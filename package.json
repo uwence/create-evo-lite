@@ -1,0 +1,20 @@
+{
+    "name": "create-evo-lite",
+    "version": "1.0.0",
+    "description": "Scaffolding tool for Evo-Lite Serverless Memory Bank",
+    "main": "index.js",
+    "bin": {
+        "create-evo-lite": "./bin/cli.js"
+    },
+    "scripts": {
+        "start": "node ./bin/cli.js"
+    },
+    "keywords": [
+        "evo-lite",
+        "ai",
+        "memory",
+        "rag"
+    ],
+    "author": "",
+    "license": "ISC"
+}
