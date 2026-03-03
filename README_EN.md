@@ -6,7 +6,7 @@
 *"Capturing the AI's mental snapshot with ultimate simplicity."*
 
 [![Vibecoding](https://img.shields.io/badge/Vibecoding-AI_Assisted-8a2be2.svg)](#)
-[![System](https://img.shields.io/badge/System-Serverless_RAG-007acc.svg)](#)
+[![System](https://img.shields.io/badge/System-Daemonless_RAG-007acc.svg)](#)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity-ff6600.svg)](#)
 [![Agent](https://img.shields.io/badge/Agent-Evo--Lite-84cc16.svg)](#)
 [![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
@@ -16,7 +16,7 @@
 ---
 </div>
 
-> **Zero-Intrusion, Decentralized, Serverless AI Memory Plugin Scaffolding with Dual-Core RAG (Search + Rerank)**
+> **Zero-Intrusion, Decentralized, Daemonless AI Memory Plugin Scaffolding with Dual-Core RAG (Search + Rerank)**
 
 `Evo-Lite` is a mental constraint and state protection system specifically designed for Agentic Workflows (AI-assisted coding). In just one second, it can **instantly equip any of your projects (frontend, backend, or even simple script libraries) with a persistent memory, technical aesthetic validation, and a completely sandboxed "Super Brain."**
 

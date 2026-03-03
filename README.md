@@ -6,7 +6,7 @@
 *“以极为克制之简，锁死 AI 的心智快照。”*
 
 [![Vibecoding](https://img.shields.io/badge/Vibecoding-AI_Assisted-8a2be2.svg)](#)
-[![System](https://img.shields.io/badge/System-Serverless_RAG-007acc.svg)](#)
+[![System](https://img.shields.io/badge/System-Daemonless_RAG-007acc.svg)](#)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity-ff6600.svg)](#)
 [![Agent](https://img.shields.io/badge/Agent-Evo--Lite-84cc16.svg)](#)
 [![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
@@ -16,7 +16,7 @@
 ---
 </div>
 
-> **0 侵入、去中心化、自带双核 RAG (检索+重排) 的 Serverless AI 记忆外挂脚手架**
+> **0 侵入、去中心化、自带双核 RAG (检索+重排) 的 Daemonless (无后台守护进程) AI 记忆外挂脚手架**
 
 `Evo-Lite` 是专为 Agentic Workflow (智能体辅助编程) 打造的心智约束与状态保护系统。它能在一秒钟内，为你的任何项目（不论是前端、后端还是普通脚本库）**瞬间装入一个具备永久记忆、技术审美校验、且完全寄生于沙盒的超级大脑**。
 

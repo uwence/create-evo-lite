@@ -1,6 +1,6 @@
 {
     "name": "create-evo-lite",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Scaffolding tool for Evo-Lite Serverless Memory Bank",
     "main": "index.js",
     "bin": {
