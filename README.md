@@ -4,6 +4,9 @@
 
 `Evo-Lite` 是专为 Agentic Workflow (智能体辅助编程) 打造的心智约束与状态保护系统。它能在一秒钟内，为你的任何项目（不论是前端、后端还是普通脚本库）**瞬间装入一个具备永久记忆、技术审美校验、且完全寄生于沙盒的超级大脑**。
 
+> [!IMPORTANT]
+> **开发环境声明**：本项目目前深度基于 **Google Antigravity** 智能体开发环境进行设计与优化（利用其强大的 Workflow / Slash Commands 机制）。目前暂未在 Cursor, Cline 或 GitHub Copilot 等其他 IDE 环境下进行充分测试，暂无官方插件适配。
+
 ---
 
 ## 🌟 为什么你需要 Evo-Lite？
