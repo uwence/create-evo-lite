@@ -1,4 +1,20 @@
-# 🚀 create-evo-lite
+<div align="center">
+
+# 🧠 create-evo-lite
+
+**The Golden Thread for Agentic Memory & Context Persistence**  
+*"Capturing the AI's mental snapshot with ultimate simplicity."*
+
+[![Vibecoding](https://img.shields.io/badge/Vibecoding-AI_Assisted-8a2be2.svg)](#)
+[![System](https://img.shields.io/badge/System-Serverless_RAG-007acc.svg)](#)
+[![Platform](https://img.shields.io/badge/Platform-Antigravity-ff6600.svg)](#)
+[![Agent](https://img.shields.io/badge/Agent-Evo--Lite-84cc16.svg)](#)
+[![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
+
+[English README](./README_EN.md) • [Architecture](./templates/ACTIVATE_EVO_LITE.md) • [Usage Guide](#🚀-quick-start) • [中文介绍](./README.md)
+
+---
+</div>
 
 > **Zero-Intrusion, Decentralized, Serverless AI Memory Plugin Scaffolding with Dual-Core RAG (Search + Rerank)**
 
