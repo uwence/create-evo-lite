@@ -13,7 +13,7 @@ async function main() {
     }
 
     const targetDir = path.resolve(targetDirArg);
-    console.log(`🚀 开始在 ${targetDir} 初始化 Evo-Lite Serverless 记忆大脑...\n`);
+    console.log(`🚀 开始在 ${targetDir} 初始化 Evo-Lite Daemonless 记忆大脑...\n`);
 
     // --- 交互式向导 ---
     const rl = readline.createInterface({
@@ -76,7 +76,7 @@ async function main() {
     fs.writeFileSync(path.join(evoLiteDir, 'active_context.md'), activeContextContent);
 
     // 4. 安装依赖
-    console.log('📦 正在安装向量数据库及核心依赖 (better-sqlite3, sqlite-vec, axios)...');
+    console.log('📦 正在从 npm 抓取并编译向量数据库及核心依赖 (better-sqlite3, sqlite-vec, axios)...');
     try {
         fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
             "name": "evo-lite-workspace",
@@ -84,10 +84,25 @@ async function main() {
             "dependencies": {}
         }, null, 2));
         execSync('npm install better-sqlite3 sqlite-vec axios', { cwd: evoLiteDir, stdio: 'inherit' });
-        console.log('✅ 依赖安装成功！');
+        console.log('✅ 依赖在线安装成功！');
     } catch (e) {
-        console.warn('⚠️ 警告: npm 依赖自动安装失败。请稍后手动在 .evo-lite 目录运行:');
-        console.warn('npm install better-sqlite3 sqlite-vec axios');
+        console.warn('\n⚠️ 警告: npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)');
+        console.log('🛡️ 正在启动终极兜底方案：自动解压并注入脱机版预编译依赖包 (fallback-deps.zip)...');
+
+        try {
+            const fallbackZip = path.join(__dirname, 'templates', 'fallback-deps.zip');
+            if (fs.existsSync(fallbackZip)) {
+                // 利用现代多端原生自带的 tar 命令解压 (Win10+ 和 Mac/Linux 均原生支持)
+                execSync(`tar -xf "${fallbackZip}"`, { cwd: evoLiteDir, stdio: 'inherit' });
+                console.log('✅ 终极脱机版预编译依赖包注入成功！危机解除！');
+            } else {
+                console.warn('❌ 无法找到离线备选安装包。请稍后在有网络和编译环境的机器上手动进入 .evo-lite 运行:');
+                console.warn('npm install better-sqlite3 sqlite-vec axios');
+            }
+        } catch (fallbackError) {
+            console.error('❌ 脱机兜底包注入也失败了:', fallbackError.message);
+            console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 sqlite-vec axios');
+        }
     }
 
     console.log('\n🎉 Evo-Lite Memory Bank 初始化完成！');
@@ -99,6 +114,11 @@ async function main() {
 }
 
 main().catch(error => {
-    console.error("初始化过程中发生错误:", error);
+    // 优雅捕获用户按下 Ctrl+C 带来的中断报错
+    if (error.code === 'ABORT_ERR') {
+        console.log('\n🚪 接收到中断信号，初始化已取消。');
+        process.exit(0);
+    }
+    console.error("❌ 初始化过程中发生未卜错误:", error);
     process.exit(1);
 });
