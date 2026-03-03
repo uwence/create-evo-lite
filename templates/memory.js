@@ -169,6 +169,7 @@ async function recall(query, topK = 3) {
 }
 
 const action = process.argv[2];
+const text = process.argv[3];
 if (action === 'remember') {
     if (!text) return console.log('Usage: node memory.js remember <"text message">');
     remember(text);
