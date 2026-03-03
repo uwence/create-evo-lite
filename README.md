@@ -1,4 +1,20 @@
-# 🚀 create-evo-lite
+<div align="center">
+
+# 🧠 create-evo-lite
+
+**The Golden Thread for Agentic Memory & Context Persistence**  
+*“以极为克制之简，锁死 AI 的心智快照。”*
+
+[![Vibecoding](https://img.shields.io/badge/Vibecoding-AI_Assisted-8a2be2.svg)](#)
+[![System](https://img.shields.io/badge/System-Serverless_RAG-007acc.svg)](#)
+[![Platform](https://img.shields.io/badge/Platform-Antigravity-ff6600.svg)](#)
+[![Agent](https://img.shields.io/badge/Agent-Evo--Lite-84cc16.svg)](#)
+[![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
+
+[English README](./README_EN.md) • [Architecture](./templates/ACTIVATE_EVO_LITE.md) • [Usage Guide](#🚀-极速上手-quick-start) • [中文介绍](./README.md)
+
+---
+</div>
 
 > **0 侵入、去中心化、自带双核 RAG (检索+重排) 的 Serverless AI 记忆外挂脚手架**
 
