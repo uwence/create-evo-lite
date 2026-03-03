@@ -31,6 +31,8 @@ function initDb() {
 
     // Verify embedding model fingerprint
     const modelRow = db.prepare('SELECT value FROM _meta WHERE key = ?').get('embedding_model');
+    const rerankRow = db.prepare('SELECT value FROM _meta WHERE key = ?').get('reranker_model');
+
     if (!modelRow) {
         db.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('embedding_model', MODEL_NAME);
     } else if (modelRow.value !== MODEL_NAME) {
@@ -41,6 +43,10 @@ function initDb() {
         console.error(`✅ 解决办法 1 (推荐): 请在 LM Studio 中重新加载之前绑定的模型 (${modelRow.value})，并修改此处的 MODEL_NAME 配置。`);
         console.error(`✅ 解决办法 2 (危险): 如果你确定要开新坑并抛弃过去的记忆，请手动删除 .evo-lite/memory.db 文件后重试。\n`);
         process.exit(1);
+    }
+
+    if (!rerankRow) {
+        db.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('reranker_model', RERANKER_MODEL);
     }
 
     db.exec(`
@@ -180,10 +186,14 @@ if (action === 'remember') {
     // Just trigger initDb to check meta fingerprint
     if (fs.existsSync(DB_PATH)) {
         const db = initDb();
-        console.log(`✅ Evo-Lite 记忆库自检通过！(绑定模型: ${MODEL_NAME})`);
+        console.log(`✅ Evo-Lite 记忆库自检通过！`);
+        console.log(`📡 [粗排/向量]: ${MODEL_NAME}`);
+        console.log(`📡 [精排/语义]: ${RERANKER_MODEL}`);
         db.close();
     } else {
-        console.log(`✅ Evo-Lite 尚未生成记忆库。(待定模型: ${MODEL_NAME})`);
+        console.log(`✅ Evo-Lite 尚未生成实体库。`);
+        console.log(`📡 [待定/向量]: ${MODEL_NAME}`);
+        console.log(`📡 [待定/语义]: ${RERANKER_MODEL}`);
     }
 } else {
     console.log('Unknown action. Use "remember", "recall" or "verify".');

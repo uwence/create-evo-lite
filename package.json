@@ -1,7 +1,7 @@
 {
     "name": "create-evo-lite",
     "version": "1.0.3",
-    "description": "Scaffolding tool for Evo-Lite Daemonless Memory Bank",
+    "description": "0-Intrusion Daemonless RAG Memory Bank for AI Agents & Coding Workflows.",
     "main": "index.js",
     "bin": {
         "create-evo-lite": "./bin/cli.js"
@@ -11,9 +11,15 @@
     },
     "keywords": [
         "evo-lite",
-        "ai",
-        "memory",
-        "rag"
+        "ai-memory",
+        "agentic-workflow",
+        "rag",
+        "local-rag",
+        "cursor-ai",
+        "antigravity",
+        "context-persistence",
+        "llm-memory",
+        "coding-assistant"
     ],
     "author": "uwence",
     "license": "MIT",

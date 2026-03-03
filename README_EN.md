@@ -40,8 +40,10 @@ As AI coding assistants become increasingly powerful, we often encounter these *
 
 * **🌐 In-Tree RAG (Pure Local Vector Engine)**
   Completely independent of background services! Uses `sqlite-vec` under the hood. Need to search historical bug records? Just run `node memory.js recall` in your native terminal to awaken forgotten details.
-* **🧠 Dual-Core Reranker for Precision**
-  More than just simple fuzzy search. Built-in logic for Jina Embeddings (coarse-grained) + BGE Reranker (fine-grained). It pinpoints the core semantics of your past struggles.
+* **🧠 Dual-Pass Retrieval Architecture**
+  **Say goodbye to "vague" or irrelevant answers.** This project implements an industrial-grade RAG pipeline:
+  - **Coarse Retrieval (Embedding)**: Instantly pinpoints candidates from thousands of memories using the `Jina-V2` algorithm.
+  - **Fine-Grained Re-ranking (Reranker)**: Automatically invokes `BGE-Reranker` for cross-semantic validation. It finds the "true" context even when keywords don't match.
 * **🛡️ Isolated Dual-Layer Memory (.evo-lite/)**
   - **Explicit State Machine (`active_context.md`)**: Forces the AI to update the progress after every session. The next AI wakes up with zero hallucination and clear goals.
   - **Implicit Long-Term Storage (`memory.db`)**: Silently accumulates experience that syncs with Git, keeping your memory safe across machines.
@@ -114,4 +116,17 @@ MyAwesomeProject/                 <-- (Your project, untouched)
 
 ---
 
+## 🏛️ The Aesthetics of Restriction
+
+Why challenge massive RAG frameworks with less than 200 lines of code?
+
+In the age of AI, **context is expensive, and mental clarity is fragile**. Traditional RAG solutions tend to be "heavy," requiring Docker, microservices, and complex sync logic. This not only clutters your project but also adds a significant maintenance burden.
+
+The core philosophy of Evo-Lite is **"Order through Simplicity"**:
+1. **Zero-Intrusion is True Respect**: A good tool should be like a ghost—existing only when summoned. That's why we insist on a `Daemonless` architecture.
+2. **Sandboxing as the Last Line of Defense**: We'd rather increase the scaffolding size slightly (with offline fallbacks) than let a developer's memory fail just because they lack a C++ compiler.
+3. **Dual-Pass Retrieval Power**: By leveraging the native speed and simplicity of `sqlite-vec`, we've implemented an industrial-grade retrieval pipeline in milliseconds, proving that high precision doesn't require a massive cluster.
+
 > *"Humans hold reverence for business and code assets; Evo-Lite is the golden thread that places the necessary constraints on AI."*
+
+---

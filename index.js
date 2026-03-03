@@ -21,13 +21,16 @@ async function main() {
         output: process.stdout
     });
 
-    console.log('================= 配置向导 =================');
-    console.log('直接按回车可使用默认的 LM Studio 本地配置。');
-    const embedUrl = await rl.question('1. Embedding API URL [http://localhost:12342/v1/embeddings]: ') || 'http://localhost:12342/v1/embeddings';
-    const embedModel = await rl.question('2. Embedding 模型名称 [jina-embeddings-v2-base-zh]: ') || 'jina-embeddings-v2-base-zh';
-    const rerankUrl = await rl.question('3. Reranker API URL [http://localhost:12342/v1/rerank]: ') || 'http://localhost:12342/v1/rerank';
-    const rerankModel = await rl.question('4. Reranker 模型名称 [text-embedding-bge-reranker-base]: ') || 'text-embedding-bge-reranker-base';
-    console.log('============================================\n');
+    console.log('================= 配置向导 (Evo-Link) =================');
+    console.log('直接按回车可使用默认的 LM Studio 本地极客配置。');
+    console.log('\n--- 阶段 A: 初步搜索 (Embedding) ---');
+    const embedUrl = await rl.question('1. API URL [http://localhost:12342/v1/embeddings]: ') || 'http://localhost:12342/v1/embeddings';
+    const embedModel = await rl.question('2. 模型名称 [jina-embeddings-v2-base-zh]: ') || 'jina-embeddings-v2-base-zh';
+
+    console.log('\n--- 阶段 B: 语义重排 (Reranker) - 精度保证 ---');
+    const rerankUrl = await rl.question('3. API URL [http://localhost:12342/v1/rerank]: ') || 'http://localhost:12342/v1/rerank';
+    const rerankModel = await rl.question('4. 模型名称 [text-embedding-bge-reranker-base]: ') || 'text-embedding-bge-reranker-base';
+    console.log('\n======================================================\n');
     rl.close();
 
     // 1. 创建目标目录 (如果不存在)
