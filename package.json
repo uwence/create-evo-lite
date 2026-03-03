@@ -1,6 +1,6 @@
 {
     "name": "create-evo-lite",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Scaffolding tool for Evo-Lite Serverless Memory Bank",
     "main": "index.js",
     "bin": {
@@ -15,6 +15,10 @@
         "memory",
         "rag"
     ],
-    "author": "",
-    "license": "ISC"
+    "author": "uwence",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/uwence/create-evo-lite.git"
+    }
 }
