@@ -4,6 +4,8 @@ const { execSync } = require('child_process');
 const readline = require('readline/promises');
 const http = require('http');
 
+const SELF_VERSION = require(path.join(__dirname, 'package.json')).version;
+
 async function main() {
     // Check for --yes or -y flag
     const args = process.argv.slice(2);
@@ -20,7 +22,7 @@ async function main() {
     }
 
     const targetDir = path.resolve(targetDirArg);
-    console.log(`🚀 开始在 ${targetDir} 初始化 Evo-Lite Daemonless 记忆大脑...\n`);
+    console.log(`🚀 Evo-Lite v${SELF_VERSION} — 开始在 ${targetDir} 初始化 Daemonless 记忆大脑...\n`);
 
     let embedUrl = 'http://localhost:12342/v1/embeddings';
     let embedModel = 'jina-embeddings-v2-base-zh';
@@ -182,6 +184,7 @@ async function main() {
     try {
         fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
             "name": "evo-lite-workspace",
+            "version": SELF_VERSION,
             "private": true,
             "dependencies": {}
         }, null, 2));
