@@ -1,6 +1,9 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.2] - 2026-03-04
+### Fixed
+- **Compact Fetch Refactor Bug**: Fixed an issue where the `compact` method failed to select the `id` column, causing the IDE handover's 'Wait List' ID array to be undefined.
 
 ## [1.3.1] - 2026-03-04
 ### Changed
