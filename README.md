@@ -80,6 +80,11 @@ create-evo-lite ./我的新游戏项目
 
 运行时，向导会弹出一系列配置询问（端口、模型名），支持**一键回车拉满默认的 LM Studio 本地部署配置** (jina-v2 + bge-reranker)。
 
+> [!TIP]
+> **推荐模型下载 (GGUF)**：
+> - Embedding: [jina-embeddings-v2-base-zh](https://huggingface.co/gpustack/jina-embeddings-v2-base-zh-GGUF)
+> - Reranker: [bge-reranker-base](https://huggingface.co/xinming0111/bge-reranker-base-Q8_0-GGUF)
+
 ### 2. 激活你的 AI (在 IDE 中)
 打开目标项目 `MyAwesomeProject`，在 Antigravity (或你的 IDE AI 助手) 的聊天框中输入神圣的指令：
 ```text

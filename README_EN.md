@@ -80,6 +80,11 @@ create-evo-lite ./MyAwesomeProject
 
 During execution, the wizard will ask a few configuration questions (ports, model names). Press **Enter** to accept the default LM Studio local deployment (jina-v2 + bge-reranker).
 
+> [!TIP]
+> **Recommended Models (GGUF)**:
+> - Embedding: [jina-embeddings-v2-base-zh](https://huggingface.co/gpustack/jina-embeddings-v2-base-zh-GGUF)
+> - Reranker: [bge-reranker-base](https://huggingface.co/xinming0111/bge-reranker-base-Q8_0-GGUF)
+
 ### 2. Activate your AI (In IDE)
 Open `MyAwesomeProject` and type the following magic command in the Antigravity (or AI assistant) chat box:
 ```text
