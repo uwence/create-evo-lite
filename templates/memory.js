@@ -8,7 +8,6 @@ const DB_PATH = path.join(__dirname, '..', 'memory.db');
 const LOG_PATH = path.join(__dirname, '..', 'memory.log');
 const LM_STUDIO_URL = 'http://localhost:12342/v1/embeddings';
 const LM_STUDIO_RERANK_URL = 'http://localhost:12342/v1/rerank';
-const LM_STUDIO_CHAT_URL = 'http://localhost:12342/v1/chat/completions';
 const MODEL_NAME = 'jina-embeddings-v2-base-zh';
 const RERANKER_MODEL = 'text-embedding-bge-reranker-base';
 
@@ -404,32 +403,17 @@ if (action === 'remember') {
 } else if (action === 'compact') {
     compact();
 } else if (action === 'verify') {
-    (async () => {
-        let chatModel = "未连接 (脱机降级兜底方案)";
-        try {
-            const modelsRes = await fetchWithRetry(() => axios.get(LM_STUDIO_URL.replace('/embeddings', '/models'), { proxy: false }), 2, 1000);
-            const candidates = modelsRes.data.data.filter(m => !m.id.toLowerCase().includes('embed') && !m.id.toLowerCase().includes('rerank'));
-            if (candidates.length > 0) {
-                chatModel = candidates[0].id;
-            }
-        } catch (e) {
-            // 忽略连接错误，保持默认的降级提示
-        }
-
-        if (fs.existsSync(DB_PATH)) {
-            const db = initDb();
-            console.log(`✅ Evo-Lite 记忆库自检通过！`);
-            console.log(`📡 [粗排/向量]: ${MODEL_NAME}`);
-            console.log(`📡 [精排/语义]: ${RERANKER_MODEL}`);
-            console.log(`🤖 [对话/整理]: ${chatModel}`);
-            db.close();
-        } else {
-            console.log(`✅ Evo-Lite 尚未生成实体库。`);
-            console.log(`📡 [待定/向量]: ${MODEL_NAME}`);
-            console.log(`📡 [待定/语义]: ${RERANKER_MODEL}`);
-            console.log(`🤖 [对话/整理]: ${chatModel}`);
-        }
-    })();
+    if (fs.existsSync(DB_PATH)) {
+        const db = initDb();
+        console.log(`✅ Evo-Lite 记忆库自检通过！`);
+        console.log(`📡 [粗排/向量]: ${MODEL_NAME}`);
+        console.log(`📡 [精排/语义]: ${RERANKER_MODEL}`);
+        db.close();
+    } else {
+        console.log(`✅ Evo-Lite 尚未生成实体库。`);
+        console.log(`📡 [待定/向量]: ${MODEL_NAME}`);
+        console.log(`📡 [待定/语义]: ${RERANKER_MODEL}`);
+    }
 } else {
     console.log('Unknown action. Use "remember", "recall", "forget", "stats", "export", "import", "compact", or "verify".');
 }
