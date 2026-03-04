@@ -20,6 +20,7 @@
 - [x] 完成了 v1.1.0 重构：扩充 `stats/forget/compact/import/export` 五大本地指令，并实现了与 LM Studio 动态模型嗅探。
 - [x] 完成了 v1.2.0 加固：解决 SQLite 并发 Locked、大记忆体 Compact 溢出 (Map-Reduce)、并防拆了 Shell 的 `--file` 传参机制。
 - [x] 完成了 v1.3.0 增强：注入时空锚点 (Space-Time Git Hashes)，增加 AI 智能体戒律法则。
+- [x] 完成了 v1.3.1 架构升维：剥离 `compact` 函数内部对本地小语言模型的依赖。改由 CLI 输出 `.evo-lite/MEMORIES_TO_COMPACT.md` 唤醒协议交接给高智商宿主 IDE Agent 代为进行深度的中文总结提炼。
 
 ## 3. 📝 下一步行动指南 (Next Actions)
 - [x] **v1.1.0 记忆库大盘与 CLI 增强**：
