@@ -102,6 +102,16 @@ node .evo-lite/cli/memory.js remember "Fix for Axios 502: Due to system proxy, s
 node .evo-lite/cli/memory.js recall "How did we fix that proxy error?"
 ```
 
+### 4. Seamless Upgrade
+When Evo-Lite releases a new version (e.g., introducing new `memory.js` skills), simply run the following in your existing project's root directory:
+```bash
+npx create-evo-lite@latest ./ --yes
+```
+The system will trigger the **Seamless Upgrade Protocol**:
+- Automatically extracts and preserves your legacy API port and model config.
+- Absolutely protects your `active_context.md` from being erased.
+- Updates core templates and prompts the AI during its next wake-up (/evo) to proactively map and merge your custom settings.
+
 ## 📂 Directory Structure at a Glance
 
 ```text

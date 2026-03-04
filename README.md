@@ -102,6 +102,16 @@ node .evo-lite/cli/memory.js remember "遇到 Axios 502 的坑：原因是走了
 node .evo-lite/cli/memory.js recall "那个代理报错怎么修的？"
 ```
 
+### 4. 无损热更新 (Seamless Upgrade)
+当 Evo-Lite 发布新版本（例如引入新的 `memory.js` 技能）时，在已安装的旧项目根目录下直接运行：
+```bash
+npx create-evo-lite@latest ./ --yes
+```
+系统会触发**无损热更新协议**：
+- 自动提取保留你原有的 API 端口和模型配置。
+- 绝对保护你的 `active_context.md` 不被清空。
+- 更新核心模板，并在 AI 下次苏醒 (/evo) 时主动引导合并你的自定义设定。
+
 ## 📂 生成的目录结构速览
 
 ```text
