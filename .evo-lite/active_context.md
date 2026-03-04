@@ -26,7 +26,11 @@
   - 实装本地模型 Lazy Loading 过慢时的“指数补偿等待机制”。
   - 当无任何模型或连接失败时，激活 **“纯文本/脱机降级兜底方案”** (`offline_memories.json` + `SQLite LIKE` 提取)，并引导大模型在 IDE 宿主终端内人机协作。
   - 实装 **向后兼容无损热更新协议 (Seamless Upgrade)**，确保 `active_context.md` 等被严格保护，旧环境模板被 `.bak` 备份，并附嵌智能体自动导读警报语。
+- [x] **v1.2.0 架构加固与体验进阶 (Fortification & Frictionless)**：
+  - **抗脏数据 OOM 重整**：引入了 Sliding Window 分块加 Map-Reduce 归纳模式，重塑 `compact` 深度睡眠，解决多碎片一并喂给大模型导致的显存爆炸。
+  - **高并发写防锁死降级**：通过给 `templates/memory.js` 的 SQLite 挂起 `PRAGMA journal_mode=WAL` 及 `busy_timeout=5000`，彻底免疫多 AI 大量并发 `remember` 时导致的锁库报错。
+  - **特殊字符截断防护**：为 `remember` 与 `recall` 原生实装 CLI 的 `--file=<path>` 追加传参规避法则，防御从纯终端管道传输引起的文本单/双引号解析破损。
 
 ## 3. ⏭️ 下一步行动
 - [ ] 解决并绕过 GitHub Push 及 npm 发布阶段所遇到的外网/2FA 网络阻碍，完成项目的最终上线流转。
-- [ ] 探究 `Cursor` 和 `Cline` 的差异化适配层 (v1.2.0)。
+- [ ] 继续探究 `Cursor` 和 `Cline` 对 Evo-Lite 返回信息或上下文衔接逻辑层的差异化适配特性。

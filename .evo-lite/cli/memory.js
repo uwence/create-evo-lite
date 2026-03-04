@@ -14,6 +14,11 @@ const RERANKER_MODEL = 'text-embedding-bge-reranker-base';
 
 function initDb() {
     const db = new Database(DB_PATH);
+
+    // Setup pragma for concurrent access and timeout
+    db.pragma('journal_mode = WAL');
+    db.pragma('busy_timeout = 5000');
+
     sqliteVec.load(db);
 
     // Virtual tables must be created carefully
@@ -326,15 +331,12 @@ async function compact() {
         return console.log('⚠️ 当前记忆库为空，不需要整理。');
     }
 
-    const allContexts = records.map((r, i) => `[ID:${i}] ${r.content}`).join('\\n');
-
     console.log('2. 正在呼叫大语言模型进行去重、合并与摘要 (等待 LM Studio 响应...)');
 
-    // 动态嗅探当前可用的对话模型 (避免把 embed/rerank 误用来跑 chat)
+    // 动态嗅探当前可用的对话模型
     let chatModel = "local-model";
     try {
         const modelsRes = await fetchWithRetry(() => axios.get(LM_STUDIO_URL.replace('/embeddings', '/models'), { proxy: false }), 3, 2000);
-        // 排除掉所有含 embed / rerank 字眼的模型
         const candidates = modelsRes.data.data.filter(m => !m.id.toLowerCase().includes('embed') && !m.id.toLowerCase().includes('rerank'));
         if (candidates.length > 0) {
             chatModel = candidates[0].id;
@@ -344,23 +346,48 @@ async function compact() {
         console.warn('⚠️ 无法动态探测对话模型，将尝试使用本地通用默认标识。');
     }
 
-    const prompt = `你是一个高级的知识图谱整理员。下面是我们项目中随时记录的零散“记忆碎片”。\n\n请你把它们去重、分类、合并，总结成提纲挈领的“几条核心架构知识与踩坑教训”。\n\n规则：\n1. 每条经验必须独立成行，且不要太长。\n2. 直接输出这几条精简后的话，不要输出“好的”、“没问题”等其他废话文本。\n3. 保留技术名词和关键代码细节。\n\n记忆碎片列表：\n${allContexts}`;
-
     try {
-        const response = await fetchWithRetry(() => axios.post(LM_STUDIO_CHAT_URL, {
-            model: chatModel,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.1, // 越低越稳定
-            stream: false
-        }, { proxy: false }), 3, 5000);
+        // [Map Phase]: 划词分块，避免大模型长度爆炸 (OOM)
+        const CHUNK_SIZE = 50; // 每 50 条聚合一次
+        let chunkedSummaries = [];
 
-        const compactedText = response.data.choices[0].message.content.trim();
+        console.log(`   (开启滑动窗口分批处理机制, 共 ${records.length} 条记忆)`);
+
+        for (let i = 0; i < records.length; i += CHUNK_SIZE) {
+            const batch = records.slice(i, i + CHUNK_SIZE);
+            const batchText = batch.map((r, idx) => `[ID:${i + idx}] ${r.content}`).join('\\n');
+            const prompt = `你是一个高级的知识图谱整理员。下面是我们项目中随时记录的零散“记忆碎片”（第 ${i / CHUNK_SIZE + 1} 批）。\n\n请你把它们去重、分类、合并，总结成提纲挈领的“几条核心架构知识与踩坑教训”。\n\n规则：\n1. 每条经验必须独立成行，且不要太长。\n2. 直接输出这几条精简后的话，不要输出“好的”、“没问题”等额外废话文本。\n3. 保留技术名词和关键代码细节。\n\n记忆碎片列表：\n${batchText}`;
+
+            console.log(`   ⏳ 正在精炼第 ${i / CHUNK_SIZE + 1} 批碎片 (${batch.length} 条)...`);
+            const response = await fetchWithRetry(() => axios.post(LM_STUDIO_CHAT_URL, {
+                model: chatModel,
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.1,
+                stream: false
+            }, { proxy: false }), 3, 5000);
+
+            chunkedSummaries.push(response.data.choices[0].message.content.trim());
+        }
+
+        // [Reduce Phase]: 如果原本分片比较多，则进行最终合并
+        let compactedText = chunkedSummaries.join('\\n');
+        if (chunkedSummaries.length > 1) {
+            console.log(`   ⏳ 正在进行全量终极凝练 (Reduce Phase)...`);
+            const reducePrompt = `下面是几段由不同记忆碎片提取出来的核心架构知识。请你再把它们全局去重和整合一次，生成最终的几条核心经验：\n\n规则:\n1. 独立成行, 不要废话, 不少字数。\n\n全量知识汇总：\n${compactedText}`;
+            const finalRes = await fetchWithRetry(() => axios.post(LM_STUDIO_CHAT_URL, {
+                model: chatModel,
+                messages: [{ role: 'user', content: reducePrompt }],
+                temperature: 0.1,
+                stream: false
+            }, { proxy: false }), 3, 5000);
+            compactedText = finalRes.data.choices[0].message.content.trim();
+        }
+
         const newThoughts = compactedText.split('\\n').map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith('好的') && l !== '```' && l !== '```markdown' && l !== '```json');
 
         console.log(`🧠 AI 整理完毕，提炼成 ${newThoughts.length} 条精华记忆。\\n`);
 
         console.log('3. 正在抹除旧记忆库 (危险操作)...');
-        // Rename old file as backup
         const backupPath = DB_PATH + '.backup.' + Date.now();
         fs.renameSync(DB_PATH, backupPath);
         console.log(`   (旧文件已备份为: ${backupPath})`);
@@ -374,26 +401,31 @@ async function compact() {
         console.log('✅ 记忆深度睡眠 (Compact) 完成！系统已焕发新生。\\n');
         appendLog('COMPACT', `Compacted ${records.length} records into ${newThoughts.length} core memories.`);
     } catch (e) {
-        console.warn(`\\n⚠️ 本地对话大模型未响应 (${e.message})。`);
-        console.log('🤖 [降级模式激活]: 正在呼叫当前 IDE 宿主智能体 (如 Antigravity / Cursor) 介入处理...');
-        console.log('--------------------------------------------------');
-        console.log('🚨 宿主 AI 助手请注意：');
-        console.log('请你立刻阅读下方打印的【原始碎片】，在脑内为其进行去重与架构总结。');
-        console.log('然后，使用 `node .evo-lite/cli/memory.js remember "你的精华总结"` 命令将结果写回系统。');
-        console.log('最后，向用户报告总结完毕，并建议用户使用 `node .evo-lite/cli/memory.js forget <id>` 清除旧废料。');
-        console.log('\\n【待精炼的原始记忆碎片】:');
-        console.log(allContexts);
-        console.log('--------------------------------------------------\\n');
+        console.warn(`\\n⚠️ 本地对话大模型未响应或上下文超载 (${e.message})。`);
+        console.log('🤖 [降级模式激活]: 请清理数据库或手动删除无效记忆...');
     }
 }
 
 const action = process.argv[2];
-const text = process.argv[3];
+let text = process.argv[3];
+
+// Support reading long/complex inputs from file to prevent shell truncation
+const fileArg = process.argv.find(arg => arg.startsWith('--file='));
+if (fileArg) {
+    const filePath = fileArg.split('=')[1];
+    if (fs.existsSync(filePath)) {
+        text = fs.readFileSync(filePath, 'utf8').trim();
+    } else {
+        console.error(`❌ 指定的文件未找到: ${filePath}`);
+        process.exit(1);
+    }
+}
+
 if (action === 'remember') {
-    if (!text) return console.log('Usage: node memory.js remember <"text message">');
+    if (!text) return console.log('Usage: node memory.js remember <"text message"> OR node memory.js remember --file=<path>');
     remember(text);
 } else if (action === 'recall') {
-    if (!text) return console.log('Usage: node memory.js recall <"text message">');
+    if (!text) return console.log('Usage: node memory.js recall <"text message"> OR node memory.js recall --file=<path>');
     recall(text);
 } else if (action === 'forget') {
     forget(text);

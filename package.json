@@ -1,6 +1,6 @@
 {
     "name": "create-evo-lite",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "0-Intrusion Daemonless RAG Memory Bank for AI Agents & Coding Workflows.",
     "main": "index.js",
     "bin": {
@@ -26,5 +26,8 @@
     "repository": {
         "type": "git",
         "url": "https://github.com/uwence/create-evo-lite.git"
+    },
+    "dependencies": {
+        "markdown-table": "^3.0.4"
     }
 }
