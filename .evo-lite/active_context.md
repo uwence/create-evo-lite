@@ -21,6 +21,7 @@
 - [x] 完成了 v1.2.0 加固：解决 SQLite 并发 Locked、大记忆体 Compact 溢出 (Map-Reduce)、并防拆了 Shell 的 `--file` 传参机制。
 - [x] 完成了 v1.3.0 增强：注入时空锚点 (Space-Time Git Hashes)，增加 AI 智能体戒律法则。
 - [x] 完成了 v1.3.1 架构升维：剥离 `compact` 函数内部对本地小语言模型的依赖。改由 CLI 输出 `.evo-lite/MEMORIES_TO_COMPACT.md` 唤醒协议交接给高智商宿主 IDE Agent 代为进行深度的中文总结提炼。
+- [x] 完成了 v1.3.2 热修复：修复 `compact` 数据结构缺少 ID 字段导致批量交接失败的隐患，并全盘演练验收。
 
 ## 3. 📝 下一步行动指南 (Next Actions)
 - [x] **v1.1.0 记忆库大盘与 CLI 增强**：

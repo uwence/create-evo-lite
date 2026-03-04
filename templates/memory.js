@@ -334,7 +334,7 @@ async function compact() {
     console.log('1. 正在抽取当前所有记忆碎片...');
 
     const db = initDb();
-    const records = db.prepare('SELECT content FROM memory_contents ORDER BY id ASC').all();
+    const records = db.prepare('SELECT id, content FROM memory_contents ORDER BY id ASC').all();
     db.close();
 
     if (records.length === 0) {
