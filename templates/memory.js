@@ -341,79 +341,35 @@ async function compact() {
         return console.log('⚠️ 当前记忆库为空，不需要整理。');
     }
 
-    console.log('2. 正在呼叫大语言模型进行去重、合并与摘要 (等待 LM Studio 响应...)');
+    console.log('2. 正在生成 IDE 智能体交接清单 (Handover Document)...');
 
-    // 动态嗅探当前可用的对话模型
-    let chatModel = "local-model";
-    try {
-        const modelsRes = await fetchWithRetry(() => axios.get(LM_STUDIO_URL.replace('/embeddings', '/models'), { proxy: false }), 3, 2000);
-        const candidates = modelsRes.data.data.filter(m => !m.id.toLowerCase().includes('embed') && !m.id.toLowerCase().includes('rerank'));
-        if (candidates.length > 0) {
-            chatModel = candidates[0].id;
-            console.log(`🤖 探测到当前对话大模型: ${chatModel}`);
-        }
-    } catch (e) {
-        console.warn('⚠️ 无法动态探测对话模型，将尝试使用本地通用默认标识。');
-    }
+    const compactFilePath = path.join(__dirname, '..', 'MEMORIES_TO_COMPACT.md');
+    let markdownContent = `# 🧠 Evo-Lite 待压缩记忆池 (Records to Compact)\\n\\n`;
+    markdownContent += `> **[To IDE Agent 宿主智能体]**:\\n`;
+    markdownContent += `> 人类或系统刚发起了 \`compact\` 指令。由于本地端侧模型能力孱弱，现在将这 **${records.length}** 条凌乱的经验碎片托付给你（拥有完整推理能力的超大语言模型）。\\n`;
+    markdownContent += `> \\n`;
+    markdownContent += `> **你的任务 (Your Mission)**:\\n`;
+    markdownContent += `> 1. 阅读下方所有的无序记忆碎片。\\n`;
+    markdownContent += `> 2. 去重、合并、并使用**极度高维的中文架构术语**总结出 3-5 条本项目最核心的“跨文件契约”或“踩坑教训”。\\n`;
+    markdownContent += `> 3. 写好总结后，请你主动新建一个临时文件并调用 \`node .evo-lite/cli/memory.js remember --file=你的临时文件路径\` 把新结晶存入。\\n`;
+    markdownContent += `> 4. 存入成功后，调用 \`node .evo-lite/cli/memory.js forget [下方所有旧 ID 带空格分隔]\` 把下方的旧垃圾彻底物理摧毁。\\n\\n---\\n\\n`;
 
-    try {
-        // [Map Phase]: 划词分块，避免大模型长度爆炸 (OOM)
-        const CHUNK_SIZE = 50; // 每 50 条聚合一次
-        let chunkedSummaries = [];
+    let allIds = [];
+    records.forEach(r => {
+        allIds.push(r.id);
+        markdownContent += `### [ID: ${r.id}]\\n${r.content}\\n\\n`;
+    });
 
-        console.log(`   (开启滑动窗口分批处理机制, 共 ${records.length} 条记忆)`);
+    markdownContent += `\\n---\\n`;
+    markdownContent += `**待销毁 ID 快捷复制区**: \`${allIds.join(' ')}\``;
 
-        for (let i = 0; i < records.length; i += CHUNK_SIZE) {
-            const batch = records.slice(i, i + CHUNK_SIZE);
-            const batchText = batch.map((r, idx) => `[ID:${i + idx}] ${r.content}`).join('\\n');
-            const prompt = `你是一个高级的知识图谱整理员。下面是我们项目中随时记录的零散“记忆碎片”（第 ${i / CHUNK_SIZE + 1} 批）。\n\n请你把它们去重、分类、合并，总结成提纲挈领的“几条核心架构知识与踩坑教训”。\n\n规则：\n1. 每条经验必须独立成行，且不要太长。\n2. 直接输出这几条精简后的话，不要输出“好的”、“没问题”等额外废话文本。\n3. 保留技术名词和关键代码细节。\n\n记忆碎片列表：\n${batchText}`;
+    fs.writeFileSync(compactFilePath, markdownContent, 'utf8');
 
-            console.log(`   ⏳ 正在精炼第 ${i / CHUNK_SIZE + 1} 批碎片 (${batch.length} 条)...`);
-            const response = await fetchWithRetry(() => axios.post(LM_STUDIO_CHAT_URL, {
-                model: chatModel,
-                messages: [{ role: 'user', content: prompt }],
-                temperature: 0.1,
-                stream: false
-            }, { proxy: false }), 3, 5000);
-
-            chunkedSummaries.push(response.data.choices[0].message.content.trim());
-        }
-
-        // [Reduce Phase]: 如果原本分片比较多，则进行最终合并
-        let compactedText = chunkedSummaries.join('\\n');
-        if (chunkedSummaries.length > 1) {
-            console.log(`   ⏳ 正在进行全量终极凝练 (Reduce Phase)...`);
-            const reducePrompt = `下面是几段由不同记忆碎片提取出来的核心架构知识。请你再把它们全局去重和整合一次，生成最终的几条核心经验：\n\n规则:\n1. 独立成行, 不要废话, 不少字数。\n\n全量知识汇总：\n${compactedText}`;
-            const finalRes = await fetchWithRetry(() => axios.post(LM_STUDIO_CHAT_URL, {
-                model: chatModel,
-                messages: [{ role: 'user', content: reducePrompt }],
-                temperature: 0.1,
-                stream: false
-            }, { proxy: false }), 3, 5000);
-            compactedText = finalRes.data.choices[0].message.content.trim();
-        }
-
-        const newThoughts = compactedText.split('\\n').map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith('好的') && l !== '```' && l !== '```markdown' && l !== '```json');
-
-        console.log(`🧠 AI 整理完毕，提炼成 ${newThoughts.length} 条精华记忆。\\n`);
-
-        console.log('3. 正在抹除旧记忆库 (危险操作)...');
-        const backupPath = DB_PATH + '.backup.' + Date.now();
-        fs.renameSync(DB_PATH, backupPath);
-        console.log(`   (旧文件已备份为: ${backupPath})`);
-
-        console.log('4. 正在注入高价值凝练记忆...');
-        for (const thought of newThoughts) {
-            console.log(`✍️ 写入: ${thought}`);
-            await remember(thought, 'compact');
-        }
-
-        console.log('✅ 记忆深度睡眠 (Compact) 完成！系统已焕发新生。\\n');
-        appendLog('COMPACT', `Compacted ${records.length} records into ${newThoughts.length} core memories.`);
-    } catch (e) {
-        console.warn(`\\n⚠️ 本地对话大模型未响应或上下文超载 (${e.message})。`);
-        console.log('🤖 [降级模式激活]: 请清理数据库或手动删除无效记忆...');
-    }
+    console.log(`\\n================ [唤醒协议执行完毕] ================`);
+    console.log(`🚨 \x1b[33m宿主智能体 (IDE Agent) 请立即接管控制权！\x1b[0m`);
+    console.log(`这 ${records.length} 条记忆的明文已经全量导出至：\\n   📄 \x1b[36m.evo-lite/MEMORIES_TO_COMPACT.md\x1b[0m`);
+    console.log(`\\n请你静默读取该文件，并按照文件头部的要求，执行高维中文摘要压缩，最后把旧数据 forget 掉！`);
+    console.log(`====================================================\\n`);
 }
 
 const action = process.argv[2];
