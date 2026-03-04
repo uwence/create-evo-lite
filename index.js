@@ -136,8 +136,15 @@ async function main() {
     const activatePath = path.join(evoLiteDir, 'ACTIVATE_EVO_LITE.md');
     const evoWorkflowPath = path.join(workflowsDir, 'evo.md');
 
-    if (fs.existsSync(activatePath)) { fs.copyFileSync(activatePath, activatePath + '.bak'); }
-    if (fs.existsSync(evoWorkflowPath)) { fs.copyFileSync(evoWorkflowPath, evoWorkflowPath + '.bak'); }
+    let hasUpgraded = false;
+    if (fs.existsSync(activatePath)) {
+        fs.copyFileSync(activatePath, activatePath + '.bak');
+        hasUpgraded = true;
+    }
+    if (fs.existsSync(evoWorkflowPath)) {
+        fs.copyFileSync(evoWorkflowPath, evoWorkflowPath + '.bak');
+        hasUpgraded = true;
+    }
 
     fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
     fs.writeFileSync(activatePath, activateContent);
@@ -152,6 +159,22 @@ async function main() {
         console.log('✅ 初始化了全新的 active_context.md。');
     } else {
         console.log('🛡️ 发现并保护了已有的 active_context.md 资产。跳过覆盖！');
+        if (hasUpgraded) {
+            try {
+                let contextContent = fs.readFileSync(activeContextPath, 'utf8');
+                const warningMsg = `\n> ⚠️ **框架已热更新**: 检测到 Evo-Lite 被新版本覆盖，原有的指引文件已被转移至 \`.bak\` 后缀保护。请 AI 助手在接管时，比对 \`ACTIVATE_EVO_LITE.md\` 与对应 \`.bak\` 的差异，如果用户写有自定义提示词，请将其融合，最后删除该系统提醒及 \`.bak\` 备份。\n`;
+                if (!contextContent.includes('⚠️ **框架已热更新**')) {
+                    const firstHeaderRegex = /^(# .+\\n+)/;
+                    if (firstHeaderRegex.test(contextContent)) {
+                        contextContent = contextContent.replace(firstHeaderRegex, `$1${warningMsg}`);
+                    } else {
+                        contextContent = warningMsg + contextContent;
+                    }
+                    fs.writeFileSync(activeContextPath, contextContent);
+                    console.log('🤖 已在 active_context.md 注入 AI 助手热升级处理向导标签！');
+                }
+            } catch (e) { }
+        }
     }
 
     // 4. 安装依赖
