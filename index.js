@@ -27,6 +27,23 @@ async function main() {
     let rerankUrl = 'http://localhost:12342/v1/rerank';
     let rerankModel = 'text-embedding-bge-reranker-base';
 
+    // 尝试反向提取旧配置以支持无损升级
+    const oldMemJsPath = path.join(targetDir, '.evo-lite', 'cli', 'memory.js');
+    if (fs.existsSync(oldMemJsPath)) {
+        try {
+            const oldCode = fs.readFileSync(oldMemJsPath, 'utf8');
+            const m1 = oldCode.match(/const LM_STUDIO_URL = '(.*?)';/);
+            const m2 = oldCode.match(/const MODEL_NAME = '(.*?)';/);
+            const m3 = oldCode.match(/const LM_STUDIO_RERANK_URL = '(.*?)';/);
+            const m4 = oldCode.match(/const RERANKER_MODEL = '(.*?)';/);
+            if (m1) embedUrl = m1[1];
+            if (m2) embedModel = m2[1];
+            if (m3) rerankUrl = m3[1];
+            if (m4) rerankModel = m4[1];
+            console.log('🔄 检测到已有的 Evo-Lite 内存芯片。已成功提取历史配置，准备进行无损热升级！');
+        } catch (e) { }
+    }
+
     if (isSilent) {
         console.log('🤖 静默模式开启: 使用默认 LM Studio 配置 (-y)');
     } else {
@@ -116,13 +133,26 @@ async function main() {
         .replace(/const MODEL_NAME = '.*?';/, `const MODEL_NAME = '${embedModel}';`)
         .replace(/const RERANKER_MODEL = '.*?';/, `const RERANKER_MODEL = '${rerankModel}';`);
 
-    fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
-    fs.writeFileSync(path.join(evoLiteDir, 'ACTIVATE_EVO_LITE.md'), activateContent);
-    fs.writeFileSync(path.join(workflowsDir, 'evo.md'), evoWorkflowContent);
+    const activatePath = path.join(evoLiteDir, 'ACTIVATE_EVO_LITE.md');
+    const evoWorkflowPath = path.join(workflowsDir, 'evo.md');
 
-    // 初始化 active_context.md
-    const activeContextContent = `# 🧠 Evo-Lite Active Context\n\n> **更新时间**: ${new Date().toISOString().split('T')[0]}\n> **项目状态**: 刚刚通过 create-evo-lite 初始化。\n\n## 1. 🎯 核心目标与当前阶段\n- 请手动填写项目的最终目标。\n\n## 2. 🚧 当前进度与任务\n- 无。\n\n## 3. ⏭️ 下一步行动\n- 让 AI 阅读此文件并开始工作。`;
-    fs.writeFileSync(path.join(evoLiteDir, 'active_context.md'), activeContextContent);
+    if (fs.existsSync(activatePath)) { fs.copyFileSync(activatePath, activatePath + '.bak'); }
+    if (fs.existsSync(evoWorkflowPath)) { fs.copyFileSync(evoWorkflowPath, evoWorkflowPath + '.bak'); }
+
+    fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
+    fs.writeFileSync(activatePath, activateContent);
+    fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
+    console.log('✅ 核心引擎与体系模板已更新 (旧有模板已保存为 .bak 备份)。');
+
+    // 初始化 active_context.md (绝对不能覆盖用户的上下文)
+    const activeContextPath = path.join(evoLiteDir, 'active_context.md');
+    if (!fs.existsSync(activeContextPath)) {
+        const activeContextContent = `# 🧠 Evo-Lite Active Context\n\n> **更新时间**: ${new Date().toISOString().split('T')[0]}\n> **项目状态**: 刚刚通过 create-evo-lite 初始化。\n\n## 1. 🎯 核心目标与当前阶段\n- 请手动填写项目的最终目标。\n\n## 2. 🚧 当前进度与任务\n- 无。\n\n## 3. ⏭️ 下一步行动\n- 让 AI 阅读此文件并开始工作。`;
+        fs.writeFileSync(activeContextPath, activeContextContent);
+        console.log('✅ 初始化了全新的 active_context.md。');
+    } else {
+        console.log('🛡️ 发现并保护了已有的 active_context.md 资产。跳过覆盖！');
+    }
 
     // 4. 安装依赖
     console.log('📦 正在从 npm 抓取并编译向量数据库及核心依赖 (better-sqlite3, sqlite-vec, axios)...');
