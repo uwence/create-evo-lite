@@ -80,8 +80,10 @@ async function main() {
                     // 只要能通，不管具体路由对不对都算连上了宿主
                     console.log('✅ Endpoint 连通测试通过！');
                     resolve();
+                    req.destroy();
                 } else {
                     resolve(); // 忽略内部 HTTP 错误
+                    req.destroy();
                 }
             });
             req.on('error', (e) => {
