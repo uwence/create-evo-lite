@@ -1,6 +1,10 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.0] - 2026-03-04
+### Added
+- **Space-Time Traceability Anchors**: Every memory inserted via CLI now automatically injects the current local time and the `git HEAD hash` as a prefix, granting historical exactness and allowing developers to checkout the precise snapshot of the codebase when the memory occurred.
+- **AI Distillation Rules**: Appended strict AI behavioral constraints to the `ACTIVATE_EVO_LITE.md` templates. Agents are now mathematically forbidden from logging daily debugging chatter and are guided to only memorize high-density architectural signals and cross-file contracts.
 
 ## [1.2.0] - 2026-03-04
 ### Added
