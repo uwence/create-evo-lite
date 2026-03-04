@@ -16,16 +16,17 @@
 
 ## 2. 🚧 当前进度与任务
 - [x] 完成了 npm 发布与 `index.js` CLI 初始化剧本。
-- [x] 为本仓库（Evo-Lite 的老家）植入了 Evo-Lite 记忆芯片。
-- [x] **v1.0.3 核心升级实装**：
-  - 优化了用户交互体验：优雅拦截了 `readline` 过程中的 `Ctrl+C` (\`ABORT_ERR\`) 中断异常。
-  - 增强了极限环境容错：实装了 `npm install` 失败后的“脱机离线包兜底方案”。
+- [x] 完成了核心防线 v1.0.3 的建设：Offline 编译回退与 Ctrl+C 取消捕捉。
+- [x] 完成了 v1.1.0 重构：扩充 `stats/forget/compact/import/export` 五大本地指令，并实现了与 LM Studio 动态模型嗅探。
+- [x] 完成了 v1.2.0 加固：解决 SQLite 并发 Locked、大记忆体 Compact 溢出 (Map-Reduce)、并防拆了 Shell 的 `--file` 传参机制。
+- [x] 完成了 v1.3.0 增强：注入时空锚点 (Space-Time Git Hashes)，增加 AI 智能体戒律法则。
+
+## 3. 📝 下一步行动指南 (Next Actions)
 - [x] **v1.1.0 记忆库大盘与 CLI 增强**：
   - `memory.js` 新增了 5 大高级子命令 (`forget`, `stats`, `export`, `import`, `compact`)。
   - 实现了 `compact` 时动态提取嗅探 LM Studio 当前正在运行的对话大模型 ID，并在 `verify` 命令中同步展示。
   - 实装本地模型 Lazy Loading 过慢时的“指数补偿等待机制”。
   - 当无任何模型或连接失败时，激活 **“纯文本/脱机降级兜底方案”** (`offline_memories.json` + `SQLite LIKE` 提取)，并引导大模型在 IDE 宿主终端内人机协作。
-  - 实装 **向后兼容无损热更新协议 (Seamless Upgrade)**，确保 `active_context.md` 等被严格保护，旧环境模板被 `.bak` 备份，并附嵌智能体自动导读警报语。
 - [x] **v1.2.0 架构加固与体验进阶 (Fortification & Frictionless)**：
   - **抗脏数据 OOM 重整**：引入了 Sliding Window 分块加 Map-Reduce 归纳模式，重塑 `compact` 深度睡眠，解决多碎片一并喂给大模型导致的显存爆炸。
   - **高并发写防锁死降级**：通过给 `templates/memory.js` 的 SQLite 挂起 `PRAGMA journal_mode=WAL` 及 `busy_timeout=5000`，彻底免疫多 AI 大量并发 `remember` 时导致的锁库报错。

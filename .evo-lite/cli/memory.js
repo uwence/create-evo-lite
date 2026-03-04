@@ -139,6 +139,16 @@ async function remember(content, source = 'cli') {
 
     const db = initDb();
 
+    // v1.3.0 Traceability: Inject Space-Time Anchors
+    let commitHash = 'No-Git';
+    try {
+        commitHash = require('child_process').execSync('git rev-parse --short HEAD', { encoding: 'utf8', stdio: 'pipe' }).trim();
+    } catch (e) {
+        // Silently ignore if not a git repo or no commits yet
+    }
+    const timestamp = new Date().toISOString();
+    content = `[Time: ${timestamp}] [Commit: ${commitHash}]\\n${content}`;
+
     const insertContent = db.prepare('INSERT INTO memory_contents (content, source) VALUES (?, ?)');
     const insertVector = db.prepare('INSERT INTO memories (rowid, vector) VALUES (?, ?)');
 
