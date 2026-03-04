@@ -2,12 +2,19 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const readline = require('readline/promises');
+const http = require('http');
 
 async function main() {
-    const targetDirArg = process.argv[2];
+    // Check for --yes or -y flag
+    const args = process.argv.slice(2);
+    const isSilent = args.includes('--yes') || args.includes('-y');
+
+    // Find the target directory argument (the first one that isn't a flag)
+    const targetDirArg = args.find(arg => !arg.startsWith('-'));
+
     if (!targetDirArg) {
         console.error('❌ 错误: 请指定目标项目目录。');
-        console.error('👉 用法: node index.js <项目路径>');
+        console.error('👉 用法: node index.js <项目路径> [--yes]');
         console.error('💡 示例: node index.js ./MyAwesomeProject');
         process.exit(1);
     }
@@ -15,23 +22,62 @@ async function main() {
     const targetDir = path.resolve(targetDirArg);
     console.log(`🚀 开始在 ${targetDir} 初始化 Evo-Lite Daemonless 记忆大脑...\n`);
 
-    // --- 交互式向导 ---
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
+    let embedUrl = 'http://localhost:12342/v1/embeddings';
+    let embedModel = 'jina-embeddings-v2-base-zh';
+    let rerankUrl = 'http://localhost:12342/v1/rerank';
+    let rerankModel = 'text-embedding-bge-reranker-base';
 
-    console.log('================= 配置向导 (Evo-Link) =================');
-    console.log('直接按回车可使用默认的 LM Studio 本地极客配置。');
-    console.log('\n--- 阶段 A: 初步搜索 (Embedding) ---');
-    const embedUrl = await rl.question('1. API URL [http://localhost:12342/v1/embeddings]: ') || 'http://localhost:12342/v1/embeddings';
-    const embedModel = await rl.question('2. 模型名称 [jina-embeddings-v2-base-zh]: ') || 'jina-embeddings-v2-base-zh';
+    if (isSilent) {
+        console.log('🤖 静默模式开启: 使用默认 LM Studio 配置 (-y)');
+    } else {
+        // --- 交互式向导 ---
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
 
-    console.log('\n--- 阶段 B: 语义重排 (Reranker) - 精度保证 ---');
-    const rerankUrl = await rl.question('3. API URL [http://localhost:12342/v1/rerank]: ') || 'http://localhost:12342/v1/rerank';
-    const rerankModel = await rl.question('4. 模型名称 [text-embedding-bge-reranker-base]: ') || 'text-embedding-bge-reranker-base';
-    console.log('\n======================================================\n');
-    rl.close();
+        console.log('================= 配置向导 (Evo-Link) =================');
+        console.log('直接按回车可使用默认的 LM Studio 本地极客配置。');
+        console.log('\n--- 阶段 A: 初步搜索 (Embedding) ---');
+        embedUrl = await rl.question(`1. API URL [${embedUrl}]: `) || embedUrl;
+        embedModel = await rl.question(`2. 模型名称 [${embedModel}]: `) || embedModel;
+
+        console.log('\n--- 阶段 B: 语义重排 (Reranker) - 精度保证 ---');
+        rerankUrl = await rl.question(`3. API URL [${rerankUrl}]: `) || rerankUrl;
+        rerankModel = await rl.question(`4. 模型名称 [${rerankModel}]: `) || rerankModel;
+        console.log('\n======================================================\n');
+        rl.close();
+    }
+
+    // 探活测试
+    console.log('📡 正在探测 Embedding API 连通性...');
+    try {
+        await new Promise((resolve, reject) => {
+            const req = http.request(embedUrl.replace('/embeddings', '/models'), {
+                method: 'GET',
+                timeout: 2000
+            }, (res) => {
+                if (res.statusCode === 200 || res.statusCode === 404 || res.statusCode === 405) {
+                    // 只要能通，不管具体路由对不对都算连上了宿主
+                    console.log('✅ Endpoint 连通测试通过！');
+                    resolve();
+                } else {
+                    resolve(); // 忽略内部 HTTP 错误
+                }
+            });
+            req.on('error', (e) => {
+                console.warn(`\n⚠️ 警告: 无法连接到 ${embedUrl}。`);
+                console.warn('⚠️ 请确保你的 LM Studio 已经启动了 Local Server 开发并加载了对应的模型！\n');
+                resolve();
+            });
+            req.on('timeout', () => {
+                req.destroy();
+                console.warn(`\n⚠️ 警告: 连接 ${embedUrl} 超时。请确保服务已启动。\n`);
+                resolve();
+            });
+            req.end();
+        });
+    } catch (e) { }
 
     // 1. 创建目标目录 (如果不存在)
     if (!fs.existsSync(targetDir)) {
