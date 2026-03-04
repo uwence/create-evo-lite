@@ -162,7 +162,7 @@ async function main() {
         if (hasUpgraded) {
             try {
                 let contextContent = fs.readFileSync(activeContextPath, 'utf8');
-                const warningMsg = `\n> ⚠️ **框架已热更新**: 检测到 Evo-Lite 被新版本覆盖，原有的指引文件已被转移至 \`.bak\` 后缀保护。请 AI 助手在接管时，比对 \`ACTIVATE_EVO_LITE.md\` 与对应 \`.bak\` 的差异，如果用户写有自定义提示词，请将其融合，最后删除该系统提醒及 \`.bak\` 备份。\n`;
+                const warningMsg = `\n> ⚠️ **框架已热更新**: 检测到 Evo-Lite 被新版本覆盖，原有的模板文件已被转移至 \`.bak\` 后缀保护。请 AI 助手在接管时，第一步先主动为你比对 \`ACTIVATE_EVO_LITE.md\` (或其他变动文件) 与对应 \`.bak\` 的差异，将关键不同点展示给你看。**在明确询问并得到你（用户）的确认后**，再将你的旧版自定义提示词合并入新文件，并在最后删掉本条警告语及 \`.bak\` 备份。\n`;
                 if (!contextContent.includes('⚠️ **框架已热更新**')) {
                     const firstHeaderRegex = /^(# .+\\n+)/;
                     if (firstHeaderRegex.test(contextContent)) {
