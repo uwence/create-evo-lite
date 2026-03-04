@@ -21,7 +21,7 @@
 `Evo-Lite` is a mental constraint and state protection system specifically designed for Agentic Workflows (AI-assisted coding). In just one second, it can **instantly equip any of your projects (frontend, backend, or even simple script libraries) with a persistent memory, technical aesthetic validation, and a completely sandboxed "Super Brain."**
 
 > [!IMPORTANT]
-> **Environment Disclaimer**: This project is currently deeply optimized based on the **Google Antigravity** agent development environment (utilizing its powerful Workflow / Slash Commands mechanism). It has not been fully tested in other IDE environments such as Cursor, Cline, or GitHub Copilot, and currently lacks official plugin adapters for them.
+> **Environment Disclaimer**: This project is deeply optimized for the **Google Antigravity** environment. **When initializing, please run this tool using Antigravity's `Fast Mode`** to ensure the AI strictly follows the intended initialization path and avoids logical deviation. Support for other IDEs like Cursor or Cline is currently untested.
 
 ---
 
