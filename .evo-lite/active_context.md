@@ -1,6 +1,6 @@
 # 🧠 Evo-Lite Active Context
 
-> **更新时间**: 2026-03-03
+> **更新时间**: 2026-03-04
 > **项目状态**: “吃自己的狗粮” - create-evo-lite 为自身初始化了记忆沙盒体系。
 
 ## 0. 🏛️ 项目核心技术铁律 (Tech Stack & Aesthetics)
