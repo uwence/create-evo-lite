@@ -49,6 +49,10 @@ As AI coding assistants become increasingly powerful, we often encounter these *
   - **Implicit Long-Term Storage (`memory.db`)**: Silently accumulates experience that syncs with Git, keeping your memory safe across machines.
 * **📦 Absolute Sandbox: Zero Dependency Leakage**
   Evo-Lite’s Node dependencies (like `sqlite`) are 100% locked inside `.evo-lite/node_modules/`. Your host project root remains pristine.
+* **⚓ Space-Time Rigid Anchoring (Git Traceability)**
+  Before any memory enters the vector database, the system forcibly stamps it with the current `[Time]` and Git `[Commit Hash]`. This enables the AI to practically `git checkout` back to the exact physical scene of the bug, even months later.
+* **🤖 IDE Agent Handover Protocol**
+  Abandoning the weak reasoning of local small language models. Through a specialized handover protocol, when performing massive memory compression (`compact`), the tangled memories are exported and handed over directly to the powerful frontier models residing within the host IDE for a massive brainpower strike.
 * **⚡ Magic Summoning: `/evo` Protocol (Antigravity Workflow)**
   No verbose prompts needed. Type `/evo` in the chat box to trigger an immediate AI self-check: sniffing the tech stack, verifying model fingerprints, and announcing current progress as a "Strict Pilot."
 * **🛑 Mandatory Git Check-in Protocol**
