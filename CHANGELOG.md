@@ -1,6 +1,10 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.30] - 2026-03-05
+### Changed
+- **Handover Protocol Format**: Refined the `ACTIVATE_EVO_LITE.md` handover instructions, clarifying the `mem remember` string format down to exact variables (`[Commit: $(git rev-parse --short HEAD)]`) for stricter execution.
+
 ## [1.3.29] - 2026-03-05
 ### Fixed
 - **Robust Model Verification**: Replaced naive HTTP GET probes with real POST requests to the `/embeddings` endpoint. This ensures the specific model is actually loaded in LM Studio, preventing false-positive setup successes.
