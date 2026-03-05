@@ -482,6 +482,27 @@ if (action === 'remember') {
         console.log(`📡 [待定/向量]: ${MODEL_NAME}`);
         console.log(`📡 [待定/语义]: ${RERANKER_MODEL}`);
     }
+} else if (!action || action === 'help') {
+    console.log(`
+🧠 \x1b[1mEvo-Lite Memory CLI (v1.3.8)\x1b[0m 🧠
+=========================================
+\x1b[36mUsage:\x1b[0m node .evo-lite/cli/memory.js <command> [arguments]
+
+\x1b[36mCommands:\x1b[0m
+  \x1b[32mremember\x1b[0m <text>     Write a new memory fragment into the database.
+                      (Must be >40 chars and formatted correctly)
+  \x1b[32mrecall\x1b[0m <query>      Semantic search against the memory database.
+  \x1b[32mforget\x1b[0m            Permanently purge all memory databases and vectors.
+  \x1b[32mstats\x1b[0m             Display current database capacity and statistics.
+  \x1b[32mexport\x1b[0m            Export all memories to a JSON file (stdout).
+  \x1b[32mimport\x1b[0m            Import memories from a JSON file path.
+  \x1b[32mcompact\x1b[0m           Extract all raw fragments into MEMORIES_TO_COMPACT.md
+                      and prepare the database for a compressed state.
+  \x1b[32mverify\x1b[0m            Run initialization checks, git state scans, and 
+                      database connection verifications.
+  \x1b[32mhelp\x1b[0m              Show this help menu.
+=========================================
+`);
 } else {
-    console.log('Unknown action. Use "remember", "recall", "forget", "stats", "export", "import", "compact", or "verify".');
+    console.log(`❌ Unknown action: '${action}'. Run 'node .evo-lite/cli/memory.js help' for usage.`);
 }
