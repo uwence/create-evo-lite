@@ -117,6 +117,26 @@ async function getRerankedScores(query, texts) {
 }
 
 async function remember(content, source = 'cli') {
+    // 3. 拦截毫无意义的流水账 (Quality Lock)
+    if (content.length < 40) {
+        console.error(`\n❌ [致命约束被触发] 记忆质量校验失败！`);
+        console.error(`记忆体字符数 (${content.length}) 过短。必须提供前因后果、架构原因或具体的绕过解法。`);
+        console.error(`请拒绝流水账式的日志记录。`);
+        process.exit(1);
+    }
+
+    // 4. 记忆库水位线拦截 (Capacity Lock)
+    const capacityDb = initDb();
+    const countRow = capacityDb.prepare('SELECT COUNT(*) as count FROM memory_contents').get();
+    if (countRow.count >= 15 && source !== 'import') {
+        capacityDb.close();
+        console.error(`\n❌ [致命约束被触发] 记忆碎片池已满载熔断 (当前: ${countRow.count}/15)！`);
+        console.error(`系统的碎片垃圾已经堆积如山，强行挤入会导致 RAG 寻址雪崩。`);
+        console.error(`🛑 【强制动作】你必须立即执行 \`node .evo-lite/cli/memory.js compact\` 进入深度清理流程！清理完成后方可存入新记忆。`);
+        process.exit(1);
+    }
+    capacityDb.close();
+
     // [程序化守卫] 记忆蒸馏规范校验
     // 1. 拦截使用区间省略号的偷懒行为
     if (/\[Commit:.*?\.\.\..*?\]/.test(content)) {
@@ -421,6 +441,36 @@ if (action === 'remember') {
 } else if (action === 'compact') {
     compact();
 } else if (action === 'verify') {
+    let hasAlert = false;
+
+    // Check 1: Unstaged Git states
+    try {
+        const gitStatus = require('child_process').execSync('git status --porcelain', { encoding: 'utf8', stdio: 'pipe' }).trim();
+        if (gitStatus.length > 0) {
+            console.log(`\n⚠️ \x1b[33m[前朝遗留告警] 发现上一任智能体遗留了未提交的 Git 状态！\x1b[0m`);
+            console.log(`如果你是刚被唤醒的 AI，请优先审视目前的代码区并决定是否进行 commit 闭环。\n`);
+            hasAlert = true;
+        }
+    } catch (e) { }
+
+    // Check 2: Stale Context
+    const contextPath = path.join(__dirname, '..', 'active_context.md');
+    try {
+        if (fs.existsSync(contextPath)) {
+            const stats = fs.statSync(contextPath);
+            const hoursDiff = (new Date() - stats.mtime) / (1000 * 60 * 60);
+            if (hoursDiff > 24) {
+                console.log(`\n⚠️ \x1b[33m[交接失约告警] active_context.md 已超过 24 小时未更新！\x1b[0m`);
+                console.log(`上一次的交接协议极有可能被违背，请务必优先阅读该文件并梳理当前真实进度。\n`);
+                hasAlert = true;
+            }
+        }
+    } catch (e) { }
+
+    if (hasAlert) {
+        console.log(`====================================================\n`);
+    }
+
     if (fs.existsSync(DB_PATH)) {
         const db = initDb();
         console.log(`✅ Evo-Lite 记忆库自检通过！`);
