@@ -96,14 +96,18 @@ Open `MyAwesomeProject` and type the following magic command in the Antigravity 
 ```
 The AI will silently load core architecture rules, run `verify` for the database, review the technical dictionary, and enter the service state perfectly.
 
-### 3. Inject Deep Memory (CLI Experience)
-AI (or humans) can invoke the terminal at any time to remember experiences:
-```bash
-# Remember a hard-earned lesson
-node .evo-lite/cli/memory.js remember "Fix for Axios 502: Due to system proxy, solved by adding proxy:false"
+### 🧩 Direct Interaction with the Brain
 
-# Query past struggles
-node .evo-lite/cli/memory.js recall "How did we fix that proxy error?"
+Whenever you need, you or your AI agent can query the memory directly:
+
+```bash
+./evo recall "Why did the login API integration fail last time?"
+```
+
+To permanently imprint a piece of crucial context:
+
+```bash
+./evo remember "The user verification relies on XYZ header, do not use ABC cookie anymore."
 ```
 
 ### 4. Seamless Upgrade

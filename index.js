@@ -129,6 +129,8 @@ async function main() {
     let memoryJsContent = fs.readFileSync(path.join(templatesDir, 'memory.js'), 'utf8');
     const activateContent = fs.readFileSync(path.join(templatesDir, 'ACTIVATE_EVO_LITE.md'), 'utf8');
     const evoWorkflowContent = fs.readFileSync(path.join(templatesDir, 'evo.md'), 'utf8');
+    const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'evo'), 'utf8');
+    const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'evo.cmd'), 'utf8');
 
     // 将向导中的配置注入到 memory.js 中
     memoryJsContent = memoryJsContent
@@ -153,6 +155,16 @@ async function main() {
     fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
     fs.writeFileSync(activatePath, activateContent);
     fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
+
+    // Inject root CLI wrappers
+    const unixWrapperPath = path.join(targetDir, 'evo');
+    const winWrapperPath = path.join(targetDir, 'evo.cmd');
+    fs.writeFileSync(unixWrapperPath, unixWrapperContent);
+    fs.writeFileSync(winWrapperPath, winWrapperContent);
+    try {
+        fs.chmodSync(unixWrapperPath, '755');
+    } catch (e) { }
+
     console.log('✅ 核心引擎与体系模板已更新 (旧有模板已保存为 .bak 备份)。');
 
     // 初始化 active_context.md (绝对不能覆盖用户的上下文)
