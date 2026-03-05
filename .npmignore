@@ -1,0 +1,9 @@
+node_modules
+.DS_Store
+.evo-lite
+memory_dump.json
+evo_memories_exported.json
+fixed_memories.json
+offline_memories.json
+assets
+.agents
