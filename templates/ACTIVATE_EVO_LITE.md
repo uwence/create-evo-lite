@@ -47,7 +47,7 @@
 
 1. **统一审美规范 (Opinionated Tech Stack)**：若项目中无明确配置，请在首次回复时向用户提出符合本项目极简理念的技术选型，经人类确认后立刻将其写入 `active_context.md`。
 2. **极简主义 (YAGNI)**：永远提供最直达的解法，禁止过度设计与抽象，禁止引入非必要或过重的第三方依赖。
-3. **自动建库流闭环 (Release Protocol)**：当 `package.json` 中的 `version` 字段发生变更时，**必须立即打 Tag 并推送** (`git push && git push --tags`)。
+3. **自动建库流闭环 (Release Protocol)**：当 `package.json` 中的 `version` 字段发生变更时，**必须立即打 Tag 并推送** (`git push && git push --tags`)。**并且在发版前，必须执行一次 `mem remember` 将本周期的核心特性压缩录入库中，不准带着断层记忆完工。**
 
 ---
 
