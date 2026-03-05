@@ -139,8 +139,8 @@ async function main() {
     const activateContent = fs.readFileSync(path.join(templatesDir, 'ACTIVATE_EVO_LITE.md'), 'utf8');
     const evoWorkflowContent = fs.readFileSync(path.join(templatesDir, 'evo.md'), 'utf8');
     const washWorkflowContent = fs.readFileSync(path.join(templatesDir, 'wash.md'), 'utf8');
-    const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'evo'), 'utf8');
-    const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'evo.cmd'), 'utf8');
+    const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
+    const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
 
     // 将向导中的配置注入到 memory.js 中
     memoryJsContent = memoryJsContent
@@ -172,8 +172,8 @@ async function main() {
     fs.writeFileSync(washWorkflowPath, washWorkflowContent);
 
     // Inject CLI wrappers into .evo-lite to avoid root pollution
-    const unixWrapperPath = path.join(evoLiteDir, 'evo');
-    const winWrapperPath = path.join(evoLiteDir, 'evo.cmd');
+    const unixWrapperPath = path.join(evoLiteDir, 'mem');
+    const winWrapperPath = path.join(evoLiteDir, 'mem.cmd');
     fs.writeFileSync(unixWrapperPath, unixWrapperContent);
     fs.writeFileSync(winWrapperPath, winWrapperContent);
     try {
@@ -272,7 +272,7 @@ async function main() {
     console.log('----------------------------------------------------');
     console.log(`👉 下一步:`);
     console.log(`  1. cd ${targetDirArg}`);
-    console.log(`  2. 在输入框中输入并发送斜杠命令: /evo`);
+    console.log(`  2. 在输入框中输入并发送斜杠命令: /mem`);
     console.log('----------------------------------------------------');
 }
 

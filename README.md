@@ -100,10 +100,10 @@ create-evo-lite ./我的新游戏项目
 AI (或人类) 可以在项目内随时呼出后台终端记住经验：
 ```bash
 # 死记一个血泪教训
-./.evo-lite/evo remember "遇到 Axios 502 的坑：原因是走了系统代理，加上 proxy:false 秒解"
+./.evo-lite/mem remember "遇到 Axios 502 的坑：原因是走了系统代理，加上 proxy:false 秒解"
 
 # 查询过去的挣扎
-./.evo-lite/evo recall "那个代理报错怎么修的？"
+./.evo-lite/mem recall "那个代理报错怎么修的？"
 ```
 
 ### 4. 无损热更新 (Seamless Upgrade)
