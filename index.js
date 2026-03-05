@@ -179,10 +179,17 @@ async function main() {
 
     fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
     fs.writeFileSync(activatePath, activateContent);
-    fs.writeFileSync(activeContextPath, activeContextTemplate.replace('{{DATE}}', new Date().toISOString().split('T')[0]));
     fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
     fs.writeFileSync(washWorkflowPath, washWorkflowContent);
     fs.writeFileSync(memWorkflowPath, memWorkflowContent);
+
+    // active_context.md 处理：新项目用模板，老项目仅备份并保护内容。
+    if (!fs.existsSync(activeContextPath)) {
+        fs.writeFileSync(activeContextPath, activeContextTemplate.replace('{{DATE}}', new Date().toISOString().split('T')[0]));
+        console.log('✅ 初始化了全新的 active_context.md。');
+    } else {
+        console.log('🛡️ 发现并保护了已有的 active_context.md 资产。准备进行内容融合注入...');
+    }
 
     // Inject CLI wrappers into .evo-lite to avoid root pollution
     const unixWrapperPath = path.join(evoLiteDir, 'mem');
@@ -195,20 +202,22 @@ async function main() {
 
     console.log('✅ 核心引擎与体系模板已更新 (旧有模板已保存为 .bak 备份)。');
 
-    // 4. 注入热更新警告与清洗协议
+    // 4. 注入热更新警告与融合指令 (Fusion Warning)
     if (hasUpgraded) {
         try {
             let contextContent = fs.readFileSync(activeContextPath, 'utf8');
-            const warningMsg = `\n> ⚠️ **框架已热更新**: 检测到 Evo-Lite 被新版本覆盖，原有的核心文件（如 \`ACTIVATE_EVO_LITE.md\` 和 \`active_context.md\`）已成功备份至 \`.bak\`。**请 AI 助手立即读取 \`active_context.md.bak\` 以恢复先前的任务进度和技术栈规范**，并比对新旧模板差异。在完成状态同步后，请删除此警告并清理 \`.bak\` 文件。\n`;
+            const warningMsg = `\n> ⚠️ **框架已热更新**: 检测到核心引擎升级，原有的自定义配置（如 \`ACTIVATE_EVO_LITE.md\`）和历史进度（如 \`active_context.md\`）已备份至 \`.bak\`。**请 AI 助手立即阅读 \`active_context.md.bak\` 以核对并恢复最新的开发进度，并确认是否需要同步 \`ACTIVATE_EVO_LITE.md.bak\` 中的自定义 Prompt。** 在完成手动融合与清理后，请删除此警告并清理 \`.bak\` 文件。\n`;
+
             if (!contextContent.includes('⚠️ **框架已热更新**')) {
-                const firstHeaderRegex = /^(# .+\n+)/;
+                // 尝试插在标题之后，如果没有标题则插在最前面
+                const firstHeaderRegex = /^(# .+\n*)/;
                 if (firstHeaderRegex.test(contextContent)) {
                     contextContent = contextContent.replace(firstHeaderRegex, `$1${warningMsg}`);
                 } else {
                     contextContent = warningMsg + contextContent;
                 }
                 fs.writeFileSync(activeContextPath, contextContent);
-                console.log('🤖 已在 active_context.md 注入 AI 助手热升级处理向导标签！');
+                console.log('🤖 已在 active_context.md 注入内容融合处理向导！');
             }
         } catch (e) { }
     }
