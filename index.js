@@ -137,7 +137,7 @@ async function main() {
     const templatesDir = path.join(__dirname, 'templates');
     let memoryJsContent = fs.readFileSync(path.join(templatesDir, 'memory.js'), 'utf8');
     const activateContent = fs.readFileSync(path.join(templatesDir, 'ACTIVATE_EVO_LITE.md'), 'utf8');
-    const evoWorkflowContent = fs.readFileSync(path.join(templatesDir, 'evo.md'), 'utf8');
+    const memWorkflowContent = fs.readFileSync(path.join(templatesDir, 'mem.md'), 'utf8');
     const washWorkflowContent = fs.readFileSync(path.join(templatesDir, 'wash.md'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
@@ -150,7 +150,7 @@ async function main() {
         .replace(/const RERANKER_MODEL = '.*?';/, `const RERANKER_MODEL = '${rerankModel}';`);
 
     const activatePath = path.join(evoLiteDir, 'ACTIVATE_EVO_LITE.md');
-    const evoWorkflowPath = path.join(workflowsDir, 'evo.md');
+    const memWorkflowPath = path.join(workflowsDir, 'mem.md');
     const washWorkflowPath = path.join(workflowsDir, 'wash.md');
 
     let hasUpgraded = false;
@@ -158,8 +158,8 @@ async function main() {
         fs.copyFileSync(activatePath, activatePath + '.bak');
         hasUpgraded = true;
     }
-    if (fs.existsSync(evoWorkflowPath)) {
-        fs.copyFileSync(evoWorkflowPath, evoWorkflowPath + '.bak');
+    if (fs.existsSync(memWorkflowPath)) {
+        fs.copyFileSync(memWorkflowPath, memWorkflowPath + '.bak');
         hasUpgraded = true;
     }
     if (fs.existsSync(washWorkflowPath)) {
@@ -168,7 +168,7 @@ async function main() {
 
     fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
     fs.writeFileSync(activatePath, activateContent);
-    fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
+    fs.writeFileSync(memWorkflowPath, memWorkflowContent);
     fs.writeFileSync(washWorkflowPath, washWorkflowContent);
 
     // Inject CLI wrappers into .evo-lite to avoid root pollution
