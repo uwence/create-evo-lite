@@ -28,6 +28,7 @@ async function main() {
     let embedModel = 'jina-embeddings-v2-base-zh';
     let rerankUrl = 'http://localhost:12342/v1/rerank';
     let rerankModel = 'text-embedding-bge-reranker-base';
+    let shouldWash = false;
 
     // 尝试反向提取旧配置以支持无损升级
     const oldMemJsPath = path.join(targetDir, '.evo-lite', 'cli', 'memory.js');
@@ -64,6 +65,14 @@ async function main() {
         console.log('\n--- 阶段 B: 语义重排 (Reranker) - 精度保证 ---');
         rerankUrl = await rl.question(`3. API URL [${rerankUrl}]: `) || rerankUrl;
         rerankModel = await rl.question(`4. 模型名称 [${rerankModel}]: `) || rerankModel;
+
+        if (fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'))) {
+            console.log('\n--- 阶段 C: 历史债务清洗 (Data Washing) ---');
+            const washInput = await rl.question(`5. 检测到旧记忆库。是否执行脱机洗盘以提取并自动重构旧数据格式至全新规范？(y/N) [N]: `);
+            if (washInput.trim().toLowerCase() === 'y') {
+                shouldWash = true;
+            }
+        }
         console.log('\n======================================================\n');
         rl.close();
     }
@@ -129,6 +138,7 @@ async function main() {
     let memoryJsContent = fs.readFileSync(path.join(templatesDir, 'memory.js'), 'utf8');
     const activateContent = fs.readFileSync(path.join(templatesDir, 'ACTIVATE_EVO_LITE.md'), 'utf8');
     const evoWorkflowContent = fs.readFileSync(path.join(templatesDir, 'evo.md'), 'utf8');
+    const washWorkflowContent = fs.readFileSync(path.join(templatesDir, 'wash.md'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'evo'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'evo.cmd'), 'utf8');
 
@@ -141,6 +151,7 @@ async function main() {
 
     const activatePath = path.join(evoLiteDir, 'ACTIVATE_EVO_LITE.md');
     const evoWorkflowPath = path.join(workflowsDir, 'evo.md');
+    const washWorkflowPath = path.join(workflowsDir, 'wash.md');
 
     let hasUpgraded = false;
     if (fs.existsSync(activatePath)) {
@@ -151,10 +162,14 @@ async function main() {
         fs.copyFileSync(evoWorkflowPath, evoWorkflowPath + '.bak');
         hasUpgraded = true;
     }
+    if (fs.existsSync(washWorkflowPath)) {
+        fs.copyFileSync(washWorkflowPath, washWorkflowPath + '.bak');
+    }
 
     fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
     fs.writeFileSync(activatePath, activateContent);
     fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
+    fs.writeFileSync(washWorkflowPath, washWorkflowContent);
 
     // Inject CLI wrappers into .evo-lite to avoid root pollution
     const unixWrapperPath = path.join(evoLiteDir, 'evo');
@@ -190,6 +205,35 @@ async function main() {
                     console.log('🤖 已在 active_context.md 注入 AI 助手热升级处理向导标签！');
                 }
             } catch (e) { }
+        }
+
+        // --- 注入清洗指令 ---
+        if (shouldWash) {
+            console.log('🛁 预处理记忆库，正在导出旧记忆碎片...');
+            try {
+                const exportJsonPath = path.join(targetDir, 'evo_memories_exported.json');
+                execSync(`node "${path.join(cliDir, 'memory.js')}" export "${exportJsonPath}"`, { stdio: 'inherit' });
+                console.log(`✅ 导出完成: ${exportJsonPath}`);
+
+                let contextContent = fs.readFileSync(activeContextPath, 'utf8');
+                const washMsg = `\n## ⚠️ 重要任务: 唤醒记忆库代码化清洗 (/wash)
+人类开发者请求你启动 **Data Washing (洗盘) 协议**！
+所有的历史记忆现在已被脱机导出至根目录的 \`evo_memories_exported.json\` 中。
+**请在接管当前状态后，优先级最高地查阅 \`.agents/workflows/wash.md\`，并以此为根据编写脚本来修复、润色并替换现有的错误格式（如缺少溯源或流水账），并在完成后清理此区段提示。\n`;
+
+                if (!contextContent.includes('Data Washing (洗盘) 协议')) {
+                    const firstHeaderRegex = /^(# .+\\n+)/;
+                    if (firstHeaderRegex.test(contextContent)) {
+                        contextContent = contextContent.replace(firstHeaderRegex, `$1${washMsg}`);
+                    } else {
+                        contextContent = washMsg + contextContent;
+                    }
+                    fs.writeFileSync(activeContextPath, contextContent);
+                    console.log('🤖 已在 active_context.md 注入洗盘协议！启动 Evo 后它将立刻着手修复。');
+                }
+            } catch (e) {
+                console.error('❌ 脱机洗盘引导部署失败:', e.message);
+            }
         }
     }
 
