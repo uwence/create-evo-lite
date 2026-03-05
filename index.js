@@ -139,6 +139,7 @@ async function main() {
     const activateContent = fs.readFileSync(path.join(templatesDir, 'ACTIVATE_EVO_LITE.md'), 'utf8');
     const evoWorkflowContent = fs.readFileSync(path.join(templatesDir, 'evo.md'), 'utf8');
     const washWorkflowContent = fs.readFileSync(path.join(templatesDir, 'wash.md'), 'utf8');
+    const activeContextTemplate = fs.readFileSync(path.join(templatesDir, 'active_context.md'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
 
@@ -185,7 +186,7 @@ async function main() {
     // 初始化 active_context.md (绝对不能覆盖用户的上下文)
     const activeContextPath = path.join(evoLiteDir, 'active_context.md');
     if (!fs.existsSync(activeContextPath)) {
-        const activeContextContent = `# 🧠 Evo-Lite Active Context\n\n> **更新时间**: ${new Date().toISOString().split('T')[0]}\n> **项目状态**: 刚刚通过 create-evo-lite 初始化。\n\n## 1. 🎯 核心目标与当前阶段\n- 请手动填写项目的最终目标。\n\n## 2. 🚧 当前进度与任务\n- 无。\n\n## 3. ⏭️ 下一步行动\n- 让 AI 阅读此文件并开始工作。`;
+        const activeContextContent = activeContextTemplate.replace('{{DATE}}', new Date().toISOString().split('T')[0]);
         fs.writeFileSync(activeContextPath, activeContextContent);
         console.log('✅ 初始化了全新的 active_context.md。');
     } else {
