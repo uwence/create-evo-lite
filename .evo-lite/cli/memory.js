@@ -117,6 +117,23 @@ async function getRerankedScores(query, texts) {
 }
 
 async function remember(content, source = 'cli') {
+    // [程序化守卫] 记忆蒸馏规范校验
+    // 1. 拦截使用区间省略号的偷懒行为
+    if (/\[Commit:.*?\.\.\..*?\]/.test(content)) {
+        console.error(`\n❌ [致命约束被触发] 记忆规范校验失败！`);
+        console.error(`严禁在记忆体中使用区间省略号 (如 aaa...bbb) 引用 Commit。`);
+        console.error(`请精确提取并分别列出本条记忆直接关联的所有独立 Commit Hash。`);
+        process.exit(1);
+    }
+
+    // 2. 拦截长篇提炼但不带精确溯源点的行为
+    if (/\d+\.\s+\*\*/.test(content) && !/\(溯源历史点: \[Commit:.*?\]\)/.test(content)) {
+        console.error(`\n❌ [致命约束被触发] 记忆规范校验失败！`);
+        console.error(`发现结构化的提炼文本，但缺失精确的 \`(溯源历史点: [Commit: xxx])\` 声明。`);
+        console.error(`请严格遵守排版规范，为每一个条目附带溯源依据！`);
+        process.exit(1);
+    }
+
     console.log(`🧠 Embedding thought...`);
     const vector = await getEmbedding(content);
 
@@ -351,6 +368,7 @@ async function compact() {
     markdownContent += `> 1. 阅读下方所有的无序记忆碎片。\\n`;
     markdownContent += `> 2. 去重、合并、并使用**极度高维的中文架构术语**总结出 3-5 条本项目最核心的“跨文件契约”或“踩坑教训”。\\n`;
     markdownContent += `> 3. 写好总结后，请你主动新建一个临时文件并调用 \`node .evo-lite/cli/memory.js remember --file=你的临时文件路径\` 把新结晶存入。\\n`;
+    markdownContent += `> ⚠️ **强制格式护航**: 总结必须遵守格式 \`[最高维标题] + 1. **核心词**: 原由与解法 (溯源历史点: [Commit: aaa, bbb])\`，否则底层抛出致命异常拒绝入库！\\n`;
     markdownContent += `> 4. 存入成功后，调用 \`node .evo-lite/cli/memory.js forget [下方所有旧 ID 带空格分隔]\` 把下方的旧垃圾彻底物理摧毁。\\n\\n---\\n\\n`;
 
     let allIds = [];
