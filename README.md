@@ -56,7 +56,9 @@
 * **⚡ 魔法唤醒语：`/evo` 协议 (Anti-gravity Workflow)**
   无需繁冗的 Prompt。一键在输入框敲下 `/evo` 回车，AI 立刻执行强制自检：嗅探技术栈、校验模型指纹、播报当前进度，进入“严格领航员”人格。
 * **🛑 强制 Check-in (Git) 提醒机制**
-  AI 在写完阶段性大功能时，被代码级约束必须强制弹窗要求人类 `git commit`，彻底告别写了 10 个文件突然写崩回档无门的悲剧。
+  AI 在写完阶段性大功能时，被代码级约束必须强制弹窗要求人类 \`git commit\`，彻底告别写了 10 个文件突然写崩回档无门的悲剧。
+* **📝 交接自动化：\`/mem\` 协议 (Handover Workflow)**
+  新增专门用于存档的工作流命令。输入 \`/mem\`，AI 将自动同步进度墙、沉淀经验碎片并协助你完成 Git 规范提交。
 
 ---
 
@@ -82,21 +84,24 @@ npm link
 create-evo-lite ./我的新游戏项目
 ```
 
-运行时，向导会弹出一系列配置询问（端口、模型名），支持**一键回车拉满默认的 LM Studio 本地部署配置** (jina-v2 + bge-reranker)。
+运行时，向导会弹出一系列配置询问（端口、模型名），支持**一键回车拉满默认的 LM Studio 本地部署配置** (jina-v2 + bge-reranker)。系统会自动发起真实的 **POST 探活请求**，确保你的模型是真的“Loaded”而不仅仅是服务器“Running”。
 
 > [!TIP]
 > **推荐模型下载 (GGUF)**：
 > - Embedding: [jina-embeddings-v2-base-zh](https://huggingface.co/gpustack/jina-embeddings-v2-base-zh-GGUF)
 > - Reranker: [bge-reranker-base](https://huggingface.co/xinming0111/bge-reranker-base-Q8_0-GGUF)
 
-### 2. 激活你的 AI (在 IDE 中)
-打开目标项目 `MyAwesomeProject`，在 Antigravity (或你的 IDE AI 助手) 的聊天框中输入神圣的指令：
-```text
-/evo
-```
 见证奇迹：AI 会开始隐秘加载架构铁律，自动运行数据库 `verify` 校验，审查项目技术字典，并完美地进入状态开始服役。
 
-### 3. 给 AI 注入深层记忆 (CLI 体验)
+### 3. 存档与交接系统
+当一个阶段的任务完成后，输入命令：
+```text
+/mem
+```
+AI 将自动执行：标记 `active_context.md` 完成项、提炼重点至向量库并准备 Git Commit。
+
+
+### 4. 给 AI 注入深层记忆 (CLI 体验)
 AI (或人类) 可以在项目内随时呼出后台终端记住经验：
 ```bash
 # 死记一个血泪教训
@@ -104,7 +109,11 @@ AI (或人类) 可以在项目内随时呼出后台终端记住经验：
 
 # 查询过去的挣扎
 ./.evo-lite/mem recall "那个代理报错怎么修的？"
+
+# 运行自检：查看模型是否真的加载
+./.evo-lite/mem verify
 ```
+
 
 ### 4. 无损热更新 (Seamless Upgrade)
 当 Evo-Lite 发布新版本（例如引入新的 `memory.js` 技能）时，在已安装的旧项目根目录下直接运行：
