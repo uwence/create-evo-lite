@@ -139,6 +139,7 @@ async function main() {
     const activateContent = fs.readFileSync(path.join(templatesDir, 'ACTIVATE_EVO_LITE.md'), 'utf8');
     const evoWorkflowContent = fs.readFileSync(path.join(templatesDir, 'evo.md'), 'utf8');
     const washWorkflowContent = fs.readFileSync(path.join(templatesDir, 'wash.md'), 'utf8');
+    const memWorkflowContent = fs.readFileSync(path.join(templatesDir, 'mem.md'), 'utf8');
     const activeContextTemplate = fs.readFileSync(path.join(templatesDir, 'active_context.md'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
@@ -154,6 +155,7 @@ async function main() {
     const activeContextPath = path.join(evoLiteDir, 'active_context.md');
     const evoWorkflowPath = path.join(workflowsDir, 'evo.md');
     const washWorkflowPath = path.join(workflowsDir, 'wash.md');
+    const memWorkflowPath = path.join(workflowsDir, 'mem.md');
 
     let hasUpgraded = false;
     if (fs.existsSync(activatePath)) {
@@ -171,12 +173,16 @@ async function main() {
     if (fs.existsSync(washWorkflowPath)) {
         fs.copyFileSync(washWorkflowPath, washWorkflowPath + '.bak');
     }
+    if (fs.existsSync(memWorkflowPath)) {
+        fs.copyFileSync(memWorkflowPath, memWorkflowPath + '.bak');
+    }
 
     fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
     fs.writeFileSync(activatePath, activateContent);
     fs.writeFileSync(activeContextPath, activeContextTemplate.replace('{{DATE}}', new Date().toISOString().split('T')[0]));
     fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
     fs.writeFileSync(washWorkflowPath, washWorkflowContent);
+    fs.writeFileSync(memWorkflowPath, memWorkflowContent);
 
     // Inject CLI wrappers into .evo-lite to avoid root pollution
     const unixWrapperPath = path.join(evoLiteDir, 'mem');
