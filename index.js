@@ -156,9 +156,9 @@ async function main() {
     fs.writeFileSync(activatePath, activateContent);
     fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
 
-    // Inject root CLI wrappers
-    const unixWrapperPath = path.join(targetDir, 'evo');
-    const winWrapperPath = path.join(targetDir, 'evo.cmd');
+    // Inject CLI wrappers into .evo-lite to avoid root pollution
+    const unixWrapperPath = path.join(evoLiteDir, 'evo');
+    const winWrapperPath = path.join(evoLiteDir, 'evo.cmd');
     fs.writeFileSync(unixWrapperPath, unixWrapperContent);
     fs.writeFileSync(winWrapperPath, winWrapperContent);
     try {

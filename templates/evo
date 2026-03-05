@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-node "$(dirname "$0")/.evo-lite/cli/memory.js" "$@"
+node "$(dirname "$0")/cli/memory.js" "$@"

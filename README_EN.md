@@ -101,13 +101,13 @@ The AI will silently load core architecture rules, run `verify` for the database
 Whenever you need, you or your AI agent can query the memory directly:
 
 ```bash
-./evo recall "Why did the login API integration fail last time?"
+./.evo-lite/evo recall "Why did the login API integration fail last time?"
 ```
 
 To permanently imprint a piece of crucial context:
 
 ```bash
-./evo remember "The user verification relies on XYZ header, do not use ABC cookie anymore."
+./.evo-lite/evo remember "The user verification relies on XYZ header, do not use ABC cookie anymore."
 ```
 
 ### 4. Seamless Upgrade
