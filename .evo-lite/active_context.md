@@ -29,17 +29,15 @@
 - [x] 完成了 v1.3.7 铁壁：将“记忆蒸馏规范”从纯提示词软约束，升级为 `memory.js` 底层的**程序级致命防线**，彻底拦截无溯源与错误区间省略格式的劣质长文本入库，并同步精简了 `ACTIVATE_EVO_LITE.md` 的提示词长度。
 
 ## 3. 📝 下一步行动指南 (Next Actions)
-- [x] **v1.1.0 记忆库大盘与 CLI 增强**：
-  - `memory.js` 新增了 5 大高级子命令 (`forget`, `stats`, `export`, `import`, `compact`)。
-  - 实现了 `compact` 时动态提取嗅探 LM Studio 当前正在运行的对话大模型 ID，并在 `verify` 命令中同步展示。
-  - 实装本地模型 Lazy Loading 过慢时的“指数补偿等待机制”。
-  - 当无任何模型或连接失败时，激活 **“纯文本/脱机降级兜底方案”** (`offline_memories.json` + `SQLite LIKE` 提取)，并引导大模型在 IDE 宿主终端内人机协作。
-- [x] **v1.2.0 架构加固与体验进阶 (Fortification & Frictionless)**：
-  - **抗脏数据 OOM 重整**：引入了 Sliding Window 分块加 Map-Reduce 归纳模式，重塑 `compact` 深度睡眠，解决多碎片一并喂给大模型导致的显存爆炸。
-  - **高并发写防锁死降级**：通过给 `templates/memory.js` 的 SQLite 挂起 `PRAGMA journal_mode=WAL` 及 `busy_timeout=5000`，彻底免疫多 AI 大量并发 `remember` 时导致的锁库报错。
-  - **特殊字符截断防护**：为 `remember` 与 `recall` 原生实装 CLI 的 `--file=<path>` 追加传参规避法则，防御从纯终端管道传输引起的文本单/双引号解析破损。
+- [x] **v1.3.14 洗盘协议 (Data Washing)**：
+  - 针对项目根目录 `.evo-lite/memory.db` 实现了初始化阶段提示升级机制。
+  - 创造性引入了 `/wash` 工作流，强制 AI 取代死板脚本，通过导出 json -> 大语言模型判断清洗规范化 -> 重新 import 建立清洁高维记忆。
+- [x] **v1.3.15 NPM 拦截风暴**：
+  - 创建了 `.npmignore` 防止 `memory_dump` 等脏数据泄露上传。
+- [x] **v1.3.16-1.3.17 语义归置 (Semantic Refactoring)**：
+  - 将数据库 CLI 的命令行缩写别名强约束从 `evo` 更正为符合直觉的 `mem` (Memory)。
+  - 保留 `/evo` 为高维总架构和上下文激活唤醒词，二者形成了物理及设计逻辑的严格剥离。
 
-## 3. ⏭️ 下一步行动
-- [x] **GitHub 同步**: 已解决 Git Push 流程，本地改动已推送到远端仓库。
-- [ ] **npm 发布**: 正在处理 npm 2FA 认证与外网发布阻碍，准备完成 v1.3.3 正式上线。
+## 4. ⏭️ 待处理与研究
+- [ ] 确保用户终端成功通过 `npm login` 完成发布。
 - [ ] 继续探究 `Cursor` 和 `Cline` 对 Evo-Lite 返回信息或上下文衔接逻辑层的差异化适配特性。
