@@ -1,6 +1,27 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.3.29] - 2026-03-05
+### Fixed
+- **Robust Model Verification**: Replaced naive HTTP GET probes with real POST requests to the `/embeddings` endpoint. This ensures the specific model is actually loaded in LM Studio, preventing false-positive setup successes.
+- **CLI Async Syntax Fix**: Wrapped command handling in an async IIFE to fix `SyntaxError: await is only valid in async functions` when running `verify` or `import` in CommonJS.
+
+## [1.3.28] - 2026-03-05
+### Fixed
+- **Context Fusion Logic**: Completely refactored the heat update mechanism for `active_context.md`. Instead of overwriting with a template, it now preserves existing user content and only prepends a "Fusion Guide" warning.
+
+## [1.3.27] - 2026-03-05
+### Added
+- **`/mem` Handover Workflow**: Introduced a standardized slash-command workflow (`/mem`) to automate state saving, task tracking, and Git commits during AI handovers.
+
+## [1.3.26] - 2026-03-05
+### Changed
+- **Guarded Instructions Protocol**: Restored the comprehensive version of `ACTIVATE_EVO_LITE.md`. Realized that hyper-minimal prompts led to AI divergence; reinstated strict cross-file contract and distillation rules.
+
+## [1.3.25] - 2026-03-05
+### Added
+- **Dynamic Context Backup**: Implemented automatic `.bak` generation for `active_context.md` during upgrades, paired with AI-facing guidance tags to facilitate seamless state recovery.
+
 ## [1.3.2] - 2026-03-04
 ### Fixed
 - **Compact Fetch Refactor Bug**: Fixed an issue where the `compact` method failed to select the `id` column, causing the IDE handover's 'Wait List' ID array to be undefined.

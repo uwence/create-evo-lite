@@ -56,7 +56,9 @@ As AI coding assistants become increasingly powerful, we often encounter these *
 * **⚡ Magic Summoning: `/evo` Protocol (Antigravity Workflow)**
   No verbose prompts needed. Type `/evo` in the chat box to trigger an immediate AI self-check: sniffing the tech stack, verifying model fingerprints, and announcing current progress as a "Strict Pilot."
 * **🛑 Mandatory Git Check-in Protocol**
-  After completing major features, the AI is programmatically constrained to remind you to `git commit`, preventing tragedies where a single mistake ruins hours of work.
+  After completing major features, the AI is programmatically constrained to remind you to \`git commit\`, preventing tragedies where a single mistake ruins hours of work.
+* **📝 Automated Handover: \`/mem\` Protocol (Handover Workflow)**
+  Newly introduced workflow command for archiving. Type \`/mem\` and the AI will automatically sync the progress wall, crystallize experience fragments, and assist you with a standardized Git commit.
 
 ---
 
@@ -82,33 +84,38 @@ npm link
 create-evo-lite ./MyAwesomeProject
 ```
 
-During execution, the wizard will ask a few configuration questions (ports, model names). Press **Enter** to accept the default LM Studio local deployment (jina-v2 + bge-reranker).
+During execution, the wizard will ask a few configuration questions (ports, model names). Press **Enter** to accept the default LM Studio local deployment (jina-v2 + bge-reranker). The system will automatically initiate a real **POST health-check**, ensuring your model is truly "Loaded" and not just the server "Running".
 
 > [!TIP]
 > **Recommended Models (GGUF)**:
 > - Embedding: [jina-embeddings-v2-base-zh](https://huggingface.co/gpustack/jina-embeddings-v2-base-zh-GGUF)
 > - Reranker: [bge-reranker-base](https://huggingface.co/xinming0111/bge-reranker-base-Q8_0-GGUF)
 
-### 2. Activate your AI (In IDE)
-Open `MyAwesomeProject` and type the following magic command in the Antigravity (or AI assistant) chat box:
-```text
-/evo
-```
-The AI will silently load core architecture rules, run `verify` for the database, review the technical dictionary, and enter the service state perfectly.
+The AI will silently load core architecture rules, run \`verify\` for the database, review the technical dictionary, and enter the service state perfectly.
 
-### 🧩 Direct Interaction with the Brain
+### 3. Archiving & Handover System
+When a task phase is complete, enter the command:
+\`\`\`text
+/mem
+\`\`\`
+The AI will automatically: mark completed items in \`active_context.md\`, refine key points into the vector database, and prepare for a Git Commit.
+
+
+### 4. Direct Interaction with the Brain
 
 Whenever you need, you or your AI agent can query the memory directly:
 
 ```bash
+# Recall historical挣扎
 ./.evo-lite/mem recall "Why did the login API integration fail last time?"
-```
 
-To permanently imprint a piece of crucial context:
-
-```bash
+# Imprint a new memory
 ./.evo-lite/mem remember "The user verification relies on XYZ header, do not use ABC cookie anymore."
+
+# Run a self-check to see if the model is actually loaded
+./.evo-lite/mem verify
 ```
+
 
 ### 4. Seamless Upgrade
 When Evo-Lite releases a new version (e.g., introducing new `memory.js` skills), simply run the following in your existing project's root directory:
