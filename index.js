@@ -77,37 +77,72 @@ async function main() {
         rl.close();
     }
 
-    // 探活测试
-    console.log('📡 正在探测 Embedding API 连通性...');
-    try {
-        await new Promise((resolve, reject) => {
-            const req = http.request(embedUrl.replace('/embeddings', '/models'), {
-                method: 'GET',
-                timeout: 2000
+    // 探活测试 - 使用真实的 POST 请求验证模型是否真的加载了
+    console.log('📡 正在验证 Embedding 模型状态...');
+    const testEmbedding = async (url, model, typeLabel) => {
+        return new Promise((resolve) => {
+            const data = JSON.stringify({
+                model: model,
+                input: "health_check"
+            });
+
+            // 简单的 http.request 而不是 axios，减少依赖使用，保持 index.js 轻量
+            const urlObj = new URL(url);
+            const req = http.request({
+                hostname: urlObj.hostname,
+                port: urlObj.port,
+                path: urlObj.pathname,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': data.length
+                },
+                timeout: 3000
             }, (res) => {
-                if (res.statusCode === 200 || res.statusCode === 404 || res.statusCode === 405) {
-                    // 只要能通，不管具体路由对不对都算连上了宿主
-                    console.log('✅ Endpoint 连通测试通过！');
-                    resolve();
-                    req.destroy();
-                } else {
-                    resolve(); // 忽略内部 HTTP 错误
-                    req.destroy();
-                }
+                let resData = '';
+                res.on('data', (chunk) => resData += chunk);
+                res.on('end', () => {
+                    if (res.statusCode === 200) {
+                        console.log(`✅ ${typeLabel} 模型 (${model}) 已就绪！`);
+                        resolve(true);
+                    } else {
+                        console.warn(`⚠️ ${typeLabel} 服务响应异常 (${res.statusCode})。`);
+                        try {
+                            const err = JSON.parse(resData);
+                            if (err.error) console.warn(`👉 LM Studio 报错: ${err.error.message || JSON.stringify(err.error)}`);
+                        } catch (e) { }
+                        console.warn(`💡 请检查 LM Studio 是否正确加载了名为 "${model}" 的模型。`);
+                        resolve(false);
+                    }
+                });
             });
+
             req.on('error', (e) => {
-                console.warn(`\n⚠️ 警告: 无法连接到 ${embedUrl}。`);
-                console.warn('⚠️ 请确保你的 LM Studio 已经启动了 Local Server 开发并加载了对应的模型！\n');
-                resolve();
+                console.warn(`❌ 无法连接到 ${typeLabel} API (${url})。提示: ${e.message}`);
+                resolve(false);
             });
+
             req.on('timeout', () => {
                 req.destroy();
-                console.warn(`\n⚠️ 警告: 连接 ${embedUrl} 超时。请确保服务已启动。\n`);
-                resolve();
+                console.warn(`❌ 连接 ${typeLabel} API 超时，服务器可能未启动或响应过慢。`);
+                resolve(false);
             });
+
+            req.write(data);
             req.end();
         });
-    } catch (e) { }
+    };
+
+    const embedReady = await testEmbedding(embedUrl, embedModel, 'Embedding');
+    // 如果有 Reranker URL 且不是默认的（或者用户手动填了），也可以验证一下
+    if (rerankUrl && (rerankUrl.includes('localhost') || rerankUrl.includes('127.0.0.1'))) {
+        await testEmbedding(rerankUrl, rerankModel, 'Reranker');
+    }
+
+    if (!embedReady) {
+        console.log('\n❗ 提醒: Embedding 验证未通过。Evo-Lite 将在初始化后处于“离线降级”模式。');
+        console.log('   建议在正式开发前，先在 LM Studio 中启动服务器并加载对应模型。\n');
+    }
 
     // 1. 创建目标目录 (如果不存在)
     if (!fs.existsSync(targetDir)) {

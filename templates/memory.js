@@ -92,8 +92,18 @@ async function getEmbedding(text) {
             input: text
         }, { proxy: false }), 3, 2000);
 
-        return response.data.data[0].embedding;
+        if (response.data && response.data.data && response.data.data[0]) {
+            return response.data.data[0].embedding;
+        }
+        return null;
     } catch (error) {
+        if (error.response) {
+            // The server responded with a status code that falls out of the range of 2xx
+            const errData = error.response.data;
+            if (errData && errData.error) {
+                console.warn(`\x1b[33m⚠️ Embedding API 报错: ${errData.error.message || JSON.stringify(errData.error)}\x1b[0m`);
+            }
+        }
         return null;
     }
 }
@@ -425,66 +435,76 @@ if (fileArg) {
     }
 }
 
-if (action === 'remember') {
-    if (!text) return console.log('Usage: node memory.js remember <"text message"> OR node memory.js remember --file=<path>');
-    remember(text);
-} else if (action === 'recall') {
-    if (!text) return console.log('Usage: node memory.js recall <"text message"> OR node memory.js recall --file=<path>');
-    recall(text);
-} else if (action === 'forget') {
-    forget(text);
-} else if (action === 'stats') {
-    stats();
-} else if (action === 'export') {
-    exportMemories(text);
-} else if (action === 'import') {
-    importMemories(text);
-} else if (action === 'compact') {
-    compact();
-} else if (action === 'verify') {
-    let hasAlert = false;
+async function run() {
+    if (action === 'remember') {
+        if (!text) return console.log('Usage: node memory.js remember <"text message"> OR node memory.js remember --file=<path>');
+        await remember(text);
+    } else if (action === 'recall') {
+        if (!text) return console.log('Usage: node memory.js recall <"text message"> OR node memory.js recall --file=<path>');
+        await recall(text);
+    } else if (action === 'forget') {
+        forget(text);
+    } else if (action === 'stats') {
+        stats();
+    } else if (action === 'export') {
+        exportMemories(text);
+    } else if (action === 'import') {
+        await importMemories(text);
+    } else if (action === 'compact') {
+        await compact();
+    } else if (action === 'verify') {
+        let hasAlert = false;
 
-    // Check 1: Unstaged Git states
-    try {
-        const gitStatus = require('child_process').execSync('git status --porcelain', { encoding: 'utf8', stdio: 'pipe' }).trim();
-        if (gitStatus.length > 0) {
-            console.log(`\n⚠️ \x1b[33m[前朝遗留告警] 发现上一任智能体遗留了未提交的 Git 状态！\x1b[0m`);
-            console.log(`如果你是刚被唤醒的 AI，请优先审视目前的代码区并决定是否进行 commit 闭环。\n`);
-            hasAlert = true;
-        }
-    } catch (e) { }
-
-    // Check 2: Stale Context
-    const contextPath = path.join(__dirname, '..', 'active_context.md');
-    try {
-        if (fs.existsSync(contextPath)) {
-            const stats = fs.statSync(contextPath);
-            const hoursDiff = (new Date() - stats.mtime) / (1000 * 60 * 60);
-            if (hoursDiff > 24) {
-                console.log(`\n⚠️ \x1b[33m[交接失约告警] active_context.md 已超过 24 小时未更新！\x1b[0m`);
-                console.log(`上一次的交接协议极有可能被违背，请务必优先阅读该文件并梳理当前真实进度。\n`);
+        // Check 1: Unstaged Git states
+        try {
+            const gitStatus = require('child_process').execSync('git status --porcelain', { encoding: 'utf8', stdio: 'pipe' }).trim();
+            if (gitStatus.length > 0) {
+                console.log(`\n⚠️ \x1b[33m[前朝遗留告警] 发现上一任智能体遗留了未提交的 Git 状态！\x1b[0m`);
+                console.log(`如果你是刚被唤醒的 AI，请优先审视目前的代码区并决定是否进行 commit 闭环。\n`);
                 hasAlert = true;
             }
+        } catch (e) { }
+
+        // Check 2: Stale Context
+        const contextPath = path.join(__dirname, '..', 'active_context.md');
+        try {
+            if (fs.existsSync(contextPath)) {
+                const stats = fs.statSync(contextPath);
+                const hoursDiff = (new Date() - stats.mtime) / (1000 * 60 * 60);
+                if (hoursDiff > 24) {
+                    console.log(`\n⚠️ \x1b[33m[交接失约告警] active_context.md 已超过 24 小时未更新！\x1b[0m`);
+                    console.log(`上一次的交接协议极有可能被违背，请务必优先阅读该文件并梳理当前真实进度。\n`);
+                    hasAlert = true;
+                }
+            }
+        } catch (e) { }
+
+        if (hasAlert) {
+            console.log(`====================================================\n`);
         }
-    } catch (e) { }
 
-    if (hasAlert) {
-        console.log(`====================================================\n`);
-    }
+        if (fs.existsSync(DB_PATH)) {
+            const db = initDb();
+            console.log(`✅ Evo-Lite 实体库状态: \x1b[32m已就绪\x1b[0m`);
+            db.close();
+        } else {
+            console.log(`✅ Evo-Lite 实体库状态: \x1b[33m尚未生成 (首次 remember 后自动创建)\x1b[0m`);
+        }
 
-    if (fs.existsSync(DB_PATH)) {
-        const db = initDb();
-        console.log(`✅ Evo-Lite 记忆库自检通过！`);
-        console.log(`📡 [粗排/向量]: ${MODEL_NAME}`);
-        console.log(`📡 [精排/语义]: ${RERANKER_MODEL}`);
-        db.close();
-    } else {
-        console.log(`✅ Evo-Lite 尚未生成实体库。`);
-        console.log(`📡 [待定/向量]: ${MODEL_NAME}`);
-        console.log(`📡 [待定/语义]: ${RERANKER_MODEL}`);
-    }
-} else if (!action || action === 'help') {
-    console.log(`
+        console.log(`📡 [配置/向量]: ${MODEL_NAME}`);
+        console.log(`📡 [配置/精排]: ${RERANKER_MODEL}`);
+
+        // 执行真实探活
+        console.log(`📡 正在探测模型实时活性...`);
+        const testVec = await getEmbedding("health_check");
+        if (testVec) {
+            console.log(`✅ \x1b[32mEmbedding 模型状态: 联机 (在线向量化可用)\x1b[0m`);
+        } else {
+            console.log(`❌ \x1b[31mEmbedding 模型状态: 离线/异常 (将启用脱机暂存模式)\x1b[0m`);
+            console.log(`👉 请检查 LM Studio 是否启动，以及是否加载了模型 "${MODEL_NAME}"`);
+        }
+    } else if (!action || action === 'help') {
+        console.log(`
 🧠 \x1b[1mEvo-Lite Memory CLI\x1b[0m 🧠
 =========================================
 \x1b[36mUsage:\x1b[0m node .evo-lite/cli/memory.js <command> [arguments]
@@ -504,6 +524,12 @@ if (action === 'remember') {
   \x1b[32mhelp\x1b[0m              Show this help menu.
 =========================================
 `);
-} else {
-    console.log(`❌ Unknown action: '${action}'. Run 'node .evo-lite/cli/memory.js help' for usage.`);
+    } else {
+        console.log(`❌ Unknown action: '${action}'. Run 'node .evo-lite/cli/memory.js help' for usage.`);
+    }
 }
+
+run().catch(error => {
+    console.error("❌ CLI 执行出错:", error);
+    process.exit(1);
+});
