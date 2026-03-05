@@ -198,6 +198,7 @@ async function remember(content, source = 'cli') {
 
     const id = transaction();
     console.log(`✅ Remembered! (ID: ${id})`);
+    console.log(`💡 [交接规约监控]: 记忆已打入隐性碎片池！请确保你同时修改了 \`.evo-lite/active_context.md\` 推进任务状态，并执行了 \`git commit\`！`);
     appendLog('REMEMBER', `ID ${id} - ${content.substring(0, 50)}...`);
     db.close();
 }
