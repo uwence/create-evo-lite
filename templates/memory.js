@@ -117,8 +117,22 @@ async function getRerankedScores(query, texts) {
             top_n: texts.length
         }, { proxy: false }), 3, 2000);
 
-        // Return sorted results based on relevance score (robust check for results/data)
-        return response.data;
+        const data = response.data;
+        // Robust check: some providers use .results, others return the array directly, or use .data.results
+        const results = data.results || data.data?.results || (Array.isArray(data) ? data : null);
+
+        if (results) {
+            return results;
+        } else {
+            // Detect "Fake 200"
+            const bodyStr = JSON.stringify(data);
+            if (bodyStr.toLowerCase().includes('unexpected endpoint')) {
+                console.warn(`\x1b[33m⚠️ Reranker 接口不支持: 提供者返回了成功状态但明确指出 Endpoint 未识别。\x1b[0m`);
+            } else {
+                console.warn(`\x1b[33m⚠️ Reranker 响应异常: 未发现有效重排结果。 Body: ${bodyStr.substring(0, 100)}...\x1b[0m`);
+            }
+            return null;
+        }
     } catch (error) {
         if (error.response) {
             const errData = error.response.data;
@@ -514,11 +528,11 @@ async function run() {
         }
 
         const testRerank = await getRerankedScores("health_check", ["test"]);
-        if (testRerank && (Array.isArray(testRerank) || testRerank.results || testRerank.data)) {
+        if (testRerank && Array.isArray(testRerank)) {
             console.log(`✅ \x1b[32m精排模型 (${RERANKER_MODEL}): 联机 (高精度重排可用)\x1b[0m`);
         } else {
-            console.log(`⚠️ \x1b[33m精排模型 (${RERANKER_MODEL}): 离线/解析失败 (将降级至纯向量检索)\x1b[0m`);
-            console.log(`👉 若需启用精排，请确保 LM Studio 已加载模型并检查 API 路径是否有误。\x1b[0m`);
+            console.log(`⚠️ \x1b[33m精排模型 (${RERANKER_MODEL}): 离线/不支持 (将降级至纯向量检索)\x1b[0m`);
+            console.log(`👉 若需启用精排，请确保服务端支持 /v1/rerank 接口并加载了模型。\x1b[0m`);
         }
     } else if (!action || action === 'help') {
         console.log(`
