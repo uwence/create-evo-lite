@@ -494,14 +494,23 @@ async function run() {
         console.log(`📡 [配置/向量]: ${MODEL_NAME}`);
         console.log(`📡 [配置/精排]: ${RERANKER_MODEL}`);
 
-        // 执行真实探活
+        // 执行模型探活
         console.log(`📡 正在探测模型实时活性...`);
+        
         const testVec = await getEmbedding("health_check");
         if (testVec) {
             console.log(`✅ \x1b[32mEmbedding 模型状态: 联机 (在线向量化可用)\x1b[0m`);
         } else {
             console.log(`❌ \x1b[31mEmbedding 模型状态: 离线/异常 (将启用脱机暂存模式)\x1b[0m`);
             console.log(`👉 请检查 LM Studio 是否启动，以及是否加载了模型 "${MODEL_NAME}"`);
+        }
+
+        const testRerank = await getRerankedScores("health_check", ["test"]);
+        if (testRerank) {
+            console.log(`✅ \x1b[32mReranker 模型状态: 联机 (高精度重排可用)\x1b[0m`);
+        } else {
+            console.log(`⚠️ \x1b[33mReranker 模型状态: 离线/不可用 (将降级至纯向量检索)\x1b[0m`);
+            console.log(`👉 若需启用精排，请确保 LM Studio 已加载模型 "${RERANKER_MODEL}"`);
         }
     } else if (!action || action === 'help') {
         console.log(`
