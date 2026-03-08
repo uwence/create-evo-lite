@@ -1,4 +1,6 @@
 # 🧠 Evo-Lite Active Context
+> ⚠️ **框架已热更新**: 检测到核心引擎升级，原有的自定义配置（如 `ACTIVATE_EVO_LITE.md`）和历史进度（如 `active_context.md`）已备份至 `.bak`。**请 AI 助手立即阅读 `active_context.md.bak` 以核对并恢复最新的开发进度，并确认是否需要同步 `ACTIVATE_EVO_LITE.md.bak` 中的自定义 Prompt。** 在完成手动融合与清理后，请删除此警告并清理 `.bak` 文件。
+
 
 > **更新时间**: 2026-03-05
 > **项目状态**: “吃自己的狗粮” - create-evo-lite 为自身初始化了记忆沙盒体系。
