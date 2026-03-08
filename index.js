@@ -161,17 +161,20 @@ async function main() {
         fs.mkdirSync(cliDir, { recursive: true });
     }
 
-    // 2.5 创建 Slash Command 目录
-    const workflowsDir = path.join(targetDir, '.agents', 'workflows');
-    if (!fs.existsSync(workflowsDir)) {
-        fs.mkdirSync(workflowsDir, { recursive: true });
-    }
+    // 2.5 创建 Slash Command 与 规则 目录
+    const agentsDir = path.join(targetDir, '.agents');
+    const workflowsDir = path.join(agentsDir, 'workflows');
+    const rulesDir = path.join(agentsDir, 'rules');
+    [agentsDir, workflowsDir, rulesDir].forEach(dir => {
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+    });
 
     // 3. 复制并注入模板文件
     console.log('📄 复制并配置记忆外挂模板文件...');
     const templatesDir = path.join(__dirname, 'templates');
     let memoryJsContent = fs.readFileSync(path.join(templatesDir, 'memory.js'), 'utf8');
-    const activateContent = fs.readFileSync(path.join(templatesDir, 'ACTIVATE_EVO_LITE.md'), 'utf8');
     const evoWorkflowContent = fs.readFileSync(path.join(templatesDir, 'evo.md'), 'utf8');
     const washWorkflowContent = fs.readFileSync(path.join(templatesDir, 'wash.md'), 'utf8');
     const memWorkflowContent = fs.readFileSync(path.join(templatesDir, 'mem.md'), 'utf8');
@@ -186,17 +189,16 @@ async function main() {
         .replace(/const MODEL_NAME = '.*?';/, `const MODEL_NAME = '${embedModel}';`)
         .replace(/const RERANKER_MODEL = '.*?';/, `const RERANKER_MODEL = '${rerankModel}';`);
 
-    const activatePath = path.join(evoLiteDir, 'ACTIVATE_EVO_LITE.md');
     const activeContextPath = path.join(evoLiteDir, 'active_context.md');
     const evoWorkflowPath = path.join(workflowsDir, 'evo.md');
     const washWorkflowPath = path.join(workflowsDir, 'wash.md');
     const memWorkflowPath = path.join(workflowsDir, 'mem.md');
 
+    // 3.1 处理规则文件集
+    const rulesTemplatesDir = path.join(templatesDir, 'rules');
+    const ruleFiles = fs.existsSync(rulesTemplatesDir) ? fs.readdirSync(rulesTemplatesDir) : [];
+
     let hasUpgraded = false;
-    if (fs.existsSync(activatePath)) {
-        fs.copyFileSync(activatePath, activatePath + '.bak');
-        hasUpgraded = true;
-    }
     if (fs.existsSync(activeContextPath)) {
         fs.copyFileSync(activeContextPath, activeContextPath + '.bak');
         hasUpgraded = true;
@@ -211,12 +213,26 @@ async function main() {
     if (fs.existsSync(memWorkflowPath)) {
         fs.copyFileSync(memWorkflowPath, memWorkflowPath + '.bak');
     }
+    
+    // 自动对规则进行备份升级
+    ruleFiles.forEach(file => {
+        const rulePath = path.join(rulesDir, file);
+        if (fs.existsSync(rulePath)) {
+            fs.copyFileSync(rulePath, rulePath + '.bak');
+            hasUpgraded = true;
+        }
+    });
 
     fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
-    fs.writeFileSync(activatePath, activateContent);
     fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
     fs.writeFileSync(washWorkflowPath, washWorkflowContent);
     fs.writeFileSync(memWorkflowPath, memWorkflowContent);
+
+    // 写入规则文件
+    ruleFiles.forEach(file => {
+        const ruleContent = fs.readFileSync(path.join(rulesTemplatesDir, file), 'utf8');
+        fs.writeFileSync(path.join(rulesDir, file), ruleContent);
+    });
 
     // active_context.md 处理：新项目用模板，老项目仅备份并保护内容。
     if (!fs.existsSync(activeContextPath)) {
@@ -241,7 +257,7 @@ async function main() {
     if (hasUpgraded) {
         try {
             let contextContent = fs.readFileSync(activeContextPath, 'utf8');
-            const warningMsg = `\n> ⚠️ **框架已热更新**: 检测到核心引擎升级，原有的自定义配置（如 \`ACTIVATE_EVO_LITE.md\`）和历史进度（如 \`active_context.md\`）已备份至 \`.bak\`。**请 AI 助手立即阅读 \`active_context.md.bak\` 以核对并恢复最新的开发进度，并确认是否需要同步 \`ACTIVATE_EVO_LITE.md.bak\` 中的自定义 Prompt。** 在完成手动融合与清理后，请删除此警告并清理 \`.bak\` 文件。\n`;
+            const warningMsg = `\n> ⚠️ **框架已热更新**: 检测到核心引擎升级，原有的历史进度（如 \`active_context.md\`）已备份至 \`.bak\`。**请 AI 助手立即阅读 \`active_context.md.bak\` 以核对并恢复最新的开发进度。** 在完成手动融合与清理后，请删除此警告并清理 \`.bak\` 文件。\n`;
 
             if (!contextContent.includes('⚠️ **框架已热更新**')) {
                 // 尝试插在标题之后，如果没有标题则插在最前面
