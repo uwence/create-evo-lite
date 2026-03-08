@@ -11,17 +11,17 @@
 [![Agent](https://img.shields.io/badge/Agent-Evo--Lite-84cc16.svg)](#)
 [![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
 
-[English README](./README_EN.md) • [Architecture](./templates/ACTIVATE_EVO_LITE.md) • [Usage Guide](#🚀-quick-start) • [中文介绍](./README.md)
+[English README](./README_EN.md) • [Architecture](./docs/AI_AGENT_DEFENSE_ARCHITECTURE.md) • [Usage Guide](#🚀-quick-start) • [中文介绍](./README.md)
 
 ---
 </div>
 
-> **Zero-Intrusion, Decentralized, Daemonless AI Memory Plugin Scaffolding with Dual-Core RAG (Search + Rerank)**
+> **Zero-Intrusion, Decentralized, Daemonless AI Core Governance & Memory System with Dual-Core RAG (Search + Rerank)**
 
-`Evo-Lite` is a mental constraint and state protection system specifically designed for Agentic Workflows (AI-assisted coding). In just one second, it can **instantly equip any of your projects (frontend, backend, or even simple script libraries) with a persistent memory, technical aesthetic validation, and a completely sandboxed "Super Brain."**
+`Evo-Lite` is a **highly disciplined** mental constraint and state protection system specifically designed for Agentic Workflows (AI-assisted coding). In v1.4.0+, it has evolved from a simple "memory plugin" into a **Rules-driven autonomous governance framework**. It can instantly equip any of your projects (frontend, backend, or even simple script libraries) with a persistent memory, technical aesthetic validation, and a completely sandboxed "Super Brain."
 
 > [!IMPORTANT]
-> **Environment Disclaimer**: This project is deeply optimized for the **Google Antigravity** environment. **When initializing, please run this tool using Antigravity's `Fast Mode`** to ensure the AI strictly follows the intended initialization path and avoids logical deviation. Support for other IDEs like Cursor or Cline is currently untested.
+> **Environment Disclaimer**: This project is deeply optimized for the **Google Antigravity** environment. **When initializing, please run this tool using Antigravity's `Fast Mode`**. v1.4.0+ now fully supports `.agents/rules` system-level hard constraints, achieving permanent protocol residence.
 
 ---
 
@@ -36,29 +36,26 @@ As AI coding assistants become increasingly powerful, we often encounter these *
 
 **Evo-Lite solves all of this elegantly with less than 200 lines of code.**
 
-## 🔥 Core Features (The Art of Evo-Lite)
+## 🔥 Core Features (v1.4.0 Architecture)
 
+* **🏗️ Governance via Rules (.agents/rules)**
+  **Core Upgrade:** Protocols are now enforced by system rules rather than just documentation. v1.4.0 shifts governance from "guide-based" to system-level hard constraints. The first thing an AI does upon waking is read `.agents/rules/evo-lite.md`, intercepting low-quality output at the source.
 * **🌐 In-Tree RAG (Pure Local Vector Engine)**
-  Completely independent of background services! Uses `sqlite-vec` under the hood. Need to search historical bug records? Just run `node memory.js recall` in your native terminal to awaken forgotten details.
+  Uses `sqlite-vec` under the hood. No background services required. Search historical records? Just run `.\.evo-lite\mem recall` in your terminal.
 * **🧠 Dual-Pass Retrieval Architecture**
-  **Say goodbye to "vague" or irrelevant answers.** This project implements an industrial-grade RAG pipeline:
-  - **Coarse Retrieval (Embedding)**: Instantly pinpoints candidates from thousands of memories using the `Jina-V2` algorithm.
-  - **Fine-Grained Re-ranking (Reranker)**: Automatically invokes `BGE-Reranker` for cross-semantic validation. It finds the "true" context even when keywords don't match.
-* **🛡️ Isolated Dual-Layer Memory (.evo-lite/)**
-  - **Explicit State Machine (`active_context.md`)**: Forces the AI to update the progress after every session. The next AI wakes up with zero hallucination and clear goals.
-  - **Implicit Long-Term Storage (`memory.db`)**: Silently accumulates experience that syncs with Git, keeping your memory safe across machines.
-* **📦 Absolute Sandbox: Zero Dependency Leakage**
-  Evo-Lite’s Node dependencies (like `sqlite`) are 100% locked inside `.evo-lite/node_modules/`. Your host project root remains pristine.
-* **⚓ Space-Time Rigid Anchoring (Git Traceability)**
-  Before any memory enters the vector database, the system forcibly stamps it with the current `[Time]` and Git `[Commit Hash]`. This enables the AI to practically `git checkout` back to the exact physical scene of the bug, even months later.
-* **🤖 IDE Agent Handover Protocol**
-  Abandoning the weak reasoning of local small language models. Through a specialized handover protocol, when performing massive memory compression (`compact`), the tangled memories are exported and handed over directly to the powerful frontier models residing within the host IDE for a massive brainpower strike.
-* **⚡ Magic Summoning: `/evo` Protocol (Antigravity Workflow)**
-  No verbose prompts needed. Type `/evo` in the chat box to trigger an immediate AI self-check: sniffing the tech stack, verifying model fingerprints, and announcing current progress as a "Strict Pilot."
-* **🛑 Mandatory Git Check-in Protocol**
-  After completing major features, the AI is programmatically constrained to remind you to \`git commit\`, preventing tragedies where a single mistake ruins hours of work.
-* **📝 Automated Handover: \`/mem\` Protocol (Handover Workflow)**
-  Newly introduced workflow command for archiving. Type \`/mem\` and the AI will automatically sync the progress wall, crystallize experience fragments, and assist you with a standardized Git commit.
+  - **Coarse Retrieval (Embedding)**: Instantly pinpoints candidates using the `Jina-V2` algorithm.
+  - **Fine-Grained Re-ranking (Reranker)**: Automatically invokes `BGE-Reranker` for semantic cross-validation, ensuring high-precision recall.
+* **🛡️ Isolated Dual-Layer Memory**
+  - **Explicit State Machine (`active_context.md`)** : Forces the AI to update progress in real-time, eliminating task hallucinations.
+  - **Implicit Long-Term Storage (`memory.db`)**: Silently accumulates experience that syncs with Git permanently.
+* **⚓ Space-Time Traceability (Git Anchoring)**
+  Every memory is stamped with `[Time]` and Git `[Commit Hash]`. Combined with `memory-distillation.md`, it rejects low-entropy "logs" without traceability.
+* **🔄 Seamless Upgrade & Fusion**
+  Supports cross-generational upgrades from v1.3.x! Automatically extracts legacy API configs, protects progress documents, and guides AI through manual fusion of backups.
+* **⚡ Automated Workflows & Slash Commands**
+  - `/evo`: Magic summoning to trigger self-check, tech stack sniffing, and progress sync.
+  - `/mem`: Archiving protocol that syncs progress, distills memory, and triggers Git Commit closure.
+  - `/wash`: Data washing protocol for offline repair and restructuring of historical "dirty" data.
 
 ---
 
@@ -130,18 +127,22 @@ The system will trigger the **Seamless Upgrade Protocol**:
 ## 📂 Directory Structure at a Glance
 
 ```text
-MyAwesomeProject/                 <-- (Your project, untouched)
-├── .agents/                      <-- (IDE Workflow Hook)
-│   └── workflows/evo.md          <-- Master script for /evo summoning
+MyAwesomeProject/                 <-- (Your Project)
+├── .agents/                      <-- (Agent Governance Area)
+│   ├── rules/                    <-- Hard Constraints (v1.4.0 Core)
+│   │   ├── evo-lite.md           - Boot Sequence Interceptor
+│   │   ├── project-archive.md    - Archiving Protocol
+│   │   └── memory-distillation.md - Quality Gatekeeper
+│   └── workflows/                <-- Slash Commands
+│       ├── evo.md                - /evo Script
+│       └── mem.md                - /mem Script
 │
-└── .evo-lite/                    <-- (The Dark Forest: Memory & Rules)
-    ├── package.json              <-- Sandbox dependency management
-    ├── node_modules/             <-- EvoLite libraries reside here
-    ├── ACTIVATE_EVO_LITE.md      <-- AI persona & guide
-    ├── active_context.md         <-- Current progress snapshot
-    ├── memory.db                 <-- (Lazy Load) Database created upon first memory
-    └── cli/
-        └── memory.js             <-- The AI's Command Line Wand (RAG script)
+└── .evo-lite/                    <-- (Memory & Dependency Sandbox)
+    ├── cli/                      - Vector DB CLI scripts
+    ├── mem.cmd                   - CLI Entry (Win)
+    ├── mem                       - CLI Entry (Unix)
+    ├── active_context.md         - Explicit Progress Sheet
+    └── memory.db                 - Implicit Vector Database
 ```
 
 ---
