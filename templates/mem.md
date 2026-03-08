@@ -1,3 +1,6 @@
+---
+description: 状态保存、进度更新与记忆闭环交接协议
+---
 # 📦 进度存档与交接协议 (/mem)
 
 当本会话完成独立功能点、Bug 修复，或需要主动结束当前工作闭环时，必须强制调用此协议，以确保上下文被安全存档。
@@ -20,19 +23,24 @@
    git add .
    git commit -m "chore(docs): 你的提交信息"
    ```
+4. 精确提取短哈希 (Fetch Short Hash)
+   提交完成后，**必须立即在终端执行以下命令**，以获取刚刚生成的 7 位短哈希（Short Hash）：
+   ```bash
+   git rev-parse --short HEAD
+   ```
 
-4. 经验向量记忆 (可选但强烈建议)
+5. 经验向量记忆 (可选但强烈建议)
    提炼本次工作中的开源方案借鉴或避坑总结，**使用第 3 步生成的真实 Commit Hash**，在终端运行以下命令：
    ```bash
-   .\.evo-lite\mem.cmd remember "核心总结：使用了 XX 算法处理了 XX 难题。(溯源历史点: [Commit: <填入第3步获取的真实Hash>])"
+   .\.evo-lite\mem.cmd remember "核心总结：使用了 XX 算法处理了 XX 难题。(溯源历史点: [Commit: <在此精确填入第4步获取的7位Hash>])"
    ```
    *(注: 非 Windows 平台请使用 `./.evo-lite/mem`)*
 
-5. 打 Tag 并汇报 (Final Handover)
+6. 打 Tag 并汇报 (Final Handover)
    若执行了第 2 步的版本号变动，必须打好 Git Tag：
    ```bash
    git tag -a v1.0.X -m "Release vX"
    ```
 
-6. 状态机跳变反馈 (Mandatory Output)
+7. 状态机跳变反馈 (Mandatory Output)
    向 Master 宣告：“交接协议已执行完毕。Master，当前功能已闭环。建议您立即审视是否执行 Git Push。”
