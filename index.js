@@ -78,13 +78,14 @@ async function main() {
     }
 
     // 探活测试 - 使用真实的 POST 请求验证模型是否真的加载了
-    console.log('📡 正在验证 Embedding 模型状态...');
-    const testEmbedding = async (url, model, typeLabel) => {
+    const testHealth = async (url, model, typeLabel) => {
         return new Promise((resolve) => {
-            const data = JSON.stringify({
-                model: model,
-                input: "health_check"
-            });
+            const isReranker = typeLabel === 'Reranker';
+            const payload = isReranker 
+                ? { model: model, query: "health_check", documents: ["check"] }
+                : { model: model, input: "health_check" };
+
+            const data = JSON.stringify(payload);
 
             // 简单的 http.request 而不是 axios，减少依赖使用，保持 index.js 轻量
             const urlObj = new URL(url);
@@ -95,7 +96,7 @@ async function main() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Content-Length': data.length
+                    'Content-Length': Buffer.byteLength(data)
                 },
                 timeout: 3000
             }, (res) => {
@@ -133,14 +134,15 @@ async function main() {
         });
     };
 
-    const embedReady = await testEmbedding(embedUrl, embedModel, 'Embedding');
+    console.log('📡 正在验证模型状态...');
+    const embedReady = await testHealth(embedUrl, embedModel, '向量模型');
     // 如果有 Reranker URL 且不是默认的（或者用户手动填了），也可以验证一下
     if (rerankUrl && (rerankUrl.includes('localhost') || rerankUrl.includes('127.0.0.1'))) {
-        await testEmbedding(rerankUrl, rerankModel, 'Reranker');
+        await testHealth(rerankUrl, rerankModel, '精排模型');
     }
 
     if (!embedReady) {
-        console.log('\n❗ 提醒: Embedding 验证未通过。Evo-Lite 将在初始化后处于“离线降级”模式。');
+        console.log('\n❗ 提醒: 向量模型验证未通过。Evo-Lite 将在初始化后处于“离线降级”模式。');
         console.log('   建议在正式开发前，先在 LM Studio 中启动服务器并加载对应模型。\n');
     }
 

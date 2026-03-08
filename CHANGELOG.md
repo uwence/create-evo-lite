@@ -6,7 +6,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Global Version Sync**: Unified project and sandbox versions to 1.4.1 for cleaner releases.
 - **Workflow Optimization**: Refined `/mem` protocol to include mandatory small version bump step for consistent versioning.
-- **Terminal Constraints**: Added specific rules to block redundant terminal-based file exploration (like `dir /s /b`) in Antigravity environments.
+- **Health Check Robustness**: Fixed Reranker probe payload structure in `index.js` and added detailed error logging in `memory.js` verify command to help diagnose "Offline" false positives.
+- **Wording Alignment**: Updated status messages to use cleaner "向量模型" and "精排模型" terminology.
 
 ### Changed
 - **Antigravity-Native Prompts**: Optimized initialization messages in `index.js` to prioritize IDE-based slash command workflows.
