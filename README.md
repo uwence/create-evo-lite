@@ -11,17 +11,17 @@
 [![Agent](https://img.shields.io/badge/Agent-Evo--Lite-84cc16.svg)](#)
 [![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
 
-[English README](./README_EN.md) • [Architecture](./templates/ACTIVATE_EVO_LITE.md) • [Usage Guide](#🚀-极速上手-quick-start) • [中文介绍](./README.md)
+[English README](./README_EN.md) • [Architecture](./docs/AI_AGENT_DEFENSE_ARCHITECTURE.md) • [Usage Guide](#🚀-极速上手-quick-start) • [中文介绍](./README.md)
 
 ---
 </div>
 
-> **0 侵入、去中心化、自带双核 RAG (检索+重排) 的 Daemonless (无后台守护进程) AI 记忆外挂脚手架**
+> **0 侵入、去中心化、自带双核 RAG (检索+重排) 的 Daemonless (无后台守护进程) AI 核心规则治理与记忆系统**
 
-`Evo-Lite` 是专为 Agentic Workflow (智能体辅助编程) 打造的心智约束与状态保护系统。它能在一秒钟内，为你的任何项目（不论是前端、后端还是普通脚本库）**瞬间装入一个具备永久记忆、技术审美校验、且完全寄生于沙盒的超级大脑**。
+`Evo-Lite` 是专为 Agentic Workflow (智能体辅助编程) 打造的**高度自律型**心智约束与状态保护系统。在 v1.4.0+ 版本中，它从单纯的“记忆外挂”进化为**基于 Rules 驱动的自治治理框架**。它能在一秒钟内，为你的任何项目（不论是前端、后端还是普通脚本库）瞬间装入一个具备永久记忆、技术审美校验、且完全寄生于沙盒的超级大脑。
 
 > [!IMPORTANT]
-> **开发环境声明**：本项目目前深度基于 **Google Antigravity** 智能体开发环境进行设计与优化。**在进行初始化操作时，建议务必在 Antigravity 中开启 `Fast 模式` 调用本工具**，以确保 AI 严格执行初始化路径，避免出现逻辑偏离。目前暂未在 Cursor, Cline 或 GitHub Copilot 等其他环境进行适配测试。
+> **开发环境声明**：本项目目前深度基于 **Google Antigravity** 智能体开发环境进行设计与优化。**在进行初始化操作时，建议务必在 Antigravity 中开启 `Fast 模式` 调用本工具**。v1.4.0+ 版本现已全面适配 `.agents/rules` 系统级硬约束，实现协议的静默常驻。
 
 ---
 
@@ -36,29 +36,26 @@
 
 **Evo-Lite 用不到 200 行代码优雅地解决了这一切。**
 
-## 🔥 核心特性 (The Art of Evo-Lite)
+## 🔥 核心特性 (v1.4.0 Architecture)
 
+* **🏗️ 规则下沉治理 (.agents/rules)**
+  **核心升级：** 以前靠文档说教，现在靠规则锁死。v1.4.0 将治理逻辑由“文档引导”升级为系统级硬约束。AI 醒来第一件事就是读取 `.agents/rules/evo-lite.md`，从根源拦截劣质输出。
 * **🌐 In-Tree RAG (纯本地向量引擎)**
-  完全脱离后台服务！底层使用 `sqlite-vec` 向量数据库。AI 想查历史 Bug 记录？只需要原生自带的终端敲下 `node memory.js recall` 即可唤醒尘封细节。
+  底层使用 `sqlite-vec` 向量数据库。AI 想查历史 Bug 记录？只需要原生自带的终端敲下 `.\.evo-lite\mem recall` 即可唤醒。
 * **🧠 双核 RAG 架构 (.Dual-Pass Retrieval)**
-  **拒绝“似是而非”的低精度回复。** 本项目内置了工业级 RAG 检索链路：
-  - **粗排 (Embedding)**: 基于 `Jina-V2` 向量算法，从万千记忆中瞬间定位相关候选。
-  - **精排 (Reranker)**: 自动调用 `BGE-Reranker` 对候选进行深度语义交叉校验。即便关键词不匹配，也能通过语义“嗅觉”抓回真正的历史教训。
-* **🛡️ 分离式显隐双层记忆区 (.evo-lite/)**
-  - **显性状态机 (`active_context.md`)**：强制 AI 每次聊完更新一次工作进度。下一个 AI 醒来没有幻觉，秒懂任务。
-  - **隐性长效库 (`memory.db`)**：悄无声息累积经验，随着 Git 流转，不怕换电脑。
-* **📦 绝对沙盒：0 依赖溢出污染**
-  Evo-Lite 的 Node 依赖 (`sqlite`等) 百分之百被锁死在 `.evo-lite/node_modules/` 下，你的宿主项目根目录干干净净，如同没有安装过一样。
-* **⚓ Space-Time 刚性锚定 (Git Traceability)**
-  任何一段记忆在打入向量库前，都会被系统强制打上当前的 `[Time]` 和 Git `[Commit Hash]` 思想戳。让 AI 甚至能在几个月后，自动帮人类 `git checkout` 回到踩坑当时的物理现场。
-* **🤖 IDE Agent Handover (降维打击)**
-  放弃用端侧小模型进行羸弱的知识总结。通过特制的架构交接协议，在进行记忆压缩 (`compact`) 时，彻底将底层数据抛出，直接由宿主 IDE 中满血版的前沿通用大模型接手推理，完成中文架构级浓缩。
-* **⚡ 魔法唤醒语：`/evo` 协议 (Anti-gravity Workflow)**
-  无需繁冗的 Prompt。一键在输入框敲下 `/evo` 回车，AI 立刻执行强制自检：嗅探技术栈、校验模型指纹、播报当前进度，进入“严格领航员”人格。
-* **🛑 强制 Check-in (Git) 提醒机制**
-  AI 在写完阶段性大功能时，被代码级约束必须强制弹窗要求人类 \`git commit\`，彻底告别写了 10 个文件突然写崩回档无门的悲剧。
-* **📝 交接自动化：\`/mem\` 协议 (Handover Workflow)**
-  新增专门用于存档的工作流命令。输入 \`/mem\`，AI 将自动同步进度墙、沉淀经验碎片并协助你完成 Git 规范提交。
+  - **粗排 (Embedding)**: 基于 `Jina-V2` 向量算法定候选。
+  - **精排 (Reranker)**: 调用 `BGE-Reranker` 进行语义交叉校验，确保高精度召回。
+* **🛡️ 分离式显隐双层记忆区**
+  - **显性状态机 (`active_context.md`)**：强制 AI 实时更新进度墙，杜绝任务幻觉。
+  - **隐性长效库 (`memory.db`)**：悄无声息累积经验，随 Git 永久流转。
+* **⚓ Space-Time 溯源锚定 (Git Traceability)**
+  任何一段记忆都会被强制打上 `[Time]` 和 Git `[Commit Hash]` 戳。配合 `memory-distillation.md` 规则，严禁无溯源的流水账入库。
+* **🔄 无损热升级与 Fusion 融合**
+  支持从 v1.3.x 跨代无损升级！自动提取旧版 API 配置，保护进度单据，并通过注入 Fusion 指令引导 AI 手动融合新进度的备份。
+* **⚡ 自动化工作流与 Slash Command**
+  - `/evo`: 魔法唤醒语，执行自检、嗅探技术栈并同步进度。
+  - `/mem`: 存档协议，自动同步进度、沉淀经验并触发 Git Commit 闭环。
+  - `/wash`: 洗盘协议，针对历史脏数据进行脱机修复与重构。
 
 ---
 
@@ -125,21 +122,25 @@ npx create-evo-lite@latest ./ --yes
 - 绝对保护你的 `active_context.md` 不被清空。
 - 更新核心模板，并在 AI 下次苏醒 (/evo) 时主动引导合并你的自定义设定。
 
-## 📂 生成的目录结构速览
+## 📂 目录结构速览
 
 ```text
-MyAwesomeProject/                 <-- (你的项目，完全不被污染)
-├── .agents/                      <-- (IDE 工作流挂载点)
-│   └── workflows/evo.md          <-- 魔法指令 /evo 响应剧本
+MyAwesomeProject/                 <-- (你的项目)
+├── .agents/                      <-- (智能体行为规范区)
+│   ├── rules/                    <-- 核心硬约束 (v1.4.0 核心)
+│   │   ├── evo-lite.md           - Boot Sequence 拦截器
+│   │   ├── project-archive.md    - 存档闭环协议
+│   │   └── memory-distillation.md - 质量守门员
+│   └── workflows/                <-- Slash Commands
+│       ├── evo.md                - /evo 唤醒剧本
+│       └── mem.md                - /mem 交接剧本
 │
-└── .evo-lite/                    <-- (黑暗森林：记忆与规则区)
-    ├── package.json              <-- 沙盒依赖管理
-    ├── node_modules/             <-- EvoLite 的库全部在这里
-    ├── ACTIVATE_EVO_LITE.md      <-- AI 第二人格启动指南 (人设规约)
-    ├── active_context.md         <-- 当前进度与目标流转单
-    ├── memory.db                 <-- (Lazy Load) 记忆触发后自动生成的离线大脑
-    └── cli/
-        └── memory.js             <-- AI 专用的命令行法杖 (RAG 脚本)
+└── .evo-lite/                    <-- (记忆存储与依赖区)
+    ├── cli/                      - 向量库 CLI 脚本
+    ├── mem.cmd                   - CLI 快捷入口 (Win)
+    ├── mem                       - CLI 快捷入口 (Unix)
+    ├── active_context.md         - 显性进度单
+    └── memory.db                 - 隐性向量数据库
 ```
 
 ---
