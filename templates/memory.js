@@ -117,33 +117,11 @@ async function getRerankedScores(query, texts) {
             top_n: texts.length
         }, { proxy: false }), 3, 2000);
 
-        const data = response.data;
-        // Robust check: some providers use .results, others return the array directly, or use .data.results
-        const results = data.results || data.data?.results || (Array.isArray(data) ? data : null);
-
-        if (results) {
-            return results;
-        } else {
-            // Detect "Fake 200"
-            const bodyStr = JSON.stringify(data);
-            if (bodyStr.toLowerCase().includes('unexpected endpoint')) {
-                console.warn(`\x1b[33m⚠️ Reranker 接口不支持: 提供者返回了成功状态但明确指出 Endpoint 未识别。\x1b[0m`);
-            } else {
-                console.warn(`\x1b[33m⚠️ Reranker 响应异常: 未发现有效重排结果。 Body: ${bodyStr.substring(0, 100)}...\x1b[0m`);
-            }
-            return null;
-        }
+        // Return sorted results based on relevance score
+        return response.data.results;
     } catch (error) {
-        if (error.response) {
-            const errData = error.response.data;
-            if (errData && errData.error) {
-                console.warn(`\x1b[33m⚠️ Rerank API 业务报错: ${errData.error.message || JSON.stringify(errData.error)}\x1b[0m`);
-            } else {
-                console.warn(`\x1b[33m⚠️ Rerank API 响应错误 (${error.response.status}): ${JSON.stringify(errData)}\x1b[0m`);
-            }
-        } else {
-            console.error('⚠️ Rerank API 连接失败:', error.message);
-        }
+        console.error('⚠️ Rerank API Error or Not Available:', error.message);
+        console.log('Falling back to vector distance only...');
         return null; // Fallback to raw distances
     }
 }
@@ -521,18 +499,18 @@ async function run() {
         
         const testVec = await getEmbedding("health_check");
         if (testVec) {
-            console.log(`✅ \x1b[32m向量模型 (${MODEL_NAME}): 联机 (在线向量化可用)\x1b[0m`);
+            console.log(`✅ \x1b[32mEmbedding 模型状态: 联机 (在线向量化可用)\x1b[0m`);
         } else {
-            console.log(`❌ \x1b[31m向量模型 (${MODEL_NAME}): 离线/异常 (将启用脱机暂存模式)\x1b[0m`);
-            console.log(`👉 请检查 LM Studio 是否启动，并正确加载了模型。\x1b[0m`);
+            console.log(`❌ \x1b[31mEmbedding 模型状态: 离线/异常 (将启用脱机暂存模式)\x1b[0m`);
+            console.log(`👉 请检查 LM Studio 是否启动，以及是否加载了模型 "${MODEL_NAME}"`);
         }
 
         const testRerank = await getRerankedScores("health_check", ["test"]);
-        if (testRerank && Array.isArray(testRerank)) {
-            console.log(`✅ \x1b[32m精排模型 (${RERANKER_MODEL}): 联机 (高精度重排可用)\x1b[0m`);
+        if (testRerank) {
+            console.log(`✅ \x1b[32mReranker 模型状态: 联机 (高精度重排可用)\x1b[0m`);
         } else {
-            console.log(`⚠️ \x1b[33m精排模型 (${RERANKER_MODEL}): 离线/不支持 (将降级至纯向量检索)\x1b[0m`);
-            console.log(`👉 若需启用精排，请确保服务端支持 /v1/rerank 接口并加载了模型。\x1b[0m`);
+            console.log(`⚠️ \x1b[33mReranker 模型状态: 离线/不可用 (将降级至纯向量检索)\x1b[0m`);
+            console.log(`👉 若需启用精排，请确保 LM Studio 已加载模型 "${RERANKER_MODEL}"`);
         }
     } else if (!action || action === 'help') {
         console.log(`
