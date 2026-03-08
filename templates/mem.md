@@ -8,7 +8,7 @@ description: 状态保存、进度更新与记忆闭环交接协议
 // turbo-all
 步骤：
 1. **显性单据覆写 (Update Active Context)**: 使用文件编辑工具修改本项目根目录下 `.evo-lite/active_context.md`。更新顶部的 `> **更新时间**:`和项目状态；将刚刚做完的事情在对应位置写为 `[x]` 勾选项；在 `## 3. ⏭️ 下一步行动项` 重新罗列接下来的目标，并将上下文断点精确记录。若是小功能可以直接工具编辑闭环。
-2. **项目版本跃迁 (Bump Version) [视情况判断]**: 如果经历了一个重要的节点或解决了一个长期阻塞的 Bug，请更新 `package.json` 中的 `version` 字段。
+2. **项目版本小跃迁 (Bump Version)**: 修订 `package.json` 中的 `version` 字段。若无重大重构，通常增加末尾修订号（z位），并将该版本号同步至 `.evo-lite/package.json`（若存在）。
 3. **经验向量记忆 (可选但强烈建议)**: 请主动回顾刚才的工作中值得借鉴的开源方案或避坑方案，提炼总结，并在终端运行:
    ```bash
    $commit = git rev-parse --short HEAD
