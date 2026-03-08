@@ -1,29 +1,13 @@
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
 ## [1.4.2] - 2026-03-08
-### Added
-- **Diagnostic Verbosity**: Added detailed response reporting for Reranker health checks in `verify` command to help diagnose LM Studio configuration issues.
-- **Robustness Patch**: Hardened the check for Rereanker success to ignore "200 OK" responses that return error messages in the body (common in LM Studio misconfigurations).
-
-## [1.4.2] - 2026-03-08
-
 ### Fixed
-- **Reranker Compatibility**: Fixed a critical bug where Reranker results failed to parse due to LM Studio's unexpected API behavior ("Fake 200").
-- **Robust Error Handling**: Added deep body verification to health checks in `index.js` and `memory.js` to detect and diagnose provider-side endpoint limitations.
-- **Result Support**: Support for multiple Reranker response formats (`.results`, `.data.results`, or raw arrays).
+- **Antigravity-Native Prompts**: Optimized initialization messages in `index.js` to prioritize IDE-based slash command workflows.
+- **Dual-Pass Health Check**: Enhanced `verify` command to perform real-time activity probing for both Embedding and Reranker models via POST requests.
+- **Workflow Optimization**: Refined `/mem` protocol to include mandatory small version bump step for consistent versioning.
+- **Terminal Constraints**: Added specific rules to block redundant terminal-based file exploration (like `dir /s /b`) in Antigravity environments.
 
 ## [1.4.1] - 2026-03-08
 ### Added
 - **Global Version Sync**: Unified project and sandbox versions to 1.4.1 for cleaner releases.
-- **Workflow Optimization**: Refined `/mem` protocol to include mandatory small version bump step for consistent versioning.
-- **Health Check Robustness**: Fixed Reranker probe payload structure in `index.js` and added detailed error logging in `memory.js` verify command to help diagnose "Offline" false positives.
-- **Wording Alignment**: Updated status messages to use cleaner "向量模型" and "精排模型" terminology.
-
-### Changed
-- **Antigravity-Native Prompts**: Optimized initialization messages in `index.js` to prioritize IDE-based slash command workflows.
-- **Dual-Pass Health Check**: Enhanced `verify` command to perform real-time activity probing for both Embedding and Reranker models via POST requests.
 
 ## [1.4.0] - 2026-03-08
 ### Added
