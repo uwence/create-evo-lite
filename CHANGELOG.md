@@ -1,3 +1,7 @@
+## [1.4.3] - 2026-03-08
+### Fixed
+- **Workflow Compliance**: Strengthened the `/mem` SOP with "MUST" constraints for task list updates and internal version synchronization.
+
 ## [1.4.2] - 2026-03-08
 ### Fixed
 - **Antigravity-Native Prompts**: Optimized initialization messages in `index.js` to prioritize IDE-based slash command workflows.
