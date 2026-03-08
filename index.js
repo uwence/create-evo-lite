@@ -80,14 +80,13 @@ async function main() {
     // 探活测试 - 使用真实的 POST 请求验证模型是否真的加载了
     const testHealth = async (url, model, typeLabel) => {
         return new Promise((resolve) => {
-            const isReranker = typeLabel === 'Reranker';
+            const isReranker = typeLabel.includes('精排');
             const payload = isReranker 
                 ? { model: model, query: "health_check", documents: ["check"] }
                 : { model: model, input: "health_check" };
 
             const data = JSON.stringify(payload);
 
-            // 简单的 http.request 而不是 axios，减少依赖使用，保持 index.js 轻量
             const urlObj = new URL(url);
             const req = http.request({
                 hostname: urlObj.hostname,
@@ -104,8 +103,26 @@ async function main() {
                 res.on('data', (chunk) => resData += chunk);
                 res.on('end', () => {
                     if (res.statusCode === 200) {
-                        console.log(`✅ ${typeLabel} 模型 (${model}) 已就绪！`);
-                        resolve(true);
+                        try {
+                            const body = JSON.parse(resData);
+                            // 深度验身: 检查是否真的返回了结果，而不是 LM Studio 的 "Unexpected endpoint" (Fake 200)
+                            const hasResults = isReranker ? body.results : body.data;
+                            
+                            if (hasResults) {
+                                console.log(`✅ ${typeLabel} (${model}): 联机。`);
+                                resolve(true);
+                            } else {
+                                if (resData.toLowerCase().includes('unexpected endpoint')) {
+                                    console.warn(`⚠️ ${typeLabel} (${model}): 接口不支持 (服务响应 Unexpected endpoint)。`);
+                                } else {
+                                    console.warn(`⚠️ ${typeLabel} (${model}): 响应成功但格式异常。`);
+                                }
+                                resolve(false);
+                            }
+                        } catch (e) {
+                            console.warn(`⚠️ ${typeLabel} (${model}): 响应成功但数据解析失败。`);
+                            resolve(false);
+                        }
                     } else {
                         console.warn(`⚠️ ${typeLabel} 服务响应异常 (${res.statusCode})。`);
                         try {

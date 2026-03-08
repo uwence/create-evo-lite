@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.2] - 2026-03-08
+### Added
+- **Diagnostic Verbosity**: Added detailed response reporting for Reranker health checks in `verify` command to help diagnose LM Studio configuration issues.
+- **Robustness Patch**: Hardened the check for Rereanker success to ignore "200 OK" responses that return error messages in the body (common in LM Studio misconfigurations).
+
+## [1.4.2] - 2026-03-08
+
+### Fixed
+- **Reranker Compatibility**: Fixed a critical bug where Reranker results failed to parse due to LM Studio's unexpected API behavior ("Fake 200").
+- **Robust Error Handling**: Added deep body verification to health checks in `index.js` and `memory.js` to detect and diagnose provider-side endpoint limitations.
+- **Result Support**: Support for multiple Reranker response formats (`.results`, `.data.results`, or raw arrays).
+
 ## [1.4.1] - 2026-03-08
 ### Added
 - **Global Version Sync**: Unified project and sandbox versions to 1.4.1 for cleaner releases.
