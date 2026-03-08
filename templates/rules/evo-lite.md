@@ -8,7 +8,7 @@ trigger: always_on
 ## 1. Explicit State Loading (静态与动态基线)
 必须调用文件读取工具加载以下核心文件：
 - **`ARCHITECTURE.md` (或同级架构文档)**：提取并严格遵守全局硬约束（技术栈要求、端口定义、代码范式）。绝不允许任何越界偏离。
-- **`.evo-lite/active_context.md`**：提取项目的当前运行状态机。精确获取上一次会话的进度断点与下一步行动项 (Action Items)，完成上下文状态接管。
+- **`.evo-lite/active_context.md`**：提取项目的当前运行状态机。精确获取上一次会话的进度断点与下一步行动项 (Action Items)，完成上下文状态接管。**[硬约束]**：严禁以任何理由（包括性能、篇幅或总结）删除或大幅简化该文件中的历史 [x] 列表。必须保留全量审计记录。
 
 ## 2. Implicit RAG Retrieval (向量记忆检索)
 **Trigger Conditions**: 遇到未知的系统报错、复杂的架构依赖链，或逻辑盲区时。
