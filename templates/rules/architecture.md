@@ -1,5 +1,18 @@
 # PROJECT ARCHITECTURE & STANDARDS
 
-**Core Stack**: 本项目全栈开发环境为 Next.js（前端）、Node.js（后端/网关）以及 Electron（桌面端）。
-**TypeScript First**: 强制开启 TypeScript 严格模式 (`strict: true`)。必须显式定义 Interfaces 和 Types，严禁使用 `any` 绕过类型检查。
-**Documentation**: 所有导出的核心逻辑和 API 路由必须使用 JSDoc/TSDoc。注释只解释“为什么这么设计 (Why)”，不解释“代码在做什么 (What)”。
+> [!NOTE]
+> 本文件定义了项目的核心技术标准、代码范式与架构约束。
+> 当 AI 智能体执行 `/evo` 或初始化任务时，必须优先遵循此处的硬约束。
+
+## 1. 核心技术栈 (Core Tech Stack)
+- **Language**: [请在此填入，如: Node.js / Python / Go]
+- **Framework**: [请在此填入]
+- **Package Manager**: [请在此填入]
+
+## 2. 代码范式 (Coding Standards)
+- [请描述项目的代码风格要求]
+- [请描述项目的模块化标准]
+
+## 3. 架构约束 (Architectural Constraints)
+- [请列出禁止使用的库或特定的架构偏好]
+- [请列出所有的防线要求]

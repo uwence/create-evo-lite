@@ -213,7 +213,7 @@ async function main() {
     if (fs.existsSync(memWorkflowPath)) {
         fs.copyFileSync(memWorkflowPath, memWorkflowPath + '.bak');
     }
-    
+
     // 自动对规则进行备份升级
     ruleFiles.forEach(file => {
         const rulePath = path.join(rulesDir, file);
@@ -333,10 +333,10 @@ async function main() {
         }
     }
 
-    console.log('\n🎉 Evo-Lite Memory Bank 初始化完成！');
+    console.log('\n🎉 Evo-Lite 架构已全盘部署完成！');
     console.log('----------------------------------------------------');
     console.log(`👉 下一步:`);
-    console.log(`  1. cd ${targetDirArg}`);
+    console.log(`  1. 请确保你已使用 Antigravity 打开了项目目录: ${targetDirArg}`);
     console.log(`  2. 在输入框中输入并发送斜杠命令: /evo`);
     console.log('----------------------------------------------------');
 }
