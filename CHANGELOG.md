@@ -1,6 +1,10 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.4.1] - 2026-03-08
+### Added
+- **Global Version Sync**: Unified project and sandbox versions to 1.4.1 for cleaner releases.
+
 ## [1.4.0] - 2026-03-08
 ### Added
 - **Rule-Based Governance Framework**: Lowered governance protocols from documentation (`ACTIVATE_EVO_LITE.md`) to persistent system rules (`.agents/rules/`). AI agents are now constrained by `evo-lite.md` boot sequence and `project-archive.md` lifecycle closure.
