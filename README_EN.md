@@ -42,9 +42,9 @@ As AI coding assistants become increasingly powerful, we often encounter these *
   **Core Upgrade:** Protocols are now enforced by system rules rather than just documentation. v1.4.0 shifts governance from "guide-based" to system-level hard constraints. The first thing an AI does upon waking is read `.agents/rules/evo-lite.md`, intercepting low-quality output at the source.
 * **🌐 In-Tree RAG (Pure Local Vector Engine)**
   Uses `sqlite-vec` under the hood. No background services required. Search historical records? Just run `.\.evo-lite\mem recall` in your terminal.
-* **🧠 Dual-Pass Retrieval Architecture**
-  - **Coarse Retrieval (Embedding)**: Instantly pinpoints candidates using the `Jina-V2` algorithm.
-  - **Fine-Grained Re-ranking (Reranker)**: Automatically invokes `BGE-Reranker` for semantic cross-validation, ensuring high-precision recall.
+* **🧠 Dual-Pass Retrieval Architecture (Pure Serverless)**
+  - **Coarse Retrieval (Embedding)**: Instantly pinpoints candidates using the `Xenova/bge-small-zh-v1.5` ONNX algorithm.
+  - **Fine-Grained Re-ranking (Reranker)**: Automatically invokes `Xenova/bge-reranker-base` for semantic cross-validation, processing entirely in-memory via Node.js without any background service.
 * **🛡️ Isolated Dual-Layer Memory**
   - **Explicit State Machine (`active_context.md`)** : Forces the AI to update progress in real-time, eliminating task hallucinations.
   - **Implicit Long-Term Storage (`memory.db`)**: Silently accumulates experience that syncs with Git permanently.
@@ -81,12 +81,12 @@ npm link
 create-evo-lite ./MyAwesomeProject
 ```
 
-During execution, the wizard will ask a few configuration questions (ports, model names). Press **Enter** to accept the default LM Studio local deployment (jina-v2 + bge-reranker). The system will automatically initiate a real **POST health-check**, ensuring your model is truly "Loaded" and not just the server "Running".
+During execution, the system will automatically initialize a **built-in ONNX Runtime (`@xenova/transformers`)** and silently download the quantized models (defaulting to `bge-small-zh-v1.5` and `bge-reranker-base`). No extra Docker or LM Studio deployments are needed, making it truly "Out of the box, zero footprint."
 
 > [!TIP]
-> **Recommended Models (GGUF)**:
-> - Embedding: [jina-embeddings-v2-base-zh](https://huggingface.co/gpustack/jina-embeddings-v2-base-zh-GGUF)
-> - Reranker: [bge-reranker-base](https://huggingface.co/xinming0111/bge-reranker-base-Q8_0-GGUF)
+> **Built-in Dual-Core Engines**:
+> - Embedding: `Xenova/bge-small-zh-v1.5` (Millisecond inference even on pure CPU)
+> - Reranker: `Xenova/bge-reranker-base` (Quantized for minimal memory footprint)
 
 The AI will silently load core architecture rules, run \`verify\` for the database, review the technical dictionary, and enter the service state perfectly.
 

@@ -1,3 +1,13 @@
+## [1.4.7] - 2026-03-10
+### Changed
+- **Capacity Expansion**: Increased the `memory.js` capacity lock threshold from 15 to 30 to better utilize the performance of the new ONNX pipeline.
+- **Agent Directives Reinforcement**: Upgraded `.agents/rules/evo-lite.md` with stricter constraints on YAGNI (forcing function reuse), enforced Atomic Commits, and added explicit Windows Terminal syntax defenses.
+
+## [1.4.6] - 2026-03-10
+### Added
+- **Serverless AI Engine**: Completely decoupled from LM Studio. Integrated `@xenova/transformers` for a pure Node.js in-process ONNX Runtime.
+- **In-Tree ONNX Models**: Switched to `Xenova/bge-small-zh-v1.5` for 512-dim Embeddings and `Xenova/bge-reranker-base` for Cross-Encoder re-ranking directly within the CLI, effectively making Evo-Lite a 100% standalone, daemonless memory solution without requiring any external AI server.
+
 ## [1.4.3] - 2026-03-08
 ### Fixed
 - **Workflow Compliance**: Strengthened the `/mem` SOP with "MUST" constraints for task list updates and internal version synchronization.
