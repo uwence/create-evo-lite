@@ -146,18 +146,40 @@ async function getRerankedScores(query, texts) {
 }
 
 async function remember(content, source = 'cli') {
-    // 3. 拦截毫无意义的流水账 (Quality Lock)
-    if (content.length < 40) {
-        console.error(`\n❌ [致命约束被触发] 记忆质量校验失败！`);
-        console.error(`记忆体字符数 (${content.length}) 过短。必须提供前因后果、架构原因或具体的绕过解法。`);
-        console.error(`请拒绝流水账式的日志记录。`);
-        process.exit(1);
+    const isImport = source === 'import';
+
+    // 以下守卫仅对常规写入生效，import 迁移时全部跳过
+    if (!isImport) {
+        // 3. 拦截毫无意义的流水账 (Quality Lock)
+        if (content.length < 40) {
+            console.error(`\n❌ [致命约束被触发] 记忆质量校验失败！`);
+            console.error(`记忆体字符数 (${content.length}) 过短。必须提供前因后果、架构原因或具体的绕过解法。`);
+            console.error(`请拒绝流水账式的日志记录。`);
+            process.exit(1);
+        }
+
+        // [程序化守卫] 记忆蒸馏规范校验
+        // 1. 拦截使用区间省略号的偷懒行为
+        if (/\[Commit:.*?\.\.\..*?\]/.test(content)) {
+            console.error(`\n❌ [致命约束被触发] 记忆规范校验失败！`);
+            console.error(`严禁在记忆体中使用区间省略号 (如 aaa...bbb) 引用 Commit。`);
+            console.error(`请精确提取并分别列出本条记忆直接关联的所有独立 Commit Hash。`);
+            process.exit(1);
+        }
+
+        // 2. 拦截长篇提炼但不带精确溯源点的行为
+        if (/\d+\.\s+\*\*/.test(content) && !/\(溯源历史点: \[Commit:.*?\]\)/.test(content)) {
+            console.error(`\n❌ [致命约束被触发] 记忆规范校验失败！`);
+            console.error(`发现结构化的提炼文本，但缺失精确的 \`(溯源历史点: [Commit: xxx])\` 声明。`);
+            console.error(`请严格遵守排版规范，为每一个条目附带溯源依据！`);
+            process.exit(1);
+        }
     }
 
-    // 4. 记忆库水位线拦截 (Capacity Lock)
+    // 4. 记忆库水位线拦截 (Capacity Lock) - import 时也跳过
     const capacityDb = initDb();
     const countRow = capacityDb.prepare('SELECT COUNT(*) as count FROM memory_contents').get();
-    if (countRow.count >= 30 && source !== 'import') {
+    if (countRow.count >= 30 && !isImport) {
         capacityDb.close();
         console.error(`\n❌ [致命约束被触发] 记忆碎片池已满载熔断 (当前: ${countRow.count}/30)！`);
         console.error(`系统的碎片垃圾已经堆积如山，强行挤入会导致 RAG 寻址雪崩。`);
@@ -165,23 +187,6 @@ async function remember(content, source = 'cli') {
         process.exit(1);
     }
     capacityDb.close();
-
-    // [程序化守卫] 记忆蒸馏规范校验
-    // 1. 拦截使用区间省略号的偷懒行为
-    if (/\[Commit:.*?\.\.\..*?\]/.test(content)) {
-        console.error(`\n❌ [致命约束被触发] 记忆规范校验失败！`);
-        console.error(`严禁在记忆体中使用区间省略号 (如 aaa...bbb) 引用 Commit。`);
-        console.error(`请精确提取并分别列出本条记忆直接关联的所有独立 Commit Hash。`);
-        process.exit(1);
-    }
-
-    // 2. 拦截长篇提炼但不带精确溯源点的行为
-    if (/\d+\.\s+\*\*/.test(content) && !/\(溯源历史点: \[Commit:.*?\]\)/.test(content)) {
-        console.error(`\n❌ [致命约束被触发] 记忆规范校验失败！`);
-        console.error(`发现结构化的提炼文本，但缺失精确的 \`(溯源历史点: [Commit: xxx])\` 声明。`);
-        console.error(`请严格遵守排版规范，为每一个条目附带溯源依据！`);
-        process.exit(1);
-    }
 
     console.log(`🧠 Embedding thought...`);
     const vector = await getEmbedding(content);
@@ -380,7 +385,7 @@ async function importMemories(filePath) {
     let successCount = 0;
     for (const record of records) {
         if (record.content) {
-            await remember(record.content, record.source || 'import');
+            await remember(record.content, 'import'); // Always use 'import' source to bypass capacity lock
             successCount++;
         }
     }

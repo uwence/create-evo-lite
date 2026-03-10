@@ -218,32 +218,43 @@ async function main() {
         }
     }
 
-    // --- 阶段 D: 注入清洗指令 ---
+    // --- 阶段 D: 跨模型迁移洗盘 ---
     if (shouldWash) {
-        console.log('🛁 预处理记忆库，正在导出旧记忆碎片...');
+        console.log('🛁 启动跨模型记忆迁移流程...');
         try {
+            const dbPath = path.join(evoLiteDir, 'memory.db');
             const exportJsonPath = path.join(targetDir, 'evo_memories_exported.json');
+
+            // Step 1: 导出旧记忆纯文本 (绕过指纹校验)
+            console.log('  [1/4] 正在导出旧记忆碎片...');
             execSync(`node "${path.join(cliDir, 'memory.js')}" export "${exportJsonPath}"`, { stdio: 'inherit' });
-            console.log(`✅ 导出完成: ${exportJsonPath}`);
 
-            let contextContent = fs.readFileSync(activeContextPath, 'utf8');
-            const washMsg = `\n## ⚠️ 重要任务: 唤醒记忆库代码化清洗 (/wash)
-人类开发者请求你启动 **Data Washing (洗盘) 协议**！
-所有的历史记忆现在已被脱机导出至根目录的 \`evo_memories_exported.json\` 中。
-**请在接管当前状态后，优先级最高地查阅 \`.agents/workflows/wash.md\`，并以此为根据编写脚本来修复、润色并替换现有的错误格式（如缺少溯源或流水账），并在完成后清理此区段提示。\n`;
+            // Step 2: 校验导出文件是否有真实内容
+            const exportedData = JSON.parse(fs.readFileSync(exportJsonPath, 'utf8'));
+            if (!Array.isArray(exportedData) || exportedData.length === 0) {
+                console.log('  ⚠️ 旧库为空，跳过迁移。');
+            } else {
+                console.log(`  [2/4] 导出成功 (${exportedData.length} 条)。正在销毁旧向量数据库...`);
+                // 删除旧 DB 及其 WAL/SHM 附属文件
+                [dbPath, dbPath + '-wal', dbPath + '-shm'].forEach(f => {
+                    if (fs.existsSync(f)) fs.unlinkSync(f);
+                });
 
-            if (!contextContent.includes('Data Washing (洗盘) 协议')) {
-                const firstHeaderRegex = /^(# .+\n+)/;
-                if (firstHeaderRegex.test(contextContent)) {
-                    contextContent = contextContent.replace(firstHeaderRegex, `$1${washMsg}`);
-                } else {
-                    contextContent = washMsg + contextContent;
-                }
-                fs.writeFileSync(activeContextPath, contextContent);
-                console.log('🤖 已在 active_context.md 注入洗盘协议！启动 Evo 后它将立刻着手修复。');
+                // Step 3: 用新引擎重新嵌入并写入全新 DB
+                console.log(`  [3/4] 正在用新 ONNX 引擎重新嵌入 ${exportedData.length} 条记忆 (首次加载模型可能需要下载，请耐心等待)...`);
+                execSync(`node "${path.join(cliDir, 'memory.js')}" import "${exportJsonPath}"`, { stdio: 'inherit' });
+
+                // Step 4: 清理导出文件
+                console.log('  [4/4] 迁移完毕！正在清理临时导出文件...');
+                if (fs.existsSync(exportJsonPath)) fs.unlinkSync(exportJsonPath);
+                console.log('✅ 跨模型记忆迁移全部完成！旧记忆已用新引擎重新嵌入。');
             }
         } catch (e) {
-            console.error('❌ 脱机洗盘引导部署失败:', e.message);
+            console.error('❌ 跨模型迁移失败:', e.message);
+            console.log('💡 你可以稍后手动执行以下步骤来补救:');
+            console.log('   1. 检查项目根目录的 evo_memories_exported.json 是否存在');
+            console.log('   2. 手动删除 .evo-lite/memory.db');
+            console.log('   3. 运行: node .evo-lite/cli/memory.js import evo_memories_exported.json');
         }
     }
 
