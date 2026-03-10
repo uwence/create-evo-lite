@@ -42,31 +42,23 @@ async function main() {
     }
 
     if (isSilent) {
-        console.log('🤖 静默模式开启: 使用默认 Transformers.js 本地极客配置 (-y)');
+        console.log('🤖 静默模式开启: 使用内置 ONNX 极客配置 (-y)');
     } else {
-        // --- 交互式向导 ---
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
+        const hasOldDb = fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'));
+        if (hasOldDb) {
+            const rl = readline.createInterface({
+                input: process.stdin,
+                output: process.stdout
+            });
 
-        console.log('================= 配置向导 (Evo-Link) =================');
-        console.log('直接按回车可使用默认的 Transformers.js 离线本地模型预演 (ONNX Runtime)。');
-        console.log('\n--- 阶段 A: 初步搜索 (Embedding) ---');
-        embedModel = await rl.question(`1. 基础检索引擎 [${embedModel}]: `) || embedModel;
-
-        console.log('\n--- 阶段 B: 语义重排 (Reranker) - 精度保证 ---');
-        rerankModel = await rl.question(`2. 跨语言重排引擎 [${rerankModel}]: `) || rerankModel;
-
-        if (fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'))) {
-            console.log('\n--- 阶段 C: 历史债务清洗 (Data Washing) ---');
-            const washInput = await rl.question(`3. 检测到旧记忆库。是否执行脱机洗盘以提取并自动重构旧数据格式至全新规范？(y/N) [N]: `);
+            console.log('================= 配置向导 (Evo-Link) =================');
+            const washInput = await rl.question(`检测到旧版记忆库。是否执行脱机洗盘，自动提取并重构旧数据格式至全新规范？(y/N) [N]: `);
             if (washInput.trim().toLowerCase() === 'y') {
                 shouldWash = true;
             }
+            console.log('======================================================\n');
+            rl.close();
         }
-        console.log('\n======================================================\n');
-        rl.close();
     }
 
     // 1. 创建目标目录 (如果不存在)
