@@ -218,6 +218,25 @@ async function main() {
         }
     }
 
+    // 4.5 注入离线 Embedding 模型缓存 (保障无网环境下 remember/recall 可用)
+    const modelCacheDir = path.join(evoLiteDir, '.cache', 'Xenova', 'bge-small-zh-v1.5');
+    if (!fs.existsSync(path.join(modelCacheDir, 'onnx', 'model_quantized.onnx'))) {
+        const embeddingPkg = path.join(__dirname, 'templates', 'embedding-model.tar.gz');
+        if (fs.existsSync(embeddingPkg)) {
+            console.log('🧊 正在解压离线 Embedding 模型缓存 (bge-small-zh-v1.5, ~15MB)...');
+            const cacheRoot = path.join(evoLiteDir, '.cache');
+            if (!fs.existsSync(cacheRoot)) fs.mkdirSync(cacheRoot, { recursive: true });
+            try {
+                execSync(`tar -xzf "${embeddingPkg}"`, { cwd: cacheRoot, stdio: 'inherit' });
+                console.log('✅ 离线 Embedding 模型注入成功！无网环境下也可直接使用 remember/recall。');
+            } catch (e) {
+                console.warn('⚠️ 离线模型解压失败，将在首次使用时在线下载:', e.message);
+            }
+        }
+    } else {
+        console.log('✅ 检测到已缓存的 Embedding 模型，跳过离线注入。');
+    }
+
     // --- 阶段 D: 跨模型迁移洗盘 ---
     if (shouldWash) {
         console.log('🛁 启动跨模型记忆迁移流程...');
