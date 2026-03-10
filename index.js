@@ -188,6 +188,36 @@ async function main() {
         } catch (e) { }
     }
 
+    // 4. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
+    console.log('📦 正在从 npm 抓取并编译向量数据库及核心依赖 (better-sqlite3, sqlite-vec, @xenova/transformers)...');
+    try {
+        fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
+            "name": "evo-lite-workspace",
+            "version": SELF_VERSION,
+            "private": true,
+            "dependencies": {}
+        }, null, 2));
+        execSync('npm install better-sqlite3 sqlite-vec @xenova/transformers', { cwd: evoLiteDir, stdio: 'inherit' });
+        console.log('✅ 依赖在线安装成功！');
+    } catch (e) {
+        console.warn('\n⚠️ 警告: npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)');
+        console.log('🛡️ 正在启动终极兜底方案：自动解压并注入脱机版预编译依赖包 (fallback-deps.zip)...');
+
+        try {
+            const fallbackZip = path.join(__dirname, 'templates', 'fallback-deps.zip');
+            if (fs.existsSync(fallbackZip)) {
+                execSync(`tar -xf "${fallbackZip}"`, { cwd: evoLiteDir, stdio: 'inherit' });
+                console.log('✅ 终极脱机版预编译依赖包注入成功！危机解除！');
+            } else {
+                console.warn('❌ 无法找到离线备选安装包。请稍后在有网络和编译环境的机器上手动进入 .evo-lite 运行:');
+                console.warn('npm install better-sqlite3 sqlite-vec axios');
+            }
+        } catch (fallbackError) {
+            console.error('❌ 脱机兜底包注入也失败了:', fallbackError.message);
+            console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 sqlite-vec axios');
+        }
+    }
+
     // --- 阶段 D: 注入清洗指令 ---
     if (shouldWash) {
         console.log('🛁 预处理记忆库，正在导出旧记忆碎片...');
@@ -214,37 +244,6 @@ async function main() {
             }
         } catch (e) {
             console.error('❌ 脱机洗盘引导部署失败:', e.message);
-        }
-    }
-
-    // 4. 安装依赖
-    console.log('📦 正在从 npm 抓取并编译向量数据库及核心依赖 (better-sqlite3, sqlite-vec, @xenova/transformers)...');
-    try {
-        fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
-            "name": "evo-lite-workspace",
-            "version": SELF_VERSION,
-            "private": true,
-            "dependencies": {}
-        }, null, 2));
-        execSync('npm install better-sqlite3 sqlite-vec @xenova/transformers', { cwd: evoLiteDir, stdio: 'inherit' });
-        console.log('✅ 依赖在线安装成功！');
-    } catch (e) {
-        console.warn('\n⚠️ 警告: npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)');
-        console.log('🛡️ 正在启动终极兜底方案：自动解压并注入脱机版预编译依赖包 (fallback-deps.zip)...');
-
-        try {
-            const fallbackZip = path.join(__dirname, 'templates', 'fallback-deps.zip');
-            if (fs.existsSync(fallbackZip)) {
-                // 利用现代多端原生自带的 tar 命令解压 (Win10+ 和 Mac/Linux 均原生支持)
-                execSync(`tar -xf "${fallbackZip}"`, { cwd: evoLiteDir, stdio: 'inherit' });
-                console.log('✅ 终极脱机版预编译依赖包注入成功！危机解除！');
-            } else {
-                console.warn('❌ 无法找到离线备选安装包。请稍后在有网络和编译环境的机器上手动进入 .evo-lite 运行:');
-                console.warn('npm install better-sqlite3 sqlite-vec axios');
-            }
-        } catch (fallbackError) {
-            console.error('❌ 脱机兜底包注入也失败了:', fallbackError.message);
-            console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 sqlite-vec axios');
         }
     }
 
