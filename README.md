@@ -43,8 +43,8 @@
 * **🌐 In-Tree RAG (纯本地向量引擎)**
   底层使用 `sqlite-vec` 向量数据库。AI 想查历史 Bug 记录？只需要原生自带的终端敲下 `.\.evo-lite\mem recall` 即可唤醒。
 * **🧠 双核 RAG 架构 (.Dual-Pass Retrieval)**
-  - **粗排 (Embedding)**: 基于 `Jina-V2` 向量算法定候选。
-  - **精排 (Reranker)**: 调用 `BGE-Reranker` 进行语义交叉校验，确保高精度召回。
+  - **粗排 (Embedding)**: 基于 `Xenova/bge-small-zh-v1.5` 向量算法定候选。
+  - **精排 (Reranker)**: 调用 `Xenova/bge-reranker-base` 进行语义交叉校验，纯本地 ONNX 推理，绝无后台驻留。
 * **🛡️ 分离式显隐双层记忆区**
   - **显性状态机 (`active_context.md`)**：强制 AI 实时更新进度墙，杜绝任务幻觉。
   - **隐性长效库 (`memory.db`)**：悄无声息累积经验，随 Git 永久流转。
@@ -81,12 +81,12 @@ npm link
 create-evo-lite ./我的新游戏项目
 ```
 
-运行时，向导会弹出一系列配置询问（端口、模型名），支持**一键回车拉满默认的 LM Studio 本地部署配置** (jina-v2 + bge-reranker)。系统会自动发起真实的 **POST 探活请求**，确保你的模型是真的“Loaded”而不仅仅是服务器“Running”。
+运行时，系统将自动使用内置的 **ONNX Runtime (`@xenova/transformers`)** 初始化环境，并在几秒钟内静默缓存量化版模型（默认使用 `bge-small-zh-v1.5` 和 `bge-reranker-base`），无需任何额外的 Docker 或 LM Studio 部署，真正做到“开箱即用、用完即走”。
 
 > [!TIP]
-> **推荐模型下载 (GGUF)**：
-> - Embedding: [jina-embeddings-v2-base-zh](https://huggingface.co/gpustack/jina-embeddings-v2-base-zh-GGUF)
-> - Reranker: [bge-reranker-base](https://huggingface.co/xinming0111/bge-reranker-base-Q8_0-GGUF)
+> **内嵌双核引擎**：
+> - Embedding: `Xenova/bge-small-zh-v1.5` (纯 CPU 推理只需毫秒级)
+> - Reranker: `Xenova/bge-reranker-base` (Quantized 量化保障极低内存占用)
 
 见证奇迹：AI 会开始隐秘加载架构铁律，自动运行数据库 `verify` 校验，审查项目技术字典，并完美地进入状态开始服役。
 
