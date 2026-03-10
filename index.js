@@ -41,10 +41,15 @@ async function main() {
         } catch (e) { }
     }
 
+    const hasOldDb = fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'));
+
     if (isSilent) {
         console.log('🤖 静默模式开启: 使用内置 ONNX 极客配置 (-y)');
+        if (hasOldDb) {
+            console.log('🔍 检测到旧版记忆库，静默模式下将自动执行跨模型迁移。');
+            shouldWash = true;
+        }
     } else {
-        const hasOldDb = fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'));
         if (hasOldDb) {
             const rl = readline.createInterface({
                 input: process.stdin,
