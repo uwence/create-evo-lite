@@ -1,3 +1,16 @@
+## [1.4.8] - 2026-03-10
+### Added
+- **Offline Embedding Model**: Bundled `bge-small-zh-v1.5` quantized ONNX model (~15MB) as `templates/embedding-model.tar.gz`. New projects now get pre-cached model files, enabling `remember` and `recall` to work even with zero network access.
+- **Cross-Model Migration**: Implemented a full automatic migration pipeline in `index.js`. When upgrading from old LM Studio-based projects, the initializer now exports old memories, destroys the incompatible DB, and re-embeds everything with the new ONNX engine in one seamless flow.
+
+### Fixed
+- **Execution Order Bug**: Fixed a critical timing issue where the data washing script (`memory.js export`) was called before `npm install` had installed its dependencies, causing `MODULE_NOT_FOUND` crashes.
+- **Fingerprint Deadlock**: `export` and `import` commands now bypass the model fingerprint check, allowing cross-model data extraction and migration without fatal errors.
+- **Import Guard Bypass**: All quality validators (length check, format check, capacity lock) are now skipped during `import` operations to prevent old memories from being rejected by new rules.
+
+### Changed
+- **Zero-Config Init**: Removed the interactive model selection wizard. Since Evo-Lite now uses built-in ONNX models, the setup is fully automatic for new projects. The only prompt that remains is the data washing confirmation for existing projects with a `memory.db`.
+
 ## [1.4.7] - 2026-03-10
 ### Changed
 - **Capacity Expansion**: Increased the `memory.js` capacity lock threshold from 15 to 30 to better utilize the performance of the new ONNX pipeline.
