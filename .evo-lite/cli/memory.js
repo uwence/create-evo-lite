@@ -2,14 +2,28 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const sqliteVec = require('sqlite-vec');
-const axios = require('axios');
+
+// Transformers.js configuration
+const { pipeline, env } = require('@xenova/transformers');
+
+// Configure environment to resolve network fetch failures
+env.allowLocalModels = true;
+env.cacheDir = path.join(__dirname, '..', '.cache');
+
+// 🔥 IMPORTANT: Force HuggingFace to use a mirror if the user is in a restricted network
+// This prevents 'fetch failed' errors when downloading the ONNX weights.
+env.remoteHost = 'https://hf-mirror.com';
+env.remotePathTemplate = '{model}/resolve/{revision}/';
 
 const DB_PATH = path.join(__dirname, '..', 'memory.db');
 const LOG_PATH = path.join(__dirname, '..', 'memory.log');
-const LM_STUDIO_URL = 'http://localhost:12342/v1/embeddings';
-const LM_STUDIO_RERANK_URL = 'http://localhost:12342/v1/rerank';
-const MODEL_NAME = 'jina-embeddings-v2-base-zh';
-const RERANKER_MODEL = 'text-embedding-bge-reranker-base';
+
+const EMBEDDING_MODEL = 'Xenova/bge-small-zh-v1.5';
+const RERANKER_MODEL = 'Xenova/bge-reranker-base';
+
+// Singleton pipeline instances to avoid reloading models into memory
+let extractorPipeline = null;
+let classifierPipeline = null;
 
 function initDb() {
     const db = new Database(DB_PATH);
@@ -23,7 +37,7 @@ function initDb() {
     // Virtual tables must be created carefully
     db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS memories USING vec0(
-            vector float[768]
+            vector float[512]
         );
     `);
 
@@ -39,13 +53,13 @@ function initDb() {
     const rerankRow = db.prepare('SELECT value FROM _meta WHERE key = ?').get('reranker_model');
 
     if (!modelRow) {
-        db.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('embedding_model', MODEL_NAME);
-    } else if (modelRow.value !== MODEL_NAME) {
+        db.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('embedding_model', EMBEDDING_MODEL);
+    } else if (modelRow.value !== EMBEDDING_MODEL) {
         console.error(`\n❌ 致命错误: 向量库模型指纹不匹配！`);
-        console.error(`⚠️ 当前脚手架配置模型: ${MODEL_NAME}`);
+        console.error(`⚠️ 当前脚手架配置模型: ${EMBEDDING_MODEL}`);
         console.error(`⚠️ 数据库内已绑定模型: ${modelRow.value}`);
         console.error(`👉 由于更换了模型，向量维度或语义空间已无法对齐。`);
-        console.error(`✅ 解决办法 1 (推荐): 请在 LM Studio 中重新加载之前绑定的模型 (${modelRow.value})，并修改此处的 MODEL_NAME 配置。`);
+        console.error(`✅ 解决办法 1 (推荐): 请在 index.js 初始化向导中输入之前绑定的模型 (${modelRow.value})，或者修改 cli/memory.js 的 EMBEDDING_MODEL 配置。`);
         console.error(`✅ 解决办法 2 (危险): 如果你确定要开新坑并抛弃过去的记忆，请手动删除 .evo-lite/memory.db 文件后重试。\n`);
         process.exit(1);
     }
@@ -71,56 +85,61 @@ function appendLog(action, content) {
     try { fs.appendFileSync(LOG_PATH, logEntry, 'utf8'); } catch (e) { }
 }
 
-async function fetchWithRetry(requestFn, maxRetries, delayMs) {
-    let retries = 0;
-    while (retries < maxRetries) {
-        try {
-            return await requestFn();
-        } catch (error) {
-            retries++;
-            if (retries >= maxRetries) throw error;
-            console.log(`   ⏳ 等待模型加载或服务预热中，稍后重试 (${retries}/${maxRetries})...`);
-            await new Promise(res => setTimeout(res, delayMs));
-        }
-    }
-}
-
 async function getEmbedding(text) {
     try {
-        const response = await fetchWithRetry(() => axios.post(LM_STUDIO_URL, {
-            model: MODEL_NAME,
-            input: text
-        }, { proxy: false }), 3, 2000);
-
-        if (response.data && response.data.data && response.data.data[0]) {
-            return response.data.data[0].embedding;
+        if (!extractorPipeline) {
+            // Lazy load the pipeline
+            extractorPipeline = await pipeline('feature-extraction', EMBEDDING_MODEL, {
+                quantized: true, // Use Q8 quantized versions by default for massive memory savings
+            });
         }
-        return null;
+        
+        // Output pooling 'mean' is common for sequence embeddings, and normalize for cosine similarity
+        const output = await extractorPipeline(text, { pooling: 'mean', normalize: true });
+        
+        // Extract the raw float array from the Tensor
+        return Array.from(output.data);
     } catch (error) {
-        if (error.response) {
-            // The server responded with a status code that falls out of the range of 2xx
-            const errData = error.response.data;
-            if (errData && errData.error) {
-                console.warn(`\x1b[33m⚠️ Embedding API 报错: ${errData.error.message || JSON.stringify(errData.error)}\x1b[0m`);
-            }
-        }
+        console.warn(`\x1b[33m⚠️ 本地 Embedding 推理失败: ${error.message}\x1b[0m`);
         return null;
     }
 }
 
 async function getRerankedScores(query, texts) {
+    if (!texts || texts.length === 0) return [];
+    
     try {
-        const response = await fetchWithRetry(() => axios.post(LM_STUDIO_RERANK_URL, {
-            model: RERANKER_MODEL,
-            query: query,
-            documents: texts,
-            top_n: texts.length
-        }, { proxy: false }), 3, 2000);
+        if (!classifierPipeline) {
+            // Lazy load the cross-encoder pipeline
+            classifierPipeline = await pipeline('text-classification', RERANKER_MODEL, {
+                quantized: true,
+            });
+        }
 
-        // Return sorted results based on relevance score
-        return response.data.results;
+        // Transformers.js text-classification pipeline supports Cross-Encoder format 
+        // We will process them one by one to ensure compatibility with all model architectures
+        const results = [];
+        for (let i = 0; i < texts.length; i++) {
+            // Note: Some models expect a string, some expect (string, string).
+            // Usually, for cross-encoders in transformers.js, we pass the query and document as separate arguments.
+            // Wait for the result: [ { label: 'LABEL_0', score: 0.99 } ]
+            const res = await classifierPipeline(query, texts[i]);
+            
+            // Depending on the model, it might return an array of objects or a single object.
+            // e.g., [{ label: 'LABEL_1', score: 0.8 }] or just { label: ... }
+            const scoreObj = Array.isArray(res) ? res[0] : res;
+            const score = scoreObj && scoreObj.score !== undefined ? scoreObj.score : 0;
+            
+            results.push({
+                index: i,
+                relevance_score: score
+            });
+        }
+        
+        return results.sort((a, b) => b.relevance_score - a.relevance_score);
+
     } catch (error) {
-        console.error('⚠️ Rerank API Error or Not Available:', error.message);
+        console.error('⚠️ 本地 Rerank 计算失败:', error.message);
         console.log('Falling back to vector distance only...');
         return null; // Fallback to raw distances
     }
@@ -168,7 +187,7 @@ async function remember(content, source = 'cli') {
     const vector = await getEmbedding(content);
 
     if (!vector) {
-        console.warn(`\\n⚠️ 无法提取向量特征 (LM Studio 连接失败或未开启)。`);
+        console.warn(`\\n⚠️ 无法提取向量特征 (ONNX 引擎加载失败)。`);
         console.log('🛡️ [脱机降级模式激活]: 正在将记忆降级暂存为 Daily Note (离线包)...');
         const offlinePath = path.join(__dirname, '..', 'offline_memories.json');
         let offlineData = [];
@@ -491,17 +510,33 @@ async function run() {
             console.log(`✅ Evo-Lite 实体库状态: \x1b[33m尚未生成 (首次 remember 后自动创建)\x1b[0m`);
         }
 
-        console.log(`📡 [配置/向量]: ${MODEL_NAME}`);
+        console.log(`📡 [配置/向量]: ${EMBEDDING_MODEL}`);
         console.log(`📡 [配置/精排]: ${RERANKER_MODEL}`);
 
-        // 执行真实探活
-        console.log(`📡 正在探测模型实时活性...`);
-        const testVec = await getEmbedding("health_check");
-        if (testVec) {
-            console.log(`✅ \x1b[32mEmbedding 模型状态: 联机 (在线向量化可用)\x1b[0m`);
-        } else {
-            console.log(`❌ \x1b[31mEmbedding 模型状态: 离线/异常 (将启用脱机暂存模式)\x1b[0m`);
-            console.log(`👉 请检查 LM Studio 是否启动，以及是否加载了模型 "${MODEL_NAME}"`);
+        // 执行模型探活
+        console.log(`\\n📡 正在启动 ONNX Runtime 引擎预热并校验本地缓存...`);
+        console.log(`   (首次运行可能需要下载模型分片至 .evo-lite/.cache，约 1-2 分钟，请耐心等待)`);
+        
+        try {
+            const testVec = await getEmbedding("health_check");
+            if (testVec) {
+                console.log(`✅ \x1b[32mEmbedding 引擎状态: 就绪 (本地 ONNX 加载成功)\x1b[0m`);
+            } else {
+                console.log(`❌ \x1b[31mEmbedding 引擎状态: 异常 (模型下载失败或环境不支持)\x1b[0m`);
+            }
+        } catch (e) {
+            console.log(`❌ \x1b[31mEmbedding 引擎崩溃: ${e.message}\x1b[0m`);
+        }
+
+        try {
+            const testRerank = await getRerankedScores("health_check", ["test"]);
+            if (testRerank) {
+                console.log(`✅ \x1b[32mReranker 引擎状态: 就绪 (交叉注意力精排可用)\x1b[0m`);
+            } else {
+                console.log(`⚠️ \x1b[33mReranker 引擎状态: 异常 (降级至纯向量检索)\x1b[0m`);
+            }
+        } catch (e) {
+             console.log(`⚠️ \x1b[33mReranker 引擎异常: ${e.message}\x1b[0m`);
         }
     } else if (!action || action === 'help') {
         console.log(`
