@@ -1,3 +1,7 @@
+## [1.4.9] - 2026-03-11
+### Fixed
+- **Silent Mode Auto-Migration**: Fixed an issue where the `--yes` (silent mode) flag would skip the cross-model data migration check. Version 1.4.9 now automatically triggers the migration pipeline if an old database is detected during a silent initialization.
+
 ## [1.4.8] - 2026-03-10
 ### Added
 - **Offline Embedding Model**: Bundled `bge-small-zh-v1.5` quantized ONNX model (~15MB) as `templates/embedding-model.tar.gz`. New projects now get pre-cached model files, enabling `remember` and `recall` to work even with zero network access.
