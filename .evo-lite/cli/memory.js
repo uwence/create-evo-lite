@@ -539,12 +539,12 @@ async function run() {
                 console.log(`✅ \x1b[32mReranker 引擎状态: 就绪 (交叉注意力精排可用)\x1b[0m`);
             } else {
                 console.log(`⚠️ \x1b[33mReranker 引擎状态: 异常 (降级至纯向量检索)\x1b[0m`);
-                console.log(`💡 Reranker 体积较大 (~1GB)，需联网首次下载。核心功能不受影响。`);
+                console.log(`💡 Reranker 体积较大 (~280MB)，需联网首次下载。核心功能不受影响。`);
                 console.log(`   下次执行 recall 时将自动尝试下载，或手动触发: node -e "const{pipeline}=require('@xenova/transformers');pipeline('text-classification','${RERANKER_MODEL}',{quantized:true})"`);
             }
         } catch (e) {
              console.log(`⚠️ \x1b[33mReranker 引擎异常: ${e.message}\x1b[0m`);
-             console.log(`💡 Reranker 为可选增强组件 (~1GB)，不影响核心 remember/recall 功能。`);
+             console.log(`💡 Reranker 为可选增强组件 (~280MB)，不影响核心 remember/recall 功能。`);
         }
     } else if (!action || action === 'help') {
         console.log(`
