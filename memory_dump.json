@@ -1,8 +1,0 @@
-[
-  {
-    "id": 7,
-    "content": "[Time: 2026-03-04T12:32:42.158Z] [Commit: 7cbab27]\\n[Evo-Lite 无服务器记忆架构与工程闭环规范]\r\n\r\n1. **Seamless Upgrade 无损更新协议**: 使用新 CLI 更新时，若检测到 `active_context.md`，会将旧版核心模板重命名为 `.bak`，并在旧文件头部注入 AI 手动合并提示，保全旧项目的定制状态。(溯源历史点: [Commit: 7cbab27])\r\n\r\n2. **高性能多 Agent 锁防线与防截断**: 废除传统的字符串 Shell 传递，长文本与恶心转义强启 `--file=<path>` 进行读写阻隔。此外，初始化数据库时通过执行 `PRAGMA journal_mode=WAL` 与 `busy_timeout=5000` 降解 SQLite 高并发 `SQLITE_BUSY` 死锁问题。(溯源历史点: [Commit: 7cbab27])\r\n\r\n3. **Space-Time 刚性锚定体系**: 所有入库文本均在表层自动拼接底层所在工程的 `git rev-parse HEAD` 及 ISO 时间，支持未来 AI 进行物理快照溯源。并且 `ACTIVATE.md` 注入了防止流水账日志写入的禁令。(溯源历史点: [Commit: 7cbab27])\r\n\r\n4. **IDE Agent Handover 协议 (降级小模型)**: 本地端侧小参数模型中文 RAG 总结时产生乱码破坏向量余弦空间的问题，通过废除本地总结，改为导出成 `.evo-lite/MEMORIES_TO_COMPACT.md` 唤醒强大的通才大模型处理解决。这是 Agent-in-Agent 架构的最佳实践表现。(溯源历史点: [Commit: 7cbab27])",
-    "created_at": "2026-03-04 12:32:42",
-    "source": "cli"
-  }
-]
