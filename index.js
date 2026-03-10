@@ -24,31 +24,25 @@ async function main() {
     const targetDir = path.resolve(targetDirArg);
     console.log(`🚀 Evo-Lite v${SELF_VERSION} — 开始在 ${targetDir} 初始化 Daemonless 记忆大脑...\n`);
 
-    let embedUrl = 'http://localhost:12342/v1/embeddings';
-    let embedModel = 'jina-embeddings-v2-base-zh';
-    let rerankUrl = 'http://localhost:12342/v1/rerank';
-    let rerankModel = 'text-embedding-bge-reranker-base';
+    let embedModel = 'Xenova/bge-small-zh-v1.5';
+    let rerankModel = 'Xenova/bge-reranker-base';
     let shouldWash = false;
 
-    // 尝试反向提取旧配置以支持无损升级
+    // 尝试反向提取旧配置以支持无损升级 (仅限于 Transformers.js 路线的配置)
     const oldMemJsPath = path.join(targetDir, '.evo-lite', 'cli', 'memory.js');
     if (fs.existsSync(oldMemJsPath)) {
         try {
             const oldCode = fs.readFileSync(oldMemJsPath, 'utf8');
-            const m1 = oldCode.match(/const LM_STUDIO_URL = '(.*?)';/);
-            const m2 = oldCode.match(/const MODEL_NAME = '(.*?)';/);
-            const m3 = oldCode.match(/const LM_STUDIO_RERANK_URL = '(.*?)';/);
-            const m4 = oldCode.match(/const RERANKER_MODEL = '(.*?)';/);
-            if (m1) embedUrl = m1[1];
-            if (m2) embedModel = m2[1];
-            if (m3) rerankUrl = m3[1];
-            if (m4) rerankModel = m4[1];
-            console.log('🔄 检测到已有的 Evo-Lite 内存芯片。已成功提取历史配置，准备进行无损热升级！');
+            const m1 = oldCode.match(/const EMBEDDING_MODEL = '(.*?)';/);
+            const m2 = oldCode.match(/const RERANKER_MODEL = '(.*?)';/);
+            if (m1 && m1[1].includes('Xenova/')) embedModel = m1[1];
+            if (m2 && m2[1].includes('Xenova/')) rerankModel = m2[1];
+            console.log('🔄 检测到已有的 Evo-Lite 内存芯片。已成功处理历史配置！');
         } catch (e) { }
     }
 
     if (isSilent) {
-        console.log('🤖 静默模式开启: 使用默认 LM Studio 配置 (-y)');
+        console.log('🤖 静默模式开启: 使用默认 Transformers.js 本地极客配置 (-y)');
     } else {
         // --- 交互式向导 ---
         const rl = readline.createInterface({
@@ -57,91 +51,22 @@ async function main() {
         });
 
         console.log('================= 配置向导 (Evo-Link) =================');
-        console.log('直接按回车可使用默认的 LM Studio 本地极客配置。');
+        console.log('直接按回车可使用默认的 Transformers.js 离线本地模型预演 (ONNX Runtime)。');
         console.log('\n--- 阶段 A: 初步搜索 (Embedding) ---');
-        embedUrl = await rl.question(`1. API URL [${embedUrl}]: `) || embedUrl;
-        embedModel = await rl.question(`2. 模型名称 [${embedModel}]: `) || embedModel;
+        embedModel = await rl.question(`1. 基础检索引擎 [${embedModel}]: `) || embedModel;
 
         console.log('\n--- 阶段 B: 语义重排 (Reranker) - 精度保证 ---');
-        rerankUrl = await rl.question(`3. API URL [${rerankUrl}]: `) || rerankUrl;
-        rerankModel = await rl.question(`4. 模型名称 [${rerankModel}]: `) || rerankModel;
+        rerankModel = await rl.question(`2. 跨语言重排引擎 [${rerankModel}]: `) || rerankModel;
 
         if (fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'))) {
             console.log('\n--- 阶段 C: 历史债务清洗 (Data Washing) ---');
-            const washInput = await rl.question(`5. 检测到旧记忆库。是否执行脱机洗盘以提取并自动重构旧数据格式至全新规范？(y/N) [N]: `);
+            const washInput = await rl.question(`3. 检测到旧记忆库。是否执行脱机洗盘以提取并自动重构旧数据格式至全新规范？(y/N) [N]: `);
             if (washInput.trim().toLowerCase() === 'y') {
                 shouldWash = true;
             }
         }
         console.log('\n======================================================\n');
         rl.close();
-    }
-
-    // 探活测试 - 使用真实的 POST 请求验证模型是否真的加载了
-    console.log('📡 正在验证 Embedding 模型状态...');
-    const testEmbedding = async (url, model, typeLabel) => {
-        return new Promise((resolve) => {
-            const data = JSON.stringify({
-                model: model,
-                input: "health_check"
-            });
-
-            // 简单的 http.request 而不是 axios，减少依赖使用，保持 index.js 轻量
-            const urlObj = new URL(url);
-            const req = http.request({
-                hostname: urlObj.hostname,
-                port: urlObj.port,
-                path: urlObj.pathname,
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': data.length
-                },
-                timeout: 3000
-            }, (res) => {
-                let resData = '';
-                res.on('data', (chunk) => resData += chunk);
-                res.on('end', () => {
-                    if (res.statusCode === 200) {
-                        console.log(`✅ ${typeLabel} 模型 (${model}) 已就绪！`);
-                        resolve(true);
-                    } else {
-                        console.warn(`⚠️ ${typeLabel} 服务响应异常 (${res.statusCode})。`);
-                        try {
-                            const err = JSON.parse(resData);
-                            if (err.error) console.warn(`👉 LM Studio 报错: ${err.error.message || JSON.stringify(err.error)}`);
-                        } catch (e) { }
-                        console.warn(`💡 请检查 LM Studio 是否正确加载了名为 "${model}" 的模型。`);
-                        resolve(false);
-                    }
-                });
-            });
-
-            req.on('error', (e) => {
-                console.warn(`❌ 无法连接到 ${typeLabel} API (${url})。提示: ${e.message}`);
-                resolve(false);
-            });
-
-            req.on('timeout', () => {
-                req.destroy();
-                console.warn(`❌ 连接 ${typeLabel} API 超时，服务器可能未启动或响应过慢。`);
-                resolve(false);
-            });
-
-            req.write(data);
-            req.end();
-        });
-    };
-
-    const embedReady = await testEmbedding(embedUrl, embedModel, 'Embedding');
-    // 如果有 Reranker URL 且不是默认的（或者用户手动填了），也可以验证一下
-    if (rerankUrl && (rerankUrl.includes('localhost') || rerankUrl.includes('127.0.0.1'))) {
-        await testEmbedding(rerankUrl, rerankModel, 'Reranker');
-    }
-
-    if (!embedReady) {
-        console.log('\n❗ 提醒: Embedding 验证未通过。Evo-Lite 将在初始化后处于“离线降级”模式。');
-        console.log('   建议在正式开发前，先在 LM Studio 中启动服务器并加载对应模型。\n');
     }
 
     // 1. 创建目标目录 (如果不存在)
@@ -184,9 +109,7 @@ async function main() {
 
     // 将向导中的配置注入到 memory.js 中
     memoryJsContent = memoryJsContent
-        .replace(/const LM_STUDIO_URL = '.*?';/, `const LM_STUDIO_URL = '${embedUrl}';`)
-        .replace(/const LM_STUDIO_RERANK_URL = '.*?';/, `const LM_STUDIO_RERANK_URL = '${rerankUrl}';`)
-        .replace(/const MODEL_NAME = '.*?';/, `const MODEL_NAME = '${embedModel}';`)
+        .replace(/const EMBEDDING_MODEL = '.*?';/, `const EMBEDDING_MODEL = '${embedModel}';`)
         .replace(/const RERANKER_MODEL = '.*?';/, `const RERANKER_MODEL = '${rerankModel}';`);
 
     const activeContextPath = path.join(evoLiteDir, 'active_context.md');
@@ -303,7 +226,7 @@ async function main() {
     }
 
     // 4. 安装依赖
-    console.log('📦 正在从 npm 抓取并编译向量数据库及核心依赖 (better-sqlite3, sqlite-vec, axios)...');
+    console.log('📦 正在从 npm 抓取并编译向量数据库及核心依赖 (better-sqlite3, sqlite-vec, @xenova/transformers)...');
     try {
         fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
             "name": "evo-lite-workspace",
@@ -311,7 +234,7 @@ async function main() {
             "private": true,
             "dependencies": {}
         }, null, 2));
-        execSync('npm install better-sqlite3 sqlite-vec axios', { cwd: evoLiteDir, stdio: 'inherit' });
+        execSync('npm install better-sqlite3 sqlite-vec @xenova/transformers', { cwd: evoLiteDir, stdio: 'inherit' });
         console.log('✅ 依赖在线安装成功！');
     } catch (e) {
         console.warn('\n⚠️ 警告: npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)');
