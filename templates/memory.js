@@ -25,7 +25,7 @@ const RERANKER_MODEL = 'Xenova/bge-reranker-base';
 let extractorPipeline = null;
 let classifierPipeline = null;
 
-function initDb() {
+function initDb(ignoreFingerprint = false) {
     const db = new Database(DB_PATH);
 
     // Setup pragma for concurrent access and timeout
@@ -54,7 +54,7 @@ function initDb() {
 
     if (!modelRow) {
         db.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('embedding_model', EMBEDDING_MODEL);
-    } else if (modelRow.value !== EMBEDDING_MODEL) {
+    } else if (modelRow.value !== EMBEDDING_MODEL && !ignoreFingerprint) {
         console.error(`\n❌ 致命错误: 向量库模型指纹不匹配！`);
         console.error(`⚠️ 当前脚手架配置模型: ${EMBEDDING_MODEL}`);
         console.error(`⚠️ 数据库内已绑定模型: ${modelRow.value}`);
@@ -356,7 +356,7 @@ function exportMemories(filePath) {
     if (!filePath) {
         return console.error('❌ Usage: node memory.js export <filename.json>');
     }
-    const db = initDb();
+    const db = initDb(true); // Bypass fingerprint mismatch for export since we only extract text
     const records = db.prepare('SELECT id, content, created_at, source FROM memory_contents ORDER BY id ASC').all();
     fs.writeFileSync(filePath, JSON.stringify(records, null, 2), 'utf8');
     console.log(`✅ ${records.length} 条记忆已导出至: ${filePath}`);
