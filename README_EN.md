@@ -36,10 +36,10 @@ As AI coding assistants become increasingly powerful, we often encounter these *
 
 **Evo-Lite solves all of this elegantly with less than 200 lines of code.**
 
-## 🔥 Core Features (v1.4.0 Architecture)
+## 🔥 Core Features (Evo-Lite Architecture)
 
 * **🏗️ Governance via Rules (.agents/rules)**
-  **Core Upgrade:** Protocols are now enforced by system rules rather than just documentation. v1.4.0 shifts governance from "guide-based" to system-level hard constraints. The first thing an AI does upon waking is read `.agents/rules/evo-lite.md`, intercepting low-quality output at the source.
+  **Core Upgrade:** Protocols are now enforced by system rules rather than just documentation. It shifts governance from a "manual guide" to system-level hard constraints. The first thing an AI does upon waking is read `.agents/rules/evo-lite.md`, intercepting low-quality output at the source.
 * **🌐 In-Tree RAG (Pure Local Vector Engine)**
   Uses `sqlite-vec` under the hood. No background services required. Search historical records? Just run `.\.evo-lite\mem recall` in your terminal.
 * **🧠 Dual-Pass Retrieval Architecture (Pure Serverless)**
@@ -129,7 +129,7 @@ The system will trigger the **Seamless Upgrade Protocol**:
 ```text
 MyAwesomeProject/                 <-- (Your Project)
 ├── .agents/                      <-- (Agent Governance Area)
-│   ├── rules/                    <-- Hard Constraints (v1.4.0 Core)
+│   ├── rules/                    <-- Hard Constraints (Core Rules)
 │   │   ├── evo-lite.md           - Boot Sequence Interceptor
 │   │   ├── project-archive.md    - Archiving Protocol
 │   │   └── memory-distillation.md - Quality Gatekeeper

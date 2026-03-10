@@ -36,10 +36,10 @@
 
 **Evo-Lite 用不到 200 行代码优雅地解决了这一切。**
 
-## 🔥 核心特性 (v1.4.0 Architecture)
+## 🔥 核心特性 (Evo-Lite Architecture)
 
 * **🏗️ 规则下沉治理 (.agents/rules)**
-  **核心升级：** 以前靠文档说教，现在靠规则锁死。v1.4.0 将治理逻辑由“文档引导”升级为系统级硬约束。AI 醒来第一件事就是读取 `.agents/rules/evo-lite.md`，从根源拦截劣质输出。
+  **核心升级：** 以前靠文档说教，现在靠规则锁死。将治理逻辑由“文档引导”升级为系统级硬约束。AI 醒来第一件事就是读取 `.agents/rules/evo-lite.md`，从根源拦截劣质输出。
 * **🌐 In-Tree RAG (纯本地向量引擎)**
   底层使用 `sqlite-vec` 向量数据库。AI 想查历史 Bug 记录？只需要原生自带的终端敲下 `.\.evo-lite\mem recall` 即可唤醒。
 * **🧠 双核 RAG 架构 (.Dual-Pass Retrieval)**
@@ -127,7 +127,7 @@ npx create-evo-lite@latest ./ --yes
 ```text
 MyAwesomeProject/                 <-- (你的项目)
 ├── .agents/                      <-- (智能体行为规范区)
-│   ├── rules/                    <-- 核心硬约束 (v1.4.0 核心)
+│   ├── rules/                    <-- 核心硬约束 (Core Rules)
 │   │   ├── evo-lite.md           - Boot Sequence 拦截器
 │   │   ├── project-archive.md    - 存档闭环协议
 │   │   └── memory-distillation.md - 质量守门员
