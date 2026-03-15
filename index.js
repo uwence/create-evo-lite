@@ -177,7 +177,7 @@ async function main() {
     if (hasUpgraded) {
         try {
             let contextContent = fs.readFileSync(activeContextPath, 'utf8');
-            const warningMsg = `\n> ⚠️ **框架已热更新**: 检测到核心引擎升级，原有的历史进度（如 \`active_context.md\`）已备份至 \`.bak\`。**请 AI 助手立即阅读 \`active_context.md.bak\` 以核对并恢复最新的开发进度。** 在完成手动融合与清理后，请删除此警告并清理 \`.bak\` 文件。\n`;
+            const warningMsg = `\n> ⚠️ **框架已热更新**: 检测到核心引擎升级，原有的历史进度已备份至 \`active_context.md.bak\`。**请 AI 助手立即执行以下两步：① 读取 \`active_context.md.bak\` 提取历史进度；② 按新四锚点格式（BEGIN/END_META、FOCUS、BACKLOG、TRAJECTORY）重写本文件，BACKLOG 保留 ≤5 条未完成任务，TRAJECTORY 保留 ≤3 条最近轨迹。** 完成后删除此警告并清理 \`.bak\` 文件。\n`;
 
             if (!contextContent.includes('⚠️ **框架已热更新**')) {
                 // 尝试插在标题之后，如果没有标题则插在最前面
