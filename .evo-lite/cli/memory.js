@@ -554,25 +554,30 @@ function extractChunksFromMd(md, type) {
 
 async function archive(content, type = 'task') {
     if (!content) return console.error(`❌ Usage: node .evo-lite/cli/memory.js archive "<text>" [--type=task|bug|note]`);
-    
+
     const rawDir = path.join(__dirname, '..', 'raw_memory');
+    const vectDir = path.join(__dirname, '..', 'vect_memory');
+
     if (!fs.existsSync(rawDir)) {
         fs.mkdirSync(rawDir, { recursive: true });
     }
-    
+    if (!fs.existsSync(vectDir)) {
+        fs.mkdirSync(vectDir, { recursive: true });
+    }
+
     const crypto = require('crypto');
     const timestamp = new Date().toISOString();
     const dateStr = timestamp.split('T')[0];
     const timeStr = timestamp.split('T')[1].substring(0, 8).replace(/:/g, '-');
     const id = `mem_${dateStr}_${timeStr}_${crypto.randomBytes(4).toString('hex')}`;
-    
+
     let mdBody = '';
     if (type === 'bug') {
         mdBody = `## 现象 (Symptom)\n${content}\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n`;
     } else {
         mdBody = `## 实现细节 (Implementation)\n${content}\n\n## 架构决策 (Architecture)\n未记录\n`;
     }
-    
+
     const fileContent = `---
 id: "${id}"
 timestamp: "${timestamp}"
@@ -584,12 +589,105 @@ ${mdBody}`;
     const filePath = path.join(rawDir, `${id}.md`);
     fs.writeFileSync(filePath, fileContent, 'utf8');
     console.log(`📄 原始结构化档案已写入: ${filePath}`);
-    
+
     console.log(`🚀 触发 1:N 向量重组归档...`);
     const chunks = extractChunksFromMd(fileContent, type);
     for (const chunk of chunks) {
         await remember(chunk, id);
     }
+
+    // 标记为已向量化
+    const vectFilePath = path.join(vectDir, `${id}.md`);
+    fs.writeFileSync(vectFilePath, '', 'utf8');
+}
+
+async function syncVectorMemory() {
+    const rawDir = path.join(__dirname, '..', 'raw_memory');
+    const vectDir = path.join(__dirname, '..', 'vect_memory');
+
+    if (!fs.existsSync(rawDir)) return;
+    if (!fs.existsSync(vectDir)) fs.mkdirSync(vectDir, { recursive: true });
+
+    const rawFiles = fs.readdirSync(rawDir).filter(f => f.endsWith('.md'));
+    const vectFiles = fs.readdirSync(vectDir).filter(f => f.endsWith('.md'));
+
+    const pendingFiles = rawFiles.filter(f => !vectFiles.includes(f));
+
+    if (pendingFiles.length === 0) {
+        return;
+    }
+
+    console.log(`\n🔄 [自动增量同步] 发现 ${pendingFiles.length} 个未向量化的原始档案，正在执行自动入库...`);
+
+    // 确保数据库引擎初始化
+    await initEmbeddingModel();
+    const db = initDb();
+    let successCount = 0;
+
+    for (const file of pendingFiles) {
+        const filePath = path.join(rawDir, file);
+        const md = fs.readFileSync(filePath, 'utf8');
+
+        const idMatch = md.match(/^id:\s*"([^"]+)"/m);
+        if (!idMatch) continue;
+        const sourceId = idMatch[1];
+
+        const typeMatch = md.match(/^type:\s*"([^"]+)"/m);
+        const type = typeMatch ? typeMatch[1] : 'task';
+
+        const chunks = extractChunksFromMd(md, type);
+        if (chunks.length === 0) {
+            // 没有内容的也建个空文件占位，免得下次再轮询
+            fs.writeFileSync(path.join(vectDir, file), '', 'utf8');
+            continue;
+        }
+
+        process.stdout.write(`📥 增量向量化 ${sourceId} (${chunks.length} 个语义块)... `);
+
+        let fileSuccess = true;
+        for (const chunk of chunks) {
+            try {
+                const vector = await getEmbedding(chunk);
+                if (vector) {
+                    let timestamp = new Date().toISOString();
+                    const tsMatch = md.match(/^timestamp:\s*"([^"]+)"/m);
+                    if (tsMatch) timestamp = tsMatch[1];
+
+                    const richContent = `[Time: ${timestamp}] [Archive-Incremental]\n${chunk}`;
+
+                    const insertContent = db.prepare('INSERT INTO memory_contents (content, source) VALUES (?, ?)');
+                    const insertVector = db.prepare('INSERT INTO memories (rowid, vector) VALUES (?, ?)');
+
+                    const transaction = db.transaction(() => {
+                        const info = insertContent.run(richContent, sourceId);
+                        const lastId = BigInt(info.lastInsertRowid);
+                        const vecBuffer = new Float32Array(vector);
+                        insertVector.run(lastId, vecBuffer);
+                        return lastId;
+                    });
+
+                    transaction();
+                    successCount++;
+                } else {
+                    fileSuccess = false;
+                }
+            } catch (e) {
+                console.error(`\n❌ 处理分块失败: ${e.message}`);
+                fileSuccess = false;
+            }
+        }
+
+        if (fileSuccess) {
+            console.log(`\x1b[32mOK\x1b[0m`);
+            // 标记为已向量化
+            fs.writeFileSync(path.join(vectDir, file), '', 'utf8');
+        } else {
+            console.log(`\x1b[31mFailed\x1b[0m`);
+        }
+    }
+
+    db.close();
+    console.log(`✅ 增量同步完成！成功向量化了 ${successCount} 个语义碎片。`);
 }
 
 async function vectorize() {
@@ -721,6 +819,13 @@ async function vectorize() {
         
         db.close();
         console.log(`\n✅ 重铸完成！共成功重新向量化了 ${successCount} 个语义碎片。`);
+
+        // 全量重铸后，更新所有文件的占位符
+        const vectDir = path.join(__dirname, '..', 'vect_memory');
+        if (!fs.existsSync(vectDir)) fs.mkdirSync(vectDir, { recursive: true });
+        for (const file of files) {
+            fs.writeFileSync(path.join(vectDir, file), '', 'utf8');
+        }
     });
 }
 
@@ -772,6 +877,8 @@ async function run() {
         }
         if (!textArg) return console.log('Usage: node memory.js archive <"text message"> [--type=task|bug|note]');
         await archive(textArg, archiveType);
+    } else if (action === 'sync') {
+        await syncVectorMemory();
     } else if (action === 'vectorize') {
         await vectorize();
     } else if (action === 'verify') {
@@ -861,6 +968,7 @@ async function run() {
 
   \x1b[32mcontext\x1b[0m <op>...   Modify active_context.md anchors (complete, add, focus).
   \x1b[32marchive\x1b[0m <text>    Save a summary to raw_memory/ and auto-vectorize it.
+  \x1b[32msync\x1b[0m              Check for unvectorized raw_memory and incrementally vectorize them.
   \x1b[32mvectorize\x1b[0m         Rebuild vector index interactively.
   \x1b[32mverify\x1b[0m            Run initialization checks, git state scans, and 
                       database connection verifications.
