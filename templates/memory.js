@@ -678,48 +678,124 @@ async function vectorize() {
         return;
     }
     
-    console.log(`🔍 扫描到 ${files.length} 个本地原始档案，开始校验和 1:N 语义向量化...`);
-    
-    const db = initDb();
-    let successCount = 0;
-    
-    for (const file of files) {
-        const filePath = path.join(rawDir, file);
-        const md = fs.readFileSync(filePath, 'utf8');
-        
-        const idMatch = md.match(/^id:\s*"([^"]+)"/m);
-        if (!idMatch) {
-            console.log(`⚠️ 文件 ${file} 缺少有效的 id 字段，跳过。`);
-            continue;
-        }
-        const sourceId = idMatch[1];
-        
-        const typeMatch = md.match(/^type:\s*"([^"]+)"/m);
-        const type = typeMatch ? typeMatch[1] : 'task';
-        
-        const existRow = db.prepare('SELECT id FROM memory_contents WHERE source = ?').get(sourceId);
-        if (existRow) {
-            console.log(`⏭️ [已存在] 跳过: ${sourceId}`);
-            continue;
-        }
-        
-        const chunks = extractChunksFromMd(md, type);
-        if (chunks.length === 0) {
-            console.log(`⚠️ 文件 ${file} 没有提取到有效的语义块，跳过。`);
-            continue;
-        }
-        
-        console.log(`📥 [入库中] 向量化 ${sourceId} (${chunks.length} 个语义块)...`);
-        for (const chunk of chunks) {
-            await remember(chunk, sourceId);
-            successCount++;
-        }
-    }
-    
-    db.close();
-    console.log(`✅ 批量重建完毕，共新增 ${successCount} 条向量记录。`);
-}
+    const readline = require('readline').createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
 
+    console.log(`\n🧠 \x1b[1m交互式模型升维管线 (Interactive Vectorize Pipeline)\x1b[0m 🧠`);
+    console.log(`================================================================`);
+    console.log(`此操作将会重新计算所有的 ${files.length} 个本地原始记忆条目，并构建新的脑区！`);
+    if (fs.existsSync(DB_PATH)) {
+        console.log(`⚠️ 检测到现有的记忆库。系统将为您自动备份后抹除其指纹锁！`);
+    }
+    console.log(`\n请选择接下来要使用的核心注意力模型:`);
+    console.log(`  \x1b[36m1.\x1b[0m Xenova/jina-embeddings-v2-base-zh (768维, 需联网拉取或已存在本地缓存, \x1b[32m推荐\x1b[0m)`);
+    console.log(`  \x1b[36m2.\x1b[0m Xenova/bge-small-zh-v1.5      (512维, 支持完全断网本地 tar.gz 解压兜底)`);
+    console.log(`  \x1b[36m0.\x1b[0m 取消操作并退出\n`);
+
+    readline.question(`👉 请输入数字 [1, 2, 0]: `, async (answer) => {
+        readline.close();
+        
+        let newModel = '';
+        let newDims = 0;
+        
+        if (answer.trim() === '1') {
+            newModel = 'Xenova/jina-embeddings-v2-base-zh';
+            newDims = 768;
+        } else if (answer.trim() === '2') {
+            newModel = FALLBACK_MODEL;
+            newDims = FALLBACK_DIMS;
+        } else {
+            console.log('🛑 操作已取消。');
+            return;
+        }
+
+        console.log(`\n🔥 正在挂载新模型: ${newModel} (${newDims}维)...`);
+
+        // 安全备份防呆机制
+        if (fs.existsSync(DB_PATH)) {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const backupPath = `${DB_PATH}.${timestamp}.bak`;
+            try {
+                fs.copyFileSync(DB_PATH, backupPath);
+                console.log(`📦 [安全护航] 旧记忆脑区已备份至: \x1b[32m${path.basename(backupPath)}\x1b[0m`);
+                fs.unlinkSync(DB_PATH); // 物理删除以解除 SQLite 对旧模型指纹的锁死
+            } catch (e) {
+                console.error(`❌ 备份或释放旧数据库失败，出于安全考虑，终止操作: ${e.message}`);
+                return;
+            }
+        }
+
+        // 强行覆盖上下文环境
+        ACTIVE_MODEL = newModel;
+        ACTIVE_DIMS = newDims;
+        
+        // 斩断过去的 ONNX Pipeline 引擎
+        extractorPipeline = null; 
+        
+        console.log(`\n📡 正在启动 ONNX Runtime 引擎预热并校验缓存 / 下载...`);
+        await initEmbeddingModel();
+
+        if (!extractorPipeline) {
+            console.error(`\n❌ 模型引擎挂载失败，请检查网络或配置后重试。备份的数据库仍可用。`);
+            return;
+        }
+
+        console.log(`\n🔍 开始进行 1:N 语义向量化重铸...`);
+        const db = initDb(); // 将以新的模型指纹建立空库
+        let successCount = 0;
+        
+        for (const file of files) {
+            const filePath = path.join(rawDir, file);
+            const md = fs.readFileSync(filePath, 'utf8');
+            
+            const idMatch = md.match(/^id:\s*"([^"]+)"/m);
+            if (!idMatch) continue;
+            const sourceId = idMatch[1];
+            
+            const typeMatch = md.match(/^type:\s*"([^"]+)"/m);
+            const type = typeMatch ? typeMatch[1] : 'task';
+            
+            const chunks = extractChunksFromMd(md, type);
+            if (chunks.length === 0) continue;
+            
+            process.stdout.write(`📥 向量化 ${sourceId} (${chunks.length} 个语义块)... `);
+            for (const chunk of chunks) {
+                try {
+                    const vector = await getEmbedding(chunk);
+                    if (vector) {
+                        let timestamp = new Date().toISOString();
+                        const tsMatch = md.match(/^timestamp:\s*"([^"]+)"/m);
+                        if (tsMatch) timestamp = tsMatch[1];
+                        
+                        const richContent = `[Time: ${timestamp}] [Archive-Rebuild]\n${chunk}`;
+
+                        const insertContent = db.prepare('INSERT INTO memory_contents (content, source) VALUES (?, ?)');
+                        const insertVector = db.prepare('INSERT INTO memories (rowid, vector) VALUES (?, ?)');
+                        
+                        const transaction = db.transaction(() => {
+                            const info = insertContent.run(richContent, sourceId);
+                            const lastId = BigInt(info.lastInsertRowid);
+                            const vecBuffer = new Float32Array(vector);
+                            insertVector.run(lastId, vecBuffer);
+                            return lastId;
+                        });
+                        
+                        transaction();
+                        successCount++;
+                    }
+                } catch (e) {
+                    console.error(`\n❌ 处理分块失败: ${e.message}`);
+                }
+            }
+            console.log(`\x1b[32mOK\x1b[0m`);
+        }
+        
+        db.close();
+        console.log(`\n✅ 重铸完成！共成功重新向量化了 ${successCount} 个语义碎片。`);
+    });
+}
 
 const action = process.argv[2];
 let text = process.argv[3];
@@ -815,7 +891,7 @@ async function run() {
         console.log(`📡 [配置/精排]: ${RERANKER_MODEL}`);
 
         // 执行模型探活
-        console.log(`\\n📡 正在启动 ONNX Runtime 引擎预热并校验本地缓存...`);
+        console.log(`\n📡 正在启动 ONNX Runtime 引擎预热并校验本地缓存...`);
         console.log(`   (首次运行可能需要下载模型分片至 .evo-lite/.cache，约 1-2 分钟，请耐心等待)`);
         
         try {
@@ -852,15 +928,15 @@ async function run() {
   \x1b[32mremember\x1b[0m <text>     Write a new memory fragment into the database.
                       (Must be >40 chars and formatted correctly)
   \x1b[32mrecall\x1b[0m <query>      Semantic search against the memory database.
-  \x1b[32mforget\x1b[0m            Permanently purge all memory databases and vectors.
+  \x1b[32mforget\x1b[0m <id>       Permanently purge specific memory by ID.
   \x1b[32mstats\x1b[0m             Display current database capacity and statistics.
-  \x1b[32mexport\x1b[0m            Export all memories to a JSON file (stdout).
-  \x1b[32mimport\x1b[0m            Import memories from a JSON file path.
+  \x1b[32mexport\x1b[0m <file>     Export all memories to a JSON file (stdout).
+  \x1b[32mimport\x1b[0m <file>     Import memories from a JSON file path.
   \x1b[32mcompact\x1b[0m           Extract all raw fragments into MEMORIES_TO_COMPACT.md
                       and prepare the database for a compressed state.
   \x1b[32mcontext\x1b[0m <op>...   Modify active_context.md anchors (complete, add, focus).
   \x1b[32marchive\x1b[0m <text>    Save a summary to raw_memory/ and auto-vectorize it.
-  \x1b[32mvectorize\x1b[0m         Rebuild vector index from raw_memory/ directory.
+  \x1b[32mvectorize\x1b[0m         Rebuild vector index interactively.
   \x1b[32mverify\x1b[0m            Run initialization checks, git state scans, and 
                       database connection verifications.
   \x1b[32mhelp\x1b[0m              Show this help menu.
