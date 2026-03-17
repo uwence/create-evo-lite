@@ -444,7 +444,7 @@ async function compact() {
     console.log(`====================================================\\n`);
 }
 
-// --- v1.5.1 Section: raw_memory 三层流水线 ---
+// --- v1.5.2 Section: raw_memory 三层流水线 (1:N 语义切块) ---
 
 function readSection(md, anchor) {
     const regex = new RegExp(`<!-- BEGIN_${anchor} -->([\\s\\S]*?)<!-- END_${anchor} -->`);
@@ -530,6 +530,31 @@ async function contextCommand(op, arg) {
     fs.writeFileSync(contextPath, md, 'utf8');
 }
 
+function extractChunksFromMd(md, type) {
+    const chunks = [];
+    const extract = RegExpStr => {
+        const match = md.match(new RegExp(RegExpStr));
+        return match && match[1] ? match[1].trim() : null;
+    };
+    
+    if (type === 'bug') {
+        const symptom = extract('## 现象 \\(Symptom\\)\\n+([\\s\\S]*?)(?:\\n+##|$)');
+        const solution = extract('## 解决方案 \\(Solution\\)\\n+([\\s\\S]*?)(?:\\n+##|$)');
+        if (symptom && symptom !== '未记录') chunks.push(symptom);
+        if (solution && solution !== '未记录') chunks.push(solution);
+    } else {
+        const impl = extract('## 实现细节 \\(Implementation\\)\\n+([\\s\\S]*?)(?:\\n+##|$)');
+        const arch = extract('## 架构决策 \\(Architecture\\)\\n+([\\s\\S]*?)(?:\\n+##|$)');
+        if (impl && impl !== '未记录') chunks.push(impl);
+        if (arch && arch !== '未记录') chunks.push(arch);
+        
+        // Backward compatibility
+        const summary = extract('## Summary\\n+([\\s\\S]*?)(?:\\n+##|\\n+---|$)');
+        if (summary && summary !== '未记录') chunks.push(summary);
+    }
+    return chunks.filter(c => c.length > 0);
+}
+
 async function archive(content, type = 'task') {
     if (!content) return console.error(`❌ Usage: node .evo-lite/cli/memory.js archive "<text>" [--type=task|bug|note]`);
     
@@ -542,6 +567,13 @@ async function archive(content, type = 'task') {
     const id = 'mem_' + crypto.randomBytes(4).toString('hex');
     const timestamp = new Date().toISOString();
     
+    let mdBody = '';
+    if (type === 'bug') {
+        mdBody = `## 现象 (Symptom)\n${content}\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n`;
+    } else {
+        mdBody = `## 实现细节 (Implementation)\n${content}\n\n## 架构决策 (Architecture)\n未记录\n`;
+    }
+    
     const fileContent = `---
 id: "${id}"
 timestamp: "${timestamp}"
@@ -549,15 +581,16 @@ type: "${type}"
 tags: []
 ---
 
-## Summary
-${content}
-`;
+${mdBody}`;
     const filePath = path.join(rawDir, `${id}.md`);
     fs.writeFileSync(filePath, fileContent, 'utf8');
-    console.log(`📄 原始档案已写入: ${filePath}`);
+    console.log(`📄 原始结构化档案已写入: ${filePath}`);
     
-    console.log(`🚀 触发向量归档...`);
-    await remember(content, id);
+    console.log(`🚀 触发 1:N 向量重组归档...`);
+    const chunks = extractChunksFromMd(fileContent, type);
+    for (const chunk of chunks) {
+        await remember(chunk, id);
+    }
 }
 
 async function vectorize() {
@@ -573,7 +606,7 @@ async function vectorize() {
         return;
     }
     
-    console.log(`🔍 扫描到 ${files.length} 个本地原始档案，开始校验和向量化...`);
+    console.log(`🔍 扫描到 ${files.length} 个本地原始档案，开始校验和 1:N 语义向量化...`);
     
     const db = initDb();
     let successCount = 0;
@@ -589,13 +622,8 @@ async function vectorize() {
         }
         const sourceId = idMatch[1];
         
-        const summaryRegex = /## Summary\s+([\s\S]*?)(?:\n##|\n---|$)/;
-        const summaryMatch = md.match(summaryRegex);
-        if (!summaryMatch || !summaryMatch[1].trim()) {
-            console.log(`⚠️ 文件 ${file} 缺少 ## Summary 内容，跳过。`);
-            continue;
-        }
-        const summary = summaryMatch[1].trim();
+        const typeMatch = md.match(/^type:\s*"([^"]+)"/m);
+        const type = typeMatch ? typeMatch[1] : 'task';
         
         const existRow = db.prepare('SELECT id FROM memory_contents WHERE source = ?').get(sourceId);
         if (existRow) {
@@ -603,9 +631,17 @@ async function vectorize() {
             continue;
         }
         
-        console.log(`📥 [入库中] 向量化: ${sourceId}`);
-        await remember(summary, sourceId);
-        successCount++;
+        const chunks = extractChunksFromMd(md, type);
+        if (chunks.length === 0) {
+            console.log(`⚠️ 文件 ${file} 没有提取到有效的语义块，跳过。`);
+            continue;
+        }
+        
+        console.log(`📥 [入库中] 向量化 ${sourceId} (${chunks.length} 个语义块)...`);
+        for (const chunk of chunks) {
+            await remember(chunk, sourceId);
+            successCount++;
+        }
     }
     
     db.close();
