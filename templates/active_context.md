@@ -16,7 +16,7 @@
 - [ ] 阅读此文件，完成上下文接管，启动开发环境。
 <!-- END_BACKLOG -->
 
-## 🔄 最近轨迹 (≤ 3 条)
+## 🔄 最近轨迹 (≤ 10 条)
 <!-- BEGIN_TRAJECTORY -->
 - [{{DATE}}] 项目通过 create-evo-lite 完成初始化。
 <!-- END_TRAJECTORY -->

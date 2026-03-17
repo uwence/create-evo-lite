@@ -513,7 +513,7 @@ async function contextCommand(op, arg, details) {
         let trajLines = trajectory.split('\n').filter(line => line.trim().startsWith('- ['));
         trajLines.unshift(newTrajLine);
         
-        if (trajLines.length > 3) {
+        if (trajLines.length > 10) {
             const removed = trajLines.pop();
             console.log(`🗑️ TRAJECTORY 超限，移除最旧条目: ${removed.trim()}`);
         }
