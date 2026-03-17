@@ -444,8 +444,179 @@ async function compact() {
     console.log(`====================================================\\n`);
 }
 
+// --- v1.5.1 Section: raw_memory 三层流水线 ---
+
+function readSection(md, anchor) {
+    const regex = new RegExp(`<!-- BEGIN_${anchor} -->([\\s\\S]*?)<!-- END_${anchor} -->`);
+    const match = md.match(regex);
+    return match ? match[1] : null;
+}
+
+function writeSection(md, anchor, newContent) {
+    const regex = new RegExp(`(<!-- BEGIN_${anchor} -->)[\\s\\S]*?(<!-- END_${anchor} -->)`);
+    return md.replace(regex, `$1\n${newContent}\n$2`);
+}
+
+async function contextCommand(op, arg) {
+    const contextPath = path.join(__dirname, '..', 'active_context.md');
+    if (!fs.existsSync(contextPath)) {
+        return console.error(`❌ 未找到 active_context.md`);
+    }
+    let md = fs.readFileSync(contextPath, 'utf8');
+
+    if (op === 'focus') {
+        if (!arg) return console.error(`❌ Usage: node .evo-lite/cli/memory.js context focus "新焦点内容"`);
+        md = writeSection(md, 'FOCUS', arg);
+        console.log(`✅ FOCUS 已更新为: ${arg}`);
+    } else if (op === 'add') {
+        if (!arg) return console.error(`❌ Usage: node .evo-lite/cli/memory.js context add "新任务描述"`);
+        let backlog = readSection(md, 'BACKLOG');
+        if (!backlog) backlog = '';
+        
+        const tasks = backlog.split('\n').filter(line => line.trim().startsWith('- [ ]'));
+        if (tasks.length >= 5) {
+            console.error(`❌ [拒绝操作] BACKLOG 任务数已达硬上限 (5条)。请先 complete 任务或移入搁置区。`);
+            process.exit(1);
+        }
+        
+        backlog = backlog.trim();
+        if (backlog === '') {
+            backlog = `- [ ] ${arg}`;
+        } else {
+            backlog += `\n- [ ] ${arg}`;
+        }
+        md = writeSection(md, 'BACKLOG', backlog);
+        console.log(`✅ 新任务已加入 BACKLOG: ${arg}`);
+    } else if (op === 'complete') {
+        if (!arg) return console.error(`❌ Usage: node .evo-lite/cli/memory.js context complete "已完成任务的摘要"`);
+        
+        let backlog = readSection(md, 'BACKLOG');
+        if (backlog) {
+            let lines = backlog.split('\n');
+            let foundIndex = lines.findIndex(line => line.trim().startsWith('- [ ]') && line.includes(arg));
+            if (foundIndex !== -1) {
+                console.log(`🗑️ 从 BACKLOG 移除: ${lines[foundIndex].trim()}`);
+                lines.splice(foundIndex, 1);
+                md = writeSection(md, 'BACKLOG', lines.join('\n').trim() === '' ? '' : lines.join('\n'));
+            } else {
+                console.log(`⚠️ 在 BACKLOG 中未找到包含 "${arg}" 的任务，继续执行归档流程。`);
+            }
+        }
+        
+        let trajectory = readSection(md, 'TRAJECTORY');
+        if (!trajectory) trajectory = '';
+        const today = new Date().toISOString().split('T')[0];
+        const newTrajLine = `- [${today}] ${arg}`;
+        
+        let trajLines = trajectory.split('\n').filter(line => line.trim().startsWith('- ['));
+        trajLines.unshift(newTrajLine);
+        
+        if (trajLines.length > 3) {
+            const removed = trajLines.pop();
+            console.log(`🗑️ TRAJECTORY 超限，移除最旧条目: ${removed.trim()}`);
+        }
+        
+        md = writeSection(md, 'TRAJECTORY', trajLines.join('\n'));
+        console.log(`✅ 任务已移入 TRAJECTORY: ${newTrajLine}`);
+        
+        console.log(`📦 正在触发溢出归档流程...`);
+        // By default, type is 'task' for completions
+        await archive(arg, 'task');
+    } else {
+        console.error(`❌ 未知的 context 操作: ${op}`);
+        return;
+    }
+    
+    fs.writeFileSync(contextPath, md, 'utf8');
+}
+
+async function archive(content, type = 'task') {
+    if (!content) return console.error(`❌ Usage: node .evo-lite/cli/memory.js archive "<text>" [--type=task|bug|note]`);
+    
+    const rawDir = path.join(__dirname, '..', 'raw_memory');
+    if (!fs.existsSync(rawDir)) {
+        fs.mkdirSync(rawDir, { recursive: true });
+    }
+    
+    const crypto = require('crypto');
+    const id = 'mem_' + crypto.randomBytes(4).toString('hex');
+    const timestamp = new Date().toISOString();
+    
+    const fileContent = `---
+id: "${id}"
+timestamp: "${timestamp}"
+type: "${type}"
+tags: []
+---
+
+## Summary
+${content}
+`;
+    const filePath = path.join(rawDir, `${id}.md`);
+    fs.writeFileSync(filePath, fileContent, 'utf8');
+    console.log(`📄 原始档案已写入: ${filePath}`);
+    
+    console.log(`🚀 触发向量归档...`);
+    await remember(content, id);
+}
+
+async function vectorize() {
+    const rawDir = path.join(__dirname, '..', 'raw_memory');
+    if (!fs.existsSync(rawDir)) {
+        console.log(`⚠️ 未找到 raw_memory 目录。`);
+        return;
+    }
+    
+    const files = fs.readdirSync(rawDir).filter(f => f.endsWith('.md'));
+    if (files.length === 0) {
+        console.log(`⚠️ raw_memory 目录为空。`);
+        return;
+    }
+    
+    console.log(`🔍 扫描到 ${files.length} 个本地原始档案，开始校验和向量化...`);
+    
+    const db = initDb();
+    let successCount = 0;
+    
+    for (const file of files) {
+        const filePath = path.join(rawDir, file);
+        const md = fs.readFileSync(filePath, 'utf8');
+        
+        const idMatch = md.match(/^id:\s*"([^"]+)"/m);
+        if (!idMatch) {
+            console.log(`⚠️ 文件 ${file} 缺少有效的 id 字段，跳过。`);
+            continue;
+        }
+        const sourceId = idMatch[1];
+        
+        const summaryRegex = /## Summary\s+([\s\S]*?)(?:\n##|\n---|$)/;
+        const summaryMatch = md.match(summaryRegex);
+        if (!summaryMatch || !summaryMatch[1].trim()) {
+            console.log(`⚠️ 文件 ${file} 缺少 ## Summary 内容，跳过。`);
+            continue;
+        }
+        const summary = summaryMatch[1].trim();
+        
+        const existRow = db.prepare('SELECT id FROM memory_contents WHERE source = ?').get(sourceId);
+        if (existRow) {
+            console.log(`⏭️ [已存在] 跳过: ${sourceId}`);
+            continue;
+        }
+        
+        console.log(`📥 [入库中] 向量化: ${sourceId}`);
+        await remember(summary, sourceId);
+        successCount++;
+    }
+    
+    db.close();
+    console.log(`✅ 批量重建完毕，共新增 ${successCount} 条向量记录。`);
+}
+
+
 const action = process.argv[2];
 let text = process.argv[3];
+const typeArg = process.argv.find(arg => arg.startsWith('--type='));
+const archiveType = typeArg ? typeArg.split('=')[1] : 'task';
 
 // Support reading long/complex inputs from file to prevent shell truncation
 const fileArg = process.argv.find(arg => arg.startsWith('--file='));
@@ -476,6 +647,19 @@ async function run() {
         await importMemories(text);
     } else if (action === 'compact') {
         await compact();
+    } else if (action === 'context') {
+        const op = process.argv[3];
+        const argParams = process.argv.slice(4).filter(a => !a.startsWith('--'));
+        await contextCommand(op, argParams.length > 0 ? argParams[0] : '');
+    } else if (action === 'archive') {
+        let textArg = text;
+        if (textArg && textArg.startsWith('--')) {
+            textArg = '';
+        }
+        if (!textArg) return console.log('Usage: node memory.js archive <"text message"> [--type=task|bug|note]');
+        await archive(textArg, archiveType);
+    } else if (action === 'vectorize') {
+        await vectorize();
     } else if (action === 'verify') {
         let hasAlert = false;
 
@@ -562,6 +746,9 @@ async function run() {
   \x1b[32mimport\x1b[0m            Import memories from a JSON file path.
   \x1b[32mcompact\x1b[0m           Extract all raw fragments into MEMORIES_TO_COMPACT.md
                       and prepare the database for a compressed state.
+  \x1b[32mcontext\x1b[0m <op>...   Modify active_context.md anchors (complete, add, focus).
+  \x1b[32marchive\x1b[0m <text>    Save a summary to raw_memory/ and auto-vectorize it.
+  \x1b[32mvectorize\x1b[0m         Rebuild vector index from raw_memory/ directory.
   \x1b[32mverify\x1b[0m            Run initialization checks, git state scans, and 
                       database connection verifications.
   \x1b[32mhelp\x1b[0m              Show this help menu.
