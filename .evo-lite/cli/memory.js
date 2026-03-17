@@ -18,12 +18,73 @@ env.remotePathTemplate = '{model}/resolve/{revision}/';
 const DB_PATH = path.join(__dirname, '..', 'memory.db');
 const LOG_PATH = path.join(__dirname, '..', 'memory.log');
 
-const EMBEDDING_MODEL = 'Xenova/bge-small-zh-v1.5';
+let ACTIVE_MODEL = 'Xenova/jina-embeddings-v2-base-zh';
+let ACTIVE_DIMS = 768;
+const FALLBACK_MODEL = 'Xenova/bge-small-zh-v1.5';
+const FALLBACK_DIMS = 512;
+
 const RERANKER_MODEL = 'Xenova/bge-reranker-base';
 
 // Singleton pipeline instances to avoid reloading models into memory
 let extractorPipeline = null;
 let classifierPipeline = null;
+
+async function initEmbeddingModel() {
+    // 1. Detect Bound Fingerprint first
+    if (fs.existsSync(DB_PATH)) {
+        try {
+            const tempDb = new Database(DB_PATH, { fileMustExist: true });
+            const row = tempDb.prepare("SELECT value FROM _meta WHERE key = 'embedding_model'").get();
+            if (row && row.value) {
+                ACTIVE_MODEL = row.value;
+                ACTIVE_DIMS = (ACTIVE_MODEL === FALLBACK_MODEL) ? FALLBACK_DIMS : 768;
+            }
+            tempDb.close();
+        } catch(e) { /* ignore */ }
+    }
+
+    try {
+        if (!extractorPipeline) {
+            extractorPipeline = await pipeline('feature-extraction', ACTIVE_MODEL, { quantized: true });
+        }
+    } catch (e) {
+        if (ACTIVE_MODEL !== FALLBACK_MODEL) {
+            console.warn(`\\n⚠️ \x1b[33m网络加载模型 ${ACTIVE_MODEL} 失败: ${e.message}\\n🔄 正在降级至本地小模型 ${FALLBACK_MODEL} (1/2)...\x1b[0m`);
+            ACTIVE_MODEL = FALLBACK_MODEL;
+            ACTIVE_DIMS = FALLBACK_DIMS;
+            extractTarFallback();
+            try {
+                extractorPipeline = await pipeline('feature-extraction', ACTIVE_MODEL, { quantized: true });
+                console.log(`✅ \x1b[32m成功降级！已加载提取了本地压缩包的小型权重。\x1b[0m`);
+            } catch (err) {
+                console.warn(`\x1b[31m❌ 本地降级模型加载也失败了: ${err.message}\x1b[0m`);
+            }
+        } else {
+            console.warn(`\\n⚠️ \x1b[33m本地小模型 ${ACTIVE_MODEL} 加载失败: ${e.message} (尝试解压备用包)\x1b[0m`);
+            extractTarFallback();
+            try {
+                extractorPipeline = await pipeline('feature-extraction', ACTIVE_MODEL, { quantized: true });
+            } catch(err) {}
+        }
+    }
+}
+
+function extractTarFallback() {
+    const cacheDir = path.join(__dirname, '..', '.cache');
+    const bgePath = path.join(cacheDir, 'Xenova', 'bge-small-zh-v1.5');
+    if (fs.existsSync(bgePath)) return; // Already extracted
+
+    const tarPath = path.join(__dirname, '..', 'templates', 'embedding-model.tar.gz');
+    if (fs.existsSync(tarPath)) {
+        console.log(`📦 \x1b[36m正在从 templates 解压内置的 embedding-model.tar.gz...\x1b[0m`);
+        try {
+            if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+            require('child_process').execSync(`tar -xzf "${tarPath}" -C "${cacheDir}"`);
+        } catch (e) {
+            console.log(`⚠️ 解压失败: ${e.message}`);
+        }
+    }
+}
 
 function initDb(ignoreFingerprint = false) {
     const db = new Database(DB_PATH);
@@ -37,7 +98,7 @@ function initDb(ignoreFingerprint = false) {
     // Virtual tables must be created carefully
     db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS memories USING vec0(
-            vector float[512]
+            vector float[${ACTIVE_DIMS}]
         );
     `);
 
@@ -53,13 +114,13 @@ function initDb(ignoreFingerprint = false) {
     const rerankRow = db.prepare('SELECT value FROM _meta WHERE key = ?').get('reranker_model');
 
     if (!modelRow) {
-        db.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('embedding_model', EMBEDDING_MODEL);
-    } else if (modelRow.value !== EMBEDDING_MODEL && !ignoreFingerprint) {
+        db.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('embedding_model', ACTIVE_MODEL);
+    } else if (modelRow.value !== ACTIVE_MODEL && !ignoreFingerprint) {
         console.error(`\n❌ 致命错误: 向量库模型指纹不匹配！`);
-        console.error(`⚠️ 当前脚手架配置模型: ${EMBEDDING_MODEL}`);
+        console.error(`⚠️ 当前脚手架配置模型: ${ACTIVE_MODEL}`);
         console.error(`⚠️ 数据库内已绑定模型: ${modelRow.value}`);
         console.error(`👉 由于更换了模型，向量维度或语义空间已无法对齐。`);
-        console.error(`✅ 解决办法 1 (推荐): 请在 index.js 初始化向导中输入之前绑定的模型 (${modelRow.value})，或者修改 cli/memory.js 的 EMBEDDING_MODEL 配置。`);
+        console.error(`✅ 解决办法 1 (推荐): 请在 index.js 初始化向导中输入之前绑定的模型 (${modelRow.value})，或者修改 cli/memory.js 的 ACTIVE_MODEL 配置。`);
         console.error(`✅ 解决办法 2 (危险): 如果你确定要开新坑并抛弃过去的记忆，请手动删除 .evo-lite/memory.db 文件后重试。\n`);
         process.exit(1);
     }
@@ -88,10 +149,8 @@ function appendLog(action, content) {
 async function getEmbedding(text) {
     try {
         if (!extractorPipeline) {
-            // Lazy load the pipeline
-            extractorPipeline = await pipeline('feature-extraction', EMBEDDING_MODEL, {
-                quantized: true, // Use Q8 quantized versions by default for massive memory savings
-            });
+            // initEmbeddingModel has failed to load anything
+            return null;
         }
         
         // Output pooling 'mean' is common for sequence embeddings, and normalize for cosine similarity
@@ -680,6 +739,8 @@ if (fileArg) {
 }
 
 async function run() {
+    await initEmbeddingModel();
+
     if (action === 'remember') {
         if (!text) return console.log('Usage: node memory.js remember <"text message"> OR node memory.js remember --file=<path>');
         await remember(text);
@@ -750,7 +811,7 @@ async function run() {
             console.log(`✅ Evo-Lite 实体库状态: \x1b[33m尚未生成 (首次 remember 后自动创建)\x1b[0m`);
         }
 
-        console.log(`📡 [配置/向量]: ${EMBEDDING_MODEL}`);
+        console.log(`📡 [配置/向量]: ${ACTIVE_MODEL}`);
         console.log(`📡 [配置/精排]: ${RERANKER_MODEL}`);
 
         // 执行模型探活
