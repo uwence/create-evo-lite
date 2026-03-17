@@ -1,26 +1,27 @@
 # 🧠 Evo-Lite Active Context (EvoRouter)
 
 <!-- BEGIN_META -->
-> **更新时间**: 2026-03-17
-> **项目状态**: 已完成 v1.5.3 交互式模型重构与防呆拦截机制。
+> **更新时间**: 2026-03-18
+> **项目状态**: v1.5.4 — 完成 compact 全链路拆除、Capacity Lock 移除、Format Schema 精简、Jina 优先模型供给策略上线。
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
 <!-- END_META -->
 
 ## 🎯 当前焦点
 <!-- BEGIN_FOCUS -->
-暂无焦点（刚完成 v1.5.2 语义隔离引擎，进入静默节点）。
-
+完成 v1.5.4 全链路精简：移除 compact/Capacity Lock/Format Schema，实现 Jina 优先模型供给策略，下一步可进入稳定性测试或 npm publish。
 ## 🚧 活跃任务 (≤ 5 条)
 <!-- BEGIN_BACKLOG -->
 
 - [ ] 开展对纯 Node.js ONNX RAG 架构的长周期稳定性与内存泄漏排查。
 - [ ] 验证 `/mem` 协议在跨会话状态继承中的表现。
 - [ ] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
+- [ ] 执行 npm publish 将 v1.5.4 发布至 npm registry。
 
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 <!-- BEGIN_TRAJECTORY -->
+- [2026-03-18] 完成 v1.5.4 大清洗：移除 compact 全链路、Capacity Lock (30→∞)、Format Schema 强制守卫；实现 index.js Jina 优先模型供给策略 + BGE 离线兜底；精简 memory-distillation.md 并补充 1:N 分块规则文档。
 - [2026-03-17] 测试带时间戳的 Raw Memory 归档文件名
 - [2026-03-17] 修复 /mem Catch-22 死锁：通过补充 --details 参数彻底解耦了短文本（删除 Backlog）与长文本（向量入库）的约束冲突，完成 v1.5.2 架构闭环。
 - [2026-03-17] 完成 v1.5.2 核心重构：引入了 Raw Memory 1:N 结构化分离引擎，支持 Symptom 和 Solution 分离提取映射。
