@@ -223,24 +223,85 @@ async function main() {
         }
     }
 
-    // 4.5 注入离线 Embedding 模型缓存 (保障无网环境下 remember/recall 可用)
-    const modelCacheDir = path.join(evoLiteDir, '.cache', 'Xenova', 'bge-small-zh-v1.5');
-    if (!fs.existsSync(path.join(modelCacheDir, 'onnx', 'model_quantized.onnx'))) {
-        const embeddingPkg = path.join(__dirname, 'templates', 'embedding-model.tar.gz');
-        if (fs.existsSync(embeddingPkg)) {
-            console.log('🧊 正在解压离线 Embedding 模型缓存 (bge-small-zh-v1.5, ~15MB)...');
-            const cacheRoot = path.join(evoLiteDir, '.cache');
-            if (!fs.existsSync(cacheRoot)) fs.mkdirSync(cacheRoot, { recursive: true });
-            try {
-                execSync(`tar -xzf "${embeddingPkg}"`, { cwd: cacheRoot, stdio: 'inherit' });
-                console.log('✅ 离线 Embedding 模型注入成功！无网环境下也可直接使用 remember/recall。');
-            } catch (e) {
-                console.warn('⚠️ 离线模型解压失败，将在首次使用时在线下载:', e.message);
+    // 4.5 Embedding 模型供给策略 (Jina 优先下载 → BGE 离线兜底)
+    let finalEmbedModel = 'Xenova/bge-small-zh-v1.5';
+    let finalEmbedDims = 512;
+
+    const jinaCacheDir = path.join(evoLiteDir, '.cache', 'Xenova', 'jina-embeddings-v2-base-zh');
+    const bgeCacheDir = path.join(evoLiteDir, '.cache', 'Xenova', 'bge-small-zh-v1.5');
+    const jinaAlreadyCached = fs.existsSync(path.join(jinaCacheDir, 'onnx', 'model_quantized.onnx'));
+    const bgeAlreadyCached = fs.existsSync(path.join(bgeCacheDir, 'onnx', 'model_quantized.onnx'));
+
+    if (jinaAlreadyCached) {
+        // Jina model already exists on disk, skip download
+        console.log('✅ 检测到已缓存的推荐 Embedding 模型 (jina-embeddings-v2-base-zh)，跳过下载。');
+        finalEmbedModel = 'Xenova/jina-embeddings-v2-base-zh';
+        finalEmbedDims = 768;
+    } else {
+        // Attempt to download Jina model via a temporary probe script
+        console.log('🌐 正在尝试下载推荐 Embedding 模型 (jina-embeddings-v2-base-zh, ~110MB)...');
+        console.log('   (此步骤需要联网，若网络受限将自动降级至离线 BGE 模型)');
+        
+        const probePath = path.join(evoLiteDir, '_probe_jina.js');
+        const cacheDirEscaped = path.join(evoLiteDir, '.cache').replace(/\\/g, '/');
+        fs.writeFileSync(probePath, `
+const { pipeline, env } = require('@xenova/transformers');
+env.allowLocalModels = true;
+env.cacheDir = '${cacheDirEscaped}';
+env.remoteHost = 'https://hf-mirror.com';
+env.remotePathTemplate = '{model}/resolve/{revision}/';
+(async () => {
+    try {
+        await pipeline('feature-extraction', 'Xenova/jina-embeddings-v2-base-zh', { quantized: true });
+        process.exit(0);
+    } catch (e) {
+        console.error(e.message);
+        process.exit(1);
+    }
+})();
+`.trimStart());
+
+        try {
+            execSync(`node "${probePath}"`, {
+                cwd: evoLiteDir,
+                stdio: ['pipe', 'inherit', 'inherit'],
+                timeout: 180000 // 3 minutes max
+            });
+            console.log('✅ 推荐 Embedding 模型 (jina-embeddings-v2-base-zh) 下载成功！');
+            finalEmbedModel = 'Xenova/jina-embeddings-v2-base-zh';
+            finalEmbedDims = 768;
+        } catch (e) {
+            console.warn('⚠️ Jina 模型下载失败 (网络受限或超时)。将使用离线 BGE 备用模型。');
+            // Fallback: extract offline BGE model cache
+            if (!bgeAlreadyCached) {
+                const embeddingPkg = path.join(__dirname, 'templates', 'embedding-model.tar.gz');
+                if (fs.existsSync(embeddingPkg)) {
+                    console.log('🧊 正在解压离线 Embedding 模型缓存 (bge-small-zh-v1.5, ~15MB)...');
+                    const cacheRoot = path.join(evoLiteDir, '.cache');
+                    if (!fs.existsSync(cacheRoot)) fs.mkdirSync(cacheRoot, { recursive: true });
+                    try {
+                        execSync(`tar -xzf "${embeddingPkg}"`, { cwd: cacheRoot, stdio: 'inherit' });
+                        console.log('✅ 离线 BGE 模型注入成功！无网环境下也可直接使用 remember/recall。');
+                    } catch (tarErr) {
+                        console.warn('⚠️ 离线模型解压失败，将在首次使用时在线下载:', tarErr.message);
+                    }
+                }
+            } else {
+                console.log('✅ 检测到已缓存的 BGE 离线模型，跳过解压。');
             }
         }
-    } else {
-        console.log('✅ 检测到已缓存的 Embedding 模型，跳过离线注入。');
+        // Cleanup temp probe script
+        try { fs.unlinkSync(probePath); } catch (_) {}
     }
+
+    // 4.6 Dynamically patch memory.js model config to match actually available model
+    const memJsFinalPath = path.join(cliDir, 'memory.js');
+    let memJsFinal = fs.readFileSync(memJsFinalPath, 'utf8');
+    memJsFinal = memJsFinal
+        .replace(/let ACTIVE_MODEL = '.*?';/, `let ACTIVE_MODEL = '${finalEmbedModel}';`)
+        .replace(/let ACTIVE_DIMS = \d+;/, `let ACTIVE_DIMS = ${finalEmbedDims};`);
+    fs.writeFileSync(memJsFinalPath, memJsFinal);
+    console.log(`📡 运行时引擎已锁定为: ${finalEmbedModel} (${finalEmbedDims}d)`);
 
     // --- 阶段 D: 跨模型迁移洗盘 ---
     if (shouldWash) {
