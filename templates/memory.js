@@ -575,8 +575,10 @@ async function archive(content, type = 'task') {
     }
     
     const crypto = require('crypto');
-    const id = 'mem_' + crypto.randomBytes(4).toString('hex');
     const timestamp = new Date().toISOString();
+    const dateStr = timestamp.split('T')[0];
+    const timeStr = timestamp.split('T')[1].substring(0, 8).replace(/:/g, '-');
+    const id = `mem_${dateStr}_${timeStr}_${crypto.randomBytes(4).toString('hex')}`;
     
     let mdBody = '';
     if (type === 'bug') {
