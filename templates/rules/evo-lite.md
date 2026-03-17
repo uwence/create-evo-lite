@@ -20,7 +20,6 @@ trigger: always_on
   - Windows: `.\.evo-lite\mem.cmd recall "<Error_Message_or_Query>"`
 **Action 2 (解决问题后入库)**: 当你攻克了架构难点，必须将经验结晶强制录入。
 - 写入指令: `node .evo-lite/cli/memory.js remember "<核心报错词: 解决思路概要>"`
-- **辅助与熔断维护**: 如果在写入时遭遇系统报错 `记忆碎片池已满载熔断`，你必须**无条件停下手头所有业务代码**，立即运行 `node .evo-lite/cli/memory.js compact` 指令并严格按照提示要求完成高维摘要的提炼与旧垃圾的销毁。
 **Expected Outcome**: 形成从遇到困难查找旧记忆，最后入库新经验的完整自治生态。
 # 1. IDENTITY & COMMUNICATION
 - **Language**: 所有对话、原理解释和架构讨论必须使用中文。所有代码注释、变量名、函数名和 Git Commits 必须使用纯英文。

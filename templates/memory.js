@@ -235,17 +235,7 @@ async function remember(content, source = 'cli') {
         }
     }
 
-    // 4. 记忆库水位线拦截 (Capacity Lock) - import 时也跳过
-    const capacityDb = initDb();
-    const countRow = capacityDb.prepare('SELECT COUNT(*) as count FROM memory_contents').get();
-    if (countRow.count >= 5000 && !isImport) {
-        capacityDb.close();
-        console.error(`\n❌ [致命约束被触发] 记忆碎片池已触及极限阈值 (当前: ${countRow.count}/5000)！`);
-        console.error(`系统的碎片垃圾已经堆积如山，强行挤入可能会导致 RAG 寻址效率下降。`);
-        console.error(`🛑 【强制动作】你必须立即执行 \`node .evo-lite/cli/memory.js compact\` 进入深度清理流程！清理完成后方可存入新记忆。`);
-        process.exit(1);
-    }
-    capacityDb.close();
+
 
     console.log(`🧠 Embedding thought...`);
     const vector = await getEmbedding(content);
@@ -457,50 +447,6 @@ async function importMemories(filePath) {
             console.log(`🗑️ 已自动清理已消耗的脱机包: ${path.basename(filePath)}`);
         } catch (e) { /* ignore cleanup errors */ }
     }
-}
-
-async function compact() {
-    console.log('\\n💤 记忆库进入深度睡眠 (Compacting...) 💤');
-    console.log('1. 正在抽取当前所有记忆碎片...');
-
-    const db = initDb();
-    const records = db.prepare('SELECT id, content FROM memory_contents ORDER BY id ASC').all();
-    db.close();
-
-    if (records.length === 0) {
-        return console.log('⚠️ 当前记忆库为空，不需要整理。');
-    }
-
-    console.log('2. 正在生成 IDE 智能体交接清单 (Handover Document)...');
-
-    const compactFilePath = path.join(__dirname, '..', 'MEMORIES_TO_COMPACT.md');
-    let markdownContent = `# 🧠 Evo-Lite 待压缩记忆池 (Records to Compact)\\n\\n`;
-    markdownContent += `> **[To IDE Agent 宿主智能体]**:\\n`;
-    markdownContent += `> 人类或系统刚发起了 \`compact\` 指令。由于本地端侧模型能力孱弱，现在将这 **${records.length}** 条凌乱的经验碎片托付给你（拥有完整推理能力的超大语言模型）。\\n`;
-    markdownContent += `> \\n`;
-    markdownContent += `> **你的任务 (Your Mission)**:\\n`;
-    markdownContent += `> 1. 阅读下方所有的无序记忆碎片。\\n`;
-    markdownContent += `> 2. 去重、合并、并使用**极度高维的中文架构术语**总结出 3-5 条本项目最核心的“跨文件契约”或“踩坑教训”。\\n`;
-    markdownContent += `> 3. 写好总结后，请你主动新建一个临时文件并调用 \`node .evo-lite/cli/memory.js remember --file=你的临时文件路径\` 把新结晶存入。\\n`;
-    markdownContent += `> ⚠️ **强制格式护航**: 总结必须遵守格式 \`[最高维标题] + 1. **核心词**: 原由与解法 (溯源历史点: [Commit: aaa, bbb])\`，否则底层抛出致命异常拒绝入库！\\n`;
-    markdownContent += `> 4. 存入成功后，调用 \`node .evo-lite/cli/memory.js forget [下方所有旧 ID 带空格分隔]\` 把下方的旧垃圾彻底物理摧毁。\\n\\n---\\n\\n`;
-
-    let allIds = [];
-    records.forEach(r => {
-        allIds.push(r.id);
-        markdownContent += `### [ID: ${r.id}]\\n${r.content}\\n\\n`;
-    });
-
-    markdownContent += `\\n---\\n`;
-    markdownContent += `**待销毁 ID 快捷复制区**: \`${allIds.join(' ')}\``;
-
-    fs.writeFileSync(compactFilePath, markdownContent, 'utf8');
-
-    console.log(`\\n================ [唤醒协议执行完毕] ================`);
-    console.log(`🚨 \x1b[33m宿主智能体 (IDE Agent) 请立即接管控制权！\x1b[0m`);
-    console.log(`这 ${records.length} 条记忆的明文已经全量导出至：\\n   📄 \x1b[36m.evo-lite/MEMORIES_TO_COMPACT.md\x1b[0m`);
-    console.log(`\\n请你静默读取该文件，并按照文件头部的要求，执行高维中文摘要压缩，最后把旧数据 forget 掉！`);
-    console.log(`====================================================\\n`);
 }
 
 // --- v1.5.2 Section: raw_memory 三层流水线 (1:N 语义切块) ---
@@ -831,8 +777,7 @@ async function run() {
         exportMemories(text);
     } else if (action === 'import') {
         await importMemories(text);
-    } else if (action === 'compact') {
-        await compact();
+
     } else if (action === 'context') {
         const op = process.argv[3];
         const argParams = process.argv.slice(4).filter(a => !a.startsWith('--'));
@@ -932,8 +877,7 @@ async function run() {
   \x1b[32mstats\x1b[0m             Display current database capacity and statistics.
   \x1b[32mexport\x1b[0m <file>     Export all memories to a JSON file (stdout).
   \x1b[32mimport\x1b[0m <file>     Import memories from a JSON file path.
-  \x1b[32mcompact\x1b[0m           Extract all raw fragments into MEMORIES_TO_COMPACT.md
-                      and prepare the database for a compressed state.
+
   \x1b[32mcontext\x1b[0m <op>...   Modify active_context.md anchors (complete, add, focus).
   \x1b[32marchive\x1b[0m <text>    Save a summary to raw_memory/ and auto-vectorize it.
   \x1b[32mvectorize\x1b[0m         Rebuild vector index interactively.
