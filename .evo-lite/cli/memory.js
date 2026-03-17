@@ -238,10 +238,10 @@ async function remember(content, source = 'cli') {
     // 4. 记忆库水位线拦截 (Capacity Lock) - import 时也跳过
     const capacityDb = initDb();
     const countRow = capacityDb.prepare('SELECT COUNT(*) as count FROM memory_contents').get();
-    if (countRow.count >= 30 && !isImport) {
+    if (countRow.count >= 5000 && !isImport) {
         capacityDb.close();
-        console.error(`\n❌ [致命约束被触发] 记忆碎片池已满载熔断 (当前: ${countRow.count}/30)！`);
-        console.error(`系统的碎片垃圾已经堆积如山，强行挤入会导致 RAG 寻址雪崩。`);
+        console.error(`\n❌ [致命约束被触发] 记忆碎片池已触及极限阈值 (当前: ${countRow.count}/5000)！`);
+        console.error(`系统的碎片垃圾已经堆积如山，强行挤入可能会导致 RAG 寻址效率下降。`);
         console.error(`🛑 【强制动作】你必须立即执行 \`node .evo-lite/cli/memory.js compact\` 进入深度清理流程！清理完成后方可存入新记忆。`);
         process.exit(1);
     }
