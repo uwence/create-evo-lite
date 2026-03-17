@@ -30,30 +30,25 @@ description: 状态保存、进度更新与记忆闭环交接协议
 2. 项目版本小跃迁 (Bump Version)
    修订 `package.json` 中的 `version` 字段。若无重大重构，增加末尾修订号（Patch），禁止修改 `.evo-lite/package.json`（若存在）。
 
-3. 版本快照约束与入库 (Git Commit - 优先执行以获取 Hash)
-   执行修改文件的入库提交，务必遵守 Conventional Commits 规范，并**读取终端返回的 Commit Hash**：
+3. 版本快照约束与入库 (Git Commit)
+   执行修改文件的入库提交，务必遵守 Conventional Commits 规范：
    ```bash
    git add .
    git commit -m "chore(docs): 你的提交信息"
    ```
-4. 精确提取短哈希 (Fetch Short Hash)
-   提交完成后，**必须立即在终端执行以下命令**，以获取刚刚生成的 7 位短哈希（Short Hash）：
-   ```bash
-   git rev-parse --short HEAD
-   ```
 
-5. 经验向量记忆 (可选但强烈建议)
-   提炼本次工作中的开源方案借鉴或避坑总结，**使用第 3 步生成的真实 Commit Hash**，在终端运行以下命令：
+4. 经验向量记忆 (可选但强烈建议)
+   提炼本次工作中的开源方案借鉴或避坑总结，在终端运行以下命令：
    ```bash
-   .\.evo-lite\mem.cmd remember "核心总结：使用了 XX 算法处理了 XX 难题。(溯源历史点: [Commit: <在此精确填入第4步获取的7位Hash>])"
+   .\.evo-lite\mem.cmd remember "核心总结：使用了 XX 算法处理了 XX 难题。"
    ```
-   *(注: 非 Windows 平台请使用 `./.evo-lite/mem`)*
+   *(注: 记忆底层引擎会自动从 Git 进程截取最新的 Commit Hash 并绑定，无需手动传入)*
 
-6. 打 Tag 并汇报 (Final Handover)
+5. 打 Tag 并汇报 (Final Handover)
    若执行了第 2 步的版本号变动，必须打好 Git Tag：
    ```bash
    git tag -a v1.0.X -m "Release vX"
    ```
 
-7. 状态机跳变反馈 (Mandatory Output)
+6. 状态机跳变反馈 (Mandatory Output)
    向 Master 宣告："交接协议已执行完毕。Master，当前功能已闭环。建议您立即审视是否执行 Git Push。"

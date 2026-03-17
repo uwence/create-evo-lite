@@ -216,26 +216,7 @@ async function remember(content, source = 'cli') {
             console.error(`请拒绝流水账式的日志记录。`);
             process.exit(1);
         }
-
-        // [程序化守卫] 记忆蒸馏规范校验
-        // 1. 拦截使用区间省略号的偷懒行为
-        if (/\[Commit:.*?\.\.\..*?\]/.test(content)) {
-            console.error(`\n❌ [致命约束被触发] 记忆规范校验失败！`);
-            console.error(`严禁在记忆体中使用区间省略号 (如 aaa...bbb) 引用 Commit。`);
-            console.error(`请精确提取并分别列出本条记忆直接关联的所有独立 Commit Hash。`);
-            process.exit(1);
-        }
-
-        // 2. 拦截长篇提炼但不带精确溯源点的行为
-        if (/\d+\.\s+\*\*/.test(content) && !/\(溯源历史点: \[Commit:.*?\]\)/.test(content)) {
-            console.error(`\n❌ [致命约束被触发] 记忆规范校验失败！`);
-            console.error(`发现结构化的提炼文本，但缺失精确的 \`(溯源历史点: [Commit: xxx])\` 声明。`);
-            console.error(`请严格遵守排版规范，为每一个条目附带溯源依据！`);
-            process.exit(1);
-        }
     }
-
-
 
     console.log(`🧠 Embedding thought...`);
     const vector = await getEmbedding(content);

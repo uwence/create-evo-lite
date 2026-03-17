@@ -11,10 +11,4 @@ description: Trigger strictly when summarizing system state for Git Commit, or c
 ## 1. 质量过滤网 (Quality Filters)
 - **静默丢弃 (Reject)**: 字符过少的无营养日志、纯流水账式的文件修改记录。
 - **强制保留 (Require)**: 重要的跨文件契约、绕过级坑点 (Workarounds)、防呆思路的演进变迁。
-
-## 3. 强校验溯源格式 (Format Schema Enforcement)
-写入的日志必须严格遵循以下结构，任何偏离都会导致底层脚本拒收：
-```text
-1. [主题词 A]: [技术细节记录]。(溯源历史点: [Commit: <hash1>, <hash2>])
-2. [契约词 B]: [防御机制]。(溯源历史点: [Commit: <hash3>])
-```
+
