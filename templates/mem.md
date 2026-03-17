@@ -16,7 +16,7 @@ description: 状态保存、进度更新与记忆闭环交接协议
    - [C. 任务 `BACKLOG` (状态迁移)]: 精准定位 `<!-- BEGIN_BACKLOG -->` 与 `<!-- END_BACKLOG -->` 之间的内容：
      - **推荐直接用 CLI 命令（自动流转及归档）**:
        ```bash
-       .\.evo-lite\mem.cmd context complete "任务摘要"
+       .\.evo-lite\mem.cmd context complete "提取词" --details="长篇详细记录与踩坑点（>40字并支持结构化入库）"
        .\.evo-lite\mem.cmd context add "新任务描述"
        ```
      - 或 AI 手动按锚点格式操作（仍允许）：

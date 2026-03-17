@@ -457,7 +457,7 @@ function writeSection(md, anchor, newContent) {
     return md.replace(regex, `$1\n${newContent}\n$2`);
 }
 
-async function contextCommand(op, arg) {
+async function contextCommand(op, arg, details) {
     const contextPath = path.join(__dirname, '..', 'active_context.md');
     if (!fs.existsSync(contextPath)) {
         return console.error(`❌ 未找到 active_context.md`);
@@ -488,13 +488,15 @@ async function contextCommand(op, arg) {
         md = writeSection(md, 'BACKLOG', backlog);
         console.log(`✅ 新任务已加入 BACKLOG: ${arg}`);
     } else if (op === 'complete') {
-        if (!arg) return console.error(`❌ Usage: node .evo-lite/cli/memory.js context complete "已完成任务的摘要"`);
+        if (!arg) return console.error(`❌ Usage: node .evo-lite/cli/memory.js context complete "提取词" [--details="详细说明..."]`);
         
         let backlog = readSection(md, 'BACKLOG');
+        let matchedTask = arg;
         if (backlog) {
             let lines = backlog.split('\n');
             let foundIndex = lines.findIndex(line => line.trim().startsWith('- [ ]') && line.includes(arg));
             if (foundIndex !== -1) {
+                matchedTask = lines[foundIndex].replace('- [ ]', '').trim();
                 console.log(`🗑️ 从 BACKLOG 移除: ${lines[foundIndex].trim()}`);
                 lines.splice(foundIndex, 1);
                 md = writeSection(md, 'BACKLOG', lines.join('\n').trim() === '' ? '' : lines.join('\n'));
@@ -506,7 +508,7 @@ async function contextCommand(op, arg) {
         let trajectory = readSection(md, 'TRAJECTORY');
         if (!trajectory) trajectory = '';
         const today = new Date().toISOString().split('T')[0];
-        const newTrajLine = `- [${today}] ${arg}`;
+        const newTrajLine = `- [${today}] ${matchedTask}`;
         
         let trajLines = trajectory.split('\n').filter(line => line.trim().startsWith('- ['));
         trajLines.unshift(newTrajLine);
@@ -520,8 +522,17 @@ async function contextCommand(op, arg) {
         console.log(`✅ 任务已移入 TRAJECTORY: ${newTrajLine}`);
         
         console.log(`📦 正在触发溢出归档流程...`);
-        // By default, type is 'task' for completions
-        await archive(arg, 'task');
+        const fileArg = process.argv.find(a => a.startsWith('--file='));
+        let archiveContent = details ? details : arg;
+        if (fileArg) {
+            const filePath = fileArg.split('=')[1];
+            if (fs.existsSync(filePath)) {
+                archiveContent = fs.readFileSync(filePath, 'utf8').trim();
+            }
+        }
+        const typeArg = process.argv.find(a => a.startsWith('--type='));
+        const archiveType = typeArg ? typeArg.split('=')[1] : 'task';
+        await archive(archiveContent, archiveType);
     } else {
         console.error(`❌ 未知的 context 操作: ${op}`);
         return;
@@ -686,7 +697,9 @@ async function run() {
     } else if (action === 'context') {
         const op = process.argv[3];
         const argParams = process.argv.slice(4).filter(a => !a.startsWith('--'));
-        await contextCommand(op, argParams.length > 0 ? argParams[0] : '');
+        const detailsArg = process.argv.find(arg => arg.startsWith('--details='));
+        const details = detailsArg ? detailsArg.substring('--details='.length) : null;
+        await contextCommand(op, argParams.length > 0 ? argParams[0] : '', details);
     } else if (action === 'archive') {
         let textArg = text;
         if (textArg && textArg.startsWith('--')) {

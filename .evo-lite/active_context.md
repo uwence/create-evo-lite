@@ -13,17 +13,18 @@
 
 ## 🚧 活跃任务 (≤ 5 条)
 <!-- BEGIN_BACKLOG -->
+
 - [ ] 开展对纯 Node.js ONNX RAG 架构的长周期稳定性与内存泄漏排查。
 - [ ] 验证 `/mem` 协议在跨会话状态继承中的表现。
 - [ ] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
-- [ ] 测试 Raw Memory 的 1:N 结构化分离
+
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 3 条)
 <!-- BEGIN_TRAJECTORY -->
-- [2026-03-17] 完成 v1.5.2 核心重构：测试 Raw Memory 的 1:N 结构化分离与语义解耦机制，确保在提取多维度 Chunk 后仍能成功录入 SQLite 并避开质量长度校验拦截器
-- [2026-03-17] 完成 v1.5.1 raw_memory 三层流水线（context, archive, vectorize）的 CLI 命令开发，打通锚点隔离与自动流转闭环。
-- [2026-03-15] 完成 v1.5.0 锚点隔离机制：改造 templates/active_context.md、mem.md、evo.md、rules/evo-lite.md 及 index.js 热更新警告，实现四区块锚点定向写入防漂移架构。
+- [2026-03-17] 修复 /mem Catch-22 死锁：通过补充 --details 参数彻底解耦了短文本（删除 Backlog）与长文本（向量入库）的约束冲突，完成 v1.5.2 架构闭环。
+- [2026-03-17] 完成 v1.5.2 核心重构：引入了 Raw Memory 1:N 结构化分离引擎，支持 Symptom 和 Solution 分离提取映射。
+- [2026-03-15] 完成 v1.5.0 锚点隔离与定向写入架构。
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
