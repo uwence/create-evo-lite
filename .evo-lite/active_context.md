@@ -11,14 +11,16 @@
 完成 v1.5.4 全链路精简：移除 compact/Capacity Lock/Format Schema，实现 Jina 优先模型供给策略，下一步可进入稳定性测试或 npm publish。
 ## 🚧 活跃任务 (≤ 5 条)
 <!-- BEGIN_BACKLOG -->
+
 - [ ] [8c2d] 验证 `/mem` 协议在跨会话状态继承中的表现。
 - [ ] [f9b1] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
 - [ ] [1e3a] 执行 npm publish 将 v1.5.4 发布至 npm registry。
-- [ ] [27f8] Test dynamically added task
+
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 <!-- BEGIN_TRAJECTORY -->
+- [9de40fe] 2026-03-18 测试闭环: 这是一条极其严谨的测试记录，用于验证在无 dirty cod...
 - [2026-03-17] 开展对纯 Node.js ONNX RAG 架构的长周期稳定性与内存泄漏排查。
 - [2026-03-17] 实现向量增量同步
 - [2026-03-18] 完成 v1.5.4 大清洗：移除 compact 全链路、Capacity Lock (30→∞)、Format Schema 强制守卫；实现 index.js Jina 优先模型供给策略 + BGE 离线兜底；精简 memory-distillation.md 并补充 1:N 分块规则文档。

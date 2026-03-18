@@ -599,7 +599,7 @@ async function contextCommand(op) {
 
         // AUTO-META-COMMIT
         try {
-            require('child_process').execSync('git add .evo-lite/ && git commit -m "chore(context): track ' + commitHash + '"', { stdio: 'pipe' });
+            require('child_process').execSync('git add -f .evo-lite/active_context.md .evo-lite/raw_memory/ .evo-lite/vect_memory/ && git commit -m "chore(context): track ' + commitHash + '"', { stdio: 'pipe' });
         } catch (e) {
             console.error(`⚠️ 自动执行 chore(context) meta-commit 失败: ${e.message}`);
         }

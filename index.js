@@ -100,6 +100,7 @@ async function main() {
     const evoWorkflowContent = fs.readFileSync(path.join(templatesDir, 'evo.md'), 'utf8');
     const washWorkflowContent = fs.readFileSync(path.join(templatesDir, 'wash.md'), 'utf8');
     const memWorkflowContent = fs.readFileSync(path.join(templatesDir, 'mem.md'), 'utf8');
+    const commitWorkflowContent = fs.readFileSync(path.join(templatesDir, 'commit.md'), 'utf8');
     const activeContextTemplate = fs.readFileSync(path.join(templatesDir, 'active_context.md'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
@@ -113,6 +114,7 @@ async function main() {
     const evoWorkflowPath = path.join(workflowsDir, 'evo.md');
     const washWorkflowPath = path.join(workflowsDir, 'wash.md');
     const memWorkflowPath = path.join(workflowsDir, 'mem.md');
+    const commitWorkflowPath = path.join(workflowsDir, 'commit.md');
 
     // 3.1 处理规则文件集
     const rulesTemplatesDir = path.join(templatesDir, 'rules');
@@ -133,6 +135,9 @@ async function main() {
     if (fs.existsSync(memWorkflowPath)) {
         fs.copyFileSync(memWorkflowPath, memWorkflowPath + '.bak');
     }
+    if (fs.existsSync(commitWorkflowPath)) {
+        fs.copyFileSync(commitWorkflowPath, commitWorkflowPath + '.bak');
+    }
 
     // 自动对规则进行备份升级
     ruleFiles.forEach(file => {
@@ -147,6 +152,7 @@ async function main() {
     fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
     fs.writeFileSync(washWorkflowPath, washWorkflowContent);
     fs.writeFileSync(memWorkflowPath, memWorkflowContent);
+    fs.writeFileSync(commitWorkflowPath, commitWorkflowContent);
 
     // 写入规则文件
     ruleFiles.forEach(file => {
