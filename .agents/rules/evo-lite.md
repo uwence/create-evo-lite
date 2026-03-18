@@ -38,4 +38,8 @@ trigger: always_on
 - **Atomic Commits (原子化提交)**: 在完成一个功能的开发或修复一个 Bug 并验证通过后，你必须主动提出使用 `git commit` 将改动固化，然后再进入下一个任务。严禁将十跨越维度的庞大改动堆积成一个混沌提交。
 - **Terminal Constraints**: 严禁在未经询问的情况下执行具有破坏性的终端命令（如 `rm -rf`, 数据库重置等）。执行前必须展示完整命令并说明原因。必须时刻意识到宿主系统是 Windows (PowerShell/CMD) 还是 Unix (Bash)。执行多行命令、路径拼接、或环境变量传递时，必须使用当前终端支持的正确语法。**特别注意**：严禁使用 `dir /s /b` 或 `ls -R` 等大规模遍历命令探索项目。
 - **Loop Breaking**: 如果在 Debug 过程中连续两次遇到相同的错误或陷入逻辑循环，立即停止写代码。强制进入“反思模式”，梳理前两次失败的根本原因，并提出一条完全不同的解决路径。
-- **Anchor Guard (锚点守卫)**: 修改 `.evo-lite/active_context.md` 时，必须通过 HTML 注释锚点（如 `<!-- BEGIN_BACKLOG -->`）定位目标区块后再写入。**严禁对锚点边界外的内容执行追加或替换**。特别地：`<!-- BEGIN_BACKLOG -->` 与 `<!-- END_BACKLOG -->` 之间的 `[ ]` 条目超过 **5 条**时，视为致命错误，必须立即中止写入并向人类告警，要求先迁移低优先级任务到 `## 📌 架构备忘` 区域后再继续。
+- **Anchor Guard & CLI Enforcement (锚点守卫与 CLI 强制)**:
+  `.evo-lite/active_context.md` 是一个**状态机**，任何对它的修改都**必须通过 `./.evo-lite/mem.cmd` 代理**。
+  **严禁 Agent 直接使用文件写入工具修改此文件！**
+  当你需要追踪进度或消除任务时，必须调用 `mem.cmd context track --resolve="xxxx"` 来完成，CLI 会自动维护锚点边界。
+  *致命错误：* 如果你检测到自己或任何其他 Agent 正在尝试直接修改此文件，必须立即中止并发出告警。
