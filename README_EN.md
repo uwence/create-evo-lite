@@ -21,7 +21,10 @@
 `Evo-Lite` is a **highly disciplined** mental constraint and state protection system specifically designed for Agentic Workflows (AI-assisted coding). In v1.4.0+, it has evolved from a simple "memory plugin" into a **Rules-driven autonomous governance framework**. It can instantly equip any of your projects (frontend, backend, or even simple script libraries) with a persistent memory, technical aesthetic validation, and a completely sandboxed "Super Brain."
 
 > [!IMPORTANT]
-> **Environment Disclaimer**: This project is deeply optimized for the **Google Antigravity** environment. **When initializing, please run this tool using Antigravity's `Fast Mode`**. v1.4.0+ now fully supports `.agents/rules` system-level hard constraints, achieving permanent protocol residence.
+> **Version 2.0.0 Major Update Warning**: The architecture has undergone a core iteration, introducing the **Two-Tier Protocol**.
+> - **`/commit`**: High-frequency usage, responsible for code commits, trajectory tracking, and task resolution. Uses 4-char Hash IDs to ensure traceability.
+> - **`/mem`**: Low-frequency usage, dedicated to session handover, version bumping, and Git Tag release.
+> It is recommended to run `node .evo-lite/cli/memory.js verify` in your Agent terminal to ensure the environment has auto-updated to the new protocols.
 
 ---
 
@@ -54,7 +57,8 @@ As AI coding assistants become increasingly powerful, we often encounter these *
   Supports cross-generational upgrades from v1.3.x! Automatically extracts legacy API configs, protects progress documents, and guides AI through manual fusion of backups.
 * **⚡ Automated Workflows & Slash Commands**
   - `/evo`: Magic summoning to trigger self-check, tech stack sniffing, and progress sync.
-  - `/mem`: Archiving protocol that syncs progress, distills memory, and triggers Git Commit closure.
+  - `/commit`: High-frequency protocol for daily code commits, trajectory tracking, and task resolution.
+  - `/mem`: Archive protocol for session handover, version bumping, and Git Tag release.
   - `/wash`: Data washing protocol for offline repair and restructuring of historical "dirty" data.
 
 ---
@@ -90,12 +94,19 @@ During execution, the system will automatically initialize a **built-in ONNX Run
 
 The AI will silently load core architecture rules, run \`verify\` for the database, review the technical dictionary, and enter the service state perfectly.
 
-### 3. Archiving & Handover System
-When a task phase is complete, enter the command:
-\`\`\`text
+### 3. High-Frequency Tracking & Closure (/commit)
+When a small feature or bug fix is complete, enter the command:
+```text
+/commit
+```
+The AI will automatically: capture the Commit Hash, record the trajectory, refine memory into the vector database, and precisely resolve the corresponding Task Hash ID in `active_context.md`.
+
+### 4. Low-Frequency Release & Handover (/mem)
+When the iteration is complete, and you need to end the session:
+```text
 /mem
-\`\`\`
-The AI will automatically: mark completed items in \`active_context.md\`, refine key points into the vector database, and prepare for a Git Commit.
+```
+The AI will automatically: perform version bumping, apply a Git Tag, and suspend the session.
 
 
 ### 4. Direct Interaction with the Brain
@@ -135,6 +146,7 @@ MyAwesomeProject/                 <-- (Your Project)
 │   │   └── memory-distillation.md - Quality Gatekeeper
 │   └── workflows/                <-- Slash Commands
 │       ├── evo.md                - /evo Script
+│       ├── commit.md             - /commit Script
 │       └── mem.md                - /mem Script
 │
 └── .evo-lite/                    <-- (Memory & Dependency Sandbox)
