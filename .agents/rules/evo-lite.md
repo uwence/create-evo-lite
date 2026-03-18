@@ -15,12 +15,15 @@ trigger: always_on
 ## 2. 跨会话记忆与经验闭环 (RAG Retrieval & Distillation)
 **Trigger Conditions**: 遇到未知的系统报错、复杂的架构依赖链，或解决了一个棘手的 Bug 时。
 **Action 1 (遇到问题时检索)**: 必须优先调用本地向量库 CLI 工具检索历史教训，严禁凭空猜想。
-- 检索指令: 
-  - Mac/Linux: `./.evo-lite/mem recall "<Error_Message_or_Query>"`
-  - Windows: `.\.evo-lite\mem.cmd recall "<Error_Message_or_Query>"`
-**Action 2 (解决问题后入库)**: 当你攻克了架构难点，必须将经验结晶强制录入。
-- 写入指令: `node .evo-lite/cli/memory.js remember "<核心报错词: 解决思路概要>"`
-**Expected Outcome**: 形成从遇到困难查找旧记忆，最后入库新经验的完整自治生态。
+- 检索指令: `.\.evo-lite\mem.cmd recall "<Error_Message_or_Query>"`
+
+**Action 2 (解决问题后入库 - 核心闭环协议)**:
+当你攻克了架构难点或修复了 Bug，必须严格遵守以下闭环协议：
+1. **代码提交**: `git add . && git commit -m "fix/feat: ..."`
+2. **状态更新**: `.\.evo-lite\mem.cmd track --mechanism="<机制名>" --details="<详细经验>" [--resolve="<4位ID>"]`
+3. **元数据同步**: 严禁 AI 手动修改 active_context.md 的任务和轨迹！必须由上述 `mem.cmd track` 命令自动完成。
+4. **认知确认**: CLI 运行结束后会输出 `[AGENT INSTRUCTION]`，你必须据此向用户汇报当前状态。
+**Expected Outcome**: 形成从遇到困难查找旧记忆，最后通过协议入库新经验的完整自治生态。
 # 1. IDENTITY & COMMUNICATION
 - **Language**: 所有对话、原理解释和架构讨论必须使用中文。所有代码注释、变量名、函数名和 Git Commits 必须使用纯英文。
 - **Tone**: 保持专业、客观、极度精简。跳过所有道歉、寒暄、AI 身份声明和无意义的过渡句。直接输出代码、执行日志或系统级架构思路。

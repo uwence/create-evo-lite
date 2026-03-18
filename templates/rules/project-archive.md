@@ -11,25 +11,20 @@ Trigger Context: `[task_status == 'completed']` OR `[intent == 'system_state_sum
 ---
 
 ## 1. Phase One: Business Logic Closure & Handover
-Condition: Code changes for the current feature/fix are complete, but NOT yet committed.
-Hook: `pre_exit`
-Constraint: BLOCK_EXECUTION_UNTIL_HUMAN_CONFIRMATION
-Action: MUST output the exact payload to stdout and halt.
-Payload:
-> Master，当前功能业务代码已闭环。请您审查并执行首次 Git Commit，以便我提取 Hash 锚点用于显隐双层记忆的沉淀。
+Condition: Code changes for the current feature/fix are complete.
+Action: MUST execute `git commit` first, then run `.\.evo-lite\mem.cmd track --mechanism="..." --details="..."`.
 
 ## 2. Phase Two: Memory Distillation & Hash Extraction
-Condition: Human confirms the initial Git Commit is complete.
 Action Pipeline:
-1. `Hash Extraction`: Execute `git log -1 --format="%h"` (or parse git status) to retrieve the latest `<hash>`.
-2. `Tool Call`: Execute `mem_remember` using the strictly extracted hash.
+1. `mem.cmd` will automatically capture the commit hash.
+2. `mem.cmd` handles the structural distillation into `raw_memory/`.
+3. `mem.cmd` handles incremental vectorization into SQLite.
+4. `mem.cmd` enforces the standard formatting schema.
 
-### 2.1 Quality Filters for mem remember
-- REJECT: `low_entropy_logs`, `generic_step_by_step_execution`
-- REQUIRE: `cross_file_contracts`, `workarounds`, `anti_idiot_logic_shifts`
+### 2.1 Quality Filters for memory
+- REJECT: `low_entropy_logs`, `generic_step_by_step_execution`, `流水账式记录`
+- REQUIRE: `cross_file_contracts`, `workarounds`, `anti_idiot_logic_shifts`, `>40字符要求`
 
 ### 2.2 Format Schema Enforcement (Strict)
-Directive: Output MUST exactly match the template below. Deviations trigger `Script_Rejection`，Please refer to memory-distillation.md.
-```text
-1. [Topic_A]: [Technical_Details]. (溯源历史点: [Commit: <extracted_hash>])
-2. [Contract_B]: [Defense_Mechanism]. (溯源历史点: [Commit: <extracted_hash>])
+Directive: All records stored in `raw_memory/` MUST follow the format enforced by `cli/memory.js`.
+Any deviation will trigger `Script_Rejection` by the CLI validator.

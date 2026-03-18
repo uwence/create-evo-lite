@@ -13,7 +13,6 @@
 <!-- BEGIN_BACKLOG -->
 
 
-- [ ] [f9b1] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
 - [ ] [1e3a] 执行 npm publish 将 v1.5.4 发布至 npm registry。
 
 
@@ -35,3 +34,4 @@
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
 > ⚠️ 此区域无锚点保护，可自由追加灵感与低优先级任务，但严禁在此堆积已完成任务。
 - 考虑 `raw_memory/` 原始文件层（YAML Frontmatter + Markdown），提升向量库抗毁性与换模型能力（参考 Gemini 设计文档讨论）。
+- [f9b1] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
