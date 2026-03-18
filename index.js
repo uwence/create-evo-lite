@@ -72,22 +72,12 @@ async function main() {
         fs.mkdirSync(targetDir, { recursive: true });
     }
 
-    // 2. 创建 .evo-lite 结构
+    // 2. 创建 .evo-lite 和 .agents 结构
     const evoLiteDir = path.join(targetDir, '.evo-lite');
     const cliDir = path.join(evoLiteDir, 'cli');
-
-    if (!fs.existsSync(evoLiteDir)) {
-        fs.mkdirSync(evoLiteDir, { recursive: true });
-    }
-    if (!fs.existsSync(cliDir)) {
-        fs.mkdirSync(cliDir, { recursive: true });
-    }
-
-    // 2.5 创建 Slash Command 与 规则 目录
     const agentsDir = path.join(targetDir, '.agents');
-    const workflowsDir = path.join(agentsDir, 'workflows');
-    const rulesDir = path.join(agentsDir, 'rules');
-    [agentsDir, workflowsDir, rulesDir].forEach(dir => {
+
+    [evoLiteDir, cliDir, agentsDir].forEach(dir => {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
@@ -96,68 +86,61 @@ async function main() {
     // 3. 复制并注入模板文件
     console.log('📄 复制并配置记忆外挂模板文件...');
     const templatesDir = path.join(__dirname, 'templates');
-    let memoryJsContent = fs.readFileSync(path.join(templatesDir, 'memory.js'), 'utf8');
-    const evoWorkflowContent = fs.readFileSync(path.join(templatesDir, 'evo.md'), 'utf8');
-    const washWorkflowContent = fs.readFileSync(path.join(templatesDir, 'wash.md'), 'utf8');
-    const memWorkflowContent = fs.readFileSync(path.join(templatesDir, 'mem.md'), 'utf8');
-    const commitWorkflowContent = fs.readFileSync(path.join(templatesDir, 'commit.md'), 'utf8');
     const activeContextTemplate = fs.readFileSync(path.join(templatesDir, 'active_context.md'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
 
-    // 将向导中的配置注入到 memory.js 中
-    memoryJsContent = memoryJsContent
-        .replace(/const EMBEDDING_MODEL = '.*?';/, `const EMBEDDING_MODEL = '${embedModel}';`)
-        .replace(/const RERANKER_MODEL = '.*?';/, `const RERANKER_MODEL = '${rerankModel}';`);
-
     const activeContextPath = path.join(evoLiteDir, 'active_context.md');
-    const evoWorkflowPath = path.join(workflowsDir, 'evo.md');
-    const washWorkflowPath = path.join(workflowsDir, 'wash.md');
-    const memWorkflowPath = path.join(workflowsDir, 'mem.md');
-    const commitWorkflowPath = path.join(workflowsDir, 'commit.md');
 
-    // 3.1 处理规则文件集
-    const rulesTemplatesDir = path.join(templatesDir, 'rules');
-    const ruleFiles = fs.existsSync(rulesTemplatesDir) ? fs.readdirSync(rulesTemplatesDir) : [];
+    // 3.0 处理 cli 文件集
+    const cliTemplatesDir = path.join(templatesDir, 'cli');
+    const cliFiles = fs.existsSync(cliTemplatesDir) ? fs.readdirSync(cliTemplatesDir) : [];
+
+    // 3.1 递归复制函数
+    function copyRecursiveSync(src, dest) {
+        const exists = fs.existsSync(src);
+        const stats = exists && fs.statSync(src);
+        const isDirectory = exists && stats.isDirectory();
+        if (isDirectory) {
+            if (!fs.existsSync(dest)) {
+                fs.mkdirSync(dest, { recursive: true });
+            }
+            fs.readdirSync(src).forEach(childItemName => {
+                copyRecursiveSync(path.join(src, childItemName),
+                                  path.join(dest, childItemName));
+            });
+        } else {
+            // 在复制前进行备份
+            if (fs.existsSync(dest)) {
+                fs.copyFileSync(dest, dest + '.bak');
+                hasUpgraded = true; // 标记发生了升级
+            }
+            fs.copyFileSync(src, dest);
+        }
+    }
 
     let hasUpgraded = false;
     if (fs.existsSync(activeContextPath)) {
         fs.copyFileSync(activeContextPath, activeContextPath + '.bak');
         hasUpgraded = true;
     }
-    if (fs.existsSync(evoWorkflowPath)) {
-        fs.copyFileSync(evoWorkflowPath, evoWorkflowPath + '.bak');
-        hasUpgraded = true;
-    }
-    if (fs.existsSync(washWorkflowPath)) {
-        fs.copyFileSync(washWorkflowPath, washWorkflowPath + '.bak');
-    }
-    if (fs.existsSync(memWorkflowPath)) {
-        fs.copyFileSync(memWorkflowPath, memWorkflowPath + '.bak');
-    }
-    if (fs.existsSync(commitWorkflowPath)) {
-        fs.copyFileSync(commitWorkflowPath, commitWorkflowPath + '.bak');
+
+    // 3.2 复制 .agents 目录
+    const agentsTemplateDir = path.join(templatesDir, '.agents');
+    if (fs.existsSync(agentsTemplateDir)) {
+        copyRecursiveSync(agentsTemplateDir, agentsDir);
     }
 
-    // 自动对规则进行备份升级
-    ruleFiles.forEach(file => {
-        const rulePath = path.join(rulesDir, file);
-        if (fs.existsSync(rulePath)) {
-            fs.copyFileSync(rulePath, rulePath + '.bak');
-            hasUpgraded = true;
+    // 写入 cli 文件
+    cliFiles.forEach(file => {
+        let content = fs.readFileSync(path.join(cliTemplatesDir, file), 'utf8');
+        // 对 memory.js 进行特殊处理，注入配置
+        if (file === 'memory.js') {
+            content = content
+                .replace(/const EMBEDDING_MODEL = '.*?';/, `const EMBEDDING_MODEL = '${embedModel}';`)
+                .replace(/const RERANKER_MODEL = '.*?';/, `const RERANKER_MODEL = '${rerankModel}';`);
         }
-    });
-
-    fs.writeFileSync(path.join(cliDir, 'memory.js'), memoryJsContent);
-    fs.writeFileSync(evoWorkflowPath, evoWorkflowContent);
-    fs.writeFileSync(washWorkflowPath, washWorkflowContent);
-    fs.writeFileSync(memWorkflowPath, memWorkflowContent);
-    fs.writeFileSync(commitWorkflowPath, commitWorkflowContent);
-
-    // 写入规则文件
-    ruleFiles.forEach(file => {
-        const ruleContent = fs.readFileSync(path.join(rulesTemplatesDir, file), 'utf8');
-        fs.writeFileSync(path.join(rulesDir, file), ruleContent);
+        fs.writeFileSync(path.join(cliDir, file), content);
     });
 
     // active_context.md 处理：新项目用模板，老项目仅备份并保护内容。
