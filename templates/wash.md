@@ -1,16 +1,34 @@
 ---
-description: 记忆清洗协议，用于诊断、导出并规范化被污染的旧记忆库 (Memory Washing Protocol)
+description: 记忆清洗与脑区重铸协议 (Brain Rebuild Protocol)
 ---
-# 🛁 响应 Evo 记忆清洗协议 (Wash Protocol)
+# 🛁 响应 Evo 脑区重铸协议 (Wash Protocol)
 
-当你收到此指令时，代表人类希望你介入并修复被“流水账”或“不规范格式”污染的记忆库。
+当你收到此指令时，代表我们需要对向量记忆库进行重置或清洗。
+**注意**：在 Evo-Lite v2.0.0+ 架构中，`raw_memory/` 目录下的 Markdown 档案是唯一真理源 (Single Source of Truth)。
 
-**步骤：**
 // turbo-all
-1. 执行 `./.evo-lite/mem.cmd export evo_memories_exported.json` 将全量记忆导出到项目根目录。
-2. 读取导出的 `evo_memories_exported.json`，根据 `.evo-lite/active_context.md` 中的最新规范（必须包含 `[Time]` 时间戳与 `[Commit: <hash>]` 锚点）进行分析。
-3. 请编写一个一次性的 Node.js 修复脚本（`wash-memory.js`），读取上述 JSON，根据新的格式规范进行修复，输出 `fixed_memories.json`。
-4. 待我确认脚本逻辑后，依次执行：
-   - 运行该脚本清洗出安全的数据。
-   - 运行 `./.evo-lite/mem.cmd forget <all_old_ids>` 删除旧垃圾数据。
-   - 运行 `./.evo-lite/mem.cmd import fixed_memories.json` 重建纯净规范的超高维记忆库。
+**执行步骤 (严格按顺序执行):**
+
+1. **原始库审查 (Audit)**:
+   前往 `.evo-lite/raw_memory/` 目录，检查档案格式是否规范（必须包含 `## 原因` 等二级标题、`[Time]` 时间戳与 `[Commit: <hash>]` 溯源锚点）。
+   *命名规范：建议采用 `mem_YYYY-MM-DD_HH-mm-ss_UUID.md` 格式。*
+
+2. **人工/AI 修复 (Fix)**:
+   直接使用编辑器打开并修改有误的 Markdown 文件。
+
+3. **物理重铸 (Rebuild)**:
+   当档案修复完成后，请在终端执行以下指令彻底重置数据库并自动重铸：
+
+   ```bash
+   # 1. 物理删除旧记忆脑区
+   del /f /s /q .evo-lite\memory.db
+
+   # 2. 清理向量缓存区
+   del /f /s /q .evo-lite\vect_memory\*
+
+   # 3. 触发交互式升维管线 (请按提示输入数字选择模型)
+   node .evo-lite/cli/memory.js vectorize
+   ```
+
+4. **确认与汇报 (Handover)**:
+   观察 CLI 输出，确认所有语义碎片已被成功重新提取与 Embedding。确认无误后宣告：“记忆脑区已重铸完毕，当前记忆库已恢复纯净状态。”
