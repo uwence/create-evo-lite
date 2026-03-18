@@ -1,97 +1,20 @@
 const fs = require('fs');
 const path = require('path');
+const { getDb, initDB } = require('./db');
+
+const { getExtractor, getReranker, getActiveModelInfo, initEmbeddingModel } = require('./models');
+
+
+const LOG_PATH = path.join(__dirname, '..', 'memory.log');
+
+
+
 const Database = require('better-sqlite3');
 const sqliteVec = require('sqlite-vec');
 
-// Transformers.js configuration
-const { pipeline, env } = require('@xenova/transformers');
-
-// Configure environment to resolve network fetch failures
-env.allowLocalModels = true;
-env.cacheDir = path.join(__dirname, '..', '.cache');
-
-// 🔥 IMPORTANT: Force HuggingFace to use a mirror if the user is in a restricted network
-// This prevents 'fetch failed' errors when downloading the ONNX weights.
-env.remoteHost = 'https://hf-mirror.com';
-env.remotePathTemplate = '{model}/resolve/{revision}/';
-
-const DB_PATH = path.join(__dirname, '..', 'memory.db');
-const LOG_PATH = path.join(__dirname, '..', 'memory.log');
-
-let ACTIVE_MODEL = 'Xenova/jina-embeddings-v2-base-zh';
-let ACTIVE_DIMS = 768;
-const FALLBACK_MODEL = 'Xenova/bge-small-zh-v1.5';
-const FALLBACK_DIMS = 512;
-
-const RERANKER_MODEL = 'Xenova/bge-reranker-base';
-
-// Singleton pipeline instances to avoid reloading models into memory
-let extractorPipeline = null;
-let classifierPipeline = null;
-
-async function initEmbeddingModel() {
-    // 1. Detect Bound Fingerprint first
-    if (fs.existsSync(DB_PATH)) {
-        try {
-            const tempDb = new Database(DB_PATH, { fileMustExist: true });
-            const row = tempDb.prepare("SELECT value FROM _meta WHERE key = 'embedding_model'").get();
-            if (row && row.value) {
-                ACTIVE_MODEL = row.value;
-                ACTIVE_DIMS = (ACTIVE_MODEL === FALLBACK_MODEL) ? FALLBACK_DIMS : 768;
-            }
-            tempDb.close();
-        } catch(e) { /* ignore */ }
-    }
-
-    try {
-        if (!extractorPipeline) {
-            extractorPipeline = await pipeline('feature-extraction', ACTIVE_MODEL, { quantized: true });
-        }
-    } catch (e) {
-        if (ACTIVE_MODEL !== FALLBACK_MODEL) {
-            console.warn(`\\n⚠️ \x1b[33m网络加载模型 ${ACTIVE_MODEL} 失败: ${e.message}\\n🔄 正在降级至本地小模型 ${FALLBACK_MODEL} (1/2)...\x1b[0m`);
-            ACTIVE_MODEL = FALLBACK_MODEL;
-            ACTIVE_DIMS = FALLBACK_DIMS;
-            extractTarFallback();
-            try {
-                extractorPipeline = await pipeline('feature-extraction', ACTIVE_MODEL, { quantized: true });
-                console.log(`✅ \x1b[32m成功降级！已加载提取了本地压缩包的小型权重。\x1b[0m`);
-            } catch (err) {
-                console.warn(`\x1b[31m❌ 本地降级模型加载也失败了: ${err.message}\x1b[0m`);
-            }
-        } else {
-            console.warn(`\\n⚠️ \x1b[33m本地小模型 ${ACTIVE_MODEL} 加载失败: ${e.message} (尝试解压备用包)\x1b[0m`);
-            extractTarFallback();
-            try {
-                extractorPipeline = await pipeline('feature-extraction', ACTIVE_MODEL, { quantized: true });
-            } catch(err) {}
-        }
-    }
-}
-
-function extractTarFallback() {
-    const cacheDir = path.join(__dirname, '..', '.cache');
-    const bgePath = path.join(cacheDir, 'Xenova', 'bge-small-zh-v1.5');
-    if (fs.existsSync(bgePath)) return; // Already extracted
-
-    const tarPath = path.join(__dirname, '..', 'templates', 'embedding-model.tar.gz');
-    if (fs.existsSync(tarPath)) {
-        console.log(`📦 \x1b[36m正在从 templates 解压内置的 embedding-model.tar.gz...\x1b[0m`);
-        try {
-            if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-            require('child_process').execSync(`tar -xzf "${tarPath}" -C "${cacheDir}"`);
-        } catch (e) {
-            console.log(`⚠️ 解压失败: ${e.message}`);
-        }
-    }
-}
-
 function initDb(ignoreFingerprint = false) {
-    const db = new Database(DB_PATH);
-
-    // Setup pragma for concurrent access and timeout
-    db.pragma('journal_mode = WAL');
-    db.pragma('busy_timeout = 5000');
+    const { model: ACTIVE_MODEL, dims: ACTIVE_DIMS } = getActiveModelInfo();
+    const db = getDb();
 
     sqliteVec.load(db);
 
@@ -120,11 +43,12 @@ function initDb(ignoreFingerprint = false) {
         console.error(`⚠️ 当前脚手架配置模型: ${ACTIVE_MODEL}`);
         console.error(`⚠️ 数据库内已绑定模型: ${modelRow.value}`);
         console.error(`👉 由于更换了模型，向量维度或语义空间已无法对齐。`);
-        console.error(`✅ 解决办法 1 (推荐): 请在 index.js 初始化向导中输入之前绑定的模型 (${modelRow.value})，或者修改 cli/memory.js 的 ACTIVE_MODEL 配置。`);
+        console.error(`✅ 解决办法 1 (推荐): 请在 index.js 初始化向导中输入之前绑定的模型 (${modelRow.value})，或者修改 cli/models.js 的 ACTIVE_MODEL 配置。`);
         console.error(`✅ 解决办法 2 (危险): 如果你确定要开新坑并抛弃过去的记忆，请手动删除 .evo-lite/memory.db 文件后重试。\n`);
         process.exit(1);
     }
 
+    const RERANKER_MODEL = 'Xenova/bge-reranker-base';
     if (!rerankRow) {
         db.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('reranker_model', RERANKER_MODEL);
     }
@@ -148,14 +72,15 @@ function appendLog(action, content) {
 
 async function getEmbedding(text) {
     try {
-        if (!extractorPipeline) {
+        const extractor = await getExtractor();
+        if (!extractor) {
             // initEmbeddingModel has failed to load anything
             return null;
         }
-        
+
         // Output pooling 'mean' is common for sequence embeddings, and normalize for cosine similarity
-        const output = await extractorPipeline(text, { pooling: 'mean', normalize: true });
-        
+        const output = await extractor(text, { pooling: 'mean', normalize: true });
+
         // Extract the raw float array from the Tensor
         return Array.from(output.data);
     } catch (error) {
@@ -166,35 +91,33 @@ async function getEmbedding(text) {
 
 async function getRerankedScores(query, texts) {
     if (!texts || texts.length === 0) return [];
-    
+
     try {
-        if (!classifierPipeline) {
-            // Lazy load the cross-encoder pipeline
-            classifierPipeline = await pipeline('text-classification', RERANKER_MODEL, {
-                quantized: true,
-            });
+        const reranker = await getReranker();
+        if (!reranker) {
+            return null; // Reranker failed to load, fallback to vector distance
         }
 
-        // Transformers.js text-classification pipeline supports Cross-Encoder format 
+        // Transformers.js text-classification pipeline supports Cross-Encoder format
         // We will process them one by one to ensure compatibility with all model architectures
         const results = [];
         for (let i = 0; i < texts.length; i++) {
             // Note: Some models expect a string, some expect (string, string).
             // Usually, for cross-encoders in transformers.js, we pass the query and document as separate arguments.
             // Wait for the result: [ { label: 'LABEL_0', score: 0.99 } ]
-            const res = await classifierPipeline(query, texts[i]);
-            
+            const res = await reranker(query, texts[i]);
+
             // Depending on the model, it might return an array of objects or a single object.
             // e.g., [{ label: 'LABEL_1', score: 0.8 }] or just { label: ... }
             const scoreObj = Array.isArray(res) ? res[0] : res;
             const score = scoreObj && scoreObj.score !== undefined ? scoreObj.score : 0;
-            
+
             results.push({
                 index: i,
                 relevance_score: score
             });
         }
-        
+
         return results.sort((a, b) => b.relevance_score - a.relevance_score);
 
     } catch (error) {
@@ -264,13 +187,12 @@ async function remember(content, source = 'cli') {
     console.log(`✅ Remembered! (ID: ${id})`);
     console.log(`💡 [交接规约监控]: 记忆已打入隐性碎片池！请确保你同时修改了 \`.evo-lite/active_context.md\` 推进任务状态，并执行了 \`git commit\`！`);
     appendLog('REMEMBER', `ID ${id} - ${content.substring(0, 50)}...`);
-    db.close();
-}
+    }
 
 async function recall(query, topK = 3) {
     console.log(`🔍 Searching memory for: "${query}"...`);
     const queryVector = await getEmbedding(query);
-    const db = initDb();
+    const db = getDb();
 
     if (!queryVector) {
         console.warn(`\\n⚠️ 提示：无法连接 Embedding 模型。向量检索瘫痪。`);
@@ -295,16 +217,15 @@ async function recall(query, topK = 3) {
         }
 
         appendLog('RECALL_FALLBACK', `Text queried "${query}"`);
-        db.close();
         return;
     }
 
     const vecBuffer = new Float32Array(queryVector);
 
     const stmt = db.prepare(`
-        SELECT 
-            m.rowid as id, 
-            mc.content, 
+        SELECT
+            m.rowid as id,
+            mc.content,
             distance
         FROM memories m
         JOIN memory_contents mc ON m.rowid = mc.id
@@ -323,6 +244,7 @@ async function recall(query, topK = 3) {
     }
 
     const documents = results.map(r => r.content);
+    const RERANKER_MODEL = 'Xenova/bge-reranker-base';
     console.log(`⏳ Reranking ${documents.length} candidates using ${RERANKER_MODEL}...`);
 
     const reranked = await getRerankedScores(query, documents);
@@ -344,7 +266,6 @@ async function recall(query, topK = 3) {
 
     console.log('================================================\\n');
     appendLog('RECALL', `Queried "${query}", found and reranked results.`);
-    db.close();
 }
 
 function forget(id) {
@@ -361,8 +282,7 @@ function forget(id) {
     } else {
         console.log(`⚠️ 未找到 ID 为 ${id} 的记忆碎片，或者已经被遗忘。`);
     }
-    db.close();
-}
+    }
 
 function stats() {
     const db = initDb();
@@ -384,8 +304,7 @@ function stats() {
         console.log('数据库体积   : 未知');
     }
     console.log('-----------------------------------\\n');
-    db.close();
-}
+    }
 
 function exportMemories(filePath) {
     if (!filePath) {
@@ -396,8 +315,7 @@ function exportMemories(filePath) {
     fs.writeFileSync(filePath, JSON.stringify(records, null, 2), 'utf8');
     console.log(`✅ ${records.length} 条记忆已导出至: ${filePath}`);
     appendLog('EXPORT', `Exported ${records.length} records to ${filePath}`);
-    db.close();
-}
+    }
 
 async function importMemories(filePath) {
     if (!filePath) {
@@ -672,9 +590,8 @@ async function archive(content, type = 'task') {
 
     const crypto = require('crypto');
     const timestamp = new Date().toISOString();
-    const dateStr = timestamp.split('T')[0];
-    const timeStr = timestamp.split('T')[1].substring(0, 8).replace(/:/g, '-');
-    const id = `mem_${dateStr}_${timeStr}_${crypto.randomBytes(4).toString('hex')}`;
+    const id = crypto.randomBytes(4).toString('hex');
+    const filename = `${timestamp.replace(/[:.]/g, '-')}-${id}.md`;
 
     let mdBody = '';
     if (type === 'bug') {
@@ -691,7 +608,7 @@ tags: []
 ---
 
 ${mdBody}`;
-    const filePath = path.join(rawDir, `${id}.md`);
+    const filePath = path.join(rawDir, filename);
     fs.writeFileSync(filePath, fileContent, 'utf8');
     console.log(`📄 原始结构化档案已写入: ${filePath}`);
 
@@ -702,7 +619,7 @@ ${mdBody}`;
     }
 
     // 标记为已向量化
-    const vectFilePath = path.join(vectDir, `${id}.md`);
+    const vectFilePath = path.join(vectDir, filename);
     fs.writeFileSync(vectFilePath, '', 'utf8');
 }
 
@@ -791,8 +708,7 @@ async function syncVectorMemory() {
         }
     }
 
-    db.close();
-    console.log(`✅ 增量同步完成！成功向量化了 ${successCount} 个语义碎片。`);
+        console.log(`✅ 增量同步完成！成功向量化了 ${successCount} 个语义碎片。`);
 }
 
 async function vectorize() {
@@ -922,8 +838,7 @@ async function vectorize() {
             console.log(`\x1b[32mOK\x1b[0m`);
         }
         
-        db.close();
-        console.log(`\n✅ 重铸完成！共成功重新向量化了 ${successCount} 个语义碎片。`);
+                console.log(`\n✅ 重铸完成！共成功重新向量化了 ${successCount} 个语义碎片。`);
 
         // 全量重铸后，更新所有文件的占位符
         const vectDir = path.join(__dirname, '..', 'vect_memory');
@@ -935,7 +850,14 @@ async function vectorize() {
 }
 
 const action = process.argv[2];
-let text = process.argv[3];
+let text;
+const contentIndex = process.argv.findIndex(arg => arg === '--content' || arg === '--query');
+
+if (contentIndex !== -1 && process.argv.length > contentIndex + 1) {
+  text = process.argv[contentIndex + 1];
+} else if (action !== 'memorize' && action !== 'recall' && action !== 'remember') {
+  text = process.argv[3];
+}
 const typeArg = process.argv.find(arg => arg.startsWith('--type='));
 const archiveType = typeArg ? typeArg.split('=')[1] : 'task';
 
@@ -1017,8 +939,7 @@ async function run() {
         if (fs.existsSync(DB_PATH)) {
             const db = initDb();
             console.log(`✅ Evo-Lite 实体库状态: \x1b[32m已就绪\x1b[0m`);
-            db.close();
-        } else {
+                    } else {
             console.log(`✅ Evo-Lite 实体库状态: \x1b[33m尚未生成 (首次 remember 后自动创建)\x1b[0m`);
         }
 
