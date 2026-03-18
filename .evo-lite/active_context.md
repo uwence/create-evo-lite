@@ -16,6 +16,7 @@
 
 ## 🔄 最近轨迹 (≤ 10 条)
 <!-- BEGIN_TRAJECTORY -->
+- [5f3a641] 2026-03-18 Architecture Refactor: Decoupled the init script (index.js) from the template structure by implementing a recursive copy me
 - [4bc99ac] 2026-03-18 Rule Enforcement: Strengthened the rules in evo-lite.md and commit.md to make direct modification of active_context.md
 - [492ae57] 2026-03-18 Config Alignment: Aligned track truncation limit to 100 characters in memory.js and synced with templates.
 - [c8efc63] 2026-03-18 File Naming Protocol: Updated memory file naming to ...
@@ -25,7 +26,6 @@
 - [2026-03-17] 开展对纯 Node.js ONNX RAG 架构的长周期稳定性与内存泄漏排查。
 - [2026-03-17] 实现向量增量同步
 - [2026-03-18] 完成 v1.5.4 大清洗：移除 compact 全链路、Capacity Lock (30→∞)、Format Schema 强制守卫；实现 index.js Jina 优先模型供给策略 + BGE 离线兜底；精简 memory-distillation.md 并补充 1:N 分块规则文档。
-- [2026-03-17] 测试带时间戳的 Raw Memory 归档文件名
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
