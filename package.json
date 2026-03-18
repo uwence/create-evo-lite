@@ -1,6 +1,6 @@
 {
     "name": "create-evo-lite",
-    "version": "1.5.4",
+    "version": "2.0.0",
     "description": "0-Intrusion Daemonless RAG Memory Bank for AI Agents & Coding Workflows.",
     "main": "index.js",
     "bin": {
