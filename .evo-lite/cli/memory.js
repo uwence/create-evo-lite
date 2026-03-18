@@ -585,7 +585,7 @@ async function contextCommand(op) {
         let trajectory = readSection(md, 'TRAJECTORY');
         if (!trajectory) trajectory = '';
         const today = new Date().toISOString().split('T')[0];
-        const newTrajLine = `- [${commitHash}] ${today} ${mechanism}: ${details.substring(0, 30)}...`;
+        const newTrajLine = `- [${commitHash}] ${today} ${mechanism}: ${details.substring(0, 100)}`;
 
         let trajLines = trajectory.split('\n').filter(line => line.trim().startsWith('- ['));
         trajLines.unshift(newTrajLine);
