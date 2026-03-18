@@ -12,14 +12,11 @@
 ## 🚧 活跃任务 (≤ 5 条)
 <!-- BEGIN_BACKLOG -->
 
-
-- [ ] [1e3a] 执行 npm publish 将 v1.5.4 发布至 npm registry。
-
-
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 <!-- BEGIN_TRAJECTORY -->
+- [c8efc63] 2026-03-18 File Naming Protocol: Updated memory file naming to ...
 - [b37c512] 2026-03-18 Wash Protocol: Updated Wash Protocol with seq...
 - [bc5df8f] 2026-03-18 跨会话继承: 通过 E2E 项目生成和模拟 Agent 唤醒，验证了跨会话...
 - [9de40fe] 2026-03-18 测试闭环: 这是一条极其严谨的测试记录，用于验证在无 dirty cod...
@@ -29,7 +26,6 @@
 - [2026-03-17] 测试带时间戳的 Raw Memory 归档文件名
 - [2026-03-17] 修复 /mem Catch-22 死锁：通过补充 --details 参数彻底解耦了短文本（删除 Backlog）与长文本（向量入库）的约束冲突，完成 v1.5.2 架构闭环。
 - [2026-03-17] 完成 v1.5.2 核心重构：引入了 Raw Memory 1:N 结构化分离引擎，支持 Symptom 和 Solution 分离提取映射。
-- [2026-03-15] 完成 v1.5.0 锚点隔离与定向写入架构。
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
