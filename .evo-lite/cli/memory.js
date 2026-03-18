@@ -443,7 +443,7 @@ function writeSection(md, anchor, newContent) {
     return md.replace(regex, `$1\n${newContent}\n$2`);
 }
 
-async function contextCommand(op, arg, details) {
+async function contextCommand(op) {
     const contextPath = path.join(__dirname, '..', 'active_context.md');
     if (!fs.existsSync(contextPath)) {
         return console.error(`❌ 未找到 active_context.md`);
@@ -451,80 +451,185 @@ async function contextCommand(op, arg, details) {
     let md = fs.readFileSync(contextPath, 'utf8');
 
     if (op === 'focus') {
+        const argParams = process.argv.slice(4).filter(a => !a.startsWith('--'));
+        const arg = argParams.length > 0 ? argParams[0] : '';
         if (!arg) return console.error(`❌ Usage: node .evo-lite/cli/memory.js context focus "新焦点内容"`);
         md = writeSection(md, 'FOCUS', arg);
         console.log(`✅ FOCUS 已更新为: ${arg}`);
+        fs.writeFileSync(contextPath, md, 'utf8');
     } else if (op === 'add') {
+        const argParams = process.argv.slice(4).filter(a => !a.startsWith('--'));
+        const arg = argParams.length > 0 ? argParams[0] : '';
         if (!arg) return console.error(`❌ Usage: node .evo-lite/cli/memory.js context add "新任务描述"`);
+
+        const crypto = require('crypto');
+        const hash = crypto.randomBytes(2).toString('hex'); // 4 chars
+
         let backlog = readSection(md, 'BACKLOG');
         if (!backlog) backlog = '';
-        
+
         const tasks = backlog.split('\n').filter(line => line.trim().startsWith('- [ ]'));
         if (tasks.length >= 5) {
-            console.error(`❌ [拒绝操作] BACKLOG 任务数已达硬上限 (5条)。请先 complete 任务或移入搁置区。`);
+            console.error(`❌ [拒绝操作] BACKLOG 任务数已达硬上限 (5条)。请先完成任务或移入搁置区。`);
             process.exit(1);
         }
-        
+
+        const newTaskLine = `- [ ] [${hash}] ${arg}`;
         backlog = backlog.trim();
         if (backlog === '') {
-            backlog = `- [ ] ${arg}`;
+            backlog = newTaskLine;
         } else {
-            backlog += `\n- [ ] ${arg}`;
+            backlog += `\n${newTaskLine}`;
         }
         md = writeSection(md, 'BACKLOG', backlog);
-        console.log(`✅ 新任务已加入 BACKLOG: ${arg}`);
-    } else if (op === 'complete') {
-        if (!arg) return console.error(`❌ Usage: node .evo-lite/cli/memory.js context complete "提取词" [--details="详细说明..."]`);
-        
-        let backlog = readSection(md, 'BACKLOG');
-        let matchedTask = arg;
-        if (backlog) {
-            let lines = backlog.split('\n');
-            let foundIndex = lines.findIndex(line => line.trim().startsWith('- [ ]') && line.includes(arg));
-            if (foundIndex !== -1) {
-                matchedTask = lines[foundIndex].replace('- [ ]', '').trim();
-                console.log(`🗑️ 从 BACKLOG 移除: ${lines[foundIndex].trim()}`);
-                lines.splice(foundIndex, 1);
-                md = writeSection(md, 'BACKLOG', lines.join('\n').trim() === '' ? '' : lines.join('\n'));
-            } else {
-                console.log(`⚠️ 在 BACKLOG 中未找到包含 "${arg}" 的任务，继续执行归档流程。`);
+        fs.writeFileSync(contextPath, md, 'utf8');
+        console.log(`✅ 新任务已加入 BACKLOG: ${newTaskLine}`);
+    } else if (op === 'track') {
+        const mechanismArg = process.argv.find(arg => arg.startsWith('--mechanism='));
+        const mechanism = mechanismArg ? mechanismArg.substring('--mechanism='.length) : null;
+        const detailsArg = process.argv.find(arg => arg.startsWith('--details='));
+        const details = detailsArg ? detailsArg.substring('--details='.length) : null;
+        const resolveArg = process.argv.find(arg => arg.startsWith('--resolve='));
+        const resolve = resolveArg ? resolveArg.substring('--resolve='.length) : null;
+
+        if (!mechanism || !details) {
+            console.error(`❌ Usage: node .evo-lite/cli/memory.js context track --mechanism="机制名" --details="长文本经验" [--resolve="4-char-hash"]`);
+            process.exit(1);
+        }
+
+        // GUARD: check git status of tracked files
+        try {
+            require('child_process').execSync('git diff --cached --quiet && git diff --quiet', { stdio: 'pipe' });
+        } catch (e) {
+            console.error(`❌ [致命约束被触发] 工作区有未提交的代码变更！`);
+            console.error(`👉 Agent 必须先执行 git commit 保存代码，再执行 track 记录轨迹。`);
+            process.exit(1);
+        }
+
+        // AUTO-HASH
+        let commitHash = 'No-Git';
+        try {
+            commitHash = require('child_process').execSync('git rev-parse --short HEAD', { encoding: 'utf8', stdio: 'pipe' }).trim();
+        } catch (e) { }
+
+        const typeArg = process.argv.find(a => a.startsWith('--type='));
+        const type = typeArg ? typeArg.split('=')[1] : 'task';
+
+        // Archive logic for track
+        const rawDir = path.join(__dirname, '..', 'raw_memory');
+        const vectDir = path.join(__dirname, '..', 'vect_memory');
+
+        if (!fs.existsSync(rawDir)) fs.mkdirSync(rawDir, { recursive: true });
+        if (!fs.existsSync(vectDir)) fs.mkdirSync(vectDir, { recursive: true });
+
+        const crypto = require('crypto');
+        const timestamp = new Date().toISOString();
+        const id = `${commitHash}_${crypto.randomBytes(4).toString('hex')}`;
+
+        let mdBody = '';
+        if (type === 'bug') {
+            mdBody = `## 现象 (Symptom)\n${details}\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n`;
+        } else {
+            mdBody = `## 实现细节 (Implementation)\n${details}\n\n## 架构决策 (Architecture)\n${mechanism}\n`;
+        }
+
+        const fileContent = `---\nid: "${id}"\ntimestamp: "${timestamp}"\ntype: "${type}"\ntags: []\n---\n\n${mdBody}`;
+
+        console.log(`🚀 触发 1:N 向量重组归档...`);
+        const chunks = extractChunksFromMd(fileContent, type);
+        let archiveSuccess = true;
+        for (const chunk of chunks) {
+            try {
+                // To avoid the length<40 guard and use id as source, we pass source=id.
+                // Our remember() function says if(!isImport){ if(content.length < 40) ... }
+                // Wait, remember() takes source. Let's pass 'cli_archive' to it, but `remember(content, id)` is used by old `archive()`
+                // Wait, old archive used `await remember(chunk, id);`
+                await remember(chunk, id);
+            } catch (e) {
+                archiveSuccess = false;
+                console.error(`❌ 向量化写入失败: ${e.message}`);
             }
         }
-        
+
+        if (!archiveSuccess) {
+            console.error(`❌ 向量化写入失败，终止追踪。`);
+            process.exit(1);
+        }
+
+        // Now we can safely write files
+        const filePath = path.join(rawDir, `${id}.md`);
+        fs.writeFileSync(filePath, fileContent, 'utf8');
+        console.log(`📄 原始结构化档案已写入: ${filePath}`);
+
+        const vectFilePath = path.join(vectDir, `${id}.md`);
+        fs.writeFileSync(vectFilePath, '', 'utf8');
+
+        // Update active_context.md
+        let resolveMsg = "任务未消除 (只记录轨迹)";
+        if (resolve) {
+            let backlog = readSection(md, 'BACKLOG');
+            if (backlog) {
+                let lines = backlog.split('\n');
+                let foundIndex = lines.findIndex(line => line.trim().startsWith('- [ ]') && line.includes(`[${resolve}]`));
+                if (foundIndex !== -1) {
+                    console.log(`🗑️ 从 BACKLOG 精准移除任务 [${resolve}]: ${lines[foundIndex].trim()}`);
+                    lines.splice(foundIndex, 1);
+                    md = writeSection(md, 'BACKLOG', lines.join('\n').trim() === '' ? '' : lines.join('\n'));
+                    resolveMsg = `任务 [${resolve}] 已成功消除`;
+                } else {
+                    console.log(`⚠️ 在 BACKLOG 中未找到包含 [${resolve}] 的任务。`);
+                }
+            }
+        }
+
         let trajectory = readSection(md, 'TRAJECTORY');
         if (!trajectory) trajectory = '';
         const today = new Date().toISOString().split('T')[0];
-        const newTrajLine = `- [${today}] ${matchedTask}`;
-        
+        const newTrajLine = `- [${commitHash}] ${today} ${mechanism}: ${details.substring(0, 30)}...`;
+
         let trajLines = trajectory.split('\n').filter(line => line.trim().startsWith('- ['));
         trajLines.unshift(newTrajLine);
-        
+
         if (trajLines.length > 10) {
-            const removed = trajLines.pop();
-            console.log(`🗑️ TRAJECTORY 超限，移除最旧条目: ${removed.trim()}`);
+            trajLines.pop(); // Keep max 10
         }
-        
+
         md = writeSection(md, 'TRAJECTORY', trajLines.join('\n'));
-        console.log(`✅ 任务已移入 TRAJECTORY: ${newTrajLine}`);
-        
-        console.log(`📦 正在触发溢出归档流程...`);
-        const fileArg = process.argv.find(a => a.startsWith('--file='));
-        let archiveContent = details ? details : arg;
-        if (fileArg) {
-            const filePath = fileArg.split('=')[1];
-            if (fs.existsSync(filePath)) {
-                archiveContent = fs.readFileSync(filePath, 'utf8').trim();
-            }
+        fs.writeFileSync(contextPath, md, 'utf8');
+
+        // AUTO-META-COMMIT
+        try {
+            require('child_process').execSync('git add .evo-lite/ && git commit -m "chore(context): track ' + commitHash + '"', { stdio: 'pipe' });
+        } catch (e) {
+            console.error(`⚠️ 自动执行 chore(context) meta-commit 失败: ${e.message}`);
         }
-        const typeArg = process.argv.find(a => a.startsWith('--type='));
-        const archiveType = typeArg ? typeArg.split('=')[1] : 'task';
-        await archive(archiveContent, archiveType);
+
+        // COGNITIVE PAYLOAD (Printed for Agent)
+        const updatedBacklog = readSection(md, 'BACKLOG');
+        const remainingTasks = updatedBacklog ? updatedBacklog.split('\n').filter(line => line.trim().startsWith('- [ ]')) : [];
+
+        console.log(`\n================================================================`);
+        console.log(`[SYSTEM: METADATA SYNC SUCCESSFUL]`);
+        console.log(`- 轨迹已记录 (Hash: ${commitHash})`);
+        console.log(`- 记忆已结构化并向量入库 (vect_memory 已标记)`);
+        console.log(`- 状态变更已自动 Commit`);
+        console.log(`\n[SYSTEM: CONTEXT UPDATE]`);
+        console.log(`${resolveMsg}。当前活跃任务 (Backlog) 剩余：${remainingTasks.length} 条。`);
+        if (remainingTasks.length > 0) {
+            remainingTasks.forEach(t => console.log(t));
+            console.log(`\n[AGENT INSTRUCTION]`);
+            console.log(`请向 User 汇报任务已闭环/轨迹已记录，并列出上述剩余任务，询问 User 下一步是继续执行哪一个任务，或者结束当前工作会话。`);
+        } else {
+            console.log(`\n[AGENT INSTRUCTION]`);
+            console.log(`警告：所有待办任务已清空！当前功能迭代已全部完成。`);
+            console.log(`请立即向 User 汇报此状态，并询问是否需要主动触发会话结束协议（/mem）进行版本号跃迁 (Bump Version) 和 Git Tag 发布。`);
+        }
+        console.log(`================================================================\n`);
+
     } else {
         console.error(`❌ 未知的 context 操作: ${op}`);
         return;
     }
-    
-    fs.writeFileSync(contextPath, md, 'utf8');
 }
 
 function extractChunksFromMd(md, type) {
@@ -866,10 +971,7 @@ async function run() {
 
     } else if (action === 'context') {
         const op = process.argv[3];
-        const argParams = process.argv.slice(4).filter(a => !a.startsWith('--'));
-        const detailsArg = process.argv.find(arg => arg.startsWith('--details='));
-        const details = detailsArg ? detailsArg.substring('--details='.length) : null;
-        await contextCommand(op, argParams.length > 0 ? argParams[0] : '', details);
+        await contextCommand(op);
     } else if (action === 'archive') {
         let textArg = text;
         if (textArg && textArg.startsWith('--')) {
@@ -966,7 +1068,7 @@ async function run() {
   \x1b[32mexport\x1b[0m <file>     Export all memories to a JSON file (stdout).
   \x1b[32mimport\x1b[0m <file>     Import memories from a JSON file path.
 
-  \x1b[32mcontext\x1b[0m <op>...   Modify active_context.md anchors (complete, add, focus).
+  \x1b[32mcontext\x1b[0m <op>...   Modify active_context.md anchors (track, add, focus).
   \x1b[32marchive\x1b[0m <text>    Save a summary to raw_memory/ and auto-vectorize it.
   \x1b[32msync\x1b[0m              Check for unvectorized raw_memory and incrementally vectorize them.
   \x1b[32mvectorize\x1b[0m         Rebuild vector index interactively.

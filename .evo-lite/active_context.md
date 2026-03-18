@@ -11,13 +11,10 @@
 完成 v1.5.4 全链路精简：移除 compact/Capacity Lock/Format Schema，实现 Jina 优先模型供给策略，下一步可进入稳定性测试或 npm publish。
 ## 🚧 活跃任务 (≤ 5 条)
 <!-- BEGIN_BACKLOG -->
-
-
-- [ ] 验证 `/mem` 协议在跨会话状态继承中的表现。
-- [ ] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
-- [ ] 执行 npm publish 将 v1.5.4 发布至 npm registry。
-
-
+- [ ] [8c2d] 验证 `/mem` 协议在跨会话状态继承中的表现。
+- [ ] [f9b1] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
+- [ ] [1e3a] 执行 npm publish 将 v1.5.4 发布至 npm registry。
+- [ ] [27f8] Test dynamically added task
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
