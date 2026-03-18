@@ -528,9 +528,9 @@ async function contextCommand(op) {
 
         let mdBody = '';
         if (type === 'bug') {
-            mdBody = `## 现象 (Symptom)\n${details}\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n`;
+            mdBody = `## 现象 (Symptom)\n[${mechanism}]\n${details}\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n`;
         } else {
-            mdBody = `## 实现细节 (Implementation)\n${details}\n\n## 架构决策 (Architecture)\n${mechanism}\n`;
+            mdBody = `## 实现细节 (Implementation)\n[${mechanism}]\n${details}\n\n## 架构决策 (Architecture)\n未记录\n`;
         }
 
         const fileContent = `---\nid: "${id}"\ntimestamp: "${timestamp}"\ntype: "${type}"\ntags: []\n---\n\n${mdBody}`;
