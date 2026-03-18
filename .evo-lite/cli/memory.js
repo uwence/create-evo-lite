@@ -672,9 +672,8 @@ async function archive(content, type = 'task') {
 
     const crypto = require('crypto');
     const timestamp = new Date().toISOString();
-    const dateStr = timestamp.split('T')[0];
-    const timeStr = timestamp.split('T')[1].substring(0, 8).replace(/:/g, '-');
-    const id = `mem_${dateStr}_${timeStr}_${crypto.randomBytes(4).toString('hex')}`;
+    const id = crypto.randomBytes(4).toString('hex');
+    const filename = `${timestamp.replace(/[:.]/g, '-')}-${id}.md`;
 
     let mdBody = '';
     if (type === 'bug') {
@@ -691,7 +690,7 @@ tags: []
 ---
 
 ${mdBody}`;
-    const filePath = path.join(rawDir, `${id}.md`);
+    const filePath = path.join(rawDir, filename);
     fs.writeFileSync(filePath, fileContent, 'utf8');
     console.log(`📄 原始结构化档案已写入: ${filePath}`);
 
@@ -702,7 +701,7 @@ ${mdBody}`;
     }
 
     // 标记为已向量化
-    const vectFilePath = path.join(vectDir, `${id}.md`);
+    const vectFilePath = path.join(vectDir, filename);
     fs.writeFileSync(vectFilePath, '', 'utf8');
 }
 
