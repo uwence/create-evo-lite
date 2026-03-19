@@ -19,12 +19,6 @@ async function memorize(text) {
     const extractor = await getExtractor();
     const { model, dims } = getActiveModelInfo();
 
-    db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS vectors USING vec0(
-            embedding float[${dims}]
-        );
-    `);
-
     const rawMemoryId = db.prepare('INSERT INTO raw_memory (content) VALUES (?)').run(text).lastInsertRowid;
     const chunks = chunkText(text);
 
@@ -46,17 +40,22 @@ async function recall(query, top_k = 10) {
     const queryVector = JSON.stringify(Array.from(queryEmbedding.data));
 
     const results = db.prepare(`
-        SELECT chunks.content, vectors.distance
-        FROM vectors
-        JOIN chunks ON chunks.vector_id = vectors.rowid
-        WHERE vectors.distance < 0.8
-        ORDER BY vectors.distance
-        LIMIT ?
+        SELECT
+            c.content,
+            v.distance
+        FROM
+            vectors v
+        JOIN
+            chunks c ON v.rowid = c.vector_id
+        WHERE
+            v.embedding MATCH ? AND k = ?
+        ORDER BY
+            v.distance
     `).all(queryVector, top_k);
 
     if (reranker && results.length > 0) {
-        const scores = await reranker(results.map(r => [query, r.content]));
-        const sortedResults = results.map((r, i) => ({ ...r, score: scores[i].score })).sort((a, b) => b.score - a.score);
+        const scores = await Promise.all(results.map(r => reranker(query, r.content)));
+        const sortedResults = results.map((r, i) => ({ ...r, score: scores[i][0].score })).sort((a, b) => b.score - a.score);
         return sortedResults;
     }
 
@@ -111,7 +110,39 @@ function track(mechanism, details) {
 
 function verify() {
     console.log('Verifying system...');
-    // This is a placeholder for a more complex verification process
+
+    // Check CLI files synchronization
+    const cliPath = path.join(__dirname);
+    const templateCliPath = path.join(__dirname, '..', '..', 'templates', 'cli');
+
+    if (fs.existsSync(templateCliPath)) {
+        const files = ['memory.js', 'db.js', 'models.js', 'memory.service.js'];
+        let outOfSync = false;
+
+        files.forEach(file => {
+            const activeFile = path.join(cliPath, file);
+            const templateFile = path.join(templateCliPath, file);
+
+            if (fs.existsSync(activeFile) && fs.existsSync(templateFile)) {
+                const activeContent = fs.readFileSync(activeFile, 'utf8');
+                const templateContent = fs.readFileSync(templateFile, 'utf8');
+                if (activeContent !== templateContent) {
+                    console.warn(`⚠️ Warning: ${file} is out of sync between active CLI and templates.`);
+                    outOfSync = true;
+                }
+            } else if (fs.existsSync(activeFile) && !fs.existsSync(templateFile)) {
+                console.warn(`⚠️ Warning: ${file} is missing in templates/cli/.`);
+                outOfSync = true;
+            }
+        });
+
+        if (!outOfSync) {
+            console.log('✅ CLI files are synced with templates.');
+        }
+    } else {
+        console.warn('⚠️ template/cli directory not found, skipping sync check.');
+    }
+
     console.log('System OK.');
 }
 

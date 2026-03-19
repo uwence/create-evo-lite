@@ -28,7 +28,11 @@ if (fileArg) {
 }
 
 async function run() {
-    initDB();
+    const { initEmbeddingModel, getActiveModelInfo } = require('./models');
+
+    await initEmbeddingModel();
+    const { model, dims } = getActiveModelInfo();
+    initDB(model, dims);
 
     if (action === 'remember' || action === 'memorize') {
         if (!text) return console.log('Usage: node memory.js remember <"text message"> OR node memory.js remember --file=<path>');
