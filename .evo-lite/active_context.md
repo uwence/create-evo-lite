@@ -15,7 +15,7 @@
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
-<!-- BEGIN_TRAJECTORY -->
+<!-- BEGIN_TRAJECTORY -->\n- [并发容错与自检增强] 2026-03-19 为数据库插入了WAL并发保护和模型降级重启表机制，在verify命令中增加模板文件同步检测\n- [QA_TEST] 2026-03-19 Verified memory core loop\n
 - [5f3a641] 2026-03-18 Architecture Refactor: Decoupled the init script (index.js) from the template structure by implementing a recursive copy me
 - [4bc99ac] 2026-03-18 Rule Enforcement: Strengthened the rules in evo-lite.md and commit.md to make direct modification of active_context.md
 - [492ae57] 2026-03-18 Config Alignment: Aligned track truncation limit to 100 characters in memory.js and synced with templates.
@@ -26,7 +26,7 @@
 - [2026-03-17] 开展对纯 Node.js ONNX RAG 架构的长周期稳定性与内存泄漏排查。
 - [2026-03-17] 实现向量增量同步
 - [2026-03-18] 完成 v1.5.4 大清洗：移除 compact 全链路、Capacity Lock (30→∞)、Format Schema 强制守卫；实现 index.js Jina 优先模型供给策略 + BGE 离线兜底；精简 memory-distillation.md 并补充 1:N 分块规则文档。
-<!-- END_TRAJECTORY -->
+\n<!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
 > ⚠️ 此区域无锚点保护，可自由追加灵感与低优先级任务，但严禁在此堆积已完成任务。
