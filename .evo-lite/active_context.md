@@ -1,14 +1,14 @@
 # 🧠 Evo-Lite Active Context (EvoRouter)
 
 <!-- BEGIN_META -->
-> **更新时间**: 2026-03-18
-> **项目状态**: v1.5.4 — 完成 compact 全链路拆除、Capacity Lock 移除、Format Schema 精简、Jina 优先模型供给策略上线。
+> **更新时间**: 2026-03-19
+> **项目状态**: v2.0.3 — 彻底重构了 memory 服务底座，全面拆解 db.js, models.js，加上 SQLite WAL 锁防护，完成 CLI 和 templates 的全链路自动化测试与文件同步校验。
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
 <!-- END_META -->
 
 ## 🎯 当前焦点
 <!-- BEGIN_FOCUS -->
-完成 v1.5.4 全链路精简：移除 compact/Capacity Lock/Format Schema，实现 Jina 优先模型供给策略，下一步可进入稳定性测试或 npm publish。
+已完成核心记忆库并发容灾与模块化重构。下一步：评估整体稳定性，筹备进入正式的 npm publish 发布流程，以及继续开发/扩展周边命令支持。
 ## 🚧 活跃任务 (≤ 5 条)
 <!-- BEGIN_BACKLOG -->
 
