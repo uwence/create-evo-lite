@@ -11,7 +11,7 @@
 [![Agent](https://img.shields.io/badge/Agent-Evo--Lite-84cc16.svg)](#)
 [![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
 
-[English README](./README_EN.md) • [Architecture](./docs/AI_AGENT_DEFENSE_ARCHITECTURE.md) • [Usage Guide](#🚀-quick-start) • [中文介绍](./README.md)
+[English README](./README_EN.md) • [Architecture](./docs/AI_AGENT_DEFENSE_ARCHITECTURE.md) • [Remember Boundary](./docs/REMEMBER_BOUNDARY_DECISION.md) • [Usage Guide](#🚀-quick-start) • [中文介绍](./README.md)
 
 ---
 </div>
@@ -55,14 +55,14 @@ As AI coding assistants become increasingly powerful, we often encounter these *
   - **Explicit state machine (`active_context.md`)** for focus, backlog, and trajectory handover
   - **Implicit memory store (`memory.db`, `raw_memory`, `vect_memory`)** for long-term searchable recall and rebuildable archives
 * **🛠️ Rebuildable Archive Pipeline**
-  `archive`, `sync`, and `vectorize` make memory maintainable over time, instead of turning it into a one-shot write-only cache.
+  `archive`, `sync`, and `rebuild` make memory maintainable over time, instead of turning it into a one-shot write-only cache.
 * **⚓ Space-Time Traceability (Git Anchoring)**
   `remember` writes are stamped with `[Time]` and Git `[Commit Hash]`, while `archive` / `track` artifacts keep their traceability in frontmatter plus structured Markdown sections. The goal is durable provenance, without pretending every memory path uses the exact same envelope.
 * **🔄 Upgradeable Runtime**
   Existing projects can be re-initialized and verified without treating the first scaffold as the only valid moment of setup.
 * **⚡ Workflow Protocols + CLI Commands**
   - Workflow layer: `/evo`, `/commit`, `/mem`, `/wash`
-  - Execution layer: `remember`, `recall`, `export`, `import`, `archive`, `sync`, `vectorize`, `context`
+  - Execution layer: `remember`, `recall`, `export`, `import`, `archive`, `sync`, `rebuild`, `context`
 
 ## 🧭 Dual-Lane Memory Model
 

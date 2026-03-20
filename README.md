@@ -11,7 +11,7 @@
 [![Agent](https://img.shields.io/badge/Agent-Evo--Lite-84cc16.svg)](#)
 [![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
 
-[English README](./README_EN.md) • [Architecture](./docs/AI_AGENT_DEFENSE_ARCHITECTURE.md) • [Usage Guide](#🚀-极速上手-quick-start) • [中文介绍](./README.md)
+[English README](./README_EN.md) • [Architecture](./docs/AI_AGENT_DEFENSE_ARCHITECTURE.md) • [Remember Boundary](./docs/REMEMBER_BOUNDARY_DECISION.md) • [Usage Guide](#🚀-极速上手-quick-start) • [中文介绍](./README.md)
 
 ---
 </div>
@@ -55,14 +55,14 @@
   - **显性状态机（`active_context.md`）**：焦点、backlog、trajectory 都有锚点边界，适合接管与交接。
   - **隐性记忆库（`memory.db` / `raw_memory` / `vect_memory`）**：结构化归档与向量索引并存，支持后续重建与同步。
 * **🛠️ 可重建的归档管线**
-  `archive`、`sync`、`vectorize` 让记忆不是“一次性写进去就听天由命”，而是可以补向量、重建向量、跨模型迁移。
+  `archive`、`sync`、`rebuild` 让记忆不是“一次性写进去就听天由命”，而是可以补向量、重建向量、跨模型迁移。
 * **⚓ Space-Time 溯源锚定 (Git Traceability)**
   `remember` 写入数据库时会补上 `[Time]` 与 `[Commit]` 头；`archive` / `track` 生成的原始档案则以 frontmatter 和结构化 Markdown 保留溯源上下文，避免把“流水账”伪装成长期知识。
 * **🔄 可升级，不强依赖单次初始化**
   你可以重新运行脚手架升级模板，也可以单独跑 `verify` 检查当前实例是否和新协议脱节。
 * **⚡ 工作流协议 + CLI 命令**
   - 工作流层：`/evo`、`/commit`、`/mem`、`/wash`
-  - 执行层：`remember`、`recall`、`export`、`import`、`archive`、`sync`、`vectorize`、`context`
+  - 执行层：`remember`、`recall`、`export`、`import`、`archive`、`sync`、`rebuild`、`context`
 
 ## 🧭 记忆双轨模型
 
