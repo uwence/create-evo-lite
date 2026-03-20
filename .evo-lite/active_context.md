@@ -2,8 +2,8 @@
 
 <!-- BEGIN_META -->
 
-> **更新时间**: 2026-03-19
-> **项目状态**: v2.0.3 — 彻底重构了 memory 服务底座，全面拆解 db.js, models.js，加上 SQLite WAL 锁防护，完成 CLI 和 templates 的全链路自动化测试与文件同步校验。
+> **更新时间**: 2026-03-21
+> **项目状态**: v2.0.4 — 完成 verify 边界收口、Git 注入链健壮化、trajectory 标签修复与 dogfooding 资产整理；普通开发循环不再默认触发 verify，/evo 与恢复场景边界已澄清。
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
 
 <!-- END_META -->
@@ -11,28 +11,28 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-dogfooding verify 已恢复到无活跃告警状态。当前主焦点：整理本轮自循环修复（SQLite 兼容回退、CRLF archive 兼容、sync 补标记、状态机锚点修复），并决定是否按 /commit 闭环沉淀。
+下一阶段优先评估 Python/Go 等非 Node 轻量适配方案，并继续完善 raw_memory 原始层的抗毁性与可重建边界；如无新异常，普通开发循环不再默认触发 verify，只在 /evo 接管、重建后验收或 runtime 异常时执行。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-
+- [ ] 暂无活跃任务。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
-- [RuntimeSelfHeal] 2026-03-20 Dogfooding runtime entered a self-healing loop: verify initially crashed on the local SQLite runtime
-- [并发容错与自检增强] 2026-03-19 为数据库插入了WAL并发保护和模型降级重启表机制，在verify命令中增加模板文件同步检测\n- [QA_TEST] 2026-03-19 Verified memory core loop\n
-- [5f3a641] 2026-03-18 Architecture Refactor: Decoupled the init script (index.js) from the template structure by implementing a recursive copy me
-- [4bc99ac] 2026-03-18 Rule Enforcement: Strengthened the rules in evo-lite.md and commit.md to make direct modification of active_context.md
-- [492ae57] 2026-03-18 Config Alignment: Aligned track truncation limit to 100 characters in memory.js and synced with templates.
-- [c8efc63] 2026-03-18 File Naming Protocol: Updated memory file naming to ...
-- [b37c512] 2026-03-18 Wash Protocol: Updated Wash Protocol with seq...
-- [bc5df8f] 2026-03-18 跨会话继承: 通过 E2E 项目生成和模拟 Agent 唤醒，验证了跨会话...
-- [9de40fe] 2026-03-18 测试闭环: 这是一条极其严谨的测试记录，用于验证在无 dirty cod...
-- [2026-03-17] 开展对纯 Node.js ONNX RAG 架构的长周期稳定性与内存泄漏排查。
+- [790f3b9] 2026-03-20 VerifyScopeClarification: Clarified the protocol boundary for verify so it is treated as an /evo startup and runtime-recovery 
+- [ad6bfe6] 2026-03-20 InjectedCleanGitStatus: Fixed the git-status injection edge case so mem wrapper flows no longer confuse an intentionally emp
+- [25caa9b] 2026-03-20 VerifyGitNoiseFilter: Unified the git-status filtering path used by both track and verify so pure .evo-lite runtime artifa
+- [391ba68] 2026-03-20 MinimalTrajectoryFixCleanup: Reduced the trajectory-label fix back to the minimal long-term behavior: future context track entrie
+- [a2709c7] 2026-03-20 TrajectoryHashRepair: Restored the trajectory label contract so square brackets carry the short commit hash instead of the
+- [1a83470] 2026-03-20 Committed the dogfooding asset migration that aligned historical raw_memory archives and vect_memory
+- [ca32c37] 2026-03-20 Completed the runtime hardening loop in two commits: first injected git metadata through mem wrapper
+- [261f33c] 2026-03-20 Dogfooding runtime entered a self-healing loop: verify initially crashed on the local SQLite runtime
+- [50a7cf8] 2026-03-19 并发容错与自检增强: 为数据库插入了WAL并发保护和模型降级重启表机制，在verify命令中增加模板文件同步检测
+- [50a7cf8] 2026-03-19 QA_TEST: Verified memory core loop
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
