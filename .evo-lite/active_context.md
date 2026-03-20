@@ -3,7 +3,7 @@
 <!-- BEGIN_META -->
 
 > **更新时间**: 2026-03-21
-> **项目状态**: v2.0.4 — 完成 verify 边界收口、Git 注入链健壮化、trajectory 标签修复与 dogfooding 资产整理；普通开发循环不再默认触发 verify，/evo 与恢复场景边界已澄清。
+> **项目状态**: v2.0.5 — 完成初始化依赖补强、根目录纪律约束、verify/reranker 降级状态持久化与启动边界澄清；下一阶段转向 workflow 兼容 Codex 与 Claude Code。
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
 
 <!-- END_META -->
@@ -11,7 +11,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-下一阶段优先评估 Python/Go 等非 Node 轻量适配方案，并继续完善 raw_memory 原始层的抗毁性与可重建边界；如无新异常，普通开发循环不再默认触发 verify，只在 /evo 接管、重建后验收或 runtime 异常时执行。
+下一阶段主线：梳理并改造现有 workflow/rules/CLI 提示，使 Evo-Lite 在 Codex 与 Claude Code 两种 agent 环境下都能稳定工作。重点检查 slash workflow 口径、路径与终端语法假设、状态机写入口限制，以及哪些协议当前带有单一宿主假设。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
