@@ -31,6 +31,26 @@
 
 ---
 
+## 🧩 宿主适配策略
+
+Evo-Lite 现在采用“**canonical 语义层 + 宿主适配层**”的结构：
+
+- **canonical 语义层**：`.agents/` 与 `.evo-lite/`
+  这里定义真正的 workflow、规则、状态机与长期记忆流转。
+- **Codex 宿主适配层**：项目根目录的 `AGENTS.md`
+  这是给 Codex 看的入口摘要，不是第二份规则真源。
+- **Claude Code 宿主适配层**：项目根目录的 `CLAUDE.md` 与 `.claude/commands/`
+  这些是给 Claude Code 的原生入口与薄包装命令，也不是第二份 canonical 规则树。
+
+你可以把它理解成：
+
+- `AGENTS.md` / `CLAUDE.md` / `.claude/commands/`：宿主看的“导航页”
+- `.agents/` / `.evo-lite/`：Evo-Lite 自己真正认账的“制度层”和“运行时”
+
+这也是为什么宿主适配资产允许在模板升级时被覆盖，而 `.agents/` 与 `.evo-lite/` 才是长期语义真源。
+
+---
+
 ## 🌟 为什么你需要 Evo-Lite？
 
 如果你本来就不是职业软件工程师，而是靠 AI 把想法、经验和业务问题快速落成小工具、小系统、小产品，那你最容易遇到的不是“不会写第一版”，而是**第二天 AI 已经不记得昨天自己干了什么**。
