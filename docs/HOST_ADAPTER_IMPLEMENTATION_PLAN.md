@@ -1,0 +1,256 @@
+# Host Adapter Implementation Plan
+
+## Purpose
+
+This document turns the compatibility matrix into an implementation plan.
+
+The question is no longer “should Evo-Lite support Codex and Claude Code differently?”
+
+The question is:
+
+- what stays canonical inside Evo-Lite
+- what should be mirrored into Codex-native assets
+- what should be mirrored into Claude Code-native assets
+- what should never be duplicated
+
+## Canonical vs Adapter Layers
+
+### Canonical Evo-Lite layer
+
+These should remain the source of truth inside the generated project:
+
+- `.agents/rules/`
+- `.agents/workflows/`
+- `.evo-lite/cli/`
+- `.evo-lite/active_context.md`
+- `.evo-lite/raw_memory/`
+- `.evo-lite/vect_memory/`
+
+Why:
+
+- They define Evo-Lite semantics.
+- They are host-neutral enough to be versioned and upgraded consistently.
+- They should continue to be the durable logic layer even if host adapters drift.
+
+### Host adapter layer
+
+These should be generated or mirrored from the canonical layer:
+
+- `AGENTS.md` for Codex
+- `CLAUDE.md` for Claude Code
+- optionally `.claude/commands/` for Claude-native command wrappers
+- optionally Claude hooks config snippets, if we later support them explicitly
+
+Why:
+
+- Codex and Claude Code each privilege different project surfaces.
+- Users should not have to hand-transcode Evo-Lite semantics into each host manually.
+
+## Codex Adapter Design
+
+### Primary target
+
+Generate a root-level `AGENTS.md`.
+
+### What it should contain
+
+1. Boot / takeover summary
+   - Load `active_context.md`
+   - respect architecture/rules
+   - use host-appropriate `mem` entrypoint
+
+2. Workflow semantic mapping
+   - `/evo`: takeover and verify workflow
+   - `/commit`: code snapshot + context track workflow
+   - `/mem`: handover / release workflow
+   - `/wash`: rebuild / archive recovery workflow
+
+3. Safety rules
+   - never edit runtime anchors directly
+   - use CLI for focus/backlog/trajectory transitions
+   - no nested wrapper directories
+   - read `active_context` before `recall`
+
+4. Host-specific reminders
+   - Codex may expose slash-like UX in some surfaces, but workflow semantics must not depend on it
+   - respect approvals / sandbox / shell constraints
+
+### What it should not contain
+
+- A full copy of every `.agents/rules/*` file
+- A second authoritative version of long workflow content
+- Host-specific claims that override canonical Evo-Lite semantics
+
+### Recommended format
+
+`AGENTS.md` should be:
+
+- short
+- operational
+- link-back oriented
+
+It should function as:
+
+- bootstrap contract
+- navigation layer
+- adapter summary
+
+Not as:
+
+- the whole rulebook duplicated again
+
+## Claude Code Adapter Design
+
+### Primary targets
+
+Generate:
+
+- root-level `CLAUDE.md`
+- optionally `.claude/commands/` wrappers for key Evo-Lite workflows
+
+### What `CLAUDE.md` should contain
+
+1. Boot summary
+   - load `active_context`
+   - consult architecture/rules
+   - treat `.agents/` as canonical Evo-Lite semantics
+
+2. Workflow mapping
+   - which Evo-Lite workflow corresponds to which native Claude command behavior
+   - what remains manual
+
+3. Guardrails
+   - do not directly edit runtime anchors
+   - use `mem` wrapper for track/focus transitions
+   - read `active_context` before `recall`
+
+4. Hook-aware notes
+   - hooks may enhance `/evo` or `/mem`
+   - hooks must not become the only source of truth
+
+### What `.claude/commands/` could contain
+
+Potential files:
+
+- `.claude/commands/evo.md`
+- `.claude/commands/commit.md`
+- `.claude/commands/mem.md`
+- `.claude/commands/wash.md`
+
+Each should:
+
+- call back to canonical Evo-Lite semantics
+- remain thin wrappers
+- avoid restating the entire policy stack inline
+
+### Optional future hook surfaces
+
+Potential mappings:
+
+- SessionStart:
+  - load or validate `active_context`
+  - possibly remind about `/evo` semantics
+
+- SessionEnd:
+  - suggest `/mem` if backlog is clear and session is ending
+
+- PreCompact:
+  - remind Claude to preserve current focus / unresolved backlog in `active_context`
+
+These should remain optional because:
+
+- not all users want automatic lifecycle intervention
+- hook-heavy behavior can become surprising if it mutates state too aggressively
+
+## Adapter Generation Rules
+
+### Rule 1: Canonical first, adapter second
+
+Never author `AGENTS.md` or `CLAUDE.md` as the primary source and then backport into `.agents/`.
+
+The flow should be:
+
+- maintain canonical Evo-Lite semantics
+- generate host adapters from those semantics
+
+### Rule 2: Prefer summaries over full duplication
+
+Adapter files should mostly:
+
+- summarize
+- point to canonical files
+- explain host-specific behavior
+
+They should not become a second giant policy tree that drifts over time.
+
+### Rule 3: Keep generated adapters deterministic
+
+If we generate host adapters, the output should be:
+
+- stable
+- overwrite-safe
+- explainable
+
+That means we likely need:
+
+- template sources in `templates/`
+- explicit generation logic in `index.js`
+- clear markers for “generated by Evo-Lite”
+
+## Proposed Template Additions
+
+### New template files
+
+- `templates/AGENTS.md`
+- `templates/CLAUDE.md`
+
+Placement:
+
+- both adapters should be emitted at the generated project's root level
+- they should sit beside `.agents/` and `.evo-lite/`, not inside them
+
+Optional later:
+
+- `templates/.claude/commands/evo.md`
+- `templates/.claude/commands/commit.md`
+- `templates/.claude/commands/mem.md`
+- `templates/.claude/commands/wash.md`
+
+### New generation behavior
+
+During init or upgrade:
+
+1. copy canonical `.agents/` and `.evo-lite/`
+2. emit `AGENTS.md` adapter
+3. emit `CLAUDE.md` adapter
+4. optionally emit `.claude/commands/` only when we are ready to support them well
+
+## First Implementation Slice
+
+The smallest useful next slice is:
+
+1. Add template-backed `AGENTS.md`
+2. Add template-backed `CLAUDE.md`
+3. Make both clearly state:
+   - Evo-Lite canonical rules live in `.agents/`
+   - runtime truth lives in `.evo-lite/`
+   - host adapter files are summaries, not the canonical rule source
+
+Status:
+
+- implemented
+
+This gives immediate value because:
+
+- Codex sees an `AGENTS.md`
+- Claude Code sees a `CLAUDE.md`
+- neither host is forced to infer intent from the wrong project surface
+
+## Decision
+
+Recommended next implementation step:
+
+- introduce generated `AGENTS.md` and `CLAUDE.md` adapters first
+- postpone `.claude/commands/` and hooks until after the adapter summaries feel stable
+
+That keeps the rollout narrow, understandable, and reversible.

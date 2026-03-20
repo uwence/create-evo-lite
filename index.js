@@ -74,8 +74,12 @@ async function main() {
     const activeContextTemplate = fs.readFileSync(path.join(templatesDir, 'active_context.md'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
+    const agentsAdapterTemplate = fs.readFileSync(path.join(templatesDir, 'AGENTS.md'), 'utf8');
+    const claudeAdapterTemplate = fs.readFileSync(path.join(templatesDir, 'CLAUDE.md'), 'utf8');
 
     const activeContextPath = path.join(evoLiteDir, 'active_context.md');
+    const agentsAdapterPath = path.join(targetDir, 'AGENTS.md');
+    const claudeAdapterPath = path.join(targetDir, 'CLAUDE.md');
 
     // 3.0 处理 cli 文件集
     const cliTemplatesDir = path.join(templatesDir, 'cli');
@@ -128,6 +132,26 @@ async function main() {
         console.log('✅ 初始化了全新的 active_context.md。');
     } else {
         console.log('🛡️ 发现并保护了已有的 active_context.md 资产。准备进行内容融合注入...');
+    }
+
+    if (!fs.existsSync(agentsAdapterPath)) {
+        fs.writeFileSync(agentsAdapterPath, agentsAdapterTemplate, 'utf8');
+        console.log('✅ 初始化了根目录 AGENTS.md (Codex adapter)。');
+    } else {
+        fs.copyFileSync(agentsAdapterPath, agentsAdapterPath + '.bak');
+        fs.writeFileSync(agentsAdapterPath, agentsAdapterTemplate, 'utf8');
+        hasUpgraded = true;
+        console.log('♻️ 更新了根目录 AGENTS.md (旧版本已备份为 .bak)。');
+    }
+
+    if (!fs.existsSync(claudeAdapterPath)) {
+        fs.writeFileSync(claudeAdapterPath, claudeAdapterTemplate, 'utf8');
+        console.log('✅ 初始化了根目录 CLAUDE.md (Claude Code adapter)。');
+    } else {
+        fs.copyFileSync(claudeAdapterPath, claudeAdapterPath + '.bak');
+        fs.writeFileSync(claudeAdapterPath, claudeAdapterTemplate, 'utf8');
+        hasUpgraded = true;
+        console.log('♻️ 更新了根目录 CLAUDE.md (旧版本已备份为 .bak)。');
     }
 
     // Inject CLI wrappers into .evo-lite to avoid root pollution
