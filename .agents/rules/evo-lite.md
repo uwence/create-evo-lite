@@ -19,15 +19,15 @@ trigger: always_on
 **Trigger Conditions**: 遇到未知的系统报错、复杂的架构依赖链、明显卡壳、连续两次修复失败，或即将修改一个可能存在历史坑点的机制时。
 **Action 1 (遇到问题时检索)**: 必须先读取 `.evo-lite/active_context.md`，确认当前焦点、backlog 与最近轨迹里是否已经有直接线索；只有当当前状态机信息不足，或问题明显属于跨会话历史经验检索场景时，才调用本地向量库 CLI 工具做 recall。严禁跳过 `active_context` 直接凭空猜想，也不要把“先 recall”误解成“可以不看当前上下文”。
 
-- 检索指令: `.\.evo-lite\mem.cmd recall "<Error_Message_or_Query>"`  
+- 检索指令: 使用当前宿主可用的 `mem` 入口执行 recall。Unix / Bash: `./.evo-lite/mem recall "<Error_Message_or_Query>"`；Windows PowerShell / CMD: `.\.evo-lite\mem.cmd recall "<Error_Message_or_Query>"`  
   默认应优先查看最相关的 **5 条结果**；除非用户明确要求更宽的检索窗口，否则不要一次拉出过多历史片段污染当前上下文。
 
 **Action 2 (解决问题后入库 - 核心闭环协议)**:
 当你攻克了架构难点或修复了 Bug，必须严格遵守以下闭环协议，按顺序有序执行，严禁合并多个步骤同时执行：
 
 1. **代码提交**: `git add . && git commit -m "fix/feat: ..."`
-2. **状态更新**: `.\.evo-lite\mem.cmd context track --mechanism="<机制名>" --details="<详细经验>" [--resolve="<4位ID>"]`
-3. **元数据同步**: 严禁 AI 手动修改 active_context.md 的任务和轨迹！必须由上述 `mem.cmd context track` 命令自动完成。
+2. **状态更新**: 使用当前宿主可用的 `mem` 入口执行 `context track --mechanism="<机制名>" --details="<详细经验>" [--resolve="<4位ID>"]`
+3. **元数据同步**: 严禁 AI 手动修改 active_context.md 的任务和轨迹！必须由上述宿主可用的 `mem context track` 命令自动完成。
 4. **认知确认**: CLI 运行结束后，你必须根据真实输出向用户汇报当前状态、已归档内容以及剩余任务。
    **Expected Outcome**: 形成从遇到困难查找旧记忆，最后通过协议入库新经验的完整自治生态。
 
@@ -50,13 +50,13 @@ trigger: always_on
 - **Workspace Root Discipline (工作区根目录纪律)**: 当用户已经在某个项目根目录中打开工作区时，默认就以该目录作为唯一项目根。**严禁 Agent 擅自再创建 `project/`、`app/`、`workspace/` 等额外包裹目录来承载真实代码**，除非用户明确要求新建子项目、monorepo 包或独立沙盒。任何会把 `.agents/`、`.evo-lite/`、源码目录与实际工作根拆开的二次套壳行为，都视为协议违规，因为它会直接破坏 workflow、CLI 路径与状态机定位。
 - **Loop Breaking**: 如果在 Debug 过程中连续两次遇到相同的错误或陷入逻辑循环，立即停止写代码。强制进入“反思模式”，先复核一次 `active_context.md` 的当前线索，再执行一次 recall 检索相关历史经验，之后梳理前两次失败的根本原因，并提出一条完全不同的解决路径。
 - **Anchor Guard & CLI Enforcement (锚点守卫与 CLI 强制)**:
-  `.evo-lite/active_context.md` 是一个**状态机**。其中 `FOCUS`、`BACKLOG`、`TRAJECTORY` 三个运行时区块的修改都**必须通过 `./.evo-lite/mem.cmd` 代理**。
+  `.evo-lite/active_context.md` 是一个**状态机**。其中 `FOCUS`、`BACKLOG`、`TRAJECTORY` 三个运行时区块的修改都**必须通过当前宿主可用的 Evo-Lite CLI 入口代理**。
   **严禁 Agent 直接使用文件写入工具修改上述三个区块！**
-  当你需要追踪进度、消除任务或切换会话焦点时，必须调用 `mem.cmd context track --resolve="xxxx"` 或 `mem.cmd context focus "..."` 来完成，CLI 会自动维护锚点边界。
+  当你需要追踪进度、消除任务或切换会话焦点时，必须调用当前宿主可用的 `mem context track --resolve="xxxx"` 或 `mem context focus "..."` 来完成，CLI 会自动维护锚点边界。
   `META` 区块目前没有专用 CLI 写入口；只有在确认不存在对应命令时，才允许围绕 `<!-- BEGIN_META -->` 与 `<!-- END_META -->` 做最小范围的人工维护。
   *致命错误：* 如果你检测到自己或任何其他 Agent 正在直接修改 `FOCUS`、`BACKLOG`、`TRAJECTORY` 任一区块，必须立即中止并发出告警。
 - **Memory Flow Model (记忆流动模型)**:
-  `active_context.md` 只负责“当前态”，`archive` 只负责“沉淀态”，两者之间默认必须通过 `mem.cmd context track` 流转。
+  `active_context.md` 只负责“当前态”，`archive` 只负责“沉淀态”，两者之间默认必须通过宿主可用的 `mem context track` 流转。
   `remember` 仅作为轻量检索缓存存在，不承担正式闭环的重建保证，也不替代 `track` 的长期沉淀职责。
   规则上应始终优先遵循：
   `active_context -> context track -> archive`

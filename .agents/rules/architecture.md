@@ -21,7 +21,7 @@
 - **Commit Convention**: 遵循 Conventional Commits 规范，这有助于自动生成 Changelog 并在未来实现自动化版本发布。
 - **Agent 状态机完整性**:
   - 严禁绕过 CLI 直接修改状态文件（如 `active_context.md`）。
-  - 所有的状态流转必须通过 `.evo-lite/mem.cmd` (或其背后的 `memory.js`) 代理，任何直接修改行为都被视为致命错误。
+  - 所有的状态流转必须通过宿主可用的 Evo-Lite CLI 入口（`./.evo-lite/mem`、`.\.evo-lite\mem.cmd` 或其背后的 `memory.js`）代理，任何直接修改行为都被视为致命错误。
 - **数据库指纹验证**: 存储向量特征前，系统会自动验证并存储所使用嵌入模型的维度指纹，防止因模型切换导致 SQLite 崩溃。
 - **Directory Structure**:
     - **`.agents/`**: 存放 Agent 相关的协议（`rules/`）和工作流定义（`workflows/`）。这些文件定义了 AI 的行为边界。

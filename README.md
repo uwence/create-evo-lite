@@ -23,7 +23,7 @@
 > [!IMPORTANT]
 > **当前版本说明**：仓库现在采用“**工作流协议 + 本地 CLI**”的双层结构。
 > - **`/commit` / `/mem` / `/wash`**：定义在 `.agents/workflows/` 中，约束 AI 该在什么时机做什么。
-> - **`memory.js` / `mem.cmd`**：定义在 `.evo-lite/cli/` 中，负责真正执行记忆、归档、状态更新与校验。
+> - **`memory.js` / `mem` wrappers**：定义在 `.evo-lite/cli/` 与项目运行时目录中，负责真正执行记忆、归档、状态更新与校验。Unix / Bash 环境使用 `./.evo-lite/mem`，Windows PowerShell / CMD 环境使用 `.\.evo-lite\mem.cmd`。
 > 升级旧项目后，建议先运行 `node .evo-lite/cli/memory.js verify` 检查 CLI、模型、状态文件与历史记忆是否处于可继续接管的状态。
 
 ---
@@ -81,7 +81,7 @@ Evo-Lite 当前采用一套明确的**双轨记忆模型**：
 ### 流动原则
 
 - 正在做的事：写在 `active_context.md`
-- 已经闭环的事：通过 `.\.evo-lite\mem.cmd context track ...` 沉淀
+- 已经闭环的事：通过当前宿主可用的 `mem context track ...` 沉淀
 - 长期经验：进入 `raw_memory/` 结构化归档
 - 轻量检索线索：可使用 `remember`
 
@@ -124,6 +124,9 @@ create-evo-lite ./我的新游戏项目
 运行时，系统会初始化本地 ONNX 模型与 SQLite 依赖，把记忆运行时落在 `.evo-lite/` 下。你不需要再额外维护 Docker、独立数据库服务或常驻后台。
 
 > [!TIP]
+> 下文若出现 `./.evo-lite/mem`，表示 Unix / Bash 类环境入口；在 Windows PowerShell / CMD 中，请使用等价的 `.\.evo-lite\mem.cmd`。
+
+> [!TIP]
 > **内嵌双核引擎**：
 > - Embedding: `Xenova/bge-small-zh-v1.5` (纯 CPU 推理只需毫秒级)
 > - Reranker: `Xenova/bge-reranker-base` (Quantized 量化保障极低内存占用)
@@ -155,7 +158,7 @@ node .evo-lite/cli/memory.js verify
 ```
 `/commit` 是**工作流协议**，不是 magic command 本体。它通常会引导 AI：
 - 先完成真正的 `git commit`
-- 再调用 `.\.evo-lite\mem.cmd context track --mechanism="..." --details="..." [--resolve="xxxx"]`
+- 再调用当前宿主可用的 `mem context track --mechanism="..." --details="..." [--resolve="xxxx"]`
 - 把一次代码动作同步为轨迹、归档和 backlog 状态变化
 - 并在最后明确告诉你：提交是否完成、`closure` 是否完整、backlog 是否被消除、下一步该继续开发还是先补救闭环
 
@@ -225,8 +228,8 @@ MyAwesomeProject/                 <-- (你的项目)
 │
 └── .evo-lite/                    <-- (记忆存储与依赖区)
     ├── cli/                      - 向量库 CLI 脚本
-    ├── mem.cmd                   - CLI 快捷入口 (Win)
-    ├── mem                       - CLI 快捷入口 (Unix)
+    ├── mem.cmd                   - CLI 快捷入口 (Windows PowerShell / CMD)
+    ├── mem                       - CLI 快捷入口 (Unix / Bash)
     ├── active_context.md         - 显性进度单
     ├── memory.db                 - 隐性向量数据库
     ├── raw_memory/               - 原始结构化记忆档案

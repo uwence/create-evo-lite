@@ -16,7 +16,9 @@ description: 状态重置、项目跃迁与挂起发布协议
 
 2. 显性单据覆写 (Update META)
    优先通过状态机 CLI 更新可代理的区块，避免直接编辑锚点内容。
-   - [A. 焦点 `FOCUS`]: 使用 `.\.evo-lite\mem.cmd context focus "下一个会话的焦点"` 更新下一阶段焦点。
+   - [A. 焦点 `FOCUS`]: 使用当前宿主可用的 `mem` 入口更新下一阶段焦点。
+     Unix / Bash: `./.evo-lite/mem context focus "下一个会话的焦点"`
+     Windows PowerShell / CMD: `.\.evo-lite\mem.cmd context focus "下一个会话的焦点"`
    - [B. 元数据 `META`]: 当前 CLI 还未提供专门的 `META` 写入口，如确需修改 `更新时间` 与 `项目状态`，只能在确认无对应 CLI 命令的前提下手动编辑 `<!-- BEGIN_META -->` 与 `<!-- END_META -->` 之间的内容。
 
 3. 项目版本小跃迁 (Bump Version)

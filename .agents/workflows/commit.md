@@ -19,7 +19,7 @@ git commit -m "fix(module): 解决了某某问题"
 
 ### 2. 轨迹写入与认知刷新 (Context Track)
 代码提交后，通过底层状态机 CLI 记录动作轨迹。CLI 会自动抓取刚才的 Commit Hash、更新 `active_context.md` 的 `FOCUS` / `BACKLOG` / `TRAJECTORY` 运行时区块，并进行结构化归档。
-**致命错误：`active_context.md` 是一个状态机。涉及任务、轨迹、焦点的修改都必须通过 `./.evo-lite/mem.cmd` 代理。严禁 Agent 直接使用文件写入工具修改这些运行时区块！`META` 区块当前没有专用 CLI 写入口，只有在确认不存在对应命令时，才允许最小范围的人工维护。如果你检测到自己或任何其他 Agent 正在尝试直接修改 `FOCUS`、`BACKLOG`、`TRAJECTORY` 任一区块，必须立即中止并发出告警。**
+**致命错误：`active_context.md` 是一个状态机。涉及任务、轨迹、焦点的修改都必须通过当前宿主可用的 Evo-Lite CLI 入口代理（Unix: `./.evo-lite/mem`；Windows: `.\.evo-lite\mem.cmd`）。严禁 Agent 直接使用文件写入工具修改这些运行时区块！`META` 区块当前没有专用 CLI 写入口，只有在确认不存在对应命令时，才允许最小范围的人工维护。如果你检测到自己或任何其他 Agent 正在尝试直接修改 `FOCUS`、`BACKLOG`、`TRAJECTORY` 任一区块，必须立即中止并发出告警。**
 
 请始终记住 Evo-Lite 的主流转模型：
 
@@ -40,6 +40,10 @@ active_context -> context track -> archive
 
 - **场景 A：随手修复、阶段性进展 (仅记录，不消灭任务)**
   ```bash
+  # Unix / Bash
+  ./.evo-lite/mem context track --mechanism="缓存优化机制" --details="发现在高并发下的死锁问题，通过引入锁机制解决..."
+
+  # Windows PowerShell / CMD
   .\.evo-lite\mem.cmd context track --mechanism="缓存优化机制" --details="发现在高并发下的死锁问题，通过引入锁机制解决..."
   ```
   *(注：机制名必须简短，details 必须详尽包含前因后果)*
@@ -47,6 +51,10 @@ active_context -> context track -> archive
 - **场景 B：彻底完成 Backlog 任务 (记录并消除任务)**
   前往 `.evo-lite/active_context.md` 的 `<BEGIN_BACKLOG>` 区域，找到你刚才完成的任务的 **4位哈希 ID (例如 `[a1b2]`)**。
   ```bash
+  # Unix / Bash
+  ./.evo-lite/mem context track --mechanism="1:N架构完结" --details="长文本向量入库完成，状态标记补齐..." --resolve="a1b2"
+
+  # Windows PowerShell / CMD
   .\.evo-lite\mem.cmd context track --mechanism="1:N架构完结" --details="长文本向量入库完成，状态标记补齐..." --resolve="a1b2"
   ```
   *(注：必须传入绝对准确的 4 字符 Hash 以避免误删)*
