@@ -23,7 +23,9 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
-- [9f358b1] 2026-03-20 ActiveContextBeforeRecall: Clarified the debugging retrieval order so agents must inspect active_context.md before deciding to 
+- [86a2cfc] 2026-03-20 ShellAwareWorkflowDocs: Extended the Codex and Claude Code compatibility pass beyond mem entrypoints into shell semantics. T
+- [eb43318] 2026-03-20 HostAwareMemEntrypoints: Clarified the workflow and rule contracts so Evo-Lite no longer assumes a single mem.cmd-only comman
+- [9f358b1] 2026-03-20 ActiveContextBeforeRecall: Clarified the debugging retrieval order so agents must inspect active_context.md before deciding to
 - [9de7dd8] 2026-03-20 EvoVerifyTakeoverSync: Tightened the /evo takeover contract so the agent must wait for mem.cmd verify to exit before summar
 - [73ba4c8] 2026-03-20 InitTrackBootstrap: Fixed a fresh-project initialization regression where the first context track path could hit archive
 - [a4be939] 2026-03-20 RecallFirstDebugging: Updated the evo-lite debugging contract so agents should prefer recall before blind trial-and-error
@@ -31,8 +33,6 @@
 - [c8b5da5] 2026-03-20 WorkspaceRootDiscipline: Hardened the evo-lite protocol against agents inventing nested wrapper directories like project/, ap
 - [2bf2424] 2026-03-20 InitStartupHardening: Fixed two concrete initialization regressions found from a fresh generated project. First, the scaff
 - [790f3b9] 2026-03-20 VerifyScopeClarification: Clarified the protocol boundary for verify so it is treated as an /evo startup and runtime-recovery
-- [ad6bfe6] 2026-03-20 InjectedCleanGitStatus: Fixed the git-status injection edge case so mem wrapper flows no longer confuse an intentionally emp
-- [25caa9b] 2026-03-20 VerifyGitNoiseFilter: Unified the git-status filtering path used by both track and verify so pure .evo-lite runtime artifa
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
