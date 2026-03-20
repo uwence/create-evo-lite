@@ -48,6 +48,10 @@ function buildArchiveFilename(timestamp, id) {
     return `mem_${formatArchiveTimestamp(timestamp)}_${id}.md`;
 }
 
+function isTrajectoryHashLabel(label) {
+    return /^(?:[a-f0-9]{7}|No-Git)$/i.test(label);
+}
+
 function chunkText(text, chunkSize = 512) {
     const chunks = [];
     for (let i = 0; i < text.length; i += chunkSize) {
@@ -434,6 +438,24 @@ function validateArchiveMarkdown(markdown, type) {
     };
 }
 
+function extractArchiveMechanism(markdown) {
+    const match = markdown.match(/## 实现细节 \(Implementation\)\n+\[([^\]]+)\]/);
+    return match ? match[1].trim() : null;
+}
+
+function extractCommitHashFromArchiveName(filename) {
+    const match = filename.match(/_((?:[a-f0-9]{7})|No-Git)_[a-f0-9]{8}\.md$/i);
+    return match ? match[1] : null;
+}
+
+function splitTrajectoryEntries(trajectory) {
+    return trajectory
+        .replace(/\\n(?=- \[)/g, '\n')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.startsWith('-'));
+}
+
 function normalizeTemplateComparableContent(file, content) {
     if (file !== 'models.js') {
         return content;
@@ -616,14 +638,67 @@ function setFocus(focus) {
     return focus;
 }
 
-function updateTrajectory(markdown, mechanism, details) {
+function updateTrajectory(markdown, mechanism, details, trajectoryId = getCommitHash()) {
     const trajectory = readSection(markdown, 'TRAJECTORY') || '';
-    const entries = trajectory.split('\n').map(line => line.trim()).filter(line => line.startsWith('-'));
-    entries.unshift(`- [${mechanism}] ${new Date().toISOString().split('T')[0]} ${details.substring(0, 100)}`);
+    const entries = splitTrajectoryEntries(trajectory);
+    entries.unshift(`- [${trajectoryId}] ${new Date().toISOString().split('T')[0]} ${mechanism}: ${details.substring(0, 100)}`);
     while (entries.length > 10) {
         entries.pop();
     }
     return writeSection(markdown, 'TRAJECTORY', entries.join('\n'));
+}
+
+function repairTrajectoryLabels() {
+    ensureContextFile();
+    const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
+    const trajectory = readSection(markdown, 'TRAJECTORY') || '';
+    const entries = splitTrajectoryEntries(trajectory);
+    const rawDir = getRawMemoryDir();
+    const mechanismToHash = new Map();
+
+    if (fs.existsSync(rawDir)) {
+        const files = fs.readdirSync(rawDir)
+            .filter(file => file.endsWith('.md'))
+            .sort()
+            .reverse();
+        for (const file of files) {
+            const mechanism = extractArchiveMechanism(fs.readFileSync(path.join(rawDir, file), 'utf8'));
+            const commitHash = extractCommitHashFromArchiveName(file);
+            if (mechanism && commitHash && !mechanismToHash.has(mechanism)) {
+                mechanismToHash.set(mechanism, commitHash);
+            }
+        }
+    }
+
+    const unresolved = [];
+    let repaired = 0;
+    const normalizedEntries = entries.map(line => {
+        const match = line.match(/^- \[([^\]]+)\](.*)$/);
+        if (!match) {
+            return line;
+        }
+
+        const label = match[1].trim();
+        if (isTrajectoryHashLabel(label) || /^\d{4}-\d{2}-\d{2}$/.test(label)) {
+            return line;
+        }
+
+        const repairedHash = mechanismToHash.get(label);
+        if (!repairedHash) {
+            unresolved.push(label);
+            return line;
+        }
+
+        repaired += 1;
+        return `- [${repairedHash}]${match[2]}`;
+    });
+
+    if (repaired > 0) {
+        fs.writeFileSync(ACTIVE_CONTEXT_PATH, writeSection(markdown, 'TRAJECTORY', normalizedEntries.join('\n')), 'utf8');
+        appendLog('CONTEXT_REPAIR_TRAJECTORY', `repaired=${repaired} unresolved=${unresolved.length}`);
+    }
+
+    return { repaired, unresolved };
 }
 
 function resolveBacklog(markdown, resolveHash) {
@@ -665,7 +740,7 @@ async function track(mechanism, details, options = {}) {
     });
 
     let markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
-    markdown = updateTrajectory(markdown, mechanism, details);
+    markdown = updateTrajectory(markdown, mechanism, details, getCommitHash());
 
     let resolvedLine = null;
     if (options.resolve) {
@@ -957,15 +1032,20 @@ module.exports = {
     buildArchiveFilename,
     buildArchiveId,
     exportMemories,
+    extractArchiveMechanism,
+    extractCommitHashFromArchiveName,
     extractChunksFromMd,
     formatArchiveTimestamp,
     forget,
     importMemories,
     inject,
+    isTrajectoryHashLabel,
     list,
     memorize,
     parseGitStatusLines,
     recall,
+    repairTrajectoryLabels,
+    splitTrajectoryEntries,
     summarizeArchiveHealth,
     setFocus,
     stats,
