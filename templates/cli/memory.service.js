@@ -249,7 +249,7 @@ async function memorize(text, options = {}) {
     return { id: Number(rawMemoryId), offline: false };
 }
 
-async function recall(query, topK = 3) {
+async function recall(query, topK = 5) {
     const db = getDb();
     const queryEmbedding = await getEmbedding(query);
 

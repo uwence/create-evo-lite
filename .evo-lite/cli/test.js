@@ -108,6 +108,7 @@ async function runTests() {
         const recallResults = await primaryLoaded.service.recall('unique semantic fragment');
         assert.ok(recallResults.length > 0, 'Recall returned no results');
         assert.ok(recallResults[0].content.includes('unique test memory fragment'), 'Recall did not surface the remembered content');
+        assert.ok(recallResults.length <= 5, 'Recall default topK should cap results at 5');
         const exportPath = path.join(primary.workspaceRoot, 'memories.json');
         primaryLoaded.service.exportMemories(exportPath);
         assert.ok(fs.existsSync(exportPath), 'Export JSON was not created');
