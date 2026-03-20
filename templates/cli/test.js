@@ -102,7 +102,7 @@ async function runTests() {
     try {
         console.log('1. Testing remember/recall/export...');
         const primary = createTempRuntimeRoot('memory');
-        const primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
+        let primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
         const testContent = 'This is a unique test memory fragment that is deliberately long enough to satisfy the quality guard and semantic search path.';
         await primaryLoaded.service.memorize(testContent);
         const recallResults = await primaryLoaded.service.recall('unique semantic fragment');
@@ -132,6 +132,23 @@ async function runTests() {
         const contextAfterTrack = fs.readFileSync(path.join(primary.runtimeRoot, 'active_context.md'), 'utf8');
         assert.ok(!contextAfterTrack.includes(`[${addResult.hash}]`), 'Resolved backlog hash still exists after track --resolve');
         assert.ok(/\n- \[(?:[a-f0-9]{7}|No-Git)\] \d{4}-\d{2}-\d{2} ProtocolRestore: /.test(contextAfterTrack), 'Trajectory did not record the new track entry with a short hash label');
+
+        console.log('2a. Testing context track bootstraps a fresh init runtime ...');
+        const freshTrackRuntime = createTempRuntimeRoot('fresh-track');
+        const freshTrackLoaded = loadCli(freshTrackRuntime.runtimeRoot, {
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+            EVO_LITE_FORCE_RERANKER_SUCCESS: '1',
+        });
+        const freshTrackResult = await freshTrackLoaded.service.track(
+            'InitBootstrap',
+            'Confirmed that the very first context track in a freshly initialized project can archive and update context without requiring a manual rebuild first.'
+        );
+        assert.strictEqual(freshTrackResult.status.archive, 'written', 'fresh init track did not self-bootstrap archive ingestion');
+        const rawTable = freshTrackLoaded.db.getDb()
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory'")
+            .get();
+        assert.ok(rawTable, 'fresh init track did not initialize the raw_memory table before archiving');
+        primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
 
         console.log('3. Testing CLI command-surface parsing for context add / focus ...');
         resetCliModuleCache();

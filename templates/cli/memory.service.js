@@ -74,6 +74,12 @@ function ensureContextFile() {
     }
 }
 
+async function ensureMemoryStoreReady() {
+    await initEmbeddingModel();
+    const { model, dims } = getActiveModelInfo();
+    initDB(model, dims);
+}
+
 function runGit(args) {
     return execFileSync('git', args, {
         encoding: 'utf8',
@@ -683,6 +689,7 @@ async function track(mechanism, details, options = {}) {
 
     ensureContextFile();
     ensureCleanWorktree();
+    await ensureMemoryStoreReady();
 
     const type = options.type || 'task';
     const archiveId = buildArchiveId();
