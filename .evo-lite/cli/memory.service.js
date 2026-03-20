@@ -670,11 +670,13 @@ async function vectorize() {
         return false;
     }
 
+    let backupName = null;
     if (fs.existsSync(DB_PATH)) {
         const backupPath = `${DB_PATH}.${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
         fs.copyFileSync(DB_PATH, backupPath);
         fs.unlinkSync(DB_PATH);
-        console.log(`📦 旧记忆脑区已备份至: ${path.basename(backupPath)}`);
+        backupName = path.basename(backupPath);
+        console.log(`📦 旧记忆脑区已备份至: ${backupName}`);
     }
 
     await initEmbeddingModel(true);
@@ -691,6 +693,19 @@ async function vectorize() {
 
     const result = await syncVectorMemory();
     console.log(`✅ 重铸完成！共处理 ${result.files} 个档案 / ${result.chunks} 个语义碎片。`);
+    console.log('📋 Rebuild Summary:');
+    console.log(`- source_archives: ${files.length}`);
+    console.log(`- rebuilt_archives: ${result.files}`);
+    console.log(`- rebuilt_chunks: ${result.chunks}`);
+    console.log(`- invalid_archives: ${result.invalid.length}`);
+    if (backupName) {
+        console.log(`- db_backup: ${backupName}`);
+    }
+    if (result.invalid.length > 0) {
+        console.log('💡 建议下一步: 先修复损坏的 raw archive，再重新执行 `node .evo-lite/cli/memory.js rebuild`。');
+    } else {
+        console.log('💡 建议下一步: 执行 `node .evo-lite/cli/memory.js verify` 确认当前实例已恢复到可继续接管状态。');
+    }
     appendLog('VECTORIZE', `Rebuilt ${result.files} files / ${result.chunks} chunks.`);
     return true;
 }
@@ -700,7 +715,12 @@ function wash() {
 }
 
 async function verify() {
-    const report = { hasAlerts: false, templateSyncChecked: false };
+    const report = { hasAlerts: false, templateSyncChecked: false, nextSteps: [] };
+    const pushNextStep = step => {
+        if (!report.nextSteps.includes(step)) {
+            report.nextSteps.push(step);
+        }
+    };
     console.log('🧪 Verifying Evo-Lite runtime...');
 
     const templateCliPath = getTemplateCliDir();
@@ -716,6 +736,7 @@ async function verify() {
                 console.warn(`⚠️ 模板缺少 ${file}，无法完成该文件的同步校验。`);
                 outOfSync = true;
                 report.hasAlerts = true;
+                pushNextStep('重新运行 `npx create-evo-lite@latest ./ --yes` 补齐模板文件。');
                 continue;
             }
             const activeContent = normalizeTemplateComparableContent(file, fs.readFileSync(activeFile, 'utf8'));
@@ -724,6 +745,7 @@ async function verify() {
                 console.warn(`⚠️ Warning: ${file} is out of sync between active CLI and templates.`);
                 outOfSync = true;
                 report.hasAlerts = true;
+                pushNextStep('重新运行 `npx create-evo-lite@latest ./ --yes`，然后再次执行 `node .evo-lite/cli/memory.js verify`。');
             }
         }
 
@@ -739,12 +761,14 @@ async function verify() {
     } else if (process.env.EVO_LITE_FORCE_GIT_DIRTY === '1') {
         console.log('\n⚠️ [前朝遗留告警] 发现未提交的 Git 状态！');
         report.hasAlerts = true;
+        pushNextStep('先整理当前 Git 工作区，再继续执行 `/commit` 或新的开发动作。');
     } else {
         try {
             const gitStatus = execSync('git status --porcelain', { encoding: 'utf8', stdio: 'pipe' }).trim();
             if (gitStatus.length > 0) {
                 console.log('\n⚠️ [前朝遗留告警] 发现未提交的 Git 状态！');
                 report.hasAlerts = true;
+                pushNextStep('先整理当前 Git 工作区，再继续执行 `/commit` 或新的开发动作。');
             }
         } catch (_) {
             console.log('ℹ️ Git 状态检查未执行：当前目录不是可用的 Git 工作区。');
@@ -757,15 +781,18 @@ async function verify() {
         if (hoursDiff > 24) {
             console.log('\n⚠️ [交接失约告警] active_context.md 已超过 24 小时未更新！');
             report.hasAlerts = true;
+            pushNextStep('先执行 `/evo` 或人工检查 `active_context.md`，确认当前项目焦点和 backlog 仍然可信。');
         }
     } else {
         console.log('⚠️ active_context.md 不存在，状态机检查未通过。');
         report.hasAlerts = true;
+        pushNextStep('先恢复或重新初始化 `.evo-lite/active_context.md`，再继续开发。');
     }
 
     if (fs.existsSync(OFFLINE_MEMORIES_PATH)) {
         console.log('⚠️ 检测到 offline_memories.json，说明仍有离线记忆尚未补齐向量。');
         report.hasAlerts = true;
+        pushNextStep('网络恢复后执行 `node .evo-lite/cli/memory.js import .evo-lite/offline_memories.json` 补齐离线记忆。');
     }
 
     if (fs.existsSync(DB_PATH)) {
@@ -781,10 +808,12 @@ async function verify() {
             console.log(`   - ${item.file}: ${item.reason}`);
         }
         report.hasAlerts = true;
+        pushNextStep('先修复损坏的 raw archive，再执行 `node .evo-lite/cli/memory.js rebuild`。');
     }
     if (archiveHealth.pending.length > 0) {
         console.log(`⚠️ 检测到 ${archiveHealth.pending.length} 个 raw archive 尚未生成 vect 标记，建议尽快执行 sync / rebuild。`);
         report.hasAlerts = true;
+        pushNextStep('若只是补齐 archive 标记，执行 `node .evo-lite/cli/memory.js sync`；若需要整体重建，执行 `node .evo-lite/cli/memory.js rebuild`。');
     }
 
     const trajectory = fs.existsSync(ACTIVE_CONTEXT_PATH) ? readSection(fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8'), 'TRAJECTORY') || '' : '';
@@ -792,6 +821,7 @@ async function verify() {
     if (trajectoryEntries.length > 1 && archiveHealth.rawFiles.length === 0) {
         console.log('⚠️ 检测到 active_context 已有多条轨迹，但尚无任何结构化 archive，状态流动可能失效。');
         report.hasAlerts = true;
+        pushNextStep('检查最近的闭环是否漏掉了 `context track`，避免只有状态机更新而没有长期归档。');
     }
 
     const { model, dims } = getActiveModelInfo();
@@ -814,6 +844,7 @@ async function verify() {
     } else {
         console.log('⚠️ Reranker 引擎状态: 异常 (当前将降级为纯向量检索)');
         report.hasAlerts = true;
+        pushNextStep('若需要恢复精排能力，请检查模型缓存或重新执行初始化。');
     }
 
     const db = getDb();
@@ -822,10 +853,19 @@ async function verify() {
     if (rawMemoryCount > 0 && chunkCount === 0) {
         console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
         report.hasAlerts = true;
+        pushNextStep('执行 `node .evo-lite/cli/memory.js rebuild`，用结构化归档重新生成 chunks。');
+    }
+
+    if (report.hasAlerts) {
+        console.log('📋 建议下一步:');
+        for (const step of report.nextSteps) {
+            console.log(`- ${step}`);
+        }
     }
 
     if (!report.hasAlerts) {
         console.log('✅ Verify completed with no active alerts.');
+        console.log('💡 建议下一步: 可以继续 `/evo` / `/commit` 工作流，或直接开始新的开发任务。');
     }
     return report;
 }

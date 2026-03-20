@@ -173,6 +173,7 @@ async function runTests() {
         });
         assert.ok(flowVerifyOutput.includes('损坏的 raw archive'), 'verify did not report invalid archive health');
         assert.ok(flowVerifyOutput.includes('尚未生成 vect 标记'), 'verify did not report pending archive vectorization');
+        assert.ok(flowVerifyOutput.includes('📋 建议下一步:'), 'verify did not print a next-step summary for alert states');
 
         console.log('7. Testing verify rebuild alert for preserved raw_memory without chunks ...');
         const rebuildRuntime = createTempRuntimeRoot('rebuild');
@@ -185,6 +186,7 @@ async function runTests() {
         assert.ok(rebuildVerifyOutput.includes('raw_memory 已有数据但 chunks 为空'), 'verify did not report preserved raw_memory without chunks');
         assert.ok(rebuildVerifyOutput.includes('显式重建命令'), 'verify did not describe the explicit rebuild path');
         assert.ok(rebuildVerifyOutput.includes('node .evo-lite/cli/memory.js rebuild'), 'verify did not point to the rebuild command');
+        assert.ok(rebuildVerifyOutput.includes('📋 建议下一步:'), 'verify did not summarize rebuild guidance');
 
         console.log('8. Testing verify alerts ...');
         const staleDate = new Date(Date.now() - 48 * 60 * 60 * 1000);
@@ -214,6 +216,7 @@ async function runTests() {
         });
         assert.ok(healthyVerifyOutput.includes('CLI files are synced with templates.'), 'verify should treat dynamic model defaults as a healthy sync state');
         assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged models.js dynamic defaults as drift');
+        assert.ok(healthyVerifyOutput.includes('可以继续 `/evo` / `/commit` 工作流'), 'verify healthy output did not include a clear next step');
 
         const driftTemplateDir = createTempTemplateCli('actual-drift', templateRoot => {
             const memoryPath = path.join(templateRoot, 'memory.js');

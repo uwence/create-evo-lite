@@ -134,6 +134,16 @@ node .evo-lite/cli/memory.js verify
 ```
 This checks the memory runtime, model availability, context freshness, offline-memory residue, and whether the current workspace is still safe to hand over.
 
+### 2. Suggested First Session (Beginner-Friendly)
+If this is your first time using AI as a real project partner, do not try to learn every command at once. Start with this minimal loop:
+
+1. Run `/evo` so the agent loads context and performs a self-check.
+2. Tell the AI your single immediate goal in plain language.
+3. After finishing one small closed loop, run `/commit` so the result becomes trajectory plus archive.
+4. When you are ready to stop, run `/mem` for low-frequency handover.
+
+If `verify` reports archive or rebuild issues, follow the concrete next-step commands printed by the CLI instead of guessing.
+
 ### 3. High-Frequency Tracking & Closure (/commit)
 When a small feature or bug fix is complete, enter the command:
 ```text
