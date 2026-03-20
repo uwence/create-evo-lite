@@ -11,6 +11,10 @@ Canonical Evo-Lite semantics live in:
 
 This file is not the canonical rule source. It is a root-level host adapter so Claude Code can discover the project contract quickly.
 
+When available, Claude-native thin wrappers may also exist under:
+
+- `.claude/commands/`
+
 ## Bootstrap
 
 When taking over this project:
@@ -33,6 +37,8 @@ When taking over this project:
   Meaning: archive inspection + rebuild/recovery flow.
 
 Claude Code may later map these semantics into native commands or hooks, but the semantic source of truth remains Evo-Lite itself.
+
+If `.claude/commands/` exists, treat those files as thin native wrappers around the same semantics, not as a second canonical rule tree.
 
 ## Guardrails
 

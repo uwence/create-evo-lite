@@ -61,8 +61,9 @@ async function main() {
     const evoLiteDir = path.join(targetDir, '.evo-lite');
     const cliDir = path.join(evoLiteDir, 'cli');
     const agentsDir = path.join(targetDir, '.agents');
+    const claudeDir = path.join(targetDir, '.claude');
 
-    [evoLiteDir, cliDir, agentsDir].forEach(dir => {
+    [evoLiteDir, cliDir, agentsDir, claudeDir].forEach(dir => {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
@@ -118,6 +119,11 @@ async function main() {
     const agentsTemplateDir = path.join(templatesDir, '.agents');
     if (fs.existsSync(agentsTemplateDir)) {
         copyRecursiveSync(agentsTemplateDir, agentsDir);
+    }
+
+    const claudeTemplateDir = path.join(templatesDir, '.claude');
+    if (fs.existsSync(claudeTemplateDir)) {
+        copyRecursiveSync(claudeTemplateDir, claudeDir);
     }
 
     // 写入 cli 文件

@@ -23,6 +23,7 @@
 > [!IMPORTANT]
 > **当前版本说明**：仓库现在采用“**工作流协议 + 本地 CLI**”的双层结构。
 > - **`AGENTS.md` / `CLAUDE.md`**：生成在项目根目录，作为 Codex 与 Claude Code 的宿主适配入口。
+> - **`.claude/commands/`**：在 Claude Code 场景下提供薄包装命令入口，但不替代 `.agents/workflows/` 的 canonical 语义。
 > - **`/commit` / `/mem` / `/wash`**：定义在 `.agents/workflows/` 中，约束 AI 该在什么时机做什么。
 > - **`memory.js` / `mem` wrappers**：定义在 `.evo-lite/cli/` 与项目运行时目录中，负责真正执行记忆、归档、状态更新与校验。Unix / Bash 环境使用 `./.evo-lite/mem`，Windows PowerShell / CMD 环境使用 `.\.evo-lite\mem.cmd`。
 > 升级旧项目后，建议先运行 `node .evo-lite/cli/memory.js verify` 检查 CLI、模型、状态文件与历史记忆是否处于可继续接管的状态。
@@ -218,6 +219,8 @@ node .evo-lite/cli/memory.js verify
 MyAwesomeProject/                 <-- (你的项目)
 ├── AGENTS.md                     <-- Codex 宿主适配入口
 ├── CLAUDE.md                     <-- Claude Code 宿主适配入口
+├── .claude/
+│   └── commands/                 <-- Claude Code 薄包装命令入口
 ├── .agents/                      <-- (智能体行为规范区)
 │   ├── rules/                    <-- 核心硬约束 (Core Rules)
 │   │   ├── evo-lite.md           - Boot Sequence 拦截器

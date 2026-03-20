@@ -1,0 +1,21 @@
+# /evo
+
+Run the Evo-Lite takeover workflow for this project.
+
+## Intent
+
+- Read `.evo-lite/active_context.md`
+- inspect canonical rules in `.agents/`
+- run the host-appropriate Evo-Lite verify entrypoint
+- summarize current focus, risks, and the smallest next step
+
+## Command guidance
+
+- Unix / Bash: `./.evo-lite/mem verify`
+- Windows PowerShell / CMD: `.\.evo-lite\mem.cmd verify`
+
+## Important
+
+- `.agents/` and `.evo-lite/` remain the canonical Evo-Lite sources of truth.
+- This Claude command is only a native wrapper surface.
+- Wait for verify to finish before summarizing health.

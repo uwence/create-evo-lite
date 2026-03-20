@@ -251,6 +251,12 @@ This gives immediate value because:
 Recommended next implementation step:
 
 - introduce generated `AGENTS.md` and `CLAUDE.md` adapters first
-- postpone `.claude/commands/` and hooks until after the adapter summaries feel stable
+- then add thin `.claude/commands/` wrappers without duplicating canonical workflow content
+- postpone hooks until after the adapter summaries and command wrappers feel stable
+
+Status:
+
+- root-level adapters implemented
+- thin `.claude/commands/` wrappers implemented
 
 That keeps the rollout narrow, understandable, and reversible.
