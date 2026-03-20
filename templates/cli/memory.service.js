@@ -820,7 +820,7 @@ async function verify() {
     const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
     const chunkCount = db.prepare('SELECT COUNT(*) AS count FROM chunks').get().count;
     if (rawMemoryCount > 0 && chunkCount === 0) {
-        console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建流程。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
+        console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js vectorize`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
         report.hasAlerts = true;
     }
 

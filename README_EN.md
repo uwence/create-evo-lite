@@ -171,6 +171,10 @@ Whenever you need, you or your AI agent can query the memory directly:
 
 # Run a self-check to see if the model is actually loaded
 ./.evo-lite/mem verify
+
+# Rebuild the structured archive path when raw_memory needs to be re-indexed
+# Note: this does not guarantee preservation of remember-only cache entries stored only in memory.db
+node .evo-lite/cli/memory.js vectorize
 ```
 
 

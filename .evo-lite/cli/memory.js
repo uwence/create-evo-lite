@@ -66,7 +66,9 @@ function printHelp() {
   \x1b[32mcontext\x1b[0m <op>...     Modify active_context.md anchors (track, add, focus).
   \x1b[32marchive\x1b[0m <text>      Save a summary to raw_memory/ and auto-vectorize it.
   \x1b[32msync\x1b[0m                Check for unvectorized raw_memory and incrementally vectorize them.
-  \x1b[32mvectorize\x1b[0m           Rebuild vector index interactively.
+  \x1b[32mvectorize\x1b[0m           Backup memory.db, then rebuild from raw_memory/ interactively.
+                      (remember-only cache entries are not guaranteed to survive this rebuild)
+  \x1b[32mwash\x1b[0m                Compatibility entry that points you to vectorize / /wash workflow.
   \x1b[32mverify\x1b[0m              Run initialization checks, git state scans, and
                         database connection verifications.
   \x1b[32mhelp\x1b[0m                Show this help menu.

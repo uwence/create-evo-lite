@@ -17,18 +17,14 @@ description: 记忆清洗与脑区重铸协议 (Brain Rebuild Protocol)
    直接使用编辑器打开并修改有误的 Markdown 文件。
 
 3. **物理重铸 (Rebuild)**:
-   当档案修复完成后，请在终端执行以下指令彻底重置数据库并自动重铸：
+   当档案修复完成后，请直接使用标准重建入口：
 
    ```bash
-   # 1. 物理删除旧记忆脑区
-   del /f /s /q .evo-lite\memory.db
-
-   # 2. 清理向量缓存区
-   del /f /s /q .evo-lite\vect_memory\*
-
-   # 3. 触发交互式升维管线 (请按提示输入数字选择模型)
    node .evo-lite/cli/memory.js vectorize
    ```
+
+   当前 `vectorize` 会先备份旧 `memory.db`，再依据 `raw_memory/` 中的结构化档案重建数据库与向量标记。
+   不要再手工删除 `memory.db` 或 `vect_memory/*`，以免绕过备份保护并误清仅存在数据库中的轻量缓存。
 
 4. **确认与汇报 (Handover)**:
    观察 CLI 输出，确认所有有效语义碎片已被成功重新提取与 Embedding，并注意是否有损坏档案被跳过待修。确认无误后宣告当前重铸结果与剩余待修项。

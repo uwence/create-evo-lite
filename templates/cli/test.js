@@ -174,7 +174,19 @@ async function runTests() {
         assert.ok(flowVerifyOutput.includes('损坏的 raw archive'), 'verify did not report invalid archive health');
         assert.ok(flowVerifyOutput.includes('尚未生成 vect 标记'), 'verify did not report pending archive vectorization');
 
-        console.log('7. Testing verify alerts ...');
+        console.log('7. Testing verify rebuild alert for preserved raw_memory without chunks ...');
+        const rebuildRuntime = createTempRuntimeRoot('rebuild');
+        const rebuildLoaded = await bootstrapRuntime(rebuildRuntime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+        await rebuildLoaded.service.memorize('This preserved raw memory record should survive a model reset so verify can warn that chunks must be rebuilt explicitly afterwards.');
+        rebuildLoaded.db.initDB('Xenova/bge-small-zh-v1.5', 512);
+        const rebuildVerifyOutput = await captureConsole(async () => {
+            await rebuildLoaded.service.verify();
+        });
+        assert.ok(rebuildVerifyOutput.includes('raw_memory 已有数据但 chunks 为空'), 'verify did not report preserved raw_memory without chunks');
+        assert.ok(rebuildVerifyOutput.includes('显式重建命令'), 'verify did not describe the explicit rebuild path');
+        assert.ok(rebuildVerifyOutput.includes('node .evo-lite/cli/memory.js vectorize'), 'verify did not point to the vectorize rebuild command');
+
+        console.log('8. Testing verify alerts ...');
         const staleDate = new Date(Date.now() - 48 * 60 * 60 * 1000);
         fs.utimesSync(path.join(primary.runtimeRoot, 'active_context.md'), staleDate, staleDate);
         const verifyLoaded = await bootstrapRuntime(primary.runtimeRoot, { EVO_LITE_FORCE_GIT_DIRTY: '1' });
@@ -184,7 +196,7 @@ async function runTests() {
         assert.ok(verifyOutput.includes('[前朝遗留告警]'), 'verify did not report dirty git state');
         assert.ok(verifyOutput.includes('[交接失约告警]'), 'verify did not report stale active_context.md');
 
-        console.log('8. Testing verify template-sync semantics ...');
+        console.log('9. Testing verify template-sync semantics ...');
         const verifyRuntime = createTempRuntimeRoot('verify');
         const healthyTemplateDir = createTempTemplateCli('healthy-model-drift', templateRoot => {
             const modelsPath = path.join(templateRoot, 'models.js');
@@ -217,7 +229,7 @@ async function runTests() {
         assert.ok(driftVerifyOutput.includes('out of sync'), 'verify did not report actual template drift');
         assert.ok(!driftVerifyOutput.includes('Verify completed with no active alerts.'), 'verify still reported a clean bill of health after drift');
 
-        console.log('9. Testing import...');
+        console.log('10. Testing import...');
         const imported = createTempRuntimeRoot('import');
         const importedLoaded = await bootstrapRuntime(imported.runtimeRoot);
         await importedLoaded.service.importMemories(exportPath);

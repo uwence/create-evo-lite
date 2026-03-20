@@ -169,6 +169,10 @@ AI (或人类) 可以在项目内随时呼出后台终端记住经验：
 
 # 运行自检：查看模型是否真的加载
 ./.evo-lite/mem verify
+
+# 当 raw_memory 需要重建时，使用标准入口重建结构化归档路径
+# 注意：这不会承诺保留仅存在于 memory.db 中的 remember 轻量缓存
+node .evo-lite/cli/memory.js vectorize
 ```
 
 
