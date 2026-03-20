@@ -25,9 +25,9 @@ trigger: always_on
 当你攻克了架构难点或修复了 Bug，必须严格遵守以下闭环协议，按顺序有序执行，严禁合并多个步骤同时执行：
 
 1. **代码提交**: `git add . && git commit -m "fix/feat: ..."`
-2. **状态更新**: `.\.evo-lite\mem.cmd track --mechanism="<机制名>" --details="<详细经验>" [--resolve="<4位ID>"]`
-3. **元数据同步**: 严禁 AI 手动修改 active_context.md 的任务和轨迹！必须由上述 `mem.cmd track` 命令自动完成。
-4. **认知确认**: CLI 运行结束后会输出 `[AGENT INSTRUCTION]`，你必须据此向用户汇报当前状态。
+2. **状态更新**: `.\.evo-lite\mem.cmd context track --mechanism="<机制名>" --details="<详细经验>" [--resolve="<4位ID>"]`
+3. **元数据同步**: 严禁 AI 手动修改 active_context.md 的任务和轨迹！必须由上述 `mem.cmd context track` 命令自动完成。
+4. **认知确认**: CLI 运行结束后，你必须根据真实输出向用户汇报当前状态、已归档内容以及剩余任务。
    **Expected Outcome**: 形成从遇到困难查找旧记忆，最后通过协议入库新经验的完整自治生态。
 
 # 1. IDENTITY & COMMUNICATION
@@ -48,7 +48,14 @@ trigger: always_on
 - **Terminal Constraints**: 严禁在未经询问的情况下执行具有破坏性的终端命令（如 `rm -rf`, 数据库重置等）。执行前必须展示完整命令并说明原因。必须时刻意识到宿主系统是 Windows (PowerShell/CMD) 还是 Unix (Bash)。执行多行命令、路径拼接、或环境变量传递时，必须使用当前终端支持的正确语法。**特别注意**：严禁使用 `dir /s /b` 或 `ls -R` 等大规模遍历命令探索项目。
 - **Loop Breaking**: 如果在 Debug 过程中连续两次遇到相同的错误或陷入逻辑循环，立即停止写代码。强制进入“反思模式”，梳理前两次失败的根本原因，并提出一条完全不同的解决路径。
 - **Anchor Guard & CLI Enforcement (锚点守卫与 CLI 强制)**:
-  `.evo-lite/active_context.md` 是一个**状态机**，任何对它的修改都**必须通过 `./.evo-lite/mem.cmd` 代理**。
-  **严禁 Agent 直接使用文件写入工具修改此文件！**
-  当你需要追踪进度或消除任务时，必须调用 `mem.cmd context track --resolve="xxxx"` 来完成，CLI 会自动维护锚点边界。
-  *致命错误：* 如果你检测到自己或任何其他 Agent 正在尝试直接修改此文件，必须立即中止并发出告警。
+  `.evo-lite/active_context.md` 是一个**状态机**。其中 `FOCUS`、`BACKLOG`、`TRAJECTORY` 三个运行时区块的修改都**必须通过 `./.evo-lite/mem.cmd` 代理**。
+  **严禁 Agent 直接使用文件写入工具修改上述三个区块！**
+  当你需要追踪进度、消除任务或切换会话焦点时，必须调用 `mem.cmd context track --resolve="xxxx"` 或 `mem.cmd context focus "..."` 来完成，CLI 会自动维护锚点边界。
+  `META` 区块目前没有专用 CLI 写入口；只有在确认不存在对应命令时，才允许围绕 `<!-- BEGIN_META -->` 与 `<!-- END_META -->` 做最小范围的人工维护。
+  *致命错误：* 如果你检测到自己或任何其他 Agent 正在直接修改 `FOCUS`、`BACKLOG`、`TRAJECTORY` 任一区块，必须立即中止并发出告警。
+- **Memory Flow Model (记忆流动模型)**:
+  `active_context.md` 只负责“当前态”，`archive` 只负责“沉淀态”，两者之间默认必须通过 `mem.cmd context track` 流转。
+  `remember` 仅作为轻量检索缓存存在，不承担正式闭环的重建保证，也不替代 `track` 的长期沉淀职责。
+  规则上应始终优先遵循：
+  `active_context -> context track -> archive`
+  如果 `track` 未成功完成归档与状态更新，就不应宣称本次任务已可靠闭环。

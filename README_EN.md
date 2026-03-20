@@ -2,8 +2,8 @@
 
 # 🧠 create-evo-lite
 
-**The Golden Thread for Agentic Memory & Context Persistence**  
-*"Capturing the AI's mental snapshot with ultimate simplicity."*
+**A Project Scaffold for AI Vibecoding**  
+*"You do not need to be a professional software engineer to keep AI work durable, traceable, and handoff-friendly."*
 
 [![Vibecoding](https://img.shields.io/badge/Vibecoding-AI_Assisted-8a2be2.svg)](#)
 [![System](https://img.shields.io/badge/System-Daemonless_RAG-007acc.svg)](#)
@@ -16,19 +16,21 @@
 ---
 </div>
 
-> **Zero-Intrusion, Decentralized, Daemonless AI Core Governance & Memory System with Dual-Core RAG (Search + Rerank)**
+> **A daemonless, project-local scaffold for AI vibecoding.**
 
-`Evo-Lite` is a **highly disciplined** mental constraint and state protection system specifically designed for Agentic Workflows (AI-assisted coding). In v1.4.0+, it has evolved from a simple "memory plugin" into a **Rules-driven autonomous governance framework**. It can instantly equip any of your projects (frontend, backend, or even simple script libraries) with a persistent memory, technical aesthetic validation, and a completely sandboxed "Super Brain."
+`Evo-Lite` is a project-local scaffold for Agentic Workflows, especially useful for people who come from **automation, controls, hardware, testing, ops, or other non-pure-software backgrounds** but still want to build real projects with AI. Instead of asking you to run an external RAG stack, it keeps **rules, explicit context, implicit memory, and CLI tooling** inside the repo, so an AI agent inherits not only code, but also discipline.
 
 > [!IMPORTANT]
-> **Version 2.0.0 Major Update Warning**: The architecture has undergone a core iteration, introducing the **Two-Tier Protocol**.
-> - **`/commit`**: High-frequency usage, responsible for code commits, trajectory tracking, and task resolution. Uses 4-char Hash IDs to ensure traceability.
-> - **`/mem`**: Low-frequency usage, dedicated to session handover, version bumping, and Git Tag release.
-> It is recommended to run `node .evo-lite/cli/memory.js verify` in your Agent terminal to ensure the environment has auto-updated to the new protocols.
+> **Current structure**: Evo-Lite uses a two-layer model.
+> - **Workflow protocols** such as `/commit`, `/mem`, and `/wash` live in `.agents/workflows/`.
+> - **Executable behavior** lives in `.evo-lite/cli/` via `memory.js` / `mem.cmd`.
+> After upgrading an existing project, run `node .evo-lite/cli/memory.js verify` before continuing work.
 
 ---
 
 ## 🌟 Why do you need Evo-Lite?
+
+If you are not a full-time software engineer and rely on AI to turn ideas, domain knowledge, and field problems into small tools or products quickly, the hardest part is usually not shipping version one. It is making sure the AI can still continue the project tomorrow without losing the thread.
 
 As AI coding assistants become increasingly powerful, we often encounter these **engineering-level pain points**:
 
@@ -37,29 +39,63 @@ As AI coding assistants become increasingly powerful, we often encounter these *
 3. **Heavy Management Costs**: Most RAG solutions for memory require running Docker or microservices. We need it simple!
 4. **Host Pollution**: No one wants to pollute a clean Java or Rust project root directory just for an AI script.
 
-**Evo-Lite solves all of this elegantly with less than 200 lines of code.**
+**Evo-Lite is not trying to turn you into a full software team. It is trying to give you a project skeleton that AI can keep working with over time.**
 
 ## 🔥 Core Features (Evo-Lite Architecture)
 
-* **🏗️ Governance via Rules (.agents/rules)**
-  **Core Upgrade:** Protocols are now enforced by system rules rather than just documentation. It shifts governance from a "manual guide" to system-level hard constraints. The first thing an AI does upon waking is read `.agents/rules/evo-lite.md`, intercepting low-quality output at the source.
+* **🏗️ Governance via Rules (`.agents/rules`)**
+  Protocols are no longer just suggestions in a chat. They live as project assets, can be versioned, reviewed, and upgraded, and serve as durable constraints for the next agent taking over.
 * **🌐 In-Tree RAG (Pure Local Vector Engine)**
-  Uses `sqlite-vec` under the hood. No background services required. Search historical records? Just run `.\.evo-lite\mem recall` in your terminal.
-* **🧠 Dual-Pass Retrieval Architecture (Pure Serverless)**
-  - **Coarse Retrieval (Embedding)**: Instantly pinpoints candidates using the `Xenova/bge-small-zh-v1.5` ONNX algorithm.
-  - **Fine-Grained Re-ranking (Reranker)**: Automatically invokes `Xenova/bge-reranker-base` for semantic cross-validation, processing entirely in-memory via Node.js without any background service.
-* **🛡️ Isolated Dual-Layer Memory**
-  - **Explicit State Machine (`active_context.md`)** : Forces the AI to update progress in real-time, eliminating task hallucinations.
-  - **Implicit Long-Term Storage (`memory.db`)**: Silently accumulates experience that syncs with Git permanently.
+  Built on `sqlite-vec`, with the whole runtime living under `.evo-lite/`. No daemon, no separate memory service, no extra deployment tier.
+* **🧠 Dual-Stage Retrieval**
+  - **Embedding** for coarse candidate retrieval
+  - **Reranker** for better semantic ordering
+  Both are designed around local ONNX inference with downgrade paths when the environment is constrained.
+* **🛡️ Explicit + Implicit Memory**
+  - **Explicit state machine (`active_context.md`)** for focus, backlog, and trajectory handover
+  - **Implicit memory store (`memory.db`, `raw_memory`, `vect_memory`)** for long-term searchable recall and rebuildable archives
+* **🛠️ Rebuildable Archive Pipeline**
+  `archive`, `sync`, and `vectorize` make memory maintainable over time, instead of turning it into a one-shot write-only cache.
 * **⚓ Space-Time Traceability (Git Anchoring)**
-  Every memory is stamped with `[Time]` and Git `[Commit Hash]`. Combined with `memory-distillation.md`, it rejects low-entropy "logs" without traceability.
-* **🔄 Seamless Upgrade & Fusion**
-  Supports cross-generational upgrades from v1.3.x! Automatically extracts legacy API configs, protects progress documents, and guides AI through manual fusion of backups.
-* **⚡ Automated Workflows & Slash Commands**
-  - `/evo`: Magic summoning to trigger self-check, tech stack sniffing, and progress sync.
-  - `/commit`: High-frequency protocol for daily code commits, trajectory tracking, and task resolution.
-  - `/mem`: Archive protocol for session handover, version bumping, and Git Tag release.
-  - `/wash`: Data washing protocol for offline repair and restructuring of historical "dirty" data.
+  `remember` writes are stamped with `[Time]` and Git `[Commit Hash]`, while `archive` / `track` artifacts keep their traceability in frontmatter plus structured Markdown sections. The goal is durable provenance, without pretending every memory path uses the exact same envelope.
+* **🔄 Upgradeable Runtime**
+  Existing projects can be re-initialized and verified without treating the first scaffold as the only valid moment of setup.
+* **⚡ Workflow Protocols + CLI Commands**
+  - Workflow layer: `/evo`, `/commit`, `/mem`, `/wash`
+  - Execution layer: `remember`, `recall`, `export`, `import`, `archive`, `sync`, `vectorize`, `context`
+
+## 🧭 Dual-Lane Memory Model
+
+Evo-Lite currently uses an explicit **dual-lane memory model**:
+
+- **`active_context.md`**: the live state panel, only for `META`, `FOCUS`, `BACKLOG`, `TRAJECTORY`, and other “what is happening right now” signals.
+- **`archive` / `track`**: long-lived structured assets for closed-loop bug reviews, implementation conclusions, architecture decisions, and reusable project knowledge.
+- **`remember`**: a lightweight implicit recall cache for quick searchable hints, but **not the primary rebuild-guaranteed closure path**.
+
+The intended mental model is:
+
+- `active_context`: cockpit
+- `archive`: black box
+- `context track`: the only compliant transition bridge
+
+### Flow Rule
+
+- Work in progress lives in `active_context.md`
+- Closed-loop progress is persisted through `.\.evo-lite\mem.cmd context track ...`
+- Long-term experience belongs in structured archives under `raw_memory/`
+- Lightweight searchable hints may use `remember`
+
+The default main lane is:
+
+```text
+active_context -> context track -> archive
+```
+
+This means:
+
+- do not keep large retrospectives inside `active_context.md`
+- do not manually duplicate records from `active_context.md` into archive
+- if `track` did not succeed, the loop is not considered reliably closed
 
 ---
 
@@ -85,55 +121,73 @@ npm link
 create-evo-lite ./MyAwesomeProject
 ```
 
-During execution, the system will automatically initialize a **built-in ONNX Runtime (`@xenova/transformers`)** and silently download the quantized models (defaulting to `bge-small-zh-v1.5` and `bge-reranker-base`). No extra Docker or LM Studio deployments are needed, making it truly "Out of the box, zero footprint."
+During setup, Evo-Lite initializes a local ONNX-based runtime and keeps the memory stack inside `.evo-lite/`. No separate service tier is required.
 
 > [!TIP]
 > **Built-in Dual-Core Engines**:
 > - Embedding: `Xenova/bge-small-zh-v1.5` (Millisecond inference even on pure CPU)
 > - Reranker: `Xenova/bge-reranker-base` (Quantized for minimal memory footprint)
 
-The AI will silently load core architecture rules, run \`verify\` for the database, review the technical dictionary, and enter the service state perfectly.
+After setup, the first thing to run is:
+```bash
+node .evo-lite/cli/memory.js verify
+```
+This checks the memory runtime, model availability, context freshness, offline-memory residue, and whether the current workspace is still safe to hand over.
 
 ### 3. High-Frequency Tracking & Closure (/commit)
 When a small feature or bug fix is complete, enter the command:
 ```text
 /commit
 ```
-The AI will automatically: capture the Commit Hash, record the trajectory, refine memory into the vector database, and precisely resolve the corresponding Task Hash ID in `active_context.md`.
+`/commit` is a workflow contract, not magic by itself. In practice it should drive the agent to:
+- complete the real `git commit`
+- run `.\.evo-lite\mem.cmd context track --mechanism="..." --details="..." [--resolve="xxxx"]`
+- convert the code action into trajectory, archive, and backlog updates
 
 ### 4. Low-Frequency Release & Handover (/mem)
 When the iteration is complete, and you need to end the session:
 ```text
 /mem
 ```
-The AI will automatically: perform version bumping, apply a Git Tag, and suspend the session.
+`/mem` is the low-frequency handover protocol for version bumps, release tagging, and explicit session suspension.
 
 
-### 4. Direct Interaction with the Brain
+### 5. Direct Interaction with the Brain
 
 Whenever you need, you or your AI agent can query the memory directly:
 
 ```bash
-# Recall historical挣扎
+# Recall historical struggle
 ./.evo-lite/mem recall "Why did the login API integration fail last time?"
 
 # Imprint a new memory
-./.evo-lite/mem remember "The user verification relies on XYZ header, do not use ABC cookie anymore."
+./.evo-lite/mem remember "The user verification relies on XYZ header, do not use ABC cookie anymore, and this only broke in CI after the proxy layer was introduced."
+
+# Create a structured archive stub
+./.evo-lite/mem archive "Core conclusions from the login pipeline refactor"
+
+# Add a new backlog item into active_context.md
+./.evo-lite/mem context add "Tighten the upgrade notes in README"
 
 # Run a self-check to see if the model is actually loaded
 ./.evo-lite/mem verify
 ```
 
 
-### 4. Seamless Upgrade
+### 6. Seamless Upgrade
 When Evo-Lite releases a new version (e.g., introducing new `memory.js` skills), simply run the following in your existing project's root directory:
 ```bash
 npx create-evo-lite@latest ./ --yes
 ```
-The system will trigger the **Seamless Upgrade Protocol**:
-- Automatically extracts and preserves your legacy API port and model config.
-- Absolutely protects your `active_context.md` from being erased.
-- Updates core templates and prompts the AI during its next wake-up (/evo) to proactively map and merge your custom settings.
+The upgrade flow will:
+- preserve the existing `active_context.md`
+- refresh `.agents/` and `.evo-lite/cli/` templates
+- attempt migration / washing paths when an older memory store is detected
+
+After upgrading, run:
+```bash
+node .evo-lite/cli/memory.js verify
+```
 
 ## 📂 Directory Structure at a Glance
 
@@ -147,28 +201,32 @@ MyAwesomeProject/                 <-- (Your Project)
 │   └── workflows/                <-- Slash Commands
 │       ├── evo.md                - /evo Script
 │       ├── commit.md             - /commit Script
-│       └── mem.md                - /mem Script
+│       ├── mem.md                - /mem Script
+│       └── wash.md               - /wash Script
 │
 └── .evo-lite/                    <-- (Memory & Dependency Sandbox)
     ├── cli/                      - Vector DB CLI scripts
     ├── mem.cmd                   - CLI Entry (Win)
     ├── mem                       - CLI Entry (Unix)
     ├── active_context.md         - Explicit Progress Sheet
-    └── memory.db                 - Implicit Vector Database
+    ├── memory.db                 - Implicit Vector Database
+    ├── raw_memory/               - Structured source archives
+    ├── vect_memory/              - Vectorized archive markers
+    └── .cache/                   - Local model cache
 ```
 
 ---
 
 ## 🏛️ The Aesthetics of Restriction
 
-Why challenge massive RAG frameworks with less than 200 lines of code?
+Why keep this as project-local infrastructure instead of turning it into another heavyweight external system?
 
 In the age of AI, **context is expensive, and mental clarity is fragile**. Traditional RAG solutions tend to be "heavy," requiring Docker, microservices, and complex sync logic. This not only clutters your project but also adds a significant maintenance burden.
 
-The core philosophy of Evo-Lite is **"Order through Simplicity"**:
+The core philosophy of Evo-Lite is **"Use project-local order to resist AI context drift."**:
 1. **Zero-Intrusion is True Respect**: A good tool should be like a ghost—existing only when summoned. That's why we insist on a `Daemonless` architecture.
 2. **Sandboxing as the Last Line of Defense**: We'd rather increase the scaffolding size slightly (with offline fallbacks) than let a developer's memory fail just because they lack a C++ compiler.
-3. **Dual-Pass Retrieval Power**: By leveraging the native speed and simplicity of `sqlite-vec`, we've implemented an industrial-grade retrieval pipeline in milliseconds, proving that high precision doesn't require a massive cluster.
+3. **Memory must be rebuildable, not merely writable**: durable AI memory is not about recording one event once; it is about being able to migrate, re-vectorize, verify, and keep using it later.
 
 > *"Humans hold reverence for business and code assets; Evo-Lite is the golden thread that places the necessary constraints on AI."*
 

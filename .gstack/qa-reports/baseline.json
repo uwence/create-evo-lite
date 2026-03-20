@@ -1,0 +1,12 @@
+{
+  "date": "2026-03-19",
+  "url": "CLI Test (Evo-Lite)",
+  "healthScore": 100,
+  "issues": [],
+  "categoryScores": {
+    "console": 100,
+    "functional": 100,
+    "ux": 100,
+    "edgeCases": 100
+  }
+}

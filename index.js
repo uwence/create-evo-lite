@@ -24,22 +24,7 @@ async function main() {
     const targetDir = path.resolve(targetDirArg);
     console.log(`🚀 Evo-Lite v${SELF_VERSION} — 开始在 ${targetDir} 初始化 Daemonless 记忆大脑...\n`);
 
-    let embedModel = 'Xenova/bge-small-zh-v1.5';
-    let rerankModel = 'Xenova/bge-reranker-base';
     let shouldWash = false;
-
-    // 尝试反向提取旧配置以支持无损升级 (仅限于 Transformers.js 路线的配置)
-    const oldMemJsPath = path.join(targetDir, '.evo-lite', 'cli', 'memory.js');
-    if (fs.existsSync(oldMemJsPath)) {
-        try {
-            const oldCode = fs.readFileSync(oldMemJsPath, 'utf8');
-            const m1 = oldCode.match(/const EMBEDDING_MODEL = '(.*?)';/);
-            const m2 = oldCode.match(/const RERANKER_MODEL = '(.*?)';/);
-            if (m1 && m1[1].includes('Xenova/')) embedModel = m1[1];
-            if (m2 && m2[1].includes('Xenova/')) rerankModel = m2[1];
-            console.log('🔄 检测到已有的 Evo-Lite 内存芯片。已成功处理历史配置！');
-        } catch (e) { }
-    }
 
     const hasOldDb = fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'));
 
@@ -133,13 +118,7 @@ async function main() {
 
     // 写入 cli 文件
     cliFiles.forEach(file => {
-        let content = fs.readFileSync(path.join(cliTemplatesDir, file), 'utf8');
-        // 对 memory.js 进行特殊处理，注入配置
-        if (file === 'memory.js') {
-            content = content
-                .replace(/const EMBEDDING_MODEL = '.*?';/, `const EMBEDDING_MODEL = '${embedModel}';`)
-                .replace(/const RERANKER_MODEL = '.*?';/, `const RERANKER_MODEL = '${rerankModel}';`);
-        }
+        const content = fs.readFileSync(path.join(cliTemplatesDir, file), 'utf8');
         fs.writeFileSync(path.join(cliDir, file), content);
     });
 
@@ -204,12 +183,23 @@ async function main() {
                 console.log('✅ 终极脱机版预编译依赖包注入成功！危机解除！');
             } else {
                 console.warn('❌ 无法找到离线备选安装包。请稍后在有网络和编译环境的机器上手动进入 .evo-lite 运行:');
-                console.warn('npm install better-sqlite3 sqlite-vec axios');
+                console.warn('npm install better-sqlite3 sqlite-vec @xenova/transformers');
             }
         } catch (fallbackError) {
             console.error('❌ 脱机兜底包注入也失败了:', fallbackError.message);
-            console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 sqlite-vec axios');
+            console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 sqlite-vec @xenova/transformers');
         }
+    }
+
+    const offlineModelsDir = path.join(evoLiteDir, 'models');
+    if (!fs.existsSync(offlineModelsDir)) {
+        fs.mkdirSync(offlineModelsDir, { recursive: true });
+    }
+
+    const packagedEmbeddingTar = path.join(__dirname, 'templates', 'embedding-model.tar.gz');
+    const runtimeEmbeddingTar = path.join(offlineModelsDir, 'bge-small-zh-v1.5.tar.gz');
+    if (fs.existsSync(packagedEmbeddingTar)) {
+        fs.copyFileSync(packagedEmbeddingTar, runtimeEmbeddingTar);
     }
 
     // 4.5 Embedding 模型供给策略 (Jina 优先下载 → BGE 离线兜底)
@@ -263,7 +253,7 @@ env.remotePathTemplate = '{model}/resolve/{revision}/';
             console.warn('⚠️ Jina 模型下载失败 (网络受限或超时)。将使用离线 BGE 备用模型。');
             // Fallback: extract offline BGE model cache
             if (!bgeAlreadyCached) {
-                const embeddingPkg = path.join(__dirname, 'templates', 'embedding-model.tar.gz');
+                const embeddingPkg = runtimeEmbeddingTar;
                 if (fs.existsSync(embeddingPkg)) {
                     console.log('🧊 正在解压离线 Embedding 模型缓存 (bge-small-zh-v1.5, ~15MB)...');
                     const cacheRoot = path.join(evoLiteDir, '.cache');
@@ -283,13 +273,13 @@ env.remotePathTemplate = '{model}/resolve/{revision}/';
         try { fs.unlinkSync(probePath); } catch (_) {}
     }
 
-    // 4.6 Dynamically patch memory.js model config to match actually available model
-    const memJsFinalPath = path.join(cliDir, 'memory.js');
-    let memJsFinal = fs.readFileSync(memJsFinalPath, 'utf8');
-    memJsFinal = memJsFinal
+    // 4.6 Dynamically patch models.js model config to match actually available model
+    const modelsJsFinalPath = path.join(cliDir, 'models.js');
+    let modelsJsFinal = fs.readFileSync(modelsJsFinalPath, 'utf8');
+    modelsJsFinal = modelsJsFinal
         .replace(/let ACTIVE_MODEL = '.*?';/, `let ACTIVE_MODEL = '${finalEmbedModel}';`)
         .replace(/let ACTIVE_DIMS = \d+;/, `let ACTIVE_DIMS = ${finalEmbedDims};`);
-    fs.writeFileSync(memJsFinalPath, memJsFinal);
+    fs.writeFileSync(modelsJsFinalPath, modelsJsFinal);
     console.log(`📡 运行时引擎已锁定为: ${finalEmbedModel} (${finalEmbedDims}d)`);
 
     // --- 阶段 D: 跨模型迁移洗盘 ---

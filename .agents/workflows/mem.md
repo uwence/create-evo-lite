@@ -15,9 +15,9 @@ description: 状态重置、项目跃迁与挂起发布协议
    确保 `active_context.md` 中的 `FOCUS` 目标已经全部达成。如果 Backlog 尚未清空，你必须警告 User，并询问是否确定要在此刻强制挂起会话。
 
 2. 显性单据覆写 (Update META)
-   使用文件编辑工具修改本项目根目录下的 `.evo-lite/active_context.md`。
-   - [A. 元数据 `META`]: 修改 `<!-- BEGIN_META -->` 与 `<!-- END_META -->` 之间的 `> **更新时间**:` 为当前时间，并更新 `> **项目状态**:`。
-   - [B. 焦点 `FOCUS`]: 描述下一个会话或者接下来的长远打算。
+   优先通过状态机 CLI 更新可代理的区块，避免直接编辑锚点内容。
+   - [A. 焦点 `FOCUS`]: 使用 `.\.evo-lite\mem.cmd context focus "下一个会话的焦点"` 更新下一阶段焦点。
+   - [B. 元数据 `META`]: 当前 CLI 还未提供专门的 `META` 写入口，如确需修改 `更新时间` 与 `项目状态`，只能在确认无对应 CLI 命令的前提下手动编辑 `<!-- BEGIN_META -->` 与 `<!-- END_META -->` 之间的内容。
 
 3. 项目版本小跃迁 (Bump Version)
    修订 `package.json` 中的 `version` 字段。若无重大重构，增加末尾修订号（Patch）。禁止修改 `.evo-lite/package.json`（若存在）。
