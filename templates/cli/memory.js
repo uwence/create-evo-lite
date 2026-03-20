@@ -11,7 +11,7 @@ function getCliText(argv = process.argv) {
 
     if (action === 'context') {
         const op = argv[3];
-        if (op === 'add' || op === 'focus' || op === 'inject' || op === 'repair-trajectory') {
+        if (op === 'add' || op === 'focus' || op === 'inject') {
             return argv[4];
         }
         return argv[4];
@@ -63,7 +63,7 @@ function printHelp() {
   \x1b[32mexport\x1b[0m <file>       Export all memories to a JSON file.
   \x1b[32mimport\x1b[0m <file>       Import memories from a JSON file path.
 
-  \x1b[32mcontext\x1b[0m <op>...     Modify active_context.md anchors (track, add, focus, repair-trajectory).
+  \x1b[32mcontext\x1b[0m <op>...     Modify active_context.md anchors (track, add, focus).
   \x1b[32marchive\x1b[0m <text>      Save a summary to raw_memory/ and auto-vectorize it.
   \x1b[32msync\x1b[0m                Check for unvectorized raw_memory and incrementally vectorize them.
   \x1b[32mrebuild\x1b[0m             Standard rebuild entry: backup memory.db, then rebuild from raw_memory/.
@@ -152,11 +152,6 @@ async function runContextCommand() {
 
     if (op === 'inject') {
         memoryService.inject(text);
-        return;
-    }
-
-    if (op === 'repair-trajectory') {
-        console.log(memoryService.repairTrajectoryLabels());
         return;
     }
 

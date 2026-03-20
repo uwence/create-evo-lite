@@ -132,26 +132,6 @@ async function runTests() {
         assert.ok(!contextAfterTrack.includes(`[${addResult.hash}]`), 'Resolved backlog hash still exists after track --resolve');
         assert.ok(/\n- \[(?:[a-f0-9]{7}|No-Git)\] \d{4}-\d{2}-\d{2} ProtocolRestore: /.test(contextAfterTrack), 'Trajectory did not record the new track entry with a short hash label');
 
-        console.log('2b. Testing repair-trajectory upgrades historical mechanism labels ...');
-        const malformedTrajectory = contextAfterTrack.replace(/\[(?:[a-f0-9]{7}|No-Git)\] (\d{4}-\d{2}-\d{2}) ProtocolRestore:/, '[ProtocolRestore] $1 ProtocolRestore:');
-        fs.writeFileSync(path.join(primary.runtimeRoot, 'active_context.md'), malformedTrajectory, 'utf8');
-        const repairResult = primaryLoaded.service.repairTrajectoryLabels();
-        assert.strictEqual(repairResult.repaired, 1, 'repair-trajectory did not fix the malformed mechanism label');
-        const repairedContext = fs.readFileSync(path.join(primary.runtimeRoot, 'active_context.md'), 'utf8');
-        assert.ok(/\n- \[(?:[a-f0-9]{7}|No-Git)\]/.test(repairedContext), 'repair-trajectory did not restore a short hash label');
-
-        console.log('2c. Testing repair-trajectory splits escaped multi-entry lines ...');
-        const mergedTrajectory = `- [ProtocolRestore] 2026-03-20 ProtocolRestore: fixed protocol drift\\n- [QA_TEST] 2026-03-20 Verified memory core loop`;
-        fs.writeFileSync(
-            path.join(primary.runtimeRoot, 'active_context.md'),
-            contextAfterTrack.replace(/<!-- BEGIN_TRAJECTORY -->[\s\S]*?<!-- END_TRAJECTORY -->/, `<!-- BEGIN_TRAJECTORY -->\n${mergedTrajectory}\n<!-- END_TRAJECTORY -->`),
-            'utf8'
-        );
-        const mergedRepairResult = primaryLoaded.service.repairTrajectoryLabels();
-        assert.strictEqual(mergedRepairResult.repaired, 1, 'repair-trajectory should repair the known malformed mechanism label in a merged line');
-        const mergedRepairedContext = fs.readFileSync(path.join(primary.runtimeRoot, 'active_context.md'), 'utf8');
-        assert.ok(mergedRepairedContext.includes('\n- [QA_TEST] 2026-03-20 Verified memory core loop'), 'repair-trajectory did not split escaped multi-entry lines');
-
         console.log('3. Testing CLI command-surface parsing for context add / focus ...');
         resetCliModuleCache();
         const cliModule = require(path.join(CLI_DIR, 'memory.js'));

@@ -48,10 +48,6 @@ function buildArchiveFilename(timestamp, id) {
     return `mem_${formatArchiveTimestamp(timestamp)}_${id}.md`;
 }
 
-function isTrajectoryHashLabel(label) {
-    return /^(?:[a-f0-9]{7}|No-Git)$/i.test(label);
-}
-
 function chunkText(text, chunkSize = 512) {
     const chunks = [];
     for (let i = 0; i < text.length; i += chunkSize) {
@@ -438,16 +434,6 @@ function validateArchiveMarkdown(markdown, type) {
     };
 }
 
-function extractArchiveMechanism(markdown) {
-    const match = markdown.match(/## 实现细节 \(Implementation\)\n+\[([^\]]+)\]/);
-    return match ? match[1].trim() : null;
-}
-
-function extractCommitHashFromArchiveName(filename) {
-    const match = filename.match(/_((?:[a-f0-9]{7})|No-Git)_[a-f0-9]{8}\.md$/i);
-    return match ? match[1] : null;
-}
-
 function splitTrajectoryEntries(trajectory) {
     return trajectory
         .replace(/\\n(?=- \[)/g, '\n')
@@ -646,59 +632,6 @@ function updateTrajectory(markdown, mechanism, details, trajectoryId = getCommit
         entries.pop();
     }
     return writeSection(markdown, 'TRAJECTORY', entries.join('\n'));
-}
-
-function repairTrajectoryLabels() {
-    ensureContextFile();
-    const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
-    const trajectory = readSection(markdown, 'TRAJECTORY') || '';
-    const entries = splitTrajectoryEntries(trajectory);
-    const rawDir = getRawMemoryDir();
-    const mechanismToHash = new Map();
-
-    if (fs.existsSync(rawDir)) {
-        const files = fs.readdirSync(rawDir)
-            .filter(file => file.endsWith('.md'))
-            .sort()
-            .reverse();
-        for (const file of files) {
-            const mechanism = extractArchiveMechanism(fs.readFileSync(path.join(rawDir, file), 'utf8'));
-            const commitHash = extractCommitHashFromArchiveName(file);
-            if (mechanism && commitHash && !mechanismToHash.has(mechanism)) {
-                mechanismToHash.set(mechanism, commitHash);
-            }
-        }
-    }
-
-    const unresolved = [];
-    let repaired = 0;
-    const normalizedEntries = entries.map(line => {
-        const match = line.match(/^- \[([^\]]+)\](.*)$/);
-        if (!match) {
-            return line;
-        }
-
-        const label = match[1].trim();
-        if (isTrajectoryHashLabel(label) || /^\d{4}-\d{2}-\d{2}$/.test(label)) {
-            return line;
-        }
-
-        const repairedHash = mechanismToHash.get(label);
-        if (!repairedHash) {
-            unresolved.push(label);
-            return line;
-        }
-
-        repaired += 1;
-        return `- [${repairedHash}]${match[2]}`;
-    });
-
-    if (repaired > 0) {
-        fs.writeFileSync(ACTIVE_CONTEXT_PATH, writeSection(markdown, 'TRAJECTORY', normalizedEntries.join('\n')), 'utf8');
-        appendLog('CONTEXT_REPAIR_TRAJECTORY', `repaired=${repaired} unresolved=${unresolved.length}`);
-    }
-
-    return { repaired, unresolved };
 }
 
 function resolveBacklog(markdown, resolveHash) {
@@ -1032,19 +965,15 @@ module.exports = {
     buildArchiveFilename,
     buildArchiveId,
     exportMemories,
-    extractArchiveMechanism,
-    extractCommitHashFromArchiveName,
     extractChunksFromMd,
     formatArchiveTimestamp,
     forget,
     importMemories,
     inject,
-    isTrajectoryHashLabel,
     list,
     memorize,
     parseGitStatusLines,
     recall,
-    repairTrajectoryLabels,
     splitTrajectoryEntries,
     summarizeArchiveHealth,
     setFocus,
