@@ -9,6 +9,7 @@ const WORKSPACE_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATE_CONTEXT_PATH = path.join(WORKSPACE_ROOT, 'templates', 'active_context.md');
 const SHARED_CACHE_DIR = path.join(WORKSPACE_ROOT, '.evo-lite', '.cache');
 const TEMPLATE_CLI_DIR = path.join(WORKSPACE_ROOT, 'templates', 'cli');
+const TEMPLATE_ROOT_DIR = path.join(WORKSPACE_ROOT, 'templates');
 process.env.NODE_PATH = path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules');
 require('module').Module._initPaths();
 
@@ -20,6 +21,10 @@ function createTempRuntimeRoot(name) {
         .readFileSync(TEMPLATE_CONTEXT_PATH, 'utf8')
         .replace(/\{\{DATE\}\}/g, new Date().toISOString().split('T')[0]);
     fs.writeFileSync(path.join(runtimeRoot, 'active_context.md'), template, 'utf8');
+    for (const file of ['AGENTS.md', 'CLAUDE.md']) {
+        fs.copyFileSync(path.join(TEMPLATE_ROOT_DIR, file), path.join(workspaceRoot, file));
+    }
+    copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.claude'), path.join(workspaceRoot, '.claude'));
     return { runtimeRoot, workspaceRoot };
 }
 
@@ -28,6 +33,28 @@ function createTempTemplateCli(name, mutate) {
     for (const file of fs.readdirSync(TEMPLATE_CLI_DIR)) {
         fs.copyFileSync(path.join(TEMPLATE_CLI_DIR, file), path.join(templateRoot, file));
     }
+    if (mutate) {
+        mutate(templateRoot);
+    }
+    return templateRoot;
+}
+
+function copyRecursive(sourceDir, targetDir) {
+    fs.mkdirSync(targetDir, { recursive: true });
+    for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+        const sourcePath = path.join(sourceDir, entry.name);
+        const targetPath = path.join(targetDir, entry.name);
+        if (entry.isDirectory()) {
+            copyRecursive(sourcePath, targetPath);
+            continue;
+        }
+        fs.copyFileSync(sourcePath, targetPath);
+    }
+}
+
+function createTempTemplateRoot(name, mutate) {
+    const templateRoot = fs.mkdtempSync(path.join(os.tmpdir(), `evo-lite-template-root-${name}-`));
+    copyRecursive(TEMPLATE_ROOT_DIR, templateRoot);
     if (mutate) {
         mutate(templateRoot);
     }
@@ -333,8 +360,8 @@ async function runTests() {
 
         console.log('10. Testing verify template-sync semantics ...');
         const verifyRuntime = createTempRuntimeRoot('verify');
-        const healthyTemplateDir = createTempTemplateCli('healthy-model-drift', templateRoot => {
-            const modelsPath = path.join(templateRoot, 'models.js');
+        const healthyTemplateRoot = createTempTemplateRoot('healthy-model-drift', templateRoot => {
+            const modelsPath = path.join(templateRoot, 'cli', 'models.js');
             const mutated = fs.readFileSync(modelsPath, 'utf8')
                 .replace(/let ACTIVE_MODEL = '.*?';/, "let ACTIVE_MODEL = 'Xenova/bge-small-zh-v1.5';")
                 .replace(/let ACTIVE_DIMS = \d+;/, 'let ACTIVE_DIMS = 512;');
@@ -342,27 +369,29 @@ async function runTests() {
         });
         const verifyHealthyLoaded = await bootstrapRuntime(verifyRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
-            EVO_LITE_TEMPLATE_CLI_DIR: healthyTemplateDir,
+            EVO_LITE_TEMPLATE_CLI_DIR: path.join(healthyTemplateRoot, 'cli'),
+            EVO_LITE_TEMPLATE_ROOT_DIR: healthyTemplateRoot,
         });
         const healthyVerifyOutput = await captureConsole(async () => {
             await verifyHealthyLoaded.service.verify();
         });
-        assert.ok(healthyVerifyOutput.includes('CLI files are synced with templates.'), 'verify should treat dynamic model defaults as a healthy sync state');
+        assert.ok(healthyVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should treat dynamic model defaults and host adapters as a healthy sync state');
         assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged models.js dynamic defaults as drift');
         assert.ok(healthyVerifyOutput.includes('可以继续 `/evo` / `/commit` 工作流'), 'verify healthy output did not include a clear next step');
 
-        const driftTemplateDir = createTempTemplateCli('actual-drift', templateRoot => {
-            const memoryPath = path.join(templateRoot, 'memory.js');
-            fs.writeFileSync(memoryPath, `${fs.readFileSync(memoryPath, 'utf8')}\n// drift`, 'utf8');
+        const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {
+            const claudePath = path.join(templateRoot, 'CLAUDE.md');
+            fs.writeFileSync(claudePath, `${fs.readFileSync(claudePath, 'utf8')}\n<!-- drift -->`, 'utf8');
         });
         const verifyDriftLoaded = await bootstrapRuntime(verifyRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
-            EVO_LITE_TEMPLATE_CLI_DIR: driftTemplateDir,
+            EVO_LITE_TEMPLATE_CLI_DIR: path.join(driftTemplateRoot, 'cli'),
+            EVO_LITE_TEMPLATE_ROOT_DIR: driftTemplateRoot,
         });
         const driftVerifyOutput = await captureConsole(async () => {
             await verifyDriftLoaded.service.verify();
         });
-        assert.ok(driftVerifyOutput.includes('out of sync'), 'verify did not report actual template drift');
+        assert.ok(driftVerifyOutput.includes('CLAUDE.md is out of sync'), 'verify did not report actual host adapter drift');
         assert.ok(!driftVerifyOutput.includes('Verify completed with no active alerts.'), 'verify still reported a clean bill of health after drift');
 
         console.log('11. Testing import...');

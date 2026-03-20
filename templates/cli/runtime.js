@@ -85,6 +85,32 @@ function getTemplateCliDir() {
     return null;
 }
 
+function getTemplateRootDir() {
+    const explicit = process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
+    if (explicit) {
+        const resolved = path.resolve(explicit);
+        return fs.existsSync(resolved) ? resolved : null;
+    }
+
+    const cliDir = getTemplateCliDir();
+    if (cliDir) {
+        return path.dirname(cliDir);
+    }
+
+    const candidates = [
+        path.join(getWorkspaceRoot(), 'templates'),
+        path.join(getRuntimeRoot(), 'templates'),
+    ];
+
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
 module.exports = {
     ensureDir,
     getActiveContextPath,
@@ -97,6 +123,7 @@ module.exports = {
     getRawMemoryDir,
     getRuntimeRoot,
     getTemplateCliDir,
+    getTemplateRootDir,
     getVectMemoryDir,
     getWalkthroughsDir,
     getWorkspaceRoot,

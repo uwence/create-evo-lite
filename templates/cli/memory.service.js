@@ -20,7 +20,9 @@ const {
     getOfflineMemoriesPath,
     getRawMemoryDir,
     getTemplateCliDir,
+    getTemplateRootDir,
     getVectMemoryDir,
+    getWorkspaceRoot,
 } = require('./runtime');
 
 const ACTIVE_CONTEXT_PATH = getActiveContextPath();
@@ -467,6 +469,28 @@ function normalizeTemplateComparableContent(file, content) {
         .replace(/let ACTIVE_DIMS = \d+;/, 'let ACTIVE_DIMS = __DYNAMIC_DIMS__;');
 }
 
+function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
+    const workspaceRoot = getWorkspaceRoot();
+    const entries = [
+        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js'].map(file => ({
+            label: file,
+            activeFile: path.join(__dirname, file),
+            templateFile: path.join(templateCliPath, file),
+        })),
+        ...['AGENTS.md', 'CLAUDE.md'].map(file => ({
+            label: file,
+            activeFile: path.join(workspaceRoot, file),
+            templateFile: path.join(templateRootPath, file),
+        })),
+        ...['evo.md', 'commit.md', 'mem.md', 'wash.md'].map(file => ({
+            label: `.claude/commands/${file}`,
+            activeFile: path.join(workspaceRoot, '.claude', 'commands', file),
+            templateFile: path.join(templateRootPath, '.claude', 'commands', file),
+        })),
+    ];
+    return entries;
+}
+
 function isMissingMemorySchemaError(error) {
     const message = String(error && error.message ? error.message : '').toLowerCase();
     return (
@@ -820,25 +844,32 @@ async function verify(options = {}) {
     console.log('🧪 Verifying Evo-Lite runtime...');
 
     const templateCliPath = getTemplateCliDir();
-    if (templateCliPath) {
+    const templateRootPath = getTemplateRootDir();
+    if (templateCliPath && templateRootPath) {
         report.templateSyncChecked = true;
-        const files = ['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js'];
+        const entries = buildTemplateSyncEntries(templateCliPath, templateRootPath);
         let outOfSync = false;
 
-        for (const file of files) {
-            const activeFile = path.join(__dirname, file);
-            const templateFile = path.join(templateCliPath, file);
+        for (const entry of entries) {
+            const { activeFile, label, templateFile } = entry;
             if (!fs.existsSync(templateFile)) {
-                console.warn(`⚠️ 模板缺少 ${file}，无法完成该文件的同步校验。`);
+                console.warn(`⚠️ 模板缺少 ${label}，无法完成该文件的同步校验。`);
                 outOfSync = true;
                 report.hasAlerts = true;
                 pushNextStep('重新运行 `npx create-evo-lite@latest ./ --yes` 补齐模板文件。');
                 continue;
             }
-            const activeContent = normalizeTemplateComparableContent(file, fs.readFileSync(activeFile, 'utf8'));
-            const templateContent = normalizeTemplateComparableContent(file, fs.readFileSync(templateFile, 'utf8'));
+            if (!fs.existsSync(activeFile)) {
+                console.warn(`⚠️ Warning: ${label} is missing from the active workspace.`);
+                outOfSync = true;
+                report.hasAlerts = true;
+                pushNextStep('重新运行 `npx create-evo-lite@latest ./ --yes`，补齐缺失的 host adapter 或模板生成资产。');
+                continue;
+            }
+            const activeContent = normalizeTemplateComparableContent(path.basename(label), fs.readFileSync(activeFile, 'utf8'));
+            const templateContent = normalizeTemplateComparableContent(path.basename(label), fs.readFileSync(templateFile, 'utf8'));
             if (activeContent !== templateContent) {
-                console.warn(`⚠️ Warning: ${file} is out of sync between active CLI and templates.`);
+                console.warn(`⚠️ Warning: ${label} is out of sync between active workspace and templates.`);
                 outOfSync = true;
                 report.hasAlerts = true;
                 pushNextStep('重新运行 `npx create-evo-lite@latest ./ --yes`，然后再次执行 `node .evo-lite/cli/memory.js verify`。');
@@ -846,7 +877,7 @@ async function verify(options = {}) {
         }
 
         if (!outOfSync) {
-            console.log('✅ CLI files are synced with templates.');
+            console.log('✅ CLI and host adapter files are synced with templates.');
         }
     } else {
         console.log('ℹ️ 模板同步检查已跳过：当前运行环境没有可对比的 templates/cli 目录。');
