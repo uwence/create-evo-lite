@@ -18,7 +18,7 @@
 
 ## 🔄 最近轨迹 (≤ 10 条)
 <!-- BEGIN_TRAJECTORY -->
-- [{{DATE}}] 项目通过 create-evo-lite 完成初始化。
+- [init] {{DATE}} 项目通过 create-evo-lite 完成初始化。
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
