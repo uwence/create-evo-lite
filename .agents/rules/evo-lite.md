@@ -46,7 +46,7 @@ trigger: always_on
 
 - **Plan First**: 在进行跨文件重构、引入新依赖或开发核心机制前，必须先利用 `### Thought Process` 生成计划，或输出精简思路，等待确认后再编写代码。
 - **Atomic Commits (原子化提交)**: 在完成一个功能的开发或修复一个 Bug 并验证通过后，你必须主动提出使用 `git commit` 将改动固化，然后再进入下一个任务。严禁将十跨越维度的庞大改动堆积成一个混沌提交。
-- **Terminal Constraints**: 严禁在未经询问的情况下执行具有破坏性的终端命令（如 `rm -rf`, 数据库重置等）。执行前必须展示完整命令并说明原因。必须时刻意识到宿主系统是 Windows (PowerShell/CMD) 还是 Unix (Bash)。执行多行命令、路径拼接、或环境变量传递时，必须使用当前终端支持的正确语法。**特别注意**：严禁使用 `dir /s /b` 或 `ls -R` 等大规模遍历命令探索项目。
+- **Terminal Constraints**: 严禁在未经询问的情况下执行具有破坏性的终端命令（如 `rm -rf`, 数据库重置等）。执行前必须展示完整命令并说明原因。必须时刻意识到当前宿主终端与 agent 环境的真实语法边界，例如 Windows PowerShell / CMD、Unix Bash / zsh，或带有自身命令代理约束的 Codex / Claude Code。执行多行命令、路径拼接、环境变量传递或通配符展开时，必须使用当前终端真正支持的语法。**特别注意**：严禁使用 `dir /s /b` 或 `ls -R` 等大规模遍历命令探索项目。
 - **Workspace Root Discipline (工作区根目录纪律)**: 当用户已经在某个项目根目录中打开工作区时，默认就以该目录作为唯一项目根。**严禁 Agent 擅自再创建 `project/`、`app/`、`workspace/` 等额外包裹目录来承载真实代码**，除非用户明确要求新建子项目、monorepo 包或独立沙盒。任何会把 `.agents/`、`.evo-lite/`、源码目录与实际工作根拆开的二次套壳行为，都视为协议违规，因为它会直接破坏 workflow、CLI 路径与状态机定位。
 - **Loop Breaking**: 如果在 Debug 过程中连续两次遇到相同的错误或陷入逻辑循环，立即停止写代码。强制进入“反思模式”，先复核一次 `active_context.md` 的当前线索，再执行一次 recall 检索相关历史经验，之后梳理前两次失败的根本原因，并提出一条完全不同的解决路径。
 - **Anchor Guard & CLI Enforcement (锚点守卫与 CLI 强制)**:
