@@ -162,6 +162,7 @@ When the iteration is complete, and you need to end the session:
 /mem
 ```
 `/mem` is the low-frequency handover protocol for version bumps, release tagging, and explicit session suspension.
+Ideally, `/mem` should also end in a stable summary: whether backlog is truly clear, whether the next-session focus was written, whether a version snapshot was created, and whether the user should rest, sync, or first finish the remaining handover work.
 
 
 ### 5. Direct Interaction with the Brain
