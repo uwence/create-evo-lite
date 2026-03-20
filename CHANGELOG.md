@@ -1,3 +1,51 @@
+## Unreleased
+
+### Fixed
+- Restored missing CLI protocol-layer commands and behaviors across the memory runtime, including `export`, `import`, `archive`, `sync`, `vectorize`, and `context add/focus/track --resolve`.
+- Fixed `context add` / `context focus` argument parsing so subcommand names are no longer written into state by mistake.
+- Fixed `verify` so template drift is treated as a real alert instead of still ending with a clean-health message.
+- Fixed false drift reports for dynamically patched `models.js` by normalizing template comparisons.
+- Fixed `sync` so malformed raw archives are no longer silently marked as vectorized.
+- Fixed rebuild guidance when `raw_memory` survives but `chunks` are empty: `verify` now points to a real recovery command.
+- Fixed stale dogfooding guidance that still described obsolete manual recovery steps.
+
+### Changed
+- Formalized the primary durable memory flow as:
+  `active_context -> context track -> archive`
+- Clarified the role split between:
+  - `active_context.md` as live state
+  - `track/archive` as durable structured knowledge
+  - `remember` as lightweight searchable cache
+- Introduced `rebuild` as the standard user-facing recovery entry point.
+- Kept `wash` as the workflow/compatibility entry and `vectorize` as the lower-level rebuild implementation path.
+- Improved `track` CLI output so closure state is easier for both humans and agents to interpret.
+- Improved `verify` output with explicit next-step guidance instead of only listing alerts.
+- Improved `rebuild` output with a clearer summary of rebuilt archives, chunks, backup file, and follow-up action.
+- Refined `/evo` so the expected first response now includes:
+  - takeover status
+  - current focus
+  - current risks
+  - most actionable next step
+- Added a beginner-friendly “first session” onboarding flow to both README files.
+
+### Added
+- Added structured `track()` status reporting for archive write state, context update state, and backlog resolution state.
+- Added recovery-path tests for the “raw_memory preserved, chunks empty” scenario.
+- Added test coverage for invalid raw archives, template sync drift, dynamic model normalization, and clearer health-check messaging.
+- Added `docs/REMEMBER_BOUNDARY_DECISION.md` to formally document the long-term boundary of `remember`.
+
+### Docs
+- Updated workflow, rule, and README docs to align with actual runtime behavior.
+- Replaced outdated rebuild guidance with the new `rebuild` entry point.
+- Clarified that `remember` does not provide the same rebuild guarantees as structured archive paths.
+- Updated dogfooding walkthrough assets so historical notes no longer present obsolete recovery steps as current guidance.
+
+### Notes
+- The runtime and dogfooding mirrors are kept in sync.
+- Current recovery guidance should prefer:
+  `node .evo-lite/cli/memory.js rebuild`
+- `remember` remains intentionally lightweight unless future usability evidence justifies a dual-write promotion mode.
+
 ## [1.4.9] - 2026-03-11
 ### Fixed
 - **Silent Mode Auto-Migration**: Fixed an issue where the `--yes` (silent mode) flag would skip the cross-model data migration check. Version 1.4.9 now automatically triggers the migration pipeline if an old database is detected during a silent initialization.
