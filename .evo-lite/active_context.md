@@ -23,7 +23,9 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
-- [790f3b9] 2026-03-20 VerifyScopeClarification: Clarified the protocol boundary for verify so it is treated as an /evo startup and runtime-recovery 
+- [c8b5da5] 2026-03-20 WorkspaceRootDiscipline: Hardened the evo-lite protocol against agents inventing nested wrapper directories like project/, ap
+- [2bf2424] 2026-03-20 InitStartupHardening: Fixed two concrete initialization regressions found from a fresh generated project. First, the scaff
+- [790f3b9] 2026-03-20 VerifyScopeClarification: Clarified the protocol boundary for verify so it is treated as an /evo startup and runtime-recovery
 - [ad6bfe6] 2026-03-20 InjectedCleanGitStatus: Fixed the git-status injection edge case so mem wrapper flows no longer confuse an intentionally emp
 - [25caa9b] 2026-03-20 VerifyGitNoiseFilter: Unified the git-status filtering path used by both track and verify so pure .evo-lite runtime artifa
 - [391ba68] 2026-03-20 MinimalTrajectoryFixCleanup: Reduced the trajectory-label fix back to the minimal long-term behavior: future context track entrie
@@ -31,8 +33,6 @@
 - [1a83470] 2026-03-20 Committed the dogfooding asset migration that aligned historical raw_memory archives and vect_memory
 - [ca32c37] 2026-03-20 Completed the runtime hardening loop in two commits: first injected git metadata through mem wrapper
 - [261f33c] 2026-03-20 Dogfooding runtime entered a self-healing loop: verify initially crashed on the local SQLite runtime
-- [50a7cf8] 2026-03-19 并发容错与自检增强: 为数据库插入了WAL并发保护和模型降级重启表机制，在verify命令中增加模板文件同步检测
-- [50a7cf8] 2026-03-19 QA_TEST: Verified memory core loop
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
