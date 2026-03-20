@@ -42,6 +42,10 @@ function getOfflineMemoriesPath() {
     return path.join(getRuntimeRoot(), 'offline_memories.json');
 }
 
+function getRerankerStatePath() {
+    return path.join(getRuntimeRoot(), 'reranker_state.json');
+}
+
 function getRawMemoryDir() {
     return path.join(getRuntimeRoot(), 'raw_memory');
 }
@@ -89,6 +93,7 @@ module.exports = {
     getDbPath,
     getLogPath,
     getOfflineMemoriesPath,
+    getRerankerStatePath,
     getRawMemoryDir,
     getRuntimeRoot,
     getTemplateCliDir,

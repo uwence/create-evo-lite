@@ -8,6 +8,7 @@ const {
     getExtractor,
     getModelConstants,
     getReranker,
+    getRerankerStatus,
     initEmbeddingModel,
     setActiveModel,
 } = require('./models');
@@ -460,6 +461,15 @@ function normalizeTemplateComparableContent(file, content) {
         .replace(/let ACTIVE_DIMS = \d+;/, 'let ACTIVE_DIMS = __DYNAMIC_DIMS__;');
 }
 
+function isMissingMemorySchemaError(error) {
+    const message = String(error && error.message ? error.message : '').toLowerCase();
+    return (
+        message.includes('no such table: raw_memory') ||
+        message.includes('no such table: chunks') ||
+        message.includes('no such table: _meta')
+    );
+}
+
 function summarizeArchiveHealth() {
     const rawDir = getRawMemoryDir();
     const vectDir = getVectMemoryDir();
@@ -793,7 +803,7 @@ function wash() {
     console.log('🛁 请使用 `rebuild` 或 `/wash` 工作流完成记忆清洗。本命令保留为兼容入口。');
 }
 
-async function verify() {
+async function verify(options = {}) {
     const report = { hasAlerts: false, templateSyncChecked: false, nextSteps: [] };
     const pushNextStep = step => {
         if (!report.nextSteps.includes(step)) {
@@ -886,9 +896,7 @@ async function verify() {
         pushNextStep('网络恢复后执行 `node .evo-lite/cli/memory.js import .evo-lite/offline_memories.json` 补齐离线记忆。');
     }
 
-    if (fs.existsSync(DB_PATH)) {
-        console.log('✅ Evo-Lite 实体库状态: 已就绪');
-    } else {
+    if (!fs.existsSync(DB_PATH)) {
         console.log('ℹ️ Evo-Lite 实体库状态: 尚未生成 (首次 remember 后自动创建)');
     }
 
@@ -929,28 +937,49 @@ async function verify() {
         report.hasAlerts = true;
     }
 
-    const reranker = await getReranker();
+    const reranker = await getReranker({ allowRetry: options.retryReranker === true });
     if (reranker) {
         console.log('✅ Reranker 引擎状态: 就绪');
     } else {
         console.log('⚠️ Reranker 引擎状态: 异常 (当前将降级为纯向量检索)');
         report.hasAlerts = true;
-        pushNextStep('若需要恢复精排能力，请检查模型缓存或重新执行初始化。');
+        const rerankerStatus = getRerankerStatus();
+        if (rerankerStatus.disabled) {
+            const retryCommand = 'node .evo-lite/cli/memory.js verify --retry-reranker';
+            if (options.retryReranker === true) {
+                pushNextStep(`本次已显式重试精排模型，但仍未恢复；可以先继续降级使用，待网络恢复后再执行 \`${retryCommand}\`。`);
+            } else {
+                pushNextStep(`当前已自动降级为纯向量检索，后续不会在普通 verify 中反复重试；若你想显式重试精排模型，请执行 \`${retryCommand}\`。`);
+            }
+        } else {
+            pushNextStep('若需要恢复精排能力，请检查模型缓存或重新执行初始化。');
+        }
     }
 
     try {
         const db = getDb();
-        const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
-        const chunkCount = db.prepare('SELECT COUNT(*) AS count FROM chunks').get().count;
-        if (rawMemoryCount > 0 && chunkCount === 0) {
-            console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
-            report.hasAlerts = true;
-            pushNextStep('执行 `node .evo-lite/cli/memory.js rebuild`，用结构化归档重新生成 chunks。');
+        const hasRawTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory'").get();
+        const hasChunksTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chunks'").get();
+        if (!hasRawTable || !hasChunksTable) {
+            console.log('ℹ️ Evo-Lite 实体库状态: 当前仍是初始化空库态，首次 remember / import / rebuild 后会自动补齐表结构。');
+        } else {
+            console.log('✅ Evo-Lite 实体库状态: 已就绪');
+            const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
+            const chunkCount = db.prepare('SELECT COUNT(*) AS count FROM chunks').get().count;
+            if (rawMemoryCount > 0 && chunkCount === 0) {
+                console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
+                report.hasAlerts = true;
+                pushNextStep('执行 `node .evo-lite/cli/memory.js rebuild`，用结构化归档重新生成 chunks。');
+            }
         }
     } catch (error) {
-        console.log(`⚠️ 数据库读取失败: ${error.message}`);
-        report.hasAlerts = true;
-        pushNextStep('数据库当前不可读；先备份 `.evo-lite/memory.db`，再执行 `node .evo-lite/cli/memory.js rebuild` 或人工排查数据库文件状态。');
+        if (isMissingMemorySchemaError(error)) {
+            console.log('ℹ️ Evo-Lite 实体库状态: 当前仍是初始化空库态，首次 remember / import / rebuild 后会自动补齐表结构。');
+        } else {
+            console.log(`⚠️ 数据库读取失败: ${error.message}`);
+            report.hasAlerts = true;
+            pushNextStep('数据库当前不可读；先备份 `.evo-lite/memory.db`，再执行 `node .evo-lite/cli/memory.js rebuild` 或人工排查数据库文件状态。');
+        }
     }
 
     if (report.hasAlerts) {

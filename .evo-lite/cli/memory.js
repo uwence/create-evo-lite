@@ -72,6 +72,7 @@ function printHelp() {
   \x1b[32mwash\x1b[0m                Compatibility entry that points you to rebuild / /wash workflow.
   \x1b[32mverify\x1b[0m              Run initialization checks, git state scans, and
                         database connection verifications.
+                      Use \x1b[33m--retry-reranker\x1b[0m to explicitly retry the reranker download.
   \x1b[32mhelp\x1b[0m                Show this help menu.
 =========================================
 `);
@@ -229,7 +230,9 @@ async function run() {
     }
 
     if (action === 'verify') {
-        await memoryService.verify();
+        await memoryService.verify({
+            retryReranker: process.argv.includes('--retry-reranker'),
+        });
         return;
     }
 

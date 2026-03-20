@@ -47,7 +47,7 @@ function loadCli(runtimeRoot, extraEnv = {}) {
     process.env.EVO_LITE_SKIP_GIT_GUARD = '1';
     process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
 
-    for (const key of ['EVO_LITE_FORCE_GIT_DIRTY', 'EVO_LITE_SKIP_GIT_STATUS']) {
+    for (const key of ['EVO_LITE_FORCE_GIT_DIRTY', 'EVO_LITE_SKIP_GIT_STATUS', 'EVO_LITE_FORCE_RERANKER_FAILURE', 'EVO_LITE_FORCE_RERANKER_SUCCESS']) {
         delete process.env[key];
     }
     Object.assign(process.env, extraEnv);
@@ -196,6 +196,19 @@ async function runTests() {
         assert.ok(flowVerifyOutput.includes('尚未生成 vect 标记'), 'verify did not report pending archive vectorization');
         assert.ok(flowVerifyOutput.includes('📋 建议下一步:'), 'verify did not print a next-step summary for alert states');
 
+        console.log('6a. Testing verify treats empty database files as fresh init state ...');
+        const emptyDbRuntime = createTempRuntimeRoot('empty-db');
+        fs.writeFileSync(path.join(emptyDbRuntime.runtimeRoot, 'memory.db'), '', 'utf8');
+        const emptyDbLoaded = loadCli(emptyDbRuntime.runtimeRoot, {
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+            EVO_LITE_FORCE_RERANKER_SUCCESS: '1',
+        });
+        const emptyDbVerifyOutput = await captureConsole(async () => {
+            await emptyDbLoaded.service.verify();
+        });
+        assert.ok(emptyDbVerifyOutput.includes('初始化空库态'), 'verify should describe empty database files as fresh init state');
+        assert.ok(!emptyDbVerifyOutput.includes('数据库读取失败'), 'verify should not report empty init databases as corruption');
+
         console.log('7. Testing verify rebuild alert for preserved raw_memory without chunks ...');
         const rebuildRuntime = createTempRuntimeRoot('rebuild');
         const rebuildLoaded = await bootstrapRuntime(rebuildRuntime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
@@ -251,6 +264,25 @@ async function runTests() {
         });
         assert.ok(!cleanInjectedOutput.includes('Git 状态检查已降级'), 'verify should trust injected clean git status instead of falling back to Node git');
         assert.ok(cleanInjectedOutput.includes('Verify completed with no active alerts.'), 'verify should stay healthy with injected clean git status');
+
+        console.log('8ab. Testing reranker failure is cached until explicit retry ...');
+        const rerankerRuntime = createTempRuntimeRoot('reranker-state');
+        const rerankerLoaded = loadCli(rerankerRuntime.runtimeRoot, {
+            EVO_LITE_FORCE_RERANKER_FAILURE: '1',
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+        });
+        const firstReranker = await rerankerLoaded.models.getReranker();
+        assert.strictEqual(firstReranker, null, 'reranker failure hook should produce a null reranker');
+        assert.ok(fs.existsSync(path.join(rerankerRuntime.runtimeRoot, 'reranker_state.json')), 'reranker failure should persist a disabled-state marker');
+
+        const rerankerRetryBlockedLoaded = loadCli(rerankerRuntime.runtimeRoot, {
+            EVO_LITE_FORCE_RERANKER_SUCCESS: '1',
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+        });
+        const blockedReranker = await rerankerRetryBlockedLoaded.models.getReranker();
+        assert.strictEqual(blockedReranker, null, 'reranker should stay disabled until an explicit retry is requested');
+        const retriedReranker = await rerankerRetryBlockedLoaded.models.getReranker({ allowRetry: true });
+        assert.ok(retriedReranker, 'explicit reranker retry should clear the disabled-state marker and restore reranking');
 
         console.log('8b. Testing git guard ignores .evo-lite-only deletions with leading status padding ...');
         process.env.EVO_LITE_SKIP_GIT_GUARD = '';

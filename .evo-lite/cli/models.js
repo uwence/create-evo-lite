@@ -3,7 +3,7 @@ const path = require('path');
 const tar = require('tar');
 const { pipeline, env } = require('@xenova/transformers');
 const { getDb } = require('./db');
-const { getCacheDir, getDbPath, getRuntimeRoot } = require('./runtime');
+const { getCacheDir, getDbPath, getRerankerStatePath, getRuntimeRoot } = require('./runtime');
 
 const DB_PATH = getDbPath();
 
@@ -15,6 +15,7 @@ const RERANKER_MODEL = 'Xenova/bge-reranker-base';
 
 let extractorPipeline = null;
 let rerankerPipeline = null;
+let rerankerDisabled = false;
 
 function configureEnv() {
     env.allowLocalModels = true;
@@ -51,6 +52,7 @@ function extractTarFallback() {
 function resetPipelines() {
     extractorPipeline = null;
     rerankerPipeline = null;
+    rerankerDisabled = false;
 }
 
 function setActiveModel(model, dims) {
@@ -109,17 +111,93 @@ async function getExtractor() {
     return extractorPipeline;
 }
 
-async function getReranker() {
-    configureEnv();
+function readRerankerState() {
+    const statePath = getRerankerStatePath();
+    if (!fs.existsSync(statePath)) {
+        return null;
+    }
+    try {
+        return JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    } catch (_) {
+        return null;
+    }
+}
 
-    if (!rerankerPipeline) {
+function writeRerankerState(state) {
+    fs.writeFileSync(getRerankerStatePath(), JSON.stringify(state, null, 2), 'utf8');
+}
+
+function clearRerankerState() {
+    const statePath = getRerankerStatePath();
+    if (fs.existsSync(statePath)) {
         try {
-            rerankerPipeline = await pipeline('text-classification', RERANKER_MODEL, { quantized: true });
-        } catch (error) {
-            console.error(`[FATAL] Failed to load reranker model ${RERANKER_MODEL}. Reranking will be disabled.`);
-            console.error(error);
-            rerankerPipeline = null;
+            fs.unlinkSync(statePath);
+        } catch (_) {}
+    }
+}
+
+function summarizeRerankerError(error) {
+    const causeCode = error && error.cause && error.cause.code ? ` (${error.cause.code})` : '';
+    const message = String(error && error.message ? error.message : 'unknown error').split('\n')[0];
+    return `${message}${causeCode}`;
+}
+
+function getRerankerStatus() {
+    const state = readRerankerState();
+    return state || { disabled: false, model: RERANKER_MODEL };
+}
+
+async function getReranker(options = {}) {
+    configureEnv();
+    const allowRetry = options.allowRetry === true;
+
+    if (process.env.EVO_LITE_FORCE_RERANKER_FAILURE === '1') {
+        const simulatedState = {
+            disabled: true,
+            message: 'simulated reranker failure',
+            model: RERANKER_MODEL,
+            reason: 'network',
+            updated_at: new Date().toISOString(),
+        };
+        writeRerankerState(simulatedState);
+        rerankerDisabled = true;
+        rerankerPipeline = null;
+        return null;
+    }
+
+    if (process.env.EVO_LITE_FORCE_RERANKER_SUCCESS === '1' && allowRetry) {
+        clearRerankerState();
+        rerankerDisabled = false;
+        if (!rerankerPipeline) {
+            rerankerPipeline = async () => [{ score: 1 }];
         }
+        return rerankerPipeline;
+    }
+
+    if (rerankerPipeline && !rerankerDisabled) {
+        return rerankerPipeline;
+    }
+
+    const rerankerState = getRerankerStatus();
+    if (!allowRetry && (rerankerDisabled || rerankerState.disabled)) {
+        rerankerDisabled = true;
+        return null;
+    }
+
+    try {
+        rerankerPipeline = await pipeline('text-classification', RERANKER_MODEL, { quantized: true });
+        rerankerDisabled = false;
+        clearRerankerState();
+    } catch (error) {
+        writeRerankerState({
+            disabled: true,
+            message: summarizeRerankerError(error),
+            model: RERANKER_MODEL,
+            reason: 'network',
+            updated_at: new Date().toISOString(),
+        });
+        rerankerPipeline = null;
+        rerankerDisabled = true;
     }
 
     return rerankerPipeline;
@@ -142,6 +220,7 @@ module.exports = {
     getExtractor,
     getModelConstants,
     getReranker,
+    getRerankerStatus,
     initEmbeddingModel,
     resetPipelines,
     setActiveModel,
