@@ -230,6 +230,28 @@ async function runTests() {
         assert.ok(!evoOnlyDirtyVerifyOutput.includes('[前朝遗留告警]'), 'verify should ignore .evo-lite-only git noise');
         assert.ok(evoOnlyDirtyVerifyOutput.includes('Verify completed with no active alerts.'), 'verify should stay healthy for .evo-lite-only git noise');
 
+        console.log('8aa. Testing verify honors injected clean git status without falling back ...');
+        const cleanInjectedRuntime = createTempRuntimeRoot('verify-clean-injected');
+        const cleanInjectedOriginalExecFileSync = childProcess.execFileSync;
+        const cleanInjectedOutput = await withPatchedExecFileSync((command, args, options) => {
+            if (command === 'git') {
+                const error = new Error('spawnSync git EPERM');
+                error.code = 'EPERM';
+                error.errno = -4048;
+                throw error;
+            }
+            return cleanInjectedOriginalExecFileSync(command, args, options);
+        }, async () => {
+            const cleanInjectedLoaded = await bootstrapRuntime(cleanInjectedRuntime.runtimeRoot, {
+                EVO_LITE_GIT_STATUS: '',
+            });
+            return captureConsole(async () => {
+                await cleanInjectedLoaded.service.verify();
+            });
+        });
+        assert.ok(!cleanInjectedOutput.includes('Git 状态检查已降级'), 'verify should trust injected clean git status instead of falling back to Node git');
+        assert.ok(cleanInjectedOutput.includes('Verify completed with no active alerts.'), 'verify should stay healthy with injected clean git status');
+
         console.log('8b. Testing git guard ignores .evo-lite-only deletions with leading status padding ...');
         process.env.EVO_LITE_SKIP_GIT_GUARD = '';
         process.env.EVO_LITE_GIT_STATUS = ' D .evo-lite/vect_memory/legacy-marker.md';

@@ -106,7 +106,10 @@ function getInjectedGitStatus() {
             return fs.readFileSync(gitStatusFile, 'utf8');
         } catch (_) {}
     }
-    return process.env.EVO_LITE_GIT_STATUS || '';
+    if (Object.prototype.hasOwnProperty.call(process.env, 'EVO_LITE_GIT_STATUS')) {
+        return process.env.EVO_LITE_GIT_STATUS || '';
+    }
+    return null;
 }
 
 function parseGitStatusLines(rawStatus) {
@@ -140,7 +143,10 @@ function ensureCleanWorktree() {
         return;
     }
     try {
-        const gitStatus = filterNonEvoLiteGitStatusLines(getInjectedGitStatus() || runGit(['status', '--porcelain']));
+        const injectedGitStatus = getInjectedGitStatus();
+        const gitStatus = filterNonEvoLiteGitStatusLines(
+            injectedGitStatus !== null ? injectedGitStatus : runGit(['status', '--porcelain'])
+        );
         if (gitStatus.length > 0) {
             throw new Error('dirty');
         }
@@ -837,7 +843,10 @@ async function verify() {
         pushNextStep('先整理当前 Git 工作区，再继续执行 `/commit` 或新的开发动作。');
     } else {
         try {
-            const gitStatus = filterNonEvoLiteGitStatusLines(getInjectedGitStatus() || runGit(['status', '--porcelain']));
+            const injectedGitStatus = getInjectedGitStatus();
+            const gitStatus = filterNonEvoLiteGitStatusLines(
+                injectedGitStatus !== null ? injectedGitStatus : runGit(['status', '--porcelain'])
+            );
             if (gitStatus.length > 0) {
                 console.log('\n⚠️ [前朝遗留告警] 发现未提交的 Git 状态！');
                 report.hasAlerts = true;
