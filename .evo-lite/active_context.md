@@ -23,7 +23,8 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
-- [8dc12e3] 2026-03-20 RootHostAdapters: Introduced the first host adapter slice for Codex and Claude Code. New projects now emit root-level 
+- [d82ea6a] 2026-03-20 ClaudeCommandWrappers: Added the first thin Claude-native command layer on top of Evo-Lite semantics. Projects now scaffold
+- [8dc12e3] 2026-03-20 RootHostAdapters: Introduced the first host adapter slice for Codex and Claude Code. New projects now emit root-level
 - [86a2cfc] 2026-03-20 ShellAwareWorkflowDocs: Extended the Codex and Claude Code compatibility pass beyond mem entrypoints into shell semantics. T
 - [eb43318] 2026-03-20 HostAwareMemEntrypoints: Clarified the workflow and rule contracts so Evo-Lite no longer assumes a single mem.cmd-only comman
 - [9f358b1] 2026-03-20 ActiveContextBeforeRecall: Clarified the debugging retrieval order so agents must inspect active_context.md before deciding to
@@ -32,7 +33,6 @@
 - [a4be939] 2026-03-20 RecallFirstDebugging: Updated the evo-lite debugging contract so agents should prefer recall before blind trial-and-error
 - [73c6b70] 2026-03-20 RerankerDegradePersistence: Changed verify and model-loading behavior so reranker download failures no longer spam retries on ev
 - [c8b5da5] 2026-03-20 WorkspaceRootDiscipline: Hardened the evo-lite protocol against agents inventing nested wrapper directories like project/, ap
-- [2bf2424] 2026-03-20 InitStartupHardening: Fixed two concrete initialization regressions found from a fresh generated project. First, the scaff
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
