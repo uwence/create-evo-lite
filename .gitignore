@@ -1,7 +1,14 @@
 node_modules/
 .DS_Store
 *.log
-.evo-lite/
+.evo-lite/*
+!.evo-lite/active_context.md
+!.evo-lite/cli/
+!.evo-lite/cli/**
+!.evo-lite/raw_memory/
+!.evo-lite/raw_memory/**/*.md
+!.evo-lite/vect_memory/
+!.evo-lite/vect_memory/**/*.md
 .agents/
 test-project*/
 temp-npm-mock/

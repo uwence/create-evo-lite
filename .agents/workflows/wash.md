@@ -11,7 +11,7 @@ description: 记忆清洗与脑区重铸协议 (Brain Rebuild Protocol)
 
 1. **原始库审查 (Audit)**:
    前往 `.evo-lite/raw_memory/` 目录，检查档案格式是否规范（至少应包含 frontmatter 中的 `id/timestamp/type` 字段，以及与类型匹配的结构化二级标题，如 `## 现象 (Symptom)` / `## 解决方案 (Solution)` 或 `## 实现细节 (Implementation)` / `## 架构决策 (Architecture)`）。
-   *命名规范：建议采用 `YYYY-MM-DDTHH-mm-ss-SSSZ-UUID.md` 格式，确保档案按时间线自然排序。*
+   *命名规范：统一采用 `mem_YYYY-MM-DD_HH-mm-ss_<commit>_<random>.md` 格式，确保时间线与来源可追溯。*
 
 2. **人工/AI 修复 (Fix)**:
    直接使用编辑器打开并修改有误的 Markdown 文件。

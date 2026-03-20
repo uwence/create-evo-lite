@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline/promises');
-const { execSync } = require('child_process');
-const { getDb, initDB } = require('./db');
+const { execFileSync } = require('child_process');
+const { closeDb, getDb, initDB } = require('./db');
 const {
     getActiveModelInfo,
     getExtractor,
@@ -33,6 +33,21 @@ function appendLog(action, content) {
     } catch (_) {}
 }
 
+function formatArchiveTimestamp(timestamp) {
+    return timestamp
+        .replace('T', '_')
+        .replace(/\.\d+Z$/, '')
+        .replace(/:/g, '-');
+}
+
+function buildArchiveId() {
+    return `${getCommitHash()}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function buildArchiveFilename(timestamp, id) {
+    return `mem_${formatArchiveTimestamp(timestamp)}_${id}.md`;
+}
+
 function chunkText(text, chunkSize = 512) {
     const chunks = [];
     for (let i = 0; i < text.length; i += chunkSize) {
@@ -58,9 +73,49 @@ function ensureContextFile() {
     }
 }
 
+function runGit(args) {
+    return execFileSync('git', args, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+}
+
+function isGitInvocationBlocked(error) {
+    const message = String(error && error.message ? error.message : '').toLowerCase();
+    const stderr = String(error && error.stderr ? error.stderr : '').toLowerCase();
+    return (
+        error && (
+            error.code === 'EPERM' ||
+            error.code === 'EACCES' ||
+            message.includes('spawnsync git eperm') ||
+            message.includes('spawn git eperm') ||
+            stderr.includes('access is denied')
+        )
+    );
+}
+
+function getInjectedCommitHash() {
+    const commitHash = process.env.EVO_LITE_GIT_COMMIT;
+    return commitHash ? commitHash.trim() : '';
+}
+
+function getInjectedGitStatus() {
+    const gitStatusFile = process.env.EVO_LITE_GIT_STATUS_FILE;
+    if (gitStatusFile && fs.existsSync(gitStatusFile)) {
+        try {
+            return fs.readFileSync(gitStatusFile, 'utf8');
+        } catch (_) {}
+    }
+    return process.env.EVO_LITE_GIT_STATUS || '';
+}
+
 function getCommitHash() {
+    const injectedCommitHash = getInjectedCommitHash();
+    if (injectedCommitHash) {
+        return injectedCommitHash;
+    }
     try {
-        return execSync('git rev-parse --short HEAD', { encoding: 'utf8', stdio: 'pipe' }).trim();
+        return runGit(['rev-parse', '--short', 'HEAD']);
     } catch (_) {
         return 'No-Git';
     }
@@ -71,7 +126,7 @@ function ensureCleanWorktree() {
         return;
     }
     try {
-        const gitStatus = execSync('git status --porcelain', { encoding: 'utf8', stdio: 'pipe' })
+        const gitStatus = (getInjectedGitStatus() || runGit(['status', '--porcelain']))
             .split(/\r?\n/)
             .map(line => line.trim())
             .filter(Boolean)
@@ -82,7 +137,10 @@ function ensureCleanWorktree() {
         if (gitStatus.length > 0) {
             throw new Error('dirty');
         }
-    } catch (_) {
+    } catch (error) {
+        if (isGitInvocationBlocked(error)) {
+            throw new Error('当前环境禁止 Node 直接调用 Git。请优先使用 `./.evo-lite/mem` 或 `.evo-lite\\mem.cmd` 执行命令，或先手工确认 `git status --short` 后再继续 track。');
+        }
         throw new Error('工作区有未提交的代码变更！请先执行 git commit 保存代码，再执行 track 记录轨迹。');
     }
 }
@@ -459,9 +517,9 @@ async function archive(content, type = 'task', options = {}) {
     ensureDir(getRawMemoryDir());
     ensureDir(getVectMemoryDir());
 
-    const id = options.id || Math.random().toString(16).slice(2, 10);
+    const id = options.id || buildArchiveId();
     const timestamp = options.timestamp || new Date().toISOString();
-    const filename = options.filename || `${timestamp.replace(/[:.]/g, '-')}-${id}.md`;
+    const filename = options.filename || buildArchiveFilename(timestamp, id);
     const filePath = path.join(getRawMemoryDir(), filename);
 
     const markdownBody = type === 'bug'
@@ -596,10 +654,8 @@ async function track(mechanism, details, options = {}) {
     ensureCleanWorktree();
 
     const type = options.type || 'task';
-    const commitHash = getCommitHash();
-    const archiveId = `${commitHash}_${Math.random().toString(16).slice(2, 10)}`;
+    const archiveId = buildArchiveId();
     const archiveResult = await archive(`[${mechanism}]\n${details}`, type, {
-        filename: `${archiveId}.md`,
         id: archiveId,
         timestamp: new Date().toISOString(),
     });
@@ -673,6 +729,7 @@ async function vectorize() {
 
     let backupName = null;
     if (fs.existsSync(DB_PATH)) {
+        closeDb();
         const backupPath = `${DB_PATH}.${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
         fs.copyFileSync(DB_PATH, backupPath);
         fs.unlinkSync(DB_PATH);
@@ -765,14 +822,23 @@ async function verify() {
         pushNextStep('先整理当前 Git 工作区，再继续执行 `/commit` 或新的开发动作。');
     } else {
         try {
-            const gitStatus = execSync('git status --porcelain', { encoding: 'utf8', stdio: 'pipe' }).trim();
+            const gitStatus = getInjectedGitStatus() || runGit(['status', '--porcelain']);
             if (gitStatus.length > 0) {
                 console.log('\n⚠️ [前朝遗留告警] 发现未提交的 Git 状态！');
                 report.hasAlerts = true;
                 pushNextStep('先整理当前 Git 工作区，再继续执行 `/commit` 或新的开发动作。');
             }
-        } catch (_) {
-            console.log('ℹ️ Git 状态检查未执行：当前目录不是可用的 Git 工作区。');
+        } catch (error) {
+            const gitError = `${error.message || ''}\n${error.stderr || ''}`;
+            if (/not a git repository/i.test(gitError)) {
+                console.log('ℹ️ Git 状态检查未执行：当前目录不是可用的 Git 工作区。');
+            } else if (isGitInvocationBlocked(error)) {
+                console.log('ℹ️ Git 状态检查已降级：当前 Node 运行环境禁止直接拉起 Git；若需完整校验，请使用 `./.evo-lite/mem verify` 或 `.evo-lite\\mem.cmd verify`。');
+            } else {
+                console.log(`⚠️ Git 状态检查失败: ${String(error.message || '').trim()}`);
+                report.hasAlerts = true;
+                pushNextStep('当前环境无法可靠执行 Git 状态检查；请先手工运行 `git status --short` 确认工作区。');
+            }
         }
     }
 
@@ -884,8 +950,11 @@ function inject(text) {
 module.exports = {
     addTask,
     archive,
+    buildArchiveFilename,
+    buildArchiveId,
     exportMemories,
     extractChunksFromMd,
+    formatArchiveTimestamp,
     forget,
     importMemories,
     inject,

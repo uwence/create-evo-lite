@@ -85,4 +85,14 @@ function initDB(activeModel, activeDims) {
     return { vectorsReset };
 }
 
-module.exports = { getDb, initDB };
+function closeDb() {
+    if (!db) {
+        return;
+    }
+    try {
+        db.close();
+    } catch (_) {}
+    db = null;
+}
+
+module.exports = { closeDb, getDb, initDB };

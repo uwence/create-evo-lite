@@ -1,2 +1,10 @@
 #!/usr/bin/env bash
+export EVO_LITE_GIT_COMMIT=""
+export EVO_LITE_GIT_STATUS=""
+if command -v git >/dev/null 2>&1; then
+  EVO_LITE_GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"
+  EVO_LITE_GIT_STATUS="$(git status --porcelain 2>/dev/null || true)"
+  export EVO_LITE_GIT_COMMIT
+  export EVO_LITE_GIT_STATUS
+fi
 node "$(dirname "$0")/cli/memory.js" "$@"
