@@ -20,10 +20,10 @@ description: 记忆清洗与脑区重铸协议 (Brain Rebuild Protocol)
    当档案修复完成后，请直接使用标准重建入口：
 
    ```bash
-   node .evo-lite/cli/memory.js vectorize
+   node .evo-lite/cli/memory.js rebuild
    ```
 
-   当前 `vectorize` 会先备份旧 `memory.db`，再依据 `raw_memory/` 中的结构化档案重建数据库与向量标记。
+   当前 `rebuild` 会调用底层的 `vectorize` 管线：先备份旧 `memory.db`，再依据 `raw_memory/` 中的结构化档案重建数据库与向量标记。
    不要再手工删除 `memory.db` 或 `vect_memory/*`，以免绕过备份保护并误清仅存在数据库中的轻量缓存。
 
 4. **确认与汇报 (Handover)**:

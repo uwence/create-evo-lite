@@ -174,7 +174,7 @@ Whenever you need, you or your AI agent can query the memory directly:
 
 # Rebuild the structured archive path when raw_memory needs to be re-indexed
 # Note: this does not guarantee preservation of remember-only cache entries stored only in memory.db
-node .evo-lite/cli/memory.js vectorize
+node .evo-lite/cli/memory.js rebuild
 ```
 
 

@@ -184,7 +184,7 @@ async function runTests() {
         });
         assert.ok(rebuildVerifyOutput.includes('raw_memory 已有数据但 chunks 为空'), 'verify did not report preserved raw_memory without chunks');
         assert.ok(rebuildVerifyOutput.includes('显式重建命令'), 'verify did not describe the explicit rebuild path');
-        assert.ok(rebuildVerifyOutput.includes('node .evo-lite/cli/memory.js vectorize'), 'verify did not point to the vectorize rebuild command');
+        assert.ok(rebuildVerifyOutput.includes('node .evo-lite/cli/memory.js rebuild'), 'verify did not point to the rebuild command');
 
         console.log('8. Testing verify alerts ...');
         const staleDate = new Date(Date.now() - 48 * 60 * 60 * 1000);

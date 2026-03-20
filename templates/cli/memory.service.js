@@ -696,7 +696,7 @@ async function vectorize() {
 }
 
 function wash() {
-    console.log('🛁 请使用 `vectorize` 或 `/wash` 工作流完成记忆清洗。本命令保留为兼容入口。');
+    console.log('🛁 请使用 `rebuild` 或 `/wash` 工作流完成记忆清洗。本命令保留为兼容入口。');
 }
 
 async function verify() {
@@ -783,7 +783,7 @@ async function verify() {
         report.hasAlerts = true;
     }
     if (archiveHealth.pending.length > 0) {
-        console.log(`⚠️ 检测到 ${archiveHealth.pending.length} 个 raw archive 尚未生成 vect 标记，建议尽快执行 sync / vectorize。`);
+        console.log(`⚠️ 检测到 ${archiveHealth.pending.length} 个 raw archive 尚未生成 vect 标记，建议尽快执行 sync / rebuild。`);
         report.hasAlerts = true;
     }
 
@@ -820,7 +820,7 @@ async function verify() {
     const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
     const chunkCount = db.prepare('SELECT COUNT(*) AS count FROM chunks').get().count;
     if (rawMemoryCount > 0 && chunkCount === 0) {
-        console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js vectorize`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
+        console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
         report.hasAlerts = true;
     }
 
