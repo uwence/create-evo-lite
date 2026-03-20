@@ -23,6 +23,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [73c6b70] 2026-03-20 RerankerDegradePersistence: Changed verify and model-loading behavior so reranker download failures no longer spam retries on ev
 - [c8b5da5] 2026-03-20 WorkspaceRootDiscipline: Hardened the evo-lite protocol against agents inventing nested wrapper directories like project/, ap
 - [2bf2424] 2026-03-20 InitStartupHardening: Fixed two concrete initialization regressions found from a fresh generated project. First, the scaff
 - [790f3b9] 2026-03-20 VerifyScopeClarification: Clarified the protocol boundary for verify so it is treated as an /evo startup and runtime-recovery
@@ -32,7 +33,6 @@
 - [a2709c7] 2026-03-20 TrajectoryHashRepair: Restored the trajectory label contract so square brackets carry the short commit hash instead of the
 - [1a83470] 2026-03-20 Committed the dogfooding asset migration that aligned historical raw_memory archives and vect_memory
 - [ca32c37] 2026-03-20 Completed the runtime hardening loop in two commits: first injected git metadata through mem wrapper
-- [261f33c] 2026-03-20 Dogfooding runtime entered a self-healing loop: verify initially crashed on the local SQLite runtime
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
