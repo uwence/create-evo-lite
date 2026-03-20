@@ -151,9 +151,8 @@ async function runContextCommand() {
 }
 
 async function run() {
-    await bootstrap();
-
     if (action === 'remember' || action === 'memorize') {
+        await bootstrap();
         if (!text) {
             throw new Error('Usage: node memory.js remember <"text message"> OR node memory.js remember --file=<path>');
         }
@@ -162,6 +161,7 @@ async function run() {
     }
 
     if (action === 'recall') {
+        await bootstrap();
         if (!text) {
             throw new Error('Usage: node memory.js recall <"text message"> OR node memory.js recall --file=<path>');
         }
@@ -170,26 +170,31 @@ async function run() {
     }
 
     if (action === 'forget') {
+        await bootstrap();
         memoryService.forget(text);
         return;
     }
 
     if (action === 'list' || action === 'stats') {
+        await bootstrap();
         console.log(action === 'stats' ? memoryService.stats() : memoryService.list());
         return;
     }
 
     if (action === 'export') {
+        await bootstrap();
         memoryService.exportMemories(text);
         return;
     }
 
     if (action === 'import') {
+        await bootstrap();
         await memoryService.importMemories(text);
         return;
     }
 
     if (action === 'archive') {
+        await bootstrap();
         const archiveText = text && text.startsWith('--') ? '' : text;
         if (!archiveText) {
             throw new Error('Usage: node memory.js archive <"text message"> [--type=task|bug|note]');
@@ -199,11 +204,13 @@ async function run() {
     }
 
     if (action === 'sync') {
+        await bootstrap();
         console.log(await memoryService.syncVectorMemory());
         return;
     }
 
     if (action === 'rebuild' || action === 'vectorize') {
+        await bootstrap();
         await memoryService.vectorize();
         return;
     }

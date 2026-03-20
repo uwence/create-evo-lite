@@ -6,11 +6,23 @@ let db;
 
 function getDb() {
     if (!db) {
-        db = new Database(getDbPath());
+        const dbPath = getDbPath();
+        db = new Database(dbPath);
         sqliteVec.load(db);
-        db.pragma('journal_mode = WAL');
-        db.pragma('busy_timeout = 5000');
-        db.pragma('synchronous = NORMAL');
+        try {
+            db.pragma('journal_mode = WAL');
+            db.pragma('busy_timeout = 5000');
+            db.pragma('synchronous = NORMAL');
+        } catch (error) {
+            // Some long-lived dogfooding databases become unstable after pragma changes.
+            // Reopen the connection in a conservative compatibility mode instead of failing hard.
+            console.warn(`⚠️ 数据库增强模式启用失败，已回退到兼容模式: ${error.message}`);
+            try {
+                db.close();
+            } catch (_) {}
+            db = new Database(dbPath);
+            sqliteVec.load(db);
+        }
     }
     return db;
 }

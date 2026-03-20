@@ -318,9 +318,10 @@ async function importMemories(filePath) {
 }
 
 function extractChunksFromMd(markdown, type) {
+    const normalizedMarkdown = markdown.replace(/\r\n/g, '\n');
     const chunks = [];
     const extract = pattern => {
-        const match = markdown.match(new RegExp(pattern));
+        const match = normalizedMarkdown.match(new RegExp(pattern));
         return match && match[1] ? match[1].trim() : null;
     };
 
@@ -847,13 +848,19 @@ async function verify() {
         pushNextStep('若需要恢复精排能力，请检查模型缓存或重新执行初始化。');
     }
 
-    const db = getDb();
-    const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
-    const chunkCount = db.prepare('SELECT COUNT(*) AS count FROM chunks').get().count;
-    if (rawMemoryCount > 0 && chunkCount === 0) {
-        console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
+    try {
+        const db = getDb();
+        const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
+        const chunkCount = db.prepare('SELECT COUNT(*) AS count FROM chunks').get().count;
+        if (rawMemoryCount > 0 && chunkCount === 0) {
+            console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
+            report.hasAlerts = true;
+            pushNextStep('执行 `node .evo-lite/cli/memory.js rebuild`，用结构化归档重新生成 chunks。');
+        }
+    } catch (error) {
+        console.log(`⚠️ 数据库读取失败: ${error.message}`);
         report.hasAlerts = true;
-        pushNextStep('执行 `node .evo-lite/cli/memory.js rebuild`，用结构化归档重新生成 chunks。');
+        pushNextStep('数据库当前不可读；先备份 `.evo-lite/memory.db`，再执行 `node .evo-lite/cli/memory.js rebuild` 或人工排查数据库文件状态。');
     }
 
     if (report.hasAlerts) {
