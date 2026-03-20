@@ -143,6 +143,7 @@ If this is your first time using AI as a real project partner, do not try to lea
 4. When you are ready to stop, run `/mem` for low-frequency handover.
 
 If `verify` reports archive or rebuild issues, follow the concrete next-step commands printed by the CLI instead of guessing.
+In a healthy setup, the `/evo` first response should immediately tell you: health status, current focus, current risks, and the most actionable next step.
 
 ### 3. High-Frequency Tracking & Closure (/commit)
 When a small feature or bug fix is complete, enter the command:
