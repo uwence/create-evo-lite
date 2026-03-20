@@ -25,6 +25,7 @@ async function main() {
     console.log(`🚀 Evo-Lite v${SELF_VERSION} — 开始在 ${targetDir} 初始化 Daemonless 记忆大脑...\n`);
 
     let shouldWash = false;
+    const hostAdapterSummary = [];
 
     const hasOldDb = fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'));
 
@@ -143,21 +144,25 @@ async function main() {
     if (!fs.existsSync(agentsAdapterPath)) {
         fs.writeFileSync(agentsAdapterPath, agentsAdapterTemplate, 'utf8');
         console.log('✅ 初始化了根目录 AGENTS.md (Codex adapter)。');
+        hostAdapterSummary.push('AGENTS.md');
     } else {
         fs.copyFileSync(agentsAdapterPath, agentsAdapterPath + '.bak');
         fs.writeFileSync(agentsAdapterPath, agentsAdapterTemplate, 'utf8');
         hasUpgraded = true;
         console.log('♻️ 更新了根目录 AGENTS.md (旧版本已备份为 .bak)。');
+        hostAdapterSummary.push('AGENTS.md');
     }
 
     if (!fs.existsSync(claudeAdapterPath)) {
         fs.writeFileSync(claudeAdapterPath, claudeAdapterTemplate, 'utf8');
         console.log('✅ 初始化了根目录 CLAUDE.md (Claude Code adapter)。');
+        hostAdapterSummary.push('CLAUDE.md');
     } else {
         fs.copyFileSync(claudeAdapterPath, claudeAdapterPath + '.bak');
         fs.writeFileSync(claudeAdapterPath, claudeAdapterTemplate, 'utf8');
         hasUpgraded = true;
         console.log('♻️ 更新了根目录 CLAUDE.md (旧版本已备份为 .bak)。');
+        hostAdapterSummary.push('CLAUDE.md');
     }
 
     // Inject CLI wrappers into .evo-lite to avoid root pollution
@@ -170,6 +175,11 @@ async function main() {
     } catch (e) { }
 
     console.log('✅ 核心引擎与体系模板已更新 (旧有模板已保存为 .bak 备份)。');
+    if (hostAdapterSummary.length > 0) {
+        console.log(`🧭 已同步宿主适配资产: ${hostAdapterSummary.join(', ')}, .claude/commands/`);
+        console.log('ℹ️ 这些宿主适配文件属于 Evo-Lite 生成资产；升级模板时允许被覆盖，canonical 语义真源仍然是 .agents/ 与 .evo-lite/。');
+        console.log('ℹ️ 后续可使用 `node .evo-lite/cli/memory.js verify` 检查 CLI 与 host adapter 是否和模板保持同步。');
+    }
 
     // 4. 注入热更新警告与融合指令 (Fusion Warning)
     if (hasUpgraded) {
