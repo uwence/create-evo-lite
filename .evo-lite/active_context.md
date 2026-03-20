@@ -23,6 +23,8 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [9f358b1] 2026-03-20 ActiveContextBeforeRecall: Clarified the debugging retrieval order so agents must inspect active_context.md before deciding to 
+- [9de7dd8] 2026-03-20 EvoVerifyTakeoverSync: Tightened the /evo takeover contract so the agent must wait for mem.cmd verify to exit before summar
 - [73ba4c8] 2026-03-20 InitTrackBootstrap: Fixed a fresh-project initialization regression where the first context track path could hit archive
 - [a4be939] 2026-03-20 RecallFirstDebugging: Updated the evo-lite debugging contract so agents should prefer recall before blind trial-and-error
 - [73c6b70] 2026-03-20 RerankerDegradePersistence: Changed verify and model-loading behavior so reranker download failures no longer spam retries on ev
@@ -31,8 +33,6 @@
 - [790f3b9] 2026-03-20 VerifyScopeClarification: Clarified the protocol boundary for verify so it is treated as an /evo startup and runtime-recovery
 - [ad6bfe6] 2026-03-20 InjectedCleanGitStatus: Fixed the git-status injection edge case so mem wrapper flows no longer confuse an intentionally emp
 - [25caa9b] 2026-03-20 VerifyGitNoiseFilter: Unified the git-status filtering path used by both track and verify so pure .evo-lite runtime artifa
-- [391ba68] 2026-03-20 MinimalTrajectoryFixCleanup: Reduced the trajectory-label fix back to the minimal long-term behavior: future context track entrie
-- [a2709c7] 2026-03-20 TrajectoryHashRepair: Restored the trajectory label contract so square brackets carry the short commit hash instead of the
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
