@@ -154,6 +154,7 @@ When a small feature or bug fix is complete, enter the command:
 - complete the real `git commit`
 - run `.\.evo-lite\mem.cmd context track --mechanism="..." --details="..." [--resolve="xxxx"]`
 - convert the code action into trajectory, archive, and backlog updates
+- and end with an explicit closure summary: whether the commit is done, whether closure is complete, whether backlog was resolved, and what the next step should be
 
 ### 4. Low-Frequency Release & Handover (/mem)
 When the iteration is complete, and you need to end the session:

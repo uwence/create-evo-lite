@@ -92,14 +92,22 @@ function printResults(results) {
 }
 
 function formatTrackResult(result) {
+    const closureComplete = result.status.archive === 'written'
+        && result.status.context === 'updated'
+        && ['resolved', 'not_requested'].includes(result.status.resolve);
+    const nextStep = closureComplete
+        ? '可以向用户汇报：代码提交已固化，轨迹与 archive 已完成闭环。'
+        : '不要宣称闭环完成；请先根据上面的状态补救 archive / context / resolve。';
     const lines = [
         '✅ Context track completed.',
+        `- closure: ${closureComplete ? 'complete' : 'partial'}`,
         `- mechanism: ${result.mechanism}`,
         `- archive: ${result.status.archive}`,
         `- context: ${result.status.context}`,
         `- resolve: ${result.status.resolve}`,
         `- chunks: ${result.chunkCount}`,
         `- archive_path: ${result.archivePath}`,
+        `- next_step: ${nextStep}`,
     ];
 
     if (result.resolvedLine) {

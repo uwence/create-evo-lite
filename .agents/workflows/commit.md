@@ -56,3 +56,15 @@ active_context -> context track -> archive
 - CLI 当前不会自动创建额外的 Meta-Commit；如需提交状态文件，请由当前会话显式决定并执行。
 - **强制要求：** 你必须根据 CLI 实际输出确认是否已完成 backlog 消除、轨迹更新和归档，然后再向 User 汇报下一步。
 - 若 CLI 只更新了状态机、但归档失败或被跳过，不得宣称本次闭环已经完整完成。
+
+建议把最终汇报收敛成 4 个要点，避免“看起来做完了、其实没闭环”的模糊表达：
+
+1. **代码快照**：本次 `git commit` 是否已完成。
+2. **闭环状态**：`context track` 输出的是 `closure: complete` 还是 `closure: partial`。
+3. **任务状态**：如果使用了 `--resolve`，明确说明 backlog 是否真的被消除。
+4. **最小下一步**：若闭环完整，就告知用户可以继续下一个任务；若闭环不完整，就明确指出先补哪一项。
+
+推荐口径：
+
+- 当 `closure: complete` 时，再向 User 说“本次修改已经可靠闭环”。
+- 当 `closure: partial` 时，只能说“代码已提交，但 archive / context / resolve 仍需补救”，不得报喜。

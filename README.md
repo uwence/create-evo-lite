@@ -154,6 +154,7 @@ node .evo-lite/cli/memory.js verify
 - 先完成真正的 `git commit`
 - 再调用 `.\.evo-lite\mem.cmd context track --mechanism="..." --details="..." [--resolve="xxxx"]`
 - 把一次代码动作同步为轨迹、归档和 backlog 状态变化
+- 并在最后明确告诉你：提交是否完成、`closure` 是否完整、backlog 是否被消除、下一步该继续开发还是先补救闭环
 
 ### 4. 低频挂起与发布 (/mem)
 当迭代彻底结束，需要结束当前工作会话时：

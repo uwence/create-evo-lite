@@ -122,9 +122,11 @@ async function runTests() {
         const cliModule = require(path.join(CLI_DIR, 'memory.js'));
         const formattedTrack = cliModule.formatTrackResult(trackResult);
         assert.ok(formattedTrack.includes('Context track completed'), 'track formatter missed completion header');
+        assert.ok(formattedTrack.includes('- closure: complete'), 'track formatter missed closure summary');
         assert.ok(formattedTrack.includes('- archive: written'), 'track formatter missed archive status');
         assert.ok(formattedTrack.includes('- context: updated'), 'track formatter missed context status');
         assert.ok(formattedTrack.includes('- resolve: resolved'), 'track formatter missed resolve status');
+        assert.ok(formattedTrack.includes('代码提交已固化，轨迹与 archive 已完成闭环'), 'track formatter missed next-step guidance');
         assert.strictEqual(
             cliModule.getCliText(['node', 'memory.js', 'context', 'add', 'Queue protocol audit']),
             'Queue protocol audit',
