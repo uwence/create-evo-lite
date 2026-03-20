@@ -23,6 +23,8 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [73ba4c8] 2026-03-20 InitTrackBootstrap: Fixed a fresh-project initialization regression where the first context track path could hit archive
+- [a4be939] 2026-03-20 RecallFirstDebugging: Updated the evo-lite debugging contract so agents should prefer recall before blind trial-and-error
 - [73c6b70] 2026-03-20 RerankerDegradePersistence: Changed verify and model-loading behavior so reranker download failures no longer spam retries on ev
 - [c8b5da5] 2026-03-20 WorkspaceRootDiscipline: Hardened the evo-lite protocol against agents inventing nested wrapper directories like project/, ap
 - [2bf2424] 2026-03-20 InitStartupHardening: Fixed two concrete initialization regressions found from a fresh generated project. First, the scaff
@@ -31,8 +33,6 @@
 - [25caa9b] 2026-03-20 VerifyGitNoiseFilter: Unified the git-status filtering path used by both track and verify so pure .evo-lite runtime artifa
 - [391ba68] 2026-03-20 MinimalTrajectoryFixCleanup: Reduced the trajectory-label fix back to the minimal long-term behavior: future context track entrie
 - [a2709c7] 2026-03-20 TrajectoryHashRepair: Restored the trajectory label contract so square brackets carry the short commit hash instead of the
-- [1a83470] 2026-03-20 Committed the dogfooding asset migration that aligned historical raw_memory archives and vect_memory
-- [ca32c37] 2026-03-20 Completed the runtime hardening loop in two commits: first injected git metadata through mem wrapper
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
