@@ -48,12 +48,7 @@ trigger: always_on
 - **Terminal Constraints**: 严禁在未经询问的情况下执行具有破坏性的终端命令（如 `rm -rf`, 数据库重置等）。执行前必须展示完整命令并说明原因。必须时刻意识到宿主系统是 Windows (PowerShell/CMD) 还是 Unix (Bash)。执行多行命令、路径拼接、或环境变量传递时，必须使用当前终端支持的正确语法。**特别注意**：严禁使用 `dir /s /b` 或 `ls -R` 等大规模遍历命令探索项目。
 - **Workspace Root Discipline (工作区根目录纪律)**: 当用户已经在某个项目根目录中打开工作区时，默认就以该目录作为唯一项目根。**严禁 Agent 擅自再创建 `project/`、`app/`、`workspace/` 等额外包裹目录来承载真实代码**，除非用户明确要求新建子项目、monorepo 包或独立沙盒。任何会把 `.agents/`、`.evo-lite/`、源码目录与实际工作根拆开的二次套壳行为，都视为协议违规，因为它会直接破坏 workflow、CLI 路径与状态机定位。
 - **Loop Breaking**: 如果在 Debug 过程中连续两次遇到相同的错误或陷入逻辑循环，立即停止写代码。强制进入“反思模式”，梳理前两次失败的根本原因，并提出一条完全不同的解决路径。
-- **Anchor Guard & CLI Enforcement (锚点守卫与 CLI 强制)**:
-  `.evo-lite/active_context.md` 是一个**状态机**。其中 `FOCUS`、`BACKLOG`、`TRAJECTORY` 三个运行时区块的修改都**必须通过 `./.evo-lite/mem.cmd` 代理**。
-  **严禁 Agent 直接使用文件写入工具修改上述三个区块！**
-  当你需要追踪进度、消除任务或切换会话焦点时，必须调用 `mem.cmd context track --resolve="xxxx"` 或 `mem.cmd context focus "..."` 来完成，CLI 会自动维护锚点边界。
-  `META` 区块目前没有专用 CLI 写入口；只有在确认不存在对应命令时，才允许围绕 `<!-- BEGIN_META -->` 与 `<!-- END_META -->` 做最小范围的人工维护。
-  *致命错误：* 如果你检测到自己或任何其他 Agent 正在直接修改 `FOCUS`、`BACKLOG`、`TRAJECTORY` 任一区块，必须立即中止并发出告警。
+- **Anchor Guard & CLI Enforcement (锚点守卫与 CLI 强制)**: `.evo-lite/active_context.md` 是一个**状态机**。其中 `FOCUS`、`BACKLOG`、`TRAJECTORY` 三个运行时区块的修改都**必须通过 `./.evo-lite/mem.cmd` 代理**，严禁 Agent 直接使用文件写入工具修改上述三个区块。需要追踪进度、消除任务或切换会话焦点时，必须调用 `mem.cmd context track --resolve="xxxx"` 或 `mem.cmd context focus "..."`，并让 CLI 负责锚点边界维护。`META` 区块目前没有专用 CLI 写入口；只有在确认不存在对应命令时，才允许围绕 `<!-- BEGIN_META -->` 与 `<!-- END_META -->` 做最小范围的人工维护。特别地：`<!-- BEGIN_BACKLOG -->` 与 `<!-- END_BACKLOG -->` 之间的 `[ ]` 条目超过 **5 条**时，视为致命错误，必须立即中止写入并向人类告警，要求先迁移低优先级任务到 `## 📌 架构备忘` 区域后再继续。
 - **Memory Flow Model (记忆流动模型)**:
   `active_context.md` 只负责“当前态”，`archive` 只负责“沉淀态”，两者之间默认必须通过 `mem.cmd context track` 流转。
   `remember` 仅作为轻量检索缓存存在，不承担正式闭环的重建保证，也不替代 `track` 的长期沉淀职责。
