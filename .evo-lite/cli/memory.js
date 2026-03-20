@@ -88,6 +88,24 @@ function printResults(results) {
     console.log(results);
 }
 
+function formatTrackResult(result) {
+    const lines = [
+        '✅ Context track completed.',
+        `- mechanism: ${result.mechanism}`,
+        `- archive: ${result.status.archive}`,
+        `- context: ${result.status.context}`,
+        `- resolve: ${result.status.resolve}`,
+        `- chunks: ${result.chunkCount}`,
+        `- archive_path: ${result.archivePath}`,
+    ];
+
+    if (result.resolvedLine) {
+        lines.push(`- resolved_line: ${result.resolvedLine}`);
+    }
+
+    return lines.join('\n');
+}
+
 async function runContextCommand() {
     const op = process.argv[3];
     if (op === 'track') {
@@ -101,7 +119,7 @@ async function runContextCommand() {
             resolve: resolveArg ? resolveArg.substring('--resolve='.length) : null,
             type,
         });
-        console.log(result);
+        console.log(formatTrackResult(result));
         return;
     }
 
@@ -236,6 +254,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    formatTrackResult,
     getCliText,
     run,
 };

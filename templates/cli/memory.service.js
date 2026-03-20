@@ -615,7 +615,22 @@ async function track(mechanism, details, options = {}) {
 
     fs.writeFileSync(ACTIVE_CONTEXT_PATH, markdown, 'utf8');
     appendLog('TRACK', `${mechanism} | resolve=${options.resolve || 'none'}`);
-    return { archivePath: archiveResult.filePath, chunkCount: archiveResult.chunkCount, mechanism, resolvedLine };
+    return {
+        archivePath: archiveResult.filePath,
+        chunkCount: archiveResult.chunkCount,
+        mechanism,
+        resolvedLine,
+        status: {
+            archive: 'written',
+            context: 'updated',
+            resolve: options.resolve ? 'resolved' : 'not_requested',
+        },
+        summary: {
+            archiveWritten: true,
+            contextUpdated: true,
+            resolvedBacklog: Boolean(resolvedLine),
+        },
+    };
 }
 
 async function vectorize() {

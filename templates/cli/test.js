@@ -104,9 +104,15 @@ async function runTests() {
         console.log('2. Testing context add / track --resolve ...');
         const addResult = primaryLoaded.service.addTask('Finish the protocol restore follow-up task');
         assert.ok(/^[a-f0-9]{4}$/i.test(addResult.hash), 'context add did not create a 4-char hash');
-        await primaryLoaded.service.track('ProtocolRestore', 'Restored the protocol-oriented CLI commands and synchronized active context behavior with the actual implementation.', {
+        const trackResult = await primaryLoaded.service.track('ProtocolRestore', 'Restored the protocol-oriented CLI commands and synchronized active context behavior with the actual implementation.', {
             resolve: addResult.hash,
         });
+        assert.strictEqual(trackResult.status.archive, 'written', 'track did not report archive success');
+        assert.strictEqual(trackResult.status.context, 'updated', 'track did not report context update success');
+        assert.strictEqual(trackResult.status.resolve, 'resolved', 'track did not report backlog resolution success');
+        assert.strictEqual(trackResult.summary.archiveWritten, true, 'track summary lost archive state');
+        assert.strictEqual(trackResult.summary.contextUpdated, true, 'track summary lost context state');
+        assert.strictEqual(trackResult.summary.resolvedBacklog, true, 'track summary lost resolve state');
         const contextAfterTrack = fs.readFileSync(path.join(primary.runtimeRoot, 'active_context.md'), 'utf8');
         assert.ok(!contextAfterTrack.includes(`[${addResult.hash}]`), 'Resolved backlog hash still exists after track --resolve');
         assert.ok(contextAfterTrack.includes('[ProtocolRestore]'), 'Trajectory did not record the new track entry');
@@ -114,6 +120,11 @@ async function runTests() {
         console.log('3. Testing CLI command-surface parsing for context add / focus ...');
         resetCliModuleCache();
         const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+        const formattedTrack = cliModule.formatTrackResult(trackResult);
+        assert.ok(formattedTrack.includes('Context track completed'), 'track formatter missed completion header');
+        assert.ok(formattedTrack.includes('- archive: written'), 'track formatter missed archive status');
+        assert.ok(formattedTrack.includes('- context: updated'), 'track formatter missed context status');
+        assert.ok(formattedTrack.includes('- resolve: resolved'), 'track formatter missed resolve status');
         assert.strictEqual(
             cliModule.getCliText(['node', 'memory.js', 'context', 'add', 'Queue protocol audit']),
             'Queue protocol audit',
