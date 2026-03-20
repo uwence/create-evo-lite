@@ -219,6 +219,17 @@ async function runTests() {
         assert.ok(verifyOutput.includes('[前朝遗留告警]'), 'verify did not report dirty git state');
         assert.ok(verifyOutput.includes('[交接失约告警]'), 'verify did not report stale active_context.md');
 
+        console.log('8a. Testing verify ignores .evo-lite-only git noise ...');
+        const evoOnlyDirtyRuntime = createTempRuntimeRoot('verify-evo-only');
+        const evoOnlyDirtyLoaded = await bootstrapRuntime(evoOnlyDirtyRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: ' M .evo-lite/active_context.md\n?? .evo-lite/raw_memory/mem_2026-03-20_00-00-00_deadbee_feedface.md',
+        });
+        const evoOnlyDirtyVerifyOutput = await captureConsole(async () => {
+            await evoOnlyDirtyLoaded.service.verify();
+        });
+        assert.ok(!evoOnlyDirtyVerifyOutput.includes('[前朝遗留告警]'), 'verify should ignore .evo-lite-only git noise');
+        assert.ok(evoOnlyDirtyVerifyOutput.includes('Verify completed with no active alerts.'), 'verify should stay healthy for .evo-lite-only git noise');
+
         console.log('8b. Testing git guard ignores .evo-lite-only deletions with leading status padding ...');
         process.env.EVO_LITE_SKIP_GIT_GUARD = '';
         process.env.EVO_LITE_GIT_STATUS = ' D .evo-lite/vect_memory/legacy-marker.md';

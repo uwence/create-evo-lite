@@ -116,6 +116,13 @@ function parseGitStatusLines(rawStatus) {
         .filter(line => line.trim().length > 0);
 }
 
+function filterNonEvoLiteGitStatusLines(rawStatus) {
+    return parseGitStatusLines(rawStatus).filter(line => {
+        const filePath = line.slice(3).trim().replace(/\\/g, '/');
+        return !filePath.startsWith('.evo-lite/');
+    });
+}
+
 function getCommitHash() {
     const injectedCommitHash = getInjectedCommitHash();
     if (injectedCommitHash) {
@@ -133,11 +140,7 @@ function ensureCleanWorktree() {
         return;
     }
     try {
-        const gitStatus = parseGitStatusLines(getInjectedGitStatus() || runGit(['status', '--porcelain']))
-            .filter(line => {
-                const filePath = line.slice(3).trim().replace(/\\/g, '/');
-                return !filePath.startsWith('.evo-lite/');
-            });
+        const gitStatus = filterNonEvoLiteGitStatusLines(getInjectedGitStatus() || runGit(['status', '--porcelain']));
         if (gitStatus.length > 0) {
             throw new Error('dirty');
         }
@@ -834,7 +837,7 @@ async function verify() {
         pushNextStep('先整理当前 Git 工作区，再继续执行 `/commit` 或新的开发动作。');
     } else {
         try {
-            const gitStatus = getInjectedGitStatus() || runGit(['status', '--porcelain']);
+            const gitStatus = filterNonEvoLiteGitStatusLines(getInjectedGitStatus() || runGit(['status', '--porcelain']));
             if (gitStatus.length > 0) {
                 console.log('\n⚠️ [前朝遗留告警] 发现未提交的 Git 状态！');
                 report.hasAlerts = true;
@@ -973,6 +976,7 @@ module.exports = {
     list,
     memorize,
     parseGitStatusLines,
+    filterNonEvoLiteGitStatusLines,
     recall,
     splitTrajectoryEntries,
     summarizeArchiveHealth,
