@@ -144,6 +144,7 @@ If this is your first time using AI as a real project partner, do not try to lea
 
 If `verify` reports archive or rebuild issues, follow the concrete next-step commands printed by the CLI instead of guessing.
 In a healthy setup, the `/evo` first response should immediately tell you: health status, current focus, current risks, and the most actionable next step.
+Likewise, when you run `/wash` or `rebuild`, the closing message should clearly tell you whether damaged archives remain, what was actually rebuilt, which memories are outside the rebuild guarantee, and whether you should continue coding or first repair the remaining issues.
 
 ### 3. High-Frequency Tracking & Closure (/commit)
 When a small feature or bug fix is complete, enter the command:
