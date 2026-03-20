@@ -219,6 +219,15 @@ async function runTests() {
         assert.ok(verifyOutput.includes('[前朝遗留告警]'), 'verify did not report dirty git state');
         assert.ok(verifyOutput.includes('[交接失约告警]'), 'verify did not report stale active_context.md');
 
+        console.log('8b. Testing git guard ignores .evo-lite-only deletions with leading status padding ...');
+        process.env.EVO_LITE_SKIP_GIT_GUARD = '';
+        process.env.EVO_LITE_GIT_STATUS = ' D .evo-lite/vect_memory/legacy-marker.md';
+        await assert.doesNotReject(async () => {
+            await primaryLoaded.service.track('GuardRegression', 'Confirmed the git clean-worktree guard ignores .evo-lite-only delete markers even when porcelain status lines start with a single-column deletion flag.');
+        }, 'track should ignore .evo-lite-only delete markers');
+        process.env.EVO_LITE_SKIP_GIT_GUARD = '1';
+        delete process.env.EVO_LITE_GIT_STATUS;
+
         console.log('9. Testing verify downgrade when Node cannot spawn git ...');
         const blockedGitRuntime = createTempRuntimeRoot('blocked-git');
         const originalExecFileSync = childProcess.execFileSync;

@@ -109,6 +109,13 @@ function getInjectedGitStatus() {
     return process.env.EVO_LITE_GIT_STATUS || '';
 }
 
+function parseGitStatusLines(rawStatus) {
+    return rawStatus
+        .split(/\r?\n/)
+        .map(line => line.replace(/\r$/, ''))
+        .filter(line => line.trim().length > 0);
+}
+
 function getCommitHash() {
     const injectedCommitHash = getInjectedCommitHash();
     if (injectedCommitHash) {
@@ -126,12 +133,9 @@ function ensureCleanWorktree() {
         return;
     }
     try {
-        const gitStatus = (getInjectedGitStatus() || runGit(['status', '--porcelain']))
-            .split(/\r?\n/)
-            .map(line => line.trim())
-            .filter(Boolean)
+        const gitStatus = parseGitStatusLines(getInjectedGitStatus() || runGit(['status', '--porcelain']))
             .filter(line => {
-                const filePath = line.slice(3).replace(/\\/g, '/');
+                const filePath = line.slice(3).trim().replace(/\\/g, '/');
                 return !filePath.startsWith('.evo-lite/');
             });
         if (gitStatus.length > 0) {
@@ -960,6 +964,7 @@ module.exports = {
     inject,
     list,
     memorize,
+    parseGitStatusLines,
     recall,
     summarizeArchiveHealth,
     setFocus,
