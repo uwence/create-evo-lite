@@ -22,9 +22,32 @@
 
 > [!IMPORTANT]
 > **Current structure**: Evo-Lite uses a two-layer model.
+> - **`AGENTS.md` / `CLAUDE.md`** are generated at the project root as host adapters for Codex and Claude Code.
+> - **`.claude/commands/`** provides thin Claude Code-native command wrappers without replacing the canonical workflow semantics in `.agents/workflows/`.
+> - **Generated asset rule**: these host adapter files are generated Evo-Lite assets and may be overwritten during template upgrades; the canonical long-term semantic source of truth remains `.agents/` and `.evo-lite/`.
 > - **Workflow protocols** such as `/commit`, `/mem`, and `/wash` live in `.agents/workflows/`.
-> - **Executable behavior** lives in `.evo-lite/cli/` via `memory.js` / `mem.cmd`.
+> - **Executable behavior** lives in `.evo-lite/cli/` via `memory.js` and the generated `mem` wrappers (`./.evo-lite/mem` on Unix/Bash, `.\.evo-lite\mem.cmd` on Windows PowerShell/CMD).
 > After upgrading an existing project, run `node .evo-lite/cli/memory.js verify` before continuing work.
+
+---
+
+## 🧩 Host Adapter Strategy
+
+Evo-Lite now uses a **canonical semantics layer + host adapter layer** model:
+
+- **Canonical semantics layer**: `.agents/` and `.evo-lite/`
+  This is where the actual workflows, rules, state machine, and long-term memory flow are defined.
+- **Codex host adapter layer**: root-level `AGENTS.md`
+  This is the Codex-facing entry summary, not a second canonical rule tree.
+- **Claude Code host adapter layer**: root-level `CLAUDE.md` plus `.claude/commands/`
+  These are Claude-facing entrypoints and thin wrappers, not a replacement for the canonical Evo-Lite source.
+
+The intended mental model is:
+
+- `AGENTS.md` / `CLAUDE.md` / `.claude/commands/`: the host-facing navigation surface
+- `.agents/` / `.evo-lite/`: the actual Evo-Lite semantics and runtime truth
+
+That is why the host adapter assets are allowed to be regenerated during upgrades, while `.agents/` and `.evo-lite/` remain the canonical sources of truth.
 
 ---
 
