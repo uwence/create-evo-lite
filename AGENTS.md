@@ -36,6 +36,15 @@ When taking over this project:
 
 These are Evo-Lite semantic workflows. Do not assume the host provides them as identical native slash commands.
 
+For Codex specifically:
+
+- Do not expect these workflow names to appear automatically in the app's navigation menu or slash-command picker.
+- In Codex, the normal way to use them is to ask for the semantic workflow explicitly in natural language, for example:
+  - "执行 Evo-Lite 的 `/evo` 工作流"
+  - "按 `/commit` 协议闭环这次修改"
+  - "执行 `/mem` 的轻量挂起版本，只写下一阶段 focus"
+- If Codex later exposes host-native command bindings in some surfaces, treat that only as an optional transport improvement, not as the canonical definition of the workflow.
+
 ## Guardrails
 
 - Do not directly edit runtime anchors in `.evo-lite/active_context.md`.

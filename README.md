@@ -29,6 +29,16 @@
 > - **`memory.js` / `mem` wrappers**：定义在 `.evo-lite/cli/` 与项目运行时目录中，负责真正执行记忆、归档、状态更新与校验。Unix / Bash 环境使用 `./.evo-lite/mem`，Windows PowerShell / CMD 环境使用 `.\.evo-lite\mem.cmd`。
 > 升级旧项目后，建议先运行 `node .evo-lite/cli/memory.js verify` 检查 CLI、模型、状态文件与历史记忆是否处于可继续接管的状态。
 
+> [!TIP]
+> **Codex 菜单预期说明**：
+> 在 Codex 里，Evo-Lite 当前提供的是“**语义工作流**”，不是自动注册到导航菜单或 slash picker 里的原生命令。
+> 也就是说，你通常**不会**在 Codex 的菜单里直接看到 `/evo`、`/commit`、`/mem`、`/wash`。
+> 正确用法是直接对 Codex 说：
+> - “执行 Evo-Lite 的 `/evo` 工作流”
+> - “按 `/commit` 协议闭环这次修改”
+> - “执行 `/mem` 的轻量挂起版本，只写下一阶段 focus”
+> Claude Code 的 `.claude/commands/` 薄包装命令不等于 Codex 也会出现同样的原生菜单项。
+
 ---
 
 ## 🧩 宿主适配策略
@@ -48,6 +58,13 @@ Evo-Lite 现在采用“**canonical 语义层 + 宿主适配层**”的结构：
 - `.agents/` / `.evo-lite/`：Evo-Lite 自己真正认账的“制度层”和“运行时”
 
 这也是为什么宿主适配资产允许在模板升级时被覆盖，而 `.agents/` 与 `.evo-lite/` 才是长期语义真源。
+
+### Codex 使用预期
+
+- **Codex**：以 `AGENTS.md` + `.agents/workflows/` + 本地 CLI 为主。
+  默认应把 `/evo`、`/commit`、`/mem`、`/wash` 理解为“语义工作流名字”，而不是一定会出现在 UI 菜单里的宿主原生命令。
+- **Claude Code**：除了 `CLAUDE.md` 之外，还可以额外读取 `.claude/commands/` 作为薄包装命令入口。
+  这意味着 Claude Code 更接近“可能看到命令文件”，但它也不改变 `.agents/workflows/` 才是 canonical 语义真源这件事。
 
 ---
 

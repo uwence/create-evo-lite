@@ -29,6 +29,16 @@
 > - **Executable behavior** lives in `.evo-lite/cli/` via `memory.js` and the generated `mem` wrappers (`./.evo-lite/mem` on Unix/Bash, `.\.evo-lite\mem.cmd` on Windows PowerShell/CMD).
 > After upgrading an existing project, run `node .evo-lite/cli/memory.js verify` before continuing work.
 
+> [!TIP]
+> **Codex menu expectation**:
+> In Codex, Evo-Lite currently provides **semantic workflows**, not native commands automatically registered into the navigation menu or slash-command picker.
+> So you should usually **not** expect to see `/evo`, `/commit`, `/mem`, or `/wash` appear as built-in menu items.
+> The normal Codex usage is to ask for the workflow explicitly in natural language, for example:
+> - "Run Evo-Lite's `/evo` workflow"
+> - "Close this change using the `/commit` protocol"
+> - "Run the lightweight `/mem` flow and only write the next focus"
+> Claude Code's `.claude/commands/` wrappers do not imply that Codex will expose the same native menu entries.
+
 ---
 
 ## 🧩 Host Adapter Strategy
@@ -48,6 +58,13 @@ The intended mental model is:
 - `.agents/` / `.evo-lite/`: the actual Evo-Lite semantics and runtime truth
 
 That is why the host adapter assets are allowed to be regenerated during upgrades, while `.agents/` and `.evo-lite/` remain the canonical sources of truth.
+
+### Codex Usage Expectation
+
+- **Codex**: primarily uses `AGENTS.md` + `.agents/workflows/` + the local CLI.
+  By default, `/evo`, `/commit`, `/mem`, and `/wash` should be treated as semantic workflow names, not guaranteed host-native menu commands.
+- **Claude Code**: in addition to `CLAUDE.md`, it may also consume `.claude/commands/` as thin command wrappers.
+  That makes Claude Code closer to a command-file model, but it still does not replace `.agents/workflows/` as the canonical semantic source.
 
 ---
 

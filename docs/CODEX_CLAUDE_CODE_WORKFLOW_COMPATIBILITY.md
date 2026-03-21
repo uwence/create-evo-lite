@@ -115,6 +115,14 @@ Good:
 
 - “Every host must support the `/evo` semantic workflow, whether via slash command, rules, or explicit command sequence.”
 
+Concrete implication for current Codex usage:
+
+- A user not seeing `/evo` or `/commit` in a Codex menu is not evidence that Evo-Lite is misconfigured.
+- In Codex today, the expected trigger is usually natural-language invocation of the workflow semantics, not discovery through a guaranteed native menu entry.
+- Therefore user-facing docs should explicitly distinguish:
+  - **semantic workflow name**: `/evo`, `/commit`, `/mem`, `/wash`
+  - **host transport**: native menu item, slash command, rule-driven invocation, or explicit command sequence
+
 ### 2. Treat command examples as host-relative
 
 Every workflow that references `mem`, git, or shell behavior should describe:
