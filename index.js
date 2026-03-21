@@ -26,6 +26,23 @@ async function main() {
 
     let shouldWash = false;
     const hostAdapterSummary = [];
+    const legacyContextPath = path.join(targetDir, '.evo-lite', 'active_context.md');
+    const legacyCliPath = path.join(targetDir, '.evo-lite', 'cli', 'memory.js');
+    const modernModelsPath = path.join(targetDir, '.evo-lite', 'cli', 'models.js');
+    const modernDbCliPath = path.join(targetDir, '.evo-lite', 'cli', 'db.js');
+    const legacyTemplatesRulesDir = path.join(targetDir, 'templates', 'rules');
+    const hasLegacyCli = fs.existsSync(legacyCliPath) && (!fs.existsSync(modernModelsPath) || !fs.existsSync(modernDbCliPath));
+    const hasLegacyTemplatesRules = fs.existsSync(legacyTemplatesRulesDir);
+    const hasLegacyContext = fs.existsSync(legacyContextPath)
+        && !fs.readFileSync(legacyContextPath, 'utf8').includes('<!-- BEGIN_META -->');
+
+    if (hasLegacyCli || hasLegacyTemplatesRules || hasLegacyContext) {
+        console.error('❌ create-evo-lite@2.x 不支持在 npm 发布的 1.4.9 旧项目上原地升级。');
+        console.error('ℹ️ 2.x 之后的运行时结构已发生破坏性变化，包括 memory schema、active_context 锚点格式与宿主适配资产布局。');
+        console.error('👉 请新建一个全新目录重新初始化 2.x 项目，不要覆盖旧项目目录。');
+        console.error('👉 如需保留旧数据，请继续使用 1.4.9 维护旧项目，或先手工导出后再迁移到新目录。');
+        process.exit(1);
+    }
 
     const hasOldDb = fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'));
 

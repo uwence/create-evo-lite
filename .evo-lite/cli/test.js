@@ -10,6 +10,7 @@ const TEMPLATE_CONTEXT_PATH = path.join(WORKSPACE_ROOT, 'templates', 'active_con
 const SHARED_CACHE_DIR = path.join(WORKSPACE_ROOT, '.evo-lite', '.cache');
 const TEMPLATE_CLI_DIR = path.join(WORKSPACE_ROOT, 'templates', 'cli');
 const TEMPLATE_ROOT_DIR = path.join(WORKSPACE_ROOT, 'templates');
+const INIT_ENTRY = path.join(WORKSPACE_ROOT, 'index.js');
 process.env.NODE_PATH = path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules');
 require('module').Module._initPaths();
 
@@ -59,6 +60,113 @@ function createTempTemplateRoot(name, mutate) {
         mutate(templateRoot);
     }
     return templateRoot;
+}
+
+function ensureParent(filePath) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function writeText(filePath, content) {
+    ensureParent(filePath);
+    fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function createLegacyInitProject(name) {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), `evo-lite-init-legacy-${name}-`));
+    writeText(path.join(projectRoot, '.evo-lite', 'active_context.md'), '# legacy active context');
+    writeText(path.join(projectRoot, '.evo-lite', 'cli', 'memory.js'), 'console.log("legacy runtime");');
+    return projectRoot;
+}
+
+function createModernInitProject(name) {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), `evo-lite-init-modern-${name}-`));
+    const template = fs
+        .readFileSync(TEMPLATE_CONTEXT_PATH, 'utf8')
+        .replace(/\{\{DATE\}\}/g, new Date().toISOString().split('T')[0]);
+    writeText(path.join(projectRoot, '.evo-lite', 'active_context.md'), template);
+    writeText(path.join(projectRoot, '.evo-lite', 'cli', 'memory.js'), 'console.log("modern runtime");');
+    writeText(path.join(projectRoot, '.evo-lite', 'cli', 'db.js'), 'module.exports = {};');
+    writeText(path.join(projectRoot, '.evo-lite', 'cli', 'models.js'), 'module.exports = {};');
+    return projectRoot;
+}
+
+async function runInitializer(projectRoot, options = {}) {
+    const originalArgv = process.argv.slice();
+    const originalExit = process.exit;
+    const originalExecSync = childProcess.execSync;
+    const originalCwd = process.cwd();
+    const stdout = [];
+    const stderr = [];
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    const indexModulePath = require.resolve(INIT_ENTRY);
+    let uncaughtInitializerError = null;
+    const uncaughtHandler = caught => {
+        if (caught && caught.code === 'TEST_EXIT') {
+            status = typeof caught.exitCode === 'number' ? caught.exitCode : 1;
+            uncaughtInitializerError = caught;
+            return;
+        }
+        throw caught;
+    };
+
+    delete require.cache[indexModulePath];
+    process.argv = ['node', INIT_ENTRY, projectRoot, '--yes'];
+    console.log = (...args) => stdout.push(args.join(' '));
+    console.warn = (...args) => stderr.push(args.join(' '));
+    console.error = (...args) => stderr.push(args.join(' '));
+    process.prependListener('uncaughtException', uncaughtHandler);
+
+    let status = 0;
+    let error = null;
+
+    try {
+        process.chdir(WORKSPACE_ROOT);
+        process.exit = code => {
+            status = typeof code === 'number' ? code : 0;
+            const exitError = new Error(`EXIT_${status}`);
+            exitError.code = 'TEST_EXIT';
+            exitError.exitCode = status;
+            throw exitError;
+        };
+        if (options.stubExecSync) {
+            childProcess.execSync = () => {
+                throw new Error('STOP_AFTER_CHECK');
+            };
+        }
+        require(indexModulePath);
+        await new Promise(resolve => setImmediate(resolve));
+        if (uncaughtInitializerError) {
+            error = uncaughtInitializerError;
+        }
+    } catch (caught) {
+        error = caught;
+        if (caught && caught.code === 'TEST_EXIT') {
+            status = typeof caught.exitCode === 'number' ? caught.exitCode : 1;
+        } else if (caught && caught.message === 'STOP_AFTER_CHECK') {
+            status = 0;
+        } else {
+            status = 1;
+        }
+    } finally {
+        delete require.cache[indexModulePath];
+        process.argv = originalArgv;
+        process.exit = originalExit;
+        childProcess.execSync = originalExecSync;
+        console.log = originalLog;
+        console.warn = originalWarn;
+        console.error = originalError;
+        process.removeListener('uncaughtException', uncaughtHandler);
+        process.chdir(originalCwd);
+    }
+
+    return {
+        status,
+        error,
+        stdout: stdout.join('\n'),
+        stderr: stderr.join('\n'),
+    };
 }
 
 function resetCliModuleCache() {
@@ -201,6 +309,27 @@ async function runTests() {
             cliModule.getCliText(['node', 'memory.js', 'add', 'Alias task payload']),
             'Alias task payload',
             'top-level add alias no longer parses correctly'
+        );
+
+        console.log('3a. Testing initializer blocks 1.4.9-era runtime but allows 2.x hot update ...');
+        const legacyInitRoot = createLegacyInitProject('blocked');
+        const legacyInitResult = await runInitializer(legacyInitRoot);
+        assert.notStrictEqual(legacyInitResult.status, 0, 'initializer should block legacy 1.4.9-era runtime directories');
+        assert.ok(
+            `${legacyInitResult.stdout}\n${legacyInitResult.stderr}`.includes('不支持在 npm 发布的 1.4.9 旧项目上原地升级'),
+            'initializer did not explain the legacy upgrade block'
+        );
+
+        const modernInitRoot = createModernInitProject('allowed');
+        const modernInitResult = await runInitializer(modernInitRoot, { stubExecSync: true });
+        assert.strictEqual(modernInitResult.status, 0, 'initializer should continue for 2.x-shaped runtime directories');
+        assert.ok(
+            !`${modernInitResult.stdout}\n${modernInitResult.stderr}`.includes('不支持在 npm 发布的 1.4.9 旧项目上原地升级'),
+            'initializer incorrectly blocked a 2.x-shaped runtime directory'
+        );
+        assert.ok(
+            modernInitResult.stdout.includes('📄 复制并配置记忆外挂模板文件'),
+            'initializer did not proceed past the legacy-runtime gate for a 2.x-shaped directory'
         );
 
         console.log('4. Testing archive / sync ...');
