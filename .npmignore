@@ -7,3 +7,4 @@ fixed_memories.json
 offline_memories.json
 assets
 .agents
+.npm-cache

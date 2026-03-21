@@ -12,3 +12,4 @@ node_modules/
 .agents/
 test-project*/
 temp-npm-mock/
+.npm-cache/
