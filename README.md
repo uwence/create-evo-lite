@@ -153,7 +153,7 @@ npx create-evo-lite ./MyAwesomeProject
 
 **方案 B：全局安装并运行 (推荐个人日常使用)**
 ```bash
-# 1. 讲源码拉到本地后进行全局软链
+# 1. 将源码拉到本地后进行全局软链
 cd create-evo-lite
 npm link
 

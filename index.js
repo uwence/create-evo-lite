@@ -105,6 +105,7 @@ async function main() {
     const cliFiles = fs.existsSync(cliTemplatesDir) ? fs.readdirSync(cliTemplatesDir) : [];
 
     // 3.1 递归复制函数
+    let hasUpgraded = false;
     function copyRecursiveSync(src, dest) {
         const exists = fs.existsSync(src);
         const stats = exists && fs.statSync(src);
@@ -127,7 +128,6 @@ async function main() {
         }
     }
 
-    let hasUpgraded = false;
     if (fs.existsSync(activeContextPath)) {
         fs.copyFileSync(activeContextPath, activeContextPath + '.bak');
         hasUpgraded = true;
