@@ -248,6 +248,60 @@ async function runTests() {
         primaryLoaded.service.exportMemories(exportPath);
         assert.ok(fs.existsSync(exportPath), 'Export JSON was not created');
 
+        console.log('1a. Testing P0 namespace isolation ...');
+        // Default writes go to prose namespace; code/symbol tables exist but stay empty.
+        const nsDb = primaryLoaded.db.getDb();
+        assert.ok(primaryLoaded.db.tableExists(nsDb, 'chunks_prose'), 'chunks_prose table should exist after first remember');
+        const proseRowCount = nsDb.prepare('SELECT COUNT(*) AS c FROM chunks_prose').get().c;
+        assert.ok(proseRowCount > 0, 'prose namespace should contain the remembered chunk');
+        // Initialize a second namespace and confirm prose data survives.
+        primaryLoaded.db.ensureNamespaceTables(nsDb, 'code', primaryLoaded.models.getActiveModelInfo().model, primaryLoaded.models.getActiveModelInfo().dims);
+        assert.ok(primaryLoaded.db.tableExists(nsDb, 'chunks_code'), 'chunks_code table should exist after ensureNamespaceTables');
+        const codeRowCount = nsDb.prepare('SELECT COUNT(*) AS c FROM chunks_code').get().c;
+        assert.strictEqual(codeRowCount, 0, 'code namespace should start empty');
+        const proseRowCountAfter = nsDb.prepare('SELECT COUNT(*) AS c FROM chunks_prose').get().c;
+        assert.strictEqual(proseRowCountAfter, proseRowCount, 'creating code ns must not disturb prose ns');
+        // Drift on the code ns alone must not touch the prose ns.
+        primaryLoaded.db.ensureNamespaceTables(nsDb, 'code', 'Xenova/some-other-model', 999);
+        const proseRowCountFinal = nsDb.prepare('SELECT COUNT(*) AS c FROM chunks_prose').get().c;
+        assert.strictEqual(proseRowCountFinal, proseRowCount, 'drift on code ns must not reset prose ns');
+
+        console.log('1b. Testing P1 safety scanner blocks well-known secret prefixes ...');
+        const safety = require(path.join(CLI_DIR, 'safety.js'));
+        const blockScan = safety.scanForSecrets('GitHub token: ghp_abcdefghij1234567890abcdefghij123456 here');
+        assert.strictEqual(blockScan.severity, 'block', 'GitHub token should be classified as block');
+        assert.ok(blockScan.hits.some(h => h.kind === 'github_token'), 'GitHub token kind should appear in hits');
+        const akiaScan = safety.scanForSecrets('config = AKIAIOSFODNN7EXAMPLE');
+        assert.strictEqual(akiaScan.severity, 'block', 'AWS access key should be classified as block');
+        // Memorize must reject content with secrets unless allowSecrets is set.
+        await assert.rejects(
+            primaryLoaded.service.memorize('My ssh key looks like ghp_abcdefghij1234567890abcdefghij123456 in this trace, which is long enough.'),
+            /安全红线拦截/,
+            'memorize must throw when content contains a known secret prefix'
+        );
+        // archive() also must reject the same content.
+        await assert.rejects(
+            primaryLoaded.service.archive('Here is my ssh key ghp_abcdefghij1234567890abcdefghij123456 captured during debugging the deploy step.'),
+            /安全红线拦截/,
+            'archive must throw when content contains a known secret prefix'
+        );
+        // No new raw archive file should have been written for the rejected payload.
+        const rawDirAfterReject = fs.existsSync(path.join(primary.runtimeRoot, 'raw_memory'))
+            ? fs.readdirSync(path.join(primary.runtimeRoot, 'raw_memory'))
+            : [];
+        assert.ok(!rawDirAfterReject.some(f => f.includes('ghp_')), 'rejected secrets must never produce a raw archive file');
+        // The summarizeHits helper must not include the matched bytes (privacy).
+        const summary = safety.summarizeHits(blockScan.hits);
+        assert.ok(!summary.includes('ghp_'), 'safety summary must not leak the matched secret bytes');
+        // Warn-tier (email PII) is redacted but written.
+        const beforeId = primaryLoaded.service.list().length;
+        await primaryLoaded.service.memorize('Contact me at alice@example.com for follow-up; this trace is long enough to satisfy the quality guard rules.');
+        const afterRows = primaryLoaded.service.list();
+        assert.ok(afterRows.length > beforeId, 'warn-tier content should be persisted (redacted)');
+        const lastRow = afterRows[afterRows.length - 1];
+        assert.ok(!lastRow.content.includes('alice@example.com'), 'warn-tier email should have been redacted in stored content');
+        assert.ok(lastRow.content.includes('<REDACTED:email>'), 'warn-tier email should be replaced with a redaction marker');
+
         console.log('2. Testing context add / track --resolve ...');
         const addResult = primaryLoaded.service.addTask('Finish the protocol restore follow-up task');
         assert.ok(/^[a-f0-9]{4}$/i.test(addResult.hash), 'context add did not create a 4-char hash');

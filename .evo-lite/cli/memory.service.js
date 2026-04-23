@@ -2,7 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline/promises');
 const { execFileSync } = require('child_process');
-const { closeDb, getDb, initDB } = require('./db');
+const { closeDb, DEFAULT_NAMESPACE, getDb, getNamespaceCounts, getNamespaces, initDB, isValidNamespace, tableExists } = require('./db');
+const safety = require('./safety');
 const {
     getActiveModelInfo,
     getExtractor,
@@ -167,6 +168,92 @@ function ensureCleanWorktree() {
     }
 }
 
+// ----------------------------------------------------------------------------
+// prepareForWrite (P0): single chokepoint for every long-term write.
+// Invoked by memorize / archive / rememberOffline so that secrets scanning
+// (P1) and namespace selection (P0/P2) live in exactly one place.
+// ----------------------------------------------------------------------------
+
+const SAFETY_STATE = {
+    lastBlock: null,
+    blockCount: 0,
+    redactionCount: 0,
+};
+
+function getSafetyState() {
+    return { ...SAFETY_STATE };
+}
+
+function detectKindHeuristic(text) {
+    if (!text || typeof text !== 'string') return 'prose';
+    if (/```[\s\S]+```/.test(text)) return 'code';
+    if (/\b(function|class|def|import|const|let|var|interface)\b/.test(text) && /[{}();]/.test(text)) {
+        return 'code';
+    }
+    if (/\.(?:js|ts|tsx|jsx|py|go|rs|java|cpp|c|h)\b/.test(text)) return 'code';
+    return 'prose';
+}
+
+function prepareForWrite(content, ctx = {}) {
+    const allowSecrets = ctx.allowSecrets === true;
+    const requestedNs = ctx.namespace;
+    const kind = ctx.kind || (requestedNs === 'code' ? 'code' : null);
+    let namespace = requestedNs;
+    if (!namespace) {
+        if (kind === 'code') namespace = 'code';
+        else if (kind === 'symbol') namespace = 'symbol';
+        else namespace = DEFAULT_NAMESPACE;
+    }
+    if (!isValidNamespace(namespace)) {
+        return {
+            rejected: true,
+            reason: `unknown namespace: ${namespace}`,
+            namespace,
+            content,
+            redacted: content,
+            hits: [],
+            severity: 'block',
+        };
+    }
+
+    const scan = safety.scanForSecrets(content || '');
+    if (scan.severity === 'block' && !allowSecrets) {
+        SAFETY_STATE.blockCount += 1;
+        SAFETY_STATE.lastBlock = {
+            timestamp: new Date().toISOString(),
+            summary: safety.summarizeHits(scan.hits),
+            source: ctx.source || 'unknown',
+        };
+        appendLog('SAFETY_BLOCK', `${ctx.source || 'unknown'} | ${safety.summarizeHits(scan.hits)}`);
+        return {
+            rejected: true,
+            reason: 'secret_detected',
+            namespace,
+            content,
+            redacted: scan.redacted,
+            hits: scan.hits.map(h => ({ kind: h.kind, severity: h.severity, start: h.start, length: h.length })),
+            severity: 'block',
+        };
+    }
+
+    let finalContent = content;
+    if (scan.severity === 'warn' && !allowSecrets) {
+        finalContent = scan.redacted;
+        SAFETY_STATE.redactionCount += 1;
+        appendLog('SAFETY_REDACT', `${ctx.source || 'unknown'} | ${safety.summarizeHits(scan.hits)}`);
+    }
+
+    return {
+        rejected: false,
+        reason: null,
+        namespace,
+        content: finalContent,
+        redacted: scan.redacted,
+        hits: scan.hits.map(h => ({ kind: h.kind, severity: h.severity, start: h.start, length: h.length })),
+        severity: scan.severity,
+    };
+}
+
 async function getEmbedding(text) {
     try {
         const extractor = await getExtractor();
@@ -181,7 +268,7 @@ async function getEmbedding(text) {
     }
 }
 
-async function rememberOffline(content, source) {
+async function rememberOffline(content, source, options = {}) {
     let offlineData = [];
     if (fs.existsSync(OFFLINE_MEMORIES_PATH)) {
         try {
@@ -194,6 +281,7 @@ async function rememberOffline(content, source) {
     offlineData.push({
         content,
         created_at: new Date().toISOString(),
+        namespace: options.namespace || DEFAULT_NAMESPACE,
         source,
     });
     fs.writeFileSync(OFFLINE_MEMORIES_PATH, JSON.stringify(offlineData, null, 2), 'utf8');
@@ -222,16 +310,34 @@ async function memorize(text, options = {}) {
         throw new Error(`记忆体字符数 (${text.length}) 过短。必须提供前因后果、架构原因或具体的绕过解法。`);
     }
 
+    // P0 + P1: every long-term write goes through the central pipeline so that
+    // namespace selection and secrets scanning live in exactly one place.
+    const prepared = prepareForWrite(text, {
+        allowSecrets: options.allowSecrets,
+        kind: options.kind,
+        namespace: options.namespace,
+        source,
+    });
+    if (prepared.rejected) {
+        const summary = prepared.hits.map(h => h.kind).join(',');
+        throw new Error(`写入被安全红线拦截 (severity=${prepared.severity}): ${summary || prepared.reason}. 如确属误判，可显式传入 --allow-secrets 重试。`);
+    }
+    const safeText = prepared.content;
+    const namespace = prepared.namespace;
+    const vectorsTable = `vectors_${namespace}`;
+    const chunksTable = `chunks_${namespace}`;
+
     const db = getDb();
-    const embedding = await getEmbedding(text);
+    const embedding = await getEmbedding(safeText);
     if (!embedding) {
-        await rememberOffline(text, source);
-        return { id: null, offline: true };
+        await rememberOffline(safeText, source, { namespace });
+        return { id: null, offline: true, namespace };
     }
 
-    const richContent = buildRichContent(text, options);
-    const rawMemoryId = db.prepare('INSERT INTO raw_memory (content, timestamp) VALUES (?, ?)').run(
+    const richContent = buildRichContent(safeText, options);
+    const rawMemoryId = db.prepare('INSERT INTO raw_memory (content, namespace, timestamp) VALUES (?, ?, ?)').run(
         richContent,
+        namespace,
         options.timestamp || new Date().toISOString()
     ).lastInsertRowid;
 
@@ -242,8 +348,8 @@ async function memorize(text, options = {}) {
         if (!chunkEmbedding) {
             continue;
         }
-        const vectorId = db.prepare('INSERT INTO vectors (embedding) VALUES (json(?))').run(JSON.stringify(chunkEmbedding)).lastInsertRowid;
-        db.prepare('INSERT INTO chunks (raw_memory_id, chunk_index, content, vector_id) VALUES (?, ?, ?, ?)').run(
+        const vectorId = db.prepare(`INSERT INTO ${vectorsTable} (embedding) VALUES (json(?))`).run(JSON.stringify(chunkEmbedding)).lastInsertRowid;
+        db.prepare(`INSERT INTO ${chunksTable} (raw_memory_id, chunk_index, content, vector_id) VALUES (?, ?, ?, ?)`).run(
             rawMemoryId,
             i,
             chunk,
@@ -251,14 +357,15 @@ async function memorize(text, options = {}) {
         );
     }
 
-    console.log(`✅ Remembered! (ID: ${rawMemoryId})`);
+    console.log(`✅ Remembered! (ID: ${rawMemoryId}, ns: ${namespace})`);
     console.log('💡 [交接规约监控]: 记忆已打入隐性碎片池！请确保你同时同步 active_context.md，并按需要执行 git commit。');
-    appendLog('REMEMBER', `ID ${rawMemoryId} - ${richContent.substring(0, 60)}...`);
-    return { id: Number(rawMemoryId), offline: false };
+    appendLog('REMEMBER', `ID ${rawMemoryId} ns=${namespace} - ${richContent.substring(0, 60)}...`);
+    return { id: Number(rawMemoryId), offline: false, namespace };
 }
 
-async function recall(query, topK = 5) {
+async function recall(query, topK = 5, options = {}) {
     const db = getDb();
+    const scope = options.scope || 'all';
     const queryEmbedding = await getEmbedding(query);
 
     if (!queryEmbedding) {
@@ -272,22 +379,38 @@ async function recall(query, topK = 5) {
     }
 
     const queryVector = JSON.stringify(queryEmbedding);
-    const results = db.prepare(`
-        SELECT
-            r.id,
-            r.content,
-            v.distance
-        FROM vectors v
-        JOIN chunks c ON v.rowid = c.vector_id
-        JOIN raw_memory r ON r.id = c.raw_memory_id
-        WHERE v.embedding MATCH ? AND k = ?
-        ORDER BY v.distance
-    `).all(queryVector, Math.max(topK * 3, 10));
+    const namespacesToSearch = scope === 'all'
+        ? getNamespaces().filter(ns => tableExists(db, `vectors_${ns}`) && tableExists(db, `chunks_${ns}`))
+        : [scope].filter(ns => isValidNamespace(ns) && tableExists(db, `vectors_${ns}`) && tableExists(db, `chunks_${ns}`));
+
+    let results = [];
+    for (const ns of namespacesToSearch) {
+        const vectorsTable = `vectors_${ns}`;
+        const chunksTable = `chunks_${ns}`;
+        try {
+            const nsResults = db.prepare(`
+                SELECT
+                    r.id,
+                    r.content,
+                    v.distance,
+                    '${ns}' AS namespace
+                FROM ${vectorsTable} v
+                JOIN ${chunksTable} c ON v.rowid = c.vector_id
+                JOIN raw_memory r ON r.id = c.raw_memory_id
+                WHERE v.embedding MATCH ? AND k = ?
+                ORDER BY v.distance
+            `).all(queryVector, Math.max(topK * 3, 10));
+            results = results.concat(nsResults);
+        } catch (_) {
+            // Skip namespaces with mismatched dims (different model registered).
+        }
+    }
 
     if (results.length === 0) {
         return [];
     }
 
+    results.sort((a, b) => a.distance - b.distance);
     const deduped = [];
     const seen = new Set();
     for (const result of results) {
@@ -299,7 +422,7 @@ async function recall(query, topK = 5) {
 
     const reranker = await getReranker();
     if (!reranker) {
-        appendLog('RECALL', `Queried "${query}", returned vector-distance results.`);
+        appendLog('RECALL', `Queried "${query}" scope=${scope}, returned vector-distance results.`);
         return deduped.slice(0, topK);
     }
 
@@ -311,7 +434,7 @@ async function recall(query, topK = 5) {
         })
     );
 
-    appendLog('RECALL', `Queried "${query}", reranked ${scored.length} candidates.`);
+    appendLog('RECALL', `Queried "${query}" scope=${scope}, reranked ${scored.length} candidates.`);
     return scored.sort((a, b) => b.score - a.score).slice(0, topK);
 }
 
@@ -321,14 +444,23 @@ function forget(id) {
     }
 
     const db = getDb();
-    const chunks = db.prepare('SELECT vector_id FROM chunks WHERE raw_memory_id = ?').all(id);
-    for (const chunk of chunks) {
-        db.prepare('DELETE FROM vectors WHERE rowid = ?').run(chunk.vector_id);
+    let totalDeleted = 0;
+    for (const ns of getNamespaces()) {
+        const chunksTable = `chunks_${ns}`;
+        const vectorsTable = `vectors_${ns}`;
+        if (!tableExists(db, chunksTable)) continue;
+        const chunks = db.prepare(`SELECT vector_id FROM ${chunksTable} WHERE raw_memory_id = ?`).all(id);
+        for (const chunk of chunks) {
+            try {
+                db.prepare(`DELETE FROM ${vectorsTable} WHERE rowid = ?`).run(chunk.vector_id);
+            } catch (_) {}
+        }
+        const r = db.prepare(`DELETE FROM ${chunksTable} WHERE raw_memory_id = ?`).run(id);
+        totalDeleted += r.changes;
     }
-    db.prepare('DELETE FROM chunks WHERE raw_memory_id = ?').run(id);
     const info = db.prepare('DELETE FROM raw_memory WHERE id = ?').run(id);
 
-    if (info.changes === 0) {
+    if (info.changes === 0 && totalDeleted === 0) {
         throw new Error(`未找到 ID 为 ${id} 的记忆碎片。`);
     }
 
@@ -342,9 +474,15 @@ function list() {
 
 function stats() {
     const db = getDb();
+    const namespaceCounts = getNamespaceCounts(db);
+    let totalChunks = 0;
+    for (const ns of Object.keys(namespaceCounts)) {
+        totalChunks += namespaceCounts[ns].chunks || 0;
+    }
     return {
-        chunks: db.prepare('SELECT COUNT(*) AS count FROM chunks').get().count,
+        chunks: totalChunks,
         count: db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count,
+        namespaces: namespaceCounts,
         ...db.prepare('SELECT MIN(timestamp) AS first, MAX(timestamp) AS last FROM raw_memory').get(),
     };
 }
@@ -377,6 +515,8 @@ async function importMemories(filePath) {
     for (const record of records) {
         if (record && record.content) {
             await memorize(record.content, {
+                allowSecrets: true, // imported records are user-controlled; trust the source
+                namespace: record.namespace,
                 skipQualityGuard: true,
                 skipTraceability: record.content.startsWith('[Time:') && record.content.includes('[Commit:'),
                 source: 'import',
@@ -472,7 +612,7 @@ function normalizeTemplateComparableContent(file, content) {
 function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
     const workspaceRoot = getWorkspaceRoot();
     const entries = [
-        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js'].map(file => ({
+        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js', 'safety.js'].map(file => ({
             label: file,
             activeFile: path.join(__dirname, file),
             templateFile: path.join(templateCliPath, file),
@@ -496,6 +636,7 @@ function isMissingMemorySchemaError(error) {
     return (
         message.includes('no such table: raw_memory') ||
         message.includes('no such table: chunks') ||
+        message.includes('no such table: chunks_prose') ||
         message.includes('no such table: _meta')
     );
 }
@@ -535,7 +676,7 @@ function summarizeArchiveHealth() {
     return summary;
 }
 
-async function ingestArchiveFile(filePath, type, sourceId, timestamp) {
+async function ingestArchiveFile(filePath, type, sourceId, timestamp, options = {}) {
     const markdown = fs.readFileSync(filePath, 'utf8');
     const validation = validateArchiveMarkdown(markdown, type);
     if (!validation.valid) {
@@ -553,7 +694,9 @@ async function ingestArchiveFile(filePath, type, sourceId, timestamp) {
 
     for (const chunk of chunks) {
         await memorize(chunk, {
+            allowSecrets: options.allowSecrets,
             commitHash: sourceId,
+            namespace: options.namespace,
             skipQualityGuard: true,
             source: `archive:${sourceId}`,
             timestamp,
@@ -575,6 +718,19 @@ async function archive(content, type = 'task', options = {}) {
         throw new Error('Usage: node memory.js archive "<text>" [--type=task|bug|note]');
     }
 
+    // P1: pre-flight safety scan on the raw archive payload BEFORE we write a file.
+    // This blocks secrets from ever landing on disk, not just in the vector index.
+    const preflightCheck = prepareForWrite(content, {
+        allowSecrets: options.allowSecrets,
+        kind: options.kind,
+        namespace: options.namespace,
+        source: 'archive',
+    });
+    if (preflightCheck.rejected) {
+        throw new Error(`归档被安全红线拦截 (severity=${preflightCheck.severity}): ${preflightCheck.hits.map(h => h.kind).join(',') || preflightCheck.reason}`);
+    }
+    const safeContent = preflightCheck.content;
+
     ensureDir(getRawMemoryDir());
     ensureDir(getVectMemoryDir());
 
@@ -584,18 +740,21 @@ async function archive(content, type = 'task', options = {}) {
     const filePath = path.join(getRawMemoryDir(), filename);
 
     const markdownBody = type === 'bug'
-        ? `## 现象 (Symptom)\n${content}\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n`
-        : `## 实现细节 (Implementation)\n${content}\n\n## 架构决策 (Architecture)\n未记录\n`;
+        ? `## 现象 (Symptom)\n${safeContent}\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n`
+        : `## 实现细节 (Implementation)\n${safeContent}\n\n## 架构决策 (Architecture)\n未记录\n`;
 
     const fileContent = `---\nid: "${id}"\ntimestamp: "${timestamp}"\ntype: "${type}"\ntags: []\n---\n\n${markdownBody}`;
     fs.writeFileSync(filePath, fileContent, 'utf8');
 
-    const ingestion = await ingestArchiveFile(filePath, type, id, timestamp);
+    const ingestion = await ingestArchiveFile(filePath, type, id, timestamp, {
+        allowSecrets: true, // we already scanned upstream; archive body is safe by construction
+        namespace: preflightCheck.namespace,
+    });
     if (!ingestion.marked) {
         throw new Error(`归档生成后校验失败: ${ingestion.invalidReason}`);
     }
     appendLog('ARCHIVE', `Archived ${filePath} into ${ingestion.inserted} chunks.`);
-    return { chunkCount: ingestion.inserted, filePath };
+    return { chunkCount: ingestion.inserted, filePath, namespace: preflightCheck.namespace };
 }
 
 async function syncVectorMemory() {
@@ -994,16 +1153,34 @@ async function verify(options = {}) {
         }
     }
 
+    const safetyState = getSafetyState();
+    const lastBlockSummary = safetyState.lastBlock
+        ? `${safetyState.lastBlock.timestamp} (${safetyState.lastBlock.summary})`
+        : 'never';
+    console.log(`🛡️ [安全/红线]: rules=${safety.getRuleCount()}, blocks=${safetyState.blockCount}, redactions=${safetyState.redactionCount}, last_block=${lastBlockSummary}`);
+
     try {
         const db = getDb();
         const hasRawTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory'").get();
-        const hasChunksTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chunks'").get();
+        const hasChunksTable = tableExists(db, 'chunks_prose') || tableExists(db, 'chunks_code') || tableExists(db, 'chunks_symbol');
         if (!hasRawTable || !hasChunksTable) {
             console.log('ℹ️ Evo-Lite 实体库状态: 当前仍是初始化空库态，首次 remember / import / rebuild 后会自动补齐表结构。');
         } else {
             console.log('✅ Evo-Lite 实体库状态: 已就绪');
+            const namespaceCounts = getNamespaceCounts(db);
             const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
-            const chunkCount = db.prepare('SELECT COUNT(*) AS count FROM chunks').get().count;
+            let chunkCount = 0;
+            const nsLines = [];
+            for (const ns of Object.keys(namespaceCounts)) {
+                const info = namespaceCounts[ns];
+                if (!info.present) continue;
+                chunkCount += info.chunks || 0;
+                nsLines.push(`   - ns=${ns} model=${info.model || 'unset'} dims=${info.dims || '?'} chunks=${info.chunks}`);
+            }
+            if (nsLines.length > 0) {
+                console.log('📚 [向量空间分布]:');
+                for (const line of nsLines) console.log(line);
+            }
             if (rawMemoryCount > 0 && chunkCount === 0) {
                 console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
                 report.hasAlerts = true;
@@ -1043,16 +1220,19 @@ module.exports = {
     archive,
     buildArchiveFilename,
     buildArchiveId,
+    detectKindHeuristic,
     exportMemories,
     extractChunksFromMd,
     formatArchiveTimestamp,
     forget,
+    getSafetyState,
     importMemories,
     inject,
     list,
     memorize,
     parseGitStatusLines,
     filterNonEvoLiteGitStatusLines,
+    prepareForWrite,
     recall,
     splitTrajectoryEntries,
     summarizeArchiveHealth,

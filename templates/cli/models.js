@@ -7,6 +7,40 @@ const { getCacheDir, getDbPath, getRerankerStatePath, getRuntimeRoot } = require
 
 const DB_PATH = getDbPath();
 
+// Model registry (P0 foundation). Each entry describes how to load a model and
+// which namespace it serves. The registry is intentionally tiny in this PR —
+// PR-C (P2) will add `jina-v2-base-code` / `nomic-embed-code` here without
+// touching call sites.
+const MODEL_REGISTRY = {
+    'Xenova/jina-embeddings-v2-base-zh': {
+        id: 'Xenova/jina-embeddings-v2-base-zh',
+        hfRepo: 'Xenova/jina-embeddings-v2-base-zh',
+        dims: 768,
+        kind: 'text',
+        quantized: false,
+        fallback: 'Xenova/bge-small-zh-v1.5',
+    },
+    'Xenova/bge-small-zh-v1.5': {
+        id: 'Xenova/bge-small-zh-v1.5',
+        hfRepo: 'Xenova/bge-small-zh-v1.5',
+        dims: 512,
+        kind: 'text',
+        quantized: true,
+        fallback: null,
+    },
+};
+
+function getModel(id) {
+    return MODEL_REGISTRY[id] || null;
+}
+
+function listModels(filter = {}) {
+    return Object.values(MODEL_REGISTRY).filter(model => {
+        if (filter.kind && model.kind !== filter.kind) return false;
+        return true;
+    });
+}
+
 let ACTIVE_MODEL = 'Xenova/jina-embeddings-v2-base-zh';
 let ACTIVE_DIMS = 768;
 const FALLBACK_MODEL = 'Xenova/bge-small-zh-v1.5';
@@ -216,12 +250,15 @@ function getModelConstants() {
 }
 
 module.exports = {
+    MODEL_REGISTRY,
     getActiveModelInfo,
     getExtractor,
+    getModel,
     getModelConstants,
     getReranker,
     getRerankerStatus,
     initEmbeddingModel,
+    listModels,
     resetPipelines,
     setActiveModel,
 };
