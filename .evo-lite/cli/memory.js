@@ -259,6 +259,16 @@ async function run() {
         return;
     }
 
+    if (action === 'inspect') {
+        const inspector = require('./inspector');
+        const portArg = process.argv.find(arg => arg.startsWith('--port='));
+        const port = portArg ? parseInt(portArg.substring('--port='.length), 10) : 0;
+        await inspector.runInspectCommand({ port });
+        // Keep the process alive; runInspectCommand registers its own SIGINT handler.
+        await new Promise(() => {});
+        return;
+    }
+
     if (!action || action === 'help') {
         printHelp();
         return;

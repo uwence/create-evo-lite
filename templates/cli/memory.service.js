@@ -612,7 +612,7 @@ function normalizeTemplateComparableContent(file, content) {
 function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
     const workspaceRoot = getWorkspaceRoot();
     const entries = [
-        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js', 'safety.js'].map(file => ({
+        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js', 'safety.js', 'inspector.js'].map(file => ({
             label: file,
             activeFile: path.join(__dirname, file),
             templateFile: path.join(templateCliPath, file),

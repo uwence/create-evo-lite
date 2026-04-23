@@ -266,8 +266,7 @@ async function runTests() {
         const proseRowCountFinal = nsDb.prepare('SELECT COUNT(*) AS c FROM chunks_prose').get().c;
         assert.strictEqual(proseRowCountFinal, proseRowCount, 'drift on code ns must not reset prose ns');
 
-        console.log('1b. Testing P1 safety scanner blocks well-known secret prefixes ...');
-        const safety = require(path.join(CLI_DIR, 'safety.js'));
+        console.log('1b. Testing P1 safety scanner blocks well-known secret prefixes ...');        const safety = require(path.join(CLI_DIR, 'safety.js'));
         const blockScan = safety.scanForSecrets('GitHub token: ghp_abcdefghij1234567890abcdefghij123456 here');
         assert.strictEqual(blockScan.severity, 'block', 'GitHub token should be classified as block');
         assert.ok(blockScan.hits.some(h => h.kind === 'github_token'), 'GitHub token kind should appear in hits');
@@ -301,6 +300,31 @@ async function runTests() {
         const lastRow = afterRows[afterRows.length - 1];
         assert.ok(!lastRow.content.includes('alice@example.com'), 'warn-tier email should have been redacted in stored content');
         assert.ok(lastRow.content.includes('<REDACTED:email>'), 'warn-tier email should be replaced with a redaction marker');
+
+        console.log('1c. Testing P4 inspector HTTP API returns 200 + JSON shapes ...');
+        const inspector = require(path.join(CLI_DIR, 'inspector.js'));
+        const handle = await inspector.startServer({ port: 0 });
+        try {
+            const fetchJson = async (apiPath) => {
+                const res = await fetch(`${handle.url.replace(/\/$/, '')}${apiPath}`);
+                assert.strictEqual(res.status, 200, `${apiPath} should return 200`);
+                return res.json();
+            };
+            const verify = await fetchJson('/api/verify');
+            assert.ok(verify.namespaces, '/api/verify must include namespaces map');
+            assert.ok('prose' in verify.namespaces, '/api/verify namespaces must include prose');
+            assert.ok(verify.safety, '/api/verify must include safety state');
+            const archiveApi = await fetchJson('/api/archive');
+            assert.ok(Array.isArray(archiveApi.files), '/api/archive must return a files array');
+            const timeline = await fetchJson('/api/timeline');
+            assert.ok(Array.isArray(timeline.entries), '/api/timeline must return an entries array');
+            // Index page should serve HTML.
+            const indexRes = await fetch(handle.url);
+            assert.strictEqual(indexRes.status, 200, 'inspector index must return 200');
+            assert.ok((await indexRes.text()).includes('Evo-Lite Inspector'), 'inspector HTML must include the title');
+        } finally {
+            await handle.close();
+        }
 
         console.log('2. Testing context add / track --resolve ...');
         const addResult = primaryLoaded.service.addTask('Finish the protocol restore follow-up task');
