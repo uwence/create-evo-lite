@@ -8,9 +8,11 @@ const { getCacheDir, getDbPath, getRerankerStatePath, getRuntimeRoot } = require
 const DB_PATH = getDbPath();
 
 // Model registry (P0 foundation). Each entry describes how to load a model and
-// which namespace it serves. The registry is intentionally tiny in this PR —
-// PR-C (P2) will add `jina-v2-base-code` / `nomic-embed-code` here without
-// touching call sites.
+// what content `kind` it is best suited for. The `kind` field drives namespace
+// selection downstream: `prepareForWrite` maps `kind: 'code'` to the `code`
+// namespace and `kind: 'text'` to the `prose` namespace. The registry is
+// intentionally tiny in this PR — PR-C (P2) will add `jina-v2-base-code` /
+// `nomic-embed-code` here without touching call sites.
 const MODEL_REGISTRY = {
     'Xenova/jina-embeddings-v2-base-zh': {
         id: 'Xenova/jina-embeddings-v2-base-zh',
