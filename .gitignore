@@ -13,3 +13,4 @@ node_modules/
 test-project*/
 temp-npm-mock/
 .npm-cache/
+.gitnexus
