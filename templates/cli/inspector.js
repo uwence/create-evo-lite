@@ -10,7 +10,7 @@ const path = require('path');
 const memoryService = require('./memory.service');
 const { closeDb, getDb, getNamespaceCounts, getNamespaces, tableExists } = require('./db');
 const { getActiveModelInfo } = require('./models');
-const { getActiveContextPath, getRawMemoryDir, getVectMemoryDir } = require('./runtime');
+const { getActiveContextPath, getIndexMemoryDir, getRawMemoryDir } = require('./runtime');
 
 function readActiveContext() {
     const p = getActiveContextPath();
@@ -30,14 +30,14 @@ function extractTrajectory(markdown) {
 
 function listArchiveFiles() {
     const rawDir = getRawMemoryDir();
-    const vectDir = getVectMemoryDir();
+    const indexDir = getIndexMemoryDir();
     if (!fs.existsSync(rawDir)) return [];
-    const vectSet = fs.existsSync(vectDir)
-        ? new Set(fs.readdirSync(vectDir).filter(f => f.endsWith('.md')))
+    const indexSet = fs.existsSync(indexDir)
+        ? new Set(fs.readdirSync(indexDir).filter(f => f.endsWith('.md')))
         : new Set();
     return fs.readdirSync(rawDir).filter(f => f.endsWith('.md')).map(file => ({
         file,
-        vectorized: vectSet.has(file),
+        indexed: indexSet.has(file),
     }));
 }
 
@@ -88,7 +88,7 @@ function renderHtml() {
   <nav style="margin-top:8px">
     <button data-tab="timeline" class="active">Active context</button>
     <button data-tab="archive">Archive</button>
-    <button data-tab="vectors">Vector spaces</button>
+    <button data-tab="vectors">Index spaces</button>
     <button data-tab="verify">Verify</button>
   </nav>
 </header>
@@ -122,16 +122,16 @@ async function load(name) {
         : '<ol>' + data.entries.map(e => '<li>' + escapeHtml(e) + '</li>').join('') + '</ol>');
     } else if (name === 'archive') {
       const data = await api('/api/archive');
-      target.innerHTML = '<h2>Archive (' + data.files.length + ')</h2><table><tr><th>File</th><th>Vectorized</th></tr>' +
-        data.files.map(f => '<tr><td>' + escapeHtml(f.file) + '</td><td class="' + (f.vectorized ? 'ok' : 'pending') +
-        '">' + (f.vectorized ? 'yes' : 'pending') + '</td></tr>').join('') + '</table>';
+      target.innerHTML = '<h2>Archive (' + data.files.length + ')</h2><table><tr><th>File</th><th>Indexed</th></tr>' +
+        data.files.map(f => '<tr><td>' + escapeHtml(f.file) + '</td><td class="' + (f.indexed ? 'ok' : 'pending') +
+        '">' + (f.indexed ? 'yes' : 'pending') + '</td></tr>').join('') + '</table>';
     } else if (name === 'vectors') {
       const data = await api('/api/verify');
       const rows = Object.entries(data.namespaces).map(([ns, info]) =>
         '<tr><td>' + escapeHtml(ns) + '</td><td>' + (info.present ? escapeHtml(String(info.model || 'unset')) : '-') +
         '</td><td>' + (info.present ? info.dims || '?' : '-') + '</td><td>' + info.chunks + '</td></tr>'
       ).join('');
-      target.innerHTML = '<h2>Vector spaces</h2><table><tr><th>Namespace</th><th>Model</th><th>Dims</th><th>Chunks</th></tr>' + rows + '</table>';
+      target.innerHTML = '<h2>Index spaces</h2><table><tr><th>Namespace</th><th>Engine</th><th>Dims</th><th>Chunks</th></tr>' + rows + '</table>';
     } else if (name === 'verify') {
       const data = await api('/api/verify');
       target.innerHTML = '<h2>Verify snapshot</h2><pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';

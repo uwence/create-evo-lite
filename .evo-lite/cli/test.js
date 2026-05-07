@@ -248,23 +248,29 @@ async function runTests() {
         primaryLoaded.service.exportMemories(exportPath);
         assert.ok(fs.existsSync(exportPath), 'Export JSON was not created');
 
+        console.log('1aa. Testing FTS fallback can recover raw_memory rows without vector chunks ...');
+        const fallbackRuntime = createTempRuntimeRoot('fts-fallback');
+        const fallbackLoaded = await bootstrapRuntime(fallbackRuntime.runtimeRoot);
+        const fallbackOnlyContent = 'FTS fallback should surface this raw-only memory fragment even if no vector chunks exist for it.';
+        const fallbackInsert = fallbackLoaded.db.getDb()
+            .prepare('INSERT INTO raw_memory (content, namespace, timestamp) VALUES (?, ?, ?)')
+            .run(fallbackOnlyContent, 'prose', new Date().toISOString());
+        const fallbackResults = await fallbackLoaded.service.recall('raw-only memory fragment');
+        assert.ok(fallbackResults.some(item => item.id === Number(fallbackInsert.lastInsertRowid)), 'FTS fallback did not surface the raw-only memory row');
+        assert.ok(fallbackResults.some(item => item.match_source === 'fts'), 'FTS fallback should label trigram-based matches');
+
         console.log('1a. Testing P0 namespace isolation ...');
-        // Default writes go to prose namespace; code/symbol tables exist but stay empty.
         const nsDb = primaryLoaded.db.getDb();
-        assert.ok(primaryLoaded.db.tableExists(nsDb, 'chunks_prose'), 'chunks_prose table should exist after first remember');
-        const proseRowCount = nsDb.prepare('SELECT COUNT(*) AS c FROM chunks_prose').get().c;
-        assert.ok(proseRowCount > 0, 'prose namespace should contain the remembered chunk');
-        // Initialize a second namespace and confirm prose data survives.
+        assert.ok(primaryLoaded.db.tableExists(nsDb, 'raw_memory_fts'), 'raw_memory_fts table should exist after first remember');
+        const proseRowCount = nsDb.prepare("SELECT COUNT(*) AS c FROM raw_memory WHERE namespace = 'prose'").get().c;
+        assert.ok(proseRowCount > 0, 'prose namespace should contain the remembered record');
         primaryLoaded.db.ensureNamespaceTables(nsDb, 'code', primaryLoaded.models.getActiveModelInfo().model, primaryLoaded.models.getActiveModelInfo().dims);
-        assert.ok(primaryLoaded.db.tableExists(nsDb, 'chunks_code'), 'chunks_code table should exist after ensureNamespaceTables');
-        const codeRowCount = nsDb.prepare('SELECT COUNT(*) AS c FROM chunks_code').get().c;
+        const namespaceCounts = primaryLoaded.db.getNamespaceCounts(nsDb);
+        assert.ok(namespaceCounts.code.present, 'code namespace should be registered after ensureNamespaceTables');
+        const codeRowCount = nsDb.prepare("SELECT COUNT(*) AS c FROM raw_memory WHERE namespace = 'code'").get().c;
         assert.strictEqual(codeRowCount, 0, 'code namespace should start empty');
-        const proseRowCountAfter = nsDb.prepare('SELECT COUNT(*) AS c FROM chunks_prose').get().c;
+        const proseRowCountAfter = nsDb.prepare("SELECT COUNT(*) AS c FROM raw_memory WHERE namespace = 'prose'").get().c;
         assert.strictEqual(proseRowCountAfter, proseRowCount, 'creating code ns must not disturb prose ns');
-        // Drift on the code ns alone must not touch the prose ns.
-        primaryLoaded.db.ensureNamespaceTables(nsDb, 'code', 'Xenova/some-other-model', 999);
-        const proseRowCountFinal = nsDb.prepare('SELECT COUNT(*) AS c FROM chunks_prose').get().c;
-        assert.strictEqual(proseRowCountFinal, proseRowCount, 'drift on code ns must not reset prose ns');
 
         console.log('1b. Testing P1 safety scanner blocks well-known secret prefixes ...');        const safety = require(path.join(CLI_DIR, 'safety.js'));
         const blockScan = safety.scanForSecrets('GitHub token: ghp_abcdefghij1234567890abcdefghij123456 here');
@@ -350,7 +356,6 @@ async function runTests() {
         const freshTrackRuntime = createTempRuntimeRoot('fresh-track');
         const freshTrackLoaded = loadCli(freshTrackRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
-            EVO_LITE_FORCE_RERANKER_SUCCESS: '1',
         });
         const freshTrackResult = await freshTrackLoaded.service.track(
             'InitBootstrap',
@@ -411,7 +416,7 @@ async function runTests() {
         );
 
         console.log('4. Testing archive / sync ...');
-        const archiveResult = await primaryLoaded.service.archive('A structured implementation summary that should become a raw archive and be vectorized immediately for later retrieval.');
+        const archiveResult = await primaryLoaded.service.archive('A structured implementation summary that should become a raw archive and be indexed immediately for later retrieval.');
         assert.ok(archiveResult.filePath.includes('raw_memory'), 'Archive did not write to raw_memory');
         assert.ok(
             /^mem_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_(?:[a-f0-9]{7}|No-Git)_[a-f0-9]{8}\.md$/i.test(path.basename(archiveResult.filePath)),
@@ -422,22 +427,22 @@ async function runTests() {
         fs.mkdirSync(rawDir, { recursive: true });
         fs.writeFileSync(
             path.join(rawDir, 'manual-sync.md'),
-            `---\nid: "manual_sync_case"\ntimestamp: "${new Date().toISOString()}"\ntype: "task"\ntags: []\n---\n\n## 实现细节 (Implementation)\nA manually injected archive file that should be discovered by sync and converted into vectorized memory chunks.\n\n## 架构决策 (Architecture)\nKeep sync focused on files missing their vect marker.\n`,
+            `---\nid: "manual_sync_case"\ntimestamp: "${new Date().toISOString()}"\ntype: "task"\ntags: []\n---\n\n## 实现细节 (Implementation)\nA manually injected archive file that should be discovered by sync and converted into indexed memory records.\n\n## 架构决策 (Architecture)\nKeep sync focused on files missing their index marker.\n`,
             'utf8'
         );
         const syncResult = await primaryLoaded.service.syncVectorMemory();
         assert.ok(syncResult.files >= 1, 'Sync did not process any pending raw archive');
-        assert.ok(fs.existsSync(path.join(primary.runtimeRoot, 'vect_memory', 'manual-sync.md')), 'Sync did not create vect marker');
+        assert.ok(fs.existsSync(path.join(primary.runtimeRoot, 'index_memory', 'manual-sync.md')), 'Sync did not create index marker');
 
         console.log('5. Testing sync invalid-archive guard ...');
         fs.writeFileSync(
             path.join(rawDir, 'broken-sync.md'),
-            '---\nid: "broken_sync_case"\ntimestamp: "2026-03-20T00:00:00.000Z"\ntype: "bug"\ntags: []\n---\n\n## 现象 (Symptom)\nBad control char here: \u000bvectorize()\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n',
+            '---\nid: "broken_sync_case"\ntimestamp: "2026-03-20T00:00:00.000Z"\ntype: "bug"\ntags: []\n---\n\n## 现象 (Symptom)\nBad control char here: \u000bindex()\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n',
             'utf8'
         );
         const invalidSyncResult = await primaryLoaded.service.syncVectorMemory();
         assert.ok(invalidSyncResult.invalid.some(item => item.file === 'broken-sync.md'), 'sync did not report the invalid archive');
-        assert.ok(!fs.existsSync(path.join(primary.runtimeRoot, 'vect_memory', 'broken-sync.md')), 'sync incorrectly marked the invalid archive as vectorized');
+        assert.ok(!fs.existsSync(path.join(primary.runtimeRoot, 'index_memory', 'broken-sync.md')), 'sync incorrectly marked the invalid archive as indexed');
 
         console.log('6. Testing verify flow alerts ...');
         const flowVerifyLoaded = await bootstrapRuntime(primary.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
@@ -445,7 +450,7 @@ async function runTests() {
             await flowVerifyLoaded.service.verify();
         });
         assert.ok(flowVerifyOutput.includes('损坏的 raw archive'), 'verify did not report invalid archive health');
-        assert.ok(flowVerifyOutput.includes('尚未生成 vect 标记'), 'verify did not report pending archive vectorization');
+        assert.ok(flowVerifyOutput.includes('尚未生成 index 标记'), 'verify did not report pending archive indexing');
         assert.ok(flowVerifyOutput.includes('📋 建议下一步:'), 'verify did not print a next-step summary for alert states');
 
         console.log('6a. Testing verify treats empty database files as fresh init state ...');
@@ -453,26 +458,22 @@ async function runTests() {
         fs.writeFileSync(path.join(emptyDbRuntime.runtimeRoot, 'memory.db'), '', 'utf8');
         const emptyDbLoaded = loadCli(emptyDbRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
-            EVO_LITE_FORCE_RERANKER_SUCCESS: '1',
         });
         const emptyDbVerifyOutput = await captureConsole(async () => {
             await emptyDbLoaded.service.verify();
         });
-        assert.ok(emptyDbVerifyOutput.includes('初始化空库态'), 'verify should describe empty database files as fresh init state');
+        assert.ok(emptyDbVerifyOutput.includes('本地记忆引擎状态: 就绪'), 'verify should bring empty database files up as a healthy local engine');
         assert.ok(!emptyDbVerifyOutput.includes('数据库读取失败'), 'verify should not report empty init databases as corruption');
 
-        console.log('7. Testing verify rebuild alert for preserved raw_memory without chunks ...');
+        console.log('7. Testing verify reports healthy local engine for populated memory db ...');
         const rebuildRuntime = createTempRuntimeRoot('rebuild');
         const rebuildLoaded = await bootstrapRuntime(rebuildRuntime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
         await rebuildLoaded.service.memorize('This preserved raw memory record should survive a model reset so verify can warn that chunks must be rebuilt explicitly afterwards.');
-        rebuildLoaded.db.initDB('Xenova/bge-small-zh-v1.5', 512);
         const rebuildVerifyOutput = await captureConsole(async () => {
             await rebuildLoaded.service.verify();
         });
-        assert.ok(rebuildVerifyOutput.includes('raw_memory 已有数据但 chunks 为空'), 'verify did not report preserved raw_memory without chunks');
-        assert.ok(rebuildVerifyOutput.includes('显式重建命令'), 'verify did not describe the explicit rebuild path');
-        assert.ok(rebuildVerifyOutput.includes('node .evo-lite/cli/memory.js rebuild'), 'verify did not point to the rebuild command');
-        assert.ok(rebuildVerifyOutput.includes('📋 建议下一步:'), 'verify did not summarize rebuild guidance');
+        assert.ok(rebuildVerifyOutput.includes('本地记忆引擎状态: 就绪'), 'verify did not report healthy local engine state');
+        assert.ok(rebuildVerifyOutput.includes('[记忆空间分布]'), 'verify did not report namespace distribution for populated memory db');
 
         console.log('8. Testing verify alerts ...');
         const staleDate = new Date(Date.now() - 48 * 60 * 60 * 1000);
@@ -517,28 +518,9 @@ async function runTests() {
         assert.ok(!cleanInjectedOutput.includes('Git 状态检查已降级'), 'verify should trust injected clean git status instead of falling back to Node git');
         assert.ok(cleanInjectedOutput.includes('Verify completed with no active alerts.'), 'verify should stay healthy with injected clean git status');
 
-        console.log('8ab. Testing reranker failure is cached until explicit retry ...');
-        const rerankerRuntime = createTempRuntimeRoot('reranker-state');
-        const rerankerLoaded = loadCli(rerankerRuntime.runtimeRoot, {
-            EVO_LITE_FORCE_RERANKER_FAILURE: '1',
-            EVO_LITE_SKIP_GIT_STATUS: '1',
-        });
-        const firstReranker = await rerankerLoaded.models.getReranker();
-        assert.strictEqual(firstReranker, null, 'reranker failure hook should produce a null reranker');
-        assert.ok(fs.existsSync(path.join(rerankerRuntime.runtimeRoot, 'reranker_state.json')), 'reranker failure should persist a disabled-state marker');
-
-        const rerankerRetryBlockedLoaded = loadCli(rerankerRuntime.runtimeRoot, {
-            EVO_LITE_FORCE_RERANKER_SUCCESS: '1',
-            EVO_LITE_SKIP_GIT_STATUS: '1',
-        });
-        const blockedReranker = await rerankerRetryBlockedLoaded.models.getReranker();
-        assert.strictEqual(blockedReranker, null, 'reranker should stay disabled until an explicit retry is requested');
-        const retriedReranker = await rerankerRetryBlockedLoaded.models.getReranker({ allowRetry: true });
-        assert.ok(retriedReranker, 'explicit reranker retry should clear the disabled-state marker and restore reranking');
-
         console.log('8b. Testing git guard ignores .evo-lite-only deletions with leading status padding ...');
         process.env.EVO_LITE_SKIP_GIT_GUARD = '';
-        process.env.EVO_LITE_GIT_STATUS = ' D .evo-lite/vect_memory/legacy-marker.md';
+        process.env.EVO_LITE_GIT_STATUS = ' D .evo-lite/index_memory/legacy-marker.md';
         await assert.doesNotReject(async () => {
             await primaryLoaded.service.track('GuardRegression', 'Confirmed the git clean-worktree guard ignores .evo-lite-only delete markers even when porcelain status lines start with a single-column deletion flag.');
         }, 'track should ignore .evo-lite-only delete markers');
@@ -567,13 +549,7 @@ async function runTests() {
 
         console.log('10. Testing verify template-sync semantics ...');
         const verifyRuntime = createTempRuntimeRoot('verify');
-        const healthyTemplateRoot = createTempTemplateRoot('healthy-model-drift', templateRoot => {
-            const modelsPath = path.join(templateRoot, 'cli', 'models.js');
-            const mutated = fs.readFileSync(modelsPath, 'utf8')
-                .replace(/let ACTIVE_MODEL = '.*?';/, "let ACTIVE_MODEL = 'Xenova/bge-small-zh-v1.5';")
-                .replace(/let ACTIVE_DIMS = \d+;/, 'let ACTIVE_DIMS = 512;');
-            fs.writeFileSync(modelsPath, mutated, 'utf8');
-        });
+        const healthyTemplateRoot = createTempTemplateRoot('healthy-sync');
         const verifyHealthyLoaded = await bootstrapRuntime(verifyRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
             EVO_LITE_TEMPLATE_CLI_DIR: path.join(healthyTemplateRoot, 'cli'),
@@ -583,7 +559,7 @@ async function runTests() {
             await verifyHealthyLoaded.service.verify();
         });
         assert.ok(healthyVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should treat dynamic model defaults and host adapters as a healthy sync state');
-        assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged models.js dynamic defaults as drift');
+        assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged healthy template files as drift');
         assert.ok(healthyVerifyOutput.includes('可以继续 `/evo` / `/commit` 工作流'), 'verify healthy output did not include a clear next step');
 
         const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {

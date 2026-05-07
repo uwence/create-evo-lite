@@ -50,8 +50,16 @@ function getRawMemoryDir() {
     return path.join(getRuntimeRoot(), 'raw_memory');
 }
 
+function getIndexMemoryDir() {
+    const legacyDir = path.join(getRuntimeRoot(), 'vect_memory');
+    if (fs.existsSync(legacyDir)) {
+        return legacyDir;
+    }
+    return path.join(getRuntimeRoot(), 'index_memory');
+}
+
 function getVectMemoryDir() {
-    return path.join(getRuntimeRoot(), 'vect_memory');
+    return getIndexMemoryDir();
 }
 
 function getWalkthroughsDir() {
@@ -117,6 +125,7 @@ module.exports = {
     getCacheDir,
     getCliDir,
     getDbPath,
+    getIndexMemoryDir,
     getLogPath,
     getOfflineMemoriesPath,
     getRerankerStatePath,

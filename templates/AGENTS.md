@@ -49,7 +49,7 @@ Treat the following as authoritative:
 
 - `.agents/` for workflow semantics
 - `.evo-lite/active_context.md` for current state
-- `.evo-lite/raw_memory/` and `.evo-lite/vect_memory/` for long-term archive artifacts
+- `.evo-lite/raw_memory/` and `.evo-lite/index_memory/` for long-term archive artifacts
 - Evo-Lite CLI output for closure/health status
 
 If this file and `.agents/` ever diverge, `.agents/` wins.

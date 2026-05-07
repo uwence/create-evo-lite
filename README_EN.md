@@ -85,15 +85,15 @@ As AI coding assistants become increasingly powerful, we often encounter these *
 
 * **🏗️ Governance via Rules (`.agents/rules`)**
   Protocols are no longer just suggestions in a chat. They live as project assets, can be versioned, reviewed, and upgraded, and serve as durable constraints for the next agent taking over.
-* **🌐 In-Tree RAG (Pure Local Vector Engine)**
-  Built on `sqlite-vec`, with the whole runtime living under `.evo-lite/`. No daemon, no separate memory service, no extra deployment tier.
-* **🧠 Dual-Stage Retrieval**
-  - **Embedding** for coarse candidate retrieval
-  - **Reranker** for better semantic ordering
-  Both are designed around local ONNX inference with downgrade paths when the environment is constrained.
+* **🌐 In-Tree RAG (Pure Local FTS Engine)**
+  Built on `SQLite FTS5 + trigram + BM25`, with the whole runtime living under `.evo-lite/`. No daemon, no separate memory service, and no model-serving tier.
+* **🧠 Lightweight Local Retrieval**
+  - **Recall** via FTS5/trigram candidate lookup
+  - **Ranking** via BM25 ordering
+  This path does not depend on external model downloads or local ONNX inference.
 * **🛡️ Explicit + Implicit Memory**
   - **Explicit state machine (`active_context.md`)** for focus, backlog, and trajectory handover
-  - **Implicit memory store (`memory.db`, `raw_memory`, `vect_memory`)** for long-term searchable recall and rebuildable archives
+  - **Implicit memory store (`memory.db`, `raw_memory`, `index_memory`)** for long-term searchable recall and rebuildable archives
 * **🛠️ Rebuildable Archive Pipeline**
   `archive`, `sync`, and `rebuild` make memory maintainable over time, instead of turning it into a one-shot write-only cache.
 * **⚓ Space-Time Traceability (Git Anchoring)**
@@ -161,18 +161,18 @@ npm link
 create-evo-lite ./MyAwesomeProject
 ```
 
-During setup, Evo-Lite initializes a local ONNX-based runtime and keeps the memory stack inside `.evo-lite/`. No separate service tier is required.
+During setup, Evo-Lite initializes a local SQLite-backed runtime and keeps the memory stack inside `.evo-lite/`. No separate service tier, model downloader, or daemon is required.
 
 > [!TIP]
-> **Built-in Dual-Core Engines**:
-> - Embedding: `Xenova/bge-small-zh-v1.5` (Millisecond inference even on pure CPU)
-> - Reranker: `Xenova/bge-reranker-base` (Quantized for minimal memory footprint)
+> **Built-in Local Retrieval Engine**:
+> - Indexing: `SQLite FTS5 + trigram`
+> - Ranking: `BM25`
 
 After setup, the first thing to run is:
 ```bash
 node .evo-lite/cli/memory.js verify
 ```
-This checks the memory runtime, model availability, context freshness, offline-memory residue, and whether the current workspace is still safe to hand over.
+This checks local index health, memory runtime state, context freshness, offline-memory residue, and whether the current workspace is still safe to hand over.
 
 ### 2. Suggested First Session (Beginner-Friendly)
 If this is your first time using AI as a real project partner, do not try to learn every command at once. Start with this minimal loop:
@@ -223,7 +223,7 @@ Whenever you need, you or your AI agent can query the memory directly:
 # Add a new backlog item into active_context.md
 ./.evo-lite/mem context add "Tighten the upgrade notes in README"
 
-# Run a self-check to see if the model is actually loaded
+# Run a self-check to see whether the local index is healthy
 ./.evo-lite/mem verify
 
 # Rebuild the structured archive path when raw_memory needs to be re-indexed
@@ -263,14 +263,13 @@ MyAwesomeProject/                 <-- (Your Project)
 │       └── wash.md               - /wash Script
 │
 └── .evo-lite/                    <-- (Memory & Dependency Sandbox)
-    ├── cli/                      - Vector DB CLI scripts
+    ├── cli/                      - Local memory CLI scripts
     ├── mem.cmd                   - CLI Entry (Win)
     ├── mem                       - CLI Entry (Unix)
     ├── active_context.md         - Explicit Progress Sheet
-    ├── memory.db                 - Implicit Vector Database
+    ├── memory.db                 - Implicit local memory database
     ├── raw_memory/               - Structured source archives
-    ├── vect_memory/              - Vectorized archive markers
-    └── .cache/                   - Local model cache
+    └── index_memory/             - Indexed archive markers
 ```
 
 ---
@@ -284,7 +283,7 @@ In the age of AI, **context is expensive, and mental clarity is fragile**. Tradi
 The core philosophy of Evo-Lite is **"Use project-local order to resist AI context drift."**:
 1. **Zero-Intrusion is True Respect**: A good tool should be like a ghost—existing only when summoned. That's why we insist on a `Daemonless` architecture.
 2. **Sandboxing as the Last Line of Defense**: We'd rather increase the scaffolding size slightly (with offline fallbacks) than let a developer's memory fail just because they lack a C++ compiler.
-3. **Memory must be rebuildable, not merely writable**: durable AI memory is not about recording one event once; it is about being able to migrate, re-vectorize, verify, and keep using it later.
+3. **Memory must be rebuildable, not merely writable**: durable AI memory is not about recording one event once; it is about being able to migrate, re-index, verify, and keep using it later.
 
 > *"Humans hold reverence for business and code assets; Evo-Lite is the golden thread that places the necessary constraints on AI."*
 

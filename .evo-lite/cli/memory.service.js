@@ -4,15 +4,7 @@ const readline = require('readline/promises');
 const { execFileSync } = require('child_process');
 const { closeDb, DEFAULT_NAMESPACE, getDb, getNamespaceCounts, getNamespaces, initDB, isValidNamespace, tableExists } = require('./db');
 const safety = require('./safety');
-const {
-    getActiveModelInfo,
-    getExtractor,
-    getModelConstants,
-    getReranker,
-    getRerankerStatus,
-    initEmbeddingModel,
-    setActiveModel,
-} = require('./models');
+const { getActiveModelInfo } = require('./models');
 const {
     ensureDir,
     getActiveContextPath,
@@ -20,9 +12,9 @@ const {
     getLogPath,
     getOfflineMemoriesPath,
     getRawMemoryDir,
+    getIndexMemoryDir,
     getTemplateCliDir,
     getTemplateRootDir,
-    getVectMemoryDir,
     getWorkspaceRoot,
 } = require('./runtime');
 
@@ -60,6 +52,69 @@ function chunkText(text, chunkSize = 512) {
     return chunks;
 }
 
+function generateTrigramQuery(query) {
+    if (!query) {
+        return query;
+    }
+
+    const tokens = query
+        .replace(/[^\w\s\u4e00-\u9fa5]/gi, ' ')
+        .split(/\s+/)
+        .map(token => token.trim())
+        .filter(Boolean);
+
+    if (tokens.length === 0) {
+        return query;
+    }
+
+    return tokens.map(token => {
+        if (token.length <= 3) {
+            return token;
+        }
+        const chars = Array.from(token);
+        const parts = [];
+        for (let i = 0; i < chars.length - 2; i += 1) {
+            parts.push(chars[i] + chars[i + 1] + chars[i + 2]);
+        }
+        return parts.length > 0 ? `(${parts.join(' AND ')})` : token;
+    }).join(' AND ');
+}
+
+function bm25RankToScore(rank) {
+    return 1 / (1 + Math.exp(rank));
+}
+
+function generateSnippet(content, query, maxChars = 200) {
+    const keywords = query.replace(/[^\w\s\u4e00-\u9fa5]/gi, ' ').split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) {
+        return content.slice(0, maxChars);
+    }
+
+    const lowerContent = content.toLowerCase();
+    let matchIndex = -1;
+    for (const keyword of keywords) {
+        const index = lowerContent.indexOf(keyword.toLowerCase());
+        if (index !== -1) {
+            matchIndex = index;
+            break;
+        }
+    }
+
+    if (matchIndex === -1) {
+        return content.slice(0, maxChars);
+    }
+
+    const start = Math.max(0, matchIndex - Math.floor(maxChars / 2));
+    let snippet = content.slice(start, start + maxChars);
+    if (start > 0) {
+        snippet = `...${snippet}`;
+    }
+    if (start + maxChars < content.length) {
+        snippet = `${snippet}...`;
+    }
+    return snippet;
+}
+
 function readSection(markdown, anchor) {
     const regex = new RegExp(`<!-- BEGIN_${anchor} -->([\\s\\S]*?)<!-- END_${anchor} -->`);
     const match = markdown.match(regex);
@@ -78,9 +133,7 @@ function ensureContextFile() {
 }
 
 async function ensureMemoryStoreReady() {
-    await initEmbeddingModel();
-    const { model, dims } = getActiveModelInfo();
-    initDB(model, dims);
+    initDB();
 }
 
 function runGit(args) {
@@ -254,18 +307,58 @@ function prepareForWrite(content, ctx = {}) {
     };
 }
 
-async function getEmbedding(text) {
-    try {
-        const extractor = await getExtractor();
-        if (!extractor) {
-            return null;
+function recallViaText(query, topK = 5, options = {}) {
+    const db = getDb();
+    const scope = options.scope || 'all';
+    const namespaces = scope === 'all'
+        ? getNamespaces()
+        : [scope].filter(namespace => isValidNamespace(namespace));
+
+    if (tableExists(db, 'raw_memory_fts')) {
+        const params = [generateTrigramQuery(query)];
+        let sql = `
+            SELECT
+                f.rowid AS id,
+                r.content,
+                r.namespace,
+                r.timestamp,
+                bm25(raw_memory_fts, 1.0, 0.0) AS bm25_rank
+            FROM raw_memory_fts f
+            JOIN raw_memory r ON f.rowid = r.id
+            WHERE raw_memory_fts MATCH ?
+        `;
+
+        if (scope !== 'all' && namespaces.length > 0) {
+            sql += ` AND r.namespace IN (${namespaces.map(() => '?').join(',')})`;
+            params.push(...namespaces);
         }
-        const output = await extractor(text, { pooling: 'mean', normalize: true });
-        return Array.from(output.data);
-    } catch (error) {
-        console.warn(`\x1b[33m⚠️ 本地 Embedding 推理失败: ${error.message}\x1b[0m`);
-        return null;
+
+        sql += ' ORDER BY bm25_rank ASC LIMIT ?';
+        params.push(topK);
+
+        try {
+            const rows = db.prepare(sql).all(...params);
+            if (rows.length > 0) {
+                appendLog('RECALL_FTS', `Queried "${query}" scope=${scope}, returned ${rows.length} trigram matches.`);
+                return rows.map(row => ({
+                    ...row,
+                    score: bm25RankToScore(row.bm25_rank),
+                    snippet: generateSnippet(row.content, query),
+                    match_source: 'fts',
+                }));
+            }
+        } catch (error) {
+            appendLog('RECALL_FTS_ERROR', `${query} | ${error.message}`);
+        }
     }
+
+    const likeResults = db.prepare('SELECT id, content, namespace, timestamp FROM raw_memory WHERE content LIKE ? LIMIT ?').all(`%${query}%`, topK);
+    appendLog('RECALL_FALLBACK', `Queried "${query}" scope=${scope}, returned ${likeResults.length} LIKE matches.`);
+    return likeResults.map(row => ({
+        ...row,
+        snippet: generateSnippet(row.content, query),
+        match_source: 'like',
+    }));
 }
 
 async function rememberOffline(content, source, options = {}) {
@@ -287,7 +380,7 @@ async function rememberOffline(content, source, options = {}) {
     fs.writeFileSync(OFFLINE_MEMORIES_PATH, JSON.stringify(offlineData, null, 2), 'utf8');
     console.log('🛡️ [脱机降级模式激活]: 正在将记忆降级暂存到 offline_memories.json...');
     console.log(`✅ 暂存离线记忆成功！(当前积压: ${offlineData.length} 条)`);
-    console.log('💡 网络恢复后，使用 `node .evo-lite/cli/memory.js import .evo-lite/offline_memories.json` 即可补齐向量。');
+    console.log('💡 可用时执行 `node .evo-lite/cli/memory.js import .evo-lite/offline_memories.json` 即可补齐本地索引。');
     appendLog('REMEMBER_OFFLINE', `Saved offline - ${content.substring(0, 60)}...`);
 }
 
@@ -324,38 +417,14 @@ async function memorize(text, options = {}) {
     }
     const safeText = prepared.content;
     const namespace = prepared.namespace;
-    const vectorsTable = `vectors_${namespace}`;
-    const chunksTable = `chunks_${namespace}`;
 
     const db = getDb();
-    const embedding = await getEmbedding(safeText);
-    if (!embedding) {
-        await rememberOffline(safeText, source, { namespace });
-        return { id: null, offline: true, namespace };
-    }
-
     const richContent = buildRichContent(safeText, options);
     const rawMemoryId = db.prepare('INSERT INTO raw_memory (content, namespace, timestamp) VALUES (?, ?, ?)').run(
         richContent,
         namespace,
         options.timestamp || new Date().toISOString()
     ).lastInsertRowid;
-
-    const chunks = chunkText(richContent);
-    for (let i = 0; i < chunks.length; i += 1) {
-        const chunk = chunks[i];
-        const chunkEmbedding = await getEmbedding(chunk);
-        if (!chunkEmbedding) {
-            continue;
-        }
-        const vectorId = db.prepare(`INSERT INTO ${vectorsTable} (embedding) VALUES (json(?))`).run(JSON.stringify(chunkEmbedding)).lastInsertRowid;
-        db.prepare(`INSERT INTO ${chunksTable} (raw_memory_id, chunk_index, content, vector_id) VALUES (?, ?, ?, ?)`).run(
-            rawMemoryId,
-            i,
-            chunk,
-            vectorId
-        );
-    }
 
     console.log(`✅ Remembered! (ID: ${rawMemoryId}, ns: ${namespace})`);
     console.log('💡 [交接规约监控]: 记忆已打入隐性碎片池！请确保你同时同步 active_context.md，并按需要执行 git commit。');
@@ -364,78 +433,9 @@ async function memorize(text, options = {}) {
 }
 
 async function recall(query, topK = 5, options = {}) {
-    const db = getDb();
-    const scope = options.scope || 'all';
-    const queryEmbedding = await getEmbedding(query);
-
-    if (!queryEmbedding) {
-        console.warn('\n⚠️ 提示：无法连接 Embedding 模型，正在降级到原生 SQLite LIKE 模糊匹配...');
-        const results = db.prepare('SELECT id, content FROM raw_memory WHERE content LIKE ? LIMIT ?').all(`%${query}%`, topK);
-        if (fs.existsSync(OFFLINE_MEMORIES_PATH)) {
-            console.log('💡 提示: sandbox 中还有未导入的离线记忆碎片 (offline_memories.json)。');
-        }
-        appendLog('RECALL_FALLBACK', `Text queried "${query}"`);
-        return results;
-    }
-
-    const queryVector = JSON.stringify(queryEmbedding);
-    const namespacesToSearch = scope === 'all'
-        ? getNamespaces().filter(ns => tableExists(db, `vectors_${ns}`) && tableExists(db, `chunks_${ns}`))
-        : [scope].filter(ns => isValidNamespace(ns) && tableExists(db, `vectors_${ns}`) && tableExists(db, `chunks_${ns}`));
-
-    let results = [];
-    for (const ns of namespacesToSearch) {
-        const vectorsTable = `vectors_${ns}`;
-        const chunksTable = `chunks_${ns}`;
-        try {
-            const nsResults = db.prepare(`
-                SELECT
-                    r.id,
-                    r.content,
-                    v.distance,
-                    '${ns}' AS namespace
-                FROM ${vectorsTable} v
-                JOIN ${chunksTable} c ON v.rowid = c.vector_id
-                JOIN raw_memory r ON r.id = c.raw_memory_id
-                WHERE v.embedding MATCH ? AND k = ?
-                ORDER BY v.distance
-            `).all(queryVector, Math.max(topK * 3, 10));
-            results = results.concat(nsResults);
-        } catch (_) {
-            // Skip namespaces with mismatched dims (different model registered).
-        }
-    }
-
-    if (results.length === 0) {
-        return [];
-    }
-
-    results.sort((a, b) => a.distance - b.distance);
-    const deduped = [];
-    const seen = new Set();
-    for (const result of results) {
-        if (!seen.has(result.id)) {
-            seen.add(result.id);
-            deduped.push(result);
-        }
-    }
-
-    const reranker = await getReranker();
-    if (!reranker) {
-        appendLog('RECALL', `Queried "${query}" scope=${scope}, returned vector-distance results.`);
-        return deduped.slice(0, topK);
-    }
-
-    const scored = await Promise.all(
-        deduped.map(async item => {
-            const rerankResult = await reranker(query, item.content);
-            const scoreObject = Array.isArray(rerankResult) ? rerankResult[0] : rerankResult;
-            return { ...item, score: scoreObject && scoreObject.score !== undefined ? scoreObject.score : 0 };
-        })
-    );
-
-    appendLog('RECALL', `Queried "${query}" scope=${scope}, reranked ${scored.length} candidates.`);
-    return scored.sort((a, b) => b.score - a.score).slice(0, topK);
+    const results = recallViaText(query, topK, options);
+    appendLog('RECALL', `Queried "${query}" scope=${options.scope || 'all'}, returned ${results.length} local matches.`);
+    return results;
 }
 
 function forget(id) {
@@ -444,23 +444,9 @@ function forget(id) {
     }
 
     const db = getDb();
-    let totalDeleted = 0;
-    for (const ns of getNamespaces()) {
-        const chunksTable = `chunks_${ns}`;
-        const vectorsTable = `vectors_${ns}`;
-        if (!tableExists(db, chunksTable)) continue;
-        const chunks = db.prepare(`SELECT vector_id FROM ${chunksTable} WHERE raw_memory_id = ?`).all(id);
-        for (const chunk of chunks) {
-            try {
-                db.prepare(`DELETE FROM ${vectorsTable} WHERE rowid = ?`).run(chunk.vector_id);
-            } catch (_) {}
-        }
-        const r = db.prepare(`DELETE FROM ${chunksTable} WHERE raw_memory_id = ?`).run(id);
-        totalDeleted += r.changes;
-    }
     const info = db.prepare('DELETE FROM raw_memory WHERE id = ?').run(id);
 
-    if (info.changes === 0 && totalDeleted === 0) {
+    if (info.changes === 0) {
         throw new Error(`未找到 ID 为 ${id} 的记忆碎片。`);
     }
 
@@ -469,7 +455,7 @@ function forget(id) {
 }
 
 function list() {
-    return getDb().prepare('SELECT id, content, timestamp FROM raw_memory ORDER BY id ASC').all();
+    return getDb().prepare('SELECT id, content, namespace, timestamp FROM raw_memory ORDER BY id ASC').all();
 }
 
 function stats() {
@@ -491,7 +477,7 @@ function exportMemories(filePath) {
     if (!filePath) {
         throw new Error('Usage: node memory.js export <filename.json>');
     }
-    const records = getDb().prepare('SELECT id, content, timestamp FROM raw_memory ORDER BY id ASC').all();
+    const records = getDb().prepare('SELECT id, content, namespace, timestamp FROM raw_memory ORDER BY id ASC').all();
     fs.writeFileSync(filePath, JSON.stringify(records, null, 2), 'utf8');
     appendLog('EXPORT', `Exported ${records.length} records to ${filePath}`);
     console.log(`✅ ${records.length} 条记忆已导出至: ${filePath}`);
@@ -601,10 +587,11 @@ function splitTrajectoryEntries(trajectory) {
 }
 
 function normalizeTemplateComparableContent(file, content) {
+    const normalized = content.replace(/\r\n/g, '\n');
     if (file !== 'models.js') {
-        return content;
+        return normalized;
     }
-    return content
+    return normalized
         .replace(/let ACTIVE_MODEL = '.*?';/, "let ACTIVE_MODEL = '__DYNAMIC_MODEL__';")
         .replace(/let ACTIVE_DIMS = \d+;/, 'let ACTIVE_DIMS = __DYNAMIC_DIMS__;');
 }
@@ -643,7 +630,7 @@ function isMissingMemorySchemaError(error) {
 
 function summarizeArchiveHealth() {
     const rawDir = getRawMemoryDir();
-    const vectDir = getVectMemoryDir();
+    const vectDir = getIndexMemoryDir();
     const summary = {
         invalid: [],
         pending: [],
@@ -704,8 +691,8 @@ async function ingestArchiveFile(filePath, type, sourceId, timestamp, options = 
         inserted += 1;
     }
 
-    ensureDir(getVectMemoryDir());
-    fs.writeFileSync(path.join(getVectMemoryDir(), path.basename(filePath)), '', 'utf8');
+    ensureDir(getIndexMemoryDir());
+    fs.writeFileSync(path.join(getIndexMemoryDir(), path.basename(filePath)), '', 'utf8');
     return {
         inserted,
         invalidReason: null,
@@ -732,7 +719,7 @@ async function archive(content, type = 'task', options = {}) {
     const safeContent = preflightCheck.content;
 
     ensureDir(getRawMemoryDir());
-    ensureDir(getVectMemoryDir());
+    ensureDir(getIndexMemoryDir());
 
     const id = options.id || buildArchiveId();
     const timestamp = options.timestamp || new Date().toISOString();
@@ -759,7 +746,7 @@ async function archive(content, type = 'task', options = {}) {
 
 async function syncVectorMemory() {
     const rawDir = getRawMemoryDir();
-    const vectDir = getVectMemoryDir();
+    const vectDir = getIndexMemoryDir();
 
     if (!fs.existsSync(rawDir)) {
         return { files: 0, chunks: 0 };
@@ -924,29 +911,8 @@ async function vectorize() {
         return false;
     }
 
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    console.log('\n🧠 交互式模型升维管线 (Interactive Vectorize Pipeline) 🧠');
-    console.log(`此操作将会重新计算 ${files.length} 个原始记忆档案的向量。`);
-    console.log('1. Xenova/jina-embeddings-v2-base-zh (768维, 推荐)');
-    console.log('2. Xenova/bge-small-zh-v1.5 (512维, 离线兜底)');
-    console.log('0. 取消操作');
-
-    const answer = (await rl.question('👉 请输入数字 [1, 2, 0]: ')).trim();
-    rl.close();
-
-    const { FALLBACK_DIMS, FALLBACK_MODEL } = getModelConstants();
-    if (answer === '0' || answer === '') {
-        console.log('🛑 操作已取消。');
-        return false;
-    }
-    if (answer === '1') {
-        setActiveModel('Xenova/jina-embeddings-v2-base-zh', 768);
-    } else if (answer === '2') {
-        setActiveModel(FALLBACK_MODEL, FALLBACK_DIMS);
-    } else {
-        console.log('🛑 无效选项，操作已取消。');
-        return false;
-    }
+    console.log('\n🧠 本地记忆索引重建管线 (Local Rebuild Pipeline) 🧠');
+    console.log(`此操作将会从 ${files.length} 个原始记忆档案重建本地 FTS 索引。`);
 
     let backupName = null;
     if (fs.existsSync(DB_PATH)) {
@@ -958,20 +924,18 @@ async function vectorize() {
         console.log(`📦 旧记忆脑区已备份至: ${backupName}`);
     }
 
-    await initEmbeddingModel(true);
-    const { model, dims } = getActiveModelInfo();
-    initDB(model, dims);
+    initDB();
 
-    ensureDir(getVectMemoryDir());
+    ensureDir(getIndexMemoryDir());
     for (const file of files) {
-        const markerPath = path.join(getVectMemoryDir(), file);
+        const markerPath = path.join(getIndexMemoryDir(), file);
         if (fs.existsSync(markerPath)) {
             fs.unlinkSync(markerPath);
         }
     }
 
     const result = await syncVectorMemory();
-    console.log(`✅ 重铸完成！共处理 ${result.files} 个档案 / ${result.chunks} 个语义碎片。`);
+    console.log(`✅ 重建完成！共处理 ${result.files} 个档案 / ${result.chunks} 个语义碎片。`);
     console.log('📋 Rebuild Summary:');
     console.log(`- source_archives: ${files.length}`);
     console.log(`- rebuilt_archives: ${result.files}`);
@@ -985,7 +949,7 @@ async function vectorize() {
     } else {
         console.log('💡 建议下一步: 执行 `node .evo-lite/cli/memory.js verify` 确认当前实例已恢复到可继续接管状态。');
     }
-    appendLog('VECTORIZE', `Rebuilt ${result.files} files / ${result.chunks} chunks.`);
+    appendLog('REBUILD_INDEX', `Rebuilt ${result.files} files / ${result.chunks} chunks.`);
     return true;
 }
 
@@ -1088,9 +1052,9 @@ async function verify(options = {}) {
     }
 
     if (fs.existsSync(OFFLINE_MEMORIES_PATH)) {
-        console.log('⚠️ 检测到 offline_memories.json，说明仍有离线记忆尚未补齐向量。');
+        console.log('⚠️ 检测到 offline_memories.json，说明仍有离线记忆尚未补齐本地索引。');
         report.hasAlerts = true;
-        pushNextStep('网络恢复后执行 `node .evo-lite/cli/memory.js import .evo-lite/offline_memories.json` 补齐离线记忆。');
+        pushNextStep('执行 `node .evo-lite/cli/memory.js import .evo-lite/offline_memories.json` 补齐离线记忆与本地索引。');
     }
 
     if (!fs.existsSync(DB_PATH)) {
@@ -1107,7 +1071,7 @@ async function verify(options = {}) {
         pushNextStep('先修复损坏的 raw archive，再执行 `node .evo-lite/cli/memory.js rebuild`。');
     }
     if (archiveHealth.pending.length > 0) {
-        console.log(`⚠️ 检测到 ${archiveHealth.pending.length} 个 raw archive 尚未生成 vect 标记，建议尽快执行 sync / rebuild。`);
+        console.log(`⚠️ 检测到 ${archiveHealth.pending.length} 个 raw archive 尚未生成 index 标记，建议尽快执行 sync / rebuild。`);
         report.hasAlerts = true;
         pushNextStep('若只是补齐 archive 标记，执行 `node .evo-lite/cli/memory.js sync`；若需要整体重建，执行 `node .evo-lite/cli/memory.js rebuild`。');
     }
@@ -1121,36 +1085,26 @@ async function verify(options = {}) {
     }
 
     const { model, dims } = getActiveModelInfo();
-    const { RERANKER_MODEL } = getModelConstants();
-    console.log(`📡 [配置/向量]: ${model} (${dims}d)`);
-    console.log(`📡 [配置/精排]: ${RERANKER_MODEL}`);
-    console.log('\n📡 正在校验 Embedding / Reranker 引擎...');
+    console.log(`📡 [配置/检索]: ${model}`);
+    console.log(`📡 [配置/版本]: ${dims}`);
+    console.log('\n📡 正在校验本地 FTS 记忆引擎...');
 
-    const embedding = await getEmbedding('health_check');
-    if (embedding) {
-        console.log('✅ Embedding 引擎状态: 就绪');
-    } else {
-        console.log('❌ Embedding 引擎状态: 异常');
-        report.hasAlerts = true;
-    }
-
-    const reranker = await getReranker({ allowRetry: options.retryReranker === true });
-    if (reranker) {
-        console.log('✅ Reranker 引擎状态: 就绪');
-    } else {
-        console.log('⚠️ Reranker 引擎状态: 异常 (当前将降级为纯向量检索)');
-        report.hasAlerts = true;
-        const rerankerStatus = getRerankerStatus();
-        if (rerankerStatus.disabled) {
-            const retryCommand = 'node .evo-lite/cli/memory.js verify --retry-reranker';
-            if (options.retryReranker === true) {
-                pushNextStep(`本次已显式重试精排模型，但仍未恢复；可以先继续降级使用，待网络恢复后再执行 \`${retryCommand}\`。`);
-            } else {
-                pushNextStep(`当前已自动降级为纯向量检索，后续不会在普通 verify 中反复重试；若你想显式重试精排模型，请执行 \`${retryCommand}\`。`);
-            }
+    try {
+        initDB(model, dims);
+        const db = getDb();
+        const hasRawTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory'").get();
+        const hasFtsTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory_fts'").get();
+        if (hasRawTable && hasFtsTable) {
+            console.log('✅ 本地记忆引擎状态: 就绪');
         } else {
-            pushNextStep('若需要恢复精排能力，请检查模型缓存或重新执行初始化。');
+            console.log('❌ 本地记忆引擎状态: 异常');
+            report.hasAlerts = true;
+            pushNextStep('重新执行 `node .evo-lite/cli/memory.js rebuild`，重建本地 FTS 索引与 archive 标记。');
         }
+    } catch (error) {
+        console.log(`❌ 本地记忆引擎状态: 异常 (${error.message})`);
+        report.hasAlerts = true;
+        pushNextStep('检查 `.evo-lite/memory.db` 是否损坏；必要时先备份，再执行 `node .evo-lite/cli/memory.js rebuild`。');
     }
 
     const safetyState = getSafetyState();
@@ -1162,29 +1116,29 @@ async function verify(options = {}) {
     try {
         const db = getDb();
         const hasRawTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory'").get();
-        const hasChunksTable = tableExists(db, 'chunks_prose') || tableExists(db, 'chunks_code') || tableExists(db, 'chunks_symbol');
-        if (!hasRawTable || !hasChunksTable) {
+        const hasFtsTable = tableExists(db, 'raw_memory_fts');
+        if (!hasRawTable || !hasFtsTable) {
             console.log('ℹ️ Evo-Lite 实体库状态: 当前仍是初始化空库态，首次 remember / import / rebuild 后会自动补齐表结构。');
         } else {
             console.log('✅ Evo-Lite 实体库状态: 已就绪');
             const namespaceCounts = getNamespaceCounts(db);
             const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
-            let chunkCount = 0;
+            let recordCount = 0;
             const nsLines = [];
             for (const ns of Object.keys(namespaceCounts)) {
                 const info = namespaceCounts[ns];
                 if (!info.present) continue;
-                chunkCount += info.chunks || 0;
-                nsLines.push(`   - ns=${ns} model=${info.model || 'unset'} dims=${info.dims || '?'} chunks=${info.chunks}`);
+                recordCount += info.chunks || 0;
+                nsLines.push(`   - ns=${ns} engine=${info.model || 'unset'} version=${info.dims || '?'} records=${info.chunks}`);
             }
             if (nsLines.length > 0) {
-                console.log('📚 [向量空间分布]:');
+                console.log('📚 [记忆空间分布]:');
                 for (const line of nsLines) console.log(line);
             }
-            if (rawMemoryCount > 0 && chunkCount === 0) {
-                console.log('⚠️ 检测到 raw_memory 已有数据但 chunks 为空，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。当前 import / sync 无法直接修复仅存于数据库表中的残留原文。');
+            if (rawMemoryCount > 0 && recordCount === 0) {
+                console.log('⚠️ 检测到 raw_memory 已有数据但本地索引未生效，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。');
                 report.hasAlerts = true;
-                pushNextStep('执行 `node .evo-lite/cli/memory.js rebuild`，用结构化归档重新生成 chunks。');
+                pushNextStep('执行 `node .evo-lite/cli/memory.js rebuild`，用结构化归档重新生成本地 FTS 索引。');
             }
         }
     } catch (error) {

@@ -42,10 +42,7 @@ if (fileArg) {
 }
 
 async function bootstrap() {
-    const { initEmbeddingModel, getActiveModelInfo } = require('./models');
-    await initEmbeddingModel();
-    const { model, dims } = getActiveModelInfo();
-    return initDB(model, dims);
+    return initDB();
 }
 
 function printHelp() {
@@ -57,22 +54,21 @@ function printHelp() {
 \x1b[36mCommands:\x1b[0m
   \x1b[32mremember\x1b[0m <text>     Write a new memory fragment into the database.
                       (Must be >40 chars and formatted correctly)
-  \x1b[32mrecall\x1b[0m <query>      Semantic search against the memory database.
+  \x1b[32mrecall\x1b[0m <query>      Local FTS/BM25 search against the memory database.
   \x1b[32mforget\x1b[0m <id>         Permanently purge specific memory by ID.
   \x1b[32mstats\x1b[0m               Display current database capacity and statistics.
   \x1b[32mexport\x1b[0m <file>       Export all memories to a JSON file.
   \x1b[32mimport\x1b[0m <file>       Import memories from a JSON file path.
 
   \x1b[32mcontext\x1b[0m <op>...     Modify active_context.md anchors (track, add, focus).
-  \x1b[32marchive\x1b[0m <text>      Save a summary to raw_memory/ and auto-vectorize it.
-  \x1b[32msync\x1b[0m                Check for unvectorized raw_memory and incrementally vectorize them.
+  \x1b[32marchive\x1b[0m <text>      Save a summary to raw_memory/ and auto-index it.
+  \x1b[32msync\x1b[0m                Check for unindexed raw_memory and ingest them.
   \x1b[32mrebuild\x1b[0m             Standard rebuild entry: backup memory.db, then rebuild from raw_memory/.
-                      (remember-only cache entries are not guaranteed to survive this rebuild)
-  \x1b[32mvectorize\x1b[0m           Low-level interactive rebuild command used by rebuild / wash.
+                      (compatibility command that rebuilds the local FTS index from archive files)
+  \x1b[32mvectorize\x1b[0m           Compatibility alias for rebuild.
   \x1b[32mwash\x1b[0m                Compatibility entry that points you to rebuild / /wash workflow.
   \x1b[32mverify\x1b[0m              Run initialization checks, git state scans, and
                         database connection verifications.
-                      Use \x1b[33m--retry-reranker\x1b[0m to explicitly retry the reranker download.
   \x1b[32mhelp\x1b[0m                Show this help menu.
 =========================================
 `);
@@ -230,9 +226,7 @@ async function run() {
     }
 
     if (action === 'verify') {
-        await memoryService.verify({
-            retryReranker: process.argv.includes('--retry-reranker'),
-        });
+        await memoryService.verify();
         return;
     }
 
