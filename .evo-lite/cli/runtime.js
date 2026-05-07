@@ -42,8 +42,8 @@ function getOfflineMemoriesPath() {
     return path.join(getRuntimeRoot(), 'offline_memories.json');
 }
 
-function getRerankerStatePath() {
-    return path.join(getRuntimeRoot(), 'reranker_state.json');
+function getIndexStatePath() {
+    return path.join(getRuntimeRoot(), 'index_state.json');
 }
 
 function getRawMemoryDir() {
@@ -60,6 +60,10 @@ function getIndexMemoryDir() {
 
 function getVectMemoryDir() {
     return getIndexMemoryDir();
+}
+
+function getRerankerStatePath() {
+    return getIndexStatePath();
 }
 
 function getWalkthroughsDir() {
@@ -126,6 +130,7 @@ module.exports = {
     getCliDir,
     getDbPath,
     getIndexMemoryDir,
+    getIndexStatePath,
     getLogPath,
     getOfflineMemoriesPath,
     getRerankerStatePath,

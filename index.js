@@ -47,9 +47,9 @@ async function main() {
     const hasOldDb = fs.existsSync(path.join(targetDir, '.evo-lite', 'memory.db'));
 
     if (isSilent) {
-        console.log('🤖 静默模式开启: 使用内置 ONNX 极客配置 (-y)');
+        console.log('🤖 静默模式开启: 使用默认初始化配置 (-y)');
         if (hasOldDb) {
-            console.log('🔍 检测到旧版记忆库，静默模式下将自动执行跨模型迁移。');
+            console.log('🔍 检测到旧版记忆库，静默模式下将自动执行旧记忆重建。');
             shouldWash = true;
         }
     } else {
@@ -249,9 +249,9 @@ async function main() {
     }
     console.log('📡 运行时引擎已锁定为: sqlite-fts5-trigram');
 
-    // --- 阶段 D: 跨模型迁移洗盘 ---
+    // --- 阶段 D: 旧记忆重建洗盘 ---
     if (shouldWash) {
-        console.log('🛁 启动跨模型记忆迁移流程...');
+        console.log('🛁 启动旧记忆重建流程...');
         try {
             const dbPath = path.join(evoLiteDir, 'memory.db');
             const exportJsonPath = path.join(targetDir, 'evo_memories_exported.json');
@@ -271,17 +271,17 @@ async function main() {
                     if (fs.existsSync(f)) fs.unlinkSync(f);
                 });
 
-                // Step 3: 用新引擎重新嵌入并写入全新 DB
-                console.log(`  [3/4] 正在用新 ONNX 引擎重新嵌入 ${exportedData.length} 条记忆 (首次加载模型可能需要下载，请耐心等待)...`);
+                // Step 3: 用当前本地索引引擎重新导入并写入全新 DB
+                console.log(`  [3/4] 正在用当前本地索引引擎重新导入 ${exportedData.length} 条记忆...`);
                 execSync(`node "${path.join(cliDir, 'memory.js')}" import "${exportJsonPath}"`, { stdio: 'inherit' });
 
                 // Step 4: 清理导出文件
                 console.log('  [4/4] 迁移完毕！正在清理临时导出文件...');
                 if (fs.existsSync(exportJsonPath)) fs.unlinkSync(exportJsonPath);
-                console.log('✅ 跨模型记忆迁移全部完成！旧记忆已用新引擎重新嵌入。');
+                console.log('✅ 旧记忆重建全部完成！历史记忆已按当前本地索引格式重新导入。');
             }
         } catch (e) {
-            console.error('❌ 跨模型迁移失败:', e.message);
+            console.error('❌ 旧记忆重建失败:', e.message);
             console.log('💡 你可以稍后手动执行以下步骤来补救:');
             console.log('   1. 检查项目根目录的 evo_memories_exported.json 是否存在');
             console.log('   2. 手动删除 .evo-lite/memory.db');

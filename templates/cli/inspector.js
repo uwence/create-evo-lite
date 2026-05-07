@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const memoryService = require('./memory.service');
 const { closeDb, getDb, getNamespaceCounts, getNamespaces, tableExists } = require('./db');
-const { getActiveModelInfo } = require('./models');
+const { getActiveEngineInfo } = require('./models');
 const { getActiveContextPath, getIndexMemoryDir, getRawMemoryDir } = require('./runtime');
 
 function readActiveContext() {
@@ -43,12 +43,12 @@ function listArchiveFiles() {
 
 function buildVerifyJson() {
     const db = getDb();
-    const { model, dims } = getActiveModelInfo();
+    const { model, dims } = getActiveEngineInfo();
     const namespaces = getNamespaceCounts(db);
     const safetyState = memoryService.getSafetyState ? memoryService.getSafetyState() : { blockCount: 0, redactionCount: 0, lastBlock: null };
     return {
-        active_model: model,
-        active_dims: dims,
+        active_engine: model,
+        active_version: dims,
         namespaces,
         archive_health: memoryService.summarizeArchiveHealth(),
         safety: safetyState,
@@ -88,14 +88,14 @@ function renderHtml() {
   <nav style="margin-top:8px">
     <button data-tab="timeline" class="active">Active context</button>
     <button data-tab="archive">Archive</button>
-    <button data-tab="vectors">Index spaces</button>
+    <button data-tab="indexes">Index spaces</button>
     <button data-tab="verify">Verify</button>
   </nav>
 </header>
 <main>
   <section id="tab-timeline"></section>
   <section id="tab-archive" hidden></section>
-  <section id="tab-vectors" hidden></section>
+  <section id="tab-indexes" hidden></section>
   <section id="tab-verify" hidden></section>
 </main>
 <script>
@@ -125,7 +125,7 @@ async function load(name) {
       target.innerHTML = '<h2>Archive (' + data.files.length + ')</h2><table><tr><th>File</th><th>Indexed</th></tr>' +
         data.files.map(f => '<tr><td>' + escapeHtml(f.file) + '</td><td class="' + (f.indexed ? 'ok' : 'pending') +
         '">' + (f.indexed ? 'yes' : 'pending') + '</td></tr>').join('') + '</table>';
-    } else if (name === 'vectors') {
+    } else if (name === 'indexes') {
       const data = await api('/api/verify');
       const rows = Object.entries(data.namespaces).map(([ns, info]) =>
         '<tr><td>' + escapeHtml(ns) + '</td><td>' + (info.present ? escapeHtml(String(info.model || 'unset')) : '-') +

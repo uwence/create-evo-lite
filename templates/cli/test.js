@@ -182,7 +182,7 @@ function loadCli(runtimeRoot, extraEnv = {}) {
     process.env.EVO_LITE_SKIP_GIT_GUARD = '1';
     process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
 
-    for (const key of ['EVO_LITE_FORCE_GIT_DIRTY', 'EVO_LITE_SKIP_GIT_STATUS', 'EVO_LITE_FORCE_RERANKER_FAILURE', 'EVO_LITE_FORCE_RERANKER_SUCCESS']) {
+    for (const key of ['EVO_LITE_FORCE_GIT_DIRTY', 'EVO_LITE_SKIP_GIT_STATUS']) {
         delete process.env[key];
     }
     Object.assign(process.env, extraEnv);
@@ -196,8 +196,8 @@ function loadCli(runtimeRoot, extraEnv = {}) {
 
 async function bootstrapRuntime(runtimeRoot, extraEnv = {}) {
     const loaded = loadCli(runtimeRoot, extraEnv);
-    await loaded.models.initEmbeddingModel(true);
-    const { model, dims } = loaded.models.getActiveModelInfo();
+    await loaded.models.initLocalIndexEngine(true);
+    const { model, dims } = loaded.models.getActiveEngineInfo();
     loaded.db.initDB(model, dims);
     return loaded;
 }
@@ -248,10 +248,10 @@ async function runTests() {
         primaryLoaded.service.exportMemories(exportPath);
         assert.ok(fs.existsSync(exportPath), 'Export JSON was not created');
 
-        console.log('1aa. Testing FTS fallback can recover raw_memory rows without vector chunks ...');
+        console.log('1aa. Testing FTS fallback can recover raw_memory rows without index markers ...');
         const fallbackRuntime = createTempRuntimeRoot('fts-fallback');
         const fallbackLoaded = await bootstrapRuntime(fallbackRuntime.runtimeRoot);
-        const fallbackOnlyContent = 'FTS fallback should surface this raw-only memory fragment even if no vector chunks exist for it.';
+        const fallbackOnlyContent = 'FTS fallback should surface this raw-only memory fragment even if no index marker exists for it.';
         const fallbackInsert = fallbackLoaded.db.getDb()
             .prepare('INSERT INTO raw_memory (content, namespace, timestamp) VALUES (?, ?, ?)')
             .run(fallbackOnlyContent, 'prose', new Date().toISOString());
@@ -264,7 +264,7 @@ async function runTests() {
         assert.ok(primaryLoaded.db.tableExists(nsDb, 'raw_memory_fts'), 'raw_memory_fts table should exist after first remember');
         const proseRowCount = nsDb.prepare("SELECT COUNT(*) AS c FROM raw_memory WHERE namespace = 'prose'").get().c;
         assert.ok(proseRowCount > 0, 'prose namespace should contain the remembered record');
-        primaryLoaded.db.ensureNamespaceTables(nsDb, 'code', primaryLoaded.models.getActiveModelInfo().model, primaryLoaded.models.getActiveModelInfo().dims);
+        primaryLoaded.db.ensureNamespaceTables(nsDb, 'code', primaryLoaded.models.getActiveEngineInfo().model, primaryLoaded.models.getActiveEngineInfo().dims);
         const namespaceCounts = primaryLoaded.db.getNamespaceCounts(nsDb);
         assert.ok(namespaceCounts.code.present, 'code namespace should be registered after ensureNamespaceTables');
         const codeRowCount = nsDb.prepare("SELECT COUNT(*) AS c FROM raw_memory WHERE namespace = 'code'").get().c;
@@ -430,7 +430,7 @@ async function runTests() {
             `---\nid: "manual_sync_case"\ntimestamp: "${new Date().toISOString()}"\ntype: "task"\ntags: []\n---\n\n## 实现细节 (Implementation)\nA manually injected archive file that should be discovered by sync and converted into indexed memory records.\n\n## 架构决策 (Architecture)\nKeep sync focused on files missing their index marker.\n`,
             'utf8'
         );
-        const syncResult = await primaryLoaded.service.syncVectorMemory();
+        const syncResult = await primaryLoaded.service.syncIndexMemory();
         assert.ok(syncResult.files >= 1, 'Sync did not process any pending raw archive');
         assert.ok(fs.existsSync(path.join(primary.runtimeRoot, 'index_memory', 'manual-sync.md')), 'Sync did not create index marker');
 
@@ -440,7 +440,7 @@ async function runTests() {
             '---\nid: "broken_sync_case"\ntimestamp: "2026-03-20T00:00:00.000Z"\ntype: "bug"\ntags: []\n---\n\n## 现象 (Symptom)\nBad control char here: \u000bindex()\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n',
             'utf8'
         );
-        const invalidSyncResult = await primaryLoaded.service.syncVectorMemory();
+        const invalidSyncResult = await primaryLoaded.service.syncIndexMemory();
         assert.ok(invalidSyncResult.invalid.some(item => item.file === 'broken-sync.md'), 'sync did not report the invalid archive');
         assert.ok(!fs.existsSync(path.join(primary.runtimeRoot, 'index_memory', 'broken-sync.md')), 'sync incorrectly marked the invalid archive as indexed');
 

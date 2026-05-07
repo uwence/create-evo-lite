@@ -4,7 +4,7 @@ const readline = require('readline/promises');
 const { execFileSync } = require('child_process');
 const { closeDb, DEFAULT_NAMESPACE, getDb, getNamespaceCounts, getNamespaces, initDB, isValidNamespace, tableExists } = require('./db');
 const safety = require('./safety');
-const { getActiveModelInfo } = require('./models');
+const { getActiveEngineInfo } = require('./models');
 const {
     ensureDir,
     getActiveContextPath,
@@ -706,7 +706,7 @@ async function archive(content, type = 'task', options = {}) {
     }
 
     // P1: pre-flight safety scan on the raw archive payload BEFORE we write a file.
-    // This blocks secrets from ever landing on disk, not just in the vector index.
+    // This blocks secrets from ever landing on disk, not just in the local index.
     const preflightCheck = prepareForWrite(content, {
         allowSecrets: options.allowSecrets,
         kind: options.kind,
@@ -744,7 +744,7 @@ async function archive(content, type = 'task', options = {}) {
     return { chunkCount: ingestion.inserted, filePath, namespace: preflightCheck.namespace };
 }
 
-async function syncVectorMemory() {
+async function syncIndexMemory() {
     const rawDir = getRawMemoryDir();
     const vectDir = getIndexMemoryDir();
 
@@ -898,7 +898,7 @@ async function track(mechanism, details, options = {}) {
     };
 }
 
-async function vectorize() {
+async function rebuildLocalIndex() {
     const rawDir = getRawMemoryDir();
     if (!fs.existsSync(rawDir)) {
         console.log('⚠️ 未找到 raw_memory 目录。');
@@ -934,7 +934,7 @@ async function vectorize() {
         }
     }
 
-    const result = await syncVectorMemory();
+    const result = await syncIndexMemory();
     console.log(`✅ 重建完成！共处理 ${result.files} 个档案 / ${result.chunks} 个语义碎片。`);
     console.log('📋 Rebuild Summary:');
     console.log(`- source_archives: ${files.length}`);
@@ -1084,7 +1084,7 @@ async function verify(options = {}) {
         pushNextStep('检查最近的闭环是否漏掉了 `context track`，避免只有状态机更新而没有长期归档。');
     }
 
-    const { model, dims } = getActiveModelInfo();
+    const { model, dims } = getActiveEngineInfo();
     console.log(`📡 [配置/检索]: ${model}`);
     console.log(`📡 [配置/版本]: ${dims}`);
     console.log('\n📡 正在校验本地 FTS 记忆引擎...');
@@ -1188,13 +1188,16 @@ module.exports = {
     filterNonEvoLiteGitStatusLines,
     prepareForWrite,
     recall,
+    rebuildLocalIndex,
     splitTrajectoryEntries,
     summarizeArchiveHealth,
     setFocus,
+    syncIndexMemory,
     stats,
-    syncVectorMemory,
     track,
-    vectorize,
     verify,
     wash,
 };
+
+module.exports.syncVectorMemory = syncIndexMemory;
+module.exports.vectorize = rebuildLocalIndex;

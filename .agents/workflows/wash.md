@@ -3,7 +3,7 @@ description: 记忆清洗与脑区重铸协议 (Brain Rebuild Protocol)
 ---
 # 🛁 响应 Evo 记忆清洗协议 (Wash Protocol)
 
-收到指令 = 需重置/清洗向量记忆库。  
+收到指令 = 需重置/清洗本地记忆索引。  
 **注意**：当前 Evo-Lite 架构里，`raw_memory/` 下 Markdown 档案是**结构化归档路径**真源，但不自动覆盖所有 `remember` 直写数据库记忆。
 
 // turbo-all
@@ -23,8 +23,8 @@ description: 记忆清洗与脑区重铸协议 (Brain Rebuild Protocol)
    node .evo-lite/cli/memory.js rebuild
    ```
 
-   当前 `rebuild` 会走底层 `vectorize` 管线：先备份旧 `memory.db`，再按 `raw_memory/` 里结构化档案重建数据库和向量标记。  
-   不要手工删 `memory.db` 或 `vect_memory/*`，免绕过备份保护，也别误清只在数据库里的轻量缓存。
+   当前 `rebuild` 会走兼容别名仍叫 `vectorize` 的本地重建管线：先备份旧 `memory.db`，再按 `raw_memory/` 里结构化档案重建数据库和 FTS/index 标记。  
+   不要手工删 `memory.db` 或 `index_memory/*` / 旧 `vect_memory/*`，免绕过备份保护，也别误清只在数据库里的轻量缓存。
 
 4. **确认与汇报 (Handover)**:
    不要只说“重建完成”。最终汇报至少要讲清 4 件事：

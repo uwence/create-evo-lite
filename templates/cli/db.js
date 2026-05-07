@@ -43,12 +43,16 @@ function tableExists(database, name) {
 }
 
 function getModelMetaKey(namespace) {
+    // Keep the on-disk key names stable so existing databases do not need a
+    // metadata migration after the engine wording cleanup.
     return namespace === DEFAULT_NAMESPACE
         ? 'memory_engine'
         : `memory_engine:${namespace}`;
 }
 
 function getDimsMetaKey(namespace) {
+    // Same compatibility rule as getModelMetaKey(): storage stays stable even
+    // though user-facing semantics now say "local index engine".
     return namespace === DEFAULT_NAMESPACE
         ? 'memory_engine_version'
         : `memory_engine_version:${namespace}`;
@@ -81,7 +85,7 @@ function ensureNamespaceTables(database, namespace, model = DEFAULT_ENGINE, dims
         throw new Error(`Unknown memory namespace: ${namespace}`);
     }
     writeNamespaceFingerprint(database, namespace, model, dims);
-    return { vectorsReset: false };
+    return { indexReset: false };
 }
 
 function initDB(activeModel = DEFAULT_ENGINE, activeDims = DEFAULT_ENGINE_VERSION, options = {}) {
@@ -148,7 +152,7 @@ function initDB(activeModel = DEFAULT_ENGINE, activeDims = DEFAULT_ENGINE_VERSIO
         ensureNamespaceTables(database, knownNamespace, activeModel, activeDims);
     }
 
-    return { vectorsReset: false };
+    return { indexReset: false };
 }
 
 function getNamespaceCounts(database = getDb()) {

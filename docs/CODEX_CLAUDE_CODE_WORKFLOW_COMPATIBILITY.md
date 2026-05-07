@@ -92,7 +92,7 @@ Design constraint:
 Intent:
 
 - inspect damaged archives
-- rebuild vector state
+- rebuild local index state
 - verify post-recovery health
 
 Preferred host mapping:
@@ -145,7 +145,12 @@ The canonical state of a completed workflow should continue to come from:
 
 - `active_context.md`
 - Evo-Lite CLI output
-- archive artifacts in `raw_memory/` and `vect_memory/`
+- archive artifacts in `raw_memory/` and `index_memory/`
+
+Compatibility note:
+
+- Older projects may still carry a legacy `vect_memory/` directory name.
+- Evo-Lite should treat that as a backward-compatible storage alias, not as the primary terminology.
 
 Host UX should not become the source of truth.
 

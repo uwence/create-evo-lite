@@ -210,13 +210,13 @@ async function run() {
 
     if (action === 'sync') {
         await bootstrap();
-        console.log(await memoryService.syncVectorMemory());
+        console.log(await memoryService.syncIndexMemory());
         return;
     }
 
     if (action === 'rebuild' || action === 'vectorize') {
         await bootstrap();
-        await memoryService.vectorize();
+        await memoryService.rebuildLocalIndex();
         return;
     }
 

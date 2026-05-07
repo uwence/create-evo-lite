@@ -1,18 +1,18 @@
-const ENGINE_MODEL = 'sqlite-fts5-trigram';
-const ENGINE_VERSION = '1';
-const DISABLED_RERANKER = 'disabled-local-engine';
+const ENGINE_ID = 'sqlite-fts5-trigram';
+const ENGINE_SCHEMA_VERSION = '1';
+const LEGACY_DISABLED_RERANKER_ID = 'disabled-local-engine';
 
-let activeModel = ENGINE_MODEL;
-let activeDims = ENGINE_VERSION;
+let activeEngine = ENGINE_ID;
+let activeVersion = ENGINE_SCHEMA_VERSION;
 
 function getModel(id) {
-    if (id !== ENGINE_MODEL) {
+    if (id !== ENGINE_ID) {
         return null;
     }
     return {
-        id: ENGINE_MODEL,
+        id: ENGINE_ID,
         hfRepo: null,
-        dims: ENGINE_VERSION,
+        dims: ENGINE_SCHEMA_VERSION,
         kind: 'text',
         quantized: false,
         fallback: null,
@@ -20,31 +20,31 @@ function getModel(id) {
 }
 
 function listModels() {
-    return [getModel(ENGINE_MODEL)];
+    return [getModel(ENGINE_ID)];
 }
 
 function resetPipelines() {}
 
-function setActiveModel(model = ENGINE_MODEL, dims = ENGINE_VERSION) {
-    activeModel = model;
-    activeDims = dims;
+function setActiveEngine(engine = ENGINE_ID, version = ENGINE_SCHEMA_VERSION) {
+    activeEngine = engine;
+    activeVersion = version;
 }
 
-async function initEmbeddingModel(forceReload = false) {
+async function initLocalIndexEngine(forceReload = false) {
     if (forceReload) {
-        setActiveModel();
+        setActiveEngine();
     }
-    return { model: activeModel, dims: activeDims };
+    return { model: activeEngine, dims: activeVersion };
 }
 
 async function getExtractor() {
     return null;
 }
 
-function getRerankerStatus() {
+function getIndexStatus() {
     return {
         disabled: true,
-        model: DISABLED_RERANKER,
+        model: LEGACY_DISABLED_RERANKER_ID,
         reason: 'removed',
     };
 }
@@ -53,30 +53,41 @@ async function getReranker() {
     return null;
 }
 
-function getActiveModelInfo() {
-    return { model: activeModel, dims: activeDims };
+function getActiveEngineInfo() {
+    return { model: activeEngine, dims: activeVersion };
 }
 
-function getModelConstants() {
+function getEngineConstants() {
     return {
-        FALLBACK_DIMS: ENGINE_VERSION,
-        FALLBACK_MODEL: ENGINE_MODEL,
-        RERANKER_MODEL: DISABLED_RERANKER,
+        FALLBACK_DIMS: ENGINE_SCHEMA_VERSION,
+        FALLBACK_MODEL: ENGINE_ID,
+        RERANKER_MODEL: LEGACY_DISABLED_RERANKER_ID,
     };
 }
 
+const setActiveModel = setActiveEngine;
+const initEmbeddingModel = initLocalIndexEngine;
+const getRerankerStatus = getIndexStatus;
+const getActiveModelInfo = getActiveEngineInfo;
+const getModelConstants = getEngineConstants;
+
 module.exports = {
     MODEL_REGISTRY: {
-        [ENGINE_MODEL]: getModel(ENGINE_MODEL),
+        [ENGINE_ID]: getModel(ENGINE_ID),
     },
+    getActiveEngineInfo,
     getActiveModelInfo,
+    getEngineConstants,
     getExtractor,
     getModel,
     getModelConstants,
     getReranker,
+    getIndexStatus,
     getRerankerStatus,
     initEmbeddingModel,
+    initLocalIndexEngine,
     listModels,
     resetPipelines,
+    setActiveEngine,
     setActiveModel,
 };

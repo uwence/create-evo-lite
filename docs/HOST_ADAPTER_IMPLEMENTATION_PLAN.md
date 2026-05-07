@@ -24,7 +24,12 @@ These should remain the source of truth inside the generated project:
 - `.evo-lite/cli/`
 - `.evo-lite/active_context.md`
 - `.evo-lite/raw_memory/`
-- `.evo-lite/vect_memory/`
+- `.evo-lite/index_memory/`
+
+Compatibility note:
+
+- Existing projects may still expose `.evo-lite/vect_memory/` as a legacy directory alias.
+- New docs and generated assets should prefer `.evo-lite/index_memory/` as the canonical name.
 
 Why:
 

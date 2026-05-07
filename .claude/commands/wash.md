@@ -7,7 +7,7 @@ Run the Evo-Lite archive inspection and rebuild workflow.
 ## Intent
 
 - inspect raw archive health
-- rebuild vector state when needed
+- rebuild local index state when needed
 - verify post-recovery status
 
 ## Important
