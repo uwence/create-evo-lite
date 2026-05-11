@@ -72,6 +72,8 @@ function printHelp() {
                         database connection verifications.
     \x1b[32mmcp\x1b[0m detect|list|explain [--json]
                                             Read-only MCP capability discovery for the current workspace.
+    \x1b[32mhooks\x1b[0m status|verify [--json]
+                                                                                        Read-only hook scaffold self-check for the current workspace.
   \x1b[32mhelp\x1b[0m                Show this help menu.
 =========================================
 `);
@@ -178,6 +180,22 @@ function formatContextValidation(validation) {
     return lines.join('\n');
 }
 
+function formatHookScaffold(report) {
+    const lines = [
+        `hook_scaffold: ${report.valid ? 'ready' : 'needs-attention'}`,
+        `workspace: ${report.workspaceRoot}`,
+        `assets: ${report.assets.length}`,
+    ];
+    for (const asset of report.assets) {
+        const syncLabel = asset.synced === null ? 'n/a' : asset.synced ? 'synced' : 'drift';
+        lines.push(`- ${asset.label}: ${asset.status} (${syncLabel})`);
+    }
+    for (const warning of report.warnings) {
+        lines.push(`warning: ${warning}`);
+    }
+    return lines.join('\n');
+}
+
 async function runContextCommand() {
     const op = process.argv[3];
     if (op === 'read') {
@@ -232,6 +250,14 @@ async function runContextCommand() {
     }
 
     throw new Error(`Unknown context operation: '${op}'.`);
+}
+
+async function runHooksCommand() {
+    const op = process.argv[3] || 'status';
+    if (!['status', 'verify'].includes(op)) {
+        throw new Error(`Unknown hooks operation: '${op}'. Use status or verify.`);
+    }
+    printPayload(memoryService.inspectHookScaffold(), formatHookScaffold);
 }
 
 async function run() {
@@ -317,6 +343,11 @@ async function run() {
         }
         const report = mcpDetect.detectMcpCapabilities();
         printPayload(report, payload => mcpDetect.formatMcpReport(payload, { explain: op === 'explain' }));
+        return;
+    }
+
+    if (action === 'hooks') {
+        await runHooksCommand();
         return;
     }
 

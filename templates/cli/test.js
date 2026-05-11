@@ -26,6 +26,12 @@ function createTempRuntimeRoot(name) {
         fs.copyFileSync(path.join(TEMPLATE_ROOT_DIR, file), path.join(workspaceRoot, file));
     }
     copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.claude'), path.join(workspaceRoot, '.claude'));
+    if (fs.existsSync(path.join(TEMPLATE_ROOT_DIR, '.github'))) {
+        copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.github'), path.join(workspaceRoot, '.github'));
+    }
+    if (fs.existsSync(path.join(TEMPLATE_ROOT_DIR, '.vscode'))) {
+        copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.vscode'), path.join(workspaceRoot, '.vscode'));
+    }
     return { runtimeRoot, workspaceRoot };
 }
 
@@ -387,6 +393,20 @@ async function runTests() {
         assert.ok(mcpReport.servers.some(server => server.category === 'context-tools'), 'mcp detect did not classify context-mode');
         assert.ok(mcpDetect.formatMcpReport(mcpReport, { explain: true }).includes('代码图谱'), 'mcp explain report missed recommended usage text');
 
+        console.log('2ba. Testing hook scaffold inspection ...');
+        const hookReport = primaryLoaded.service.inspectHookScaffold();
+        assert.strictEqual(hookReport.valid, true, 'hook scaffold inspection should pass for the template-shaped workspace');
+        assert.strictEqual(hookReport.missing.length, 0, 'hook scaffold inspection should not report missing assets for the template-shaped workspace');
+        assert.ok(hookReport.assets.some(asset => asset.label === '.vscode/mcp.json' && asset.exists), 'hook scaffold inspection did not include the workspace MCP config asset');
+        const missingHookRuntime = createTempRuntimeRoot('hook-missing');
+        const missingHookLoaded = loadCli(missingHookRuntime.runtimeRoot, {
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+        });
+        fs.unlinkSync(path.join(missingHookRuntime.workspaceRoot, '.github', 'hooks', 'context-mode.ps1'));
+        const missingHookReport = missingHookLoaded.service.inspectHookScaffold();
+        assert.strictEqual(missingHookReport.valid, false, 'hook scaffold inspection should fail when a required hook asset is missing');
+        assert.ok(missingHookReport.missing.includes('.github/hooks/context-mode.ps1'), 'hook scaffold inspection did not report the missing PowerShell hook wrapper');
+
         console.log('2c. Testing context track bootstraps a fresh init runtime ...');
         const freshTrackRuntime = createTempRuntimeRoot('fresh-track');
         const freshTrackLoaded = loadCli(freshTrackRuntime.runtimeRoot, {
@@ -448,6 +468,22 @@ async function runTests() {
         assert.ok(
             modernInitResult.stdout.includes('📄 复制并配置记忆外挂模板文件'),
             'initializer did not proceed past the legacy-runtime gate for a 2.x-shaped directory'
+        );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.github', 'copilot-instructions.md')),
+            'initializer did not scaffold .github/copilot-instructions.md into the target project'
+        );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.json')),
+            'initializer did not scaffold .github/hooks/context-mode.json into the target project'
+        );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.ps1')),
+            'initializer did not scaffold .github/hooks/context-mode.ps1 into the target project'
+        );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.vscode', 'mcp.json')),
+            'initializer did not scaffold .vscode/mcp.json into the target project'
         );
 
         console.log('4. Testing archive / sync ...');
@@ -595,11 +631,33 @@ async function runTests() {
         });
         assert.ok(healthyVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should treat dynamic model defaults and host adapters as a healthy sync state');
         assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged healthy template files as drift');
+        assert.ok(!healthyVerifyOutput.includes('.github/hooks/context-mode.json is out of sync'), 'verify incorrectly flagged healthy hook assets as drift');
         assert.ok(healthyVerifyOutput.includes('可以继续 `/evo` / `/commit` 工作流'), 'verify healthy output did not include a clear next step');
 
+        const localExtensionRuntime = createTempRuntimeRoot('verify-local-extension');
+        const localExtensionLoaded = await bootstrapRuntime(localExtensionRuntime.runtimeRoot, {
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+            EVO_LITE_TEMPLATE_CLI_DIR: path.join(healthyTemplateRoot, 'cli'),
+            EVO_LITE_TEMPLATE_ROOT_DIR: healthyTemplateRoot,
+        });
+        const localInstructionsPath = path.join(localExtensionRuntime.workspaceRoot, '.github', 'copilot-instructions.md');
+        fs.writeFileSync(
+            localInstructionsPath,
+            fs.readFileSync(localInstructionsPath, 'utf8').replace(
+                '<!-- evo-lite:local-extensions:start -->\n<!-- evo-lite:local-extensions:end -->',
+                '<!-- evo-lite:local-extensions:start -->\n# Local Tooling\n\nUse `rtk` when shell output would be noisy.\n<!-- evo-lite:local-extensions:end -->'
+            ),
+            'utf8'
+        );
+        const localExtensionVerifyOutput = await captureConsole(async () => {
+            await localExtensionLoaded.service.verify();
+        });
+        assert.ok(localExtensionVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should ignore local extension blocks in managed markdown files');
+        assert.ok(!localExtensionVerifyOutput.includes('.github/copilot-instructions.md is out of sync'), 'verify incorrectly flagged a local extension block as template drift');
+
         const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {
-            const claudePath = path.join(templateRoot, 'CLAUDE.md');
-            fs.writeFileSync(claudePath, `${fs.readFileSync(claudePath, 'utf8')}\n<!-- drift -->`, 'utf8');
+            const hookConfigPath = path.join(templateRoot, '.github', 'hooks', 'context-mode.json');
+            fs.writeFileSync(hookConfigPath, `${fs.readFileSync(hookConfigPath, 'utf8')}\n`, 'utf8');
         });
         const verifyDriftLoaded = await bootstrapRuntime(verifyRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
@@ -609,7 +667,7 @@ async function runTests() {
         const driftVerifyOutput = await captureConsole(async () => {
             await verifyDriftLoaded.service.verify();
         });
-        assert.ok(driftVerifyOutput.includes('CLAUDE.md is out of sync'), 'verify did not report actual host adapter drift');
+        assert.ok(driftVerifyOutput.includes('.github/hooks/context-mode.json is out of sync'), 'verify did not report actual hook asset drift');
         assert.ok(!driftVerifyOutput.includes('Verify completed with no active alerts.'), 'verify still reported a clean bill of health after drift');
 
         console.log('11. Testing import...');

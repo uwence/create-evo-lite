@@ -60,6 +60,7 @@ Treat the following as authoritative:
 
 If this file and `.agents/` ever diverge, `.agents/` wins.
 
+<!-- evo-lite:local-extensions:start -->
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
@@ -103,3 +104,4 @@ This project is indexed by GitNexus as **create-evo-lite** (724 symbols, 1294 re
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+<!-- evo-lite:local-extensions:end -->

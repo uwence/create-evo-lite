@@ -59,3 +59,6 @@ Treat the following as authoritative:
 - Evo-Lite CLI output for closure/health status
 
 If this file and `.agents/` ever diverge, `.agents/` wins.
+
+<!-- evo-lite:local-extensions:start -->
+<!-- evo-lite:local-extensions:end -->

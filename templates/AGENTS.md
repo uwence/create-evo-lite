@@ -36,6 +36,9 @@ When taking over this project:
 
 These are Evo-Lite semantic workflows. Do not assume the host provides them as identical native slash commands.
 
+<!-- evo-lite:local-extensions:start -->
+<!-- evo-lite:local-extensions:end -->
+
 ## Guardrails
 
 - Do not directly edit runtime anchors in `.evo-lite/active_context.md`.
@@ -53,3 +56,6 @@ Treat the following as authoritative:
 - Evo-Lite CLI output for closure/health status
 
 If this file and `.agents/` ever diverge, `.agents/` wins.
+
+<!-- evo-lite:local-extensions:start -->
+<!-- evo-lite:local-extensions:end -->

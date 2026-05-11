@@ -144,6 +144,16 @@ async function main() {
         copyRecursiveSync(claudeTemplateDir, claudeDir);
     }
 
+    const githubTemplateDir = path.join(templatesDir, '.github');
+    if (fs.existsSync(githubTemplateDir)) {
+        copyRecursiveSync(githubTemplateDir, path.join(targetDir, '.github'));
+    }
+
+    const vscodeTemplateDir = path.join(templatesDir, '.vscode');
+    if (fs.existsSync(vscodeTemplateDir)) {
+        copyRecursiveSync(vscodeTemplateDir, path.join(targetDir, '.vscode'));
+    }
+
     // 写入 cli 文件
     cliFiles.forEach(file => {
         const content = fs.readFileSync(path.join(cliTemplatesDir, file), 'utf8');

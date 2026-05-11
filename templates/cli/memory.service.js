@@ -724,6 +724,13 @@ function splitTrajectoryEntries(trajectory) {
 
 function normalizeTemplateComparableContent(file, content) {
     const normalized = content.replace(/\r\n/g, '\n');
+    if (['AGENTS.md', 'CLAUDE.md', 'copilot-instructions.md'].includes(file)) {
+        return normalized
+            .replace(/\n?<!-- evo-lite:local-extensions:start -->[\s\S]*?<!-- evo-lite:local-extensions:end -->/g, '')
+            .split('<!-- evo-lite:local-extensions -->')[0]
+            .replace(/\n{3,}/g, '\n\n')
+            .trimEnd();
+    }
     if (file !== 'models.js') {
         return normalized;
     }
@@ -750,8 +757,102 @@ function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
             activeFile: path.join(workspaceRoot, '.claude', 'commands', file),
             templateFile: path.join(templateRootPath, '.claude', 'commands', file),
         })),
+        ...['copilot-instructions.md', 'hooks/context-mode.json', 'hooks/context-mode.ps1'].map(file => ({
+            label: `.github/${file}`,
+            activeFile: path.join(workspaceRoot, '.github', ...file.split('/')),
+            templateFile: path.join(templateRootPath, '.github', ...file.split('/')),
+        })),
+        {
+            label: '.vscode/mcp.json',
+            activeFile: path.join(workspaceRoot, '.vscode', 'mcp.json'),
+            templateFile: path.join(templateRootPath, '.vscode', 'mcp.json'),
+        },
     ];
     return entries;
+}
+
+function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
+    return [
+        {
+            label: '.github/copilot-instructions.md',
+            activeFile: path.join(workspaceRoot, '.github', 'copilot-instructions.md'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'copilot-instructions.md') : null,
+        },
+        {
+            label: '.github/hooks/context-mode.json',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'context-mode.json'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'context-mode.json') : null,
+        },
+        {
+            label: '.github/hooks/context-mode.ps1',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'context-mode.ps1'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'context-mode.ps1') : null,
+        },
+        {
+            label: '.vscode/mcp.json',
+            activeFile: path.join(workspaceRoot, '.vscode', 'mcp.json'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.vscode', 'mcp.json') : null,
+        },
+    ];
+}
+
+function inspectHookScaffold() {
+    const workspaceRoot = getWorkspaceRoot();
+    const templateRootPath = getTemplateRootDir();
+    const warnings = [];
+    const missing = [];
+    const outOfSync = [];
+    const assets = buildHookScaffoldEntries(workspaceRoot, templateRootPath).map(entry => {
+        const exists = fs.existsSync(entry.activeFile);
+        const templateExists = entry.templateFile ? fs.existsSync(entry.templateFile) : false;
+        let synced = null;
+
+        if (!exists) {
+            missing.push(entry.label);
+        }
+
+        if (exists && templateExists) {
+            synced = normalizeTemplateComparableContent(
+                path.basename(entry.label),
+                fs.readFileSync(entry.activeFile, 'utf8')
+            ) === normalizeTemplateComparableContent(
+                path.basename(entry.label),
+                fs.readFileSync(entry.templateFile, 'utf8')
+            );
+            if (!synced) {
+                outOfSync.push(entry.label);
+            }
+        }
+
+        if (exists && entry.templateFile && !templateExists) {
+            warnings.push(`template missing for ${entry.label}`);
+        }
+
+        return {
+            exists,
+            label: entry.label,
+            path: entry.activeFile,
+            status: !exists ? 'missing' : synced === false ? 'out-of-sync' : 'ready',
+            synced,
+            templateExists: entry.templateFile ? templateExists : null,
+            templatePath: entry.templateFile,
+        };
+    });
+
+    if (!templateRootPath) {
+        warnings.push('template root unavailable; sync comparison skipped');
+    }
+
+    return {
+        assets,
+        checkedAt: new Date().toISOString(),
+        missing,
+        outOfSync,
+        templateRootPath,
+        valid: missing.length === 0 && outOfSync.length === 0,
+        warnings,
+        workspaceRoot,
+    };
 }
 
 function isMissingMemorySchemaError(error) {
@@ -1323,6 +1424,7 @@ module.exports = {
     parseGitStatusLines,
     readActiveContext,
     filterNonEvoLiteGitStatusLines,
+    inspectHookScaffold,
     prepareForWrite,
     recall,
     rebuildLocalIndex,

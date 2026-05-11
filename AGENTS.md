@@ -36,6 +36,7 @@ When taking over this project:
 
 These are Evo-Lite semantic workflows. Do not assume the host provides them as identical native slash commands.
 
+<!-- evo-lite:local-extensions:start -->
 For Codex specifically:
 
 - Do not expect these workflow names to appear automatically in the app's navigation menu or slash-command picker.
@@ -44,6 +45,7 @@ For Codex specifically:
   - "按 `/commit` 协议闭环这次修改"
   - "执行 `/mem` 的轻量挂起版本，只写下一阶段 focus"
 - If Codex later exposes host-native command bindings in some surfaces, treat that only as an optional transport improvement, not as the canonical definition of the workflow.
+<!-- evo-lite:local-extensions:end -->
 
 ## Guardrails
 
@@ -63,6 +65,7 @@ Treat the following as authoritative:
 
 If this file and `.agents/` ever diverge, `.agents/` wins.
 
+<!-- evo-lite:local-extensions:start -->
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
@@ -106,3 +109,4 @@ This project is indexed by GitNexus as **create-evo-lite** (724 symbols, 1294 re
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+<!-- evo-lite:local-extensions:end -->
