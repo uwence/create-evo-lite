@@ -72,8 +72,8 @@ function printHelp() {
                         database connection verifications.
     \x1b[32mmcp\x1b[0m detect|list|explain [--json]
                                             Read-only MCP capability discovery for the current workspace.
-    \x1b[32mhooks\x1b[0m status|verify [--json]
-                                                                                        Read-only hook scaffold self-check for the current workspace.
+        \x1b[32mhooks\x1b[0m status|verify|install [--json] [--force]
+                                                                                        Hook scaffold self-check or install for the current workspace.
   \x1b[32mhelp\x1b[0m                Show this help menu.
 =========================================
 `);
@@ -196,6 +196,30 @@ function formatHookScaffold(report) {
     return lines.join('\n');
 }
 
+function formatHookInstall(result) {
+    const lines = [
+        `hook_install: ${result.valid ? 'complete' : 'partial'}`,
+        `workspace: ${result.workspaceRoot}`,
+        `installed: ${result.installed.length}`,
+        `overwritten: ${result.overwritten.length}`,
+        `skipped: ${result.skipped.length}`,
+    ];
+    for (const label of result.installed) {
+        lines.push(`installed: ${label}`);
+    }
+    for (const label of result.overwritten) {
+        lines.push(`overwritten: ${label}`);
+    }
+    for (const label of result.skipped) {
+        lines.push(`skipped: ${label}`);
+    }
+    for (const label of result.missingTemplates) {
+        lines.push(`warning: template missing for ${label}`);
+    }
+    lines.push(`next_step: node .evo-lite/cli/memory.js hooks verify${result.valid ? '' : ' --json'}`);
+    return lines.join('\n');
+}
+
 async function runContextCommand() {
     const op = process.argv[3];
     if (op === 'read') {
@@ -254,8 +278,12 @@ async function runContextCommand() {
 
 async function runHooksCommand() {
     const op = process.argv[3] || 'status';
-    if (!['status', 'verify'].includes(op)) {
-        throw new Error(`Unknown hooks operation: '${op}'. Use status or verify.`);
+    if (!['status', 'verify', 'install'].includes(op)) {
+        throw new Error(`Unknown hooks operation: '${op}'. Use status, verify, or install.`);
+    }
+    if (op === 'install') {
+        printPayload(memoryService.installHookScaffold({ force: hasFlag('--force') }), formatHookInstall);
+        return;
     }
     printPayload(memoryService.inspectHookScaffold(), formatHookScaffold);
 }

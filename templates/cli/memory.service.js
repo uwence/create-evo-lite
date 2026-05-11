@@ -855,6 +855,52 @@ function inspectHookScaffold() {
     };
 }
 
+function installHookScaffold(options = {}) {
+    const workspaceRoot = getWorkspaceRoot();
+    const templateRootPath = getTemplateRootDir();
+    if (!templateRootPath) {
+        throw new Error('Hooks install requires an accessible templates directory. Re-run create-evo-lite from the package root or provide EVO_LITE_TEMPLATE_ROOT_DIR.');
+    }
+
+    const force = options.force === true;
+    const result = {
+        backedUp: [],
+        checkedAt: new Date().toISOString(),
+        force,
+        installed: [],
+        missingTemplates: [],
+        overwritten: [],
+        skipped: [],
+        templateRootPath,
+        workspaceRoot,
+    };
+
+    for (const entry of buildHookScaffoldEntries(workspaceRoot, templateRootPath)) {
+        if (!entry.templateFile || !fs.existsSync(entry.templateFile)) {
+            result.missingTemplates.push(entry.label);
+            continue;
+        }
+
+        ensureDir(path.dirname(entry.activeFile));
+        if (fs.existsSync(entry.activeFile)) {
+            if (!force) {
+                result.skipped.push(entry.label);
+                continue;
+            }
+            fs.copyFileSync(entry.activeFile, `${entry.activeFile}.bak`);
+            result.backedUp.push(`${entry.label}.bak`);
+            result.overwritten.push(entry.label);
+        } else {
+            result.installed.push(entry.label);
+        }
+
+        fs.copyFileSync(entry.templateFile, entry.activeFile);
+    }
+
+    result.valid = result.missingTemplates.length === 0;
+    return result;
+}
+
 function isMissingMemorySchemaError(error) {
     const message = String(error && error.message ? error.message : '').toLowerCase();
     return (
@@ -1425,6 +1471,7 @@ module.exports = {
     readActiveContext,
     filterNonEvoLiteGitStatusLines,
     inspectHookScaffold,
+    installHookScaffold,
     prepareForWrite,
     recall,
     rebuildLocalIndex,

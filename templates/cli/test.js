@@ -407,6 +407,21 @@ async function runTests() {
         assert.strictEqual(missingHookReport.valid, false, 'hook scaffold inspection should fail when a required hook asset is missing');
         assert.ok(missingHookReport.missing.includes('.github/hooks/context-mode.ps1'), 'hook scaffold inspection did not report the missing PowerShell hook wrapper');
 
+        console.log('2bb. Testing hook scaffold install ...');
+        const installHookRuntime = createTempRuntimeRoot('hook-install');
+        const installHookLoaded = loadCli(installHookRuntime.runtimeRoot, {
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+        });
+        fs.unlinkSync(path.join(installHookRuntime.workspaceRoot, '.github', 'hooks', 'context-mode.ps1'));
+        const installHookResult = installHookLoaded.service.installHookScaffold();
+        assert.ok(installHookResult.installed.includes('.github/hooks/context-mode.ps1'), 'hook scaffold install did not restore a missing hook wrapper');
+        assert.ok(fs.existsSync(path.join(installHookRuntime.workspaceRoot, '.github', 'hooks', 'context-mode.ps1')), 'hook scaffold install did not recreate the missing PowerShell hook wrapper');
+        const installInstructionsPath = path.join(installHookRuntime.workspaceRoot, '.github', 'copilot-instructions.md');
+        fs.writeFileSync(installInstructionsPath, '# mutated\n', 'utf8');
+        const forceInstallResult = installHookLoaded.service.installHookScaffold({ force: true });
+        assert.ok(forceInstallResult.overwritten.includes('.github/copilot-instructions.md'), 'hook scaffold install --force did not overwrite an existing managed asset');
+        assert.ok(fs.existsSync(`${installInstructionsPath}.bak`), 'hook scaffold install --force did not create a backup before overwriting');
+
         console.log('2c. Testing context track bootstraps a fresh init runtime ...');
         const freshTrackRuntime = createTempRuntimeRoot('fresh-track');
         const freshTrackLoaded = loadCli(freshTrackRuntime.runtimeRoot, {
