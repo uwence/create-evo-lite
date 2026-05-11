@@ -1,0 +1,23 @@
+{
+  "servers": {
+    "contextModeCreateEvoLite": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "--init",
+        "-i",
+        "-e",
+        "HOME=/data",
+        "-v",
+        "mcp-context-mode-data:/data",
+        "-v",
+        "${workspaceFolder}:/workspace",
+        "-w",
+        "/workspace",
+        "mcp-context-mode:local"
+      ]
+    }
+  },
+  "inputs": []
+}

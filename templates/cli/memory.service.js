@@ -126,6 +126,142 @@ function writeSection(markdown, anchor, newContent) {
     return markdown.replace(regex, `$1\n${newContent}\n$2`);
 }
 
+const ACTIVE_CONTEXT_ANCHORS = ['META', 'FOCUS', 'BACKLOG', 'TRAJECTORY'];
+
+function countMatches(markdown, pattern) {
+    return (markdown.match(pattern) || []).length;
+}
+
+function parseBacklogTasks(backlog) {
+    return backlog
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.startsWith('- ['))
+        .map(line => {
+            const checkboxMatch = line.match(/^- \[([ xX])\]\s*(.*)$/);
+            const body = checkboxMatch ? checkboxMatch[2].trim() : line;
+            const hashMatch = body.match(/^\[([a-f0-9]{4})\]\s*(.*)$/i);
+            return {
+                checked: checkboxMatch ? checkboxMatch[1].toLowerCase() === 'x' : false,
+                hash: hashMatch ? hashMatch[1] : null,
+                line,
+                text: hashMatch ? hashMatch[2].trim() : body,
+            };
+        });
+}
+
+function parseTrajectoryEntries(trajectory) {
+    return splitTrajectoryEntries(trajectory).map(line => {
+        const match = line.match(/^- \[([^\]]+)\]\s+(\d{4}-\d{2}-\d{2})\s+([^:]+):\s*(.*)$/);
+        return {
+            date: match ? match[2] : null,
+            id: match ? match[1] : null,
+            line,
+            mechanism: match ? match[3].trim() : null,
+            summary: match ? match[4].trim() : line,
+        };
+    });
+}
+
+function validateActiveContextMarkdown(markdown) {
+    const errors = [];
+    const warnings = [];
+    const sectionRanges = [];
+
+    for (const anchor of ACTIVE_CONTEXT_ANCHORS) {
+        const beginPattern = new RegExp(`<!-- BEGIN_${anchor} -->`, 'g');
+        const endPattern = new RegExp(`<!-- END_${anchor} -->`, 'g');
+        const beginCount = countMatches(markdown, beginPattern);
+        const endCount = countMatches(markdown, endPattern);
+        if (beginCount !== 1 || endCount !== 1) {
+            errors.push(`${anchor} anchor count mismatch: begin=${beginCount}, end=${endCount}`);
+            continue;
+        }
+        const beginIndex = markdown.indexOf(`<!-- BEGIN_${anchor} -->`);
+        const endIndex = markdown.indexOf(`<!-- END_${anchor} -->`);
+        if (beginIndex > endIndex) {
+            errors.push(`${anchor} anchor order is invalid`);
+            continue;
+        }
+        sectionRanges.push({ anchor, beginIndex, endIndex });
+    }
+
+    for (let index = 1; index < sectionRanges.length; index += 1) {
+        const previous = sectionRanges[index - 1];
+        const current = sectionRanges[index];
+        if (previous.endIndex > current.beginIndex) {
+            errors.push(`${previous.anchor} overlaps ${current.anchor}`);
+        }
+    }
+
+    const sections = Object.fromEntries(ACTIVE_CONTEXT_ANCHORS.map(anchor => [anchor.toLowerCase(), (readSection(markdown, anchor) || '').trim()]));
+    const backlogTasks = parseBacklogTasks(sections.backlog || '');
+    const pendingTasks = backlogTasks.filter(task => !task.checked && !task.line.includes('暂无活跃任务'));
+    const trajectoryEntries = parseTrajectoryEntries(sections.trajectory || '');
+
+    if (pendingTasks.length > 5) {
+        errors.push(`BACKLOG pending task count exceeds 5: ${pendingTasks.length}`);
+    }
+    if (trajectoryEntries.length > 20) {
+        warnings.push(`TRAJECTORY has ${trajectoryEntries.length} entries; recommended maximum is 20`);
+    }
+    if (!sections.focus) {
+        warnings.push('FOCUS section is empty');
+    }
+    if (/请手动填写|尚未确定当前焦点|阅读此文件，完成上下文接管/.test(markdown)) {
+        warnings.push('active_context still contains initialization placeholder text');
+    }
+
+    return {
+        anchors: sectionRanges.map(range => range.anchor),
+        checkedAt: new Date().toISOString(),
+        errors,
+        valid: errors.length === 0,
+        warnings,
+    };
+}
+
+function buildActiveContextSnapshot(markdown) {
+    const sections = Object.fromEntries(ACTIVE_CONTEXT_ANCHORS.map(anchor => [anchor.toLowerCase(), (readSection(markdown, anchor) || '').trim()]));
+    const backlogTasks = parseBacklogTasks(sections.backlog || '');
+    const trajectoryEntries = parseTrajectoryEntries(sections.trajectory || '');
+    return {
+        path: ACTIVE_CONTEXT_PATH,
+        sections,
+        summary: {
+            activeTaskCount: backlogTasks.filter(task => !task.checked && !task.line.includes('暂无活跃任务')).length,
+            focus: sections.focus,
+            latestTrajectory: trajectoryEntries[0] || null,
+            trajectoryCount: trajectoryEntries.length,
+        },
+        tasks: backlogTasks,
+        trajectory: trajectoryEntries,
+        validation: validateActiveContextMarkdown(markdown),
+    };
+}
+
+function readActiveContext() {
+    ensureContextFile();
+    return buildActiveContextSnapshot(fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8'));
+}
+
+function summarizeActiveContext() {
+    const snapshot = readActiveContext();
+    return {
+        path: snapshot.path,
+        focus: snapshot.summary.focus,
+        activeTasks: snapshot.tasks.filter(task => !task.checked && !task.line.includes('暂无活跃任务')),
+        latestTrajectory: snapshot.summary.latestTrajectory,
+        trajectoryCount: snapshot.summary.trajectoryCount,
+        validation: snapshot.validation,
+    };
+}
+
+function validateActiveContextFile() {
+    ensureContextFile();
+    return validateActiveContextMarkdown(fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8'));
+}
+
 function ensureContextFile() {
     if (!fs.existsSync(ACTIVE_CONTEXT_PATH)) {
         throw new Error(`未找到 active_context.md: ${ACTIVE_CONTEXT_PATH}`);
@@ -599,7 +735,7 @@ function normalizeTemplateComparableContent(file, content) {
 function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
     const workspaceRoot = getWorkspaceRoot();
     const entries = [
-        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js', 'safety.js', 'inspector.js'].map(file => ({
+        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js', 'safety.js', 'inspector.js', 'mcp-detect.js'].map(file => ({
             label: file,
             activeFile: path.join(__dirname, file),
             templateFile: path.join(templateCliPath, file),
@@ -1185,17 +1321,21 @@ module.exports = {
     list,
     memorize,
     parseGitStatusLines,
+    readActiveContext,
     filterNonEvoLiteGitStatusLines,
     prepareForWrite,
     recall,
     rebuildLocalIndex,
     splitTrajectoryEntries,
+    summarizeActiveContext,
     summarizeArchiveHealth,
     setFocus,
     syncIndexMemory,
     stats,
     track,
     verify,
+    validateActiveContextFile,
+    validateActiveContextMarkdown,
     wash,
 };
 

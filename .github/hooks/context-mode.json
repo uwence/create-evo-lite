@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ./.github/hooks/context-mode.ps1 pretooluse"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ./.github/hooks/context-mode.ps1 posttooluse"
+      }
+    ],
+    "PreCompact": [
+      {
+        "type": "command",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ./.github/hooks/context-mode.ps1 precompact"
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ./.github/hooks/context-mode.ps1 sessionstart"
+      }
+    ]
+  }
+}

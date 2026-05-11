@@ -170,7 +170,7 @@ async function runInitializer(projectRoot, options = {}) {
 }
 
 function resetCliModuleCache() {
-    for (const file of ['runtime.js', 'db.js', 'models.js', 'memory.service.js', 'memory.js']) {
+    for (const file of ['runtime.js', 'db.js', 'models.js', 'memory.service.js', 'mcp-detect.js', 'memory.js']) {
         delete require.cache[path.join(CLI_DIR, file)];
         delete require.cache[require.resolve(path.join(CLI_DIR, file))];
     }
@@ -352,7 +352,42 @@ async function runTests() {
         assert.ok(!contextAfterTrack.includes(`[${addResult.hash}]`), 'Resolved backlog hash still exists after track --resolve');
         assert.ok(/\n- \[(?:[a-f0-9]{7}|No-Git)\] \d{4}-\d{2}-\d{2} ProtocolRestore: /.test(contextAfterTrack), 'Trajectory did not record the new track entry with a short hash label');
 
-        console.log('2a. Testing context track bootstraps a fresh init runtime ...');
+        console.log('2a. Testing context read / summary / validate ...');
+        const contextSnapshot = primaryLoaded.service.readActiveContext();
+        assert.strictEqual(contextSnapshot.path, path.join(primary.runtimeRoot, 'active_context.md'), 'context read returned the wrong active_context path');
+        assert.strictEqual(contextSnapshot.validation.valid, true, 'fresh template context should validate structurally');
+        assert.ok(contextSnapshot.validation.anchors.includes('META'), 'context validation missed META anchor');
+        assert.ok(contextSnapshot.sections.focus.includes('尚未确定当前焦点'), 'context read did not expose the FOCUS section');
+        assert.ok(contextSnapshot.summary.latestTrajectory.line.includes('ProtocolRestore'), 'context read did not parse the latest trajectory entry');
+        assert.ok(contextSnapshot.tasks.some(task => task.hash === 'a1b2'), 'context read did not parse backlog task hashes');
+
+        const contextSummary = primaryLoaded.service.summarizeActiveContext();
+        assert.strictEqual(contextSummary.validation.valid, true, 'context summary should include validation state');
+        assert.ok(contextSummary.activeTasks.length >= 1, 'context summary did not include active backlog tasks');
+        assert.ok(contextSummary.latestTrajectory.line.includes('ProtocolRestore'), 'context summary did not include latest trajectory');
+
+        const contextValidation = primaryLoaded.service.validateActiveContextFile();
+        assert.strictEqual(contextValidation.valid, true, 'context validate should pass for the template-shaped context');
+        assert.ok(
+            contextValidation.warnings.some(warning => warning.includes('initialization placeholder')),
+            'context validate should warn about initialization placeholders without failing structure validation'
+        );
+
+        console.log('2b. Testing MCP detection ...');
+        writeText(path.join(primary.workspaceRoot, '.vscode', 'mcp.json'), JSON.stringify({
+            servers: {
+                gitnexus: { command: 'docker', args: ['run', 'gitnexus:local'] },
+                contextModeCreateEvoLite: { command: 'docker', args: ['run', 'mcp-context-mode:local'] },
+            },
+        }, null, 2));
+        const mcpDetect = require(path.join(CLI_DIR, 'mcp-detect.js'));
+        const mcpReport = mcpDetect.detectMcpCapabilities({ workspaceRoot: primary.workspaceRoot });
+        assert.strictEqual(mcpReport.serverCount, 2, 'mcp detect did not find configured workspace MCP servers');
+        assert.ok(mcpReport.servers.some(server => server.category === 'code-intelligence'), 'mcp detect did not classify GitNexus');
+        assert.ok(mcpReport.servers.some(server => server.category === 'context-tools'), 'mcp detect did not classify context-mode');
+        assert.ok(mcpDetect.formatMcpReport(mcpReport, { explain: true }).includes('代码图谱'), 'mcp explain report missed recommended usage text');
+
+        console.log('2c. Testing context track bootstraps a fresh init runtime ...');
         const freshTrackRuntime = createTempRuntimeRoot('fresh-track');
         const freshTrackLoaded = loadCli(freshTrackRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',

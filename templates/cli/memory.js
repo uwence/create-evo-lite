@@ -61,6 +61,7 @@ function printHelp() {
   \x1b[32mimport\x1b[0m <file>       Import memories from a JSON file path.
 
   \x1b[32mcontext\x1b[0m <op>...     Modify active_context.md anchors (track, add, focus).
+                      Read-only ops: read, summary, validate [--json].
   \x1b[32marchive\x1b[0m <text>      Save a summary to raw_memory/ and auto-index it.
   \x1b[32msync\x1b[0m                Check for unindexed raw_memory and ingest them.
   \x1b[32mrebuild\x1b[0m             Standard rebuild entry: backup memory.db, then rebuild from raw_memory/.
@@ -69,6 +70,8 @@ function printHelp() {
   \x1b[32mwash\x1b[0m                Compatibility entry that points you to rebuild / /wash workflow.
   \x1b[32mverify\x1b[0m              Run initialization checks, git state scans, and
                         database connection verifications.
+    \x1b[32mmcp\x1b[0m detect|list|explain [--json]
+                                            Read-only MCP capability discovery for the current workspace.
   \x1b[32mhelp\x1b[0m                Show this help menu.
 =========================================
 `);
@@ -114,8 +117,84 @@ function formatTrackResult(result) {
     return lines.join('\n');
 }
 
+function hasFlag(flag) {
+    return process.argv.includes(flag);
+}
+
+function printPayload(payload, formatter) {
+    if (hasFlag('--json')) {
+        console.log(JSON.stringify(payload, null, 2));
+        return;
+    }
+    console.log(formatter(payload));
+}
+
+function formatContextRead(snapshot) {
+    return [
+        `active_context: ${snapshot.path}`,
+        '',
+        'META:',
+        snapshot.sections.meta || '(empty)',
+        '',
+        'FOCUS:',
+        snapshot.sections.focus || '(empty)',
+        '',
+        'BACKLOG:',
+        snapshot.sections.backlog || '(empty)',
+        '',
+        'TRAJECTORY:',
+        snapshot.sections.trajectory || '(empty)',
+    ].join('\n');
+}
+
+function formatContextSummary(summary) {
+    const lines = [
+        `active_context: ${summary.path}`,
+        `focus: ${summary.focus || '(empty)'}`,
+        `active_tasks: ${summary.activeTasks.length}`,
+        `trajectory_entries: ${summary.trajectoryCount}`,
+        `validation: ${summary.validation.valid ? 'valid' : 'invalid'}`,
+    ];
+    if (summary.latestTrajectory) {
+        lines.push(`latest: ${summary.latestTrajectory.line}`);
+    }
+    for (const warning of summary.validation.warnings) {
+        lines.push(`warning: ${warning}`);
+    }
+    for (const error of summary.validation.errors) {
+        lines.push(`error: ${error}`);
+    }
+    return lines.join('\n');
+}
+
+function formatContextValidation(validation) {
+    const lines = [`active_context validation: ${validation.valid ? 'valid' : 'invalid'}`];
+    for (const warning of validation.warnings) {
+        lines.push(`warning: ${warning}`);
+    }
+    for (const error of validation.errors) {
+        lines.push(`error: ${error}`);
+    }
+    return lines.join('\n');
+}
+
 async function runContextCommand() {
     const op = process.argv[3];
+    if (op === 'read') {
+        printPayload(memoryService.readActiveContext(), formatContextRead);
+        return;
+    }
+
+    if (op === 'summary') {
+        printPayload(memoryService.summarizeActiveContext(), formatContextSummary);
+        return;
+    }
+
+    if (op === 'validate') {
+        printPayload(memoryService.validateActiveContextFile(), formatContextValidation);
+        return;
+    }
+
     if (op === 'track') {
         const mechanismArg = process.argv.find(arg => arg.startsWith('--mechanism='));
         const mechanism = mechanismArg ? mechanismArg.substring('--mechanism='.length) : null;
@@ -227,6 +306,17 @@ async function run() {
 
     if (action === 'verify') {
         await memoryService.verify();
+        return;
+    }
+
+    if (action === 'mcp') {
+        const mcpDetect = require('./mcp-detect');
+        const op = process.argv[3] || 'detect';
+        if (!['detect', 'list', 'explain'].includes(op)) {
+            throw new Error(`Unknown mcp operation: '${op}'. Use detect, list, or explain.`);
+        }
+        const report = mcpDetect.detectMcpCapabilities();
+        printPayload(report, payload => mcpDetect.formatMcpReport(payload, { explain: op === 'explain' }));
         return;
     }
 
