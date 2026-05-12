@@ -7,6 +7,7 @@
 
 - Language: JavaScript on Node.js
 - Package manager: npm
+- CLI Framework: `commander.js` for robust and structured top-level command-line argument parsing and command routing
 - Storage and retrieval: local SQLite via `better-sqlite3`
 - Search engine: `FTS5 + trigram + BM25`
 - Runtime style: daemonless, project-local, no separate memory service

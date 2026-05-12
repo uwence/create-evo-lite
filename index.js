@@ -3,16 +3,22 @@ const path = require('path');
 const { execSync } = require('child_process');
 const readline = require('readline/promises');
 const http = require('http');
+const { Command } = require('commander');
 
 const SELF_VERSION = require(path.join(__dirname, 'package.json')).version;
 
-async function main() {
-    // Check for --yes or -y flag
-    const args = process.argv.slice(2);
-    const isSilent = args.includes('--yes') || args.includes('-y');
+function buildProgram() {
+    return new Command()
+        .name('create-evo-lite')
+        .description('Scaffold Evo-Lite into a target project directory.')
+        .version(SELF_VERSION)
+        .argument('[project-path]', 'Target project path')
+        .option('-y, --yes', 'Use default initialization configuration')
+        .showHelpAfterError();
+}
 
-    // Find the target directory argument (the first one that isn't a flag)
-    const targetDirArg = args.find(arg => !arg.startsWith('-'));
+async function runInit(targetDirArg, options = {}) {
+    const isSilent = options.yes === true;
 
     if (!targetDirArg) {
         console.error('❌ 错误: 请指定目标项目目录。');
@@ -243,19 +249,21 @@ async function main() {
     }
 
     // 4. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
-    console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar)...');
+    console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander)...');
     try {
         fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
             "name": "evo-lite-workspace",
             "version": SELF_VERSION,
             "private": true,
-            "dependencies": {}
+            "dependencies": {
+                "commander": "^14.0.2"
+            }
         }, null, 2));
-        execSync('npm install better-sqlite3 tar', { cwd: evoLiteDir, stdio: 'inherit' });
+        execSync('npm install better-sqlite3 tar commander', { cwd: evoLiteDir, stdio: 'inherit' });
         console.log('✅ 依赖在线安装成功！');
     } catch (e) {
         console.warn('\n⚠️ 警告: npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)');
-        console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 tar');
+        console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 tar commander');
     }
     console.log('📡 运行时引擎已锁定为: sqlite-fts5-trigram');
 
@@ -307,7 +315,15 @@ async function main() {
     console.log('----------------------------------------------------');
 }
 
-main().catch(error => {
+async function main(argv = process.argv) {
+    const program = buildProgram();
+    program.parse(argv);
+    const options = program.opts();
+    const [targetDirArg] = program.processedArgs;
+    await runInit(targetDirArg, options);
+}
+
+function handleCliError(error) {
     // 优雅捕获用户按下 Ctrl+C 带来的中断报错
     if (error.code === 'ABORT_ERR') {
         console.log('\n🚪 接收到中断信号，初始化已取消。');
@@ -315,4 +331,15 @@ main().catch(error => {
     }
     console.error("❌ 初始化过程中发生未卜错误:", error);
     process.exit(1);
-});
+}
+
+module.exports = {
+    buildProgram,
+    handleCliError,
+    main,
+    runInit,
+};
+
+if (path.resolve(process.argv[1] || '') === path.resolve(__filename)) {
+    main().catch(handleCliError);
+}

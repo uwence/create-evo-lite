@@ -1,2 +1,4 @@
 #!/usr/bin/env node
-require('../index.js');
+const { handleCliError, main } = require('../index.js');
+
+main().catch(handleCliError);

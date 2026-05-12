@@ -1,6 +1,7 @@
 const fs = require('fs');
 const memoryService = require('./memory.service');
 const { initDB } = require('./db');
+const { Command } = require('commander');
 
 function getCliText(argv = process.argv) {
     const action = argv[2];
@@ -24,21 +25,53 @@ function getCliText(argv = process.argv) {
     return argv[3];
 }
 
-const action = process.argv[2];
-let text = getCliText(process.argv);
-
-const typeArg = process.argv.find(arg => arg.startsWith('--type='));
-const archiveType = typeArg ? typeArg.split('=')[1] : 'task';
-
-const fileArg = process.argv.find(arg => arg.startsWith('--file='));
-if (fileArg) {
-    const filePath = fileArg.split('=')[1];
-    if (fs.existsSync(filePath)) {
-        text = fs.readFileSync(filePath, 'utf8').trim();
-    } else {
-        console.error(`❌ 指定的文件未找到: ${filePath}`);
-        process.exit(1);
+function readTextFromFile(filePath) {
+    if (!fs.existsSync(filePath)) {
+        throw new Error(`❌ 指定的文件未找到: ${filePath}`);
     }
+    return fs.readFileSync(filePath, 'utf8').trim();
+}
+
+function resolveCliText(text, options = {}) {
+    if (options.file) {
+        return readTextFromFile(options.file);
+    }
+    if (typeof options.content === 'string') {
+        return options.content;
+    }
+    if (typeof options.query === 'string') {
+        return options.query;
+    }
+    return typeof text === 'string' ? text : '';
+}
+
+function collectOption(value, previous = []) {
+    previous.push(value);
+    return previous;
+}
+
+function parseSuccessOption(value) {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'ok', 'success'].includes(normalized)) {
+        return true;
+    }
+    if (['false', '0', 'no', 'error', 'failed', 'failure'].includes(normalized)) {
+        return false;
+    }
+    return null;
+}
+
+function withTextSourceOptions(command, mode = 'content') {
+    command.option('--file <path>', 'Read input text from a file');
+    if (mode === 'query') {
+        command.option('--query <text>', 'Query text override');
+        return command;
+    }
+    command.option('--content <text>', 'Text content override');
+    return command;
 }
 
 async function bootstrap() {
@@ -119,12 +152,8 @@ function formatTrackResult(result) {
     return lines.join('\n');
 }
 
-function hasFlag(flag) {
-    return process.argv.includes(flag);
-}
-
-function printPayload(payload, formatter) {
-    if (hasFlag('--json')) {
+function printPayload(payload, formatter, options = {}) {
+    if (options.json === true) {
         console.log(JSON.stringify(payload, null, 2));
         return;
     }
@@ -253,233 +282,304 @@ function formatHookLifecycle(report) {
     return lines.join('\n');
 }
 
-async function runContextCommand() {
-    const op = process.argv[3];
+async function runContextCommand(op, text, options = {}) {
     if (op === 'read') {
-        printPayload(memoryService.readActiveContext(), formatContextRead);
+        printPayload(memoryService.readActiveContext(), formatContextRead, options);
         return;
     }
 
     if (op === 'summary') {
-        printPayload(memoryService.summarizeActiveContext(), formatContextSummary);
+        printPayload(memoryService.summarizeActiveContext(), formatContextSummary, options);
         return;
     }
 
     if (op === 'validate') {
-        printPayload(memoryService.validateActiveContextFile(), formatContextValidation);
+        printPayload(memoryService.validateActiveContextFile(), formatContextValidation, options);
         return;
     }
 
     if (op === 'track') {
-        const mechanismArg = process.argv.find(arg => arg.startsWith('--mechanism='));
-        const mechanism = mechanismArg ? mechanismArg.substring('--mechanism='.length) : null;
-        const detailsArg = process.argv.find(arg => arg.startsWith('--details='));
-        const details = detailsArg ? detailsArg.substring('--details='.length) : text || '';
-        const resolveArg = process.argv.find(arg => arg.startsWith('--resolve='));
-        const type = archiveType;
-        const result = await memoryService.track(mechanism, details, {
-            resolve: resolveArg ? resolveArg.substring('--resolve='.length) : null,
-            type,
+        const details = typeof options.details === 'string'
+            ? options.details
+            : resolveCliText(text, options);
+        const result = await memoryService.track(options.mechanism, details, {
+            resolve: options.resolve || null,
+            type: options.type || 'task',
         });
         console.log(formatTrackResult(result));
         return;
     }
 
     if (op === 'add') {
-        if (!text) {
+        const taskText = resolveCliText(text, options);
+        if (!taskText) {
             throw new Error('Usage: node .evo-lite/cli/memory.js context add "新任务描述"');
         }
-        console.log(memoryService.addTask(text));
+        console.log(memoryService.addTask(taskText));
         return;
     }
 
     if (op === 'focus') {
-        if (!text) {
+        const focusText = resolveCliText(text, options);
+        if (!focusText) {
             throw new Error('Usage: node .evo-lite/cli/memory.js context focus "新焦点内容"');
         }
-        console.log(memoryService.setFocus(text));
+        console.log(memoryService.setFocus(focusText));
         return;
     }
 
     if (op === 'inject') {
-        memoryService.inject(text);
+        memoryService.inject(resolveCliText(text, options));
         return;
     }
 
     throw new Error(`Unknown context operation: '${op}'.`);
 }
 
-async function runHooksCommand() {
-    const op = process.argv[3] || 'status';
+async function runHooksCommand(op = 'status', options = {}) {
     if (!['status', 'verify', 'install', 'advise'].includes(op)) {
         throw new Error(`Unknown hooks operation: '${op}'. Use status, verify, install, or advise.`);
     }
     if (op === 'install') {
-        printPayload(memoryService.installHookScaffold({ force: hasFlag('--force') }), formatHookInstall);
+        printPayload(memoryService.installHookScaffold({ force: options.force === true }), formatHookInstall, options);
         return;
     }
     if (op === 'advise') {
-        const event = process.argv[4] || 'sessionstart';
-        const toolArg = process.argv.find(arg => arg.startsWith('--tool='));
-        const tool = toolArg ? toolArg.substring('--tool='.length) : null;
-        const commandArg = process.argv.find(arg => arg.startsWith('--command='));
-        const command = commandArg ? commandArg.substring('--command='.length) : null;
-        const outputArg = process.argv.find(arg => arg.startsWith('--output='));
-        const output = outputArg ? outputArg.substring('--output='.length) : null;
-        const targets = process.argv
-            .filter(arg => arg.startsWith('--target='))
-            .map(arg => arg.substring('--target='.length))
-            .filter(Boolean);
-        const successArg = process.argv.find(arg => arg.startsWith('--success='));
-        let success = null;
-        if (successArg) {
-            const normalized = successArg.substring('--success='.length).trim().toLowerCase();
-            if (['true', '1', 'yes', 'ok', 'success'].includes(normalized)) {
-                success = true;
-            } else if (['false', '0', 'no', 'error', 'failed', 'failure'].includes(normalized)) {
-                success = false;
-            }
-        }
-        const report = memoryService.inspectHookLifecycle(event, { command, output, success, targets, tool });
-        printPayload(report, formatHookLifecycle);
+        const report = memoryService.inspectHookLifecycle(options.event || 'sessionstart', {
+            command: options.command || null,
+            output: options.output || null,
+            success: parseSuccessOption(options.success),
+            targets: Array.isArray(options.target) ? options.target : [],
+            tool: options.tool || null,
+        });
+        printPayload(report, formatHookLifecycle, options);
         if (report.blocked) {
             process.exitCode = 2;
         }
         return;
     }
-    printPayload(memoryService.inspectHookScaffold(), formatHookScaffold);
+    printPayload(memoryService.inspectHookScaffold(), formatHookScaffold, options);
 }
 
-async function run() {
-    if (action === 'remember' || action === 'memorize') {
+async function runMcpCommand(op = 'detect', options = {}) {
+    const mcpDetect = require('./mcp-detect');
+    if (!['detect', 'list', 'explain'].includes(op)) {
+        throw new Error(`Unknown mcp operation: '${op}'. Use detect, list, or explain.`);
+    }
+    const report = mcpDetect.detectMcpCapabilities();
+    printPayload(report, payload => mcpDetect.formatMcpReport(payload, { explain: op === 'explain' }), options);
+}
+
+function buildProgram() {
+    const program = new Command();
+    const contextCommand = program.command('context').description('Modify active_context.md anchors and inspect runtime state.');
+    const hooksCommand = program.command('hooks').description('Inspect or install hook scaffold assets.');
+    const mcpCommand = program.command('mcp').description('Read-only MCP capability discovery for the current workspace.');
+
+    program
+        .name('memory')
+        .description('Evo-Lite runtime CLI')
+        .showHelpAfterError();
+
+    withTextSourceOptions(
+        program.command('remember [text]').alias('memorize').description('Write a new memory fragment into the database.')
+    ).action(async (text, options) => {
         await bootstrap();
-        if (!text) {
+        const memoryText = resolveCliText(text, options);
+        if (!memoryText) {
             throw new Error('Usage: node memory.js remember <"text message"> OR node memory.js remember --file=<path>');
         }
-        await memoryService.memorize(text);
-        return;
-    }
+        await memoryService.memorize(memoryText);
+    });
 
-    if (action === 'recall') {
+    withTextSourceOptions(
+        program.command('recall [query]').description('Local FTS/BM25 search against the memory database.'),
+        'query'
+    ).action(async (query, options) => {
         await bootstrap();
-        if (!text) {
+        const recallQuery = resolveCliText(query, options);
+        if (!recallQuery) {
             throw new Error('Usage: node memory.js recall <"text message"> OR node memory.js recall --file=<path>');
         }
-        printResults(await memoryService.recall(text));
-        return;
-    }
+        printResults(await memoryService.recall(recallQuery));
+    });
 
-    if (action === 'forget') {
+    program.command('forget <id>').description('Permanently purge specific memory by ID.').action(async id => {
         await bootstrap();
-        memoryService.forget(text);
-        return;
-    }
+        memoryService.forget(id);
+    });
 
-    if (action === 'list' || action === 'stats') {
+    program.command('list').description('List all stored memories.').action(async () => {
         await bootstrap();
-        console.log(action === 'stats' ? memoryService.stats() : memoryService.list());
-        return;
-    }
+        console.log(memoryService.list());
+    });
 
-    if (action === 'export') {
+    program.command('stats').description('Display current database capacity and statistics.').action(async () => {
         await bootstrap();
-        memoryService.exportMemories(text);
-        return;
-    }
+        console.log(memoryService.stats());
+    });
 
-    if (action === 'import') {
+    program.command('export <file>').description('Export all memories to a JSON file.').action(async file => {
         await bootstrap();
-        await memoryService.importMemories(text);
-        return;
-    }
+        memoryService.exportMemories(file);
+    });
 
-    if (action === 'archive') {
+    program.command('import <file>').description('Import memories from a JSON file path.').action(async file => {
         await bootstrap();
-        const archiveText = text && text.startsWith('--') ? '' : text;
-        if (!archiveText) {
-            throw new Error('Usage: node memory.js archive <"text message"> [--type=task|bug|note]');
-        }
-        console.log(await memoryService.archive(archiveText, archiveType));
-        return;
-    }
+        await memoryService.importMemories(file);
+    });
 
-    if (action === 'sync') {
+    withTextSourceOptions(
+        program.command('archive [text]').description('Save a summary to raw_memory/ and auto-index it.')
+    )
+        .option('--type <type>', 'Archive type', 'task')
+        .action(async (text, options) => {
+            await bootstrap();
+            const archiveText = resolveCliText(text, options);
+            if (!archiveText) {
+                throw new Error('Usage: node memory.js archive <"text message"> [--type=task|bug|note]');
+            }
+            console.log(await memoryService.archive(archiveText, options.type || 'task'));
+        });
+
+    program.command('sync').description('Check for unindexed raw_memory and ingest them.').action(async () => {
         await bootstrap();
         console.log(await memoryService.syncIndexMemory());
-        return;
-    }
+    });
 
-    if (action === 'rebuild' || action === 'vectorize') {
+    program.command('rebuild').alias('vectorize').description('Rebuild the local FTS index from archive files.').action(async () => {
         await bootstrap();
         await memoryService.rebuildLocalIndex();
-        return;
-    }
+    });
 
-    if (action === 'wash') {
+    program.command('wash').description('Compatibility entry that points you to rebuild / /wash workflow.').action(() => {
         memoryService.wash();
-        return;
-    }
+    });
 
-    if (action === 'verify') {
+    program.command('verify').description('Run initialization checks, git state scans, and database verifications.').action(async () => {
         await memoryService.verify();
+    });
+
+    mcpCommand.command('detect').option('--json', 'Print JSON output').action(async options => {
+        await runMcpCommand('detect', options);
+    });
+    mcpCommand.command('list').option('--json', 'Print JSON output').action(async options => {
+        await runMcpCommand('list', options);
+    });
+    mcpCommand.command('explain').option('--json', 'Print JSON output').action(async options => {
+        await runMcpCommand('explain', options);
+    });
+    mcpCommand.action(async () => {
+        await runMcpCommand('detect');
+    });
+
+    hooksCommand.command('status').option('--json', 'Print JSON output').action(async options => {
+        await runHooksCommand('status', options);
+    });
+    hooksCommand.command('verify').option('--json', 'Print JSON output').action(async options => {
+        await runHooksCommand('verify', options);
+    });
+    hooksCommand.command('install')
+        .option('--json', 'Print JSON output')
+        .option('--force', 'Overwrite existing hook assets after backing them up')
+        .action(async options => {
+            await runHooksCommand('install', options);
+        });
+    hooksCommand.command('advise [event]')
+        .option('--json', 'Print JSON output')
+        .option('--tool <tool>', 'Tool name')
+        .option('--command <command>', 'Associated command text')
+        .option('--output <output>', 'Associated output text')
+        .option('--target <path>', 'Touched target path', collectOption, [])
+        .option('--success <state>', 'Normalized success state')
+        .action(async (event, options) => {
+            await runHooksCommand('advise', {
+                ...options,
+                event: event || 'sessionstart',
+            });
+        });
+    hooksCommand.action(async () => {
+        await runHooksCommand('status');
+    });
+
+    contextCommand.command('read').option('--json', 'Print JSON output').action(async options => {
+        await runContextCommand('read', '', options);
+    });
+    contextCommand.command('summary').option('--json', 'Print JSON output').action(async options => {
+        await runContextCommand('summary', '', options);
+    });
+    contextCommand.command('validate').option('--json', 'Print JSON output').action(async options => {
+        await runContextCommand('validate', '', options);
+    });
+    withTextSourceOptions(
+        contextCommand.command('track [details]').description('Persist a completed action into trajectory and archive.')
+    )
+        .requiredOption('--mechanism <mechanism>', 'Mechanism label for trajectory tracking')
+        .option('--details <text>', 'Detailed archive text override')
+        .option('--resolve <hash>', 'Resolve a backlog hash')
+        .option('--type <type>', 'Archive type', 'task')
+        .action(async (details, options) => {
+            await runContextCommand('track', details, options);
+        });
+    withTextSourceOptions(
+        contextCommand.command('add [text]').description('Add a new backlog item.')
+    ).action(async (text, options) => {
+        await runContextCommand('add', text, options);
+    });
+    withTextSourceOptions(
+        contextCommand.command('focus [text]').description('Set the current focus text.')
+    ).action(async (text, options) => {
+        await runContextCommand('focus', text, options);
+    });
+    withTextSourceOptions(
+        contextCommand.command('inject [text]').description('Internal/experimental context inject command.')
+    ).action(async (text, options) => {
+        await runContextCommand('inject', text, options);
+    });
+    contextCommand.action(() => {
+        contextCommand.outputHelp();
+    });
+
+    withTextSourceOptions(
+        program.command('track [details]').description('Alias for context track.')
+    )
+        .requiredOption('--mechanism <mechanism>', 'Mechanism label for trajectory tracking')
+        .option('--details <text>', 'Detailed archive text override')
+        .option('--resolve <hash>', 'Resolve a backlog hash')
+        .option('--type <type>', 'Archive type', 'task')
+        .action(async (details, options) => {
+            await runContextCommand('track', details, options);
+        });
+    withTextSourceOptions(program.command('add [text]').description('Alias for context add.')).action(async (text, options) => {
+        await runContextCommand('add', text, options);
+    });
+    withTextSourceOptions(program.command('focus [text]').description('Alias for context focus.')).action(async (text, options) => {
+        await runContextCommand('focus', text, options);
+    });
+
+    program.command('inspect')
+        .description('Run the inspector HTTP server.')
+        .option('--port <port>', 'Preferred port', value => parseInt(value, 10), 0)
+        .action(async options => {
+            const inspector = require('./inspector');
+            await inspector.runInspectCommand({ port: options.port || 0 });
+            await new Promise(() => {});
+        });
+
+    program.action(() => {
+        program.outputHelp();
+    });
+
+    return program;
+}
+
+async function run(argv = process.argv) {
+    const program = buildProgram();
+    if (!Array.isArray(argv) || argv.length <= 2) {
+        program.outputHelp();
         return;
     }
-
-    if (action === 'mcp') {
-        const mcpDetect = require('./mcp-detect');
-        const op = process.argv[3] || 'detect';
-        if (!['detect', 'list', 'explain'].includes(op)) {
-            throw new Error(`Unknown mcp operation: '${op}'. Use detect, list, or explain.`);
-        }
-        const report = mcpDetect.detectMcpCapabilities();
-        printPayload(report, payload => mcpDetect.formatMcpReport(payload, { explain: op === 'explain' }));
-        return;
-    }
-
-    if (action === 'hooks') {
-        await runHooksCommand();
-        return;
-    }
-
-    if (action === 'context') {
-        await runContextCommand();
-        return;
-    }
-
-    if (action === 'track') {
-        process.argv.splice(2, 1, 'context', 'track');
-        await runContextCommand();
-        return;
-    }
-
-    if (action === 'focus') {
-        process.argv.splice(2, 1, 'context', 'focus');
-        await runContextCommand();
-        return;
-    }
-
-    if (action === 'add') {
-        process.argv.splice(2, 1, 'context', 'add');
-        await runContextCommand();
-        return;
-    }
-
-    if (action === 'inspect') {
-        const inspector = require('./inspector');
-        const portArg = process.argv.find(arg => arg.startsWith('--port='));
-        const port = portArg ? parseInt(portArg.substring('--port='.length), 10) : 0;
-        await inspector.runInspectCommand({ port });
-        // Keep the process alive; runInspectCommand registers its own SIGINT handler.
-        await new Promise(() => {});
-        return;
-    }
-
-    if (!action || action === 'help') {
-        printHelp();
-        return;
-    }
-
-    throw new Error(`Unknown action: '${action}'. Run 'node .evo-lite/cli/memory.js help' for usage.`);
+    await program.parseAsync(argv);
 }
 
 if (require.main === module) {
