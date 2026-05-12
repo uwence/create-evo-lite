@@ -438,6 +438,13 @@ async function runTests() {
         const postCommitAdvice = postCommitLoaded.service.inspectHookLifecycle('posttooluse', { tool: 'git.commit' });
         assert.strictEqual(postCommitAdvice.trackNeedsUpdate, true, 'hook lifecycle advice should detect when the latest commit has not been tracked yet');
         assert.ok(postCommitAdvice.reminders.some(reminder => reminder.includes('context track')), 'hook lifecycle advice did not remind about running context track after a commit');
+        const partialClosureAdvice = postCommitLoaded.service.inspectHookLifecycle('posttooluse', {
+            command: 'git commit -m "test" && node .evo-lite/cli/memory.js context track --mechanism="Lifecycle" --details="Attempted closure"',
+            success: false,
+            tool: 'terminal.run',
+        });
+        assert.ok(partialClosureAdvice.reminders.some(reminder => reminder.includes('返回失败')), 'hook lifecycle advice did not surface a failed closure command');
+        assert.ok(partialClosureAdvice.reminders.some(reminder => reminder.includes('尝试执行 context track')), 'hook lifecycle advice did not detect an attempted-but-incomplete context track step');
 
         const stopRuntime = createTempRuntimeRoot('hook-stop');
         const stopLoaded = loadCli(stopRuntime.runtimeRoot, {

@@ -920,7 +920,12 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
 
     const warnings = [];
     const reminders = [];
+    const command = String(options.command || '').trim();
+    const output = String(options.output || '').trim();
+    const success = typeof options.success === 'boolean' ? options.success : null;
     const tool = String(options.tool || '').trim();
+    const commandLower = command.toLowerCase();
+    const outputLower = output.toLowerCase();
     const toolLower = tool.toLowerCase();
     const contextExists = fs.existsSync(ACTIVE_CONTEXT_PATH);
     const contextSummary = contextExists ? summarizeActiveContext() : null;
@@ -950,6 +955,9 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
     const changedFiles = (gitStatus || []).map(line => line.slice(3).trim().replace(/\\/g, '/'));
     const releaseFiles = changedFiles.filter(filePath => /(^|\/)(package\.json|CHANGELOG\.md|VERSION)$/i.test(filePath));
     const commitLikeTool = /commit|release|ship|version/.test(toolLower);
+    const commitLikeCommand = /(git\s+commit\b|npm\s+version\b|pnpm\s+version\b|yarn\s+version\b|changeset\b|\brelease\b|\bship\b)/.test(commandLower);
+    const attemptedTrackCommand = /(context\s+track\b|memory\.js\s+context\s+track\b|mem(?:\.cmd)?\s+track\b)/.test(commandLower);
+    const commitLikeActivity = commitLikeTool || commitLikeCommand;
 
     if (!contextExists) {
         reminders.push('active_context.md 缺失；先恢复或重新初始化状态机文件，再继续使用 hooks 自动提醒。');
@@ -967,7 +975,16 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
         }
     }
 
-    if (((event === 'posttooluse' && commitLikeTool) || ['precompact', 'stop'].includes(event)) && trackNeedsUpdate) {
+    if (event === 'posttooluse' && success === false && (commitLikeActivity || attemptedTrackCommand)) {
+        reminders.push('检测到闭环相关命令返回失败；不要报告完成，先检查 commit/track/release 的实际输出。');
+    }
+
+    if (event === 'posttooluse' && trackNeedsUpdate && attemptedTrackCommand) {
+        const failureHint = success === false || /error|failed|exception/.test(outputLower)
+            ? '；当前输出显示闭环命令未完成，优先检查 context track 步骤。'
+            : '；请确认命令串中的 context track 是否真正执行成功。';
+        reminders.push(`检测到命令已尝试执行 context track，但 TRAJECTORY 仍未更新${failureHint}`);
+    } else if (((event === 'posttooluse' && commitLikeActivity) || ['precompact', 'stop'].includes(event)) && trackNeedsUpdate) {
         reminders.push('检测到最新 commit 尚未写入 TRAJECTORY；请执行 `node .evo-lite/cli/memory.js context track --mechanism="..." --details="..."` 完成闭环。');
     }
 
@@ -988,13 +1005,16 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
         dirty,
         event,
         focus: contextSummary ? contextSummary.focus : null,
+        command: command || null,
         latestTrajectory: contextSummary ? contextSummary.latestTrajectory : null,
         releaseFiles,
         reminders,
+        success,
         tool: tool || null,
         trackNeedsUpdate,
         valid: reminders.length === 0,
         warnings,
+        output: output || null,
         workspaceRoot: getWorkspaceRoot(),
     };
 }

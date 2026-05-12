@@ -233,6 +233,12 @@ function formatHookLifecycle(report) {
     if (report.tool) {
         lines.push(`tool: ${report.tool}`);
     }
+    if (report.command) {
+        lines.push(`command: ${report.command}`);
+    }
+    if (report.success !== null) {
+        lines.push(`success: ${report.success ? 'yes' : 'no'}`);
+    }
     if (report.latestTrajectory) {
         lines.push(`latest: ${report.latestTrajectory.line}`);
     }
@@ -314,7 +320,21 @@ async function runHooksCommand() {
         const event = process.argv[4] || 'sessionstart';
         const toolArg = process.argv.find(arg => arg.startsWith('--tool='));
         const tool = toolArg ? toolArg.substring('--tool='.length) : null;
-        printPayload(memoryService.inspectHookLifecycle(event, { tool }), formatHookLifecycle);
+        const commandArg = process.argv.find(arg => arg.startsWith('--command='));
+        const command = commandArg ? commandArg.substring('--command='.length) : null;
+        const outputArg = process.argv.find(arg => arg.startsWith('--output='));
+        const output = outputArg ? outputArg.substring('--output='.length) : null;
+        const successArg = process.argv.find(arg => arg.startsWith('--success='));
+        let success = null;
+        if (successArg) {
+            const normalized = successArg.substring('--success='.length).trim().toLowerCase();
+            if (['true', '1', 'yes', 'ok', 'success'].includes(normalized)) {
+                success = true;
+            } else if (['false', '0', 'no', 'error', 'failed', 'failure'].includes(normalized)) {
+                success = false;
+            }
+        }
+        printPayload(memoryService.inspectHookLifecycle(event, { command, output, success, tool }), formatHookLifecycle);
         return;
     }
     printPayload(memoryService.inspectHookScaffold(), formatHookScaffold);
