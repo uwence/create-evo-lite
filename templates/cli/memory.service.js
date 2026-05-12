@@ -853,7 +853,7 @@ function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
             activeFile: path.join(workspaceRoot, file),
             templateFile: path.join(templateRootPath, file),
         })),
-        ...['evo.md', 'commit.md', 'mem.md', 'wash.md'].map(file => ({
+        ...['evo.md', 'commit.md', 'mem.md'].map(file => ({
             label: `.claude/commands/${file}`,
             activeFile: path.join(workspaceRoot, '.claude', 'commands', file),
             templateFile: path.join(templateRootPath, '.claude', 'commands', file),

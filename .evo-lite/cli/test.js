@@ -529,6 +529,7 @@ async function runTests() {
         });
         const configuredHookAdvice = configuredHookLoaded.service.inspectHookLifecycle('pretooluse', { tool: 'apply_patch' });
         assert.strictEqual(configuredHookAdvice.blocked, false, 'pretooluse should allow implementation after architecture.md is configured');
+        primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
 
         console.log('4. Testing archive / sync ...');
         const archiveResult = await primaryLoaded.service.archive('A structured implementation summary that should become a raw archive and be indexed immediately for later retrieval.');
