@@ -3,25 +3,47 @@
     "PreToolUse": [
       {
         "type": "command",
-        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ./.github/hooks/context-mode.ps1 pretooluse"
+        "command": "./.github/hooks/context-mode.sh pretooluse",
+        "windows": "cmd /d /c .\\.github\\hooks\\git-bash.cmd .\\.github\\hooks\\context-mode.sh pretooluse"
       }
     ],
     "PostToolUse": [
       {
         "type": "command",
-        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ./.github/hooks/context-mode.ps1 posttooluse"
+        "command": "./.github/hooks/context-mode.sh posttooluse",
+        "windows": "cmd /d /c .\\.github\\hooks\\git-bash.cmd .\\.github\\hooks\\context-mode.sh posttooluse"
+      },
+      {
+        "type": "command",
+        "command": "node ./.github/hooks/evo-lite-hook.js posttooluse"
       }
     ],
     "PreCompact": [
       {
         "type": "command",
-        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ./.github/hooks/context-mode.ps1 precompact"
+        "command": "./.github/hooks/context-mode.sh precompact",
+        "windows": "cmd /d /c .\\.github\\hooks\\git-bash.cmd .\\.github\\hooks\\context-mode.sh precompact"
+      },
+      {
+        "type": "command",
+        "command": "node ./.github/hooks/evo-lite-hook.js precompact"
       }
     ],
     "SessionStart": [
       {
         "type": "command",
-        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ./.github/hooks/context-mode.ps1 sessionstart"
+        "command": "./.github/hooks/context-mode.sh sessionstart",
+        "windows": "cmd /d /c .\\.github\\hooks\\git-bash.cmd .\\.github\\hooks\\context-mode.sh sessionstart"
+      },
+      {
+        "type": "command",
+        "command": "node ./.github/hooks/evo-lite-hook.js sessionstart"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node ./.github/hooks/evo-lite-hook.js stop"
       }
     ]
   }

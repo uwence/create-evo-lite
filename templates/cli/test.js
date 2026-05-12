@@ -188,7 +188,7 @@ function loadCli(runtimeRoot, extraEnv = {}) {
     process.env.EVO_LITE_SKIP_GIT_GUARD = '1';
     process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
 
-    for (const key of ['EVO_LITE_FORCE_GIT_DIRTY', 'EVO_LITE_SKIP_GIT_STATUS']) {
+    for (const key of ['EVO_LITE_FORCE_GIT_DIRTY', 'EVO_LITE_SKIP_GIT_STATUS', 'EVO_LITE_GIT_STATUS', 'EVO_LITE_GIT_STATUS_FILE', 'EVO_LITE_GIT_COMMIT']) {
         delete process.env[key];
     }
     Object.assign(process.env, extraEnv);
@@ -398,29 +398,58 @@ async function runTests() {
         assert.strictEqual(hookReport.valid, true, 'hook scaffold inspection should pass for the template-shaped workspace');
         assert.strictEqual(hookReport.missing.length, 0, 'hook scaffold inspection should not report missing assets for the template-shaped workspace');
         assert.ok(hookReport.assets.some(asset => asset.label === '.vscode/mcp.json' && asset.exists), 'hook scaffold inspection did not include the workspace MCP config asset');
+        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/evo-lite-hook.js' && asset.exists), 'hook scaffold inspection did not include the lifecycle advice hook wrapper');
+        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/git-bash.cmd' && asset.exists), 'hook scaffold inspection did not include the Windows Git Bash launcher asset');
         const missingHookRuntime = createTempRuntimeRoot('hook-missing');
         const missingHookLoaded = loadCli(missingHookRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
         });
-        fs.unlinkSync(path.join(missingHookRuntime.workspaceRoot, '.github', 'hooks', 'context-mode.ps1'));
+        fs.unlinkSync(path.join(missingHookRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'));
         const missingHookReport = missingHookLoaded.service.inspectHookScaffold();
         assert.strictEqual(missingHookReport.valid, false, 'hook scaffold inspection should fail when a required hook asset is missing');
-        assert.ok(missingHookReport.missing.includes('.github/hooks/context-mode.ps1'), 'hook scaffold inspection did not report the missing PowerShell hook wrapper');
+        assert.ok(missingHookReport.missing.includes('.github/hooks/evo-lite-hook.js'), 'hook scaffold inspection did not report the missing lifecycle advice hook wrapper');
 
         console.log('2bb. Testing hook scaffold install ...');
         const installHookRuntime = createTempRuntimeRoot('hook-install');
         const installHookLoaded = loadCli(installHookRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
         });
-        fs.unlinkSync(path.join(installHookRuntime.workspaceRoot, '.github', 'hooks', 'context-mode.ps1'));
+        fs.unlinkSync(path.join(installHookRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'));
         const installHookResult = installHookLoaded.service.installHookScaffold();
-        assert.ok(installHookResult.installed.includes('.github/hooks/context-mode.ps1'), 'hook scaffold install did not restore a missing hook wrapper');
-        assert.ok(fs.existsSync(path.join(installHookRuntime.workspaceRoot, '.github', 'hooks', 'context-mode.ps1')), 'hook scaffold install did not recreate the missing PowerShell hook wrapper');
+        assert.ok(installHookResult.installed.includes('.github/hooks/evo-lite-hook.js'), 'hook scaffold install did not restore a missing lifecycle advice hook wrapper');
+        assert.ok(fs.existsSync(path.join(installHookRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js')), 'hook scaffold install did not recreate the missing lifecycle advice hook wrapper');
         const installInstructionsPath = path.join(installHookRuntime.workspaceRoot, '.github', 'copilot-instructions.md');
         fs.writeFileSync(installInstructionsPath, '# mutated\n', 'utf8');
         const forceInstallResult = installHookLoaded.service.installHookScaffold({ force: true });
         assert.ok(forceInstallResult.overwritten.includes('.github/copilot-instructions.md'), 'hook scaffold install --force did not overwrite an existing managed asset');
         assert.ok(fs.existsSync(`${installInstructionsPath}.bak`), 'hook scaffold install --force did not create a backup before overwriting');
+
+        console.log('2bc. Testing hook lifecycle advice ...');
+        const lifecycleRuntime = createTempRuntimeRoot('hook-lifecycle');
+        const lifecycleLoaded = await bootstrapRuntime(lifecycleRuntime.runtimeRoot, {
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+            EVO_LITE_GIT_COMMIT: 'aaa1111',
+        });
+        await lifecycleLoaded.service.track('LifecycleBaseline', 'Baseline track entry before simulating a newer commit.');
+        const postCommitLoaded = loadCli(lifecycleRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+            EVO_LITE_GIT_COMMIT: 'bbb2222',
+        });
+        const postCommitAdvice = postCommitLoaded.service.inspectHookLifecycle('posttooluse', { tool: 'git.commit' });
+        assert.strictEqual(postCommitAdvice.trackNeedsUpdate, true, 'hook lifecycle advice should detect when the latest commit has not been tracked yet');
+        assert.ok(postCommitAdvice.reminders.some(reminder => reminder.includes('context track')), 'hook lifecycle advice did not remind about running context track after a commit');
+
+        const stopRuntime = createTempRuntimeRoot('hook-stop');
+        const stopLoaded = loadCli(stopRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: ' M package.json',
+            EVO_LITE_GIT_COMMIT: 'ccc3333',
+        });
+        const stopStaleDate = new Date(Date.now() - (48 * 60 * 60 * 1000));
+        fs.utimesSync(path.join(stopRuntime.runtimeRoot, 'active_context.md'), stopStaleDate, stopStaleDate);
+        const stopAdvice = stopLoaded.service.inspectHookLifecycle('stop');
+        assert.ok(stopAdvice.reminders.some(reminder => reminder.includes('未提交')), 'hook lifecycle stop advice did not warn about dirty git state');
+        assert.ok(stopAdvice.reminders.some(reminder => reminder.includes('24 小时')), 'hook lifecycle stop advice did not warn about stale active_context');
+        assert.ok(stopAdvice.reminders.some(reminder => reminder.includes('release/tag/CHANGELOG')), 'hook lifecycle stop advice did not warn about release closure after version-file changes');
 
         console.log('2c. Testing context track bootstraps a fresh init runtime ...');
         const freshTrackRuntime = createTempRuntimeRoot('fresh-track');
@@ -493,9 +522,21 @@ async function runTests() {
             'initializer did not scaffold .github/hooks/context-mode.json into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.ps1')),
-            'initializer did not scaffold .github/hooks/context-mode.ps1 into the target project'
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.sh')),
+            'initializer did not scaffold .github/hooks/context-mode.sh into the target project'
         );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'evo-lite-hook.js')),
+            'initializer did not scaffold .github/hooks/evo-lite-hook.js into the target project'
+        );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'git-bash.cmd')),
+            'initializer did not scaffold .github/hooks/git-bash.cmd into the target project'
+        );
+        const modernHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.json'), 'utf8'));
+        assert.ok(modernHookConfig.hooks.SessionStart.some(entry => entry.command.includes('evo-lite-hook.js sessionstart')), 'initializer did not scaffold SessionStart lifecycle advice hook');
+        assert.ok(modernHookConfig.hooks.PreCompact.some(entry => entry.command.includes('evo-lite-hook.js precompact')), 'initializer did not scaffold PreCompact lifecycle advice hook');
+        assert.ok(Array.isArray(modernHookConfig.hooks.Stop) && modernHookConfig.hooks.Stop.some(entry => entry.command.includes('evo-lite-hook.js stop')), 'initializer did not scaffold Stop lifecycle advice hook');
         assert.ok(
             fs.existsSync(path.join(modernInitRoot, '.vscode', 'mcp.json')),
             'initializer did not scaffold .vscode/mcp.json into the target project'
@@ -672,7 +713,9 @@ async function runTests() {
 
         const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {
             const hookConfigPath = path.join(templateRoot, '.github', 'hooks', 'context-mode.json');
-            fs.writeFileSync(hookConfigPath, `${fs.readFileSync(hookConfigPath, 'utf8')}\n`, 'utf8');
+            const hookConfig = JSON.parse(fs.readFileSync(hookConfigPath, 'utf8'));
+            hookConfig.hooks.PreToolUse[0].command = './.github/hooks/context-mode.sh altered-pretooluse';
+            fs.writeFileSync(hookConfigPath, JSON.stringify(hookConfig, null, 2), 'utf8');
         });
         const verifyDriftLoaded = await bootstrapRuntime(verifyRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',

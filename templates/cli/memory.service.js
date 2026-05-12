@@ -732,11 +732,12 @@ function normalizeTemplateComparableContent(file, content) {
             .trimEnd();
     }
     if (file !== 'models.js') {
-        return normalized;
+        return normalized.trimEnd();
     }
     return normalized
         .replace(/let ACTIVE_MODEL = '.*?';/, "let ACTIVE_MODEL = '__DYNAMIC_MODEL__';")
-        .replace(/let ACTIVE_DIMS = \d+;/, 'let ACTIVE_DIMS = __DYNAMIC_DIMS__;');
+        .replace(/let ACTIVE_DIMS = \d+;/, 'let ACTIVE_DIMS = __DYNAMIC_DIMS__;')
+        .trimEnd();
 }
 
 function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
@@ -757,7 +758,7 @@ function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
             activeFile: path.join(workspaceRoot, '.claude', 'commands', file),
             templateFile: path.join(templateRootPath, '.claude', 'commands', file),
         })),
-        ...['copilot-instructions.md', 'hooks/context-mode.json', 'hooks/context-mode.ps1'].map(file => ({
+        ...['copilot-instructions.md', 'hooks/context-mode.json', 'hooks/context-mode.sh', 'hooks/evo-lite-hook.js', 'hooks/git-bash.cmd'].map(file => ({
             label: `.github/${file}`,
             activeFile: path.join(workspaceRoot, '.github', ...file.split('/')),
             templateFile: path.join(templateRootPath, '.github', ...file.split('/')),
@@ -784,9 +785,19 @@ function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
             templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'context-mode.json') : null,
         },
         {
-            label: '.github/hooks/context-mode.ps1',
-            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'context-mode.ps1'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'context-mode.ps1') : null,
+            label: '.github/hooks/context-mode.sh',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'context-mode.sh'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'context-mode.sh') : null,
+        },
+        {
+            label: '.github/hooks/evo-lite-hook.js',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'evo-lite-hook.js') : null,
+        },
+        {
+            label: '.github/hooks/git-bash.cmd',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'git-bash.cmd'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'git-bash.cmd') : null,
         },
         {
             label: '.vscode/mcp.json',
@@ -899,6 +910,93 @@ function installHookScaffold(options = {}) {
 
     result.valid = result.missingTemplates.length === 0;
     return result;
+}
+
+function inspectHookLifecycle(event = 'sessionstart', options = {}) {
+    const allowedEvents = ['sessionstart', 'posttooluse', 'precompact', 'stop'];
+    if (!allowedEvents.includes(event)) {
+        throw new Error(`Unsupported hook lifecycle event: ${event}`);
+    }
+
+    const warnings = [];
+    const reminders = [];
+    const tool = String(options.tool || '').trim();
+    const toolLower = tool.toLowerCase();
+    const contextExists = fs.existsSync(ACTIVE_CONTEXT_PATH);
+    const contextSummary = contextExists ? summarizeActiveContext() : null;
+    const contextStats = contextExists ? fs.statSync(ACTIVE_CONTEXT_PATH) : null;
+    const staleHours = contextStats ? (Date.now() - contextStats.mtimeMs) / (1000 * 60 * 60) : null;
+    const contextStale = typeof staleHours === 'number' && staleHours > 24;
+    const currentCommit = getCommitHash();
+    const latestTrajectoryId = contextSummary && contextSummary.latestTrajectory ? contextSummary.latestTrajectory.id : null;
+    const trackNeedsUpdate = Boolean(currentCommit && currentCommit !== 'No-Git' && latestTrajectoryId && latestTrajectoryId !== currentCommit);
+
+    let gitStatus = null;
+    let dirty = null;
+    try {
+        const injectedGitStatus = getInjectedGitStatus();
+        gitStatus = filterNonEvoLiteGitStatusLines(
+            injectedGitStatus !== null ? injectedGitStatus : runGit(['status', '--porcelain'])
+        );
+        dirty = gitStatus.length > 0;
+    } catch (error) {
+        if (isGitInvocationBlocked(error)) {
+            warnings.push('git status unavailable in the current Node environment; prefer ./.evo-lite/mem or .evo-lite\\mem.cmd for full hook checks.');
+        } else {
+            warnings.push(`git status check failed: ${String(error.message || '').trim()}`);
+        }
+    }
+
+    const changedFiles = (gitStatus || []).map(line => line.slice(3).trim().replace(/\\/g, '/'));
+    const releaseFiles = changedFiles.filter(filePath => /(^|\/)(package\.json|CHANGELOG\.md|VERSION)$/i.test(filePath));
+    const commitLikeTool = /commit|release|ship|version/.test(toolLower);
+
+    if (!contextExists) {
+        reminders.push('active_context.md 缺失；先恢复或重新初始化状态机文件，再继续使用 hooks 自动提醒。');
+    } else {
+        if (contextSummary.validation && !contextSummary.validation.valid) {
+            reminders.push('active_context 结构校验失败；先执行 `node .evo-lite/cli/memory.js context validate --json` 并修复锚点问题。');
+        }
+        if (contextStale && ['sessionstart', 'precompact', 'stop'].includes(event)) {
+            reminders.push('active_context.md 已超过 24 小时未更新；先执行 `/evo` 或人工确认当前 focus/backlog 是否仍然可信。');
+        }
+        if (contextSummary.validation) {
+            for (const warning of contextSummary.validation.warnings) {
+                warnings.push(warning);
+            }
+        }
+    }
+
+    if (((event === 'posttooluse' && commitLikeTool) || ['precompact', 'stop'].includes(event)) && trackNeedsUpdate) {
+        reminders.push('检测到最新 commit 尚未写入 TRAJECTORY；请执行 `node .evo-lite/cli/memory.js context track --mechanism="..." --details="..."` 完成闭环。');
+    }
+
+    if (['precompact', 'stop'].includes(event) && dirty === true) {
+        reminders.push('工作区仍有未提交的非 .evo-lite 改动；结束前请确认是否需要提交、暂存或明确保留现场。');
+    }
+
+    if (['posttooluse', 'precompact', 'stop'].includes(event) && releaseFiles.length > 0) {
+        reminders.push(`检测到版本相关文件改动 (${releaseFiles.join(', ')})；请确认 release/tag/CHANGELOG 闭环是否完成。`);
+    }
+
+    return {
+        activeTaskCount: contextSummary ? contextSummary.activeTasks.length : 0,
+        checkedAt: new Date().toISOString(),
+        contextExists,
+        contextStale,
+        currentCommit,
+        dirty,
+        event,
+        focus: contextSummary ? contextSummary.focus : null,
+        latestTrajectory: contextSummary ? contextSummary.latestTrajectory : null,
+        releaseFiles,
+        reminders,
+        tool: tool || null,
+        trackNeedsUpdate,
+        valid: reminders.length === 0,
+        warnings,
+        workspaceRoot: getWorkspaceRoot(),
+    };
 }
 
 function isMissingMemorySchemaError(error) {
@@ -1465,6 +1563,7 @@ module.exports = {
     getSafetyState,
     importMemories,
     inject,
+    inspectHookLifecycle,
     list,
     memorize,
     parseGitStatusLines,

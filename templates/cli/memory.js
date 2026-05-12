@@ -220,6 +220,31 @@ function formatHookInstall(result) {
     return lines.join('\n');
 }
 
+function formatHookLifecycle(report) {
+    const lines = [
+        `hook_lifecycle: ${report.valid ? 'clear' : 'action-needed'}`,
+        `event: ${report.event}`,
+        `workspace: ${report.workspaceRoot}`,
+        `focus: ${report.focus || '(empty)'}`,
+        `active_tasks: ${report.activeTaskCount}`,
+        `dirty: ${report.dirty === null ? 'unknown' : report.dirty ? 'yes' : 'no'}`,
+        `track_needs_update: ${report.trackNeedsUpdate ? 'yes' : 'no'}`,
+    ];
+    if (report.tool) {
+        lines.push(`tool: ${report.tool}`);
+    }
+    if (report.latestTrajectory) {
+        lines.push(`latest: ${report.latestTrajectory.line}`);
+    }
+    for (const reminder of report.reminders) {
+        lines.push(`reminder: ${reminder}`);
+    }
+    for (const warning of report.warnings) {
+        lines.push(`warning: ${warning}`);
+    }
+    return lines.join('\n');
+}
+
 async function runContextCommand() {
     const op = process.argv[3];
     if (op === 'read') {
@@ -278,11 +303,18 @@ async function runContextCommand() {
 
 async function runHooksCommand() {
     const op = process.argv[3] || 'status';
-    if (!['status', 'verify', 'install'].includes(op)) {
-        throw new Error(`Unknown hooks operation: '${op}'. Use status, verify, or install.`);
+    if (!['status', 'verify', 'install', 'advise'].includes(op)) {
+        throw new Error(`Unknown hooks operation: '${op}'. Use status, verify, install, or advise.`);
     }
     if (op === 'install') {
         printPayload(memoryService.installHookScaffold({ force: hasFlag('--force') }), formatHookInstall);
+        return;
+    }
+    if (op === 'advise') {
+        const event = process.argv[4] || 'sessionstart';
+        const toolArg = process.argv.find(arg => arg.startsWith('--tool='));
+        const tool = toolArg ? toolArg.substring('--tool='.length) : null;
+        printPayload(memoryService.inspectHookLifecycle(event, { tool }), formatHookLifecycle);
         return;
     }
     printPayload(memoryService.inspectHookScaffold(), formatHookScaffold);
