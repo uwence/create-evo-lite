@@ -11,5 +11,3 @@ assets
 .npm-cache*
 *.tgz
 sandbox-*
-templates/embedding-model.tar.gz
-templates/fallback-deps.zip
