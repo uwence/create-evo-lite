@@ -927,6 +927,7 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
     const commandLower = command.toLowerCase();
     const outputLower = output.toLowerCase();
     const toolLower = tool.toLowerCase();
+    const responseLooksFailed = /(^|\s|:)(error|failed|failure|exception|non-zero|exit code [1-9])/i.test(output);
     const contextExists = fs.existsSync(ACTIVE_CONTEXT_PATH);
     const contextSummary = contextExists ? summarizeActiveContext() : null;
     const contextStats = contextExists ? fs.statSync(ACTIVE_CONTEXT_PATH) : null;
@@ -975,12 +976,12 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
         }
     }
 
-    if (event === 'posttooluse' && success === false && (commitLikeActivity || attemptedTrackCommand)) {
+    if (event === 'posttooluse' && (success === false || responseLooksFailed) && (commitLikeActivity || attemptedTrackCommand)) {
         reminders.push('检测到闭环相关命令返回失败；不要报告完成，先检查 commit/track/release 的实际输出。');
     }
 
     if (event === 'posttooluse' && trackNeedsUpdate && attemptedTrackCommand) {
-        const failureHint = success === false || /error|failed|exception/.test(outputLower)
+        const failureHint = success === false || responseLooksFailed
             ? '；当前输出显示闭环命令未完成，优先检查 context track 步骤。'
             : '；请确认命令串中的 context track 是否真正执行成功。';
         reminders.push(`检测到命令已尝试执行 context track，但 TRAJECTORY 仍未更新${failureHint}`);

@@ -37,6 +37,46 @@ function normalizeRawText(value) {
         .trim();
 }
 
+function pickOfficialToolInputCommand(toolInput) {
+    if (!toolInput || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
+        return null;
+    }
+
+    for (const key of ['command', 'commandLine', 'shellCommand', 'terminalCommand']) {
+        const value = compactText(toolInput[key]);
+        if (value) {
+            return value;
+        }
+    }
+
+    return null;
+}
+
+function extractOfficialHookPayload(parsed) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return null;
+    }
+
+    const toolInput = parsed.tool_input && typeof parsed.tool_input === 'object'
+        ? parsed.tool_input
+        : parsed.toolInput && typeof parsed.toolInput === 'object'
+            ? parsed.toolInput
+            : null;
+
+    const payload = {
+        command: pickOfficialToolInputCommand(toolInput),
+        output: compactText(parsed.tool_response || parsed.toolResponse, 1200),
+        success: null,
+        tool: compactText(parsed.tool_name || parsed.toolName),
+    };
+
+    if (!payload.command && payload.tool === 'runTerminalCommand') {
+        payload.command = compactText(parsed.command || parsed.commandLine);
+    }
+
+    return payload;
+}
+
 function flattenPayload(value, pathPrefix = '', entries = [], depth = 0) {
     if (value == null || depth > 5 || entries.length > 200) {
         return entries;
@@ -137,20 +177,27 @@ function readHookPayload() {
 
     try {
         const parsed = JSON.parse(normalizedRaw);
+        const officialPayload = extractOfficialHookPayload(parsed) || {};
         const entries = flattenPayload(parsed);
-        return {
+        const fallbackPayload = {
             command: pickFirstString(entries, [
                 /(^|\.)(command|commandLine|shellCommand|terminalCommand)$/i,
                 /(^|\.)(input|toolInput|tool_input|prompt|arguments)$/i,
             ]),
             output: pickFirstString(entries, [
-                /(^|\.)(stdout|stderr|output|resultText|message|summary)$/i,
+                /(^|\.)(tool_response|toolResponse|stdout|stderr|output|resultText|message|summary)$/i,
             ]),
             success: pickSuccess(entries),
             tool: pickFirstString(entries, [
                 /(^|\.)(toolName|tool_name|tool)$/i,
                 /(^|\.)(invocationName|tool\.name)$/i,
             ]),
+        };
+        return {
+            command: officialPayload.command || fallbackPayload.command,
+            output: officialPayload.output || fallbackPayload.output,
+            success: officialPayload.success ?? fallbackPayload.success,
+            tool: officialPayload.tool || fallbackPayload.tool,
         };
     } catch {
         return {

@@ -440,11 +440,42 @@ async function runTests() {
         assert.ok(postCommitAdvice.reminders.some(reminder => reminder.includes('context track')), 'hook lifecycle advice did not remind about running context track after a commit');
         const partialClosureAdvice = postCommitLoaded.service.inspectHookLifecycle('posttooluse', {
             command: 'git commit -m "test" && node .evo-lite/cli/memory.js context track --mechanism="Lifecycle" --details="Attempted closure"',
-            success: false,
+            output: 'context track failed after commit',
             tool: 'terminal.run',
         });
         assert.ok(partialClosureAdvice.reminders.some(reminder => reminder.includes('返回失败')), 'hook lifecycle advice did not surface a failed closure command');
         assert.ok(partialClosureAdvice.reminders.some(reminder => reminder.includes('尝试执行 context track')), 'hook lifecycle advice did not detect an attempted-but-incomplete context track step');
+        copyRecursive(TEMPLATE_CLI_DIR, path.join(lifecycleRuntime.runtimeRoot, 'cli'));
+        const wrapperResult = childProcess.spawnSync(
+            process.execPath,
+            [path.join(lifecycleRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'), 'posttooluse'],
+            {
+                cwd: lifecycleRuntime.workspaceRoot,
+                encoding: 'utf8',
+                env: {
+                    ...process.env,
+                    EVO_LITE_GIT_COMMIT: 'bbb2222',
+                    EVO_LITE_GIT_STATUS: '',
+                    EVO_LITE_ROOT: lifecycleRuntime.runtimeRoot,
+                    EVO_LITE_TEMPLATE_ROOT_DIR: TEMPLATE_ROOT_DIR,
+                    NODE_PATH: [path.join(WORKSPACE_ROOT, 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+                },
+                input: JSON.stringify({
+                    hookEventName: 'PostToolUse',
+                    tool_name: 'runTerminalCommand',
+                    tool_input: {
+                        command: 'git commit -m "test" && node .evo-lite/cli/memory.js context track --mechanism="Lifecycle" --details="Attempted closure"',
+                    },
+                    tool_response: 'context track failed after commit',
+                    tool_use_id: 'tool-123',
+                }),
+            }
+        );
+        assert.strictEqual(wrapperResult.status, 0, `official PostToolUse payload wrapper exited with ${wrapperResult.status}: ${wrapperResult.stderr}`);
+        const wrapperOutput = `${wrapperResult.stdout || ''}${wrapperResult.stderr || ''}`;
+        assert.ok(wrapperOutput.includes('tool: runTerminalCommand'), `wrapper did not parse the official tool_name field: ${wrapperOutput}`);
+        assert.ok(wrapperOutput.includes('command: git commit -m') && wrapperOutput.includes('context track'), `wrapper did not parse the official tool_input.command field: ${wrapperOutput}`);
+        assert.ok(wrapperOutput.includes('返回失败'), `wrapper did not surface failure based on official tool_response text: ${wrapperOutput}`);
 
         const stopRuntime = createTempRuntimeRoot('hook-stop');
         const stopLoaded = loadCli(stopRuntime.runtimeRoot, {
