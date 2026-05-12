@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const ALLOWED_EVENTS = new Set(['sessionstart', 'posttooluse', 'precompact', 'stop']);
+const ALLOWED_EVENTS = new Set(['sessionstart', 'pretooluse', 'posttooluse', 'precompact', 'stop']);
 const TOOL_ENV_KEYS = [
     'GITHUB_COPILOT_TOOL_NAME',
     'COPILOT_TOOL_NAME',
@@ -77,6 +77,22 @@ function extractOfficialHookPayload(parsed) {
     return payload;
 }
 
+function extractPatchTargets(value) {
+    if (typeof value !== 'string') {
+        return [];
+    }
+
+    const targets = [];
+    const normalized = normalizeRawText(value);
+    const patchRegex = /\*\*\* (?:Update|Add|Delete) File:\s+([^\r\n]+)/g;
+    let match = patchRegex.exec(normalized);
+    while (match) {
+        targets.push(match[1].trim());
+        match = patchRegex.exec(normalized);
+    }
+    return targets;
+}
+
 function flattenPayload(value, pathPrefix = '', entries = [], depth = 0) {
     if (value == null || depth > 5 || entries.length > 200) {
         return entries;
@@ -102,6 +118,37 @@ function flattenPayload(value, pathPrefix = '', entries = [], depth = 0) {
     }
 
     return entries;
+}
+
+function collectTouchedTargets(entries) {
+    const targets = [];
+    const seen = new Set();
+
+    const pushTarget = value => {
+        if (typeof value !== 'string') {
+            return;
+        }
+        const normalized = normalizeRawText(value);
+        if (!normalized || seen.has(normalized)) {
+            return;
+        }
+        seen.add(normalized);
+        targets.push(normalized);
+    };
+
+    for (const entry of entries) {
+        if (typeof entry.value !== 'string') {
+            continue;
+        }
+        if (/(^|\.)(filePath|dirPath|path|old_path|new_path|oldPath|newPath|targetPath)$/i.test(entry.path)) {
+            pushTarget(entry.value);
+        }
+        for (const patchTarget of extractPatchTargets(entry.value)) {
+            pushTarget(patchTarget);
+        }
+    }
+
+    return targets;
 }
 
 function pickFirstString(entries, patterns) {
@@ -149,6 +196,7 @@ function readHookPayload() {
             output: null,
             success: null,
             tool: null,
+            targets: [],
         };
     }
 
@@ -161,6 +209,7 @@ function readHookPayload() {
             output: null,
             success: null,
             tool: null,
+            targets: [],
         };
     }
 
@@ -172,6 +221,7 @@ function readHookPayload() {
             output: null,
             success: null,
             tool: null,
+            targets: [],
         };
     }
 
@@ -179,6 +229,7 @@ function readHookPayload() {
         const parsed = JSON.parse(normalizedRaw);
         const officialPayload = extractOfficialHookPayload(parsed) || {};
         const entries = flattenPayload(parsed);
+        const targets = collectTouchedTargets(entries);
         const fallbackPayload = {
             command: pickFirstString(entries, [
                 /(^|\.)(command|commandLine|shellCommand|terminalCommand)$/i,
@@ -198,6 +249,7 @@ function readHookPayload() {
             output: officialPayload.output || fallbackPayload.output,
             success: officialPayload.success ?? fallbackPayload.success,
             tool: officialPayload.tool || fallbackPayload.tool,
+            targets,
         };
     } catch {
         return {
@@ -205,6 +257,7 @@ function readHookPayload() {
             output: null,
             success: null,
             tool: null,
+            targets: extractPatchTargets(normalizedRaw),
         };
     }
 }
@@ -253,6 +306,9 @@ function main() {
     if (typeof hookPayload.success === 'boolean') {
         args.push(`--success=${hookPayload.success}`);
     }
+    for (const target of hookPayload.targets || []) {
+        args.push(`--target=${target}`);
+    }
 
     const result = spawnSync(process.execPath, args, {
         cwd: workspaceRoot,
@@ -263,7 +319,11 @@ function main() {
         console.error(`[evo-lite-hook] ${result.error.message}`);
     }
 
-    process.exit(0);
+    if (result.error) {
+        process.exit(1);
+    }
+
+    process.exit(typeof result.status === 'number' ? result.status : 0);
 }
 
 main();

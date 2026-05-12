@@ -448,7 +448,81 @@ async function runTests() {
         });
         assert.ok(partialClosureAdvice.reminders.some(reminder => reminder.includes('返回失败')), 'hook lifecycle advice did not surface a failed closure command');
         assert.ok(partialClosureAdvice.reminders.some(reminder => reminder.includes('尝试执行 context track')), 'hook lifecycle advice did not detect an attempted-but-incomplete context track step');
+        writeText(
+            path.join(lifecycleRuntime.workspaceRoot, '.agents', 'rules', 'architecture.md'),
+            fs.readFileSync(path.join(TEMPLATE_ROOT_DIR, '.agents', 'rules', 'architecture.md'), 'utf8')
+        );
+        const blockedPretoolAdvice = postCommitLoaded.service.inspectHookLifecycle('pretooluse', { tool: 'apply_patch' });
+        assert.strictEqual(blockedPretoolAdvice.blocked, true, 'pretooluse should block implementation work when architecture.md is still placeholder content');
+        assert.ok(blockedPretoolAdvice.reminders.some(reminder => reminder.includes('架构尚未锁定')), 'pretooluse did not explain the architecture lock blocker');
+        const architectureBootstrapAdvice = postCommitLoaded.service.inspectHookLifecycle('pretooluse', {
+            tool: 'apply_patch',
+            targets: ['.agents/rules/architecture.md'],
+        });
+        assert.strictEqual(architectureBootstrapAdvice.blocked, false, 'pretooluse should allow editing architecture.md while architecture.md is still placeholder content');
+        const architectureDirAdvice = postCommitLoaded.service.inspectHookLifecycle('pretooluse', {
+            tool: 'create_directory',
+            targets: ['.agents/rules'],
+        });
+        assert.strictEqual(architectureDirAdvice.blocked, false, 'pretooluse should allow creating the architecture rules directory before architecture is locked');
+        const readOnlyPretoolAdvice = postCommitLoaded.service.inspectHookLifecycle('pretooluse', { tool: 'read_file' });
+        assert.strictEqual(readOnlyPretoolAdvice.blocked, false, 'pretooluse should not block read-only work when architecture is unlocked');
         copyRecursive(TEMPLATE_CLI_DIR, path.join(lifecycleRuntime.runtimeRoot, 'cli'));
+        const blockedPretoolWrapperResult = childProcess.spawnSync(
+            process.execPath,
+            [path.join(lifecycleRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'), 'pretooluse'],
+            {
+                cwd: lifecycleRuntime.workspaceRoot,
+                encoding: 'utf8',
+                env: {
+                    ...process.env,
+                    EVO_LITE_GIT_COMMIT: 'bbb2222',
+                    EVO_LITE_GIT_STATUS: '',
+                    EVO_LITE_ROOT: lifecycleRuntime.runtimeRoot,
+                    EVO_LITE_TEMPLATE_ROOT_DIR: TEMPLATE_ROOT_DIR,
+                    NODE_PATH: [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+                },
+                input: JSON.stringify({
+                    hookEventName: 'PreToolUse',
+                    tool_name: 'apply_patch',
+                    tool_input: {
+                        filePath: 'index.js',
+                    },
+                    tool_use_id: 'tool-pre-1',
+                }),
+            }
+        );
+        assert.strictEqual(blockedPretoolWrapperResult.status, 2, `official PreToolUse payload wrapper should block implementation before architecture lock: ${blockedPretoolWrapperResult.stderr}`);
+        const blockedPretoolWrapperOutput = `${blockedPretoolWrapperResult.stdout || ''}${blockedPretoolWrapperResult.stderr || ''}`;
+        assert.ok(blockedPretoolWrapperOutput.includes('blocked: yes'), `wrapper did not surface the blocked state: ${blockedPretoolWrapperOutput}`);
+        assert.ok(blockedPretoolWrapperOutput.includes('架构尚未锁定'), `wrapper did not surface the architecture blocker: ${blockedPretoolWrapperOutput}`);
+        const architecturePretoolWrapperResult = childProcess.spawnSync(
+            process.execPath,
+            [path.join(lifecycleRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'), 'pretooluse'],
+            {
+                cwd: lifecycleRuntime.workspaceRoot,
+                encoding: 'utf8',
+                env: {
+                    ...process.env,
+                    EVO_LITE_GIT_COMMIT: 'bbb2222',
+                    EVO_LITE_GIT_STATUS: '',
+                    EVO_LITE_ROOT: lifecycleRuntime.runtimeRoot,
+                    EVO_LITE_TEMPLATE_ROOT_DIR: TEMPLATE_ROOT_DIR,
+                    NODE_PATH: [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+                },
+                input: JSON.stringify({
+                    hookEventName: 'PreToolUse',
+                    tool_name: 'apply_patch',
+                    tool_input: {
+                        input: '*** Begin Patch\n*** Update File: .agents/rules/architecture.md\n*** End Patch',
+                    },
+                    tool_use_id: 'tool-pre-architecture',
+                }),
+            }
+        );
+        assert.strictEqual(architecturePretoolWrapperResult.status, 0, `official PreToolUse payload wrapper should allow architecture bootstrap edits before architecture lock: ${architecturePretoolWrapperResult.stderr}`);
+        const architecturePretoolWrapperOutput = `${architecturePretoolWrapperResult.stdout || ''}${architecturePretoolWrapperResult.stderr || ''}`;
+        assert.ok(architecturePretoolWrapperOutput.includes('blocked: no'), `wrapper did not allow the architecture bootstrap edit: ${architecturePretoolWrapperOutput}`);
         const wrapperResult = childProcess.spawnSync(
             process.execPath,
             [path.join(lifecycleRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'), 'posttooluse'],
@@ -461,7 +535,7 @@ async function runTests() {
                     EVO_LITE_GIT_STATUS: '',
                     EVO_LITE_ROOT: lifecycleRuntime.runtimeRoot,
                     EVO_LITE_TEMPLATE_ROOT_DIR: TEMPLATE_ROOT_DIR,
-                    NODE_PATH: [path.join(WORKSPACE_ROOT, 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+                    NODE_PATH: [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
                 },
                 input: JSON.stringify({
                     hookEventName: 'PostToolUse',
@@ -479,6 +553,18 @@ async function runTests() {
         assert.ok(wrapperOutput.includes('tool: runTerminalCommand'), `wrapper did not parse the official tool_name field: ${wrapperOutput}`);
         assert.ok(wrapperOutput.includes('command: git commit -m') && wrapperOutput.includes('context track'), `wrapper did not parse the official tool_input.command field: ${wrapperOutput}`);
         assert.ok(wrapperOutput.includes('返回失败'), `wrapper did not surface failure based on official tool_response text: ${wrapperOutput}`);
+
+        const configuredPretoolRuntime = createTempRuntimeRoot('hook-pretool-configured');
+        writeText(
+            path.join(configuredPretoolRuntime.workspaceRoot, '.agents', 'rules', 'architecture.md'),
+            '# PROJECT ARCHITECTURE & STANDARDS\n\n- Language: Node.js\n- Framework/runtime: CLI + templates\n- Package manager: npm\n- Storage/retrieval: sqlite-fts5-trigram\n'
+        );
+        const configuredPretoolLoaded = loadCli(configuredPretoolRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+            EVO_LITE_GIT_COMMIT: 'ddd4444',
+        });
+        const configuredPretoolAdvice = configuredPretoolLoaded.service.inspectHookLifecycle('pretooluse', { tool: 'apply_patch' });
+        assert.strictEqual(configuredPretoolAdvice.blocked, false, 'pretooluse should allow implementation after architecture.md is configured');
 
         const stopRuntime = createTempRuntimeRoot('hook-stop');
         const stopLoaded = loadCli(stopRuntime.runtimeRoot, {
@@ -576,6 +662,7 @@ async function runTests() {
         );
         const modernHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.json'), 'utf8'));
         assert.ok(modernHookConfig.hooks.SessionStart.some(entry => entry.command.includes('evo-lite-hook.js sessionstart')), 'initializer did not scaffold SessionStart lifecycle advice hook');
+        assert.ok(modernHookConfig.hooks.PreToolUse.some(entry => entry.command.includes('evo-lite-hook.js pretooluse')), 'initializer did not scaffold PreToolUse architecture guard hook');
         assert.ok(modernHookConfig.hooks.PreCompact.some(entry => entry.command.includes('evo-lite-hook.js precompact')), 'initializer did not scaffold PreCompact lifecycle advice hook');
         assert.ok(Array.isArray(modernHookConfig.hooks.Stop) && modernHookConfig.hooks.Stop.some(entry => entry.command.includes('evo-lite-hook.js stop')), 'initializer did not scaffold Stop lifecycle advice hook');
         assert.ok(
@@ -788,6 +875,48 @@ async function runTests() {
         });
         assert.ok(driftVerifyOutput.includes('.github/hooks/context-mode.json is out of sync'), 'verify did not report actual hook asset drift');
         assert.ok(!driftVerifyOutput.includes('Verify completed with no active alerts.'), 'verify still reported a clean bill of health after drift');
+
+        console.log('10a. Testing sessionstart architecture guidance ...');
+        const missingArchitectureRuntime = createTempRuntimeRoot('hook-architecture-missing');
+        const missingArchitectureLoaded = await bootstrapRuntime(missingArchitectureRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const missingArchitectureReport = missingArchitectureLoaded.service.inspectHookLifecycle('sessionstart');
+        assert.strictEqual(missingArchitectureReport.architectureStatus, 'missing', 'sessionstart should report missing architecture rules');
+        assert.ok(
+            missingArchitectureReport.reminders.some(reminder => reminder.includes('architecture.md') && reminder.includes('候选架构/语言方案')),
+            'sessionstart did not remind the agent to propose architecture options when architecture.md is missing'
+        );
+
+        const placeholderArchitectureRuntime = createTempRuntimeRoot('hook-architecture-placeholder');
+        writeText(
+            path.join(placeholderArchitectureRuntime.workspaceRoot, '.agents', 'rules', 'architecture.md'),
+            fs.readFileSync(path.join(TEMPLATE_ROOT_DIR, '.agents', 'rules', 'architecture.md'), 'utf8')
+        );
+        const placeholderArchitectureLoaded = await bootstrapRuntime(placeholderArchitectureRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const placeholderArchitectureReport = placeholderArchitectureLoaded.service.inspectHookLifecycle('sessionstart');
+        assert.strictEqual(placeholderArchitectureReport.architectureStatus, 'placeholder', 'sessionstart should report placeholder architecture rules');
+        assert.ok(
+            placeholderArchitectureReport.reminders.some(reminder => reminder.includes('模板占位态')),
+            'sessionstart did not remind the agent that architecture.md is still placeholder content'
+        );
+
+        const configuredArchitectureRuntime = createTempRuntimeRoot('hook-architecture-configured');
+        writeText(
+            path.join(configuredArchitectureRuntime.workspaceRoot, '.agents', 'rules', 'architecture.md'),
+            '# PROJECT ARCHITECTURE & STANDARDS\n\n- Language: Node.js\n- Framework/runtime: CLI + templates\n- Package manager: npm\n- Storage/retrieval: sqlite-fts5-trigram\n'
+        );
+        const configuredArchitectureLoaded = await bootstrapRuntime(configuredArchitectureRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const configuredArchitectureReport = configuredArchitectureLoaded.service.inspectHookLifecycle('sessionstart');
+        assert.strictEqual(configuredArchitectureReport.architectureStatus, 'configured', 'sessionstart should report configured architecture rules');
+        assert.ok(
+            !configuredArchitectureReport.reminders.some(reminder => reminder.includes('architecture.md')),
+            'sessionstart should not emit architecture reminders after architecture.md is configured'
+        );
 
         console.log('11. Testing import...');
         const imported = createTempRuntimeRoot('import');

@@ -9,6 +9,12 @@ This workspace exposes context-mode through the Docker-backed MCP server defined
 - When resuming work after compaction or restart, search prior context with `ctx_search` before asking the user to repeat state.
 - Use `ctx stats` to inspect savings and `ctx doctor` when MCP or hook wiring looks unhealthy.
 
+# Architecture Rule
+
+- During `/evo` takeover or before the first substantive implementation step, read `.agents/rules/architecture.md`.
+- If `architecture.md` is configured, treat it as a hard constraint for language, framework/runtime, package manager, storage/retrieval, and module boundaries.
+- If `architecture.md` is missing or still placeholder content, do not assume a stack as fact. Propose 2-3 candidate architecture/language options from the current repo signals or project name, then ask the user whether to adopt your proposal or customize it before coding.
+
 <!-- evo-lite:local-extensions:start -->
 
 

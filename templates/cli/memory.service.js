@@ -257,6 +257,106 @@ function summarizeActiveContext() {
     };
 }
 
+function getArchitectureRulesPath() {
+    return path.join(getWorkspaceRoot(), '.agents', 'rules', 'architecture.md');
+}
+
+function normalizeHookTarget(target) {
+    if (typeof target !== 'string') {
+        return null;
+    }
+
+    const normalized = target.replace(/\\/g, '/').trim();
+    if (!normalized) {
+        return null;
+    }
+
+    return normalized.replace(/^[A-Za-z]:/, '');
+}
+
+function isArchitectureBootstrapTarget(target) {
+    const normalized = normalizeHookTarget(target);
+    if (!normalized) {
+        return false;
+    }
+
+    return [
+        '.agents',
+        '.agents/rules',
+        '.agents/rules/architecture.md',
+        '/.agents',
+        '/.agents/rules',
+        '/.agents/rules/architecture.md',
+    ].some(suffix => normalized === suffix || normalized.endsWith(suffix));
+}
+
+function onlyTargetsArchitectureBootstrap(targets) {
+    const normalizedTargets = Array.isArray(targets)
+        ? targets.map(normalizeHookTarget).filter(Boolean)
+        : [];
+    return normalizedTargets.length > 0 && normalizedTargets.every(isArchitectureBootstrapTarget);
+}
+
+function inspectArchitectureRules() {
+    const architecturePath = getArchitectureRulesPath();
+    if (!fs.existsSync(architecturePath)) {
+        return {
+            exists: false,
+            path: architecturePath,
+            placeholder: false,
+            status: 'missing',
+        };
+    }
+
+    const content = fs.readFileSync(architecturePath, 'utf8');
+    const placeholder = [
+        /\[填写/i,
+        /填写主语言|填写核心框架|填写包管理器|填写数据库或检索栈/,
+        /填写脚手架或主入口职责|填写模板层职责|填写实例运行时目录/,
+        /填写代码风格|填写不能绕过的状态机|填写目录纪律/,
+    ].some(pattern => pattern.test(content));
+
+    return {
+        exists: true,
+        path: architecturePath,
+        placeholder,
+        status: placeholder ? 'placeholder' : 'configured',
+    };
+}
+
+function isCommitLikeActivity(command, tool) {
+    const toolLower = String(tool || '').toLowerCase();
+    const commandLower = String(command || '').toLowerCase();
+    return /commit|release|ship|version/.test(toolLower)
+        || /(git\s+commit\b|npm\s+version\b|pnpm\s+version\b|yarn\s+version\b|changeset\b|\brelease\b|\bship\b)/.test(commandLower);
+}
+
+function isImplementationLikeActivity(command, tool) {
+    const toolLower = String(tool || '').toLowerCase();
+    const normalizedTool = toolLower.replace(/[^a-z0-9]/g, '');
+    const commandLower = String(command || '').toLowerCase();
+    const fileMutationTool = [
+        'applypatch',
+        'createfile',
+        'createdirectory',
+        'editfile',
+        'replace',
+        'rename',
+        'delete',
+        'move',
+        'writefile',
+        'inserteditintofile',
+        'editnotebookfile',
+    ].some(token => normalizedTool.includes(token));
+    const terminalTool = ['runterminalcommand', 'terminalrun', 'runinterminal'].some(token => normalizedTool.includes(token));
+    const terminalMutation = terminalTool && (
+        />\s*\S/.test(commandLower)
+        || /(^|[\s;|&])(git\s+(?:apply|add|commit|mv|rm)\b|npm\s+version\b|pnpm\s+version\b|yarn\s+version\b|changeset\b|\brelease\b|\bship\b|mkdir\b|touch\b|mv\b|cp\b|rm\b|del\b|copy\b|move\b|new-item\b|set-content\b|add-content\b|out-file\b|tee\b|sed\s+-i\b|perl\s+-pi\b)/.test(commandLower)
+    );
+
+    return fileMutationTool || terminalMutation;
+}
+
 function validateActiveContextFile() {
     ensureContextFile();
     return validateActiveContextMarkdown(fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8'));
@@ -913,7 +1013,7 @@ function installHookScaffold(options = {}) {
 }
 
 function inspectHookLifecycle(event = 'sessionstart', options = {}) {
-    const allowedEvents = ['sessionstart', 'posttooluse', 'precompact', 'stop'];
+    const allowedEvents = ['sessionstart', 'pretooluse', 'posttooluse', 'precompact', 'stop'];
     if (!allowedEvents.includes(event)) {
         throw new Error(`Unsupported hook lifecycle event: ${event}`);
     }
@@ -928,11 +1028,13 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
     const outputLower = output.toLowerCase();
     const toolLower = tool.toLowerCase();
     const responseLooksFailed = /(^|\s|:)(error|failed|failure|exception|non-zero|exit code [1-9])/i.test(output);
+    const targets = Array.isArray(options.targets) ? options.targets : [];
     const contextExists = fs.existsSync(ACTIVE_CONTEXT_PATH);
     const contextSummary = contextExists ? summarizeActiveContext() : null;
     const contextStats = contextExists ? fs.statSync(ACTIVE_CONTEXT_PATH) : null;
     const staleHours = contextStats ? (Date.now() - contextStats.mtimeMs) / (1000 * 60 * 60) : null;
     const contextStale = typeof staleHours === 'number' && staleHours > 24;
+    const architectureRules = inspectArchitectureRules();
     const currentCommit = getCommitHash();
     const latestTrajectoryId = contextSummary && contextSummary.latestTrajectory ? contextSummary.latestTrajectory.id : null;
     const trackNeedsUpdate = Boolean(currentCommit && currentCommit !== 'No-Git' && latestTrajectoryId && latestTrajectoryId !== currentCommit);
@@ -955,10 +1057,15 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
 
     const changedFiles = (gitStatus || []).map(line => line.slice(3).trim().replace(/\\/g, '/'));
     const releaseFiles = changedFiles.filter(filePath => /(^|\/)(package\.json|CHANGELOG\.md|VERSION)$/i.test(filePath));
-    const commitLikeTool = /commit|release|ship|version/.test(toolLower);
-    const commitLikeCommand = /(git\s+commit\b|npm\s+version\b|pnpm\s+version\b|yarn\s+version\b|changeset\b|\brelease\b|\bship\b)/.test(commandLower);
     const attemptedTrackCommand = /(context\s+track\b|memory\.js\s+context\s+track\b|mem(?:\.cmd)?\s+track\b)/.test(commandLower);
-    const commitLikeActivity = commitLikeTool || commitLikeCommand;
+    const commitLikeActivity = isCommitLikeActivity(command, tool);
+    const implementationLikeActivity = isImplementationLikeActivity(command, tool);
+    const architectureUnlocked = architectureRules.status === 'missing' || architectureRules.status === 'placeholder';
+    const architectureBootstrapEdit = onlyTargetsArchitectureBootstrap(targets);
+    const blocked = event === 'pretooluse'
+        && architectureUnlocked
+        && (implementationLikeActivity || commitLikeActivity || attemptedTrackCommand)
+        && !architectureBootstrapEdit;
 
     if (!contextExists) {
         reminders.push('active_context.md 缺失；先恢复或重新初始化状态机文件，再继续使用 hooks 自动提醒。');
@@ -974,6 +1081,18 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
                 warnings.push(warning);
             }
         }
+    }
+
+    if (event === 'sessionstart') {
+        if (architectureRules.status === 'missing') {
+            reminders.push('`.agents/rules/architecture.md` 缺失；执行 `/evo` 接管时请先根据现有项目痕迹或项目名提出 2-3 个候选架构/语言方案，并让用户明确选择“采纳建议”还是“自定义”。');
+        } else if (architectureRules.status === 'placeholder') {
+            reminders.push('`.agents/rules/architecture.md` 仍是模板占位态；执行 `/evo` 接管时不要把架构当既定事实，先基于现有项目痕迹或项目名提出候选方案，并让用户确认是沿用建议还是自定义。');
+        }
+    }
+
+    if (blocked) {
+        reminders.push(`架构尚未锁定（architecture.md: ${architectureRules.status}）；当前操作属于正式实现或提交闭环。先执行 \/evo 完成架构确认，并把 .agents/rules/architecture.md 从缺失/占位态更新为已配置后再继续。`);
     }
 
     if (event === 'posttooluse' && (success === false || responseLooksFailed) && (commitLikeActivity || attemptedTrackCommand)) {
@@ -1000,6 +1119,8 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
     return {
         activeTaskCount: contextSummary ? contextSummary.activeTasks.length : 0,
         checkedAt: new Date().toISOString(),
+        architectureStatus: architectureRules.status,
+        blocked,
         contextExists,
         contextStale,
         currentCommit,
@@ -1013,7 +1134,7 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
         success,
         tool: tool || null,
         trackNeedsUpdate,
-        valid: reminders.length === 0,
+        valid: !blocked && reminders.length === 0,
         warnings,
         output: output || null,
         workspaceRoot: getWorkspaceRoot(),

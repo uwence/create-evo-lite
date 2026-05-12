@@ -18,6 +18,8 @@ This file is not the canonical rule source. It is a root-level host adapter so C
 When taking over this project:
 
 1. Read `.agents/rules/` and `.agents/workflows/` as the canonical Evo-Lite semantics.
+  - Treat `.agents/rules/architecture.md` as the architecture source of truth.
+  - If `architecture.md` is missing or still placeholder during `/evo`, architecture is not locked yet: propose 2-3 candidate language/framework options from existing repo signals or the project name, then ask the user whether to adopt your proposal or customize it before coding.
 2. Read `.evo-lite/active_context.md` as the current runtime state.
 3. Use the host-appropriate Evo-Lite CLI wrapper when interacting with runtime state:
    - Unix / Bash: `./.evo-lite/mem`

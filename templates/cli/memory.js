@@ -227,6 +227,8 @@ function formatHookLifecycle(report) {
         `workspace: ${report.workspaceRoot}`,
         `focus: ${report.focus || '(empty)'}`,
         `active_tasks: ${report.activeTaskCount}`,
+        `architecture_status: ${report.architectureStatus || 'unknown'}`,
+        `blocked: ${report.blocked ? 'yes' : 'no'}`,
         `dirty: ${report.dirty === null ? 'unknown' : report.dirty ? 'yes' : 'no'}`,
         `track_needs_update: ${report.trackNeedsUpdate ? 'yes' : 'no'}`,
     ];
@@ -324,6 +326,10 @@ async function runHooksCommand() {
         const command = commandArg ? commandArg.substring('--command='.length) : null;
         const outputArg = process.argv.find(arg => arg.startsWith('--output='));
         const output = outputArg ? outputArg.substring('--output='.length) : null;
+        const targets = process.argv
+            .filter(arg => arg.startsWith('--target='))
+            .map(arg => arg.substring('--target='.length))
+            .filter(Boolean);
         const successArg = process.argv.find(arg => arg.startsWith('--success='));
         let success = null;
         if (successArg) {
@@ -334,7 +340,11 @@ async function runHooksCommand() {
                 success = false;
             }
         }
-        printPayload(memoryService.inspectHookLifecycle(event, { command, output, success, tool }), formatHookLifecycle);
+        const report = memoryService.inspectHookLifecycle(event, { command, output, success, targets, tool });
+        printPayload(report, formatHookLifecycle);
+        if (report.blocked) {
+            process.exitCode = 2;
+        }
         return;
     }
     printPayload(memoryService.inspectHookScaffold(), formatHookScaffold);

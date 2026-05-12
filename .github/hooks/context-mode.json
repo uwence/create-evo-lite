@@ -5,6 +5,14 @@
         "type": "command",
         "command": "./.github/hooks/context-mode.sh pretooluse",
         "windows": "cmd /d /c .\\.github\\hooks\\git-bash.cmd .\\.github\\hooks\\context-mode.sh pretooluse"
+      },
+      {
+        "type": "command",
+        "command": "node ./.github/hooks/evo-lite-hook.js pretooluse"
+      },
+      {
+        "type": "command",
+        "command": "node ./.github/hooks/dogfood-commit-hook.js pretooluse"
       }
     ],
     "PostToolUse": [
