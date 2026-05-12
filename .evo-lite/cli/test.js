@@ -26,6 +26,12 @@ function createTempRuntimeRoot(name) {
         fs.copyFileSync(path.join(TEMPLATE_ROOT_DIR, file), path.join(workspaceRoot, file));
     }
     copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.claude'), path.join(workspaceRoot, '.claude'));
+    for (const dir of ['.github', '.vscode']) {
+        const sourceDir = path.join(TEMPLATE_ROOT_DIR, dir);
+        if (fs.existsSync(sourceDir)) {
+            copyRecursive(sourceDir, path.join(workspaceRoot, dir));
+        }
+    }
     return { runtimeRoot, workspaceRoot };
 }
 
@@ -335,6 +341,9 @@ async function runTests() {
         console.log('2. Testing context add / track --resolve ...');
         const addResult = primaryLoaded.service.addTask('Finish the protocol restore follow-up task');
         assert.ok(/^[a-f0-9]{4}$/i.test(addResult.hash), 'context add did not create a 4-char hash');
+        const contextAfterAdd = fs.readFileSync(path.join(primary.runtimeRoot, 'active_context.md'), 'utf8');
+        assert.ok(!contextAfterAdd.includes('- [ ] 暂无活跃任务。'), 'context add should replace the empty backlog placeholder');
+        assert.ok(contextAfterAdd.includes(`[${addResult.hash}] Finish the protocol restore follow-up task`), 'context add did not persist the new backlog task');
         const trackResult = await primaryLoaded.service.track('ProtocolRestore', 'Restored the protocol-oriented CLI commands and synchronized active context behavior with the actual implementation.', {
             resolve: addResult.hash,
         });

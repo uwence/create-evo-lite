@@ -61,6 +61,7 @@ function printHelp() {
   \x1b[32mimport\x1b[0m <file>       Import memories from a JSON file path.
 
   \x1b[32mcontext\x1b[0m <op>...     Modify active_context.md anchors (track, add, focus).
+                      Read-only ops: read, summary, validate [--json].
   \x1b[32marchive\x1b[0m <text>      Save a summary to raw_memory/ and auto-index it.
   \x1b[32msync\x1b[0m                Check for unindexed raw_memory and ingest them.
   \x1b[32mrebuild\x1b[0m             Standard rebuild entry: backup memory.db, then rebuild from raw_memory/.
@@ -69,6 +70,10 @@ function printHelp() {
   \x1b[32mwash\x1b[0m                Compatibility entry that points you to rebuild / /wash workflow.
   \x1b[32mverify\x1b[0m              Run initialization checks, git state scans, and
                         database connection verifications.
+    \x1b[32mmcp\x1b[0m detect|list|explain [--json]
+                                            Read-only MCP capability discovery for the current workspace.
+        \x1b[32mhooks\x1b[0m status|verify|install [--json] [--force]
+                                                                                        Hook scaffold self-check or install for the current workspace.
   \x1b[32mhelp\x1b[0m                Show this help menu.
 =========================================
 `);
@@ -114,8 +119,155 @@ function formatTrackResult(result) {
     return lines.join('\n');
 }
 
+function hasFlag(flag) {
+    return process.argv.includes(flag);
+}
+
+function printPayload(payload, formatter) {
+    if (hasFlag('--json')) {
+        console.log(JSON.stringify(payload, null, 2));
+        return;
+    }
+    console.log(formatter(payload));
+}
+
+function formatContextRead(snapshot) {
+    return [
+        `active_context: ${snapshot.path}`,
+        '',
+        'META:',
+        snapshot.sections.meta || '(empty)',
+        '',
+        'FOCUS:',
+        snapshot.sections.focus || '(empty)',
+        '',
+        'BACKLOG:',
+        snapshot.sections.backlog || '(empty)',
+        '',
+        'TRAJECTORY:',
+        snapshot.sections.trajectory || '(empty)',
+    ].join('\n');
+}
+
+function formatContextSummary(summary) {
+    const lines = [
+        `active_context: ${summary.path}`,
+        `focus: ${summary.focus || '(empty)'}`,
+        `active_tasks: ${summary.activeTasks.length}`,
+        `trajectory_entries: ${summary.trajectoryCount}`,
+        `validation: ${summary.validation.valid ? 'valid' : 'invalid'}`,
+    ];
+    if (summary.latestTrajectory) {
+        lines.push(`latest: ${summary.latestTrajectory.line}`);
+    }
+    for (const warning of summary.validation.warnings) {
+        lines.push(`warning: ${warning}`);
+    }
+    for (const error of summary.validation.errors) {
+        lines.push(`error: ${error}`);
+    }
+    return lines.join('\n');
+}
+
+function formatContextValidation(validation) {
+    const lines = [`active_context validation: ${validation.valid ? 'valid' : 'invalid'}`];
+    for (const warning of validation.warnings) {
+        lines.push(`warning: ${warning}`);
+    }
+    for (const error of validation.errors) {
+        lines.push(`error: ${error}`);
+    }
+    return lines.join('\n');
+}
+
+function formatHookScaffold(report) {
+    const lines = [
+        `hook_scaffold: ${report.valid ? 'ready' : 'needs-attention'}`,
+        `workspace: ${report.workspaceRoot}`,
+        `assets: ${report.assets.length}`,
+    ];
+    for (const asset of report.assets) {
+        const syncLabel = asset.synced === null ? 'n/a' : asset.synced ? 'synced' : 'drift';
+        lines.push(`- ${asset.label}: ${asset.status} (${syncLabel})`);
+    }
+    for (const warning of report.warnings) {
+        lines.push(`warning: ${warning}`);
+    }
+    return lines.join('\n');
+}
+
+function formatHookInstall(result) {
+    const lines = [
+        `hook_install: ${result.valid ? 'complete' : 'partial'}`,
+        `workspace: ${result.workspaceRoot}`,
+        `installed: ${result.installed.length}`,
+        `overwritten: ${result.overwritten.length}`,
+        `skipped: ${result.skipped.length}`,
+    ];
+    for (const label of result.installed) {
+        lines.push(`installed: ${label}`);
+    }
+    for (const label of result.overwritten) {
+        lines.push(`overwritten: ${label}`);
+    }
+    for (const label of result.skipped) {
+        lines.push(`skipped: ${label}`);
+    }
+    for (const label of result.missingTemplates) {
+        lines.push(`warning: template missing for ${label}`);
+    }
+    lines.push(`next_step: node .evo-lite/cli/memory.js hooks verify${result.valid ? '' : ' --json'}`);
+    return lines.join('\n');
+}
+
+function formatHookLifecycle(report) {
+    const lines = [
+        `hook_lifecycle: ${report.valid ? 'clear' : 'action-needed'}`,
+        `event: ${report.event}`,
+        `workspace: ${report.workspaceRoot}`,
+        `focus: ${report.focus || '(empty)'}`,
+        `active_tasks: ${report.activeTaskCount}`,
+        `dirty: ${report.dirty === null ? 'unknown' : report.dirty ? 'yes' : 'no'}`,
+        `track_needs_update: ${report.trackNeedsUpdate ? 'yes' : 'no'}`,
+    ];
+    if (report.tool) {
+        lines.push(`tool: ${report.tool}`);
+    }
+    if (report.command) {
+        lines.push(`command: ${report.command}`);
+    }
+    if (report.success !== null) {
+        lines.push(`success: ${report.success ? 'yes' : 'no'}`);
+    }
+    if (report.latestTrajectory) {
+        lines.push(`latest: ${report.latestTrajectory.line}`);
+    }
+    for (const reminder of report.reminders) {
+        lines.push(`reminder: ${reminder}`);
+    }
+    for (const warning of report.warnings) {
+        lines.push(`warning: ${warning}`);
+    }
+    return lines.join('\n');
+}
+
 async function runContextCommand() {
     const op = process.argv[3];
+    if (op === 'read') {
+        printPayload(memoryService.readActiveContext(), formatContextRead);
+        return;
+    }
+
+    if (op === 'summary') {
+        printPayload(memoryService.summarizeActiveContext(), formatContextSummary);
+        return;
+    }
+
+    if (op === 'validate') {
+        printPayload(memoryService.validateActiveContextFile(), formatContextValidation);
+        return;
+    }
+
     if (op === 'track') {
         const mechanismArg = process.argv.find(arg => arg.startsWith('--mechanism='));
         const mechanism = mechanismArg ? mechanismArg.substring('--mechanism='.length) : null;
@@ -153,6 +305,39 @@ async function runContextCommand() {
     }
 
     throw new Error(`Unknown context operation: '${op}'.`);
+}
+
+async function runHooksCommand() {
+    const op = process.argv[3] || 'status';
+    if (!['status', 'verify', 'install', 'advise'].includes(op)) {
+        throw new Error(`Unknown hooks operation: '${op}'. Use status, verify, install, or advise.`);
+    }
+    if (op === 'install') {
+        printPayload(memoryService.installHookScaffold({ force: hasFlag('--force') }), formatHookInstall);
+        return;
+    }
+    if (op === 'advise') {
+        const event = process.argv[4] || 'sessionstart';
+        const toolArg = process.argv.find(arg => arg.startsWith('--tool='));
+        const tool = toolArg ? toolArg.substring('--tool='.length) : null;
+        const commandArg = process.argv.find(arg => arg.startsWith('--command='));
+        const command = commandArg ? commandArg.substring('--command='.length) : null;
+        const outputArg = process.argv.find(arg => arg.startsWith('--output='));
+        const output = outputArg ? outputArg.substring('--output='.length) : null;
+        const successArg = process.argv.find(arg => arg.startsWith('--success='));
+        let success = null;
+        if (successArg) {
+            const normalized = successArg.substring('--success='.length).trim().toLowerCase();
+            if (['true', '1', 'yes', 'ok', 'success'].includes(normalized)) {
+                success = true;
+            } else if (['false', '0', 'no', 'error', 'failed', 'failure'].includes(normalized)) {
+                success = false;
+            }
+        }
+        printPayload(memoryService.inspectHookLifecycle(event, { command, output, success, tool }), formatHookLifecycle);
+        return;
+    }
+    printPayload(memoryService.inspectHookScaffold(), formatHookScaffold);
 }
 
 async function run() {
@@ -227,6 +412,22 @@ async function run() {
 
     if (action === 'verify') {
         await memoryService.verify();
+        return;
+    }
+
+    if (action === 'mcp') {
+        const mcpDetect = require('./mcp-detect');
+        const op = process.argv[3] || 'detect';
+        if (!['detect', 'list', 'explain'].includes(op)) {
+            throw new Error(`Unknown mcp operation: '${op}'. Use detect, list, or explain.`);
+        }
+        const report = mcpDetect.detectMcpCapabilities();
+        printPayload(report, payload => mcpDetect.formatMcpReport(payload, { explain: op === 'explain' }));
+        return;
+    }
+
+    if (action === 'hooks') {
+        await runHooksCommand();
         return;
     }
 

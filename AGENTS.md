@@ -35,6 +35,7 @@ When taking over this project:
   Meaning: archive inspection + rebuild/recovery flow.
 
 These are Evo-Lite semantic workflows. Do not assume the host provides them as identical native slash commands.
+If these names do not appear in a Codex menu or picker, that is expected; use natural-language invocation unless the host explicitly exposes a native binding.
 
 <!-- evo-lite:local-extensions:start -->
 For Codex specifically:

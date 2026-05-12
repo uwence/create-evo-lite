@@ -11,18 +11,20 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-继续恢复检查软协议会话阅读顺序问题，并验证 Codex 菜单预期澄清是否足够。重点观察 AGENTS.md / README / host adapter 文案是否能让用户正确理解：Codex 侧是语义工作流触发，不是原生导航菜单注册。
+完成 live runtime hook dogfood 验证，并收口 Codex 工作流语义澄清相关改动；确认 AGENTS.md / README / runtime hooks 路径一致后进入提交准备。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
 - [ ] 暂无活跃任务。
+- [ ] [97d0] 整理并验证当前 live runtime、hook scaffold 与 Codex 文案澄清改动，准备进入 commit + context track 闭环。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [3569d63] 2026-05-07 LocalIndexDeModelCleanup: 完成 create-evo-lite 的去模型化收口：修正 index.js 初始化日志中的 ONNX/跨模型残留；把 root/template workflow 与 Claude command 
 - [f1e2988] 2026-03-21 LegacyUpgradeGate: Blocked in-place upgrade for npm-published 1.4.9-era runtimes by detecting pre-2.0 context/template/
 - [913c0d1] 2026-03-20 VerifyHostAdapterDrift: Extended verify so template sync is no longer limited to the active CLI files. It now compares root
 - [d82ea6a] 2026-03-20 ClaudeCommandWrappers: Added the first thin Claude-native command layer on top of Evo-Lite semantics. Projects now scaffold
@@ -32,7 +34,6 @@
 - [9f358b1] 2026-03-20 ActiveContextBeforeRecall: Clarified the debugging retrieval order so agents must inspect active_context.md before deciding to
 - [9de7dd8] 2026-03-20 EvoVerifyTakeoverSync: Tightened the /evo takeover contract so the agent must wait for mem.cmd verify to exit before summar
 - [73ba4c8] 2026-03-20 InitTrackBootstrap: Fixed a fresh-project initialization regression where the first context track path could hit archive
-- [a4be939] 2026-03-20 RecallFirstDebugging: Updated the evo-lite debugging contract so agents should prefer recall before blind trial-and-error
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)

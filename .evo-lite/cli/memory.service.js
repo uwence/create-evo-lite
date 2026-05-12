@@ -126,6 +126,142 @@ function writeSection(markdown, anchor, newContent) {
     return markdown.replace(regex, `$1\n${newContent}\n$2`);
 }
 
+const ACTIVE_CONTEXT_ANCHORS = ['META', 'FOCUS', 'BACKLOG', 'TRAJECTORY'];
+
+function countMatches(markdown, pattern) {
+    return (markdown.match(pattern) || []).length;
+}
+
+function parseBacklogTasks(backlog) {
+    return backlog
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.startsWith('- ['))
+        .map(line => {
+            const checkboxMatch = line.match(/^- \[([ xX])\]\s*(.*)$/);
+            const body = checkboxMatch ? checkboxMatch[2].trim() : line;
+            const hashMatch = body.match(/^\[([a-f0-9]{4})\]\s*(.*)$/i);
+            return {
+                checked: checkboxMatch ? checkboxMatch[1].toLowerCase() === 'x' : false,
+                hash: hashMatch ? hashMatch[1] : null,
+                line,
+                text: hashMatch ? hashMatch[2].trim() : body,
+            };
+        });
+}
+
+function parseTrajectoryEntries(trajectory) {
+    return splitTrajectoryEntries(trajectory).map(line => {
+        const match = line.match(/^- \[([^\]]+)\]\s+(\d{4}-\d{2}-\d{2})\s+([^:]+):\s*(.*)$/);
+        return {
+            date: match ? match[2] : null,
+            id: match ? match[1] : null,
+            line,
+            mechanism: match ? match[3].trim() : null,
+            summary: match ? match[4].trim() : line,
+        };
+    });
+}
+
+function validateActiveContextMarkdown(markdown) {
+    const errors = [];
+    const warnings = [];
+    const sectionRanges = [];
+
+    for (const anchor of ACTIVE_CONTEXT_ANCHORS) {
+        const beginPattern = new RegExp(`<!-- BEGIN_${anchor} -->`, 'g');
+        const endPattern = new RegExp(`<!-- END_${anchor} -->`, 'g');
+        const beginCount = countMatches(markdown, beginPattern);
+        const endCount = countMatches(markdown, endPattern);
+        if (beginCount !== 1 || endCount !== 1) {
+            errors.push(`${anchor} anchor count mismatch: begin=${beginCount}, end=${endCount}`);
+            continue;
+        }
+        const beginIndex = markdown.indexOf(`<!-- BEGIN_${anchor} -->`);
+        const endIndex = markdown.indexOf(`<!-- END_${anchor} -->`);
+        if (beginIndex > endIndex) {
+            errors.push(`${anchor} anchor order is invalid`);
+            continue;
+        }
+        sectionRanges.push({ anchor, beginIndex, endIndex });
+    }
+
+    for (let index = 1; index < sectionRanges.length; index += 1) {
+        const previous = sectionRanges[index - 1];
+        const current = sectionRanges[index];
+        if (previous.endIndex > current.beginIndex) {
+            errors.push(`${previous.anchor} overlaps ${current.anchor}`);
+        }
+    }
+
+    const sections = Object.fromEntries(ACTIVE_CONTEXT_ANCHORS.map(anchor => [anchor.toLowerCase(), (readSection(markdown, anchor) || '').trim()]));
+    const backlogTasks = parseBacklogTasks(sections.backlog || '');
+    const pendingTasks = backlogTasks.filter(task => !task.checked && !task.line.includes('暂无活跃任务'));
+    const trajectoryEntries = parseTrajectoryEntries(sections.trajectory || '');
+
+    if (pendingTasks.length > 5) {
+        errors.push(`BACKLOG pending task count exceeds 5: ${pendingTasks.length}`);
+    }
+    if (trajectoryEntries.length > 20) {
+        warnings.push(`TRAJECTORY has ${trajectoryEntries.length} entries; recommended maximum is 20`);
+    }
+    if (!sections.focus) {
+        warnings.push('FOCUS section is empty');
+    }
+    if (/请手动填写|尚未确定当前焦点|阅读此文件，完成上下文接管/.test(markdown)) {
+        warnings.push('active_context still contains initialization placeholder text');
+    }
+
+    return {
+        anchors: sectionRanges.map(range => range.anchor),
+        checkedAt: new Date().toISOString(),
+        errors,
+        valid: errors.length === 0,
+        warnings,
+    };
+}
+
+function buildActiveContextSnapshot(markdown) {
+    const sections = Object.fromEntries(ACTIVE_CONTEXT_ANCHORS.map(anchor => [anchor.toLowerCase(), (readSection(markdown, anchor) || '').trim()]));
+    const backlogTasks = parseBacklogTasks(sections.backlog || '');
+    const trajectoryEntries = parseTrajectoryEntries(sections.trajectory || '');
+    return {
+        path: ACTIVE_CONTEXT_PATH,
+        sections,
+        summary: {
+            activeTaskCount: backlogTasks.filter(task => !task.checked && !task.line.includes('暂无活跃任务')).length,
+            focus: sections.focus,
+            latestTrajectory: trajectoryEntries[0] || null,
+            trajectoryCount: trajectoryEntries.length,
+        },
+        tasks: backlogTasks,
+        trajectory: trajectoryEntries,
+        validation: validateActiveContextMarkdown(markdown),
+    };
+}
+
+function readActiveContext() {
+    ensureContextFile();
+    return buildActiveContextSnapshot(fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8'));
+}
+
+function summarizeActiveContext() {
+    const snapshot = readActiveContext();
+    return {
+        path: snapshot.path,
+        focus: snapshot.summary.focus,
+        activeTasks: snapshot.tasks.filter(task => !task.checked && !task.line.includes('暂无活跃任务')),
+        latestTrajectory: snapshot.summary.latestTrajectory,
+        trajectoryCount: snapshot.summary.trajectoryCount,
+        validation: snapshot.validation,
+    };
+}
+
+function validateActiveContextFile() {
+    ensureContextFile();
+    return validateActiveContextMarkdown(fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8'));
+}
+
 function ensureContextFile() {
     if (!fs.existsSync(ACTIVE_CONTEXT_PATH)) {
         throw new Error(`未找到 active_context.md: ${ACTIVE_CONTEXT_PATH}`);
@@ -588,18 +724,26 @@ function splitTrajectoryEntries(trajectory) {
 
 function normalizeTemplateComparableContent(file, content) {
     const normalized = content.replace(/\r\n/g, '\n');
+    if (['AGENTS.md', 'CLAUDE.md', 'copilot-instructions.md'].includes(file)) {
+        return normalized
+            .replace(/\n?<!-- evo-lite:local-extensions:start -->[\s\S]*?<!-- evo-lite:local-extensions:end -->/g, '')
+            .split('<!-- evo-lite:local-extensions -->')[0]
+            .replace(/\n{3,}/g, '\n\n')
+            .trimEnd();
+    }
     if (file !== 'models.js') {
-        return normalized;
+        return normalized.trimEnd();
     }
     return normalized
         .replace(/let ACTIVE_MODEL = '.*?';/, "let ACTIVE_MODEL = '__DYNAMIC_MODEL__';")
-        .replace(/let ACTIVE_DIMS = \d+;/, 'let ACTIVE_DIMS = __DYNAMIC_DIMS__;');
+        .replace(/let ACTIVE_DIMS = \d+;/, 'let ACTIVE_DIMS = __DYNAMIC_DIMS__;')
+        .trimEnd();
 }
 
 function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
     const workspaceRoot = getWorkspaceRoot();
     const entries = [
-        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js', 'safety.js', 'inspector.js'].map(file => ({
+        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js', 'safety.js', 'inspector.js', 'mcp-detect.js'].map(file => ({
             label: file,
             activeFile: path.join(__dirname, file),
             templateFile: path.join(templateCliPath, file),
@@ -614,8 +758,266 @@ function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
             activeFile: path.join(workspaceRoot, '.claude', 'commands', file),
             templateFile: path.join(templateRootPath, '.claude', 'commands', file),
         })),
+        ...['copilot-instructions.md', 'hooks/context-mode.json', 'hooks/context-mode.sh', 'hooks/evo-lite-hook.js', 'hooks/git-bash.cmd'].map(file => ({
+            label: `.github/${file}`,
+            activeFile: path.join(workspaceRoot, '.github', ...file.split('/')),
+            templateFile: path.join(templateRootPath, '.github', ...file.split('/')),
+        })),
+        {
+            label: '.vscode/mcp.json',
+            activeFile: path.join(workspaceRoot, '.vscode', 'mcp.json'),
+            templateFile: path.join(templateRootPath, '.vscode', 'mcp.json'),
+        },
     ];
     return entries;
+}
+
+function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
+    return [
+        {
+            label: '.github/copilot-instructions.md',
+            activeFile: path.join(workspaceRoot, '.github', 'copilot-instructions.md'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'copilot-instructions.md') : null,
+        },
+        {
+            label: '.github/hooks/context-mode.json',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'context-mode.json'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'context-mode.json') : null,
+        },
+        {
+            label: '.github/hooks/context-mode.sh',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'context-mode.sh'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'context-mode.sh') : null,
+        },
+        {
+            label: '.github/hooks/evo-lite-hook.js',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'evo-lite-hook.js') : null,
+        },
+        {
+            label: '.github/hooks/git-bash.cmd',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'git-bash.cmd'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'git-bash.cmd') : null,
+        },
+        {
+            label: '.vscode/mcp.json',
+            activeFile: path.join(workspaceRoot, '.vscode', 'mcp.json'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.vscode', 'mcp.json') : null,
+        },
+    ];
+}
+
+function inspectHookScaffold() {
+    const workspaceRoot = getWorkspaceRoot();
+    const templateRootPath = getTemplateRootDir();
+    const warnings = [];
+    const missing = [];
+    const outOfSync = [];
+    const assets = buildHookScaffoldEntries(workspaceRoot, templateRootPath).map(entry => {
+        const exists = fs.existsSync(entry.activeFile);
+        const templateExists = entry.templateFile ? fs.existsSync(entry.templateFile) : false;
+        let synced = null;
+
+        if (!exists) {
+            missing.push(entry.label);
+        }
+
+        if (exists && templateExists) {
+            synced = normalizeTemplateComparableContent(
+                path.basename(entry.label),
+                fs.readFileSync(entry.activeFile, 'utf8')
+            ) === normalizeTemplateComparableContent(
+                path.basename(entry.label),
+                fs.readFileSync(entry.templateFile, 'utf8')
+            );
+            if (!synced) {
+                outOfSync.push(entry.label);
+            }
+        }
+
+        if (exists && entry.templateFile && !templateExists) {
+            warnings.push(`template missing for ${entry.label}`);
+        }
+
+        return {
+            exists,
+            label: entry.label,
+            path: entry.activeFile,
+            status: !exists ? 'missing' : synced === false ? 'out-of-sync' : 'ready',
+            synced,
+            templateExists: entry.templateFile ? templateExists : null,
+            templatePath: entry.templateFile,
+        };
+    });
+
+    if (!templateRootPath) {
+        warnings.push('template root unavailable; sync comparison skipped');
+    }
+
+    return {
+        assets,
+        checkedAt: new Date().toISOString(),
+        missing,
+        outOfSync,
+        templateRootPath,
+        valid: missing.length === 0 && outOfSync.length === 0,
+        warnings,
+        workspaceRoot,
+    };
+}
+
+function installHookScaffold(options = {}) {
+    const workspaceRoot = getWorkspaceRoot();
+    const templateRootPath = getTemplateRootDir();
+    if (!templateRootPath) {
+        throw new Error('Hooks install requires an accessible templates directory. Re-run create-evo-lite from the package root or provide EVO_LITE_TEMPLATE_ROOT_DIR.');
+    }
+
+    const force = options.force === true;
+    const result = {
+        backedUp: [],
+        checkedAt: new Date().toISOString(),
+        force,
+        installed: [],
+        missingTemplates: [],
+        overwritten: [],
+        skipped: [],
+        templateRootPath,
+        workspaceRoot,
+    };
+
+    for (const entry of buildHookScaffoldEntries(workspaceRoot, templateRootPath)) {
+        if (!entry.templateFile || !fs.existsSync(entry.templateFile)) {
+            result.missingTemplates.push(entry.label);
+            continue;
+        }
+
+        ensureDir(path.dirname(entry.activeFile));
+        if (fs.existsSync(entry.activeFile)) {
+            if (!force) {
+                result.skipped.push(entry.label);
+                continue;
+            }
+            fs.copyFileSync(entry.activeFile, `${entry.activeFile}.bak`);
+            result.backedUp.push(`${entry.label}.bak`);
+            result.overwritten.push(entry.label);
+        } else {
+            result.installed.push(entry.label);
+        }
+
+        fs.copyFileSync(entry.templateFile, entry.activeFile);
+    }
+
+    result.valid = result.missingTemplates.length === 0;
+    return result;
+}
+
+function inspectHookLifecycle(event = 'sessionstart', options = {}) {
+    const allowedEvents = ['sessionstart', 'posttooluse', 'precompact', 'stop'];
+    if (!allowedEvents.includes(event)) {
+        throw new Error(`Unsupported hook lifecycle event: ${event}`);
+    }
+
+    const warnings = [];
+    const reminders = [];
+    const command = String(options.command || '').trim();
+    const output = String(options.output || '').trim();
+    const success = typeof options.success === 'boolean' ? options.success : null;
+    const tool = String(options.tool || '').trim();
+    const commandLower = command.toLowerCase();
+    const outputLower = output.toLowerCase();
+    const toolLower = tool.toLowerCase();
+    const responseLooksFailed = /(^|\s|:)(error|failed|failure|exception|non-zero|exit code [1-9])/i.test(output);
+    const contextExists = fs.existsSync(ACTIVE_CONTEXT_PATH);
+    const contextSummary = contextExists ? summarizeActiveContext() : null;
+    const contextStats = contextExists ? fs.statSync(ACTIVE_CONTEXT_PATH) : null;
+    const staleHours = contextStats ? (Date.now() - contextStats.mtimeMs) / (1000 * 60 * 60) : null;
+    const contextStale = typeof staleHours === 'number' && staleHours > 24;
+    const currentCommit = getCommitHash();
+    const latestTrajectoryId = contextSummary && contextSummary.latestTrajectory ? contextSummary.latestTrajectory.id : null;
+    const trackNeedsUpdate = Boolean(currentCommit && currentCommit !== 'No-Git' && latestTrajectoryId && latestTrajectoryId !== currentCommit);
+
+    let gitStatus = null;
+    let dirty = null;
+    try {
+        const injectedGitStatus = getInjectedGitStatus();
+        gitStatus = filterNonEvoLiteGitStatusLines(
+            injectedGitStatus !== null ? injectedGitStatus : runGit(['status', '--porcelain'])
+        );
+        dirty = gitStatus.length > 0;
+    } catch (error) {
+        if (isGitInvocationBlocked(error)) {
+            warnings.push('git status unavailable in the current Node environment; prefer ./.evo-lite/mem or .evo-lite\\mem.cmd for full hook checks.');
+        } else {
+            warnings.push(`git status check failed: ${String(error.message || '').trim()}`);
+        }
+    }
+
+    const changedFiles = (gitStatus || []).map(line => line.slice(3).trim().replace(/\\/g, '/'));
+    const releaseFiles = changedFiles.filter(filePath => /(^|\/)(package\.json|CHANGELOG\.md|VERSION)$/i.test(filePath));
+    const commitLikeTool = /commit|release|ship|version/.test(toolLower);
+    const commitLikeCommand = /(git\s+commit\b|npm\s+version\b|pnpm\s+version\b|yarn\s+version\b|changeset\b|\brelease\b|\bship\b)/.test(commandLower);
+    const attemptedTrackCommand = /(context\s+track\b|memory\.js\s+context\s+track\b|mem(?:\.cmd)?\s+track\b)/.test(commandLower);
+    const commitLikeActivity = commitLikeTool || commitLikeCommand;
+
+    if (!contextExists) {
+        reminders.push('active_context.md 缺失；先恢复或重新初始化状态机文件，再继续使用 hooks 自动提醒。');
+    } else {
+        if (contextSummary.validation && !contextSummary.validation.valid) {
+            reminders.push('active_context 结构校验失败；先执行 `node .evo-lite/cli/memory.js context validate --json` 并修复锚点问题。');
+        }
+        if (contextStale && ['sessionstart', 'precompact', 'stop'].includes(event)) {
+            reminders.push('active_context.md 已超过 24 小时未更新；先执行 `/evo` 或人工确认当前 focus/backlog 是否仍然可信。');
+        }
+        if (contextSummary.validation) {
+            for (const warning of contextSummary.validation.warnings) {
+                warnings.push(warning);
+            }
+        }
+    }
+
+    if (event === 'posttooluse' && (success === false || responseLooksFailed) && (commitLikeActivity || attemptedTrackCommand)) {
+        reminders.push('检测到闭环相关命令返回失败；不要报告完成，先检查 commit/track/release 的实际输出。');
+    }
+
+    if (event === 'posttooluse' && trackNeedsUpdate && attemptedTrackCommand) {
+        const failureHint = success === false || responseLooksFailed
+            ? '；当前输出显示闭环命令未完成，优先检查 context track 步骤。'
+            : '；请确认命令串中的 context track 是否真正执行成功。';
+        reminders.push(`检测到命令已尝试执行 context track，但 TRAJECTORY 仍未更新${failureHint}`);
+    } else if (((event === 'posttooluse' && commitLikeActivity) || ['precompact', 'stop'].includes(event)) && trackNeedsUpdate) {
+        reminders.push('检测到最新 commit 尚未写入 TRAJECTORY；请执行 `node .evo-lite/cli/memory.js context track --mechanism="..." --details="..."` 完成闭环。');
+    }
+
+    if (['precompact', 'stop'].includes(event) && dirty === true) {
+        reminders.push('工作区仍有未提交的非 .evo-lite 改动；结束前请确认是否需要提交、暂存或明确保留现场。');
+    }
+
+    if (['posttooluse', 'precompact', 'stop'].includes(event) && releaseFiles.length > 0) {
+        reminders.push(`检测到版本相关文件改动 (${releaseFiles.join(', ')})；请确认 release/tag/CHANGELOG 闭环是否完成。`);
+    }
+
+    return {
+        activeTaskCount: contextSummary ? contextSummary.activeTasks.length : 0,
+        checkedAt: new Date().toISOString(),
+        contextExists,
+        contextStale,
+        currentCommit,
+        dirty,
+        event,
+        focus: contextSummary ? contextSummary.focus : null,
+        command: command || null,
+        latestTrajectory: contextSummary ? contextSummary.latestTrajectory : null,
+        releaseFiles,
+        reminders,
+        success,
+        tool: tool || null,
+        trackNeedsUpdate,
+        valid: reminders.length === 0,
+        warnings,
+        output: output || null,
+        workspaceRoot: getWorkspaceRoot(),
+    };
 }
 
 function isMissingMemorySchemaError(error) {
@@ -797,15 +1199,19 @@ async function syncIndexMemory() {
 function addTask(task) {
     ensureContextFile();
     const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
-    let backlog = readSection(markdown, 'BACKLOG') || '';
-    const tasks = backlog.split('\n').map(line => line.trim()).filter(line => line.startsWith('- [ ]'));
+    const backlogLines = (readSection(markdown, 'BACKLOG') || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
+    const isPlaceholderLine = line => /^-\s*\[\s\]\s*暂无活跃任务。?$/.test(line);
+    const tasks = backlogLines.filter(line => line.startsWith('- [ ]') && !isPlaceholderLine(line));
     if (tasks.length >= 5) {
         throw new Error('BACKLOG 任务数已达硬上限 (5条)。请先完成任务或移入搁置区。');
     }
 
     const hash = Math.random().toString(16).slice(2, 6);
     const newTaskLine = `- [ ] [${hash}] ${task}`;
-    backlog = backlog.trim() ? `${backlog.trim()}\n${newTaskLine}` : newTaskLine;
+    const backlog = [...backlogLines.filter(line => !isPlaceholderLine(line)), newTaskLine].join('\n');
     fs.writeFileSync(ACTIVE_CONTEXT_PATH, writeSection(markdown, 'BACKLOG', backlog), 'utf8');
     appendLog('CONTEXT_ADD', newTaskLine);
     return { hash, line: newTaskLine };
@@ -1182,20 +1588,27 @@ module.exports = {
     getSafetyState,
     importMemories,
     inject,
+    inspectHookLifecycle,
     list,
     memorize,
     parseGitStatusLines,
+    readActiveContext,
     filterNonEvoLiteGitStatusLines,
+    inspectHookScaffold,
+    installHookScaffold,
     prepareForWrite,
     recall,
     rebuildLocalIndex,
     splitTrajectoryEntries,
+    summarizeActiveContext,
     summarizeArchiveHealth,
     setFocus,
     syncIndexMemory,
     stats,
     track,
     verify,
+    validateActiveContextFile,
+    validateActiveContextMarkdown,
     wash,
 };
 

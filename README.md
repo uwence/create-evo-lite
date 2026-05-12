@@ -264,8 +264,8 @@ MyAwesomeProject/                 <-- (你的项目)
 │   │   ├── evo-lite.md           - Boot Sequence 拦截器
 │   │   ├── project-archive.md    - 存档闭环协议
 │   │   └── memory-distillation.md - 质量守门员
-│   └── workflows/                <-- Slash Commands
-│       ├── evo.md                - /evo 唤醒剧本
+│   └── workflows/                <-- 工作流语义定义（不是保证出现在宿主菜单里的原生命令）
+│       ├── evo.md                - /evo 语义工作流剧本
 │       ├── commit.md             - /commit 高频闭环剧本
 │       ├── mem.md                - /mem 交接剧本
 │       └── wash.md               - /wash 洗盘与重建剧本

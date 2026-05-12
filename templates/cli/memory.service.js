@@ -1199,15 +1199,19 @@ async function syncIndexMemory() {
 function addTask(task) {
     ensureContextFile();
     const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
-    let backlog = readSection(markdown, 'BACKLOG') || '';
-    const tasks = backlog.split('\n').map(line => line.trim()).filter(line => line.startsWith('- [ ]'));
+    const backlogLines = (readSection(markdown, 'BACKLOG') || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
+    const isPlaceholderLine = line => /^-\s*\[\s\]\s*暂无活跃任务。?$/.test(line);
+    const tasks = backlogLines.filter(line => line.startsWith('- [ ]') && !isPlaceholderLine(line));
     if (tasks.length >= 5) {
         throw new Error('BACKLOG 任务数已达硬上限 (5条)。请先完成任务或移入搁置区。');
     }
 
     const hash = Math.random().toString(16).slice(2, 6);
     const newTaskLine = `- [ ] [${hash}] ${task}`;
-    backlog = backlog.trim() ? `${backlog.trim()}\n${newTaskLine}` : newTaskLine;
+    const backlog = [...backlogLines.filter(line => !isPlaceholderLine(line)), newTaskLine].join('\n');
     fs.writeFileSync(ACTIVE_CONTEXT_PATH, writeSection(markdown, 'BACKLOG', backlog), 'utf8');
     appendLog('CONTEXT_ADD', newTaskLine);
     return { hash, line: newTaskLine };

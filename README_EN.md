@@ -256,11 +256,11 @@ MyAwesomeProject/                 <-- (Your Project)
 │   │   ├── evo-lite.md           - Boot Sequence Interceptor
 │   │   ├── project-archive.md    - Archiving Protocol
 │   │   └── memory-distillation.md - Quality Gatekeeper
-│   └── workflows/                <-- Slash Commands
-│       ├── evo.md                - /evo Script
-│       ├── commit.md             - /commit Script
-│       ├── mem.md                - /mem Script
-│       └── wash.md               - /wash Script
+│   └── workflows/                <-- Workflow semantics, not guaranteed host-native menu commands
+│       ├── evo.md                - /evo semantic workflow script
+│       ├── commit.md             - /commit workflow script
+│       ├── mem.md                - /mem workflow script
+│       └── wash.md               - /wash workflow script
 │
 └── .evo-lite/                    <-- (Memory & Dependency Sandbox)
     ├── cli/                      - Local memory CLI scripts
