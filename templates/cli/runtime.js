@@ -50,12 +50,28 @@ function getRawMemoryDir() {
     return path.join(getRuntimeRoot(), 'raw_memory');
 }
 
-function getIndexMemoryDir() {
+function migrateLegacyIndexMemoryDir() {
+    const modernDir = path.join(getRuntimeRoot(), 'index_memory');
     const legacyDir = path.join(getRuntimeRoot(), 'vect_memory');
-    if (fs.existsSync(legacyDir)) {
+
+    if (!fs.existsSync(legacyDir)) {
+        return modernDir;
+    }
+
+    if (fs.existsSync(modernDir)) {
+        return modernDir;
+    }
+
+    try {
+        fs.renameSync(legacyDir, modernDir);
+        return modernDir;
+    } catch (_) {
         return legacyDir;
     }
-    return path.join(getRuntimeRoot(), 'index_memory');
+}
+
+function getIndexMemoryDir() {
+    return migrateLegacyIndexMemoryDir();
 }
 
 function getVectMemoryDir() {
@@ -138,6 +154,7 @@ module.exports = {
     getRuntimeRoot,
     getTemplateCliDir,
     getTemplateRootDir,
+    migrateLegacyIndexMemoryDir,
     getVectMemoryDir,
     getWalkthroughsDir,
     getWorkspaceRoot,

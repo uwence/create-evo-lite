@@ -602,6 +602,26 @@ async function runTests() {
         assert.ok(syncResult.files >= 1, 'Sync did not process any pending raw archive');
         assert.ok(fs.existsSync(path.join(primary.runtimeRoot, 'index_memory', 'manual-sync.md')), 'Sync did not create index marker');
 
+        console.log('4a. Testing legacy vect_memory marker migration ...');
+        const legacyIndexRuntime = createTempRuntimeRoot('legacy-index');
+        const legacyIndexDir = path.join(legacyIndexRuntime.runtimeRoot, 'vect_memory');
+        fs.mkdirSync(legacyIndexDir, { recursive: true });
+        fs.writeFileSync(path.join(legacyIndexDir, 'legacy-marker.md'), '', 'utf8');
+        loadCli(legacyIndexRuntime.runtimeRoot);
+        const legacyRuntimePaths = require(path.join(CLI_DIR, 'runtime.js'));
+        const migratedIndexDir = legacyRuntimePaths.getIndexMemoryDir();
+        assert.strictEqual(
+            migratedIndexDir,
+            path.join(legacyIndexRuntime.runtimeRoot, 'index_memory'),
+            'runtime did not resolve the migrated index_memory directory'
+        );
+        assert.ok(
+            fs.existsSync(path.join(legacyIndexRuntime.runtimeRoot, 'index_memory', 'legacy-marker.md')),
+            'legacy vect_memory marker file was not migrated into index_memory'
+        );
+        assert.ok(!fs.existsSync(legacyIndexDir), 'legacy vect_memory directory should be renamed when no index_memory exists');
+        primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
+
         console.log('5. Testing sync invalid-archive guard ...');
         fs.writeFileSync(
             path.join(rawDir, 'broken-sync.md'),

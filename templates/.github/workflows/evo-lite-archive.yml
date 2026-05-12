@@ -4,7 +4,8 @@
 # archive payload from the PR title + merge commit + a truncated `git log
 # --stat`, runs it through the local Evo-Lite safety scanner (P1), and opens
 # a follow-up PR that adds the new files under `.evo-lite/raw_memory/` and
-# `.evo-lite/vect_memory/`.
+# `.evo-lite/index_memory/` (older repositories may still use
+# `.evo-lite/vect_memory/`).
 #
 # This workflow ships disabled-by-default. To enable it, copy this file into
 # your repository's `.github/workflows/` (the create-evo-lite initializer
@@ -102,11 +103,15 @@ jobs:
             #${{ github.event.pull_request.number }}.
 
             This PR adds the resulting `.evo-lite/raw_memory/` and
-            `.evo-lite/vect_memory/` files so the team's long-term archive
+            `.evo-lite/index_memory/` files so the team's long-term archive
             stays in sync with the default branch — without depending on any
             individual developer's local IDE session.
+
+            Older repositories that still expose `.evo-lite/vect_memory/`
+            remain compatible because the workflow stages both marker paths.
           branch: evo-lite/auto-archive-${{ github.event.pull_request.number }}
           add-paths: |
             .evo-lite/raw_memory/**
+            .evo-lite/index_memory/**
             .evo-lite/vect_memory/**
           delete-branch: true

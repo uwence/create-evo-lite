@@ -93,7 +93,7 @@ As AI coding assistants become increasingly powerful, we often encounter these *
   This path does not depend on external model downloads or local ONNX inference.
 * **🛡️ Explicit + Implicit Memory**
   - **Explicit state machine (`active_context.md`)** for focus, backlog, and trajectory handover
-  - **Implicit memory store (`memory.db`, `raw_memory`, `index_memory`)** for long-term searchable recall and rebuildable archives
+  - **Implicit memory store (`memory.db`, `raw_memory`, `index_memory`)** for long-term searchable recall and rebuildable archives. Older repositories may still expose `vect_memory/` as the legacy alias of `index_memory/`; the current runtime migrates it to `index_memory/` automatically when that is safe.
 * **🛠️ Rebuildable Archive Pipeline**
   `archive`, `sync`, and `rebuild` make memory maintainable over time, instead of turning it into a one-shot write-only cache.
 * **⚓ Space-Time Traceability (Git Anchoring)**
@@ -162,6 +162,13 @@ create-evo-lite ./MyAwesomeProject
 ```
 
 During setup, Evo-Lite initializes a local SQLite-backed runtime and keeps the memory stack inside `.evo-lite/`. No separate service tier, model downloader, or daemon is required.
+
+> [!TIP]
+> When this guide shows `./.evo-lite/mem`, that is the Unix / Bash entrypoint. On Windows PowerShell / CMD, use the equivalent `\.\.evo-lite\mem.cmd` wrapper.
+
+> [!IMPORTANT]
+> Run all `mem`, `memory.js`, and Git-aware commands from the **target project root**, then invoke the wrapper via a relative path.
+> Do not stay inside another repository or unrelated working directory and call the target project's `./.evo-lite/mem` or `\.\.evo-lite\mem.cmd` through an absolute path; otherwise Git-traceable records such as `remember`, `archive`, and `context track` may inherit the caller directory's commit / git state instead of the generated project itself.
 
 > [!TIP]
 > **Built-in Local Retrieval Engine**:
@@ -271,6 +278,9 @@ MyAwesomeProject/                 <-- (Your Project)
     ├── raw_memory/               - Structured source archives
     └── index_memory/             - Indexed archive markers
 ```
+
+  > [!NOTE]
+  > Older dogfood repositories may still use `.evo-lite/vect_memory/`. When `.evo-lite/index_memory/` does not exist yet, the current runtime automatically migrates the legacy marker directory to the new name; in practice a project will usually expose either `index_memory/` or `vect_memory/`, not both at the same time.
 
 ---
 
