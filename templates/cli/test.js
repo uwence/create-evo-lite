@@ -660,11 +660,17 @@ async function runTests() {
             fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'git-bash.cmd')),
             'initializer did not scaffold .github/hooks/git-bash.cmd into the target project'
         );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json')),
+            'initializer did not scaffold .github/hooks/rtk-rewrite.json into the target project'
+        );
         const modernHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.json'), 'utf8'));
         assert.ok(modernHookConfig.hooks.SessionStart.some(entry => entry.command.includes('evo-lite-hook.js sessionstart')), 'initializer did not scaffold SessionStart lifecycle advice hook');
         assert.ok(modernHookConfig.hooks.PreToolUse.some(entry => entry.command.includes('evo-lite-hook.js pretooluse')), 'initializer did not scaffold PreToolUse architecture guard hook');
         assert.ok(modernHookConfig.hooks.PreCompact.some(entry => entry.command.includes('evo-lite-hook.js precompact')), 'initializer did not scaffold PreCompact lifecycle advice hook');
         assert.ok(Array.isArray(modernHookConfig.hooks.Stop) && modernHookConfig.hooks.Stop.some(entry => entry.command.includes('evo-lite-hook.js stop')), 'initializer did not scaffold Stop lifecycle advice hook');
+        const rtkRewriteConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json'), 'utf8'));
+        assert.ok(rtkRewriteConfig.hooks.PreToolUse.some(entry => entry.command === 'rtk hook copilot'), 'initializer did not scaffold the RTK rewrite hook config');
         assert.ok(
             fs.existsSync(path.join(modernInitRoot, '.vscode', 'mcp.json')),
             'initializer did not scaffold .vscode/mcp.json into the target project'
@@ -836,6 +842,7 @@ async function runTests() {
         assert.ok(healthyVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should treat dynamic model defaults and host adapters as a healthy sync state');
         assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged healthy template files as drift');
         assert.ok(!healthyVerifyOutput.includes('.github/hooks/context-mode.json is out of sync'), 'verify incorrectly flagged healthy hook assets as drift');
+        assert.ok(!healthyVerifyOutput.includes('.github/hooks/rtk-rewrite.json is out of sync'), 'verify incorrectly flagged the RTK hook asset as drift');
         assert.ok(healthyVerifyOutput.includes('可以继续 `/evo` / `/commit` 工作流'), 'verify healthy output did not include a clear next step');
 
         const localExtensionRuntime = createTempRuntimeRoot('verify-local-extension');
@@ -864,6 +871,10 @@ async function runTests() {
             const hookConfig = JSON.parse(fs.readFileSync(hookConfigPath, 'utf8'));
             hookConfig.hooks.PreToolUse[0].command = './.github/hooks/context-mode.sh altered-pretooluse';
             fs.writeFileSync(hookConfigPath, JSON.stringify(hookConfig, null, 2), 'utf8');
+            const rtkHookPath = path.join(templateRoot, '.github', 'hooks', 'rtk-rewrite.json');
+            const rtkHookConfig = JSON.parse(fs.readFileSync(rtkHookPath, 'utf8'));
+            rtkHookConfig.hooks.PreToolUse[0].command = 'rtk hook altered';
+            fs.writeFileSync(rtkHookPath, JSON.stringify(rtkHookConfig, null, 2), 'utf8');
         });
         const verifyDriftLoaded = await bootstrapRuntime(verifyRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
@@ -874,6 +885,7 @@ async function runTests() {
             await verifyDriftLoaded.service.verify();
         });
         assert.ok(driftVerifyOutput.includes('.github/hooks/context-mode.json is out of sync'), 'verify did not report actual hook asset drift');
+        assert.ok(driftVerifyOutput.includes('.github/hooks/rtk-rewrite.json is out of sync'), 'verify did not report RTK hook asset drift');
         assert.ok(!driftVerifyOutput.includes('Verify completed with no active alerts.'), 'verify still reported a clean bill of health after drift');
 
         console.log('10a. Testing sessionstart architecture guidance ...');

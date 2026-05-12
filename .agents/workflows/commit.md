@@ -61,16 +61,37 @@ active_context -> context track -> archive
 
 ### 3. 认知闭环与汇报 (Cognitive Closure)
 步骤 2 跑完后，CLI 会输出归档结果、轨迹更新结果和可选任务消除结果。
-- CLI 当前不会自动创建额外 Meta-Commit；如需提交状态文件，请由当前会话显式决定并执行。
+- CLI 当前不会自动创建额外 Meta-Commit；如需提交状态文件，请按下面的“显式 Meta-Commit”标准动作执行。
 - **强制要求：** 必须根据 CLI 实际输出确认是否已完成 backlog 消除、轨迹更新和归档，然后再向 User 汇报下一步。
 - 若 CLI 只更新了状态机、但归档失败或被跳过，不得宣称本次闭环已经完整完成。
+
+#### 标准附加动作：显式 Meta-Commit (Runtime State Snapshot)
+
+只要步骤 2 已经返回 `closure: complete`，并且 `context track` 产出了新的受追踪运行时状态文件（典型如 `.evo-lite/active_context.md`、本次新增的 `raw_memory/*.md`），就把它当成 **同一次 `/commit` 的标准后继动作** 执行：
+
+1. **单独开一个状态提交，不要混进代码快照**。这个提交只用于版本化 `.evo-lite/active_context.md`、本次新增的 `raw_memory/*.md`，以及你明确知道属于本次闭环产物的其他运行时状态文件。
+2. **这仍然属于同一次 `/commit`，但不是同一个 Git commit object**。代码快照已经在步骤 1 固化，后续 `context track` 才生成运行时状态文件，所以这些文件在 Git 语义上只能进入紧随其后的独立 Meta-Commit。
+3. **这是附加提交，不是重新跑一次闭环**。执行这个 Meta-Commit 后，**不要**再对这次状态提交追加第二轮 `context track`，否则会把“提交状态文件”再次写成新的轨迹，形成递归闭环。
+4. **口径上必须和代码快照分开汇报**。先说明代码提交是否完成，再说明是否额外执行了 runtime state 的 Meta-Commit。
+
+示例：
+
+```bash
+# Unix / Bash
+git add .evo-lite/active_context.md .evo-lite/raw_memory/
+git commit -m "chore(meta): snapshot evo-lite runtime state"
+
+# Windows PowerShell / CMD
+git add .evo-lite/active_context.md .evo-lite/raw_memory/
+git commit -m "chore(meta): snapshot evo-lite runtime state"
+```
 
 最终汇报收敛成 4 点，避开“看起来做完了、其实没闭环”：
 
 1. **代码快照**：本次 `git commit` 是否已完成。
 2. **闭环状态**：`context track` 输出的是 `closure: complete` 还是 `closure: partial`。
 3. **任务状态**：如果用了 `--resolve`，明确说明 backlog 是否真的被消除。
-4. **最小下一步**：若闭环完整，就告知用户可以继续下一个任务；若闭环不完整，就明确指出先补哪一项。
+4. **最小下一步**：若闭环完整且 `context track` 产出了受追踪运行时状态文件，就执行上面的显式 Meta-Commit；若闭环完整且没有新的运行时状态文件要版本化，就告知用户可以继续下一个任务；若闭环不完整，就明确指出先补哪一项。
 
 推荐口径：
 

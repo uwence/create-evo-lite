@@ -858,7 +858,7 @@ function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
             activeFile: path.join(workspaceRoot, '.claude', 'commands', file),
             templateFile: path.join(templateRootPath, '.claude', 'commands', file),
         })),
-        ...['copilot-instructions.md', 'hooks/context-mode.json', 'hooks/context-mode.sh', 'hooks/evo-lite-hook.js', 'hooks/git-bash.cmd'].map(file => ({
+        ...['copilot-instructions.md', 'hooks/context-mode.json', 'hooks/context-mode.sh', 'hooks/evo-lite-hook.js', 'hooks/git-bash.cmd', 'hooks/rtk-rewrite.json'].map(file => ({
             label: `.github/${file}`,
             activeFile: path.join(workspaceRoot, '.github', ...file.split('/')),
             templateFile: path.join(templateRootPath, '.github', ...file.split('/')),
@@ -898,6 +898,11 @@ function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
             label: '.github/hooks/git-bash.cmd',
             activeFile: path.join(workspaceRoot, '.github', 'hooks', 'git-bash.cmd'),
             templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'git-bash.cmd') : null,
+        },
+        {
+            label: '.github/hooks/rtk-rewrite.json',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'rtk-rewrite.json'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'rtk-rewrite.json') : null,
         },
         {
             label: '.vscode/mcp.json',

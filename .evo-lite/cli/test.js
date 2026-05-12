@@ -427,8 +427,14 @@ async function runTests() {
             fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.json')),
             'initializer did not scaffold .github/hooks/context-mode.json into the target project'
         );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json')),
+            'initializer did not scaffold .github/hooks/rtk-rewrite.json into the target project'
+        );
         const modernHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.json'), 'utf8'));
         assert.ok(modernHookConfig.hooks.PreToolUse.some(entry => entry.command.includes('evo-lite-hook.js pretooluse')), 'initializer did not scaffold PreToolUse architecture guard hook');
+        const rtkRewriteConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json'), 'utf8'));
+        assert.ok(rtkRewriteConfig.hooks.PreToolUse.some(entry => entry.command === 'rtk hook copilot'), 'initializer did not scaffold the RTK rewrite hook config');
 
         console.log('3b. Testing pretooluse architecture guard ...');
         const blockedHookRuntime = createTempRuntimeRoot('hook-pretool-architecture');
@@ -689,11 +695,16 @@ async function runTests() {
         });
         assert.ok(healthyVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should treat dynamic model defaults and host adapters as a healthy sync state');
         assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged healthy template files as drift');
+        assert.ok(!healthyVerifyOutput.includes('.github/hooks/rtk-rewrite.json is out of sync'), 'verify incorrectly flagged the RTK hook asset as drift');
         assert.ok(healthyVerifyOutput.includes('可以继续 `/evo` / `/commit` 工作流'), 'verify healthy output did not include a clear next step');
 
         const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {
             const claudePath = path.join(templateRoot, 'CLAUDE.md');
             fs.writeFileSync(claudePath, `${fs.readFileSync(claudePath, 'utf8')}\n<!-- drift -->`, 'utf8');
+            const rtkHookPath = path.join(templateRoot, '.github', 'hooks', 'rtk-rewrite.json');
+            const rtkHookConfig = JSON.parse(fs.readFileSync(rtkHookPath, 'utf8'));
+            rtkHookConfig.hooks.PreToolUse[0].command = 'rtk hook altered';
+            fs.writeFileSync(rtkHookPath, JSON.stringify(rtkHookConfig, null, 2), 'utf8');
         });
         const verifyDriftLoaded = await bootstrapRuntime(verifyRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
@@ -704,6 +715,7 @@ async function runTests() {
             await verifyDriftLoaded.service.verify();
         });
         assert.ok(driftVerifyOutput.includes('CLAUDE.md is out of sync'), 'verify did not report actual host adapter drift');
+        assert.ok(driftVerifyOutput.includes('.github/hooks/rtk-rewrite.json is out of sync'), 'verify did not report RTK hook asset drift');
         assert.ok(!driftVerifyOutput.includes('Verify completed with no active alerts.'), 'verify still reported a clean bill of health after drift');
 
         console.log('10a. Testing sessionstart architecture guidance ...');

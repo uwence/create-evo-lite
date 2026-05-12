@@ -2,8 +2,8 @@
 
 # 🧠 create-evo-lite
 
-**给 AI Vibecoding 准备的项目脚手架**  
-*“不要求你先成为专业软件工程师，也能让 AI 在项目里有记忆、有交接、有边界。”*
+**给 AI Vibecoding 准备的项目内治理脚手架**  
+*“不要求你先成为专业软件工程师，也能让 AI 在项目里按规则接管、持续推进并完成交接。”*
 
 [![Vibecoding](https://img.shields.io/badge/Vibecoding-AI_Assisted-8a2be2.svg)](#)
 [![System](https://img.shields.io/badge/System-Daemonless_RAG-007acc.svg)](#)
@@ -16,9 +16,9 @@
 ---
 </div>
 
-> **一个寄生在项目树里的、Daemonless（无后台守护进程）的 AI vibecoding 脚手架。**
+> **一个寄生在项目树里的、Daemonless（无后台守护进程）的 AI 开发治理运行时与脚手架。**
 
-`Evo-Lite` 是专为 Agentic Workflow（智能体辅助编程）打造的项目内脚手架，尤其适合**像工控、自动化、硬件、测试、运维这类并非纯软件工程背景**、但希望借助 AI 持续做项目的人。它不依赖常驻服务，不要求你额外维护一个独立 RAG 系统，而是把**规则、显性上下文、隐性记忆、CLI 工具**一起收进项目目录，让 AI 在接管项目时不只是“看到代码”，还要“继承秩序”。
+`Evo-Lite` 不是另一个独立记忆服务，而是专为 Agentic Workflow（智能体辅助编程）打造的**项目内治理层**，尤其适合**像工控、自动化、硬件、测试、运维这类并非纯软件工程背景**、但希望借助 AI 持续做项目的人。它不依赖常驻服务，不要求你额外维护一个独立 RAG 系统，而是把**规则、显性状态、归档通道、CLI 工作流**一起收进项目目录，让 AI 在接管项目时不只是“看到代码”，还必须**遵守协议、继承状态、留下可审计轨迹**。本地检索与记忆仍然存在，但只是这个治理运行时里的子系统。
 
 > [!IMPORTANT]
 > **当前版本说明**：仓库现在采用“**工作流协议 + 本地 CLI**”的双层结构。
@@ -104,9 +104,9 @@ Evo-Lite 现在采用“**canonical 语义层 + 宿主适配层**”的结构：
   - 工作流层：`/evo`、`/commit`、`/mem`、`/wash`
   - 执行层：`remember`、`recall`、`export`、`import`、`archive`、`sync`、`rebuild`、`context`
 
-## 🧭 记忆双轨模型
+## 🧭 状态与记忆双轨模型
 
-Evo-Lite 当前采用一套明确的**双轨记忆模型**：
+Evo-Lite 当前采用一套明确的**状态与记忆双轨模型**：
 
 - **`active_context.md`**：当前状态面板，只维护 `META`、`FOCUS`、`BACKLOG`、`TRAJECTORY` 这类“现在正在发生什么”的信息。
 - **`archive` / `track`**：长期结构化资产，用于保存已经闭环的 Bug 复盘、实现结论、架构决策和可复用经验。

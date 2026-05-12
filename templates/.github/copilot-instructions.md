@@ -16,4 +16,18 @@ This workspace exposes context-mode through the Docker-backed MCP server defined
 - If `architecture.md` is missing or still placeholder content, do not assume a stack as fact. Propose 2-3 candidate architecture/language options from the current repo signals or project name, then ask the user whether to adopt your proposal or customize it before coding.
 
 <!-- evo-lite:local-extensions:start -->
+# RTK Token-Optimized CLI
+
+RTK is installed as a native Windows CLI. Use it explicitly for shell commands whose raw output would be noisy.
+
+Examples:
+
+```sh
+rtk git status
+rtk git diff
+rtk ls .
+rtk read README.md
+rtk grep "pattern" .
+rtk gain
+```
 <!-- evo-lite:local-extensions:end -->

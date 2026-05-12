@@ -2,8 +2,8 @@
 
 # 🧠 create-evo-lite
 
-**A Project Scaffold for AI Vibecoding**  
-*"You do not need to be a professional software engineer to keep AI work durable, traceable, and handoff-friendly."*
+**A Project-Local Governance Scaffold for AI Vibecoding**  
+*"You do not need to be a professional software engineer to make AI work governed, durable, and handoff-friendly."*
 
 [![Vibecoding](https://img.shields.io/badge/Vibecoding-AI_Assisted-8a2be2.svg)](#)
 [![System](https://img.shields.io/badge/System-Daemonless_RAG-007acc.svg)](#)
@@ -16,9 +16,9 @@
 ---
 </div>
 
-> **A daemonless, project-local scaffold for AI vibecoding.**
+> **A daemonless, project-local governance runtime and scaffold for AI vibecoding.**
 
-`Evo-Lite` is a project-local scaffold for Agentic Workflows, especially useful for people who come from **automation, controls, hardware, testing, ops, or other non-pure-software backgrounds** but still want to build real projects with AI. Instead of asking you to run an external RAG stack, it keeps **rules, explicit context, implicit memory, and CLI tooling** inside the repo, so an AI agent inherits not only code, but also discipline.
+`Evo-Lite` is not another standalone memory service. It is a **project-local governance layer** for Agentic Workflows, especially useful for people who come from **automation, controls, hardware, testing, ops, or other non-pure-software backgrounds** but still want to build real projects with AI. Instead of asking you to run an external RAG stack, it keeps **rules, explicit state, archive paths, and executable workflow tooling** inside the repo, so an AI agent inherits not only code, but also protocol, state, and auditable closure. Local retrieval and memory still exist, but they are subsystems rather than the full product definition.
 
 > [!IMPORTANT]
 > **Current structure**: Evo-Lite uses a two-layer model.
@@ -104,9 +104,9 @@ As AI coding assistants become increasingly powerful, we often encounter these *
   - Workflow layer: `/evo`, `/commit`, `/mem`, `/wash`
   - Execution layer: `remember`, `recall`, `export`, `import`, `archive`, `sync`, `rebuild`, `context`
 
-## 🧭 Dual-Lane Memory Model
+## 🧭 Dual-Lane State + Memory Model
 
-Evo-Lite currently uses an explicit **dual-lane memory model**:
+Evo-Lite currently uses an explicit **dual-lane state + memory model**:
 
 - **`active_context.md`**: the live state panel, only for `META`, `FOCUS`, `BACKLOG`, `TRAJECTORY`, and other “what is happening right now” signals.
 - **`archive` / `track`**: long-lived structured assets for closed-loop bug reviews, implementation conclusions, architecture decisions, and reusable project knowledge.
