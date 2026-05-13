@@ -23,6 +23,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [1f8eb6c] 2026-05-13 BaselineInitCommit: Completed the fresh-repo bootstrap hardening pass for create-evo-lite. The scaffold entry now ensure
 - [bc1ae84] 2026-05-13 BootstrapFlowHardening: Closed the dogfood feedback loop for empty-repo onboarding and takeover friction. The scaffold now a
 - [39d7cfc] 2026-05-13 HookOwnershipBoundary: Completed the Evo-Lite hook-ownership boundary split for scaffolded host assets. Narrowed managed Gi
 - [62e6dda] 2026-05-13 RuntimeBoundaryGuardrails: Added session_events observability as non-durable telemetry, introduced context events read path, an
@@ -32,7 +33,6 @@
 - [9aa0b88] 2026-05-12 VerifySyncStabilization: Stabilized the live regression suite after the RTK and governance work. Rebound the primary test run
 - [29d6597] 2026-05-12 RtkHookGovernance: Imported the portable RTK rewrite hook into root and template assets, registered it in scaffold and
 - [7be4c52] 2026-05-12 ArchitectureGuardHooks: Hardened the PreToolUse governance path across live and template runtime assets. Added target-aware
-- [a5ec6b8] 2026-05-12 HookRuntimeDogfood: Completed live runtime hook dogfood and Codex workflow semantics clarification. Added hooks, MCP det
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
