@@ -23,6 +23,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [df7e188] 2026-05-13 CodexHookBridge: Completed the Codex-native hook integration pass for create-evo-lite. Added project and template .co
 - [83af489] 2026-05-12 CommanderCliRouting: Completed the commander.js CLI migration for create-evo-lite. Refactored the public scaffold entrypo
 - [9aa0b88] 2026-05-12 VerifySyncStabilization: Stabilized the live regression suite after the RTK and governance work. Rebound the primary test run
 - [29d6597] 2026-05-12 RtkHookGovernance: Imported the portable RTK rewrite hook into root and template assets, registered it in scaffold and
@@ -32,7 +33,6 @@
 - [f1e2988] 2026-03-21 LegacyUpgradeGate: Blocked in-place upgrade for npm-published 1.4.9-era runtimes by detecting pre-2.0 context/template/
 - [913c0d1] 2026-03-20 VerifyHostAdapterDrift: Extended verify so template sync is no longer limited to the active CLI files. It now compares root
 - [d82ea6a] 2026-03-20 ClaudeCommandWrappers: Added the first thin Claude-native command layer on top of Evo-Lite semantics. Projects now scaffold
-- [8dc12e3] 2026-03-20 RootHostAdapters: Introduced the first host adapter slice for Codex and Claude Code. New projects now emit root-level
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
