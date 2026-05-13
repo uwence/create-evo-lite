@@ -81,7 +81,7 @@
           {
             "type": "command",
             "command": "node ./.codex/hooks/gitnexus-hook.js posttooluse",
-            "statusMessage": "Checking GitNexus MCP status..."
+            "statusMessage": "Refreshing local GitNexus index..."
           }
         ]
       }

@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const ALLOWED_EVENTS = new Set(['posttooluse']);
 const TOOL_ENV_KEYS = [
@@ -202,6 +203,75 @@ function shouldAnalyze(command, tool, success) {
     return /\bgit\s+(commit|merge)\b/.test(commandLower) || /^git\.(commit|merge)$/.test(toolLower);
 }
 
+function resolveGitNexusExecutable() {
+    const override = compactText(process.env.GITNEXUS_BIN, 1200);
+    if (override) {
+        return override;
+    }
+
+    if (process.platform !== 'win32') {
+        return 'gitnexus';
+    }
+
+    const candidates = [
+        process.env.APPDATA ? path.join(process.env.APPDATA, 'npm', 'gitnexus.cmd') : null,
+        process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Roaming', 'npm', 'gitnexus.cmd') : null,
+        'gitnexus.cmd',
+        'gitnexus.exe',
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+        if (!path.isAbsolute(candidate) || fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return 'gitnexus.cmd';
+}
+
+function quoteWindowsArg(value) {
+    const normalized = String(value || '');
+    if (!normalized) {
+        return '""';
+    }
+
+    if (!/[\s"]/u.test(normalized)) {
+        return normalized;
+    }
+
+    return `"${normalized.replace(/"/g, '\\"')}"`;
+}
+
+function runGitNexus(args, workspaceRoot) {
+    const executable = resolveGitNexusExecutable();
+    const options = {
+        cwd: workspaceRoot,
+        encoding: 'utf8',
+        windowsHide: true,
+    };
+    const result = process.platform === 'win32' && /\.cmd$/i.test(executable)
+        ? spawnSync(
+            process.env.ComSpec || 'cmd.exe',
+            ['/d', '/s', '/c', [quoteWindowsArg(executable), ...args.map(quoteWindowsArg)].join(' ')],
+            options
+        )
+        : spawnSync(executable, args, options);
+
+    if (result.error) {
+        throw result.error;
+    }
+
+    return {
+        status: typeof result.status === 'number' ? result.status : 0,
+        stdout: normalizeRawText(result.stdout || ''),
+        stderr: normalizeRawText(result.stderr || ''),
+    };
+}
+
+function buildAnalyzeArgs(workspaceRoot) {
+    return ['analyze', workspaceRoot];
+}
+
 function deriveGitNexusUrls(baseUrl) {
     const normalizedBase = String(baseUrl || 'http://localhost:4747/api/mcp').replace(/\/+$/, '');
     const root = normalizedBase.endsWith('/api/mcp')
@@ -343,6 +413,18 @@ function logInfo(message) {
 }
 
 async function checkGitNexus(workspaceRoot) {
+    const analyzeResult = runGitNexus(buildAnalyzeArgs(workspaceRoot), workspaceRoot);
+    if (analyzeResult.status === 0) {
+        const summary = compactText(analyzeResult.stdout, 1200);
+        if (summary) {
+            logDebug(summary);
+        }
+        logInfo('ℹ️ [GitNexus] Local index refreshed for this repo.');
+        return;
+    }
+
+    logDebug(compactText(analyzeResult.stderr || analyzeResult.stdout, 1200) || 'local GitNexus analyze failed');
+
     const urls = deriveGitNexusUrls(process.env.GITNEXUS_MCP_URL);
     const serviceState = await checkGitNexusService(urls);
     const repos = await readIndexedRepos(urls);
