@@ -899,21 +899,16 @@ function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
             activeFile: path.join(workspaceRoot, '.claude', 'commands', file),
             templateFile: path.join(templateRootPath, '.claude', 'commands', file),
         })),
-        ...['copilot-instructions.md', 'hooks/context-mode.json', 'hooks/context-mode.sh', 'hooks/evo-lite-hook.js', 'hooks/git-bash.cmd', 'hooks/rtk-rewrite.json'].map(file => ({
+        ...['copilot-instructions.md', 'hooks/evo-lite.json', 'hooks/evo-lite-hook.js', 'hooks/dogfood-commit-hook.js'].map(file => ({
             label: `.github/${file}`,
             activeFile: path.join(workspaceRoot, '.github', ...file.split('/')),
             templateFile: path.join(templateRootPath, '.github', ...file.split('/')),
         })),
-        ...['hooks.json', 'hooks/context-mode-hook.js', 'hooks/gitnexus-hook.js'].map(file => ({
+        ...['hooks.json'].map(file => ({
             label: `.codex/${file}`,
             activeFile: path.join(workspaceRoot, '.codex', ...file.split('/')),
             templateFile: path.join(templateRootPath, '.codex', ...file.split('/')),
         })),
-        {
-            label: '.vscode/mcp.json',
-            activeFile: path.join(workspaceRoot, '.vscode', 'mcp.json'),
-            templateFile: path.join(templateRootPath, '.vscode', 'mcp.json'),
-        },
     ];
     return entries;
 }
@@ -926,14 +921,9 @@ function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
             templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'copilot-instructions.md') : null,
         },
         {
-            label: '.github/hooks/context-mode.json',
-            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'context-mode.json'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'context-mode.json') : null,
-        },
-        {
-            label: '.github/hooks/context-mode.sh',
-            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'context-mode.sh'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'context-mode.sh') : null,
+            label: '.github/hooks/evo-lite.json',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'evo-lite.json'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'evo-lite.json') : null,
         },
         {
             label: '.github/hooks/evo-lite-hook.js',
@@ -941,39 +931,14 @@ function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
             templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'evo-lite-hook.js') : null,
         },
         {
-            label: '.github/hooks/git-bash.cmd',
-            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'git-bash.cmd'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'git-bash.cmd') : null,
-        },
-        {
-            label: '.github/hooks/rtk-rewrite.json',
-            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'rtk-rewrite.json'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'rtk-rewrite.json') : null,
+            label: '.github/hooks/dogfood-commit-hook.js',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'dogfood-commit-hook.js'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'dogfood-commit-hook.js') : null,
         },
         {
             label: '.codex/hooks.json',
             activeFile: path.join(workspaceRoot, '.codex', 'hooks.json'),
             templateFile: templateRootPath ? path.join(templateRootPath, '.codex', 'hooks.json') : null,
-        },
-        {
-            label: '.codex/hooks/context-mode-hook.js',
-            activeFile: path.join(workspaceRoot, '.codex', 'hooks', 'context-mode-hook.js'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.codex', 'hooks', 'context-mode-hook.js') : null,
-        },
-        {
-            label: '.codex/hooks/gitnexus-hook.js',
-            activeFile: path.join(workspaceRoot, '.codex', 'hooks', 'gitnexus-hook.js'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.codex', 'hooks', 'gitnexus-hook.js') : null,
-        },
-        {
-            label: '.codex/hooks/rtk-codex-hook.js',
-            activeFile: path.join(workspaceRoot, '.codex', 'hooks', 'rtk-codex-hook.js'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.codex', 'hooks', 'rtk-codex-hook.js') : null,
-        },
-        {
-            label: '.vscode/mcp.json',
-            activeFile: path.join(workspaceRoot, '.vscode', 'mcp.json'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.vscode', 'mcp.json') : null,
         },
     ];
 }

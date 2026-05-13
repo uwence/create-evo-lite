@@ -1,13 +1,12 @@
-# Context-Mode Routing
+# Evo-Lite Workspace Bootstrap
 
-This workspace exposes context-mode through the Docker-backed MCP server defined in `.vscode/mcp.json`.
+This workspace uses Evo-Lite as the project-local workflow, handoff, and runtime-state layer.
 
-- Prefer `ctx_execute`, `ctx_execute_file`, and `ctx_batch_execute` for analysis that would otherwise dump large raw output into chat.
-- Prefer `ctx_fetch_and_index` plus `ctx_search` for web content instead of pasting or returning raw page bodies.
-- Keep file reads and terminal output focused on editing, targeted validation, and short results.
-- When using context-mode file tools, pass workspace-relative paths such as `.vscode/mcp.json`; do not pass Windows absolute paths.
-- When resuming work after compaction or restart, search prior context with `ctx_search` before asking the user to repeat state.
-- Use `ctx stats` to inspect savings and `ctx doctor` when MCP or hook wiring looks unhealthy.
+- Read `.agents/rules/` and `.agents/workflows/` as the canonical workflow semantics.
+- Read `.evo-lite/active_context.md` as the current runtime state before starting a new implementation slice.
+- Use `./.evo-lite/mem` on Unix / Bash and `.\.evo-lite\mem.cmd` on Windows PowerShell / CMD for focus, backlog, trajectory, and handoff transitions.
+- Do not hand-edit protected runtime anchors when an Evo-Lite CLI path already exists.
+- External integrations such as context-mode, RTK, and GitNexus are optional and are managed by their own installers and configs, not by Evo-Lite scaffold ownership.
 
 # Architecture Rule
 
@@ -16,18 +15,4 @@ This workspace exposes context-mode through the Docker-backed MCP server defined
 - If `architecture.md` is missing or still placeholder content, do not assume a stack as fact. Propose 2-3 candidate architecture/language options from the current repo signals or project name, then ask the user whether to adopt your proposal or customize it before coding.
 
 <!-- evo-lite:local-extensions:start -->
-# RTK Token-Optimized CLI
-
-RTK is installed as a native Windows CLI. Use it explicitly for shell commands whose raw output would be noisy.
-
-Examples:
-
-```sh
-rtk git status
-rtk git diff
-rtk ls .
-rtk read README.md
-rtk grep "pattern" .
-rtk gain
-```
 <!-- evo-lite:local-extensions:end -->

@@ -403,10 +403,12 @@ async function runTests() {
         const hookReport = primaryLoaded.service.inspectHookScaffold();
         assert.strictEqual(hookReport.valid, true, 'hook scaffold inspection should pass for the template-shaped workspace');
         assert.strictEqual(hookReport.missing.length, 0, 'hook scaffold inspection should not report missing assets for the template-shaped workspace');
-        assert.ok(hookReport.assets.some(asset => asset.label === '.vscode/mcp.json' && asset.exists), 'hook scaffold inspection did not include the workspace MCP config asset');
+        assert.ok(hookReport.assets.some(asset => asset.label === '.github/copilot-instructions.md' && asset.exists), 'hook scaffold inspection did not include the Copilot bootstrap instructions asset');
+        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/evo-lite.json' && asset.exists), 'hook scaffold inspection did not include the GitHub hook registry asset');
         assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/evo-lite-hook.js' && asset.exists), 'hook scaffold inspection did not include the lifecycle advice hook wrapper');
-        assert.ok(hookReport.assets.some(asset => asset.label === '.codex/hooks.json' && asset.exists), 'hook scaffold inspection did not include the Codex hook manifest');
-        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/git-bash.cmd' && asset.exists), 'hook scaffold inspection did not include the Windows Git Bash launcher asset');
+        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/dogfood-commit-hook.js' && asset.exists), 'hook scaffold inspection did not include the dogfood guard hook wrapper');
+        assert.ok(hookReport.assets.some(asset => asset.label === '.codex/hooks.json' && asset.exists), 'hook scaffold inspection did not include the Evo-Lite Codex hook manifest');
+        assert.ok(!hookReport.assets.some(asset => asset.label === '.vscode/mcp.json'), 'hook scaffold inspection should not treat workspace MCP config as an Evo-Lite-managed asset');
         const missingHookRuntime = createTempRuntimeRoot('hook-missing');
         const missingHookLoaded = loadCli(missingHookRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
@@ -426,10 +428,14 @@ async function runTests() {
         assert.ok(installHookResult.installed.includes('.github/hooks/evo-lite-hook.js'), 'hook scaffold install did not restore a missing lifecycle advice hook wrapper');
         assert.ok(fs.existsSync(path.join(installHookRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js')), 'hook scaffold install did not recreate the missing lifecycle advice hook wrapper');
         const installInstructionsPath = path.join(installHookRuntime.workspaceRoot, '.github', 'copilot-instructions.md');
+        const externalMcpConfigPath = path.join(installHookRuntime.workspaceRoot, '.vscode', 'mcp.json');
         fs.writeFileSync(installInstructionsPath, '# mutated\n', 'utf8');
+        fs.writeFileSync(externalMcpConfigPath, '{"mutated":true}\n', 'utf8');
         const forceInstallResult = installHookLoaded.service.installHookScaffold({ force: true });
         assert.ok(forceInstallResult.overwritten.includes('.github/copilot-instructions.md'), 'hook scaffold install --force did not overwrite an existing managed asset');
         assert.ok(fs.existsSync(`${installInstructionsPath}.bak`), 'hook scaffold install --force did not create a backup before overwriting');
+        assert.ok(!forceInstallResult.overwritten.includes('.vscode/mcp.json'), 'hook scaffold install --force should not overwrite unmanaged MCP config assets');
+        assert.strictEqual(fs.readFileSync(externalMcpConfigPath, 'utf8'), '{"mutated":true}\n', 'hook scaffold install unexpectedly rewrote an unmanaged MCP config asset');
 
         console.log('2bc. Testing hook lifecycle advice ...');
         const lifecycleRuntime = createTempRuntimeRoot('hook-lifecycle');
@@ -649,55 +655,63 @@ async function runTests() {
             'initializer did not scaffold .github/copilot-instructions.md into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.json')),
-            'initializer did not scaffold .github/hooks/context-mode.json into the target project'
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'evo-lite.json')),
+            'initializer did not scaffold .github/hooks/evo-lite.json into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.sh')),
-            'initializer did not scaffold .github/hooks/context-mode.sh into the target project'
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'dogfood-commit-hook.js')),
+            'initializer did not scaffold .github/hooks/dogfood-commit-hook.js into the target project'
         );
         assert.ok(
             fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'evo-lite-hook.js')),
             'initializer did not scaffold .github/hooks/evo-lite-hook.js into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'git-bash.cmd')),
-            'initializer did not scaffold .github/hooks/git-bash.cmd into the target project'
+            !fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.sh')),
+            'initializer should not scaffold external context-mode shell hooks into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json')),
-            'initializer did not scaffold .github/hooks/rtk-rewrite.json into the target project'
+            !fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'git-bash.cmd')),
+            'initializer should not scaffold Git Bash launcher assets into the target project'
         );
         assert.ok(
             fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks.json')),
             'initializer did not scaffold .codex/hooks.json into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'context-mode-hook.js')),
-            'initializer did not scaffold .codex/hooks/context-mode-hook.js into the target project'
+            !fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json')),
+            'initializer should not scaffold RTK rewrite hook config into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'gitnexus-hook.js')),
-            'initializer did not scaffold .codex/hooks/gitnexus-hook.js into the target project'
+            !fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'context-mode-hook.js')),
+            'initializer should not scaffold context-mode Codex hooks into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'rtk-codex-hook.js')),
-            'initializer did not scaffold .codex/hooks/rtk-codex-hook.js into the target project'
+            !fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'gitnexus-hook.js')),
+            'initializer should not scaffold GitNexus Codex hooks into the target project'
         );
-        const modernHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.json'), 'utf8'));
+        assert.ok(
+            !fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'rtk-codex-hook.js')),
+            'initializer should not scaffold RTK Codex hooks into the target project'
+        );
+        const modernHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'evo-lite.json'), 'utf8'));
         assert.ok(modernHookConfig.hooks.SessionStart.some(entry => entry.command.includes('evo-lite-hook.js sessionstart')), 'initializer did not scaffold SessionStart lifecycle advice hook');
         assert.ok(modernHookConfig.hooks.PreToolUse.some(entry => entry.command.includes('evo-lite-hook.js pretooluse')), 'initializer did not scaffold PreToolUse architecture guard hook');
+        assert.ok(modernHookConfig.hooks.PreToolUse.some(entry => entry.command.includes('dogfood-commit-hook.js pretooluse')), 'initializer did not scaffold the dogfood guard hook');
         assert.ok(modernHookConfig.hooks.PreCompact.some(entry => entry.command.includes('evo-lite-hook.js precompact')), 'initializer did not scaffold PreCompact lifecycle advice hook');
         assert.ok(Array.isArray(modernHookConfig.hooks.Stop) && modernHookConfig.hooks.Stop.some(entry => entry.command.includes('evo-lite-hook.js stop')), 'initializer did not scaffold Stop lifecycle advice hook');
-        const rtkRewriteConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json'), 'utf8'));
-        assert.ok(rtkRewriteConfig.hooks.PreToolUse.some(entry => entry.command === 'rtk hook copilot'), 'initializer did not scaffold the RTK rewrite hook config');
+        assert.ok(!JSON.stringify(modernHookConfig).includes('context-mode.sh'), 'initializer should no longer wire external context-mode shell hooks through the managed GitHub hook registry');
         const codexHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.codex', 'hooks.json'), 'utf8'));
-        assert.ok(codexHookConfig.hooks.SessionStart.some(entry => entry.hooks.some(hook => hook.command.includes('context-mode-hook.js sessionstart'))), 'initializer did not scaffold Codex SessionStart context-mode hook');
-        assert.ok(codexHookConfig.hooks.PreToolUse.some(entry => entry.matcher === 'Bash' && entry.hooks.some(hook => hook.command.includes('rtk-codex-hook.js pretooluse'))), 'initializer did not scaffold Codex PreToolUse RTK hook');
-        assert.ok(codexHookConfig.hooks.PostToolUse.some(entry => entry.hooks.some(hook => hook.command.includes('gitnexus-hook.js posttooluse'))), 'initializer did not scaffold Codex PostToolUse GitNexus hook');
+        assert.ok(codexHookConfig.hooks.SessionStart.some(entry => entry.hooks.some(hook => hook.command.includes('evo-lite-hook.js sessionstart'))), 'initializer did not scaffold Codex SessionStart Evo-Lite hook');
+        assert.ok(codexHookConfig.hooks.PreToolUse.some(entry => entry.matcher === 'Bash' && entry.hooks.some(hook => hook.command.includes('evo-lite-hook.js pretooluse'))), 'initializer did not scaffold Codex PreToolUse Evo-Lite architecture hook');
+        assert.ok(codexHookConfig.hooks.PreToolUse.some(entry => entry.matcher === 'Bash' && entry.hooks.some(hook => hook.command.includes('dogfood-commit-hook.js pretooluse'))), 'initializer did not scaffold Codex PreToolUse dogfood hook');
+        assert.ok(codexHookConfig.hooks.PostToolUse.some(entry => entry.hooks.some(hook => hook.command.includes('evo-lite-hook.js posttooluse'))), 'initializer did not scaffold Codex PostToolUse Evo-Lite closure hook');
+        assert.ok(!JSON.stringify(codexHookConfig).includes('context-mode-hook.js'), 'initializer should no longer wire context-mode through the managed Codex hook manifest');
+        assert.ok(!JSON.stringify(codexHookConfig).includes('rtk-codex-hook.js'), 'initializer should no longer wire RTK through the managed Codex hook manifest');
+        assert.ok(!JSON.stringify(codexHookConfig).includes('gitnexus-hook.js'), 'initializer should no longer wire GitNexus through the managed Codex hook manifest');
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.vscode', 'mcp.json')),
-            'initializer did not scaffold .vscode/mcp.json into the target project'
+            !fs.existsSync(path.join(modernInitRoot, '.vscode', 'mcp.json')),
+            'initializer should not scaffold external MCP config into the target project'
         );
 
         console.log('4. Testing archive / sync ...');
@@ -865,9 +879,9 @@ async function runTests() {
         });
         assert.ok(healthyVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should treat dynamic model defaults and host adapters as a healthy sync state');
         assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged healthy template files as drift');
-        assert.ok(!healthyVerifyOutput.includes('.github/hooks/context-mode.json is out of sync'), 'verify incorrectly flagged healthy hook assets as drift');
+        assert.ok(!healthyVerifyOutput.includes('.github/hooks/evo-lite.json is out of sync'), 'verify incorrectly flagged the managed GitHub hook registry as drift');
         assert.ok(!healthyVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify incorrectly flagged the Codex hook manifest as drift');
-        assert.ok(!healthyVerifyOutput.includes('.github/hooks/rtk-rewrite.json is out of sync'), 'verify incorrectly flagged the RTK hook asset as drift');
+        assert.ok(!healthyVerifyOutput.includes('.github/hooks/dogfood-commit-hook.js is out of sync'), 'verify incorrectly flagged the dogfood guard hook as drift');
         assert.ok(healthyVerifyOutput.includes('可以继续 `/evo` / `/commit` 工作流'), 'verify healthy output did not include a clear next step');
 
         const localExtensionRuntime = createTempRuntimeRoot('verify-local-extension');
@@ -892,18 +906,16 @@ async function runTests() {
         assert.ok(!localExtensionVerifyOutput.includes('.github/copilot-instructions.md is out of sync'), 'verify incorrectly flagged a local extension block as template drift');
 
         const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {
-            const hookConfigPath = path.join(templateRoot, '.github', 'hooks', 'context-mode.json');
-            const hookConfig = JSON.parse(fs.readFileSync(hookConfigPath, 'utf8'));
-            hookConfig.hooks.PreToolUse[0].command = './.github/hooks/context-mode.sh altered-pretooluse';
-            fs.writeFileSync(hookConfigPath, JSON.stringify(hookConfig, null, 2), 'utf8');
+            const dogfoodHookPath = path.join(templateRoot, '.github', 'hooks', 'dogfood-commit-hook.js');
+            fs.writeFileSync(dogfoodHookPath, `${fs.readFileSync(dogfoodHookPath, 'utf8')}\n// drift\n`, 'utf8');
+            const githubHookRegistryPath = path.join(templateRoot, '.github', 'hooks', 'evo-lite.json');
+            const githubHookRegistry = JSON.parse(fs.readFileSync(githubHookRegistryPath, 'utf8'));
+            githubHookRegistry.hooks.SessionStart[0].command = 'node ./.github/hooks/evo-lite-hook.js altered-sessionstart';
+            fs.writeFileSync(githubHookRegistryPath, JSON.stringify(githubHookRegistry, null, 2), 'utf8');
             const codexHookPath = path.join(templateRoot, '.codex', 'hooks.json');
             const codexHookConfig = JSON.parse(fs.readFileSync(codexHookPath, 'utf8'));
-            codexHookConfig.hooks.PostToolUse[0].hooks[2].command = 'node ./.codex/hooks/gitnexus-hook.js altered-posttooluse';
+            codexHookConfig.hooks.PostToolUse[0].hooks[0].command = 'node ./.github/hooks/evo-lite-hook.js altered-posttooluse';
             fs.writeFileSync(codexHookPath, JSON.stringify(codexHookConfig, null, 2), 'utf8');
-            const rtkHookPath = path.join(templateRoot, '.github', 'hooks', 'rtk-rewrite.json');
-            const rtkHookConfig = JSON.parse(fs.readFileSync(rtkHookPath, 'utf8'));
-            rtkHookConfig.hooks.PreToolUse[0].command = 'rtk hook altered';
-            fs.writeFileSync(rtkHookPath, JSON.stringify(rtkHookConfig, null, 2), 'utf8');
         });
         const verifyDriftLoaded = await bootstrapRuntime(verifyRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
@@ -913,9 +925,9 @@ async function runTests() {
         const driftVerifyOutput = await captureConsole(async () => {
             await verifyDriftLoaded.service.verify();
         });
-        assert.ok(driftVerifyOutput.includes('.github/hooks/context-mode.json is out of sync'), 'verify did not report actual hook asset drift');
+        assert.ok(driftVerifyOutput.includes('.github/hooks/evo-lite.json is out of sync'), 'verify did not report managed GitHub hook registry drift');
+        assert.ok(driftVerifyOutput.includes('.github/hooks/dogfood-commit-hook.js is out of sync'), 'verify did not report actual Evo-Lite hook asset drift');
         assert.ok(driftVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify did not report Codex hook manifest drift');
-        assert.ok(driftVerifyOutput.includes('.github/hooks/rtk-rewrite.json is out of sync'), 'verify did not report RTK hook asset drift');
         assert.ok(!driftVerifyOutput.includes('Verify completed with no active alerts.'), 'verify still reported a clean bill of health after drift');
 
         console.log('10a. Testing sessionstart architecture guidance ...');

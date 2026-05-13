@@ -1,54 +1,64 @@
-# 🛡️ Evo-Lite 智能体防御与心智约束架构 (AI Agent Defense & Hooks Architecture)
+# 🛡️ Evo-Lite 智能体治理边界与闭环架构 (AI Agent Governance & Closure Architecture)
 
-> **文档目的**: 本文档提炼了 `create-evo-lite` 项目在对抗大语言模型（LLM）“非线性流转”、“间歇性失忆”以及“闭环失忆症 (Closure Amnesia)” 时，所演化出的一套基于“程序钩子 (Hooks) + 静态法则”的混合防御架构。日后开发类似的 Agentic Workflow 或多智能体协作系统时可作为核心架构参考。
+> **文档目的**: 本文档说明 `create-evo-lite` 当前采用的项目内治理架构，以及它对 Hook、CLI、显性状态、长期归档和外部工具集成的边界定义。它不再把 Evo-Lite 描述为“统管所有宿主 Hook 的总调度器”，而是把它限定为一个**项目内治理与闭环运行时**。
 
-为了让 AI 助手能够长期、稳定地维护一个复杂项目，单纯依赖 `system_prompt` 或 Markdown 里的软性自然语言约束是极度不可靠的。AI 会因为上下文截断、Token 面临上限、或者基于回合制的盲区而忽略规则。
+为了让 AI 助手能够长期、稳定地维护一个复杂项目，单纯依赖 `system_prompt` 或 Markdown 里的软性自然语言约束是远远不够的。AI 会因为上下文截断、回合制盲区或注意力漂移而忽略规则。
 
-为了对抗这些缺陷，本项目建立了一张**“布满程序断点（Hooks）的网”**，通过底层逻辑强制拦截、命令回显和主动修改源文件，形成了一套双向护城河。
-
----
-
-## 🏗️ 1. 核心进度池：`active_context.md` (对抗闭环失忆症)
-
-这是整个项目流动状态的心脏，也是 AI 最容易忘记更新的地方（因为 AI 永远无法预知人类何时结束会话）。
-
-* **钩子 A (静态最高指令)**: `.agents/rules/evo-lite.md` 内硬编码了触发器：*“每当完成一个独立的功能闭环、修好一个 Bug、或执行完 `git commit/push` 操作后，必须立刻原地同步执行交接，严禁拖延！”*
-* **钩子 B (行动后震慑抛出·代码级)**: 在底层 `memory.js` 数据库代码中，只要 AI 执行了成功入库 (`mem remember`)，Node.js 会在控制台底部紧接着抛出黄字警告：`💡 [交接规约监控]：请确保你同时修改了 active_context.md 推进任务状态，并执行了 git commit！`。以此将硬性防呆警报实时反馈回 AI 的视觉流 (Context Window) 中。
-* **钩子 C (启动失约告警·代码级)**: 工作流唤醒词 `/evo` 会在后台静默执行 `mem verify`。该脚本利用 `fs.statSync` 检测：如果发现 `active_context.md` 超过 **24小时** 未修改且此时被挂载，立马在控制台爆红警告：`⚠️ [交接失约告警]`，提示上个 AI 已经违约，逼迫当任 AI 重新梳理进度。
+Evo-Lite 的应对方式不是去接管所有外部工具，而是把**项目协议、当前状态、闭环落盘和少量必要的宿主治理 Hook**沉到项目树内部，让 AI 每次接管时都能看到并执行同一套最小治理面。
 
 ---
 
-## 🗄️ 2. 隐性持久层：`memory.db` (通过 `mem` CLI 唤醒的 RAG 向量)
+## 🏗️ 1. 核心状态池：`active_context.md` (对抗闭环失忆症)
 
-为了防止 AI 遗忘宝贵的大型经验（被逼成哑巴 AI），或随意塞入无价值的流水账缓存导致向量库劣化。
+这是整个项目流动状态的心脏，也是 AI 最容易忘记更新的地方。
 
-* **钩子 A (质量门槛拦截·代码级)**: 当前 CLI 会对普通 `remember` 写入施加最小质量门槛。若内容过短（如少于 40 字）或缺少足够上下文，底层脚本会直接拒绝写入，逼迫 AI 提供更完整的前因后果、架构原因或绕过解法，而不是把低熵流水账塞进记忆库。
-* **钩子 B (溯源补全与结构化归档)**: CLI 在写入隐性记忆时会补上 `[Time]` / `[Commit]` 头部；在执行 `context track` / `archive` 时，还会同步生成结构化 Markdown 归档并增量向量化。这样长期经验既能进数据库，也能以项目内资产形式保留。
-* **钩子 C (脱机降级捕捉)**: 如果本地 Embedding 模型加载失败，底层钩子会自动截留特征，把断层记忆扔进脱机文件 `offline_memories.json` 并记录系统日志。在后续被查阅 (`mem recall`) 或自检 (`mem verify`) 时，只要脚本发现此离线日志存在，就会抛出提醒，提示仍有离线盲区尚未同步回向量网络。
+* **静态协议层**: `.agents/rules/` 与 `.agents/workflows/` 定义了接管、闭环、挂起与清洗的 canonical 语义。这里是 Evo-Lite 的制度层，而不是宿主命令菜单本身。
+* **CLI 提醒层**: `memory.js` 在 `remember`、`context track`、`verify` 等动作后输出明确的下一步提醒，把“该不该交接”“该不该补闭环”直接推回 AI 的视觉流中。
+* **启动健康检查**: `/evo` 语义会驱动 `verify`，检查 `active_context.md`、本地索引、归档健康度以及工作区状态；如果上下文长期未更新，会提示当前接管者优先梳理状态，而不是盲目继续编码。
 
 ---
 
-## 📜 3. 主规约与环境：项目脚手架与守护协议
+## 🗄️ 2. 隐性持久层：`memory.db` + `raw_memory` + `index_memory`
 
-在框架升级、初始化和环境重塑时，非常容易直接覆盖掉开发者的自有提示词或引发未知的技术债。
+为了防止 AI 遗忘宝贵经验，或把低质量流水账塞进长期记忆层，Evo-Lite 把记忆拆成“轻量可召回缓存”和“可重建结构化归档”两条线。
 
-* **钩子 A (无损热更新探针)**: 脚手架 `index.js` 在监测到目标目录已有旧版核心规则文件（如 `.agents/rules/evo-lite.md`）时，不仅会将其热备份为 `.bak`，同时会在核心 `active_context.md` 的当前任务列表**最顶头强插一行 AI 最高优先级的 `⚠️ 框架已热更新` 警示语**。这会直接阻断 AI 的既有幻觉，让接管的 AI 必须第一眼先看到这个最高级指令，强制其去比对 `.bak` 差异并负责把用户的定制 Prompt 手动缝合进新文件。
-* **钩子 B (历史债务洗盘协议 Data Washing)**: CLI 工具在第一次初始化或升级当前目录时，如果发现残留了旧的 `.db` 资产文件，会交互式提示人类。一旦人类选择 `Y` 洗盘，脚本会在 `active_context.md` 顶端打入 `Data Washing` 洗盘任务标记，通过让 AI 挂接执行 `/wash` 工作流，利用 AI 自身的能力进行旧数据的自动化提取、清洗、规范化格式转换，并重新挂载（Import），绝不放任旧数据规范腐烂。
+* **`remember` 轻量线**: 对短期可召回知识写入本地数据库，但会施加最小质量门槛，避免长期被低熵片段污染。
+* **`archive` / `track` 主闭环线**: 闭环后的结论进入结构化 Markdown 归档，并同步生成 index marker；这条线才承担长期可审计与可重建职责。
+* **`verify` / `sync` / `rebuild` 自愈线**: 当归档损坏、索引缺失或数据库需要重建时，Evo-Lite 通过 CLI 自检和重建，而不是依赖外部守护进程替它兜底。
+
+---
+
+## 📜 3. 宿主最小治理面：Evo-Lite 自有 Hook 与生成资产
+
+Evo-Lite 当前只拥有一组**最小、明确、可重建**的宿主治理资产，而不是所有外部工具的统一入口。
+
+* **受管 GitHub 资产**: `.github/copilot-instructions.md`、`.github/hooks/evo-lite.json`、`.github/hooks/evo-lite-hook.js`、`.github/hooks/dogfood-commit-hook.js`
+* **受管 Codex 资产**: `.codex/hooks.json`
+* **受管含义**: 这些文件是 Evo-Lite 自己生成、校验和必要时覆盖的资产。它们负责当前工作流的接管提醒、闭环提醒、PreToolUse 治理和 dogfood 约束。
+* **非受管含义**: RTK、GitNexus、context-mode、MCP server config 等外部能力，不再由 Evo-Lite 负责脚手架分发、统一接线或校验漂移。若项目需要它们，应由各自安装器或配置体系单独管理。
 
 ---
 
 ## 🌳 4. 版本闭环与 Git 树约束 (`package.json` & Commit)
 
-* **钩子 A (残余状态扫描)**: 所有的项目重启极有可能伴随着上一任 AI 忘记保存的代码。唤醒项目入口 `/evo` 后台挂载的 `mem verify`，会在 Node.js 里执行并捕获 `git status --porcelain`。若 stdout 非空，直接在终端界面抛出最高级别告警：`⚠️ [前朝遗留告警] 发现上一任智能体遗留了未提交的 Git 状态！`（专治跑路不提交代码的 AI）。
-* **钩子 B (发版指令捆绑)**: 制定了“牵一发而动全身”的静态死板约束：只要修改了 `version` -> 必须执行紧随其后的 `commit` -> 必须执行 `git tag` -> 必须执行带 tag 的 `push` (`git push && git push --tags`)。如果在对话思考轨迹中没出现这连串动作，强制要求 AI 根据指令督促自己执行到底。
+* **残余状态扫描**: `/evo` 驱动的 `verify` 会读取 Git 工作区状态，并对遗留的未提交改动给出明确提示。
+* **闭环要求**: 版本变更、提交、tag、push 与 `context track` 不是彼此无关的动作，而是一条需要明确完成的闭环链。Evo-Lite 通过协议和 CLI 提示去强调这条链，而不是假设 AI 会自发记住。
 
 ---
 
-## 💎 架构总结 (Conclusion)
+## 🧭 5. 边界结论 (Boundary Conclusion)
 
-本架构证明：要构建一个稳健的长期存在、无人值守（或极少人值守）的 Agentic Workflow 神经组件，**双向护城河**必不可少：
+当前架构的核心不是“把所有能力都拉进一个 Hook 网里”，而是划清楚下面三层边界：
 
-1. **静态约束**：写在 Markdown 协议里，依赖系统底层 `system_prompt` 或作为入口被一次性全文灌入 AI 记忆流。
-2. **动态钩子 (Dynamic Hooks)**：全部下沉在宿主语言（如 Node.js, Python）或 Shell 脚本底层。AI 无论是通过 CLI 工具操作业务，还是脚手架自我演化，所有的违规或状态变化必然被脚本层捕获并直接以**终端回显（Stdout Error / Warning）**的物理形式，硬塞回 LLM 的视觉流（Context Window）中，形成强迫性阻断重试或意识纠正。
+1. **canonical 语义层**：`.agents/` 与 `.evo-lite/`，负责制度、状态机、CLI 和长期归档。
+2. **宿主最小治理层**：Evo-Lite 自有 GitHub/Codex Hook 资产，只负责接管、闭环、dogfood 与必要守卫。
+3. **外部能力层**：context-mode、RTK、GitNexus、独立 MCP 服务等，可选接入，但不属于 Evo-Lite scaffold ownership。
 
-这就是从 **“规则约束” (Rule-based Constraint)** 走向 **“系统级钩子防呆” (Systemic Poka-Yoke Hooks)** 的最佳工程实践参考。
+也就是说，Evo-Lite 追求的不是“总线式全能接管”，而是**项目内治理运行时的最小闭环**：
+
+- 当前状态要有地方承载
+- 已完成闭环要有标准落盘通道
+- AI 接管时要能被提醒风险与下一步
+- 宿主侧只保留 Evo-Lite 自己真正需要拥有的 Hook 面
+
+这才是当前版本最准确的工程边界。

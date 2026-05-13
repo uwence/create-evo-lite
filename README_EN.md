@@ -25,6 +25,7 @@
 > - **`AGENTS.md` / `CLAUDE.md`** are generated at the project root as host adapters for Codex and Claude Code.
 > - **`.claude/commands/`** provides thin Claude Code-native command wrappers without replacing the canonical workflow semantics in `.agents/workflows/`.
 > - **Generated asset rule**: these host adapter files are generated Evo-Lite assets and may be overwritten during template upgrades; the canonical long-term semantic source of truth remains `.agents/` and `.evo-lite/`.
+> - **External integration boundary**: context-mode, RTK, GitNexus, and standalone MCP configs are optional external capabilities. Evo-Lite does not own their scaffold distribution or lifecycle; if you use them, manage them through their own installers and config flows.
 > - **Workflow protocols** such as `/commit`, `/mem`, and `/wash` live in `.agents/workflows/`.
 > - **Executable behavior** lives in `.evo-lite/cli/` via `memory.js` and the generated `mem` wrappers (`./.evo-lite/mem` on Unix/Bash, `.\.evo-lite\mem.cmd` on Windows PowerShell/CMD).
 > After upgrading an existing project, run `node .evo-lite/cli/memory.js verify` before continuing work.

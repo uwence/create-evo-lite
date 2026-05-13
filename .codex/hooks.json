@@ -6,11 +6,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ./.codex/hooks/context-mode-hook.js sessionstart",
-            "statusMessage": "Syncing context-mode session state..."
-          },
-          {
-            "type": "command",
             "command": "node ./.github/hooks/evo-lite-hook.js sessionstart",
             "statusMessage": "Refreshing Evo-Lite session guidance..."
           }
@@ -21,16 +16,6 @@
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "node ./.codex/hooks/rtk-codex-hook.js pretooluse",
-            "statusMessage": "Checking RTK shell rewrite..."
-          },
-          {
-            "type": "command",
-            "command": "node ./.codex/hooks/context-mode-hook.js pretooluse",
-            "statusMessage": "Syncing context-mode before tool use..."
-          },
           {
             "type": "command",
             "command": "node ./.github/hooks/evo-lite-hook.js pretooluse",
@@ -46,11 +31,6 @@
       {
         "matcher": "apply_patch",
         "hooks": [
-          {
-            "type": "command",
-            "command": "node ./.codex/hooks/context-mode-hook.js pretooluse",
-            "statusMessage": "Syncing context-mode before tool use..."
-          },
           {
             "type": "command",
             "command": "node ./.github/hooks/evo-lite-hook.js pretooluse",
@@ -70,18 +50,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ./.codex/hooks/context-mode-hook.js posttooluse",
-            "statusMessage": "Syncing context-mode after tool use..."
-          },
-          {
-            "type": "command",
             "command": "node ./.github/hooks/evo-lite-hook.js posttooluse",
             "statusMessage": "Refreshing Evo-Lite closure guidance..."
-          },
-          {
-            "type": "command",
-            "command": "node ./.codex/hooks/gitnexus-hook.js posttooluse",
-            "statusMessage": "Refreshing local GitNexus index..."
           }
         ]
       }

@@ -152,17 +152,29 @@ async function runInit(targetDirArg, options = {}) {
 
     const githubTemplateDir = path.join(templatesDir, '.github');
     if (fs.existsSync(githubTemplateDir)) {
-        copyRecursiveSync(githubTemplateDir, path.join(targetDir, '.github'));
-    }
-
-    const vscodeTemplateDir = path.join(templatesDir, '.vscode');
-    if (fs.existsSync(vscodeTemplateDir)) {
-        copyRecursiveSync(vscodeTemplateDir, path.join(targetDir, '.vscode'));
+        [
+            ['copilot-instructions.md'],
+            ['hooks', 'evo-lite.json'],
+            ['hooks', 'evo-lite-hook.js'],
+            ['hooks', 'dogfood-commit-hook.js'],
+        ].forEach(parts => {
+            const src = path.join(githubTemplateDir, ...parts);
+            const dest = path.join(targetDir, '.github', ...parts);
+            if (fs.existsSync(src)) {
+                fs.mkdirSync(path.dirname(dest), { recursive: true });
+                copyRecursiveSync(src, dest);
+            }
+        });
     }
 
     const codexTemplateDir = path.join(templatesDir, '.codex');
     if (fs.existsSync(codexTemplateDir)) {
-        copyRecursiveSync(codexTemplateDir, path.join(targetDir, '.codex'));
+        const codexHooksManifestSrc = path.join(codexTemplateDir, 'hooks.json');
+        const codexHooksManifestDest = path.join(targetDir, '.codex', 'hooks.json');
+        if (fs.existsSync(codexHooksManifestSrc)) {
+            fs.mkdirSync(path.dirname(codexHooksManifestDest), { recursive: true });
+            copyRecursiveSync(codexHooksManifestSrc, codexHooksManifestDest);
+        }
     }
 
     // 写入 cli 文件
