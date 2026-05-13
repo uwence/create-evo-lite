@@ -268,6 +268,32 @@ function summarizeActiveContext() {
     };
 }
 
+function inspectActiveContextState() {
+    if (!fs.existsSync(ACTIVE_CONTEXT_PATH)) {
+        return {
+            exists: false,
+            path: ACTIVE_CONTEXT_PATH,
+            placeholder: false,
+            status: 'missing',
+        };
+    }
+
+    const snapshot = readActiveContext();
+    const haystacks = [snapshot.sections.meta || '', snapshot.sections.focus || '', snapshot.sections.backlog || ''];
+    const placeholder = [
+        '请手动填写项目的最终目标',
+        '尚未确定当前焦点',
+        '阅读此文件，完成上下文接管',
+    ].some(token => haystacks.some(text => text.includes(token)));
+
+    return {
+        exists: true,
+        path: snapshot.path,
+        placeholder,
+        status: placeholder ? 'placeholder' : 'configured',
+    };
+}
+
 function getArchitectureRulesPath() {
     return path.join(getWorkspaceRoot(), '.agents', 'rules', 'architecture.md');
 }
@@ -1065,7 +1091,8 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
     const toolLower = tool.toLowerCase();
     const responseLooksFailed = /(^|\s|:)(error|failed|failure|exception|non-zero|exit code [1-9])/i.test(output);
     const targets = Array.isArray(options.targets) ? options.targets : [];
-    const contextExists = fs.existsSync(ACTIVE_CONTEXT_PATH);
+    const contextState = inspectActiveContextState();
+    const contextExists = contextState.exists;
     const contextSummary = contextExists ? summarizeActiveContext() : null;
     const contextStats = contextExists ? fs.statSync(ACTIVE_CONTEXT_PATH) : null;
     const staleHours = contextStats ? (Date.now() - contextStats.mtimeMs) / (1000 * 60 * 60) : null;
@@ -1120,6 +1147,9 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
     }
 
     if (event === 'sessionstart') {
+        if (contextState.status === 'placeholder') {
+            reminders.push('`.evo-lite/active_context.md` 仍是初始化占位态；先把核心目标、当前 focus 与 backlog 改成真实项目状态，再继续正式实现。');
+        }
         if (architectureRules.status === 'missing') {
             reminders.push('`.agents/rules/architecture.md` 缺失；执行 `/evo` 接管时请先根据现有项目痕迹或项目名提出 2-3 个候选架构/语言方案，并让用户明确选择“采纳建议”还是“自定义”。');
         } else if (architectureRules.status === 'placeholder') {
@@ -1158,6 +1188,7 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
         architectureStatus: architectureRules.status,
         blocked,
         contextExists,
+        contextStatus: contextState.status,
         contextStale,
         currentCommit,
         dirty,
@@ -1538,59 +1569,97 @@ function wash() {
 }
 
 async function verify(options = {}) {
-    const report = { hasAlerts: false, templateSyncChecked: false, nextSteps: [] };
+    const silent = options.silent === true;
+    const log = (...args) => {
+        if (!silent) {
+            console.log(...args);
+        }
+    };
+    const warn = (...args) => {
+        if (!silent) {
+            console.warn(...args);
+        }
+    };
+    const report = {
+        activeContext: 'unknown',
+        architectureStatus: 'unknown',
+        archives: { invalid: 0, pending: 0, raw: 0 },
+        bootstrapPending: false,
+        bootstrapSteps: [],
+        configuration: null,
+        contextStatus: 'unknown',
+        entityStore: 'unknown',
+        git: 'unknown',
+        hasAlerts: false,
+        localEngine: 'unknown',
+        nextSteps: [],
+        safety: null,
+        templateSync: 'skipped',
+        templateSyncChecked: false,
+    };
     const pushNextStep = step => {
         if (!report.nextSteps.includes(step)) {
             report.nextSteps.push(step);
         }
     };
-    console.log('🧪 Verifying Evo-Lite runtime...');
+    const pushBootstrapStep = step => {
+        if (!report.bootstrapSteps.includes(step)) {
+            report.bootstrapSteps.push(step);
+        }
+    };
+    log('🧪 Verifying Evo-Lite runtime...');
 
     const templateCliPath = getTemplateCliDir();
     const templateRootPath = getTemplateRootDir();
     if (templateCliPath && templateRootPath) {
         report.templateSyncChecked = true;
+        report.templateSync = 'synced';
         const entries = buildTemplateSyncEntries(templateCliPath, templateRootPath);
         let outOfSync = false;
 
         for (const entry of entries) {
             const { activeFile, label, templateFile } = entry;
             if (!fs.existsSync(templateFile)) {
-                console.warn(`⚠️ 模板缺少 ${label}，无法完成该文件的同步校验。`);
+                warn(`⚠️ 模板缺少 ${label}，无法完成该文件的同步校验。`);
                 outOfSync = true;
                 report.hasAlerts = true;
+                report.templateSync = 'out-of-sync';
                 pushNextStep('重新运行 `npx create-evo-lite@latest ./ --yes` 补齐模板文件。');
                 continue;
             }
             if (!fs.existsSync(activeFile)) {
-                console.warn(`⚠️ Warning: ${label} is missing from the active workspace.`);
+                warn(`⚠️ Warning: ${label} is missing from the active workspace.`);
                 outOfSync = true;
                 report.hasAlerts = true;
+                report.templateSync = 'out-of-sync';
                 pushNextStep('重新运行 `npx create-evo-lite@latest ./ --yes`，补齐缺失的 host adapter 或模板生成资产。');
                 continue;
             }
             const activeContent = normalizeTemplateComparableContent(path.basename(label), fs.readFileSync(activeFile, 'utf8'));
             const templateContent = normalizeTemplateComparableContent(path.basename(label), fs.readFileSync(templateFile, 'utf8'));
             if (activeContent !== templateContent) {
-                console.warn(`⚠️ Warning: ${label} is out of sync between active workspace and templates.`);
+                warn(`⚠️ Warning: ${label} is out of sync between active workspace and templates.`);
                 outOfSync = true;
                 report.hasAlerts = true;
+                report.templateSync = 'out-of-sync';
                 pushNextStep('重新运行 `npx create-evo-lite@latest ./ --yes`，然后再次执行 `node .evo-lite/cli/memory.js verify`。');
             }
         }
 
         if (!outOfSync) {
-            console.log('✅ CLI and host adapter files are synced with templates.');
+            log('✅ CLI and host adapter files are synced with templates.');
         }
     } else {
-        console.log('ℹ️ 模板同步检查已跳过：当前运行环境没有可对比的 templates/cli 目录。');
+        log('ℹ️ 模板同步检查已跳过：当前运行环境没有可对比的 templates/cli 目录。');
     }
 
     if (process.env.EVO_LITE_SKIP_GIT_STATUS === '1') {
-        console.log('ℹ️ Git 状态检查已按测试/显式配置跳过。');
+        log('ℹ️ Git 状态检查已按测试/显式配置跳过。');
+        report.git = 'skipped';
     } else if (process.env.EVO_LITE_FORCE_GIT_DIRTY === '1') {
-        console.log('\n⚠️ [前朝遗留告警] 发现未提交的 Git 状态！');
+        log('\n⚠️ [前朝遗留告警] 发现未提交的 Git 状态！');
         report.hasAlerts = true;
+        report.git = 'dirty';
         pushNextStep('先整理当前 Git 工作区，再继续执行 `/commit` 或新的开发动作。');
     } else {
         try {
@@ -1599,19 +1668,25 @@ async function verify(options = {}) {
                 injectedGitStatus !== null ? injectedGitStatus : runGit(['status', '--porcelain'])
             );
             if (gitStatus.length > 0) {
-                console.log('\n⚠️ [前朝遗留告警] 发现未提交的 Git 状态！');
+                log('\n⚠️ [前朝遗留告警] 发现未提交的 Git 状态！');
                 report.hasAlerts = true;
+                report.git = 'dirty';
                 pushNextStep('先整理当前 Git 工作区，再继续执行 `/commit` 或新的开发动作。');
+            } else {
+                report.git = 'clean';
             }
         } catch (error) {
             const gitError = `${error.message || ''}\n${error.stderr || ''}`;
             if (/not a git repository/i.test(gitError)) {
-                console.log('ℹ️ Git 状态检查未执行：当前目录不是可用的 Git 工作区。');
+                log('ℹ️ Git 状态检查未执行：当前目录不是可用的 Git 工作区。');
+                report.git = 'not-a-repo';
             } else if (isGitInvocationBlocked(error)) {
-                console.log('ℹ️ Git 状态检查已降级：当前 Node 运行环境禁止直接拉起 Git；若需完整校验，请使用 `./.evo-lite/mem verify` 或 `.evo-lite\\mem.cmd verify`。');
+                log('ℹ️ Git 状态检查已降级：当前 Node 运行环境禁止直接拉起 Git；若需完整校验，请使用 `./.evo-lite/mem verify` 或 `.evo-lite\\mem.cmd verify`。');
+                report.git = 'degraded';
             } else {
-                console.log(`⚠️ Git 状态检查失败: ${String(error.message || '').trim()}`);
+                log(`⚠️ Git 状态检查失败: ${String(error.message || '').trim()}`);
                 report.hasAlerts = true;
+                report.git = 'error';
                 pushNextStep('当前环境无法可靠执行 Git 状态检查；请先手工运行 `git status --short` 确认工作区。');
             }
         }
@@ -1621,37 +1696,72 @@ async function verify(options = {}) {
         const contextStats = fs.statSync(ACTIVE_CONTEXT_PATH);
         const hoursDiff = (Date.now() - contextStats.mtimeMs) / (1000 * 60 * 60);
         if (hoursDiff > 24) {
-            console.log('\n⚠️ [交接失约告警] active_context.md 已超过 24 小时未更新！');
+            log('\n⚠️ [交接失约告警] active_context.md 已超过 24 小时未更新！');
             report.hasAlerts = true;
+            report.activeContext = 'stale';
             pushNextStep('先执行 `/evo` 或人工检查 `active_context.md`，确认当前项目焦点和 backlog 仍然可信。');
+        } else {
+            report.activeContext = 'fresh';
         }
     } else {
-        console.log('⚠️ active_context.md 不存在，状态机检查未通过。');
+        log('⚠️ active_context.md 不存在，状态机检查未通过。');
         report.hasAlerts = true;
+        report.activeContext = 'missing';
         pushNextStep('先恢复或重新初始化 `.evo-lite/active_context.md`，再继续开发。');
     }
 
+    const contextState = inspectActiveContextState();
+    report.contextStatus = contextState.status;
+    if (contextState.status === 'placeholder') {
+        report.bootstrapPending = true;
+        log('ℹ️ [初始化引导] 当前 active_context.md 仍是初始化占位态。');
+        pushBootstrapStep('先用 `node .evo-lite/cli/memory.js context focus "..."` 写入真实当前焦点，再按需要补齐 backlog。');
+        pushBootstrapStep('完成首个最小切片前，不要把模板里的默认目标和初始化任务继续当成真实项目状态。');
+    }
+
+    const architectureRules = inspectArchitectureRules();
+    report.architectureStatus = architectureRules.status;
+    if (architectureRules.status === 'missing') {
+        report.bootstrapPending = true;
+        log('ℹ️ [初始化引导] 尚未检测到 `.agents/rules/architecture.md`。');
+        pushBootstrapStep('补齐 `.agents/rules/architecture.md`，至少锁定语言、包管理器、检索/存储栈与模块边界。');
+    } else if (architectureRules.status === 'placeholder') {
+        report.bootstrapPending = true;
+        log('ℹ️ [初始化引导] `.agents/rules/architecture.md` 仍是模板占位态。');
+        pushBootstrapStep('先把架构候选方案落成已配置规则，再进入正式实现或提交闭环。');
+    }
+
+    if (report.git === 'not-a-repo') {
+        report.bootstrapPending = true;
+        pushBootstrapStep('如果当前项目还不是 Git 仓库，先执行 `git init`，或重新运行 create-evo-lite 让脚手架自动完成初始化。');
+    }
+
     if (fs.existsSync(OFFLINE_MEMORIES_PATH)) {
-        console.log('⚠️ 检测到 offline_memories.json，说明仍有离线记忆尚未补齐本地索引。');
+        log('⚠️ 检测到 offline_memories.json，说明仍有离线记忆尚未补齐本地索引。');
         report.hasAlerts = true;
         pushNextStep('执行 `node .evo-lite/cli/memory.js import .evo-lite/offline_memories.json` 补齐离线记忆与本地索引。');
     }
 
     if (!fs.existsSync(DB_PATH)) {
-        console.log('ℹ️ Evo-Lite 实体库状态: 尚未生成 (首次 remember 后自动创建)');
+        log('ℹ️ Evo-Lite 实体库状态: 尚未生成 (首次 remember 后自动创建)');
     }
 
     const archiveHealth = summarizeArchiveHealth();
+    report.archives = {
+        invalid: archiveHealth.invalid.length,
+        pending: archiveHealth.pending.length,
+        raw: archiveHealth.rawFiles.length,
+    };
     if (archiveHealth.invalid.length > 0) {
-        console.log(`⚠️ 检测到 ${archiveHealth.invalid.length} 个损坏的 raw archive，需先修复后再进行完整重建。`);
+        log(`⚠️ 检测到 ${archiveHealth.invalid.length} 个损坏的 raw archive，需先修复后再进行完整重建。`);
         for (const item of archiveHealth.invalid.slice(0, 3)) {
-            console.log(`   - ${item.file}: ${item.reason}`);
+            log(`   - ${item.file}: ${item.reason}`);
         }
         report.hasAlerts = true;
         pushNextStep('先修复损坏的 raw archive，再执行 `node .evo-lite/cli/memory.js rebuild`。');
     }
     if (archiveHealth.pending.length > 0) {
-        console.log(`⚠️ 检测到 ${archiveHealth.pending.length} 个 raw archive 尚未生成 index 标记，建议尽快执行 sync / rebuild。`);
+        log(`⚠️ 检测到 ${archiveHealth.pending.length} 个 raw archive 尚未生成 index 标记，建议尽快执行 sync / rebuild。`);
         report.hasAlerts = true;
         pushNextStep('若只是补齐 archive 标记，执行 `node .evo-lite/cli/memory.js sync`；若需要整体重建，执行 `node .evo-lite/cli/memory.js rebuild`。');
     }
@@ -1659,15 +1769,16 @@ async function verify(options = {}) {
     const trajectory = fs.existsSync(ACTIVE_CONTEXT_PATH) ? readSection(fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8'), 'TRAJECTORY') || '' : '';
     const trajectoryEntries = trajectory.split('\n').map(line => line.trim()).filter(line => line.startsWith('-'));
     if (trajectoryEntries.length > 1 && archiveHealth.rawFiles.length === 0) {
-        console.log('⚠️ 检测到 active_context 已有多条轨迹，但尚无任何结构化 archive，状态流动可能失效。');
+        log('⚠️ 检测到 active_context 已有多条轨迹，但尚无任何结构化 archive，状态流动可能失效。');
         report.hasAlerts = true;
         pushNextStep('检查最近的闭环是否漏掉了 `context track`，避免只有状态机更新而没有长期归档。');
     }
 
     const { model, dims } = getActiveEngineInfo();
-    console.log(`📡 [配置/检索]: ${model}`);
-    console.log(`📡 [配置/版本]: ${dims}`);
-    console.log('\n📡 正在校验本地 FTS 记忆引擎...');
+    report.configuration = { model, dims };
+    log(`📡 [配置/检索]: ${model}`);
+    log(`📡 [配置/版本]: ${dims}`);
+    log('\n📡 正在校验本地 FTS 记忆引擎...');
 
     try {
         initDB(model, dims);
@@ -1675,15 +1786,18 @@ async function verify(options = {}) {
         const hasRawTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory'").get();
         const hasFtsTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory_fts'").get();
         if (hasRawTable && hasFtsTable) {
-            console.log('✅ 本地记忆引擎状态: 就绪');
+            log('✅ 本地记忆引擎状态: 就绪');
+            report.localEngine = 'ready';
         } else {
-            console.log('❌ 本地记忆引擎状态: 异常');
+            log('❌ 本地记忆引擎状态: 异常');
             report.hasAlerts = true;
+            report.localEngine = 'error';
             pushNextStep('重新执行 `node .evo-lite/cli/memory.js rebuild`，重建本地 FTS 索引与 archive 标记。');
         }
     } catch (error) {
-        console.log(`❌ 本地记忆引擎状态: 异常 (${error.message})`);
+        log(`❌ 本地记忆引擎状态: 异常 (${error.message})`);
         report.hasAlerts = true;
+        report.localEngine = 'error';
         pushNextStep('检查 `.evo-lite/memory.db` 是否损坏；必要时先备份，再执行 `node .evo-lite/cli/memory.js rebuild`。');
     }
 
@@ -1691,16 +1805,24 @@ async function verify(options = {}) {
     const lastBlockSummary = safetyState.lastBlock
         ? `${safetyState.lastBlock.timestamp} (${safetyState.lastBlock.summary})`
         : 'never';
-    console.log(`🛡️ [安全/红线]: rules=${safety.getRuleCount()}, blocks=${safetyState.blockCount}, redactions=${safetyState.redactionCount}, last_block=${lastBlockSummary}`);
+    report.safety = {
+        blockCount: safetyState.blockCount,
+        lastBlock: safetyState.lastBlock || null,
+        redactionCount: safetyState.redactionCount,
+        ruleCount: safety.getRuleCount(),
+    };
+    log(`🛡️ [安全/红线]: rules=${safety.getRuleCount()}, blocks=${safetyState.blockCount}, redactions=${safetyState.redactionCount}, last_block=${lastBlockSummary}`);
 
     try {
         const db = getDb();
         const hasRawTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory'").get();
         const hasFtsTable = tableExists(db, 'raw_memory_fts');
         if (!hasRawTable || !hasFtsTable) {
-            console.log('ℹ️ Evo-Lite 实体库状态: 当前仍是初始化空库态，首次 remember / import / rebuild 后会自动补齐表结构。');
+            log('ℹ️ Evo-Lite 实体库状态: 当前仍是初始化空库态，首次 remember / import / rebuild 后会自动补齐表结构。');
+            report.entityStore = 'init-empty';
         } else {
-            console.log('✅ Evo-Lite 实体库状态: 已就绪');
+            log('✅ Evo-Lite 实体库状态: 已就绪');
+            report.entityStore = 'ready';
             const namespaceCounts = getNamespaceCounts(db);
             const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
             let recordCount = 0;
@@ -1712,11 +1834,11 @@ async function verify(options = {}) {
                 nsLines.push(`   - ns=${ns} engine=${info.model || 'unset'} version=${info.dims || '?'} records=${info.chunks}`);
             }
             if (nsLines.length > 0) {
-                console.log('📚 [记忆空间分布]:');
-                for (const line of nsLines) console.log(line);
+                log('📚 [记忆空间分布]:');
+                for (const line of nsLines) log(line);
             }
             if (rawMemoryCount > 0 && recordCount === 0) {
-                console.log('⚠️ 检测到 raw_memory 已有数据但本地索引未生效，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。');
+                log('⚠️ 检测到 raw_memory 已有数据但本地索引未生效，建议尽快执行显式重建命令 `node .evo-lite/cli/memory.js rebuild`。');
                 report.hasAlerts = true;
                 pushNextStep('执行 `node .evo-lite/cli/memory.js rebuild`，用结构化归档重新生成本地 FTS 索引。');
             }
@@ -1724,7 +1846,7 @@ async function verify(options = {}) {
             if (hasSessionEventsTable) {
                 const sessionEventCount = db.prepare('SELECT COUNT(*) AS count FROM session_events').get().count;
                 if (sessionEventCount > 0 && rawMemoryCount === 0 && archiveHealth.rawFiles.length === 0) {
-                    console.log('⚠️ 检测到 session_events 已有记录，但 durable archive 仍为空；请确认没有把事件日志当作长期归档主链。');
+                    log('⚠️ 检测到 session_events 已有记录，但 durable archive 仍为空；请确认没有把事件日志当作长期归档主链。');
                     report.hasAlerts = true;
                     pushNextStep('保持 `active_context -> context track -> archive` 为唯一 durable 主链；不要把 session_events/remember 升格为并行归档。');
                 }
@@ -1732,24 +1854,33 @@ async function verify(options = {}) {
         }
     } catch (error) {
         if (isMissingMemorySchemaError(error)) {
-            console.log('ℹ️ Evo-Lite 实体库状态: 当前仍是初始化空库态，首次 remember / import / rebuild 后会自动补齐表结构。');
+            log('ℹ️ Evo-Lite 实体库状态: 当前仍是初始化空库态，首次 remember / import / rebuild 后会自动补齐表结构。');
+            report.entityStore = 'init-empty';
         } else {
-            console.log(`⚠️ 数据库读取失败: ${error.message}`);
+            log(`⚠️ 数据库读取失败: ${error.message}`);
             report.hasAlerts = true;
+            report.entityStore = 'error';
             pushNextStep('数据库当前不可读；先备份 `.evo-lite/memory.db`，再执行 `node .evo-lite/cli/memory.js rebuild` 或人工排查数据库文件状态。');
         }
     }
 
     if (report.hasAlerts) {
-        console.log('📋 建议下一步:');
+        log('📋 建议下一步:');
         for (const step of report.nextSteps) {
-            console.log(`- ${step}`);
+            log(`- ${step}`);
+        }
+    }
+
+    if (report.bootstrapPending) {
+        log('📌 初始化引导:');
+        for (const step of report.bootstrapSteps) {
+            log(`- ${step}`);
         }
     }
 
     if (!report.hasAlerts) {
-        console.log('✅ Verify completed with no active alerts.');
-        console.log('💡 建议下一步: 可以继续 `/evo` / `/commit` 工作流，或直接开始新的开发任务。');
+        log('✅ Verify completed with no active alerts.');
+        log('💡 建议下一步: 可以继续 `/evo` / `/commit` 工作流，或直接开始新的开发任务。');
     }
     return report;
 }
@@ -1771,6 +1902,7 @@ module.exports = {
     getSafetyState,
     importMemories,
     inject,
+    inspectActiveContextState,
     inspectHookLifecycle,
     list,
     memorize,

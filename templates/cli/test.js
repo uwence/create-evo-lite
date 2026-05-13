@@ -139,7 +139,9 @@ async function runInitializer(projectRoot, options = {}) {
             exitError.exitCode = status;
             throw exitError;
         };
-        if (options.stubExecSync) {
+        if (typeof options.execSyncImpl === 'function') {
+            childProcess.execSync = options.execSyncImpl;
+        } else if (options.stubExecSync) {
             childProcess.execSync = () => {
                 throw new Error('STOP_AFTER_CHECK');
             };
@@ -640,7 +642,22 @@ async function runTests() {
         );
 
         const modernInitRoot = createModernInitProject('allowed');
-        const modernInitResult = await runInitializer(modernInitRoot, { stubExecSync: true });
+        const modernInitCommands = [];
+        const modernInitResult = await runInitializer(modernInitRoot, {
+            execSyncImpl: (command, execOptions = {}) => {
+                modernInitCommands.push({ command, cwd: execOptions.cwd || null });
+                if (command === 'git rev-parse --is-inside-work-tree') {
+                    const error = new Error('fatal: not a git repository');
+                    error.stderr = Buffer.from('fatal: not a git repository');
+                    throw error;
+                }
+                if (command === 'git init') {
+                    fs.mkdirSync(path.join(modernInitRoot, '.git'), { recursive: true });
+                    return Buffer.from('Initialized empty Git repository\n');
+                }
+                throw new Error('STOP_AFTER_CHECK');
+            },
+        });
         assert.strictEqual(modernInitResult.status, 0, 'initializer should continue for 2.x-shaped runtime directories');
         assert.ok(
             !`${modernInitResult.stdout}\n${modernInitResult.stderr}`.includes('不支持在 npm 发布的 1.4.9 旧项目上原地升级'),
@@ -713,6 +730,41 @@ async function runTests() {
             !fs.existsSync(path.join(modernInitRoot, '.vscode', 'mcp.json')),
             'initializer should not scaffold external MCP config into the target project'
         );
+        assert.ok(
+            modernInitCommands.some(entry => entry.command === 'git init' && entry.cwd === modernInitRoot),
+            'initializer did not attempt to initialize a Git repository for a fresh target project'
+        );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.git')),
+            'initializer did not leave behind a Git repository marker for a fresh target project'
+        );
+
+        console.log('3b. Testing bootstrap command condenses init-state guidance ...');
+        const bootstrapCommandRuntime = createTempRuntimeRoot('bootstrap-command');
+        loadCli(bootstrapCommandRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const bootstrapCliModule = require(path.join(CLI_DIR, 'memory.js'));
+        const bootstrapOutput = await captureConsole(async () => {
+            await bootstrapCliModule.run(['node', 'memory.js', 'bootstrap']);
+        });
+        assert.ok(
+            bootstrapOutput.includes('takeover: bootstrap-pending'),
+            'bootstrap command did not classify placeholder initialization state as bootstrap-pending'
+        );
+        assert.ok(
+            bootstrapOutput.includes('context_status: placeholder'),
+            'bootstrap command did not expose placeholder active_context state'
+        );
+        assert.ok(
+            bootstrapOutput.includes('architecture_status: missing'),
+            'bootstrap command did not expose missing architecture status'
+        );
+        assert.ok(
+            bootstrapOutput.includes('next_step:'),
+            'bootstrap command did not emit compressed next-step guidance'
+        );
+        primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
 
         console.log('4. Testing archive / sync ...');
         const archiveResult = await primaryLoaded.service.archive('A structured implementation summary that should become a raw archive and be indexed immediately for later retrieval.');
@@ -836,6 +888,18 @@ async function runTests() {
         });
         assert.ok(!cleanInjectedOutput.includes('Git 状态检查已降级'), 'verify should trust injected clean git status instead of falling back to Node git');
         assert.ok(cleanInjectedOutput.includes('Verify completed with no active alerts.'), 'verify should stay healthy with injected clean git status');
+
+        console.log('8ab. Testing verify surfaces bootstrap guidance for placeholder init state ...');
+        const initGuidanceRuntime = createTempRuntimeRoot('verify-init-guidance');
+        const initGuidanceLoaded = await bootstrapRuntime(initGuidanceRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const initGuidanceOutput = await captureConsole(async () => {
+            await initGuidanceLoaded.service.verify();
+        });
+        assert.ok(initGuidanceOutput.includes('[初始化引导] 当前 active_context.md 仍是初始化占位态。'), 'verify did not surface placeholder active_context guidance');
+        assert.ok(initGuidanceOutput.includes('📌 初始化引导:'), 'verify did not print a dedicated bootstrap guidance section');
+        assert.ok(initGuidanceOutput.includes('.agents/rules/architecture.md'), 'verify did not mention missing or placeholder architecture rules during init guidance');
 
         console.log('8b. Testing git guard ignores .evo-lite-only deletions with leading status padding ...');
         process.env.EVO_LITE_SKIP_GIT_GUARD = '';

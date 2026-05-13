@@ -101,6 +101,8 @@ function printHelp() {
                       (compatibility command that rebuilds the local FTS index from archive files)
   \x1b[32mvectorize\x1b[0m           Compatibility alias for rebuild.
   \x1b[32mwash\x1b[0m                Compatibility entry that points you to rebuild / /wash workflow.
+    \x1b[32mbootstrap\x1b[0m           Read active_context + architecture status + verify,
+                                            then print a compact takeover report.
   \x1b[32mverify\x1b[0m              Run initialization checks, git state scans, and
                         database connection verifications.
     \x1b[32mmcp\x1b[0m detect|list|explain [--json]
@@ -267,6 +269,7 @@ function formatHookLifecycle(report) {
         `workspace: ${report.workspaceRoot}`,
         `focus: ${report.focus || '(empty)'}`,
         `active_tasks: ${report.activeTaskCount}`,
+        `context_status: ${report.contextStatus || 'unknown'}`,
         `architecture_status: ${report.architectureStatus || 'unknown'}`,
         `blocked: ${report.blocked ? 'yes' : 'no'}`,
         `dirty: ${report.dirty === null ? 'unknown' : report.dirty ? 'yes' : 'no'}`,
@@ -289,6 +292,46 @@ function formatHookLifecycle(report) {
     }
     for (const warning of report.warnings) {
         lines.push(`warning: ${warning}`);
+    }
+    return lines.join('\n');
+}
+
+function formatBootstrapReport(payload) {
+    const context = payload.context;
+    const sessionstart = payload.sessionstart;
+    const verify = payload.verify;
+    const nextSteps = [...new Set([...(sessionstart.reminders || []), ...(verify.nextSteps || [])])].slice(0, 4);
+    const warnings = [...new Set([...(sessionstart.warnings || []), ...((context.validation && context.validation.warnings) || [])])].slice(0, 3);
+    const needsBootstrap = ['placeholder', 'missing'].includes(sessionstart.contextStatus)
+        || ['placeholder', 'missing'].includes(sessionstart.architectureStatus);
+    const takeover = verify.hasAlerts
+        ? 'attention-needed'
+        : needsBootstrap
+            ? 'bootstrap-pending'
+            : 'ready';
+
+    const lines = [
+        `takeover: ${takeover}`,
+        `focus: ${sessionstart.focus || '(empty)'}`,
+        `active_tasks: ${sessionstart.activeTaskCount}`,
+        `trajectory_entries: ${context.trajectoryCount}`,
+        `context_status: ${sessionstart.contextStatus || 'unknown'}`,
+        `architecture_status: ${sessionstart.architectureStatus || 'unknown'}`,
+        `git_status: ${verify.git}`,
+        `template_sync: ${verify.templateSync}`,
+        `local_engine: ${verify.localEngine}`,
+        `entity_store: ${verify.entityStore}`,
+    ];
+
+    if (context.latestTrajectory) {
+        lines.push(`latest: ${context.latestTrajectory.line}`);
+    }
+
+    for (const warning of warnings) {
+        lines.push(`warning: ${warning}`);
+    }
+    for (const step of nextSteps) {
+        lines.push(`next_step: ${step}`);
     }
     return lines.join('\n');
 }
@@ -391,6 +434,14 @@ async function runMcpCommand(op = 'detect', options = {}) {
     printPayload(report, payload => mcpDetect.formatMcpReport(payload, { explain: op === 'explain' }), options);
 }
 
+async function runBootstrapCommand(options = {}) {
+    await bootstrap();
+    const context = memoryService.summarizeActiveContext();
+    const verify = await memoryService.verify({ silent: true });
+    const sessionstart = memoryService.inspectHookLifecycle('sessionstart');
+    printPayload({ context, sessionstart, verify }, formatBootstrapReport, options);
+}
+
 function buildProgram() {
     const program = new Command();
     const contextCommand = program.command('context').description('Modify active_context.md anchors and inspect runtime state.');
@@ -401,6 +452,14 @@ function buildProgram() {
         .name('memory')
         .description('Evo-Lite runtime CLI')
         .showHelpAfterError();
+
+    program.command('bootstrap')
+        .alias('evo-start')
+        .description('Read active_context, inspect architecture bootstrap state, and print a compact takeover report.')
+        .option('--json', 'Print JSON output')
+        .action(async options => {
+            await runBootstrapCommand(options);
+        });
 
     withTextSourceOptions(
         program.command('remember [text]').alias('memorize').description('Write a new memory fragment into the database.')

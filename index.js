@@ -14,7 +14,80 @@ function buildProgram() {
         .version(SELF_VERSION)
         .argument('[project-path]', 'Target project path')
         .option('-y, --yes', 'Use default initialization configuration')
+        .option('--no-git', 'Skip git repository initialization')
         .showHelpAfterError();
+}
+
+function getExecErrorText(error) {
+    if (!error) {
+        return '';
+    }
+
+    const parts = [];
+    if (typeof error.message === 'string') {
+        parts.push(error.message);
+    }
+    if (typeof error.stderr === 'string') {
+        parts.push(error.stderr);
+    } else if (Buffer.isBuffer(error.stderr)) {
+        parts.push(error.stderr.toString('utf8'));
+    }
+    if (typeof error.stdout === 'string') {
+        parts.push(error.stdout);
+    } else if (Buffer.isBuffer(error.stdout)) {
+        parts.push(error.stdout.toString('utf8'));
+    }
+    return parts.join('\n');
+}
+
+function isGitCommandMissing(error) {
+    return /not recognized as an internal or external command|enoent|spawn git/i.test(getExecErrorText(error));
+}
+
+function isMissingGitWorkspace(error) {
+    return /not a git repository/i.test(getExecErrorText(error));
+}
+
+function ensureGitWorkspace(targetDir, options = {}) {
+    if (options.git === false) {
+        console.log('ℹ️ Git 初始化已按配置跳过 (--no-git)。Evo-Lite 将以 No-Git 模式继续运行。');
+        return { status: 'skipped' };
+    }
+
+    try {
+        execSync('git rev-parse --is-inside-work-tree', {
+            cwd: targetDir,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        console.log('✅ Git 工作区已存在，保留当前仓库状态。');
+        return { status: 'existing' };
+    } catch (error) {
+        if (isGitCommandMissing(error)) {
+            console.warn('⚠️ 未检测到 Git 可执行文件，无法自动初始化仓库。Evo-Lite 将暂时以 No-Git 模式继续。');
+            return { status: 'missing-git' };
+        }
+        if (!isMissingGitWorkspace(error)) {
+            console.warn(`⚠️ Git 工作区探测失败: ${getExecErrorText(error).trim()}`);
+            return { status: 'probe-failed' };
+        }
+    }
+
+    try {
+        execSync('git init', {
+            cwd: targetDir,
+            stdio: 'ignore',
+        });
+        console.log('✅ 已为目标项目初始化 Git 仓库。');
+        console.log('💡 建议首个提交: git add . && git commit -m "chore: initialize Evo-Lite workspace"');
+        return { status: 'initialized' };
+    } catch (error) {
+        if (isGitCommandMissing(error)) {
+            console.warn('⚠️ 未检测到 Git 可执行文件，无法自动初始化仓库。Evo-Lite 将暂时以 No-Git 模式继续。');
+            return { status: 'missing-git' };
+        }
+        console.warn(`⚠️ Git 自动初始化失败: ${getExecErrorText(error).trim()}`);
+        return { status: 'init-failed' };
+    }
 }
 
 async function runInit(targetDirArg, options = {}) {
@@ -265,7 +338,10 @@ async function runInit(targetDirArg, options = {}) {
         } catch (e) { }
     }
 
-    // 4. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
+    // 4.5 补齐 Git 前提，避免首次闭环就落入 No-Git 模式。
+    ensureGitWorkspace(targetDir, options);
+
+    // 5. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
     console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander)...');
     try {
         fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
@@ -328,7 +404,8 @@ async function runInit(targetDirArg, options = {}) {
     console.log('----------------------------------------------------');
     console.log(`👉 下一步:`);
     console.log(`  1. 请确保你已使用 Antigravity 打开了项目目录: ${targetDirArg}`);
-    console.log(`  2. 在输入框中输入并发送斜杠命令: /evo`);
+    console.log('  2. 先运行 `.evo-lite\\mem.cmd bootstrap` (Windows) 或 `./.evo-lite/mem bootstrap` (Unix) 获取压缩接管摘要。');
+    console.log('  3. 如果你使用的是支持工作流语义的 Agent，再触发 `/evo` 或直接继续开发。');
     console.log('----------------------------------------------------');
 }
 
