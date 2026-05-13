@@ -23,6 +23,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [39d7cfc] 2026-05-13 HookOwnershipBoundary: Completed the Evo-Lite hook-ownership boundary split for scaffolded host assets. Narrowed managed Gi
 - [62e6dda] 2026-05-13 RuntimeBoundaryGuardrails: Added session_events observability as non-durable telemetry, introduced context events read path, an
 - [daf68c1] 2026-05-13 GitNexusLocalHookRefresh: Switched the Codex GitNexus post-tool hook from localhost-service-first behavior to a local-CLI-firs
 - [df7e188] 2026-05-13 CodexHookBridge: Completed the Codex-native hook integration pass for create-evo-lite. Added project and template .co
@@ -32,7 +33,6 @@
 - [7be4c52] 2026-05-12 ArchitectureGuardHooks: Hardened the PreToolUse governance path across live and template runtime assets. Added target-aware
 - [a5ec6b8] 2026-05-12 HookRuntimeDogfood: Completed live runtime hook dogfood and Codex workflow semantics clarification. Added hooks, MCP det
 - [3569d63] 2026-05-07 LocalIndexDeModelCleanup: 完成 create-evo-lite 的去模型化收口：修正 index.js 初始化日志中的 ONNX/跨模型残留；把 root/template workflow 与 Claude command
-- [f1e2988] 2026-03-21 LegacyUpgradeGate: Blocked in-place upgrade for npm-published 1.4.9-era runtimes by detecting pre-2.0 context/template/
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
