@@ -72,7 +72,7 @@ If this file and `.agents/` ever diverge, `.agents/` wins.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **create-evo-lite** (724 symbols, 1294 relationships, 64 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **create-evo-lite** (946 symbols, 1746 relationships, 84 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -112,4 +112,35 @@ This project is indexed by GitNexus as **create-evo-lite** (724 symbols, 1294 re
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+<!-- rtk:start -->
+# RTK — Token-Optimized Shell Usage
+
+This project is configured to use RTK with Codex on native Windows.
+
+@RTK.md
+
+Read [RTK.md](/D:/Data/ProjectAgent/create-evo-lite/RTK.md) before heavy shell exploration, large diffs, or noisy test/build commands.
+
+## RTK Mode In This Workspace
+
+- Current host: Codex on native Windows
+- Integration type: prompt-level guidance via `AGENTS.md + RTK.md`
+- Important: Codex still cannot transparently rewrite tool input on this host
+- A Codex `PreToolUse` hook now checks Bash commands and may deny the raw command with a suggestion to rerun it as `rtk ...`
+- Prefer explicit `rtk ...` commands when you already know you want compact output
+
+## Prefer RTK For
+
+- repository status and diffs: `rtk git status`, `rtk git diff`, `rtk git log -n 10`
+- noisy test/build/lint flows: `rtk test ...`, `rtk cargo test`, `rtk npm test`, `rtk tsc`, `rtk lint`
+- shell-based code/file reads: `rtk read <file>`, `rtk smart <file>`, `rtk grep <pattern> .`, `rtk find "<glob>" .`
+- structured data and logs: `rtk json <file>`, `rtk log <file>`, `rtk summary <command>`
+
+## Do Not Force RTK
+
+- If a command is simple, low-noise, or needs exact raw output, the plain command is fine
+- If RTK degrades needed detail, rerun the raw command or use `RTK_DISABLED=1 <command>` where supported
+- Codex built-in file tools are still valid when precise raw file content matters more than token savings
+<!-- rtk:end -->
 <!-- evo-lite:local-extensions:end -->

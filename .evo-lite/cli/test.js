@@ -26,7 +26,7 @@ function createTempRuntimeRoot(name) {
         fs.copyFileSync(path.join(TEMPLATE_ROOT_DIR, file), path.join(workspaceRoot, file));
     }
     copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.claude'), path.join(workspaceRoot, '.claude'));
-    for (const dir of ['.github', '.vscode']) {
+    for (const dir of ['.github', '.vscode', '.codex']) {
         const sourceDir = path.join(TEMPLATE_ROOT_DIR, dir);
         if (fs.existsSync(sourceDir)) {
             copyRecursive(sourceDir, path.join(workspaceRoot, dir));
@@ -431,10 +431,30 @@ async function runTests() {
             fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json')),
             'initializer did not scaffold .github/hooks/rtk-rewrite.json into the target project'
         );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks.json')),
+            'initializer did not scaffold .codex/hooks.json into the target project'
+        );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'context-mode-hook.js')),
+            'initializer did not scaffold .codex/hooks/context-mode-hook.js into the target project'
+        );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'gitnexus-hook.js')),
+            'initializer did not scaffold .codex/hooks/gitnexus-hook.js into the target project'
+        );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'rtk-codex-hook.js')),
+            'initializer did not scaffold .codex/hooks/rtk-codex-hook.js into the target project'
+        );
         const modernHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.json'), 'utf8'));
         assert.ok(modernHookConfig.hooks.PreToolUse.some(entry => entry.command.includes('evo-lite-hook.js pretooluse')), 'initializer did not scaffold PreToolUse architecture guard hook');
         const rtkRewriteConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json'), 'utf8'));
         assert.ok(rtkRewriteConfig.hooks.PreToolUse.some(entry => entry.command === 'rtk hook copilot'), 'initializer did not scaffold the RTK rewrite hook config');
+        const codexHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.codex', 'hooks.json'), 'utf8'));
+        assert.ok(codexHookConfig.hooks.SessionStart.some(entry => entry.hooks.some(hook => hook.command.includes('context-mode-hook.js sessionstart'))), 'initializer did not scaffold Codex SessionStart context-mode hook');
+        assert.ok(codexHookConfig.hooks.PreToolUse.some(entry => entry.matcher === 'Bash' && entry.hooks.some(hook => hook.command.includes('rtk-codex-hook.js pretooluse'))), 'initializer did not scaffold Codex PreToolUse RTK hook');
+        assert.ok(codexHookConfig.hooks.PostToolUse.some(entry => entry.hooks.some(hook => hook.command.includes('gitnexus-hook.js posttooluse'))), 'initializer did not scaffold Codex PostToolUse GitNexus hook');
 
         console.log('3b. Testing pretooluse architecture guard ...');
         const blockedHookRuntime = createTempRuntimeRoot('hook-pretool-architecture');
@@ -696,12 +716,17 @@ async function runTests() {
         });
         assert.ok(healthyVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should treat dynamic model defaults and host adapters as a healthy sync state');
         assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged healthy template files as drift');
+        assert.ok(!healthyVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify incorrectly flagged the Codex hook manifest as drift');
         assert.ok(!healthyVerifyOutput.includes('.github/hooks/rtk-rewrite.json is out of sync'), 'verify incorrectly flagged the RTK hook asset as drift');
         assert.ok(healthyVerifyOutput.includes('可以继续 `/evo` / `/commit` 工作流'), 'verify healthy output did not include a clear next step');
 
         const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {
             const claudePath = path.join(templateRoot, 'CLAUDE.md');
             fs.writeFileSync(claudePath, `${fs.readFileSync(claudePath, 'utf8')}\n<!-- drift -->`, 'utf8');
+            const codexHookPath = path.join(templateRoot, '.codex', 'hooks.json');
+            const codexHookConfig = JSON.parse(fs.readFileSync(codexHookPath, 'utf8'));
+            codexHookConfig.hooks.PostToolUse[0].hooks[2].command = 'node ./.codex/hooks/gitnexus-hook.js altered-posttooluse';
+            fs.writeFileSync(codexHookPath, JSON.stringify(codexHookConfig, null, 2), 'utf8');
             const rtkHookPath = path.join(templateRoot, '.github', 'hooks', 'rtk-rewrite.json');
             const rtkHookConfig = JSON.parse(fs.readFileSync(rtkHookPath, 'utf8'));
             rtkHookConfig.hooks.PreToolUse[0].command = 'rtk hook altered';
@@ -716,6 +741,7 @@ async function runTests() {
             await verifyDriftLoaded.service.verify();
         });
         assert.ok(driftVerifyOutput.includes('CLAUDE.md is out of sync'), 'verify did not report actual host adapter drift');
+        assert.ok(driftVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify did not report Codex hook manifest drift');
         assert.ok(driftVerifyOutput.includes('.github/hooks/rtk-rewrite.json is out of sync'), 'verify did not report RTK hook asset drift');
         assert.ok(!driftVerifyOutput.includes('Verify completed with no active alerts.'), 'verify still reported a clean bill of health after drift');
 

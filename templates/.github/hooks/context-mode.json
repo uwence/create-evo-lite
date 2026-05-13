@@ -9,6 +9,10 @@
       {
         "type": "command",
         "command": "node ./.github/hooks/evo-lite-hook.js pretooluse"
+      },
+      {
+        "type": "command",
+        "command": "node ./.github/hooks/dogfood-commit-hook.js pretooluse"
       }
     ],
     "PostToolUse": [

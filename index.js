@@ -160,6 +160,11 @@ async function runInit(targetDirArg, options = {}) {
         copyRecursiveSync(vscodeTemplateDir, path.join(targetDir, '.vscode'));
     }
 
+    const codexTemplateDir = path.join(templatesDir, '.codex');
+    if (fs.existsSync(codexTemplateDir)) {
+        copyRecursiveSync(codexTemplateDir, path.join(targetDir, '.codex'));
+    }
+
     // 写入 cli 文件
     cliFiles.forEach(file => {
         const content = fs.readFileSync(path.join(cliTemplatesDir, file), 'utf8');

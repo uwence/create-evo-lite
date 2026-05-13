@@ -863,6 +863,11 @@ function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
             activeFile: path.join(workspaceRoot, '.github', ...file.split('/')),
             templateFile: path.join(templateRootPath, '.github', ...file.split('/')),
         })),
+        ...['hooks.json', 'hooks/context-mode-hook.js', 'hooks/gitnexus-hook.js'].map(file => ({
+            label: `.codex/${file}`,
+            activeFile: path.join(workspaceRoot, '.codex', ...file.split('/')),
+            templateFile: path.join(templateRootPath, '.codex', ...file.split('/')),
+        })),
         {
             label: '.vscode/mcp.json',
             activeFile: path.join(workspaceRoot, '.vscode', 'mcp.json'),
@@ -903,6 +908,26 @@ function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
             label: '.github/hooks/rtk-rewrite.json',
             activeFile: path.join(workspaceRoot, '.github', 'hooks', 'rtk-rewrite.json'),
             templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'rtk-rewrite.json') : null,
+        },
+        {
+            label: '.codex/hooks.json',
+            activeFile: path.join(workspaceRoot, '.codex', 'hooks.json'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.codex', 'hooks.json') : null,
+        },
+        {
+            label: '.codex/hooks/context-mode-hook.js',
+            activeFile: path.join(workspaceRoot, '.codex', 'hooks', 'context-mode-hook.js'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.codex', 'hooks', 'context-mode-hook.js') : null,
+        },
+        {
+            label: '.codex/hooks/gitnexus-hook.js',
+            activeFile: path.join(workspaceRoot, '.codex', 'hooks', 'gitnexus-hook.js'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.codex', 'hooks', 'gitnexus-hook.js') : null,
+        },
+        {
+            label: '.codex/hooks/rtk-codex-hook.js',
+            activeFile: path.join(workspaceRoot, '.codex', 'hooks', 'rtk-codex-hook.js'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.codex', 'hooks', 'rtk-codex-hook.js') : null,
         },
         {
             label: '.vscode/mcp.json',

@@ -1,0 +1,102 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.codex/hooks/context-mode-hook.js sessionstart",
+            "statusMessage": "Syncing context-mode session state..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-hook.js sessionstart",
+            "statusMessage": "Refreshing Evo-Lite session guidance..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.codex/hooks/rtk-codex-hook.js pretooluse",
+            "statusMessage": "Checking RTK shell rewrite..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.codex/hooks/context-mode-hook.js pretooluse",
+            "statusMessage": "Syncing context-mode before tool use..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-hook.js pretooluse",
+            "statusMessage": "Checking Evo-Lite architecture guard..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/dogfood-commit-hook.js pretooluse",
+            "statusMessage": "Checking dogfood evidence..."
+          }
+        ]
+      },
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.codex/hooks/context-mode-hook.js pretooluse",
+            "statusMessage": "Syncing context-mode before tool use..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-hook.js pretooluse",
+            "statusMessage": "Checking Evo-Lite architecture guard..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/dogfood-commit-hook.js pretooluse",
+            "statusMessage": "Checking dogfood evidence..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.codex/hooks/context-mode-hook.js posttooluse",
+            "statusMessage": "Syncing context-mode after tool use..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-hook.js posttooluse",
+            "statusMessage": "Refreshing Evo-Lite closure guidance..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.codex/hooks/gitnexus-hook.js posttooluse",
+            "statusMessage": "Checking GitNexus MCP status..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-hook.js stop",
+            "statusMessage": "Checking Evo-Lite handoff state..."
+          }
+        ]
+      }
+    ]
+  }
+}
