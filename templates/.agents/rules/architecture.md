@@ -23,3 +23,7 @@
 - [填写代码风格、模块边界或性能约束]
 - [填写不能绕过的状态机、CLI 或数据一致性约束]
 - [填写目录纪律、依赖偏好或禁止事项]
+- Keep `active_context -> context track -> archive(raw_memory)` as the only durable governance chain.
+- `session_events` / resume snapshots are observational runtime telemetry, not a second durable archive channel.
+- Runtime truth must stay project-local under `.evo-lite/`; do not move canonical project state into host-global cache directories.
+- It is allowed to borrow source/chunk metadata, stats, cleanup, expiration, and worktree isolation patterns, but they must remain operational enhancements around the existing Evo-Lite workflow contract.

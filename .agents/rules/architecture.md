@@ -31,3 +31,7 @@
 - Do not mutate `active_context.md` runtime sections by hand when a CLI path exists.
 - Do not introduce extra wrapper directories like `project/`, `app/`, or `workspace/` unless the user explicitly asks for a nested project.
 - Prefer the current local FTS architecture; do not reintroduce heavy embedding or external service assumptions unless the user explicitly requests an architecture change.
+- Keep `active_context -> context track -> archive(raw_memory)` as the only durable governance chain.
+- `session_events` / resume snapshots are observational runtime telemetry, not a second durable archive channel.
+- Runtime truth must stay project-local under `.evo-lite/`; do not move canonical project state into host-global cache directories.
+- It is allowed to borrow source/chunk metadata, stats, cleanup, expiration, and worktree isolation patterns, but they must remain operational enhancements around the existing Evo-Lite workflow contract.

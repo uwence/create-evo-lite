@@ -209,6 +209,17 @@ function formatContextValidation(validation) {
     return lines.join('\n');
 }
 
+function formatContextEvents(events) {
+    if (!Array.isArray(events) || events.length === 0) {
+        return 'session_events: 0';
+    }
+    const lines = [`session_events: ${events.length}`];
+    for (const row of events) {
+        lines.push(`- [${row.id}] ${row.timestamp} event=${row.event} tool=${row.tool || 'n/a'} success=${row.success === null ? 'unknown' : row.success ? 'yes' : 'no'}`);
+    }
+    return lines.join('\n');
+}
+
 function formatHookScaffold(report) {
     const lines = [
         `hook_scaffold: ${report.valid ? 'ready' : 'needs-attention'}`,
@@ -295,6 +306,16 @@ async function runContextCommand(op, text, options = {}) {
 
     if (op === 'validate') {
         printPayload(memoryService.validateActiveContextFile(), formatContextValidation, options);
+        return;
+    }
+
+    if (op === 'events') {
+        const limit = Number.isInteger(options.limit) ? options.limit : Number.parseInt(String(options.limit || '20'), 10);
+        const rows = memoryService.readSessionEvents({
+            event: options.event || null,
+            limit: Number.isFinite(limit) ? limit : 20,
+        });
+        printPayload(rows, formatContextEvents, options);
         return;
     }
 
@@ -511,6 +532,13 @@ function buildProgram() {
     contextCommand.command('validate').option('--json', 'Print JSON output').action(async options => {
         await runContextCommand('validate', '', options);
     });
+    contextCommand.command('events')
+        .option('--limit <number>', 'Max rows to return', value => parseInt(value, 10), 20)
+        .option('--event <name>', 'Filter by event name')
+        .option('--json', 'Print JSON output')
+        .action(async options => {
+            await runContextCommand('events', '', options);
+        });
     withTextSourceOptions(
         contextCommand.command('track [details]').description('Persist a completed action into trajectory and archive.')
     )

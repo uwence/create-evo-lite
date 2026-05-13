@@ -29,12 +29,14 @@ trigger: always_on
 - `track` = compliant transition path
 - `archive` = long-term structured asset
 - `remember` = lightweight recall cache, not the primary closure path
+- `session_events` = lifecycle telemetry and resume hints only, not a durable closure replacement
 
 Preferred flow:
 
 `active_context -> context track -> archive`
 
 Do not claim reliable closure if `track` failed to write archive or update context.
+Do not evolve `remember` or `session_events` into a parallel durable archive chain.
 
 ## 5. Safety and behavior
 

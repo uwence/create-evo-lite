@@ -2,7 +2,18 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline/promises');
 const { execFileSync } = require('child_process');
-const { closeDb, DEFAULT_NAMESPACE, getDb, getNamespaceCounts, getNamespaces, initDB, isValidNamespace, tableExists } = require('./db');
+const {
+    closeDb,
+    DEFAULT_NAMESPACE,
+    getDb,
+    getNamespaceCounts,
+    getNamespaces,
+    initDB,
+    insertSessionEvent,
+    isValidNamespace,
+    listSessionEvents,
+    tableExists,
+} = require('./db');
 const safety = require('./safety');
 const { getActiveEngineInfo } = require('./models');
 const {
@@ -709,6 +720,36 @@ function stats() {
     };
 }
 
+function recordSessionEvent(event, options = {}) {
+    if (!event || typeof event !== 'string') {
+        throw new Error('recordSessionEvent requires a non-empty event string.');
+    }
+    initDB();
+    const payload = {
+        activeTaskCount: options.activeTaskCount ?? null,
+        blocked: options.blocked ?? null,
+        dirty: options.dirty ?? null,
+        reminders: Array.isArray(options.reminders) ? options.reminders : [],
+        trackNeedsUpdate: options.trackNeedsUpdate ?? null,
+        warnings: Array.isArray(options.warnings) ? options.warnings : [],
+    };
+    const id = insertSessionEvent(getDb(), {
+        command: options.command || null,
+        event,
+        payload,
+        success: options.success ?? null,
+        timestamp: options.timestamp || new Date().toISOString(),
+        tool: options.tool || null,
+    });
+    appendLog('SESSION_EVENT', `id=${id} event=${event} tool=${options.tool || 'n/a'}`);
+    return id;
+}
+
+function readSessionEvents(options = {}) {
+    initDB();
+    return listSessionEvents(getDb(), options);
+}
+
 function exportMemories(filePath) {
     if (!filePath) {
         throw new Error('Usage: node memory.js export <filename.json>');
@@ -1146,7 +1187,7 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
         reminders.push(`检测到版本相关文件改动 (${releaseFiles.join(', ')})；请确认 release/tag/CHANGELOG 闭环是否完成。`);
     }
 
-    return {
+    const report = {
         activeTaskCount: contextSummary ? contextSummary.activeTasks.length : 0,
         checkedAt: new Date().toISOString(),
         architectureStatus: architectureRules.status,
@@ -1169,6 +1210,23 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
         output: output || null,
         workspaceRoot: getWorkspaceRoot(),
     };
+    try {
+        recordSessionEvent(report.event, {
+            activeTaskCount: report.activeTaskCount,
+            blocked: report.blocked,
+            command: report.command,
+            dirty: report.dirty,
+            reminders: report.reminders,
+            success: report.success,
+            timestamp: report.checkedAt,
+            tool: report.tool,
+            trackNeedsUpdate: report.trackNeedsUpdate,
+            warnings: report.warnings,
+        });
+    } catch (error) {
+        appendLog('SESSION_EVENT_ERROR', `${report.event} | ${error.message}`);
+    }
+    return report;
 }
 
 function isMissingMemorySchemaError(error) {
@@ -1697,6 +1755,15 @@ async function verify(options = {}) {
                 report.hasAlerts = true;
                 pushNextStep('执行 `node .evo-lite/cli/memory.js rebuild`，用结构化归档重新生成本地 FTS 索引。');
             }
+            const hasSessionEventsTable = tableExists(db, 'session_events');
+            if (hasSessionEventsTable) {
+                const sessionEventCount = db.prepare('SELECT COUNT(*) AS count FROM session_events').get().count;
+                if (sessionEventCount > 0 && rawMemoryCount === 0 && archiveHealth.rawFiles.length === 0) {
+                    console.log('⚠️ 检测到 session_events 已有记录，但 durable archive 仍为空；请确认没有把事件日志当作长期归档主链。');
+                    report.hasAlerts = true;
+                    pushNextStep('保持 `active_context -> context track -> archive` 为唯一 durable 主链；不要把 session_events/remember 升格为并行归档。');
+                }
+            }
         }
     } catch (error) {
         if (isMissingMemorySchemaError(error)) {
@@ -1749,6 +1816,8 @@ module.exports = {
     installHookScaffold,
     prepareForWrite,
     recall,
+    readSessionEvents,
+    recordSessionEvent,
     rebuildLocalIndex,
     splitTrajectoryEntries,
     summarizeActiveContext,

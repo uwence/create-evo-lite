@@ -107,6 +107,18 @@ function initDB(activeModel = DEFAULT_ENGINE, activeDims = DEFAULT_ENGINE_VERSIO
         );
     `);
 
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS session_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event TEXT NOT NULL,
+            tool TEXT,
+            command TEXT,
+            success INTEGER,
+            payload TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+
     try {
         const cols = database.prepare("PRAGMA table_info(raw_memory)").all();
         if (!cols.some(c => c.name === 'namespace')) {
@@ -155,6 +167,66 @@ function initDB(activeModel = DEFAULT_ENGINE, activeDims = DEFAULT_ENGINE_VERSIO
     return { indexReset: false };
 }
 
+function insertSessionEvent(database = getDb(), entry = {}) {
+    const event = typeof entry.event === 'string' ? entry.event.trim() : '';
+    if (!event) {
+        throw new Error('session event requires a non-empty event name');
+    }
+    const success = entry.success === null || entry.success === undefined
+        ? null
+        : entry.success
+            ? 1
+            : 0;
+    const payload = entry.payload === null || entry.payload === undefined
+        ? null
+        : JSON.stringify(entry.payload);
+    const info = database.prepare(`
+        INSERT INTO session_events (event, tool, command, success, payload, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+        event,
+        entry.tool || null,
+        entry.command || null,
+        success,
+        payload,
+        entry.timestamp || new Date().toISOString()
+    );
+    return Number(info.lastInsertRowid);
+}
+
+function listSessionEvents(database = getDb(), options = {}) {
+    const limit = Number.isInteger(options.limit) ? options.limit : 20;
+    const safeLimit = Math.min(Math.max(limit, 1), 500);
+    const eventFilter = typeof options.event === 'string' && options.event.trim()
+        ? options.event.trim()
+        : null;
+    let sql = `
+        SELECT id, event, tool, command, success, payload, timestamp
+        FROM session_events
+    `;
+    const params = [];
+    if (eventFilter) {
+        sql += ' WHERE event = ?';
+        params.push(eventFilter);
+    }
+    sql += ' ORDER BY id DESC LIMIT ?';
+    params.push(safeLimit);
+    const rows = database.prepare(sql).all(...params);
+    return rows.map(row => ({
+        ...row,
+        payload: row.payload ? safeJsonParse(row.payload) : null,
+        success: row.success === null ? null : Boolean(row.success),
+    }));
+}
+
+function safeJsonParse(value) {
+    try {
+        return JSON.parse(value);
+    } catch (_) {
+        return null;
+    }
+}
+
 function getNamespaceCounts(database = getDb()) {
     const rows = database.prepare(`
         SELECT namespace, COUNT(*) AS count
@@ -195,7 +267,9 @@ module.exports = {
     getNamespaces,
     getNamespaceCounts,
     initDB,
+    insertSessionEvent,
     isValidNamespace,
+    listSessionEvents,
     readNamespaceFingerprint,
     tableExists,
 };
