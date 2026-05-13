@@ -6,6 +6,7 @@ const http = require('http');
 const { Command } = require('commander');
 
 const SELF_VERSION = require(path.join(__dirname, 'package.json')).version;
+const INITIAL_COMMIT_MESSAGE = 'chore: initialize Evo-Lite workspace';
 
 function buildProgram() {
     return new Command()
@@ -15,6 +16,7 @@ function buildProgram() {
         .argument('[project-path]', 'Target project path')
         .option('-y, --yes', 'Use default initialization configuration')
         .option('--no-git', 'Skip git repository initialization')
+        .option('--no-initial-commit', 'Skip automatic baseline scaffold commit')
         .showHelpAfterError();
 }
 
@@ -48,6 +50,58 @@ function isMissingGitWorkspace(error) {
     return /not a git repository/i.test(getExecErrorText(error));
 }
 
+function isGitIdentityMissing(error) {
+    return /author identity unknown|unable to auto-detect email address|please tell me who you are/i.test(getExecErrorText(error));
+}
+
+function hasEvoLiteGitignoreRules(content = '') {
+    return content.includes('.evo-lite/*')
+        && content.includes('!.evo-lite/active_context.md')
+        && content.includes('!.evo-lite/cli/**');
+}
+
+function extractEvoLiteGitignoreBlock(templateContent) {
+    const normalized = typeof templateContent === 'string' ? templateContent.trim() : '';
+    const marker = '# Evo-Lite runtime';
+    const markerIndex = normalized.indexOf(marker);
+
+    if (!normalized) {
+        return '';
+    }
+
+    return markerIndex === -1 ? normalized : normalized.slice(markerIndex).trim();
+}
+
+function ensureProjectGitignore(targetDir, templateContent) {
+    const gitignorePath = path.join(targetDir, '.gitignore');
+    const normalizedTemplate = typeof templateContent === 'string' ? templateContent.trim() : '';
+    const evoLiteBlock = extractEvoLiteGitignoreBlock(templateContent);
+
+    if (!normalizedTemplate) {
+        return { status: 'missing-template' };
+    }
+
+    if (!fs.existsSync(gitignorePath)) {
+        fs.writeFileSync(gitignorePath, `${normalizedTemplate}\n`, 'utf8');
+        console.log('✅ 已初始化项目 .gitignore，并加入 Evo-Lite 运行时忽略规则。');
+        return { status: 'created' };
+    }
+
+    const currentContent = fs.readFileSync(gitignorePath, 'utf8');
+    if (hasEvoLiteGitignoreRules(currentContent)) {
+        return { status: 'existing' };
+    }
+
+    const separator = currentContent.endsWith('\n') ? '' : '\n';
+    fs.writeFileSync(gitignorePath, `${currentContent}${separator}\n${evoLiteBlock}\n`, 'utf8');
+    console.log('✅ 已向现有 .gitignore 补齐 Evo-Lite 运行时忽略规则。');
+    return { status: 'updated' };
+}
+
+function getInitialCommitHint() {
+    return `git add . && git commit -m "${INITIAL_COMMIT_MESSAGE}"`;
+}
+
 function ensureGitWorkspace(targetDir, options = {}) {
     if (options.git === false) {
         console.log('ℹ️ Git 初始化已按配置跳过 (--no-git)。Evo-Lite 将以 No-Git 模式继续运行。');
@@ -78,7 +132,6 @@ function ensureGitWorkspace(targetDir, options = {}) {
             stdio: 'ignore',
         });
         console.log('✅ 已为目标项目初始化 Git 仓库。');
-        console.log('💡 建议首个提交: git add . && git commit -m "chore: initialize Evo-Lite workspace"');
         return { status: 'initialized' };
     } catch (error) {
         if (isGitCommandMissing(error)) {
@@ -87,6 +140,63 @@ function ensureGitWorkspace(targetDir, options = {}) {
         }
         console.warn(`⚠️ Git 自动初始化失败: ${getExecErrorText(error).trim()}`);
         return { status: 'init-failed' };
+    }
+}
+
+function createInitialCommit(targetDir, options = {}) {
+    if (options.initialCommit === false) {
+        console.log('ℹ️ 初始化基线提交已按配置跳过 (--no-initial-commit)。');
+        console.log(`💡 如需手动提交当前脚手架状态，可执行: ${getInitialCommitHint()}`);
+        return { status: 'skipped' };
+    }
+
+    if (options.gitStatus !== 'initialized') {
+        return { status: 'not-applicable' };
+    }
+
+    if (options.isFreshTarget !== true) {
+        console.log('ℹ️ 检测到目标目录初始化前已含内容，未自动创建基线提交，以避免把既有文件混入脚手架首个提交。');
+        console.log(`💡 如需手动提交当前脚手架状态，可执行: ${getInitialCommitHint()}`);
+        return { status: 'nonfresh-target' };
+    }
+
+    try {
+        const statusOutput = execSync('git status --short', {
+            cwd: targetDir,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        }).toString('utf8').trim();
+
+        if (!statusOutput) {
+            console.log('ℹ️ Git 工作区当前无待提交内容，跳过自动基线提交。');
+            return { status: 'clean' };
+        }
+    } catch (error) {
+        console.warn(`⚠️ 无法确认初始化工作区状态，已跳过自动基线提交: ${getExecErrorText(error).trim()}`);
+        console.log(`💡 如需手动提交当前脚手架状态，可执行: ${getInitialCommitHint()}`);
+        return { status: 'status-check-failed' };
+    }
+
+    try {
+        execSync('git add --all', {
+            cwd: targetDir,
+            stdio: 'ignore',
+        });
+        execSync(`git commit -m "${INITIAL_COMMIT_MESSAGE}"`, {
+            cwd: targetDir,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        console.log(`✅ 已创建 Evo-Lite 初始化基线提交 (${INITIAL_COMMIT_MESSAGE})。`);
+        return { status: 'committed' };
+    } catch (error) {
+        if (isGitIdentityMissing(error)) {
+            console.warn('⚠️ Git 用户身份未配置，无法自动创建初始化基线提交。');
+            console.log('💡 请先配置 `git config user.name` 和 `git config user.email`，再手动提交当前脚手架状态。');
+            console.log(`💡 建议首个提交: ${getInitialCommitHint()}`);
+            return { status: 'identity-missing' };
+        }
+        console.warn(`⚠️ 自动创建初始化基线提交失败: ${getExecErrorText(error).trim()}`);
+        console.log(`💡 建议首个提交: ${getInitialCommitHint()}`);
+        return { status: 'commit-failed' };
     }
 }
 
@@ -101,6 +211,8 @@ async function runInit(targetDirArg, options = {}) {
     }
 
     const targetDir = path.resolve(targetDirArg);
+    const preExistingEntries = fs.existsSync(targetDir) ? fs.readdirSync(targetDir) : [];
+    const isFreshTarget = preExistingEntries.length === 0;
     console.log(`🚀 Evo-Lite v${SELF_VERSION} — 开始在 ${targetDir} 初始化 Daemonless 记忆大脑...\n`);
 
     let shouldWash = false;
@@ -170,6 +282,7 @@ async function runInit(targetDirArg, options = {}) {
     console.log('📄 复制并配置记忆外挂模板文件...');
     const templatesDir = path.join(__dirname, 'templates');
     const activeContextTemplate = fs.readFileSync(path.join(templatesDir, 'active_context.md'), 'utf8');
+    const gitignoreTemplate = fs.readFileSync(path.join(templatesDir, '.gitignore'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
     const agentsAdapterTemplate = fs.readFileSync(path.join(templatesDir, 'AGENTS.md'), 'utf8');
@@ -288,6 +401,8 @@ async function runInit(targetDirArg, options = {}) {
         hostAdapterSummary.push('CLAUDE.md');
     }
 
+    ensureProjectGitignore(targetDir, gitignoreTemplate);
+
     // Inject CLI wrappers into .evo-lite to avoid root pollution
     const unixWrapperPath = path.join(evoLiteDir, 'mem');
     const winWrapperPath = path.join(evoLiteDir, 'mem.cmd');
@@ -339,7 +454,7 @@ async function runInit(targetDirArg, options = {}) {
     }
 
     // 4.5 补齐 Git 前提，避免首次闭环就落入 No-Git 模式。
-    ensureGitWorkspace(targetDir, options);
+    const gitWorkspace = ensureGitWorkspace(targetDir, options);
 
     // 5. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
     console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander)...');
@@ -399,6 +514,12 @@ async function runInit(targetDirArg, options = {}) {
             console.log('   3. 运行: node .evo-lite/cli/memory.js import evo_memories_exported.json');
         }
     }
+
+    createInitialCommit(targetDir, {
+        gitStatus: gitWorkspace.status,
+        initialCommit: options.initialCommit,
+        isFreshTarget,
+    });
 
     console.log('\n🎉 Evo-Lite 架构已全盘部署完成！');
     console.log('----------------------------------------------------');

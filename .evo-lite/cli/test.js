@@ -655,6 +655,12 @@ async function runTests() {
                     fs.mkdirSync(path.join(modernInitRoot, '.git'), { recursive: true });
                     return Buffer.from('Initialized empty Git repository\n');
                 }
+                if (command === 'npm install better-sqlite3 tar commander') {
+                    return Buffer.from('');
+                }
+                if (command.startsWith('git ')) {
+                    throw new Error(`UNEXPECTED_GIT_COMMAND:${command}`);
+                }
                 throw new Error('STOP_AFTER_CHECK');
             },
         });
@@ -738,6 +744,62 @@ async function runTests() {
             fs.existsSync(path.join(modernInitRoot, '.git')),
             'initializer did not leave behind a Git repository marker for a fresh target project'
         );
+        assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.gitignore')),
+            'initializer did not scaffold .gitignore into the target project'
+        );
+        assert.ok(
+            !modernInitCommands.some(entry => entry.command === 'git commit -m "chore: initialize Evo-Lite workspace"'),
+            'initializer should not auto-commit when scaffolding into a non-empty existing directory'
+        );
+
+        console.log('3ab. Testing initializer auto-creates a baseline commit for a fresh target ...');
+        const freshInitParent = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lite-init-fresh-'));
+        const freshInitRoot = path.join(freshInitParent, 'workspace');
+        const freshInitCommands = [];
+        const freshInitResult = await runInitializer(freshInitRoot, {
+            execSyncImpl: (command, execOptions = {}) => {
+                freshInitCommands.push({ command, cwd: execOptions.cwd || null });
+                if (command === 'git rev-parse --is-inside-work-tree') {
+                    const error = new Error('fatal: not a git repository');
+                    error.stderr = Buffer.from('fatal: not a git repository');
+                    throw error;
+                }
+                if (command === 'git init') {
+                    fs.mkdirSync(path.join(freshInitRoot, '.git'), { recursive: true });
+                    return Buffer.from('Initialized empty Git repository\n');
+                }
+                if (command === 'npm install better-sqlite3 tar commander') {
+                    return Buffer.from('');
+                }
+                if (command === 'git status --short') {
+                    return Buffer.from('?? .gitignore\n?? .evo-lite/\n?? AGENTS.md\n?? CLAUDE.md\n');
+                }
+                if (command === 'git add --all') {
+                    return Buffer.from('');
+                }
+                if (command === 'git commit -m "chore: initialize Evo-Lite workspace"') {
+                    return Buffer.from('[main (root-commit) abc1234] chore: initialize Evo-Lite workspace\n');
+                }
+                throw new Error(`UNEXPECTED_COMMAND:${command}`);
+            },
+        });
+        assert.strictEqual(freshInitResult.status, 0, 'initializer should succeed for a fresh target directory');
+        assert.ok(
+            freshInitCommands.some(entry => entry.command === 'git add --all' && entry.cwd === freshInitRoot),
+            'initializer did not stage the scaffolded files before creating the baseline commit'
+        );
+        assert.ok(
+            freshInitCommands.some(entry => entry.command === 'git commit -m "chore: initialize Evo-Lite workspace"' && entry.cwd === freshInitRoot),
+            'initializer did not create the baseline scaffold commit for a fresh target project'
+        );
+        assert.ok(
+            freshInitResult.stdout.includes('✅ 已创建 Evo-Lite 初始化基线提交'),
+            'initializer did not report baseline commit creation for a fresh target project'
+        );
+        const freshGitignore = fs.readFileSync(path.join(freshInitRoot, '.gitignore'), 'utf8');
+        assert.ok(freshGitignore.includes('.evo-lite/*'), 'scaffolded .gitignore did not ignore Evo-Lite runtime artifacts');
+        assert.ok(freshGitignore.includes('!.evo-lite/cli/**'), 'scaffolded .gitignore did not preserve tracked Evo-Lite CLI assets');
 
         console.log('3b. Testing bootstrap command condenses init-state guidance ...');
         const bootstrapCommandRuntime = createTempRuntimeRoot('bootstrap-command');
