@@ -25,6 +25,10 @@ function createTempRuntimeRoot(name) {
     for (const file of ['AGENTS.md', 'CLAUDE.md']) {
         fs.copyFileSync(path.join(TEMPLATE_ROOT_DIR, file), path.join(workspaceRoot, file));
     }
+    const managedEvoWorkflowPath = path.join(TEMPLATE_ROOT_DIR, '.agents', 'workflows', 'evo.md');
+    if (fs.existsSync(managedEvoWorkflowPath)) {
+        writeText(path.join(workspaceRoot, '.agents', 'workflows', 'evo.md'), fs.readFileSync(managedEvoWorkflowPath, 'utf8'));
+    }
     copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.claude'), path.join(workspaceRoot, '.claude'));
     if (fs.existsSync(path.join(TEMPLATE_ROOT_DIR, '.github'))) {
         copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.github'), path.join(workspaceRoot, '.github'));
@@ -1075,6 +1079,7 @@ async function runTests() {
         });
         assert.ok(healthyVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should treat dynamic model defaults and host adapters as a healthy sync state');
         assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged healthy template files as drift');
+        assert.ok(!healthyVerifyOutput.includes('.agents/workflows/evo.md is out of sync'), 'verify incorrectly flagged the managed /evo workflow as drift');
         assert.ok(!healthyVerifyOutput.includes('.github/hooks/evo-lite.json is out of sync'), 'verify incorrectly flagged the managed GitHub hook registry as drift');
         assert.ok(!healthyVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify incorrectly flagged the Codex hook manifest as drift');
         assert.ok(!healthyVerifyOutput.includes('.github/hooks/dogfood-commit-hook.js is out of sync'), 'verify incorrectly flagged the dogfood guard hook as drift');
@@ -1102,6 +1107,8 @@ async function runTests() {
         assert.ok(!localExtensionVerifyOutput.includes('.github/copilot-instructions.md is out of sync'), 'verify incorrectly flagged a local extension block as template drift');
 
         const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {
+            const evoWorkflowPath = path.join(templateRoot, '.agents', 'workflows', 'evo.md');
+            fs.writeFileSync(evoWorkflowPath, `${fs.readFileSync(evoWorkflowPath, 'utf8')}\n<!-- drift -->\n`, 'utf8');
             const dogfoodHookPath = path.join(templateRoot, '.github', 'hooks', 'dogfood-commit-hook.js');
             fs.writeFileSync(dogfoodHookPath, `${fs.readFileSync(dogfoodHookPath, 'utf8')}\n// drift\n`, 'utf8');
             const githubHookRegistryPath = path.join(templateRoot, '.github', 'hooks', 'evo-lite.json');
@@ -1121,6 +1128,7 @@ async function runTests() {
         const driftVerifyOutput = await captureConsole(async () => {
             await verifyDriftLoaded.service.verify();
         });
+        assert.ok(driftVerifyOutput.includes('.agents/workflows/evo.md is out of sync'), 'verify did not report managed /evo workflow drift');
         assert.ok(driftVerifyOutput.includes('.github/hooks/evo-lite.json is out of sync'), 'verify did not report managed GitHub hook registry drift');
         assert.ok(driftVerifyOutput.includes('.github/hooks/dogfood-commit-hook.js is out of sync'), 'verify did not report actual Evo-Lite hook asset drift');
         assert.ok(driftVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify did not report Codex hook manifest drift');
