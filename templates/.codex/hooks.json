@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ./.github/hooks/evo-lite-hook.js stop",
+            "command": "node ./.github/hooks/evo-lite-codex-stop-hook.js",
             "statusMessage": "Checking Evo-Lite handoff state..."
           }
         ]

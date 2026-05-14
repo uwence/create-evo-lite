@@ -30,13 +30,14 @@ trigger: always_on
 - `archive` = long-term structured asset
 - `remember` = lightweight recall cache, not the primary closure path
 - `session_events` = lifecycle telemetry and resume hints only, not a durable closure replacement
+- `provenance` sidecar = fine-grained hook audit trail, useful for evidence and future replay views, not a durable closure replacement
 
 Preferred flow:
 
 `active_context -> context track -> archive`
 
 Do not claim reliable closure if `track` failed to write archive or update context.
-Do not evolve `remember` or `session_events` into a parallel durable archive chain.
+Do not evolve `remember`, `session_events`, or `provenance` into a parallel durable archive chain.
 
 ## 5. Safety and behavior
 

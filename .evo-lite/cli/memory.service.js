@@ -1013,6 +1013,11 @@ function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
             templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'evo-lite-hook.js') : null,
         },
         {
+            label: '.github/hooks/evo-lite-codex-stop-hook.js',
+            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'evo-lite-codex-stop-hook.js'),
+            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'evo-lite-codex-stop-hook.js') : null,
+        },
+        {
             label: '.github/hooks/dogfood-commit-hook.js',
             activeFile: path.join(workspaceRoot, '.github', 'hooks', 'dogfood-commit-hook.js'),
             templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'dogfood-commit-hook.js') : null,

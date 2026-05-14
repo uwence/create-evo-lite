@@ -13,6 +13,15 @@ const TOOL_ENV_KEYS = [
     'TOOL_NAME',
 ];
 
+function getRuntimeRoot(workspaceRoot) {
+    const override = typeof process.env.EVO_LITE_ROOT === 'string' ? process.env.EVO_LITE_ROOT.trim() : '';
+    return override ? path.resolve(override) : path.join(workspaceRoot, '.evo-lite');
+}
+
+function getProvenanceFilePath(workspaceRoot) {
+    return path.join(getRuntimeRoot(workspaceRoot), 'provenance', 'steps.ndjson');
+}
+
 function compactText(value, maxLength = 600) {
     if (typeof value !== 'string') {
         return null;
@@ -278,6 +287,18 @@ function getToolName() {
     return null;
 }
 
+function appendProvenanceRecord(workspaceRoot, record) {
+    try {
+        const filePath = getProvenanceFilePath(workspaceRoot);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.appendFileSync(filePath, `${JSON.stringify(record)}\n`, 'utf8');
+    } catch (error) {
+        if (process.env.EVO_LITE_DEBUG_HOOKS === '1') {
+            console.error(`[evo-lite-hook] provenance append failed: ${error.message}`);
+        }
+    }
+}
+
 function main() {
     const event = (process.argv[2] || '').toLowerCase();
     if (!ALLOWED_EVENTS.has(event)) {
@@ -320,8 +341,35 @@ function main() {
     }
 
     if (result.error) {
+        appendProvenanceRecord(workspaceRoot, {
+            command: hookPayload.command || null,
+            error: compactText(result.error.message, 240),
+            event,
+            output: hookPayload.output || null,
+            recordedAt: new Date().toISOString(),
+            status: 'spawn-error',
+            success: hookPayload.success,
+            targets: Array.isArray(hookPayload.targets) ? hookPayload.targets.slice(0, 8) : [],
+            tool: tool || null,
+            transport: 'shared-hook',
+            workspaceRoot,
+        });
         process.exit(1);
     }
+
+    appendProvenanceRecord(workspaceRoot, {
+        command: hookPayload.command || null,
+        event,
+        output: hookPayload.output || null,
+        recordedAt: new Date().toISOString(),
+        sourceCommit: process.env.EVO_LITE_GIT_COMMIT || null,
+        status: typeof result.status === 'number' ? result.status : 0,
+        success: hookPayload.success,
+        targets: Array.isArray(hookPayload.targets) ? hookPayload.targets.slice(0, 8) : [],
+        tool: tool || null,
+        transport: 'shared-hook',
+        workspaceRoot,
+    });
 
     process.exit(typeof result.status === 'number' ? result.status : 0);
 }

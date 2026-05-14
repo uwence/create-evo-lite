@@ -10,6 +10,9 @@ node_modules/
 !.evo-lite/vect_memory/
 !.evo-lite/vect_memory/**/*.md
 .agents/
+!templates/.agents/
+!templates/.agents/workflows/
+!templates/.agents/workflows/*.md
 test-project*/
 temp-npm-mock/
 .npm-cache/

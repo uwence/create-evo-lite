@@ -113,6 +113,7 @@ Evo-Lite 当前采用一套明确的**状态与记忆双轨模型**：
 - **`active_context.md`**：当前状态面板，只维护 `META`、`FOCUS`、`BACKLOG`、`TRAJECTORY` 这类“现在正在发生什么”的信息。
 - **`archive` / `track`**：长期结构化资产，用于保存已经闭环的 Bug 复盘、实现结论、架构决策和可复用经验。
 - **`remember`**：轻量隐性检索缓存，适合随手记住一条以后可能会 recall 到的坑点，但**不承担主闭环的重建保证**。
+- **`provenance`**：hook 旁路生成的细粒度操作审计侧车，适合补充 step/time-line 级证据，但**不是新的 durable 主链，也不替代 `archive` / `track`**。
 
 `/evo` 接管时，推荐遵循 **recall-first takeover**：先读 `active_context` 和 `verify`，再用 1-3 个锚点驱动的 recall 查询检查是否存在会改变下一步的历史经验。若 recall 无命中，应明确按 fresh takeover 继续，而不是把“没查到”误写成“没有风险”。
 
@@ -128,6 +129,7 @@ Evo-Lite 当前采用一套明确的**状态与记忆双轨模型**：
 - 已经闭环的事：通过当前宿主可用的 `mem context track ...` 沉淀
 - 长期经验：进入 `raw_memory/` 结构化归档
 - 轻量检索线索：可使用 `remember`
+- 细粒度操作审计：可写入 `.evo-lite/provenance/` 作为 sidecar 证据
 
 默认主通道是：
 
@@ -139,6 +141,7 @@ active_context -> context track -> archive
 
 - 不应把大段复盘长期堆在 `active_context.md`
 - 不应手工把任务记录从 `active_context.md` 复制一份到 archive
+- 不应把 `provenance` sidecar 当成与 `archive` 并列的长期闭环主链
 - 没有成功 `track`，就不算真正完成一次可靠闭环
 
 ---

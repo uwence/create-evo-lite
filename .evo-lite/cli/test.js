@@ -84,6 +84,17 @@ function writeText(filePath, content) {
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
+function readNdjson(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return [];
+    }
+    return fs.readFileSync(filePath, 'utf8')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+}
+
 function createLegacyInitProject(name) {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), `evo-lite-init-legacy-${name}-`));
     writeText(path.join(projectRoot, '.evo-lite', 'active_context.md'), '# legacy active context');
@@ -412,6 +423,7 @@ async function runTests() {
         assert.ok(hookReport.assets.some(asset => asset.label === '.github/copilot-instructions.md' && asset.exists), 'hook scaffold inspection did not include the Copilot bootstrap instructions asset');
         assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/evo-lite.json' && asset.exists), 'hook scaffold inspection did not include the GitHub hook registry asset');
         assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/evo-lite-hook.js' && asset.exists), 'hook scaffold inspection did not include the lifecycle advice hook wrapper');
+        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/evo-lite-codex-stop-hook.js' && asset.exists), 'hook scaffold inspection did not include the Codex stop hook wrapper');
         assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/dogfood-commit-hook.js' && asset.exists), 'hook scaffold inspection did not include the dogfood guard hook wrapper');
         assert.ok(hookReport.assets.some(asset => asset.label === '.codex/hooks.json' && asset.exists), 'hook scaffold inspection did not include the Evo-Lite Codex hook manifest');
         assert.ok(!hookReport.assets.some(asset => asset.label === '.vscode/mcp.json'), 'hook scaffold inspection should not treat workspace MCP config as an Evo-Lite-managed asset');
@@ -569,6 +581,14 @@ async function runTests() {
         assert.ok(wrapperOutput.includes('tool: runTerminalCommand'), `wrapper did not parse the official tool_name field: ${wrapperOutput}`);
         assert.ok(wrapperOutput.includes('command: git commit -m') && wrapperOutput.includes('context track'), `wrapper did not parse the official tool_input.command field: ${wrapperOutput}`);
         assert.ok(wrapperOutput.includes('返回失败'), `wrapper did not surface failure based on official tool_response text: ${wrapperOutput}`);
+        const lifecycleProvenance = readNdjson(path.join(lifecycleRuntime.runtimeRoot, 'provenance', 'steps.ndjson'));
+        assert.ok(lifecycleProvenance.some(entry =>
+            entry.event === 'posttooluse'
+            && entry.transport === 'shared-hook'
+            && entry.tool === 'runTerminalCommand'
+            && typeof entry.command === 'string'
+            && entry.command.includes('context track')
+        ), `shared hook did not append a provenance record for posttooluse: ${JSON.stringify(lifecycleProvenance, null, 2)}`);
 
         const configuredPretoolRuntime = createTempRuntimeRoot('hook-pretool-configured');
         writeText(
@@ -593,6 +613,81 @@ async function runTests() {
         assert.ok(stopAdvice.reminders.some(reminder => reminder.includes('未提交')), 'hook lifecycle stop advice did not warn about dirty git state');
         assert.ok(stopAdvice.reminders.some(reminder => reminder.includes('24 小时')), 'hook lifecycle stop advice did not warn about stale active_context');
         assert.ok(stopAdvice.reminders.some(reminder => reminder.includes('release/tag/CHANGELOG')), 'hook lifecycle stop advice did not warn about release closure after version-file changes');
+        writeText(
+            path.join(stopRuntime.runtimeRoot, 'cli', 'memory.js'),
+            `process.stdout.write(JSON.stringify({
+                reminders: [
+                    '检测到最新 commit 尚未写入 TRAJECTORY；请执行 context track 完成闭环。',
+                    '工作区仍有未提交的非 .evo-lite 改动；结束前请确认是否需要提交。'
+                ],
+                warnings: ['git status unavailable in the current Node environment']
+            }));`
+        );
+        const stopWrapperResult = childProcess.spawnSync(
+            process.execPath,
+            [path.join(stopRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-codex-stop-hook.js')],
+            {
+                cwd: stopRuntime.workspaceRoot,
+                encoding: 'utf8',
+                env: {
+                    ...process.env,
+                    EVO_LITE_GIT_COMMIT: 'ccc3333',
+                    EVO_LITE_GIT_STATUS: ' M package.json',
+                },
+            }
+        );
+        assert.strictEqual(stopWrapperResult.status, 0, `Codex stop wrapper exited with ${stopWrapperResult.status}: ${stopWrapperResult.stderr}`);
+        assert.strictEqual(
+            (stopWrapperResult.stdout || '').trim(),
+            '{"decision":"accept"}',
+            `Codex stop wrapper stdout should contain only the compact decision JSON: ${stopWrapperResult.stdout}`
+        );
+        assert.deepStrictEqual(
+            JSON.parse((stopWrapperResult.stdout || '').trim()),
+            { decision: 'accept' },
+            `Codex stop wrapper did not return valid decision JSON: ${stopWrapperResult.stdout}`
+        );
+        assert.ok(
+            (stopWrapperResult.stderr || '').includes('[evo-lite stop]'),
+            `Codex stop wrapper did not surface stop reminders on stderr: ${stopWrapperResult.stderr}`
+        );
+        assert.ok(
+            (stopWrapperResult.stderr || '').includes('未提交'),
+            `Codex stop wrapper stderr did not include dirty-worktree reminder: ${stopWrapperResult.stderr}`
+        );
+        const stopProvenance = readNdjson(path.join(stopRuntime.runtimeRoot, 'provenance', 'steps.ndjson'));
+        assert.ok(stopProvenance.some(entry =>
+            entry.event === 'stop'
+            && entry.transport === 'codex-stop'
+            && entry.decision === 'accept'
+            && Array.isArray(entry.reminders)
+            && entry.reminders.some(reminder => reminder.includes('TRAJECTORY'))
+        ), `Codex stop wrapper did not append a provenance record: ${JSON.stringify(stopProvenance, null, 2)}`);
+
+        const stopBrokenRuntime = createTempRuntimeRoot('hook-stop-bad-json');
+        writeText(
+            path.join(stopBrokenRuntime.runtimeRoot, 'cli', 'memory.js'),
+            'process.stdout.write("not-json"); process.stderr.write("broken stderr");'
+        );
+        const stopBrokenResult = childProcess.spawnSync(
+            process.execPath,
+            [path.join(stopBrokenRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-codex-stop-hook.js')],
+            {
+                cwd: stopBrokenRuntime.workspaceRoot,
+                encoding: 'utf8',
+            }
+        );
+        assert.strictEqual(stopBrokenResult.status, 0, `Codex stop wrapper should accept malformed stop advice output: ${stopBrokenResult.stderr}`);
+        assert.strictEqual(
+            (stopBrokenResult.stdout || '').trim(),
+            '{"decision":"accept"}',
+            `Codex stop wrapper should fall back to clean accept JSON when stop advice stdout is malformed: ${stopBrokenResult.stdout}`
+        );
+        assert.strictEqual(
+            (stopBrokenResult.stderr || '').trim(),
+            '',
+            `Codex stop wrapper should not leak malformed stop advice to stderr without debug mode: ${stopBrokenResult.stderr}`
+        );
 
         console.log('2c. Testing context track bootstraps a fresh init runtime ...');
         const freshTrackRuntime = createTempRuntimeRoot('fresh-track');
@@ -847,6 +942,10 @@ async function runTests() {
             'initializer did not scaffold .github/hooks/evo-lite-hook.js into the target project'
         );
         assert.ok(
+            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'evo-lite-codex-stop-hook.js')),
+            'initializer did not scaffold .github/hooks/evo-lite-codex-stop-hook.js into the target project'
+        );
+        assert.ok(
             !fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.sh')),
             'initializer should not scaffold external context-mode shell hooks into the target project'
         );
@@ -886,6 +985,7 @@ async function runTests() {
         assert.ok(codexHookConfig.hooks.PreToolUse.some(entry => entry.matcher === 'Bash' && entry.hooks.some(hook => hook.command.includes('evo-lite-hook.js pretooluse'))), 'initializer did not scaffold Codex PreToolUse Evo-Lite architecture hook');
         assert.ok(codexHookConfig.hooks.PreToolUse.some(entry => entry.matcher === 'Bash' && entry.hooks.some(hook => hook.command.includes('dogfood-commit-hook.js pretooluse'))), 'initializer did not scaffold Codex PreToolUse dogfood hook');
         assert.ok(codexHookConfig.hooks.PostToolUse.some(entry => entry.hooks.some(hook => hook.command.includes('evo-lite-hook.js posttooluse'))), 'initializer did not scaffold Codex PostToolUse Evo-Lite closure hook');
+        assert.ok(codexHookConfig.hooks.Stop.some(entry => entry.hooks.some(hook => hook.command.includes('evo-lite-codex-stop-hook.js'))), 'initializer did not scaffold the Codex stop JSON wrapper');
         assert.ok(!JSON.stringify(codexHookConfig).includes('context-mode-hook.js'), 'initializer should no longer wire context-mode through the managed Codex hook manifest');
         assert.ok(!JSON.stringify(codexHookConfig).includes('rtk-codex-hook.js'), 'initializer should no longer wire RTK through the managed Codex hook manifest');
         assert.ok(!JSON.stringify(codexHookConfig).includes('gitnexus-hook.js'), 'initializer should no longer wire GitNexus through the managed Codex hook manifest');

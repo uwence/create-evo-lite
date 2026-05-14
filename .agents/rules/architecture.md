@@ -33,5 +33,6 @@
 - Prefer the current local FTS architecture; do not reintroduce heavy embedding or external service assumptions unless the user explicitly requests an architecture change.
 - Keep `active_context -> context track -> archive(raw_memory)` as the only durable governance chain.
 - `session_events` / resume snapshots are observational runtime telemetry, not a second durable archive channel.
+- `provenance` sidecar data under `.evo-lite/` may capture fine-grained hook evidence, but it must remain supplemental and must not replace the durable governance chain.
 - Runtime truth must stay project-local under `.evo-lite/`; do not move canonical project state into host-global cache directories.
 - It is allowed to borrow source/chunk metadata, stats, cleanup, expiration, and worktree isolation patterns, but they must remain operational enhancements around the existing Evo-Lite workflow contract.

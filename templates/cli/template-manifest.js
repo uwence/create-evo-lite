@@ -50,7 +50,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
         activeRoot: 'workspace',
         templateRoot: 'root',
         relativeDir: ['.github'],
-        files: ['copilot-instructions.md', 'hooks/evo-lite.json', 'hooks/evo-lite-hook.js', 'hooks/dogfood-commit-hook.js'],
+        files: ['copilot-instructions.md', 'hooks/evo-lite.json', 'hooks/evo-lite-hook.js', 'hooks/evo-lite-codex-stop-hook.js', 'hooks/dogfood-commit-hook.js'],
     },
     {
         key: 'codex-managed-assets',
