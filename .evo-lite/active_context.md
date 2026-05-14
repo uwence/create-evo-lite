@@ -23,6 +23,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [45977cb] 2026-05-14 HookProvenanceSidecar: Stabilized the Codex stop-hook JSON contract, synced the managed workflow templates back into the tr
 - [77f9a5a] 2026-05-14 WorkflowClosureHardening: Completed the managed template manifest pass, expanded recall-first takeover matching with alias/rul
 - [4093d9c] 2026-05-14 WorkflowTemplateSync: Aligned root and template /evo workflow content, added .agents/workflows/evo.md to managed template-
 - [229889e] 2026-05-14 RecallFirstTakeover: Implemented bounded recall-first takeover for bootstrap, mirrored live/template runtime and tests, d
@@ -32,7 +33,6 @@
 - [62e6dda] 2026-05-13 RuntimeBoundaryGuardrails: Added session_events observability as non-durable telemetry, introduced context events read path, an
 - [daf68c1] 2026-05-13 GitNexusLocalHookRefresh: Switched the Codex GitNexus post-tool hook from localhost-service-first behavior to a local-CLI-firs
 - [df7e188] 2026-05-13 CodexHookBridge: Completed the Codex-native hook integration pass for create-evo-lite. Added project and template .co
-- [83af489] 2026-05-12 CommanderCliRouting: Completed the commander.js CLI migration for create-evo-lite. Refactored the public scaffold entrypo
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
