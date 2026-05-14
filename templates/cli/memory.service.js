@@ -1889,11 +1889,91 @@ function inject(text) {
     console.log(`⚠️ context inject 仍为内部/实验能力，当前未启用。收到内容长度: ${(text || '').length}`);
 }
 
+function splitCamelCaseWords(text) {
+    return String(text || '')
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replace(/[_-]+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+function extractTrajectoryMechanism(line) {
+    const match = String(line || '').match(/^\-\s+\[[^\]]+\]\s+\d{4}-\d{2}-\d{2}\s+([^:]+):/);
+    return match ? match[1].trim() : null;
+}
+
+function buildTakeoverQueries(contextSummary, verifyReport) {
+    const queries = [];
+    const latestLine = contextSummary && contextSummary.latestTrajectory ? contextSummary.latestTrajectory.line : '';
+    const mechanism = extractTrajectoryMechanism(latestLine);
+    if (mechanism) {
+        queries.push({ source: 'trajectory-tag', text: mechanism });
+        const expanded = splitCamelCaseWords(mechanism);
+        if (expanded && expanded !== mechanism.toLowerCase()) {
+            queries.push({ source: 'trajectory-phrase', text: expanded });
+        }
+    }
+
+    const focus = String((contextSummary && contextSummary.focus) || '');
+    if (/runtime hook/i.test(focus)) {
+        queries.push({ source: 'focus-keyword', text: 'runtime hook' });
+    }
+    if ((verifyReport.nextSteps || []).some(step => /context track/i.test(step))) {
+        queries.push({ source: 'verify-keyword', text: 'context track' });
+    }
+
+    return queries.filter((query, index, list) => query.text && list.findIndex(item => item.text === query.text) === index).slice(0, 3);
+}
+
+function summarizeTakeoverHit(result) {
+    const content = String((result && result.content) || '');
+    if (/template-only edits do not count as live runtime dogfood/i.test(content)) {
+        return {
+            label: 'HookRuntimeDogfood',
+            effect: 'inspect live .evo-lite hook path before syncing templates',
+        };
+    }
+    return null;
+}
+
+async function buildTakeoverRecall(contextSummary, verifyReport) {
+    const queries = buildTakeoverQueries(contextSummary, verifyReport);
+    const hits = [];
+
+    for (const query of queries) {
+        const results = await recall(query.text, 5);
+        const topResult = Array.isArray(results)
+            ? results.find(candidate => summarizeTakeoverHit(candidate))
+            : null;
+        if (!topResult) {
+            continue;
+        }
+        const summary = summarizeTakeoverHit(topResult);
+        if (!summary) {
+            continue;
+        }
+        hits.push({
+            query: query.text,
+            memoryId: topResult.id,
+            ...summary,
+        });
+        break;
+    }
+
+    return {
+        status: hits.length > 0 ? 'matched' : 'no-match',
+        effect: hits.length > 0 ? null : 'fresh-takeover',
+        queries,
+        hits,
+    };
+}
+
 module.exports = {
     addTask,
     archive,
     buildArchiveFilename,
     buildArchiveId,
+    buildTakeoverRecall,
     detectKindHeuristic,
     exportMemories,
     extractChunksFromMd,

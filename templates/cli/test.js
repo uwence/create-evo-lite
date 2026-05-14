@@ -823,8 +823,78 @@ async function runTests() {
             'bootstrap command did not expose missing architecture status'
         );
         assert.ok(
+            bootstrapOutput.includes('memory_status: no-match'),
+            'bootstrap command did not surface no-match recall status'
+        );
+        assert.ok(
+            bootstrapOutput.includes('memory_effect: fresh-takeover'),
+            'bootstrap command did not surface fresh-takeover recall fallback'
+        );
+        assert.ok(
             bootstrapOutput.includes('next_step:'),
             'bootstrap command did not emit compressed next-step guidance'
+        );
+
+        console.log('3c. Testing bootstrap command surfaces actionable recall hits ...');
+        const bootstrapRecallRuntime = createTempRuntimeRoot('bootstrap-recall-match');
+        const bootstrapRecallLoaded = await bootstrapRuntime(bootstrapRecallRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        await bootstrapRecallLoaded.service.memorize(
+            'HookRuntimeDogfood template-only edits do not count as live runtime dogfood; inspect live .evo-lite hook path before syncing templates. This note is deliberately long enough to satisfy the quality guard.'
+        );
+        console.log(bootstrapRecallLoaded.service.setFocus('完成 live runtime hook dogfood 收口，并确认 runtime hook 路径一致'));
+        await bootstrapRecallLoaded.service.track(
+            'HookRuntimeDogfood',
+            'Completed live runtime hook dogfood and clarified that live runtime path verification must happen before template sync.'
+        );
+        loadCli(bootstrapRecallRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const bootstrapRecallCliModule = require(path.join(CLI_DIR, 'memory.js'));
+        const bootstrapRecallOutput = await captureConsole(async () => {
+            await bootstrapRecallCliModule.run(['node', 'memory.js', 'bootstrap']);
+        });
+        assert.ok(
+            bootstrapRecallOutput.includes('memory_status: matched'),
+            'bootstrap command did not surface matched recall status'
+        );
+        assert.ok(
+            bootstrapRecallOutput.includes('memory_hit: HookRuntimeDogfood'),
+            'bootstrap command did not surface actionable recall hit in takeover summary'
+        );
+        assert.ok(
+            bootstrapRecallOutput.includes('memory_effect: inspect live .evo-lite hook path before syncing templates'),
+            'bootstrap command did not surface the recall-driven next-step effect'
+        );
+
+        console.log('3d. Testing bootstrap recall ignores non-actionable noise ...');
+        const bootstrapNoiseRuntime = createTempRuntimeRoot('bootstrap-recall-noise');
+        const bootstrapNoiseLoaded = await bootstrapRuntime(bootstrapNoiseRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        await bootstrapNoiseLoaded.service.memorize(
+            'This note mentions runtime hook in passing but does not constrain any next step. It is intentionally long enough to satisfy the quality guard.'
+        );
+        console.log(bootstrapNoiseLoaded.service.setFocus('确认 runtime hook 路径一致'));
+        loadCli(bootstrapNoiseRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const bootstrapNoiseCliModule = require(path.join(CLI_DIR, 'memory.js'));
+        const bootstrapNoiseOutput = await captureConsole(async () => {
+            await bootstrapNoiseCliModule.run(['node', 'memory.js', 'bootstrap']);
+        });
+        assert.ok(
+            bootstrapNoiseOutput.includes('memory_status: no-match'),
+            'bootstrap command did not downgrade non-actionable recall noise to no-match'
+        );
+        assert.ok(
+            bootstrapNoiseOutput.includes('memory_effect: fresh-takeover'),
+            'bootstrap command did not preserve fresh-takeover fallback for non-actionable noise'
+        );
+        assert.ok(
+            !bootstrapNoiseOutput.includes('memory_hit:'),
+            'bootstrap command surfaced a non-actionable recall result as a primary hit'
         );
         primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
 

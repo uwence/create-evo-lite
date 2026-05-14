@@ -300,6 +300,7 @@ function formatBootstrapReport(payload) {
     const context = payload.context;
     const sessionstart = payload.sessionstart;
     const verify = payload.verify;
+    const takeoverRecall = payload.takeoverRecall || { status: 'no-match', effect: 'fresh-takeover', queries: [], hits: [] };
     const nextSteps = [...new Set([...(sessionstart.reminders || []), ...(verify.nextSteps || [])])].slice(0, 4);
     const warnings = [...new Set([...(sessionstart.warnings || []), ...((context.validation && context.validation.warnings) || [])])].slice(0, 3);
     const needsBootstrap = ['placeholder', 'missing'].includes(sessionstart.contextStatus)
@@ -321,7 +322,29 @@ function formatBootstrapReport(payload) {
         `template_sync: ${verify.templateSync}`,
         `local_engine: ${verify.localEngine}`,
         `entity_store: ${verify.entityStore}`,
+        `memory_status: ${takeoverRecall.status || 'no-match'}`,
     ];
+
+    if (Array.isArray(takeoverRecall.queries)) {
+        for (const query of takeoverRecall.queries) {
+            if (query && query.source && query.text) {
+                lines.push(`memory_query: ${query.source}:${query.text}`);
+            }
+        }
+    }
+
+    if (Array.isArray(takeoverRecall.hits) && takeoverRecall.hits.length > 0) {
+        for (const hit of takeoverRecall.hits) {
+            if (hit.label) {
+                lines.push(`memory_hit: ${hit.label}`);
+            }
+            if (hit.effect) {
+                lines.push(`memory_effect: ${hit.effect}`);
+            }
+        }
+    } else {
+        lines.push(`memory_effect: ${takeoverRecall.effect || 'fresh-takeover'}`);
+    }
 
     if (context.latestTrajectory) {
         lines.push(`latest: ${context.latestTrajectory.line}`);
@@ -439,7 +462,8 @@ async function runBootstrapCommand(options = {}) {
     const context = memoryService.summarizeActiveContext();
     const verify = await memoryService.verify({ silent: true });
     const sessionstart = memoryService.inspectHookLifecycle('sessionstart');
-    printPayload({ context, sessionstart, verify }, formatBootstrapReport, options);
+    const takeoverRecall = await memoryService.buildTakeoverRecall(context, verify);
+    printPayload({ context, sessionstart, verify, takeoverRecall }, formatBootstrapReport, options);
 }
 
 function buildProgram() {

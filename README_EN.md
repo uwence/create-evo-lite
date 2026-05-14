@@ -113,6 +113,8 @@ Evo-Lite currently uses an explicit **dual-lane state + memory model**:
 - **`archive` / `track`**: long-lived structured assets for closed-loop bug reviews, implementation conclusions, architecture decisions, and reusable project knowledge.
 - **`remember`**: a lightweight implicit recall cache for quick searchable hints, but **not the primary rebuild-guaranteed closure path**.
 
+During `/evo` takeover, prefer a **recall-first takeover** flow: read `active_context` and `verify` first, then run 1-3 anchor-driven recall queries to check whether project memory contains prior lessons that change the next step. If recall returns nothing, say so explicitly and continue as a fresh takeover instead of silently implying that no risk exists.
+
 The intended mental model is:
 
 - `active_context`: cockpit
@@ -186,12 +188,14 @@ This checks local index health, memory runtime state, context freshness, offline
 If this is your first time using AI as a real project partner, do not try to learn every command at once. Start with this minimal loop:
 
 1. Run `/evo` so the agent loads context and performs a self-check.
+  - In the ideal flow, `/evo` also performs a bounded recall before the first summary: derive queries from `FOCUS`, recent `TRAJECTORY` labels, and `verify` governance terms, then only surface hits that actually change the next step.
 2. Tell the AI your single immediate goal in plain language.
 3. After finishing one small closed loop, run `/commit` so the result becomes trajectory plus archive.
 4. When you are ready to stop, run `/mem` for low-frequency handover.
 
 If `verify` reports archive or rebuild issues, follow the concrete next-step commands printed by the CLI instead of guessing.
 In a healthy setup, the `/evo` first response should immediately tell you: health status, current focus, current risks, and the most actionable next step.
+When recall-first takeover is active, that first response should also tell you which memory anchors were queried, whether anything matched, and what changed because of those matches; if nothing matched, it should explicitly say that the session is proceeding as a fresh takeover.
 Likewise, when you run `/wash` or `rebuild`, the closing message should clearly tell you whether damaged archives remain, what was actually rebuilt, which memories are outside the rebuild guarantee, and whether you should continue coding or first repair the remaining issues.
 
 ### 3. High-Frequency Tracking & Closure (/commit)
