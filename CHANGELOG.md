@@ -8,6 +8,8 @@
 - Fixed `sync` so malformed raw archives are no longer silently marked as vectorized.
 - Fixed rebuild guidance when `raw_memory` survives but `chunks` are empty: `verify` now points to a real recovery command.
 - Fixed stale dogfooding guidance that still described obsolete manual recovery steps.
+- Fixed `mem commit` when invoked through the generated `mem` wrappers so pre-command injected Git hash/status no longer poison the post-commit `context track` and runtime-state snapshot stages.
+- Fixed `mem commit --json` so nested remember/archive hints no longer pollute machine-readable output during programmatic consumption on Windows PowerShell.
 
 ### Changed
 - Formalized the primary durable memory flow as:
@@ -21,6 +23,9 @@
 - Improved `track` CLI output so closure state is easier for both humans and agents to interpret.
 - Improved `verify` output with explicit next-step guidance instead of only listing alerts.
 - Improved `rebuild` output with a clearer summary of rebuilt archives, chunks, backup file, and follow-up action.
+- Replaced the hand-maintained template sync/init copy lists with a shared managed template manifest, bringing `.agents/workflows/*` governance assets into the same managed family model.
+- Expanded recall-first takeover matching from a single dogfood-shaped memory hit into alias tables plus rule-based hit summarization.
+- Added an explicit `mem commit` fast path that sequences the code snapshot, `context track`, and runtime-state snapshot behind one command surface while preserving separate Git commits for code and runtime state.
 - Refined `/evo` so the expected first response now includes:
   - takeover status
   - current focus
@@ -33,12 +38,16 @@
 - Added recovery-path tests for the “raw_memory preserved, chunks empty” scenario.
 - Added test coverage for invalid raw archives, template sync drift, dynamic model normalization, and clearer health-check messaging.
 - Added `docs/REMEMBER_BOUNDARY_DECISION.md` to formally document the long-term boundary of `remember`.
+- Added shared `template-manifest.js` and `recall-rules.js` modules to both the template runtime and the live dogfooding mirror.
+- Added regression coverage for the `mem commit` fast path, including staged-only guards and wrapper-injected Git state.
+- Added regression coverage that `mem commit --json` stays directly parseable instead of being prefixed by human-facing remember logs.
 
 ### Docs
 - Updated workflow, rule, and README docs to align with actual runtime behavior.
 - Replaced outdated rebuild guidance with the new `rebuild` entry point.
 - Clarified that `remember` does not provide the same rebuild guarantees as structured archive paths.
 - Updated dogfooding walkthrough assets so historical notes no longer present obsolete recovery steps as current guidance.
+- Documented the explicit `mem commit` fast path across `/commit` workflow docs, README usage guides, and host adapter entrypoints.
 
 ### Notes
 - The runtime and dogfooding mirrors are kept in sync.

@@ -6,6 +6,22 @@ description: 核心高频协议：代码提交、轨迹追踪与任务闭环
 会话里**完成一次功能修改、Bug 修复、或阶段性进展时**，必须执行本协议。  
 协议是 Evo-Lite 核心高频链路，把代码动作变成可检索长文本向量记忆，并自动维护任务大盘。
 
+### 0. 低摩擦显式快路 (Explicit Fast Path)
+如果你已经明确知道本次代码快照的 commit message、轨迹 mechanism、闭环 details，以及可选的 backlog resolve hash，可以直接调用显式 helper，而不是手动分三段敲命令：
+
+```bash
+# Unix / Bash
+./.evo-lite/mem commit "将代码快照、context track 与 runtime state snapshot 封成一次显式闭环。" --code-message="feat(runtime): add commit fast path" --mechanism="CommitFastPath" --resolve="a1b2"
+
+# Windows PowerShell / CMD
+.\.evo-lite\mem.cmd commit "将代码快照、context track 与 runtime state snapshot 封成一次显式闭环。" --code-message="feat(runtime): add commit fast path" --mechanism="CommitFastPath" --resolve="a1b2"
+```
+
+- 这个 helper 仍然严格执行同一协议：先代码快照 commit，再 `context track`，最后在需要时补独立的 runtime state Meta-Commit。
+- 默认 `--stage=staged`，只接受已经 staged 的非 `.evo-lite` 代码改动；只有你明确要把当前全部受追踪代码变更一起纳入快照时，才显式传 `--stage=all`。
+- `mem commit` 是显式降摩擦入口，不是隐藏自动化；最终仍要逐项确认 `code_snapshot`、`context_closure`、`runtime_meta` 的实际结果。
+- 在 Windows 上，如果是人类交互式执行，优先在 Git Bash 里运行 `./.evo-lite/mem commit ...`；`.\.evo-lite\mem.cmd` 继续保留给 PowerShell / CMD 兼容与自动化场景。若要把结果交给脚本或 Agent 继续消费，优先追加 `--json`。
+
 // turbo-all
 **执行步骤 (严格按顺序执行，禁止跨级或跳过):**
 
@@ -20,6 +36,8 @@ git commit -m "fix(module): 解决了某某问题"
 ### 2. 轨迹写入与认知刷新 (Context Track)
 提交后，用底层状态机 CLI 记动作轨迹。CLI 自动抓取刚才 Commit Hash，更新 `active_context.md` 的 `FOCUS` / `BACKLOG` / `TRAJECTORY` 运行时区块，并做结构化归档。  
 **致命错误：`active_context.md` 是一个状态机。涉及任务、轨迹、焦点的修改都必须通过当前宿主可用的 Evo-Lite CLI 入口代理（Unix: `./.evo-lite/mem`；Windows: `\\.\\evo-lite\\mem.cmd`）。严禁 Agent 直接使用文件写入工具修改这些运行时区块！`META` 区块当前没有专用 CLI 写入口，只有在确认不存在对应命令时，才允许最小范围的人工维护。如果你检测到自己或任何其他 Agent 正在尝试直接修改 `FOCUS`、`BACKLOG`、`TRAJECTORY` 任一区块，必须立即中止并发出告警。**
+
+对人类使用者的补充口径：Windows 交互式场景优先 Git Bash + `./.evo-lite/mem`；PowerShell / CMD 仍是受支持的兼容入口，但更适合自动化和宿主集成。若输出将被机器继续消费，优先使用 `--json`。
 
 记住 Evo-Lite 主流转模型：
 

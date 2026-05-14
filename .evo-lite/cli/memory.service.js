@@ -16,6 +16,8 @@ const {
 } = require('./db');
 const safety = require('./safety');
 const { getActiveEngineInfo } = require('./models');
+const { TAKEOVER_FOCUS_QUERY_ALIASES, TAKEOVER_VERIFY_QUERY_ALIASES, TAKEOVER_HIT_RULES } = require('./recall-rules');
+const { buildManagedTemplateEntries } = require('./template-manifest');
 const {
     ensureDir,
     getActiveContextPath,
@@ -410,10 +412,11 @@ async function ensureMemoryStoreReady() {
 }
 
 function runGit(args) {
-    return execFileSync('git', args, {
+    const output = execFileSync('git', args, {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
+    });
+    return String(output).replace(/[\r\n]+$/, '');
 }
 
 function isGitInvocationBlocked(error) {
@@ -448,6 +451,30 @@ function getInjectedGitStatus() {
     return null;
 }
 
+async function withLiveGitState(callback) {
+    const keys = ['EVO_LITE_GIT_COMMIT', 'EVO_LITE_GIT_STATUS', 'EVO_LITE_GIT_STATUS_FILE'];
+    const previous = new Map();
+
+    for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(process.env, key)) {
+            previous.set(key, process.env[key]);
+        }
+        delete process.env[key];
+    }
+
+    try {
+        return await callback();
+    } finally {
+        for (const key of keys) {
+            if (previous.has(key)) {
+                process.env[key] = previous.get(key);
+            } else {
+                delete process.env[key];
+            }
+        }
+    }
+}
+
 function parseGitStatusLines(rawStatus) {
     return rawStatus
         .split(/\r?\n/)
@@ -455,11 +482,26 @@ function parseGitStatusLines(rawStatus) {
         .filter(line => line.trim().length > 0);
 }
 
+function parseGitStatusEntry(line) {
+    return {
+        staged: line[0] || ' ',
+        unstaged: line[1] || ' ',
+        filePath: line.slice(3).trim().replace(/\\/g, '/'),
+        raw: line,
+    };
+}
+
 function filterNonEvoLiteGitStatusLines(rawStatus) {
     return parseGitStatusLines(rawStatus).filter(line => {
         const filePath = line.slice(3).trim().replace(/\\/g, '/');
         return !filePath.startsWith('.evo-lite/');
     });
+}
+
+function getNonEvoLiteGitStatusEntries(rawStatus) {
+    return parseGitStatusLines(rawStatus)
+        .map(parseGitStatusEntry)
+        .filter(entry => entry.filePath && !entry.filePath.startsWith('.evo-lite/'));
 }
 
 function getCommitHash() {
@@ -492,6 +534,38 @@ function ensureCleanWorktree() {
         }
         throw new Error('工作区有未提交的代码变更！请先执行 git commit 保存代码，再执行 track 记录轨迹。');
     }
+}
+
+function validateCommitStageMode(stageMode) {
+    const normalized = String(stageMode || 'staged').trim().toLowerCase();
+    if (!['staged', 'all'].includes(normalized)) {
+        throw new Error('mem commit 只支持 `--stage=staged` 或 `--stage=all`。');
+    }
+    return normalized;
+}
+
+function ensureCodeSnapshotReady(stageMode) {
+    if (stageMode === 'all') {
+        runGit(['add', '--all']);
+    }
+
+    const entries = getNonEvoLiteGitStatusEntries(runGit(['status', '--porcelain']));
+    if (entries.length === 0) {
+        throw new Error('未发现待提交的非 .evo-lite 代码变更。');
+    }
+
+    if (stageMode === 'staged') {
+        const unstagedEntries = entries.filter(entry => entry.staged === ' ' || entry.unstaged !== ' ');
+        if (unstagedEntries.length > 0) {
+            throw new Error('mem commit 默认只消费已 staged 的代码快照；请先 git add 目标文件，或改用 `--stage=all`。');
+        }
+    }
+
+    return entries;
+}
+
+function toWorkspaceGitPath(filePath) {
+    return path.relative(getWorkspaceRoot(), filePath).replace(/\\/g, '/');
 }
 
 // ----------------------------------------------------------------------------
@@ -651,9 +725,11 @@ async function rememberOffline(content, source, options = {}) {
         source,
     });
     fs.writeFileSync(OFFLINE_MEMORIES_PATH, JSON.stringify(offlineData, null, 2), 'utf8');
-    console.log('🛡️ [脱机降级模式激活]: 正在将记忆降级暂存到 offline_memories.json...');
-    console.log(`✅ 暂存离线记忆成功！(当前积压: ${offlineData.length} 条)`);
-    console.log('💡 可用时执行 `node .evo-lite/cli/memory.js import .evo-lite/offline_memories.json` 即可补齐本地索引。');
+    if (!options.silent) {
+        console.log('🛡️ [脱机降级模式激活]: 正在将记忆降级暂存到 offline_memories.json...');
+        console.log(`✅ 暂存离线记忆成功！(当前积压: ${offlineData.length} 条)`);
+        console.log('💡 可用时执行 `node .evo-lite/cli/memory.js import .evo-lite/offline_memories.json` 即可补齐本地索引。');
+    }
     appendLog('REMEMBER_OFFLINE', `Saved offline - ${content.substring(0, 60)}...`);
 }
 
@@ -699,8 +775,10 @@ async function memorize(text, options = {}) {
         options.timestamp || new Date().toISOString()
     ).lastInsertRowid;
 
-    console.log(`✅ Remembered! (ID: ${rawMemoryId}, ns: ${namespace})`);
-    console.log('💡 [交接规约监控]: 记忆已打入隐性碎片池！请确保你同时同步 active_context.md，并按需要执行 git commit。');
+    if (!options.silent) {
+        console.log(`✅ Remembered! (ID: ${rawMemoryId}, ns: ${namespace})`);
+        console.log('💡 [交接规约监控]: 记忆已打入隐性碎片池！请确保你同时同步 active_context.md，并按需要执行 git commit。');
+    }
     appendLog('REMEMBER', `ID ${rawMemoryId} ns=${namespace} - ${richContent.substring(0, 60)}...`);
     return { id: Number(rawMemoryId), offline: false, namespace };
 }
@@ -908,40 +986,13 @@ function normalizeTemplateComparableContent(file, content) {
 }
 
 function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
-    const workspaceRoot = getWorkspaceRoot();
-    const entries = [
-        ...['memory.js', 'db.js', 'models.js', 'memory.service.js', 'runtime.js', 'safety.js', 'inspector.js', 'mcp-detect.js'].map(file => ({
-            label: file,
-            activeFile: path.join(__dirname, file),
-            templateFile: path.join(templateCliPath, file),
-        })),
-        ...['AGENTS.md', 'CLAUDE.md'].map(file => ({
-            label: file,
-            activeFile: path.join(workspaceRoot, file),
-            templateFile: path.join(templateRootPath, file),
-        })),
-        ...['evo.md'].map(file => ({
-            label: `.agents/workflows/${file}`,
-            activeFile: path.join(workspaceRoot, '.agents', 'workflows', file),
-            templateFile: path.join(templateRootPath, '.agents', 'workflows', file),
-        })),
-        ...['evo.md', 'commit.md', 'mem.md'].map(file => ({
-            label: `.claude/commands/${file}`,
-            activeFile: path.join(workspaceRoot, '.claude', 'commands', file),
-            templateFile: path.join(templateRootPath, '.claude', 'commands', file),
-        })),
-        ...['copilot-instructions.md', 'hooks/evo-lite.json', 'hooks/evo-lite-hook.js', 'hooks/dogfood-commit-hook.js'].map(file => ({
-            label: `.github/${file}`,
-            activeFile: path.join(workspaceRoot, '.github', ...file.split('/')),
-            templateFile: path.join(templateRootPath, '.github', ...file.split('/')),
-        })),
-        ...['hooks.json'].map(file => ({
-            label: `.codex/${file}`,
-            activeFile: path.join(workspaceRoot, '.codex', ...file.split('/')),
-            templateFile: path.join(templateRootPath, '.codex', ...file.split('/')),
-        })),
-    ];
-    return entries;
+    return buildManagedTemplateEntries({
+        workspaceRoot: getWorkspaceRoot(),
+        activeCliDir: __dirname,
+        templateRootPath,
+        templateCliPath,
+        scopes: ['sync-always'],
+    });
 }
 
 function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
@@ -1296,6 +1347,7 @@ async function ingestArchiveFile(filePath, type, sourceId, timestamp, options = 
             allowSecrets: options.allowSecrets,
             commitHash: sourceId,
             namespace: options.namespace,
+            silent: options.silent,
             skipQualityGuard: true,
             source: `archive:${sourceId}`,
             timestamp,
@@ -1348,6 +1400,7 @@ async function archive(content, type = 'task', options = {}) {
     const ingestion = await ingestArchiveFile(filePath, type, id, timestamp, {
         allowSecrets: true, // we already scanned upstream; archive body is safe by construction
         namespace: preflightCheck.namespace,
+        silent: options.silent,
     });
     if (!ingestion.marked) {
         throw new Error(`归档生成后校验失败: ${ingestion.invalidReason}`);
@@ -1481,6 +1534,7 @@ async function track(mechanism, details, options = {}) {
     const archiveId = buildArchiveId();
     const archiveResult = await archive(`[${mechanism}]\n${details}`, type, {
         id: archiveId,
+        silent: options.silent,
         timestamp: new Date().toISOString(),
     });
 
@@ -1512,6 +1566,76 @@ async function track(mechanism, details, options = {}) {
             resolvedBacklog: Boolean(resolvedLine),
         },
     };
+}
+
+async function commitWithContext(codeMessage, mechanism, details, options = {}) {
+    if (!codeMessage || !mechanism || !details) {
+        throw new Error('Usage: node .evo-lite/cli/memory.js commit "闭环详情" --code-message="feat(...): ..." --mechanism="机制名" [--resolve="4-char-hash"] [--stage=staged|all]');
+    }
+
+    ensureContextFile();
+    await ensureMemoryStoreReady();
+
+    const stageMode = validateCommitStageMode(options.stage || 'staged');
+    ensureCodeSnapshotReady(stageMode);
+
+    runGit(['commit', '-m', codeMessage]);
+    const codeCommitHash = runGit(['rev-parse', '--short', 'HEAD']);
+    const runtimeMessage = options.metaMessage || 'chore(meta): snapshot evo-lite runtime state';
+    const result = {
+        stageMode,
+        code: {
+            status: 'written',
+            commitHash: codeCommitHash,
+            message: codeMessage,
+        },
+        track: {
+            status: 'skipped',
+            result: null,
+        },
+        runtime: {
+            status: 'skipped',
+            commitHash: null,
+            message: runtimeMessage,
+            files: [],
+        },
+        errorStage: null,
+        errorMessage: null,
+    };
+
+    try {
+        const trackResult = await withLiveGitState(() => track(mechanism, details, {
+            resolve: options.resolve || null,
+            silent: options.silent,
+            type: options.type || 'task',
+        }));
+        result.track = {
+            status: 'complete',
+            result: trackResult,
+        };
+        result.runtime.files = [
+            toWorkspaceGitPath(ACTIVE_CONTEXT_PATH),
+            toWorkspaceGitPath(trackResult.archivePath),
+        ];
+    } catch (error) {
+        result.track.status = 'failed';
+        result.errorStage = 'track';
+        result.errorMessage = error.message;
+        return result;
+    }
+
+    try {
+        runGit(['add', '--', ...result.runtime.files]);
+        runGit(['commit', '-m', runtimeMessage]);
+        result.runtime.status = 'written';
+        result.runtime.commitHash = runGit(['rev-parse', '--short', 'HEAD']);
+    } catch (error) {
+        result.runtime.status = 'failed';
+        result.errorStage = 'meta-commit';
+        result.errorMessage = error.message;
+    }
+
+    return result;
 }
 
 async function rebuildLocalIndex() {
@@ -1920,22 +2044,37 @@ function buildTakeoverQueries(contextSummary, verifyReport) {
     }
 
     const focus = String((contextSummary && contextSummary.focus) || '');
-    if (/runtime hook/i.test(focus)) {
-        queries.push({ source: 'focus-keyword', text: 'runtime hook' });
-    }
-    if ((verifyReport.nextSteps || []).some(step => /context track/i.test(step))) {
-        queries.push({ source: 'verify-keyword', text: 'context track' });
+    for (const alias of TAKEOVER_FOCUS_QUERY_ALIASES) {
+        if (!alias.match.test(focus)) {
+            continue;
+        }
+        for (const text of alias.queries) {
+            queries.push({ source: alias.source, text });
+        }
     }
 
-    return queries.filter((query, index, list) => query.text && list.findIndex(item => item.text === query.text) === index).slice(0, 3);
+    const verifyText = (verifyReport.nextSteps || []).join('\n');
+    for (const alias of TAKEOVER_VERIFY_QUERY_ALIASES) {
+        if (!alias.match.test(verifyText)) {
+            continue;
+        }
+        for (const text of alias.queries) {
+            queries.push({ source: alias.source, text });
+        }
+    }
+
+    return queries.filter((query, index, list) => query.text && list.findIndex(item => item.text === query.text) === index).slice(0, 5);
 }
 
 function summarizeTakeoverHit(result) {
     const content = String((result && result.content) || '');
-    if (/template-only edits do not count as live runtime dogfood/i.test(content)) {
+    for (const rule of TAKEOVER_HIT_RULES) {
+        if (!rule.pattern.test(content)) {
+            continue;
+        }
         return {
-            label: 'HookRuntimeDogfood',
-            effect: 'inspect live .evo-lite hook path before syncing templates',
+            label: rule.label,
+            effect: rule.effect,
         };
     }
     return null;
@@ -1979,6 +2118,7 @@ module.exports = {
     buildArchiveFilename,
     buildArchiveId,
     buildTakeoverRecall,
+    commitWithContext,
     detectKindHeuristic,
     exportMemories,
     extractChunksFromMd,
@@ -1991,9 +2131,11 @@ module.exports = {
     inspectHookLifecycle,
     list,
     memorize,
+    parseGitStatusEntry,
     parseGitStatusLines,
     readActiveContext,
     filterNonEvoLiteGitStatusLines,
+    getNonEvoLiteGitStatusEntries,
     inspectHookScaffold,
     installHookScaffold,
     prepareForWrite,

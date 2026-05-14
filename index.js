@@ -4,6 +4,7 @@ const { execSync } = require('child_process');
 const readline = require('readline/promises');
 const http = require('http');
 const { Command } = require('commander');
+const { buildManagedTemplateEntries } = require(path.join(__dirname, 'templates', 'cli', 'template-manifest'));
 
 const SELF_VERSION = require(path.join(__dirname, 'package.json')).version;
 const INITIAL_COMMIT_MESSAGE = 'chore: initialize Evo-Lite workspace';
@@ -320,48 +321,43 @@ async function runInit(targetDirArg, options = {}) {
         }
     }
 
+    function copyManagedTemplateAssets(entries) {
+        for (const entry of entries) {
+            const destinationExists = fs.existsSync(entry.activeFile);
+            if (entry.scope === 'copy-on-init' && destinationExists) {
+                if (entry.label === '.github/workflows/evo-lite-archive.yml') {
+                    console.log('ℹ️ 检测到 .github/workflows/evo-lite-archive.yml 已存在，未覆盖；如需升级请手工对比 templates/.github/workflows/evo-lite-archive.yml。');
+                }
+                continue;
+            }
+            fs.mkdirSync(path.dirname(entry.activeFile), { recursive: true });
+            copyRecursiveSync(entry.templateFile, entry.activeFile);
+            if (entry.scope === 'copy-on-init' && entry.label === '.github/workflows/evo-lite-archive.yml') {
+                console.log('🤖 已注入 P5 团队模式 workflow: .github/workflows/evo-lite-archive.yml (PR 合并后自动归档；可在 GitHub Settings 中按需启用)。');
+            }
+        }
+    }
+
     if (fs.existsSync(activeContextPath)) {
         fs.copyFileSync(activeContextPath, activeContextPath + '.bak');
         hasUpgraded = true;
     }
 
-    // 3.2 复制 .agents 目录
-    const agentsTemplateDir = path.join(templatesDir, '.agents');
-    if (fs.existsSync(agentsTemplateDir)) {
-        copyRecursiveSync(agentsTemplateDir, agentsDir);
+    // 3.2 复制 .agents/rules，并通过 managed manifest 同步其余治理资产
+    const agentRulesTemplateDir = path.join(templatesDir, '.agents', 'rules');
+    if (fs.existsSync(agentRulesTemplateDir)) {
+        copyRecursiveSync(agentRulesTemplateDir, path.join(agentsDir, 'rules'));
     }
 
-    const claudeTemplateDir = path.join(templatesDir, '.claude');
-    if (fs.existsSync(claudeTemplateDir)) {
-        copyRecursiveSync(claudeTemplateDir, claudeDir);
-    }
-
-    const githubTemplateDir = path.join(templatesDir, '.github');
-    if (fs.existsSync(githubTemplateDir)) {
-        [
-            ['copilot-instructions.md'],
-            ['hooks', 'evo-lite.json'],
-            ['hooks', 'evo-lite-hook.js'],
-            ['hooks', 'dogfood-commit-hook.js'],
-        ].forEach(parts => {
-            const src = path.join(githubTemplateDir, ...parts);
-            const dest = path.join(targetDir, '.github', ...parts);
-            if (fs.existsSync(src)) {
-                fs.mkdirSync(path.dirname(dest), { recursive: true });
-                copyRecursiveSync(src, dest);
-            }
-        });
-    }
-
-    const codexTemplateDir = path.join(templatesDir, '.codex');
-    if (fs.existsSync(codexTemplateDir)) {
-        const codexHooksManifestSrc = path.join(codexTemplateDir, 'hooks.json');
-        const codexHooksManifestDest = path.join(targetDir, '.codex', 'hooks.json');
-        if (fs.existsSync(codexHooksManifestSrc)) {
-            fs.mkdirSync(path.dirname(codexHooksManifestDest), { recursive: true });
-            copyRecursiveSync(codexHooksManifestSrc, codexHooksManifestDest);
-        }
-    }
+    copyManagedTemplateAssets(
+        buildManagedTemplateEntries({
+            workspaceRoot: targetDir,
+            activeCliDir: cliDir,
+            templateRootPath: templatesDir,
+            templateCliPath: cliTemplatesDir,
+            scopes: ['sync-always', 'copy-on-init'],
+        }).filter(entry => !['core-cli', 'root-host-adapters'].includes(entry.family))
+    );
 
     // 写入 cli 文件
     cliFiles.forEach(file => {
@@ -417,20 +413,6 @@ async function runInit(targetDirArg, options = {}) {
         console.log(`🧭 已同步宿主适配资产: ${hostAdapterSummary.join(', ')}, .claude/commands/`);
         console.log('ℹ️ 这些宿主适配文件属于 Evo-Lite 生成资产；升级模板时允许被覆盖，canonical 语义真源仍然是 .agents/ 与 .evo-lite/。');
         console.log('ℹ️ 后续可使用 `node .evo-lite/cli/memory.js verify` 检查 CLI 与 host adapter 是否和模板保持同步。');
-    }
-
-    // P5 团队模式: 拷贝 PR 合并后的自动归档 workflow（仅在目标仓未存在同名文件时拷贝，避免覆盖团队的已有自定义）
-    const workflowSrc = path.join(templatesDir, '.github', 'workflows', 'evo-lite-archive.yml');
-    const workflowDestDir = path.join(targetDir, '.github', 'workflows');
-    const workflowDest = path.join(workflowDestDir, 'evo-lite-archive.yml');
-    if (fs.existsSync(workflowSrc)) {
-        if (!fs.existsSync(workflowDest)) {
-            fs.mkdirSync(workflowDestDir, { recursive: true });
-            fs.copyFileSync(workflowSrc, workflowDest);
-            console.log('🤖 已注入 P5 团队模式 workflow: .github/workflows/evo-lite-archive.yml (PR 合并后自动归档；可在 GitHub Settings 中按需启用)。');
-        } else {
-            console.log('ℹ️ 检测到 .github/workflows/evo-lite-archive.yml 已存在，未覆盖；如需升级请手工对比 templates/.github/workflows/evo-lite-archive.yml。');
-        }
     }
 
     // 4. 注入热更新警告与融合指令 (Fusion Warning)

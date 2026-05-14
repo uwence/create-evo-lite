@@ -30,7 +30,7 @@ When taking over this project:
 - `/evo`
   Meaning: takeover + verify + summarize focus, risks, next step.
 - `/commit`
-  Meaning: code snapshot + `context track` + closure reporting.
+  Meaning: code snapshot + `context track` + runtime-state closure reporting; when the commit message, mechanism, and closure details are already known, prefer the explicit `mem commit` fast path instead of hand-driving the three closure steps.
 - `/mem`
   Meaning: low-frequency handover + version/tag snapshot.
 - `/wash`

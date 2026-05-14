@@ -13,6 +13,9 @@ Run the Evo-Lite high-frequency closure workflow.
 ## Command guidance
 
 - Use the host-appropriate `mem` wrapper for `context track`
+- When the code message, mechanism, and closure details are already known, prefer the explicit `mem commit` fast path instead of hand-driving the three closure steps
+- Keep the code snapshot commit and the runtime state snapshot as two separate commits even when using `mem commit`
+- Default to `--stage=staged`; use `--stage=all` only when you intentionally want to snapshot all current tracked code changes
 - Do not edit runtime anchors in `.evo-lite/active_context.md` directly
 
 ## Important

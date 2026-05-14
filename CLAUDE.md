@@ -32,7 +32,7 @@ When taking over this project:
 - `/evo`
   Meaning: takeover + verify + summarize focus, risks, next step.
 - `/commit`
-  Meaning: code snapshot + `context track` + closure reporting.
+  Meaning: code snapshot + `context track` + runtime-state closure reporting; when the commit message, mechanism, and closure details are already known, prefer the explicit `mem commit` fast path instead of hand-driving the three closure steps.
 - `/mem`
   Meaning: low-frequency handover + version/tag snapshot.
 - `/wash`
@@ -64,7 +64,7 @@ If this file and `.agents/` ever diverge, `.agents/` wins.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **create-evo-lite** (1046 symbols, 1942 relationships, 93 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **create-evo-lite** (1077 symbols, 1998 relationships, 96 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

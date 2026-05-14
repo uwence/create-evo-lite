@@ -103,7 +103,8 @@ Evo-Lite 现在采用“**canonical 语义层 + 宿主适配层**”的结构：
   你可以重新运行脚手架升级模板，也可以单独跑 `verify` 检查当前实例是否和新协议脱节。
 * **⚡ 工作流协议 + CLI 命令**
   - 工作流层：`/evo`、`/commit`、`/mem`、`/wash`
-  - 执行层：`remember`、`recall`、`export`、`import`、`archive`、`sync`、`rebuild`、`context`
+  - 执行层：`remember`、`recall`、`export`、`import`、`archive`、`sync`、`rebuild`、`context`、`commit`
+  - 其中 `mem commit` 是 `/commit` 的显式低摩擦 helper：把代码快照、`context track` 与 runtime state snapshot 串成一个命令面，但不改变协议本身的三段式语义。
 
 ## 🧭 状态与记忆双轨模型
 
@@ -167,7 +168,7 @@ create-evo-lite ./我的新游戏项目
 运行时，系统会初始化本地 SQLite 依赖，把记忆运行时落在 `.evo-lite/` 下。你不需要再额外维护 Docker、独立数据库服务、模型下载器或常驻后台。
 
 > [!TIP]
-> 下文若出现 `./.evo-lite/mem`，表示 Unix / Bash 类环境入口；在 Windows PowerShell / CMD 中，请使用等价的 `.\.evo-lite\mem.cmd`。
+> 下文若出现 `./.evo-lite/mem`，表示 Unix / Bash 类环境入口；在 Windows 上，如果是**人类交互式执行**，优先使用 Git Bash + `./.evo-lite/mem`，通常更容易避开 PowerShell 对中文或 emoji 输出的控制台编码差异。`.\.evo-lite\mem.cmd` 仍保留给 PowerShell / CMD 兼容与自动化场景。若是脚本、Agent 或其他程序化消费路径，优先使用 `--json` 获取稳定输出。
 
 > [!IMPORTANT]
 > 所有 `mem` / `memory.js` / Git 相关命令，都应先进入**目标项目根目录**，再用相对路径执行对应入口。
@@ -192,6 +193,7 @@ node .evo-lite/cli/memory.js verify
   - 理想情况下，`/evo` 还应该在首屏前先做一次有界 recall：优先从 `FOCUS`、最近 `TRAJECTORY` 标签和 `verify` 治理术语里抽 query，查到后只汇报会改变下一步的历史命中。
 2. 用一句人话告诉 AI 你现在最想完成的一个小目标。
 3. 做完一个小闭环后执行 `/commit`，让 AI 把代码动作沉淀成轨迹和 archive。
+  - 如果 commit message、mechanism、details 都已经明确，也可以直接执行当前宿主可用的 `mem commit ...` 快路；它底层仍走同一套 `/commit` 协议。
 4. 当你准备收工时执行 `/mem`，完成一次低频交接。
 普通开发循环里，不需要在每次改完代码后都额外跑一遍 `verify`；把它留给 `/evo` 接管、自愈验收和异常排查即可。
 
@@ -206,10 +208,24 @@ node .evo-lite/cli/memory.js verify
 /commit
 ```
 `/commit` 是**工作流协议**，不是 magic command 本体。它通常会引导 AI：
-- 先完成真正的 `git commit`
-- 再调用当前宿主可用的 `mem context track --mechanism="..." --details="..." [--resolve="xxxx"]`
+- 先完成真正的 `git commit`，或者在信息已经齐备时直接调用当前宿主可用的 `mem commit "..." --code-message="..." --mechanism="..." [--resolve="xxxx"]`
+- 再调用当前宿主可用的 `mem context track --mechanism="..." --details="..." [--resolve="xxxx"]`，或由 `mem commit` 在内部按同一协议顺序执行
+- 若 `context track` 产出了新的受追踪运行时状态文件，再补一个独立的 runtime state meta-commit
 - 把一次代码动作同步为轨迹、归档和 backlog 状态变化
 - 并在最后明确告诉你：提交是否完成、`closure` 是否完整、backlog 是否被消除、下一步该继续开发还是先补救闭环
+
+当代码快照提交信息、轨迹 mechanism、闭环 details 都已经明确时，推荐直接使用显式快路：
+
+```bash
+# Unix / Bash
+./.evo-lite/mem commit "将代码快照、context track 与 runtime state snapshot 封成一次显式闭环。" --code-message="feat(runtime): add commit fast path" --mechanism="CommitFastPath" --resolve="a1b2"
+
+# Windows PowerShell / CMD
+.\.evo-lite\mem.cmd commit "将代码快照、context track 与 runtime state snapshot 封成一次显式闭环。" --code-message="feat(runtime): add commit fast path" --mechanism="CommitFastPath" --resolve="a1b2"
+```
+
+这个 fast path 仍然遵守 `/commit` 原协议：代码快照 commit 和 runtime state snapshot 依然是两个独立 Git commit，默认也只接受已经 staged 的非 `.evo-lite` 代码改动。只有你明确想把当前全部受追踪代码变更一起纳入这次代码快照时，才显式传 `--stage=all`。
+如果你是在 Windows 上手动交互执行，优先在 Git Bash 里运行 `./.evo-lite/mem commit ...`；只有当你明确需要 PowerShell / CMD 兼容时再使用 `.\.evo-lite\mem.cmd`。如果要把结果交给脚本或 Agent 继续消费，优先追加 `--json`。
 
 ### 4. 低频挂起与发布 (/mem)
 当迭代彻底结束，需要结束当前工作会话时：
@@ -234,6 +250,10 @@ AI (或人类) 可以在项目内随时呼出后台终端记住经验：
 
 # 给 active_context.md 增加一条待办
 ./.evo-lite/mem context add "补充 README 中的升级说明"
+
+# 显式快路：把代码快照、context track 与 runtime state snapshot 串成一个命令
+./.evo-lite/mem commit "将代码快照、context track 与 runtime state snapshot 封成一次显式闭环。" --code-message="feat(runtime): add commit fast path" --mechanism="CommitFastPath" --resolve="a1b2"
+# 默认只接受已 staged 的代码快照；确实要把当前全部代码改动一起纳入时，再显式传 --stage=all
 
 # 运行自检：查看本地索引是否健康
 # 常见时机：/evo 接管、升级后、rebuild/wash 后、或怀疑 runtime 异常时

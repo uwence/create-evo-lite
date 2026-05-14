@@ -96,6 +96,7 @@ function printHelp() {
   \x1b[32mcontext\x1b[0m <op>...     Modify active_context.md anchors (track, add, focus).
                       Read-only ops: read, summary, validate [--json].
   \x1b[32marchive\x1b[0m <text>      Save a summary to raw_memory/ and auto-index it.
+    \x1b[32mcommit\x1b[0m <text>       Create code commit, context track, and runtime state meta-commit in one explicit flow.
   \x1b[32msync\x1b[0m                Check for unindexed raw_memory and ingest them.
   \x1b[32mrebuild\x1b[0m             Standard rebuild entry: backup memory.db, then rebuild from raw_memory/.
                       (compatibility command that rebuilds the local FTS index from archive files)
@@ -151,6 +152,62 @@ function formatTrackResult(result) {
         lines.push(`- resolved_line: ${result.resolvedLine}`);
     }
 
+    return lines.join('\n');
+}
+
+function formatCommitFlowResult(result) {
+    const closureComplete = result.code.status === 'written'
+        && result.track.status === 'complete'
+        && result.runtime.status === 'written';
+    const lines = [
+        `${closureComplete ? '✅' : '⚠️'} Evo-Lite commit flow ${closureComplete ? 'completed' : 'ended partial'}.`,
+        `- stage_mode: ${result.stageMode}`,
+        `- code_snapshot: ${result.code.status}`,
+    ];
+
+    if (result.code.commitHash) {
+        lines.push(`- code_commit: ${result.code.commitHash}`);
+    }
+    if (result.code.message) {
+        lines.push(`- code_message: ${result.code.message}`);
+    }
+
+    lines.push(`- context_closure: ${result.track.status}`);
+    if (result.track.result) {
+        lines.push(`- mechanism: ${result.track.result.mechanism}`);
+        lines.push(`- archive: ${result.track.result.status.archive}`);
+        lines.push(`- context: ${result.track.result.status.context}`);
+        lines.push(`- resolve: ${result.track.result.status.resolve}`);
+        lines.push(`- archive_path: ${result.track.result.archivePath}`);
+        if (result.track.result.resolvedLine) {
+            lines.push(`- resolved_line: ${result.track.result.resolvedLine}`);
+        }
+    }
+
+    lines.push(`- runtime_meta: ${result.runtime.status}`);
+    if (result.runtime.commitHash) {
+        lines.push(`- runtime_commit: ${result.runtime.commitHash}`);
+    }
+    if (result.runtime.message) {
+        lines.push(`- runtime_message: ${result.runtime.message}`);
+    }
+    for (const file of result.runtime.files || []) {
+        lines.push(`- runtime_file: ${file}`);
+    }
+
+    if (result.errorStage) {
+        lines.push(`- error_stage: ${result.errorStage}`);
+        lines.push(`- error: ${result.errorMessage}`);
+    }
+
+    const nextStep = closureComplete
+        ? '可以向用户汇报：代码快照、context track、runtime state meta-commit 已完成一次显式闭环。'
+        : result.errorStage === 'track'
+            ? '代码快照已提交；请先补救 context track，然后再提交运行时状态文件。'
+            : result.errorStage === 'meta-commit'
+                ? 'context track 已完成；请补做 runtime state 的 meta-commit，不要再次运行 context track。'
+                : '请先补齐当前闭环步骤，再继续下一个任务。';
+    lines.push(`- next_step: ${nextStep}`);
     return lines.join('\n');
 }
 
@@ -466,6 +523,27 @@ async function runBootstrapCommand(options = {}) {
     printPayload({ context, sessionstart, verify, takeoverRecall }, formatBootstrapReport, options);
 }
 
+async function runCommitCommand(details, options = {}) {
+    await bootstrap();
+    const commitDetails = typeof options.details === 'string'
+        ? options.details
+        : resolveCliText(details, options);
+    if (!commitDetails) {
+        throw new Error('Usage: node .evo-lite/cli/memory.js commit "闭环详情" --code-message="feat(...): ..." --mechanism="机制名"');
+    }
+    const result = await memoryService.commitWithContext(options.codeMessage, options.mechanism, commitDetails, {
+        resolve: options.resolve || null,
+        silent: options.json === true,
+        type: options.type || 'task',
+        stage: options.stage || 'staged',
+        metaMessage: options.metaMessage || 'chore(meta): snapshot evo-lite runtime state',
+    });
+    printPayload(result, formatCommitFlowResult, options);
+    if (result.errorStage) {
+        process.exitCode = 2;
+    }
+}
+
 function buildProgram() {
     const program = new Command();
     const contextCommand = program.command('context').description('Modify active_context.md anchors and inspect runtime state.');
@@ -483,6 +561,21 @@ function buildProgram() {
         .option('--json', 'Print JSON output')
         .action(async options => {
             await runBootstrapCommand(options);
+        });
+
+    withTextSourceOptions(
+        program.command('commit [details]').description('Create code commit, context track, and runtime state snapshot in one flow.')
+    )
+        .requiredOption('--code-message <message>', 'Commit message for the code snapshot')
+        .requiredOption('--mechanism <mechanism>', 'Mechanism label for trajectory tracking')
+        .option('--details <text>', 'Detailed archive text override')
+        .option('--resolve <hash>', 'Resolve a backlog hash')
+        .option('--type <type>', 'Archive type', 'task')
+        .option('--stage <mode>', 'How to prepare the code snapshot: staged or all', 'staged')
+        .option('--meta-message <message>', 'Commit message for the runtime state snapshot', 'chore(meta): snapshot evo-lite runtime state')
+        .option('--json', 'Print JSON output')
+        .action(async (details, options) => {
+            await runCommitCommand(details, options);
         });
 
     withTextSourceOptions(
@@ -701,6 +794,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    formatCommitFlowResult,
     formatTrackResult,
     getCliText,
     run,

@@ -25,9 +25,9 @@ function createTempRuntimeRoot(name) {
     for (const file of ['AGENTS.md', 'CLAUDE.md']) {
         fs.copyFileSync(path.join(TEMPLATE_ROOT_DIR, file), path.join(workspaceRoot, file));
     }
-    const managedEvoWorkflowPath = path.join(TEMPLATE_ROOT_DIR, '.agents', 'workflows', 'evo.md');
-    if (fs.existsSync(managedEvoWorkflowPath)) {
-        writeText(path.join(workspaceRoot, '.agents', 'workflows', 'evo.md'), fs.readFileSync(managedEvoWorkflowPath, 'utf8'));
+    const managedWorkflowDir = path.join(TEMPLATE_ROOT_DIR, '.agents', 'workflows');
+    if (fs.existsSync(managedWorkflowDir)) {
+        copyRecursive(managedWorkflowDir, path.join(workspaceRoot, '.agents', 'workflows'));
     }
     copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.claude'), path.join(workspaceRoot, '.claude'));
     if (fs.existsSync(path.join(TEMPLATE_ROOT_DIR, '.github'))) {
@@ -610,6 +610,159 @@ async function runTests() {
         assert.ok(rawTable, 'fresh init track did not initialize the raw_memory table before archiving');
         primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
 
+        console.log('2d. Testing commit fast path ...');
+        const commitFlowRuntime = createTempRuntimeRoot('commit-flow');
+        writeText(path.join(commitFlowRuntime.workspaceRoot, 'src', 'feature.js'), 'module.exports = true;\n');
+        const commitFastPathCommands = [];
+        let commitFastPathPhase = 'staged';
+        const commitFlowExecFileSync = childProcess.execFileSync;
+        await withPatchedExecFileSync((command, args, options) => {
+            if (command !== 'git') {
+                return commitFlowExecFileSync(command, args, options);
+            }
+            commitFastPathCommands.push(args.join(' '));
+            if (args[0] === 'status' && args[1] === '--porcelain') {
+                return commitFastPathPhase === 'staged' ? 'M  src/feature.js\n' : '';
+            }
+            if (args[0] === 'commit' && args[1] === '-m' && args[2] === 'feat(runtime): add commit fast path') {
+                commitFastPathPhase = 'code';
+                return '[main abc1111] feat(runtime): add commit fast path\n';
+            }
+            if (args[0] === 'rev-parse' && args[1] === '--short' && args[2] === 'HEAD') {
+                return commitFastPathPhase === 'meta' ? 'def2222' : 'abc1111';
+            }
+            if (args[0] === 'add' && args[1] === '--') {
+                return '';
+            }
+            if (args[0] === 'commit' && args[1] === '-m' && args[2] === 'chore(meta): snapshot evo-lite runtime state') {
+                commitFastPathPhase = 'meta';
+                return '[main def2222] chore(meta): snapshot evo-lite runtime state\n';
+            }
+            throw new Error(`UNEXPECTED_GIT:${args.join(' ')}`);
+        }, async () => {
+            const commitFlowLoaded = await bootstrapRuntime(commitFlowRuntime.runtimeRoot, {
+                EVO_LITE_GIT_COMMIT: 'base0001',
+                EVO_LITE_GIT_STATUS: 'M  src/feature.js\n',
+            });
+            const backlogTask = commitFlowLoaded.service.addTask('Close the commit fast path follow-up');
+            const commitCliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const commitOutput = await captureConsole(async () => {
+                await commitCliModule.run([
+                    'node',
+                    'memory.js',
+                    'commit',
+                    'Bundled the code snapshot, context track, and runtime state meta-commit into one explicit flow.',
+                    '--code-message',
+                    'feat(runtime): add commit fast path',
+                    '--mechanism',
+                    'CommitFastPath',
+                    '--resolve',
+                    backlogTask.hash,
+                ]);
+            });
+            assert.ok(commitOutput.includes('code_snapshot: written'), 'commit fast path did not report code snapshot success');
+            assert.ok(commitOutput.includes('context_closure: complete'), 'commit fast path did not report context closure success');
+            assert.ok(commitOutput.includes('runtime_meta: written'), 'commit fast path did not report runtime meta-commit success');
+            assert.ok(commitOutput.includes('code_commit: abc1111'), 'commit fast path did not report the code commit hash');
+            assert.ok(!commitOutput.includes('base0001'), 'commit fast path leaked the wrapper-injected git hash into the user-facing report');
+            assert.ok(commitOutput.includes('runtime_commit: def2222'), 'commit fast path did not report the runtime meta-commit hash');
+        });
+        const commitFlowContext = fs.readFileSync(path.join(commitFlowRuntime.runtimeRoot, 'active_context.md'), 'utf8');
+        assert.ok(/\n- \[abc1111\] \d{4}-\d{2}-\d{2} CommitFastPath: /.test(commitFlowContext), 'commit fast path did not anchor trajectory updates to the code snapshot commit');
+        assert.ok(!commitFlowContext.includes('Close the commit fast path follow-up'), 'commit fast path did not resolve the backlog item');
+        assert.ok(commitFastPathCommands.some(command => command === 'commit -m feat(runtime): add commit fast path'), 'commit fast path did not create the code snapshot commit');
+        assert.ok(commitFastPathCommands.some(command => command === 'commit -m chore(meta): snapshot evo-lite runtime state'), 'commit fast path did not create the runtime state meta-commit');
+        assert.ok(commitFastPathCommands.some(command => /^add -- \.evo-lite\/active_context\.md \.evo-lite\/raw_memory\/mem_/.test(command)), 'commit fast path did not stage the runtime state files explicitly');
+
+        console.log('2dd. Testing commit fast path JSON output stays machine-readable ...');
+        const commitJsonRuntime = createTempRuntimeRoot('commit-flow-json');
+        writeText(path.join(commitJsonRuntime.workspaceRoot, 'src', 'feature.js'), 'module.exports = true;\n');
+        let commitJsonPhase = 'staged';
+        await withPatchedExecFileSync((command, args, options) => {
+            if (command !== 'git') {
+                return commitFlowExecFileSync(command, args, options);
+            }
+            if (args[0] === 'status' && args[1] === '--porcelain') {
+                return commitJsonPhase === 'staged' ? 'M  src/feature.js\n' : '';
+            }
+            if (args[0] === 'commit' && args[1] === '-m' && args[2] === 'feat(runtime): add commit fast path json') {
+                commitJsonPhase = 'code';
+                return '[main abc3333] feat(runtime): add commit fast path json\n';
+            }
+            if (args[0] === 'rev-parse' && args[1] === '--short' && args[2] === 'HEAD') {
+                return commitJsonPhase === 'meta' ? 'def4444' : 'abc3333';
+            }
+            if (args[0] === 'add' && args[1] === '--') {
+                return '';
+            }
+            if (args[0] === 'commit' && args[1] === '-m' && args[2] === 'chore(meta): snapshot evo-lite runtime state') {
+                commitJsonPhase = 'meta';
+                return '[main def4444] chore(meta): snapshot evo-lite runtime state\n';
+            }
+            throw new Error(`UNEXPECTED_GIT:${args.join(' ')}`);
+        }, async () => {
+            await bootstrapRuntime(commitJsonRuntime.runtimeRoot, {
+                EVO_LITE_GIT_COMMIT: 'basejson',
+                EVO_LITE_GIT_STATUS: 'M  src/feature.js\n',
+            });
+            const commitCliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const jsonOutput = await captureConsole(async () => {
+                await commitCliModule.run([
+                    'node',
+                    'memory.js',
+                    'commit',
+                    'Bundled a machine-readable commit flow output.',
+                    '--code-message',
+                    'feat(runtime): add commit fast path json',
+                    '--mechanism',
+                    'CommitFastPath',
+                    '--json',
+                ]);
+            });
+            assert.ok(jsonOutput.trim().startsWith('{'), 'commit fast path JSON output should not be prefixed by human-facing remember logs');
+            const parsed = JSON.parse(jsonOutput);
+            assert.strictEqual(parsed.track.status, 'complete', 'commit fast path JSON output did not report a complete context closure');
+            assert.strictEqual(parsed.runtime.status, 'written', 'commit fast path JSON output did not report the runtime meta-commit');
+        });
+
+        console.log('2e. Testing commit fast path enforces staged-only snapshots by default ...');
+        const commitGuardRuntime = createTempRuntimeRoot('commit-stage-guard');
+        let commitAttempted = false;
+        await withPatchedExecFileSync((command, args, options) => {
+            if (command !== 'git') {
+                return commitFlowExecFileSync(command, args, options);
+            }
+            if (args[0] === 'status' && args[1] === '--porcelain') {
+                return ' M src/feature.js\n';
+            }
+            if (args[0] === 'commit') {
+                commitAttempted = true;
+            }
+            throw new Error(`UNEXPECTED_GIT:${args.join(' ')}`);
+        }, async () => {
+            await bootstrapRuntime(commitGuardRuntime.runtimeRoot, {
+                EVO_LITE_GIT_STATUS: '',
+            });
+            const commitCliModule = require(path.join(CLI_DIR, 'memory.js'));
+            await assert.rejects(
+                async () => {
+                    await commitCliModule.run([
+                        'node',
+                        'memory.js',
+                        'commit',
+                        'Attempted commit flow without staging the code snapshot first.',
+                        '--code-message',
+                        'feat(runtime): should fail staged guard',
+                        '--mechanism',
+                        'CommitFastPath',
+                    ]);
+                },
+                /--stage=all/,
+                'commit fast path did not explain how to proceed when the code snapshot was not fully staged'
+            );
+        });
+        assert.strictEqual(commitAttempted, false, 'commit fast path should fail before attempting git commit when the code snapshot is not staged');
+
         console.log('3. Testing CLI command-surface parsing for context add / focus ...');
         resetCliModuleCache();
         const cliModule = require(path.join(CLI_DIR, 'memory.js'));
@@ -872,6 +1025,64 @@ async function runTests() {
             'bootstrap command did not surface the recall-driven next-step effect'
         );
 
+        console.log('3ca. Testing bootstrap command surfaces workflow-template recall hits ...');
+        const bootstrapWorkflowRuntime = createTempRuntimeRoot('bootstrap-recall-workflow-sync');
+        const bootstrapWorkflowLoaded = await bootstrapRuntime(bootstrapWorkflowRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        await bootstrapWorkflowLoaded.service.memorize(
+            'WorkflowTemplateSync managed workflow drift should be handled by diffing managed workflow files before mirroring live and template changes. This note is deliberately long enough to satisfy the quality guard.'
+        );
+        console.log(bootstrapWorkflowLoaded.service.setFocus('收口 template sync 漂移，并确认 managed workflow 对齐'));
+        loadCli(bootstrapWorkflowRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const bootstrapWorkflowCliModule = require(path.join(CLI_DIR, 'memory.js'));
+        const bootstrapWorkflowOutput = await captureConsole(async () => {
+            await bootstrapWorkflowCliModule.run(['node', 'memory.js', 'bootstrap']);
+        });
+        assert.ok(
+            bootstrapWorkflowOutput.includes('memory_status: matched'),
+            'bootstrap command did not surface matched workflow-template recall status'
+        );
+        assert.ok(
+            bootstrapWorkflowOutput.includes('memory_hit: WorkflowTemplateSync'),
+            'bootstrap command did not surface workflow-template recall hit in takeover summary'
+        );
+        assert.ok(
+            bootstrapWorkflowOutput.includes('memory_effect: diff managed workflow files before mirroring live and template changes'),
+            'bootstrap command did not surface workflow-template recall effect'
+        );
+
+        console.log('3cb. Testing bootstrap command surfaces context-track closure recall hits ...');
+        const bootstrapClosureRuntime = createTempRuntimeRoot('bootstrap-recall-closure');
+        const bootstrapClosureLoaded = await bootstrapRuntime(bootstrapClosureRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        await bootstrapClosureLoaded.service.memorize(
+            'ContextTrackClosure requires pairing context track with a dedicated runtime state meta-commit such as chore(meta): snapshot evo-lite runtime state. This note is deliberately long enough to satisfy the quality guard.'
+        );
+        console.log(bootstrapClosureLoaded.service.setFocus('收口 context track 与 runtime state meta-commit 流程'));
+        loadCli(bootstrapClosureRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const bootstrapClosureCliModule = require(path.join(CLI_DIR, 'memory.js'));
+        const bootstrapClosureOutput = await captureConsole(async () => {
+            await bootstrapClosureCliModule.run(['node', 'memory.js', 'bootstrap']);
+        });
+        assert.ok(
+            bootstrapClosureOutput.includes('memory_status: matched'),
+            'bootstrap command did not surface matched context-track closure recall status'
+        );
+        assert.ok(
+            bootstrapClosureOutput.includes('memory_hit: ContextTrackClosure'),
+            'bootstrap command did not surface context-track closure recall hit in takeover summary'
+        );
+        assert.ok(
+            bootstrapClosureOutput.includes('memory_effect: pair context track with a dedicated runtime state snapshot commit'),
+            'bootstrap command did not surface context-track closure recall effect'
+        );
+
         console.log('3d. Testing bootstrap recall ignores non-actionable noise ...');
         const bootstrapNoiseRuntime = createTempRuntimeRoot('bootstrap-recall-noise');
         const bootstrapNoiseLoaded = await bootstrapRuntime(bootstrapNoiseRuntime.runtimeRoot, {
@@ -1080,6 +1291,9 @@ async function runTests() {
         assert.ok(healthyVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should treat dynamic model defaults and host adapters as a healthy sync state');
         assert.ok(!healthyVerifyOutput.includes('out of sync'), 'verify incorrectly flagged healthy template files as drift');
         assert.ok(!healthyVerifyOutput.includes('.agents/workflows/evo.md is out of sync'), 'verify incorrectly flagged the managed /evo workflow as drift');
+        assert.ok(!healthyVerifyOutput.includes('.agents/workflows/commit.md is out of sync'), 'verify incorrectly flagged the managed /commit workflow as drift');
+        assert.ok(!healthyVerifyOutput.includes('.agents/workflows/mem.md is out of sync'), 'verify incorrectly flagged the managed /mem workflow as drift');
+        assert.ok(!healthyVerifyOutput.includes('.agents/workflows/walkthrough.md is out of sync'), 'verify incorrectly flagged the managed /walkthrough workflow as drift');
         assert.ok(!healthyVerifyOutput.includes('.github/hooks/evo-lite.json is out of sync'), 'verify incorrectly flagged the managed GitHub hook registry as drift');
         assert.ok(!healthyVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify incorrectly flagged the Codex hook manifest as drift');
         assert.ok(!healthyVerifyOutput.includes('.github/hooks/dogfood-commit-hook.js is out of sync'), 'verify incorrectly flagged the dogfood guard hook as drift');
@@ -1109,6 +1323,8 @@ async function runTests() {
         const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {
             const evoWorkflowPath = path.join(templateRoot, '.agents', 'workflows', 'evo.md');
             fs.writeFileSync(evoWorkflowPath, `${fs.readFileSync(evoWorkflowPath, 'utf8')}\n<!-- drift -->\n`, 'utf8');
+            const commitWorkflowPath = path.join(templateRoot, '.agents', 'workflows', 'commit.md');
+            fs.writeFileSync(commitWorkflowPath, `${fs.readFileSync(commitWorkflowPath, 'utf8')}\n<!-- drift -->\n`, 'utf8');
             const dogfoodHookPath = path.join(templateRoot, '.github', 'hooks', 'dogfood-commit-hook.js');
             fs.writeFileSync(dogfoodHookPath, `${fs.readFileSync(dogfoodHookPath, 'utf8')}\n// drift\n`, 'utf8');
             const githubHookRegistryPath = path.join(templateRoot, '.github', 'hooks', 'evo-lite.json');
@@ -1129,6 +1345,7 @@ async function runTests() {
             await verifyDriftLoaded.service.verify();
         });
         assert.ok(driftVerifyOutput.includes('.agents/workflows/evo.md is out of sync'), 'verify did not report managed /evo workflow drift');
+        assert.ok(driftVerifyOutput.includes('.agents/workflows/commit.md is out of sync'), 'verify did not report managed /commit workflow drift');
         assert.ok(driftVerifyOutput.includes('.github/hooks/evo-lite.json is out of sync'), 'verify did not report managed GitHub hook registry drift');
         assert.ok(driftVerifyOutput.includes('.github/hooks/dogfood-commit-hook.js is out of sync'), 'verify did not report actual Evo-Lite hook asset drift');
         assert.ok(driftVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify did not report Codex hook manifest drift');

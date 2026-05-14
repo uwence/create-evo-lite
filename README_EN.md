@@ -103,7 +103,8 @@ As AI coding assistants become increasingly powerful, we often encounter these *
   Existing projects can be re-initialized and verified without treating the first scaffold as the only valid moment of setup.
 * **⚡ Workflow Protocols + CLI Commands**
   - Workflow layer: `/evo`, `/commit`, `/mem`, `/wash`
-  - Execution layer: `remember`, `recall`, `export`, `import`, `archive`, `sync`, `rebuild`, `context`
+  - Execution layer: `remember`, `recall`, `export`, `import`, `archive`, `sync`, `rebuild`, `context`, `commit`
+  - `mem commit` is the explicit low-friction helper for `/commit`: it bundles the code snapshot, `context track`, and runtime state snapshot behind one command surface without changing the underlying three-step protocol.
 
 ## 🧭 Dual-Lane State + Memory Model
 
@@ -167,7 +168,7 @@ create-evo-lite ./MyAwesomeProject
 During setup, Evo-Lite initializes a local SQLite-backed runtime and keeps the memory stack inside `.evo-lite/`. No separate service tier, model downloader, or daemon is required.
 
 > [!TIP]
-> When this guide shows `./.evo-lite/mem`, that is the Unix / Bash entrypoint. On Windows PowerShell / CMD, use the equivalent `\.\.evo-lite\mem.cmd` wrapper.
+> When this guide shows `./.evo-lite/mem`, that is the Unix / Bash entrypoint. On Windows, if a **human is running commands interactively**, prefer Git Bash with `./.evo-lite/mem`; it usually avoids PowerShell console-encoding differences around Chinese text and emoji. `\.\.evo-lite\mem.cmd` remains supported for PowerShell / CMD compatibility and automation. For scripts, agents, or any other programmatic consumer, prefer `--json` for stable output.
 
 > [!IMPORTANT]
 > Run all `mem`, `memory.js`, and Git-aware commands from the **target project root**, then invoke the wrapper via a relative path.
@@ -191,6 +192,7 @@ If this is your first time using AI as a real project partner, do not try to lea
   - In the ideal flow, `/evo` also performs a bounded recall before the first summary: derive queries from `FOCUS`, recent `TRAJECTORY` labels, and `verify` governance terms, then only surface hits that actually change the next step.
 2. Tell the AI your single immediate goal in plain language.
 3. After finishing one small closed loop, run `/commit` so the result becomes trajectory plus archive.
+  - If the commit message, mechanism, and closure details are already known, you can also run the host-appropriate `mem commit ...` fast path directly; under the hood it still follows the same `/commit` protocol.
 4. When you are ready to stop, run `/mem` for low-frequency handover.
 
 If `verify` reports archive or rebuild issues, follow the concrete next-step commands printed by the CLI instead of guessing.
@@ -204,10 +206,24 @@ When a small feature or bug fix is complete, enter the command:
 /commit
 ```
 `/commit` is a workflow contract, not magic by itself. In practice it should drive the agent to:
-- complete the real `git commit`
-- run `.\.evo-lite\mem.cmd context track --mechanism="..." --details="..." [--resolve="xxxx"]`
+- complete the real `git commit`, or directly call the host-appropriate `mem commit "..." --code-message="..." --mechanism="..." [--resolve="xxxx"]` when all inputs are already known
+- run `\.\.evo-lite\mem.cmd context track --mechanism="..." --details="..." [--resolve="xxxx"]`, or let `mem commit` execute the same ordered protocol internally
+- add a separate runtime state meta-commit when `context track` produces new tracked runtime files
 - convert the code action into trajectory, archive, and backlog updates
 - and end with an explicit closure summary: whether the commit is done, whether closure is complete, whether backlog was resolved, and what the next step should be
+
+When the code snapshot message, tracking mechanism, and closure details are already known, prefer the explicit fast path:
+
+```bash
+# Unix / Bash
+./.evo-lite/mem commit "Bundle the code snapshot, context track, and runtime state snapshot into one explicit closure flow." --code-message="feat(runtime): add commit fast path" --mechanism="CommitFastPath" --resolve="a1b2"
+
+# Windows PowerShell / CMD
+.\.evo-lite\mem.cmd commit "Bundle the code snapshot, context track, and runtime state snapshot into one explicit closure flow." --code-message="feat(runtime): add commit fast path" --mechanism="CommitFastPath" --resolve="a1b2"
+```
+
+This fast path still follows the `/commit` contract exactly: the code snapshot commit and the runtime state snapshot remain two separate Git commits, and the default mode only accepts already staged non-`.evo-lite` code changes. Only pass `--stage=all` when you intentionally want to include all current tracked code changes in the code snapshot.
+If you are running this manually on Windows, prefer Git Bash with `./.evo-lite/mem commit ...`; only use `\.\.evo-lite\mem.cmd` when you explicitly need PowerShell / CMD compatibility. If another script or agent will consume the result, add `--json`.
 
 ### 4. Low-Frequency Release & Handover (/mem)
 When the iteration is complete, and you need to end the session:
@@ -234,6 +250,10 @@ Whenever you need, you or your AI agent can query the memory directly:
 
 # Add a new backlog item into active_context.md
 ./.evo-lite/mem context add "Tighten the upgrade notes in README"
+
+# Explicit fast path: bundle code commit, context track, and runtime state snapshot
+./.evo-lite/mem commit "Bundle the code snapshot, context track, and runtime state snapshot into one explicit closure flow." --code-message="feat(runtime): add commit fast path" --mechanism="CommitFastPath" --resolve="a1b2"
+# By default this only accepts an already staged code snapshot; pass --stage=all only when that is intentional
 
 # Run a self-check to see whether the local index is healthy
 ./.evo-lite/mem verify

@@ -30,7 +30,7 @@ When taking over this project:
 - `/evo`
   Meaning: takeover + verify + summarize focus, risks, next step.
 - `/commit`
-  Meaning: code snapshot + `context track` + closure reporting.
+  Meaning: code snapshot + `context track` + runtime-state closure reporting; when the commit message, mechanism, and closure details are already known, prefer the explicit `mem commit` fast path instead of hand-driving the three closure steps.
 - `/mem`
   Meaning: low-frequency handover + version/tag snapshot.
 - `/wash`
@@ -46,6 +46,7 @@ For Codex specifically:
 - In Codex, the normal way to use them is to ask for the semantic workflow explicitly in natural language, for example:
   - "执行 Evo-Lite 的 `/evo` 工作流"
   - "按 `/commit` 协议闭环这次修改"
+  - "直接用 `mem commit` 快路把这次代码提交和 context track 一起闭环"
   - "执行 `/mem` 的轻量挂起版本，只写下一阶段 focus"
 - If Codex later exposes host-native command bindings in some surfaces, treat that only as an optional transport improvement, not as the canonical definition of the workflow.
 <!-- evo-lite:local-extensions:end -->
@@ -72,7 +73,7 @@ If this file and `.agents/` ever diverge, `.agents/` wins.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **create-evo-lite** (1046 symbols, 1942 relationships, 93 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **create-evo-lite** (1077 symbols, 1998 relationships, 96 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
