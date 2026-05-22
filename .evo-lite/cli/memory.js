@@ -279,80 +279,6 @@ function formatContextEvents(events) {
     return lines.join('\n');
 }
 
-function formatHookScaffold(report) {
-    const lines = [
-        `hook_scaffold: ${report.valid ? 'ready' : 'needs-attention'}`,
-        `workspace: ${report.workspaceRoot}`,
-        `assets: ${report.assets.length}`,
-    ];
-    for (const asset of report.assets) {
-        const syncLabel = asset.synced === null ? 'n/a' : asset.synced ? 'synced' : 'drift';
-        lines.push(`- ${asset.label}: ${asset.status} (${syncLabel})`);
-    }
-    for (const warning of report.warnings) {
-        lines.push(`warning: ${warning}`);
-    }
-    return lines.join('\n');
-}
-
-function formatHookInstall(result) {
-    const lines = [
-        `hook_install: ${result.valid ? 'complete' : 'partial'}`,
-        `workspace: ${result.workspaceRoot}`,
-        `installed: ${result.installed.length}`,
-        `overwritten: ${result.overwritten.length}`,
-        `skipped: ${result.skipped.length}`,
-    ];
-    for (const label of result.installed) {
-        lines.push(`installed: ${label}`);
-    }
-    for (const label of result.overwritten) {
-        lines.push(`overwritten: ${label}`);
-    }
-    for (const label of result.skipped) {
-        lines.push(`skipped: ${label}`);
-    }
-    for (const label of result.missingTemplates) {
-        lines.push(`warning: template missing for ${label}`);
-    }
-    lines.push(`next_step: node .evo-lite/cli/memory.js hooks verify${result.valid ? '' : ' --json'}`);
-    return lines.join('\n');
-}
-
-function formatHookLifecycle(report) {
-    const lines = [
-        `hook_lifecycle: ${report.valid ? 'clear' : 'action-needed'}`,
-        `event: ${report.event}`,
-        `workspace: ${report.workspaceRoot}`,
-        `focus: ${report.focus || '(empty)'}`,
-        `active_tasks: ${report.activeTaskCount}`,
-        `context_status: ${report.contextStatus || 'unknown'}`,
-        `architecture_status: ${report.architectureStatus || 'unknown'}`,
-        `blocked: ${report.blocked ? 'yes' : 'no'}`,
-        `dirty: ${report.dirty === null ? 'unknown' : report.dirty ? 'yes' : 'no'}`,
-        `track_needs_update: ${report.trackNeedsUpdate ? 'yes' : 'no'}`,
-    ];
-    if (report.tool) {
-        lines.push(`tool: ${report.tool}`);
-    }
-    if (report.command) {
-        lines.push(`command: ${report.command}`);
-    }
-    if (report.success !== null) {
-        lines.push(`success: ${report.success ? 'yes' : 'no'}`);
-    }
-    if (report.latestTrajectory) {
-        lines.push(`latest: ${report.latestTrajectory.line}`);
-    }
-    for (const reminder of report.reminders) {
-        lines.push(`reminder: ${reminder}`);
-    }
-    for (const warning of report.warnings) {
-        lines.push(`warning: ${warning}`);
-    }
-    return lines.join('\n');
-}
-
 function formatBootstrapReport(payload) {
     const context = payload.context;
     const sessionstart = payload.sessionstart;
@@ -413,6 +339,25 @@ function formatBootstrapReport(payload) {
     for (const step of nextSteps) {
         lines.push(`next_step: ${step}`);
     }
+
+    if (Array.isArray(takeoverRecall.reflections) && takeoverRecall.reflections.length > 0) {
+        lines.push('');
+        lines.push('================================================================================');
+        lines.push('💡 Evo-Lite 历史避坑与决策联想 (Technical Avoidance & Architecture Reflections)');
+        lines.push('--------------------------------------------------------------------------------');
+        for (const item of takeoverRecall.reflections) {
+            lines.push(`🔍 召回技术词: [${item.keyword}] | Memory ID: ${item.memoryId} | Namespace: ${item.namespace}`);
+            lines.push('');
+            const indentedReflection = item.reflection
+                .split('\n')
+                .map(line => '   ' + line)
+                .join('\n');
+            lines.push(indentedReflection);
+            lines.push('--------------------------------------------------------------------------------');
+        }
+        lines.push('================================================================================');
+    }
+
     return lines.join('\n');
 }
 
@@ -480,45 +425,11 @@ async function runContextCommand(op, text, options = {}) {
     throw new Error(`Unknown context operation: '${op}'.`);
 }
 
-async function runHooksCommand(op = 'status', options = {}) {
-    if (!['status', 'verify', 'install', 'advise'].includes(op)) {
-        throw new Error(`Unknown hooks operation: '${op}'. Use status, verify, install, or advise.`);
-    }
-    if (op === 'install') {
-        printPayload(memoryService.installHookScaffold({ force: options.force === true }), formatHookInstall, options);
-        return;
-    }
-    if (op === 'advise') {
-        const report = memoryService.inspectHookLifecycle(options.event || 'sessionstart', {
-            command: options.command || null,
-            output: options.output || null,
-            success: parseSuccessOption(options.success),
-            targets: Array.isArray(options.target) ? options.target : [],
-            tool: options.tool || null,
-        });
-        printPayload(report, formatHookLifecycle, options);
-        if (report.blocked) {
-            process.exitCode = 2;
-        }
-        return;
-    }
-    printPayload(memoryService.inspectHookScaffold(), formatHookScaffold, options);
-}
-
-async function runMcpCommand(op = 'detect', options = {}) {
-    const mcpDetect = require('./mcp-detect');
-    if (!['detect', 'list', 'explain'].includes(op)) {
-        throw new Error(`Unknown mcp operation: '${op}'. Use detect, list, or explain.`);
-    }
-    const report = mcpDetect.detectMcpCapabilities();
-    printPayload(report, payload => mcpDetect.formatMcpReport(payload, { explain: op === 'explain' }), options);
-}
-
 async function runBootstrapCommand(options = {}) {
     await bootstrap();
     const context = memoryService.summarizeActiveContext();
     const verify = await memoryService.verify({ silent: true });
-    const sessionstart = memoryService.inspectHookLifecycle('sessionstart');
+    const sessionstart = memoryService.inspectLocalState('sessionstart');
     const takeoverRecall = await memoryService.buildTakeoverRecall(context, verify);
     printPayload({ context, sessionstart, verify, takeoverRecall }, formatBootstrapReport, options);
 }
@@ -547,8 +458,6 @@ async function runCommitCommand(details, options = {}) {
 function buildProgram() {
     const program = new Command();
     const contextCommand = program.command('context').description('Modify active_context.md anchors and inspect runtime state.');
-    const hooksCommand = program.command('hooks').description('Inspect or install hook scaffold assets.');
-    const mcpCommand = program.command('mcp').description('Read-only MCP capability discovery for the current workspace.');
 
     program
         .name('memory')
@@ -657,47 +566,7 @@ function buildProgram() {
         await memoryService.verify();
     });
 
-    mcpCommand.command('detect').option('--json', 'Print JSON output').action(async options => {
-        await runMcpCommand('detect', options);
-    });
-    mcpCommand.command('list').option('--json', 'Print JSON output').action(async options => {
-        await runMcpCommand('list', options);
-    });
-    mcpCommand.command('explain').option('--json', 'Print JSON output').action(async options => {
-        await runMcpCommand('explain', options);
-    });
-    mcpCommand.action(async () => {
-        await runMcpCommand('detect');
-    });
 
-    hooksCommand.command('status').option('--json', 'Print JSON output').action(async options => {
-        await runHooksCommand('status', options);
-    });
-    hooksCommand.command('verify').option('--json', 'Print JSON output').action(async options => {
-        await runHooksCommand('verify', options);
-    });
-    hooksCommand.command('install')
-        .option('--json', 'Print JSON output')
-        .option('--force', 'Overwrite existing hook assets after backing them up')
-        .action(async options => {
-            await runHooksCommand('install', options);
-        });
-    hooksCommand.command('advise [event]')
-        .option('--json', 'Print JSON output')
-        .option('--tool <tool>', 'Tool name')
-        .option('--command <command>', 'Associated command text')
-        .option('--output <output>', 'Associated output text')
-        .option('--target <path>', 'Touched target path', collectOption, [])
-        .option('--success <state>', 'Normalized success state')
-        .action(async (event, options) => {
-            await runHooksCommand('advise', {
-                ...options,
-                event: event || 'sessionstart',
-            });
-        });
-    hooksCommand.action(async () => {
-        await runHooksCommand('status');
-    });
 
     contextCommand.command('read').option('--json', 'Print JSON output').action(async options => {
         await runContextCommand('read', '', options);

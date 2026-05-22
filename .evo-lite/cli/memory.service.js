@@ -969,13 +969,6 @@ function splitTrajectoryEntries(trajectory) {
 
 function normalizeTemplateComparableContent(file, content) {
     const normalized = content.replace(/\r\n/g, '\n');
-    if (['AGENTS.md', 'CLAUDE.md', 'copilot-instructions.md'].includes(file)) {
-        return normalized
-            .replace(/\n?<!-- evo-lite:local-extensions:start -->[\s\S]*?<!-- evo-lite:local-extensions:end -->/g, '')
-            .split('<!-- evo-lite:local-extensions -->')[0]
-            .replace(/\n{3,}/g, '\n\n')
-            .trimEnd();
-    }
     if (file !== 'models.js') {
         return normalized.trimEnd();
     }
@@ -995,147 +988,9 @@ function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
     });
 }
 
-function buildHookScaffoldEntries(workspaceRoot, templateRootPath) {
-    return [
-        {
-            label: '.github/copilot-instructions.md',
-            activeFile: path.join(workspaceRoot, '.github', 'copilot-instructions.md'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'copilot-instructions.md') : null,
-        },
-        {
-            label: '.github/hooks/evo-lite.json',
-            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'evo-lite.json'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'evo-lite.json') : null,
-        },
-        {
-            label: '.github/hooks/evo-lite-hook.js',
-            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'evo-lite-hook.js') : null,
-        },
-        {
-            label: '.github/hooks/evo-lite-codex-stop-hook.js',
-            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'evo-lite-codex-stop-hook.js'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'evo-lite-codex-stop-hook.js') : null,
-        },
-        {
-            label: '.github/hooks/dogfood-commit-hook.js',
-            activeFile: path.join(workspaceRoot, '.github', 'hooks', 'dogfood-commit-hook.js'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.github', 'hooks', 'dogfood-commit-hook.js') : null,
-        },
-        {
-            label: '.codex/hooks.json',
-            activeFile: path.join(workspaceRoot, '.codex', 'hooks.json'),
-            templateFile: templateRootPath ? path.join(templateRootPath, '.codex', 'hooks.json') : null,
-        },
-    ];
-}
 
-function inspectHookScaffold() {
-    const workspaceRoot = getWorkspaceRoot();
-    const templateRootPath = getTemplateRootDir();
-    const warnings = [];
-    const missing = [];
-    const outOfSync = [];
-    const assets = buildHookScaffoldEntries(workspaceRoot, templateRootPath).map(entry => {
-        const exists = fs.existsSync(entry.activeFile);
-        const templateExists = entry.templateFile ? fs.existsSync(entry.templateFile) : false;
-        let synced = null;
 
-        if (!exists) {
-            missing.push(entry.label);
-        }
-
-        if (exists && templateExists) {
-            synced = normalizeTemplateComparableContent(
-                path.basename(entry.label),
-                fs.readFileSync(entry.activeFile, 'utf8')
-            ) === normalizeTemplateComparableContent(
-                path.basename(entry.label),
-                fs.readFileSync(entry.templateFile, 'utf8')
-            );
-            if (!synced) {
-                outOfSync.push(entry.label);
-            }
-        }
-
-        if (exists && entry.templateFile && !templateExists) {
-            warnings.push(`template missing for ${entry.label}`);
-        }
-
-        return {
-            exists,
-            label: entry.label,
-            path: entry.activeFile,
-            status: !exists ? 'missing' : synced === false ? 'out-of-sync' : 'ready',
-            synced,
-            templateExists: entry.templateFile ? templateExists : null,
-            templatePath: entry.templateFile,
-        };
-    });
-
-    if (!templateRootPath) {
-        warnings.push('template root unavailable; sync comparison skipped');
-    }
-
-    return {
-        assets,
-        checkedAt: new Date().toISOString(),
-        missing,
-        outOfSync,
-        templateRootPath,
-        valid: missing.length === 0 && outOfSync.length === 0,
-        warnings,
-        workspaceRoot,
-    };
-}
-
-function installHookScaffold(options = {}) {
-    const workspaceRoot = getWorkspaceRoot();
-    const templateRootPath = getTemplateRootDir();
-    if (!templateRootPath) {
-        throw new Error('Hooks install requires an accessible templates directory. Re-run create-evo-lite from the package root or provide EVO_LITE_TEMPLATE_ROOT_DIR.');
-    }
-
-    const force = options.force === true;
-    const result = {
-        backedUp: [],
-        checkedAt: new Date().toISOString(),
-        force,
-        installed: [],
-        missingTemplates: [],
-        overwritten: [],
-        skipped: [],
-        templateRootPath,
-        workspaceRoot,
-    };
-
-    for (const entry of buildHookScaffoldEntries(workspaceRoot, templateRootPath)) {
-        if (!entry.templateFile || !fs.existsSync(entry.templateFile)) {
-            result.missingTemplates.push(entry.label);
-            continue;
-        }
-
-        ensureDir(path.dirname(entry.activeFile));
-        if (fs.existsSync(entry.activeFile)) {
-            if (!force) {
-                result.skipped.push(entry.label);
-                continue;
-            }
-            fs.copyFileSync(entry.activeFile, `${entry.activeFile}.bak`);
-            result.backedUp.push(`${entry.label}.bak`);
-            result.overwritten.push(entry.label);
-        } else {
-            result.installed.push(entry.label);
-        }
-
-        fs.copyFileSync(entry.templateFile, entry.activeFile);
-    }
-
-    result.valid = result.missingTemplates.length === 0;
-    return result;
-}
-
-function inspectHookLifecycle(event = 'sessionstart', options = {}) {
+function inspectLocalState(event = 'sessionstart', options = {}) {
     const allowedEvents = ['sessionstart', 'pretooluse', 'posttooluse', 'precompact', 'stop'];
     if (!allowedEvents.includes(event)) {
         throw new Error(`Unsupported hook lifecycle event: ${event}`);
@@ -1284,6 +1139,10 @@ function inspectHookLifecycle(event = 'sessionstart', options = {}) {
         appendLog('SESSION_EVENT_ERROR', `${report.event} | ${error.message}`);
     }
     return report;
+}
+
+function inspectHookLifecycle(event = 'sessionstart', options = {}) {
+    return inspectLocalState(event, options);
 }
 
 function isMissingMemorySchemaError(error) {
@@ -2085,10 +1944,71 @@ function summarizeTakeoverHit(result) {
     return null;
 }
 
+function extractKeywordsFromContext(focusText, backlogArray) {
+    const stopwords = new Set([
+        'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'arent', 'as', 'at',
+        'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', 'cant', 'cannot', 'could',
+        'did', 'didnt', 'do', 'does', 'doesnt', 'doing', 'dont', 'down', 'during', 'each', 'few', 'for', 'from', 'further',
+        'had', 'hadnt', 'has', 'hasnt', 'have', 'havent', 'having', 'he', 'hed', 'hell', 'hes', 'her', 'here', 'heres',
+        'hers', 'herself', 'him', 'himself', 'his', 'how', 'hows', 'i', 'id', 'ill', 'im', 'ive', 'if', 'in', 'into',
+        'is', 'isnt', 'it', 'its', 'itself', 'lets', 'me', 'more', 'most', 'mustnt', 'my', 'myself', 'no', 'nor', 'not',
+        'of', 'off', 'on', 'once', 'only', 'or', 'other', 'ought', 'our', 'ours', 'ourselves', 'out', 'over', 'own',
+        'same', 'shant', 'she', 'shed', 'shell', 'shes', 'should', 'shouldnt', 'so', 'some', 'such', 'than', 'that',
+        'thats', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'theres', 'these', 'they', 'theyd',
+        'theyll', 'theyre', 'theyve', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 'very', 'was',
+        'wasnt', 'we', 'wed', 'well', 'were', 'weve', 'werent', 'what', 'whats', 'when', 'whens', 'where', 'wheres',
+        'which', 'while', 'who', 'whos', 'whom', 'why', 'whys', 'with', 'wont', 'would', 'wouldnt', 'you', 'youd',
+        'youll', 'youre', 'youve', 'your', 'yours', 'yourself', 'yourselves',
+        'todo', 'task', 'fix', 'bug', 'issue', 'feat', 'feature', 'refactor', 'test', 'run', 'work', 'project', 'code',
+        'file', 'files', 'directory', 'folder', 'update', 'modify', 'add', 'remove', 'delete', 'clean', 'change',
+        '的', '了', '和', '是', '就', '都', '而', '及', '与', '着', '或', '以', '在', '对', '于', '自', '之', '所', '去', '进行', '完成', '实现', '保留'
+    ]);
+
+    const keywords = new Set();
+    const processText = (text) => {
+        if (!text) return;
+        const matches = text.match(/[a-zA-Z0-9_-]{2,}|[\u4e00-\u9fa5]{2,}/g);
+        if (matches) {
+            for (const m of matches) {
+                const lower = m.toLowerCase();
+                if (!stopwords.has(lower) && !/^\d+$/.test(lower)) {
+                    keywords.add(lower);
+                }
+            }
+        }
+    };
+
+    processText(focusText);
+    if (Array.isArray(backlogArray)) {
+        for (const item of backlogArray) {
+            processText(item);
+        }
+    }
+
+    return Array.from(keywords);
+}
+
+function extractReflectionBlock(content) {
+    if (!content) return null;
+    const regex = /##\s+(避坑与教训|解决方案\s*\(Solution\)|核心决策|架构决策\s*\(Architecture\)|现象\s*\(Symptom\))[\s\S]*?(?=(?:\n##|$))/i;
+    const match = content.match(regex);
+    if (match) {
+        return match[0].trim();
+    }
+    // Fallback: If no markdown headings but contains avoidance/decision-making keywords, return the entire content
+    const lower = content.toLowerCase();
+    const hasReflectionKeyword = /避坑|教训|决策|解决|防止|必须|注意|symptom|solution|architecture|avoid/i.test(lower);
+    if (hasReflectionKeyword) {
+        return content.trim();
+    }
+    return null;
+}
+
 async function buildTakeoverRecall(contextSummary, verifyReport) {
     const queries = buildTakeoverQueries(contextSummary, verifyReport);
     const hits = [];
 
+    // 1. Legacy Query Alias Rules
     for (const query of queries) {
         const results = await recall(query.text, 5);
         const topResult = Array.isArray(results)
@@ -2109,11 +2029,37 @@ async function buildTakeoverRecall(contextSummary, verifyReport) {
         break;
     }
 
+    // 2. Keyword-based SQLite Walkthrough FTS5/LIKE deep recall
+    const reflections = [];
+    const focusText = String((contextSummary && contextSummary.focus) || '');
+    const backlog = (contextSummary && contextSummary.backlog) || [];
+    const keywords = extractKeywordsFromContext(focusText, backlog);
+
+    for (const keyword of keywords) {
+        const results = await recall(keyword, 3);
+        if (!Array.isArray(results)) continue;
+        for (const candidate of results) {
+            const block = extractReflectionBlock(candidate.content);
+            if (block) {
+                if (reflections.some(r => r.memoryId === candidate.id)) continue;
+                reflections.push({
+                    keyword,
+                    memoryId: candidate.id,
+                    namespace: candidate.namespace,
+                    timestamp: candidate.timestamp,
+                    reflection: block,
+                    content: candidate.content
+                });
+            }
+        }
+    }
+
     return {
-        status: hits.length > 0 ? 'matched' : 'no-match',
-        effect: hits.length > 0 ? null : 'fresh-takeover',
+        status: (hits.length > 0 || reflections.length > 0) ? 'matched' : 'no-match',
+        effect: (hits.length > 0 || reflections.length > 0) ? null : 'fresh-takeover',
         queries,
         hits,
+        reflections: reflections.slice(0, 3)
     };
 }
 
@@ -2134,6 +2080,7 @@ module.exports = {
     inject,
     inspectActiveContextState,
     inspectHookLifecycle,
+    inspectLocalState,
     list,
     memorize,
     parseGitStatusEntry,
@@ -2141,8 +2088,6 @@ module.exports = {
     readActiveContext,
     filterNonEvoLiteGitStatusLines,
     getNonEvoLiteGitStatusEntries,
-    inspectHookScaffold,
-    installHookScaffold,
     prepareForWrite,
     recall,
     readSessionEvents,

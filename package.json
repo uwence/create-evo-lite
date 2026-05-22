@@ -10,8 +10,7 @@
         "commander": "^14.0.2"
     },
     "scripts": {
-        "start": "node ./bin/cli.js",
-        "test:dogfood-hook": "node ./scripts/test-dogfood-commit-hook.js"
+        "start": "node ./bin/cli.js"
     },
     "keywords": [
         "evo-lite",

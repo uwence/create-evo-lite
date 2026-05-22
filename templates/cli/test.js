@@ -22,22 +22,12 @@ function createTempRuntimeRoot(name) {
         .readFileSync(TEMPLATE_CONTEXT_PATH, 'utf8')
         .replace(/\{\{DATE\}\}/g, new Date().toISOString().split('T')[0]);
     fs.writeFileSync(path.join(runtimeRoot, 'active_context.md'), template, 'utf8');
-    for (const file of ['AGENTS.md', 'CLAUDE.md']) {
-        fs.copyFileSync(path.join(TEMPLATE_ROOT_DIR, file), path.join(workspaceRoot, file));
-    }
-    const managedWorkflowDir = path.join(TEMPLATE_ROOT_DIR, '.agents', 'workflows');
-    if (fs.existsSync(managedWorkflowDir)) {
-        copyRecursive(managedWorkflowDir, path.join(workspaceRoot, '.agents', 'workflows'));
-    }
-    copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.claude'), path.join(workspaceRoot, '.claude'));
-    if (fs.existsSync(path.join(TEMPLATE_ROOT_DIR, '.github'))) {
-        copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.github'), path.join(workspaceRoot, '.github'));
+    const workflowsDir = path.join(TEMPLATE_ROOT_DIR, '.agents', 'workflows');
+    if (fs.existsSync(workflowsDir)) {
+        copyRecursive(workflowsDir, path.join(workspaceRoot, '.agents', 'workflows'));
     }
     if (fs.existsSync(path.join(TEMPLATE_ROOT_DIR, '.vscode'))) {
         copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.vscode'), path.join(workspaceRoot, '.vscode'));
-    }
-    if (fs.existsSync(path.join(TEMPLATE_ROOT_DIR, '.codex'))) {
-        copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.codex'), path.join(workspaceRoot, '.codex'));
     }
     return { runtimeRoot, workspaceRoot };
 }
@@ -196,7 +186,7 @@ async function runInitializer(projectRoot, options = {}) {
 }
 
 function resetCliModuleCache() {
-    for (const file of ['runtime.js', 'db.js', 'models.js', 'memory.service.js', 'mcp-detect.js', 'memory.js']) {
+    for (const file of ['runtime.js', 'db.js', 'models.js', 'memory.service.js', 'memory.js']) {
         delete require.cache[path.join(CLI_DIR, file)];
         delete require.cache[require.resolve(path.join(CLI_DIR, file))];
     }
@@ -402,58 +392,7 @@ async function runTests() {
             'context validate should warn about initialization placeholders without failing structure validation'
         );
 
-        console.log('2b. Testing MCP detection ...');
-        writeText(path.join(primary.workspaceRoot, '.vscode', 'mcp.json'), JSON.stringify({
-            servers: {
-                gitnexus: { command: 'docker', args: ['run', 'gitnexus:local'] },
-                contextModeCreateEvoLite: { command: 'docker', args: ['run', 'mcp-context-mode:local'] },
-            },
-        }, null, 2));
-        const mcpDetect = require(path.join(CLI_DIR, 'mcp-detect.js'));
-        const mcpReport = mcpDetect.detectMcpCapabilities({ workspaceRoot: primary.workspaceRoot });
-        assert.strictEqual(mcpReport.serverCount, 2, 'mcp detect did not find configured workspace MCP servers');
-        assert.ok(mcpReport.servers.some(server => server.category === 'code-intelligence'), 'mcp detect did not classify GitNexus');
-        assert.ok(mcpReport.servers.some(server => server.category === 'context-tools'), 'mcp detect did not classify context-mode');
-        assert.ok(mcpDetect.formatMcpReport(mcpReport, { explain: true }).includes('代码图谱'), 'mcp explain report missed recommended usage text');
 
-        console.log('2ba. Testing hook scaffold inspection ...');
-        const hookReport = primaryLoaded.service.inspectHookScaffold();
-        assert.strictEqual(hookReport.valid, true, 'hook scaffold inspection should pass for the template-shaped workspace');
-        assert.strictEqual(hookReport.missing.length, 0, 'hook scaffold inspection should not report missing assets for the template-shaped workspace');
-        assert.ok(hookReport.assets.some(asset => asset.label === '.github/copilot-instructions.md' && asset.exists), 'hook scaffold inspection did not include the Copilot bootstrap instructions asset');
-        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/evo-lite.json' && asset.exists), 'hook scaffold inspection did not include the GitHub hook registry asset');
-        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/evo-lite-hook.js' && asset.exists), 'hook scaffold inspection did not include the lifecycle advice hook wrapper');
-        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/evo-lite-codex-stop-hook.js' && asset.exists), 'hook scaffold inspection did not include the Codex stop hook wrapper');
-        assert.ok(hookReport.assets.some(asset => asset.label === '.github/hooks/dogfood-commit-hook.js' && asset.exists), 'hook scaffold inspection did not include the dogfood guard hook wrapper');
-        assert.ok(hookReport.assets.some(asset => asset.label === '.codex/hooks.json' && asset.exists), 'hook scaffold inspection did not include the Evo-Lite Codex hook manifest');
-        assert.ok(!hookReport.assets.some(asset => asset.label === '.vscode/mcp.json'), 'hook scaffold inspection should not treat workspace MCP config as an Evo-Lite-managed asset');
-        const missingHookRuntime = createTempRuntimeRoot('hook-missing');
-        const missingHookLoaded = loadCli(missingHookRuntime.runtimeRoot, {
-            EVO_LITE_SKIP_GIT_STATUS: '1',
-        });
-        fs.unlinkSync(path.join(missingHookRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'));
-        const missingHookReport = missingHookLoaded.service.inspectHookScaffold();
-        assert.strictEqual(missingHookReport.valid, false, 'hook scaffold inspection should fail when a required hook asset is missing');
-        assert.ok(missingHookReport.missing.includes('.github/hooks/evo-lite-hook.js'), 'hook scaffold inspection did not report the missing lifecycle advice hook wrapper');
-
-        console.log('2bb. Testing hook scaffold install ...');
-        const installHookRuntime = createTempRuntimeRoot('hook-install');
-        const installHookLoaded = loadCli(installHookRuntime.runtimeRoot, {
-            EVO_LITE_SKIP_GIT_STATUS: '1',
-        });
-        fs.unlinkSync(path.join(installHookRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'));
-        const installHookResult = installHookLoaded.service.installHookScaffold();
-        assert.ok(installHookResult.installed.includes('.github/hooks/evo-lite-hook.js'), 'hook scaffold install did not restore a missing lifecycle advice hook wrapper');
-        assert.ok(fs.existsSync(path.join(installHookRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js')), 'hook scaffold install did not recreate the missing lifecycle advice hook wrapper');
-        const installInstructionsPath = path.join(installHookRuntime.workspaceRoot, '.github', 'copilot-instructions.md');
-        const externalMcpConfigPath = path.join(installHookRuntime.workspaceRoot, '.vscode', 'mcp.json');
-        fs.writeFileSync(installInstructionsPath, '# mutated\n', 'utf8');
-        fs.writeFileSync(externalMcpConfigPath, '{"mutated":true}\n', 'utf8');
-        const forceInstallResult = installHookLoaded.service.installHookScaffold({ force: true });
-        assert.ok(forceInstallResult.overwritten.includes('.github/copilot-instructions.md'), 'hook scaffold install --force did not overwrite an existing managed asset');
-        assert.ok(fs.existsSync(`${installInstructionsPath}.bak`), 'hook scaffold install --force did not create a backup before overwriting');
-        assert.ok(!forceInstallResult.overwritten.includes('.vscode/mcp.json'), 'hook scaffold install --force should not overwrite unmanaged MCP config assets');
-        assert.strictEqual(fs.readFileSync(externalMcpConfigPath, 'utf8'), '{"mutated":true}\n', 'hook scaffold install unexpectedly rewrote an unmanaged MCP config asset');
 
         console.log('2bc. Testing hook lifecycle advice ...');
         const lifecycleRuntime = createTempRuntimeRoot('hook-lifecycle');
@@ -495,100 +434,7 @@ async function runTests() {
         assert.strictEqual(architectureDirAdvice.blocked, false, 'pretooluse should allow creating the architecture rules directory before architecture is locked');
         const readOnlyPretoolAdvice = postCommitLoaded.service.inspectHookLifecycle('pretooluse', { tool: 'read_file' });
         assert.strictEqual(readOnlyPretoolAdvice.blocked, false, 'pretooluse should not block read-only work when architecture is unlocked');
-        copyRecursive(TEMPLATE_CLI_DIR, path.join(lifecycleRuntime.runtimeRoot, 'cli'));
-        const blockedPretoolWrapperResult = childProcess.spawnSync(
-            process.execPath,
-            [path.join(lifecycleRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'), 'pretooluse'],
-            {
-                cwd: lifecycleRuntime.workspaceRoot,
-                encoding: 'utf8',
-                env: {
-                    ...process.env,
-                    EVO_LITE_GIT_COMMIT: 'bbb2222',
-                    EVO_LITE_GIT_STATUS: '',
-                    EVO_LITE_ROOT: lifecycleRuntime.runtimeRoot,
-                    EVO_LITE_TEMPLATE_ROOT_DIR: TEMPLATE_ROOT_DIR,
-                    NODE_PATH: [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
-                },
-                input: JSON.stringify({
-                    hookEventName: 'PreToolUse',
-                    tool_name: 'apply_patch',
-                    tool_input: {
-                        filePath: 'index.js',
-                    },
-                    tool_use_id: 'tool-pre-1',
-                }),
-            }
-        );
-        assert.strictEqual(blockedPretoolWrapperResult.status, 2, `official PreToolUse payload wrapper should block implementation before architecture lock: ${blockedPretoolWrapperResult.stderr}`);
-        const blockedPretoolWrapperOutput = `${blockedPretoolWrapperResult.stdout || ''}${blockedPretoolWrapperResult.stderr || ''}`;
-        assert.ok(blockedPretoolWrapperOutput.includes('blocked: yes'), `wrapper did not surface the blocked state: ${blockedPretoolWrapperOutput}`);
-        assert.ok(blockedPretoolWrapperOutput.includes('架构尚未锁定'), `wrapper did not surface the architecture blocker: ${blockedPretoolWrapperOutput}`);
-        const architecturePretoolWrapperResult = childProcess.spawnSync(
-            process.execPath,
-            [path.join(lifecycleRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'), 'pretooluse'],
-            {
-                cwd: lifecycleRuntime.workspaceRoot,
-                encoding: 'utf8',
-                env: {
-                    ...process.env,
-                    EVO_LITE_GIT_COMMIT: 'bbb2222',
-                    EVO_LITE_GIT_STATUS: '',
-                    EVO_LITE_ROOT: lifecycleRuntime.runtimeRoot,
-                    EVO_LITE_TEMPLATE_ROOT_DIR: TEMPLATE_ROOT_DIR,
-                    NODE_PATH: [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
-                },
-                input: JSON.stringify({
-                    hookEventName: 'PreToolUse',
-                    tool_name: 'apply_patch',
-                    tool_input: {
-                        input: '*** Begin Patch\n*** Update File: .agents/rules/architecture.md\n*** End Patch',
-                    },
-                    tool_use_id: 'tool-pre-architecture',
-                }),
-            }
-        );
-        assert.strictEqual(architecturePretoolWrapperResult.status, 0, `official PreToolUse payload wrapper should allow architecture bootstrap edits before architecture lock: ${architecturePretoolWrapperResult.stderr}`);
-        const architecturePretoolWrapperOutput = `${architecturePretoolWrapperResult.stdout || ''}${architecturePretoolWrapperResult.stderr || ''}`;
-        assert.ok(architecturePretoolWrapperOutput.includes('blocked: no'), `wrapper did not allow the architecture bootstrap edit: ${architecturePretoolWrapperOutput}`);
-        const wrapperResult = childProcess.spawnSync(
-            process.execPath,
-            [path.join(lifecycleRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-hook.js'), 'posttooluse'],
-            {
-                cwd: lifecycleRuntime.workspaceRoot,
-                encoding: 'utf8',
-                env: {
-                    ...process.env,
-                    EVO_LITE_GIT_COMMIT: 'bbb2222',
-                    EVO_LITE_GIT_STATUS: '',
-                    EVO_LITE_ROOT: lifecycleRuntime.runtimeRoot,
-                    EVO_LITE_TEMPLATE_ROOT_DIR: TEMPLATE_ROOT_DIR,
-                    NODE_PATH: [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
-                },
-                input: JSON.stringify({
-                    hookEventName: 'PostToolUse',
-                    tool_name: 'runTerminalCommand',
-                    tool_input: {
-                        command: 'git commit -m "test" && node .evo-lite/cli/memory.js context track --mechanism="Lifecycle" --details="Attempted closure"',
-                    },
-                    tool_response: 'context track failed after commit',
-                    tool_use_id: 'tool-123',
-                }),
-            }
-        );
-        assert.strictEqual(wrapperResult.status, 0, `official PostToolUse payload wrapper exited with ${wrapperResult.status}: ${wrapperResult.stderr}`);
-        const wrapperOutput = `${wrapperResult.stdout || ''}${wrapperResult.stderr || ''}`;
-        assert.ok(wrapperOutput.includes('tool: runTerminalCommand'), `wrapper did not parse the official tool_name field: ${wrapperOutput}`);
-        assert.ok(wrapperOutput.includes('command: git commit -m') && wrapperOutput.includes('context track'), `wrapper did not parse the official tool_input.command field: ${wrapperOutput}`);
-        assert.ok(wrapperOutput.includes('返回失败'), `wrapper did not surface failure based on official tool_response text: ${wrapperOutput}`);
-        const lifecycleProvenance = readNdjson(path.join(lifecycleRuntime.runtimeRoot, 'provenance', 'steps.ndjson'));
-        assert.ok(lifecycleProvenance.some(entry =>
-            entry.event === 'posttooluse'
-            && entry.transport === 'shared-hook'
-            && entry.tool === 'runTerminalCommand'
-            && typeof entry.command === 'string'
-            && entry.command.includes('context track')
-        ), `shared hook did not append a provenance record for posttooluse: ${JSON.stringify(lifecycleProvenance, null, 2)}`);
+
 
         const configuredPretoolRuntime = createTempRuntimeRoot('hook-pretool-configured');
         writeText(
@@ -613,81 +459,7 @@ async function runTests() {
         assert.ok(stopAdvice.reminders.some(reminder => reminder.includes('未提交')), 'hook lifecycle stop advice did not warn about dirty git state');
         assert.ok(stopAdvice.reminders.some(reminder => reminder.includes('24 小时')), 'hook lifecycle stop advice did not warn about stale active_context');
         assert.ok(stopAdvice.reminders.some(reminder => reminder.includes('release/tag/CHANGELOG')), 'hook lifecycle stop advice did not warn about release closure after version-file changes');
-        writeText(
-            path.join(stopRuntime.runtimeRoot, 'cli', 'memory.js'),
-            `process.stdout.write(JSON.stringify({
-                reminders: [
-                    '检测到最新 commit 尚未写入 TRAJECTORY；请执行 context track 完成闭环。',
-                    '工作区仍有未提交的非 .evo-lite 改动；结束前请确认是否需要提交。'
-                ],
-                warnings: ['git status unavailable in the current Node environment']
-            }));`
-        );
-        const stopWrapperResult = childProcess.spawnSync(
-            process.execPath,
-            [path.join(stopRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-codex-stop-hook.js')],
-            {
-                cwd: stopRuntime.workspaceRoot,
-                encoding: 'utf8',
-                env: {
-                    ...process.env,
-                    EVO_LITE_GIT_COMMIT: 'ccc3333',
-                    EVO_LITE_GIT_STATUS: ' M package.json',
-                },
-            }
-        );
-        assert.strictEqual(stopWrapperResult.status, 0, `Codex stop wrapper exited with ${stopWrapperResult.status}: ${stopWrapperResult.stderr}`);
-        assert.strictEqual(
-            (stopWrapperResult.stdout || '').trim(),
-            '{"decision":"accept"}',
-            `Codex stop wrapper stdout should contain only the compact decision JSON: ${stopWrapperResult.stdout}`
-        );
-        assert.deepStrictEqual(
-            JSON.parse((stopWrapperResult.stdout || '').trim()),
-            { decision: 'accept' },
-            `Codex stop wrapper did not return valid decision JSON: ${stopWrapperResult.stdout}`
-        );
-        assert.ok(
-            (stopWrapperResult.stderr || '').includes('[evo-lite stop]'),
-            `Codex stop wrapper did not surface stop reminders on stderr: ${stopWrapperResult.stderr}`
-        );
-        assert.ok(
-            (stopWrapperResult.stderr || '').includes('未提交'),
-            `Codex stop wrapper stderr did not include dirty-worktree reminder: ${stopWrapperResult.stderr}`
-        );
-        const stopProvenance = readNdjson(path.join(stopRuntime.runtimeRoot, 'provenance', 'steps.ndjson'));
-        assert.ok(stopProvenance.some(entry =>
-            entry.event === 'stop'
-            && entry.transport === 'codex-stop'
-            && entry.decision === 'accept'
-            && Array.isArray(entry.reminders)
-            && entry.reminders.some(reminder => reminder.includes('TRAJECTORY'))
-        ), `Codex stop wrapper did not append a provenance record: ${JSON.stringify(stopProvenance, null, 2)}`);
 
-        const stopBrokenRuntime = createTempRuntimeRoot('hook-stop-bad-json');
-        writeText(
-            path.join(stopBrokenRuntime.runtimeRoot, 'cli', 'memory.js'),
-            'process.stdout.write("not-json"); process.stderr.write("broken stderr");'
-        );
-        const stopBrokenResult = childProcess.spawnSync(
-            process.execPath,
-            [path.join(stopBrokenRuntime.workspaceRoot, '.github', 'hooks', 'evo-lite-codex-stop-hook.js')],
-            {
-                cwd: stopBrokenRuntime.workspaceRoot,
-                encoding: 'utf8',
-            }
-        );
-        assert.strictEqual(stopBrokenResult.status, 0, `Codex stop wrapper should accept malformed stop advice output: ${stopBrokenResult.stderr}`);
-        assert.strictEqual(
-            (stopBrokenResult.stdout || '').trim(),
-            '{"decision":"accept"}',
-            `Codex stop wrapper should fall back to clean accept JSON when stop advice stdout is malformed: ${stopBrokenResult.stdout}`
-        );
-        assert.strictEqual(
-            (stopBrokenResult.stderr || '').trim(),
-            '',
-            `Codex stop wrapper should not leak malformed stop advice to stderr without debug mode: ${stopBrokenResult.stderr}`
-        );
 
         console.log('2c. Testing context track bootstraps a fresh init runtime ...');
         const freshTrackRuntime = createTempRuntimeRoot('fresh-track');
@@ -926,72 +698,32 @@ async function runTests() {
             'initializer did not proceed past the legacy-runtime gate for a 2.x-shaped directory'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'copilot-instructions.md')),
-            'initializer did not scaffold .github/copilot-instructions.md into the target project'
+            fs.existsSync(path.join(modernInitRoot, '.agents', 'workflows', 'evo.md')),
+            'initializer did not scaffold .agents/workflows/evo.md into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'evo-lite.json')),
-            'initializer did not scaffold .github/hooks/evo-lite.json into the target project'
+            fs.existsSync(path.join(modernInitRoot, '.evo-lite', 'cli', 'memory.js')),
+            'initializer did not scaffold .evo-lite/cli/memory.js into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'dogfood-commit-hook.js')),
-            'initializer did not scaffold .github/hooks/dogfood-commit-hook.js into the target project'
+            !fs.existsSync(path.join(modernInitRoot, '.github')),
+            'initializer should not scaffold any .github directory into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'evo-lite-hook.js')),
-            'initializer did not scaffold .github/hooks/evo-lite-hook.js into the target project'
+            !fs.existsSync(path.join(modernInitRoot, '.codex')),
+            'initializer should not scaffold any .codex directory into the target project'
         );
         assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'evo-lite-codex-stop-hook.js')),
-            'initializer did not scaffold .github/hooks/evo-lite-codex-stop-hook.js into the target project'
+            !fs.existsSync(path.join(modernInitRoot, '.claude')),
+            'initializer should not scaffold any .claude directory into the target project'
         );
         assert.ok(
-            !fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'context-mode.sh')),
-            'initializer should not scaffold external context-mode shell hooks into the target project'
+            !fs.existsSync(path.join(modernInitRoot, 'AGENTS.md')),
+            'initializer should not scaffold AGENTS.md into the target project'
         );
         assert.ok(
-            !fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'git-bash.cmd')),
-            'initializer should not scaffold Git Bash launcher assets into the target project'
-        );
-        assert.ok(
-            fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks.json')),
-            'initializer did not scaffold .codex/hooks.json into the target project'
-        );
-        assert.ok(
-            !fs.existsSync(path.join(modernInitRoot, '.github', 'hooks', 'rtk-rewrite.json')),
-            'initializer should not scaffold RTK rewrite hook config into the target project'
-        );
-        assert.ok(
-            !fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'context-mode-hook.js')),
-            'initializer should not scaffold context-mode Codex hooks into the target project'
-        );
-        assert.ok(
-            !fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'gitnexus-hook.js')),
-            'initializer should not scaffold GitNexus Codex hooks into the target project'
-        );
-        assert.ok(
-            !fs.existsSync(path.join(modernInitRoot, '.codex', 'hooks', 'rtk-codex-hook.js')),
-            'initializer should not scaffold RTK Codex hooks into the target project'
-        );
-        const modernHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.github', 'hooks', 'evo-lite.json'), 'utf8'));
-        assert.ok(modernHookConfig.hooks.SessionStart.some(entry => entry.command.includes('evo-lite-hook.js sessionstart')), 'initializer did not scaffold SessionStart lifecycle advice hook');
-        assert.ok(modernHookConfig.hooks.PreToolUse.some(entry => entry.command.includes('evo-lite-hook.js pretooluse')), 'initializer did not scaffold PreToolUse architecture guard hook');
-        assert.ok(modernHookConfig.hooks.PreToolUse.some(entry => entry.command.includes('dogfood-commit-hook.js pretooluse')), 'initializer did not scaffold the dogfood guard hook');
-        assert.ok(modernHookConfig.hooks.PreCompact.some(entry => entry.command.includes('evo-lite-hook.js precompact')), 'initializer did not scaffold PreCompact lifecycle advice hook');
-        assert.ok(Array.isArray(modernHookConfig.hooks.Stop) && modernHookConfig.hooks.Stop.some(entry => entry.command.includes('evo-lite-hook.js stop')), 'initializer did not scaffold Stop lifecycle advice hook');
-        assert.ok(!JSON.stringify(modernHookConfig).includes('context-mode.sh'), 'initializer should no longer wire external context-mode shell hooks through the managed GitHub hook registry');
-        const codexHookConfig = JSON.parse(fs.readFileSync(path.join(modernInitRoot, '.codex', 'hooks.json'), 'utf8'));
-        assert.ok(codexHookConfig.hooks.SessionStart.some(entry => entry.hooks.some(hook => hook.command.includes('evo-lite-hook.js sessionstart'))), 'initializer did not scaffold Codex SessionStart Evo-Lite hook');
-        assert.ok(codexHookConfig.hooks.PreToolUse.some(entry => entry.matcher === 'Bash' && entry.hooks.some(hook => hook.command.includes('evo-lite-hook.js pretooluse'))), 'initializer did not scaffold Codex PreToolUse Evo-Lite architecture hook');
-        assert.ok(codexHookConfig.hooks.PreToolUse.some(entry => entry.matcher === 'Bash' && entry.hooks.some(hook => hook.command.includes('dogfood-commit-hook.js pretooluse'))), 'initializer did not scaffold Codex PreToolUse dogfood hook');
-        assert.ok(codexHookConfig.hooks.PostToolUse.some(entry => entry.hooks.some(hook => hook.command.includes('evo-lite-hook.js posttooluse'))), 'initializer did not scaffold Codex PostToolUse Evo-Lite closure hook');
-        assert.ok(codexHookConfig.hooks.Stop.some(entry => entry.hooks.some(hook => hook.command.includes('evo-lite-codex-stop-hook.js'))), 'initializer did not scaffold the Codex stop JSON wrapper');
-        assert.ok(!JSON.stringify(codexHookConfig).includes('context-mode-hook.js'), 'initializer should no longer wire context-mode through the managed Codex hook manifest');
-        assert.ok(!JSON.stringify(codexHookConfig).includes('rtk-codex-hook.js'), 'initializer should no longer wire RTK through the managed Codex hook manifest');
-        assert.ok(!JSON.stringify(codexHookConfig).includes('gitnexus-hook.js'), 'initializer should no longer wire GitNexus through the managed Codex hook manifest');
-        assert.ok(
-            !fs.existsSync(path.join(modernInitRoot, '.vscode', 'mcp.json')),
-            'initializer should not scaffold external MCP config into the target project'
+            !fs.existsSync(path.join(modernInitRoot, 'CLAUDE.md')),
+            'initializer should not scaffold CLAUDE.md into the target project'
         );
         assert.ok(
             modernInitCommands.some(entry => entry.command === 'git init' && entry.cwd === modernInitRoot),
@@ -1181,6 +913,38 @@ async function runTests() {
         assert.ok(
             bootstrapClosureOutput.includes('memory_effect: pair context track with a dedicated runtime state snapshot commit'),
             'bootstrap command did not surface context-track closure recall effect'
+        );
+
+        console.log('3cc. Testing FTS5 Walkthrough Keyword-based Avoidance Recall ...');
+        const bootstrapFtsRuntime = createTempRuntimeRoot('bootstrap-recall-fts');
+        const bootstrapFtsLoaded = await bootstrapRuntime(bootstrapFtsRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        await bootstrapFtsLoaded.service.memorize(
+            '## 闭环机制 (Mechanism)\n' +
+            'Use SQLite FTS5 for fast search.\n\n' +
+            '## 避坑与教训\n' +
+            'Avoid synchronous locking on SQLite databases by enabling WAL mode.'
+        );
+        console.log(bootstrapFtsLoaded.service.setFocus('We are upgrading SQLite dynamic reflection engine'));
+        loadCli(bootstrapFtsRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const bootstrapFtsCliModule = require(path.join(CLI_DIR, 'memory.js'));
+        const bootstrapFtsOutput = await captureConsole(async () => {
+            await bootstrapFtsCliModule.run(['node', 'memory.js', 'bootstrap']);
+        });
+        assert.ok(
+            bootstrapFtsOutput.includes('💡 Evo-Lite 历史避坑与决策联想'),
+            'bootstrap command did not output the Evo-Lite Technical Avoidance header'
+        );
+        assert.ok(
+            bootstrapFtsOutput.includes('Avoid synchronous locking on SQLite databases by enabling WAL mode.'),
+            'bootstrap command did not recall the SQLite FTS5 walkthrough avoidance block'
+        );
+        assert.ok(
+            bootstrapFtsOutput.includes('sqlite'),
+            'bootstrap command did not print the matching keyword sqlite'
         );
 
         console.log('3d. Testing bootstrap recall ignores non-actionable noise ...');
@@ -1394,47 +1158,13 @@ async function runTests() {
         assert.ok(!healthyVerifyOutput.includes('.agents/workflows/commit.md is out of sync'), 'verify incorrectly flagged the managed /commit workflow as drift');
         assert.ok(!healthyVerifyOutput.includes('.agents/workflows/mem.md is out of sync'), 'verify incorrectly flagged the managed /mem workflow as drift');
         assert.ok(!healthyVerifyOutput.includes('.agents/workflows/walkthrough.md is out of sync'), 'verify incorrectly flagged the managed /walkthrough workflow as drift');
-        assert.ok(!healthyVerifyOutput.includes('.github/hooks/evo-lite.json is out of sync'), 'verify incorrectly flagged the managed GitHub hook registry as drift');
-        assert.ok(!healthyVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify incorrectly flagged the Codex hook manifest as drift');
-        assert.ok(!healthyVerifyOutput.includes('.github/hooks/dogfood-commit-hook.js is out of sync'), 'verify incorrectly flagged the dogfood guard hook as drift');
         assert.ok(healthyVerifyOutput.includes('可以继续 `/evo` / `/commit` 工作流'), 'verify healthy output did not include a clear next step');
-
-        const localExtensionRuntime = createTempRuntimeRoot('verify-local-extension');
-        const localExtensionLoaded = await bootstrapRuntime(localExtensionRuntime.runtimeRoot, {
-            EVO_LITE_SKIP_GIT_STATUS: '1',
-            EVO_LITE_TEMPLATE_CLI_DIR: path.join(healthyTemplateRoot, 'cli'),
-            EVO_LITE_TEMPLATE_ROOT_DIR: healthyTemplateRoot,
-        });
-        const localInstructionsPath = path.join(localExtensionRuntime.workspaceRoot, '.github', 'copilot-instructions.md');
-        fs.writeFileSync(
-            localInstructionsPath,
-            fs.readFileSync(localInstructionsPath, 'utf8').replace(
-                '<!-- evo-lite:local-extensions:start -->\n<!-- evo-lite:local-extensions:end -->',
-                '<!-- evo-lite:local-extensions:start -->\n# Local Tooling\n\nUse `rtk` when shell output would be noisy.\n<!-- evo-lite:local-extensions:end -->'
-            ),
-            'utf8'
-        );
-        const localExtensionVerifyOutput = await captureConsole(async () => {
-            await localExtensionLoaded.service.verify();
-        });
-        assert.ok(localExtensionVerifyOutput.includes('CLI and host adapter files are synced with templates.'), 'verify should ignore local extension blocks in managed markdown files');
-        assert.ok(!localExtensionVerifyOutput.includes('.github/copilot-instructions.md is out of sync'), 'verify incorrectly flagged a local extension block as template drift');
 
         const driftTemplateRoot = createTempTemplateRoot('actual-drift', templateRoot => {
             const evoWorkflowPath = path.join(templateRoot, '.agents', 'workflows', 'evo.md');
             fs.writeFileSync(evoWorkflowPath, `${fs.readFileSync(evoWorkflowPath, 'utf8')}\n<!-- drift -->\n`, 'utf8');
             const commitWorkflowPath = path.join(templateRoot, '.agents', 'workflows', 'commit.md');
             fs.writeFileSync(commitWorkflowPath, `${fs.readFileSync(commitWorkflowPath, 'utf8')}\n<!-- drift -->\n`, 'utf8');
-            const dogfoodHookPath = path.join(templateRoot, '.github', 'hooks', 'dogfood-commit-hook.js');
-            fs.writeFileSync(dogfoodHookPath, `${fs.readFileSync(dogfoodHookPath, 'utf8')}\n// drift\n`, 'utf8');
-            const githubHookRegistryPath = path.join(templateRoot, '.github', 'hooks', 'evo-lite.json');
-            const githubHookRegistry = JSON.parse(fs.readFileSync(githubHookRegistryPath, 'utf8'));
-            githubHookRegistry.hooks.SessionStart[0].command = 'node ./.github/hooks/evo-lite-hook.js altered-sessionstart';
-            fs.writeFileSync(githubHookRegistryPath, JSON.stringify(githubHookRegistry, null, 2), 'utf8');
-            const codexHookPath = path.join(templateRoot, '.codex', 'hooks.json');
-            const codexHookConfig = JSON.parse(fs.readFileSync(codexHookPath, 'utf8'));
-            codexHookConfig.hooks.PostToolUse[0].hooks[0].command = 'node ./.github/hooks/evo-lite-hook.js altered-posttooluse';
-            fs.writeFileSync(codexHookPath, JSON.stringify(codexHookConfig, null, 2), 'utf8');
         });
         const verifyDriftLoaded = await bootstrapRuntime(verifyRuntime.runtimeRoot, {
             EVO_LITE_SKIP_GIT_STATUS: '1',
@@ -1446,9 +1176,6 @@ async function runTests() {
         });
         assert.ok(driftVerifyOutput.includes('.agents/workflows/evo.md is out of sync'), 'verify did not report managed /evo workflow drift');
         assert.ok(driftVerifyOutput.includes('.agents/workflows/commit.md is out of sync'), 'verify did not report managed /commit workflow drift');
-        assert.ok(driftVerifyOutput.includes('.github/hooks/evo-lite.json is out of sync'), 'verify did not report managed GitHub hook registry drift');
-        assert.ok(driftVerifyOutput.includes('.github/hooks/dogfood-commit-hook.js is out of sync'), 'verify did not report actual Evo-Lite hook asset drift');
-        assert.ok(driftVerifyOutput.includes('.codex/hooks.json is out of sync'), 'verify did not report Codex hook manifest drift');
         assert.ok(!driftVerifyOutput.includes('Verify completed with no active alerts.'), 'verify still reported a clean bill of health after drift');
 
         console.log('10a. Testing sessionstart architecture guidance ...');

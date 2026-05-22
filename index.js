@@ -217,7 +217,6 @@ async function runInit(targetDirArg, options = {}) {
     console.log(`🚀 Evo-Lite v${SELF_VERSION} — 开始在 ${targetDir} 初始化 Daemonless 记忆大脑...\n`);
 
     let shouldWash = false;
-    const hostAdapterSummary = [];
     const legacyContextPath = path.join(targetDir, '.evo-lite', 'active_context.md');
     const legacyCliPath = path.join(targetDir, '.evo-lite', 'cli', 'memory.js');
     const modernModelsPath = path.join(targetDir, '.evo-lite', 'cli', 'models.js');
@@ -271,9 +270,8 @@ async function runInit(targetDirArg, options = {}) {
     const evoLiteDir = path.join(targetDir, '.evo-lite');
     const cliDir = path.join(evoLiteDir, 'cli');
     const agentsDir = path.join(targetDir, '.agents');
-    const claudeDir = path.join(targetDir, '.claude');
 
-    [evoLiteDir, cliDir, agentsDir, claudeDir].forEach(dir => {
+    [evoLiteDir, cliDir, agentsDir].forEach(dir => {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
@@ -286,12 +284,8 @@ async function runInit(targetDirArg, options = {}) {
     const gitignoreTemplate = fs.readFileSync(path.join(templatesDir, '.gitignore'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
-    const agentsAdapterTemplate = fs.readFileSync(path.join(templatesDir, 'AGENTS.md'), 'utf8');
-    const claudeAdapterTemplate = fs.readFileSync(path.join(templatesDir, 'CLAUDE.md'), 'utf8');
 
     const activeContextPath = path.join(evoLiteDir, 'active_context.md');
-    const agentsAdapterPath = path.join(targetDir, 'AGENTS.md');
-    const claudeAdapterPath = path.join(targetDir, 'CLAUDE.md');
 
     // 3.0 处理 cli 文件集
     const cliTemplatesDir = path.join(templatesDir, 'cli');
@@ -373,30 +367,6 @@ async function runInit(targetDirArg, options = {}) {
         console.log('🛡️ 发现并保护了已有的 active_context.md 资产。准备进行内容融合注入...');
     }
 
-    if (!fs.existsSync(agentsAdapterPath)) {
-        fs.writeFileSync(agentsAdapterPath, agentsAdapterTemplate, 'utf8');
-        console.log('✅ 初始化了根目录 AGENTS.md (Codex adapter)。');
-        hostAdapterSummary.push('AGENTS.md');
-    } else {
-        fs.copyFileSync(agentsAdapterPath, agentsAdapterPath + '.bak');
-        fs.writeFileSync(agentsAdapterPath, agentsAdapterTemplate, 'utf8');
-        hasUpgraded = true;
-        console.log('♻️ 更新了根目录 AGENTS.md (旧版本已备份为 .bak)。');
-        hostAdapterSummary.push('AGENTS.md');
-    }
-
-    if (!fs.existsSync(claudeAdapterPath)) {
-        fs.writeFileSync(claudeAdapterPath, claudeAdapterTemplate, 'utf8');
-        console.log('✅ 初始化了根目录 CLAUDE.md (Claude Code adapter)。');
-        hostAdapterSummary.push('CLAUDE.md');
-    } else {
-        fs.copyFileSync(claudeAdapterPath, claudeAdapterPath + '.bak');
-        fs.writeFileSync(claudeAdapterPath, claudeAdapterTemplate, 'utf8');
-        hasUpgraded = true;
-        console.log('♻️ 更新了根目录 CLAUDE.md (旧版本已备份为 .bak)。');
-        hostAdapterSummary.push('CLAUDE.md');
-    }
-
     ensureProjectGitignore(targetDir, gitignoreTemplate);
 
     // Inject CLI wrappers into .evo-lite to avoid root pollution
@@ -408,12 +378,7 @@ async function runInit(targetDirArg, options = {}) {
         fs.chmodSync(unixWrapperPath, '755');
     } catch (e) { }
 
-    console.log('✅ 核心引擎与体系模板已更新 (旧有模板已保存为 .bak 备份)。');
-    if (hostAdapterSummary.length > 0) {
-        console.log(`🧭 已同步宿主适配资产: ${hostAdapterSummary.join(', ')}, .claude/commands/`);
-        console.log('ℹ️ 这些宿主适配文件属于 Evo-Lite 生成资产；升级模板时允许被覆盖，canonical 语义真源仍然是 .agents/ 与 .evo-lite/。');
-        console.log('ℹ️ 后续可使用 `node .evo-lite/cli/memory.js verify` 检查 CLI 与 host adapter 是否和模板保持同步。');
-    }
+    console.log('`✅ 核心引擎与体系模板已更新 (旧有模板已保存为 .bak 备份)。`');
 
     // 4. 注入热更新警告与融合指令 (Fusion Warning)
     if (hasUpgraded) {
