@@ -102,17 +102,17 @@ Excluded from MVP:
 
 ### Phase 5: Dashboard build
 
-- [ ] [task:add-dashboard-builder] Implement dashboard data builder
+- [x] [task:add-dashboard-builder] Implement dashboard data builder
   - files: templates/cli/dashboard-data.js, templates/cli/memory.js
   - verify: node .evo-lite/cli/memory.js dashboard build
   - acceptance: generates dashboard-data.json; inspector reads this file instead of re-running scan logic
 
-- [ ] [task:add-inspector-architecture-drift-tabs] Add Architecture and Drift tabs to inspector
+- [x] [task:add-inspector-architecture-drift-tabs] Add Architecture and Drift tabs to inspector
   - files: templates/cli/inspector.js
   - verify: node .evo-lite/cli/memory.js inspect
   - acceptance: Architecture and Drift panels visible; existing timeline/verify endpoints unchanged
 
-- [ ] [task:add-verify-control-status] Extend verify to report project_control status
+- [x] [task:add-verify-control-status] Extend verify to report project_control status
   - files: templates/cli/memory.service.js
   - verify: node .evo-lite/cli/memory.js verify
   - acceptance: verify reports project_control status without running expensive scans

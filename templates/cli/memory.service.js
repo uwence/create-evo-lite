@@ -1586,6 +1586,7 @@ async function verify(options = {}) {
         hasAlerts: false,
         localEngine: 'unknown',
         nextSteps: [],
+        project_control: 'unknown',
         safety: null,
         templateSync: 'skipped',
         templateSyncChecked: false,
@@ -1869,6 +1870,27 @@ async function verify(options = {}) {
         for (const step of report.bootstrapSteps) {
             log(`- ${step}`);
         }
+    }
+
+    // project_control: read dashboard-data.json for a quick status without running scans
+    try {
+        const dashPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'dashboard-data.json');
+        if (fs.existsSync(dashPath)) {
+            const dash = JSON.parse(fs.readFileSync(dashPath, 'utf8'));
+            const missing = [dash.planning, dash.architecture, dash.drift].filter(d => d && d.missing).length;
+            const driftSummary = dash.drift && !dash.drift.missing ? dash.drift.summary : null;
+            if (missing === 0 && driftSummary && driftSummary.errors === 0 && driftSummary.warnings === 0) {
+                report.project_control = 'ok';
+            } else if (missing === 3) {
+                report.project_control = 'no-data';
+            } else {
+                report.project_control = driftSummary && driftSummary.errors > 0 ? 'error' : 'partial';
+            }
+        } else {
+            report.project_control = 'no-data';
+        }
+    } catch (_) {
+        report.project_control = 'error';
     }
 
     if (!report.hasAlerts) {

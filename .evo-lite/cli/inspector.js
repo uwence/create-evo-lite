@@ -90,6 +90,8 @@ function renderHtml() {
     <button data-tab="planning">Planning</button>
     <button data-tab="archive">Archive</button>
     <button data-tab="indexes">Index spaces</button>
+    <button data-tab="architecture">Architecture</button>
+    <button data-tab="drift">Drift</button>
     <button data-tab="verify">Verify</button>
   </nav>
 </header>
@@ -98,6 +100,8 @@ function renderHtml() {
   <section id="tab-planning" hidden></section>
   <section id="tab-archive" hidden></section>
   <section id="tab-indexes" hidden></section>
+  <section id="tab-architecture" hidden></section>
+  <section id="tab-drift" hidden></section>
   <section id="tab-verify" hidden></section>
 </main>
 <script>
@@ -173,6 +177,44 @@ async function load(name) {
         '</td><td>' + (info.present ? info.dims || '?' : '-') + '</td><td>' + info.chunks + '</td></tr>'
       ).join('');
       target.innerHTML = '<h2>Index spaces</h2><table><tr><th>Namespace</th><th>Engine</th><th>Dims</th><th>Chunks</th></tr>' + rows + '</table>';
+    } else if (name === 'architecture') {
+      const data = await api('/api/architecture');
+      if (data.missing) {
+        target.innerHTML = '<h2>Architecture</h2><p class="pending">No architecture-ir.json found.</p><pre>' + escapeHtml(data.hint) + '</pre>';
+      } else {
+        let html = '<h2>Architecture <small style="opacity:0.5;font-size:0.8em">' + escapeHtml(data.version) + ' · ' + escapeHtml(data.provider) + '</small></h2>';
+        html += '<table><tr><th>Module</th><th>Role</th><th>Files</th><th>Description</th></tr>';
+        for (const mod of (data.modules || [])) {
+          html += '<tr><td>' + escapeHtml(mod.id) + '</td><td>' + escapeHtml(mod.role) + '</td><td>' + (mod.fileCount || 0) + '</td><td style="opacity:0.7">' + escapeHtml(mod.description || '') + '</td></tr>';
+        }
+        html += '</table>';
+        const unclassified = (data.files || []).filter(f => !f.module).length;
+        if (unclassified > 0) html += '<p class="pending">' + unclassified + ' unclassified files</p>';
+        target.innerHTML = html;
+      }
+    } else if (name === 'drift') {
+      const data = await api('/api/drift');
+      if (data.missing) {
+        target.innerHTML = '<h2>Drift</h2><p class="pending">No drift-report.json found.</p><pre>' + escapeHtml(data.hint) + '</pre>';
+      } else {
+        const s = data.summary || {};
+        let html = '<h2>Drift <small style="opacity:0.5;font-size:0.8em">' + escapeHtml(data.version) + '</small></h2>';
+        html += '<p>' + (s.total || 0) + ' findings · <span class="err">' + (s.errors || 0) + ' errors</span> · <span class="pending">' + (s.warnings || 0) + ' warnings</span> · ' + (s.info || 0) + ' info</p>';
+        if ((data.findings || []).length > 0) {
+          html += '<table><tr><th>Rule</th><th>Scope</th><th>Level</th><th>Message</th><th>Action</th></tr>';
+          for (const f of data.findings) {
+            const cls = f.level === 'error' ? 'err' : f.level === 'warning' ? 'pending' : '';
+            html += '<tr><td>' + escapeHtml(f.rule) + '</td><td>' + escapeHtml(f.scope || '') + '</td>';
+            html += '<td class="' + cls + '">' + escapeHtml(f.level) + '</td>';
+            html += '<td>' + escapeHtml(f.message) + '</td>';
+            html += '<td style="opacity:0.7">' + escapeHtml(f.suggestedAction || '') + '</td></tr>';
+          }
+          html += '</table>';
+        } else {
+          html += '<p class="ok">No drift findings.</p>';
+        }
+        target.innerHTML = html;
+      }
     } else if (name === 'verify') {
       const data = await api('/api/verify');
       target.innerHTML = '<h2>Verify snapshot</h2><pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
@@ -215,6 +257,20 @@ function handleApi(req, res) {
                 return send(200, { missing: true, hint: 'Run: mem plan scan' });
             }
             return send(200, JSON.parse(fs.readFileSync(irPath, 'utf8')));
+        }
+        if (url === '/api/architecture') {
+            const irPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'architecture', 'architecture-ir.json');
+            if (!fs.existsSync(irPath)) {
+                return send(200, { missing: true, hint: 'Run: mem architecture scan' });
+            }
+            return send(200, JSON.parse(fs.readFileSync(irPath, 'utf8')));
+        }
+        if (url === '/api/drift') {
+            const reportPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'architecture', 'drift-report.json');
+            if (!fs.existsSync(reportPath)) {
+                return send(200, { missing: true, hint: 'Run: mem architecture diff && mem plan gaps' });
+            }
+            return send(200, JSON.parse(fs.readFileSync(reportPath, 'utf8')));
         }
     } catch (error) {
         return send(500, { error: error.message });

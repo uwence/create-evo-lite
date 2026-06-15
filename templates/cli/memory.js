@@ -632,6 +632,7 @@ function buildProgram() {
 
     require('./planning').registerPlanCommands(program);
     require('./architecture').registerArchitectureCommands(program);
+    require('./dashboard-data').registerDashboardCommands(program);
 
     program.command('inspect')
         .description('Run the inspector HTTP server.')
