@@ -23,6 +23,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [2d9d54d] 2026-06-15 feat: Phase 3 architecture scanner complete. 9/14 dogfood tasks done. mem architecture scan: 9 modules, 34
 - [e3943e1] 2026-06-15 feat: Add /api/planning HTTP endpoint to inspector serving plan-ir.json. Add Planning nav tab with spec/pl
 - [0a7cbb9] 2026-06-15 feat: Add mem plan status and mem plan scan commands. Markdown parser reads docs/specs/ and docs/plans/ in
 - [a7a94f0] 2026-05-22 FTS5_Deplatform_Upgrade: 完成了 Evo-Lite 2.0 骨架架构重构与去平台化（De-platforming）。移除了 templates/ 下所有平台特定资产（如 .github, .codex, .claude 等），
@@ -32,7 +33,6 @@
 - [229889e] 2026-05-14 RecallFirstTakeover: Implemented bounded recall-first takeover for bootstrap, mirrored live/template runtime and tests, d
 - [1f8eb6c] 2026-05-13 BaselineInitCommit: Completed the fresh-repo bootstrap hardening pass for create-evo-lite. The scaffold entry now ensure
 - [bc1ae84] 2026-05-13 BootstrapFlowHardening: Closed the dogfood feedback loop for empty-repo onboarding and takeover friction. The scaffold now a
-- [39d7cfc] 2026-05-13 HookOwnershipBoundary: Completed the Evo-Lite hook-ownership boundary split for scaffolded host assets. Narrowed managed Gi
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
