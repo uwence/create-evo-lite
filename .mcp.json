@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "evo-lite": {
+      "command": "node",
+      "args": [".evo-lite/cli/memory.js", "mcp"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
