@@ -54,11 +54,11 @@ const TOOLS = [
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
-function handleRecall(args) {
+async function handleRecall(args) {
     const query = args.query || '';
     const k = Number(args.k) || 5;
-    const results = memoryService.recall({ query, k });
-    return { query, k, results };
+    const results = await memoryService.recall(query, k);
+    return { query, k, results: Array.isArray(results) ? results : [] };
 }
 
 function handleVerify() {
@@ -134,7 +134,7 @@ function handleActiveContext() {
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-function dispatch(name, args) {
+async function dispatch(name, args) {
     switch (name) {
         case 'evo_recall':            return handleRecall(args);
         case 'evo_verify':            return handleVerify();
@@ -149,6 +149,8 @@ function dispatch(name, args) {
 // ── Server bootstrap ──────────────────────────────────────────────────────────
 
 async function runMcpServer() {
+    try { require('./db').getDb(); } catch (_) {}
+
     const server = new Server(
         { name: 'evo-lite', version: require('../../package.json').version },
         { capabilities: { tools: {} } },
@@ -159,7 +161,7 @@ async function runMcpServer() {
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { name, arguments: args } = request.params;
         try {
-            const result = dispatch(name, args || {});
+            const result = await dispatch(name, args || {});
             return {
                 content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
             };

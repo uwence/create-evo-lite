@@ -1,0 +1,22 @@
+{
+  "_comment": "Evo-Lite MCP Server — Claude Code configuration sample.",
+  "_usage": "Copy the mcpServers block into .claude/settings.json in your project root.",
+  "_note": "cwd must point to the project root where .evo-lite/ exists. The server runs over stdio; no network socket is opened.",
+
+  "mcpServers": {
+    "evo-lite": {
+      "command": "node",
+      "args": [".evo-lite/cli/memory.js", "mcp"],
+      "cwd": "${workspaceRoot}"
+    }
+  },
+
+  "_tools": [
+    "evo_recall            — search memory archive (param: query, k)",
+    "evo_verify            — engine / namespace / safety snapshot",
+    "evo_plan_status       — planning IR: specs, plans, task progress",
+    "evo_architecture_status — architecture IR: modules, file counts",
+    "evo_drift_status      — live drift scan (arch + planning findings)",
+    "evo_active_context    — active_context.md: focus, backlog, trajectory"
+  ]
+}

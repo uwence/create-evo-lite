@@ -93,12 +93,12 @@ Excluded from MVP:
 
 ### Phase 3: Integration and docs
 
-- [ ] [task:add-mcp-claude-config-sample] Add Claude Code config sample to docs/
+- [x] [task:add-mcp-claude-config-sample] Add Claude Code config sample to docs/
   - files: docs/contracts/mcp-server-config-sample.json
   - verify: human review — config is valid JSON with correct mcpServers entry
   - acceptance: copy-paste ready for .claude/settings.json or claude_desktop_config.json
 
-- [ ] [task:validate-mcp-dogfood] Validate MCP server with Claude Code connection
+- [x] [task:validate-mcp-dogfood] Validate MCP server with Claude Code connection
   - files: .evo-lite/generated/mcp-validation.json
   - verify: Claude Code connects to mem mcp and successfully calls all six tools
   - acceptance: all tools return correct structured responses; no errors in MCP inspector
