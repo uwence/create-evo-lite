@@ -28,6 +28,26 @@ function extractTrajectory(markdown) {
         .filter(line => line.startsWith('-'));
 }
 
+function extractActiveContext(markdown) {
+    if (!markdown) return { meta: [], focus: '', backlog: [], trajectory: [] };
+    function extractBlock(tag) {
+        const m = markdown.match(new RegExp(`<!-- BEGIN_${tag} -->([\\s\\S]*?)<!-- END_${tag} -->`));
+        return m ? m[1] : '';
+    }
+    const meta = [];
+    for (const line of extractBlock('META').split('\n')) {
+        const m = line.match(/^>\s*\*\*(.+?)\*\*:\s*(.+)$/);
+        if (m) meta.push({ key: m[1], value: m[2].trim() });
+    }
+    const focus = extractBlock('FOCUS').trim();
+    const backlog = extractBlock('BACKLOG').split('\n')
+        .map(l => l.trim()).filter(l => l.startsWith('- '))
+        .map(l => ({ done: /^\- \[x\]/i.test(l), text: l.replace(/^\- \[[ xX]\]\s*/, '') }));
+    const trajectory = extractBlock('TRAJECTORY').split('\n')
+        .map(l => l.trim()).filter(l => l.startsWith('-'));
+    return { meta, focus, backlog, trajectory };
+}
+
 function listArchiveFiles() {
     const rawDir = getRawMemoryDir();
     const indexDir = getIndexMemoryDir();
@@ -123,9 +143,29 @@ async function load(name) {
   try {
     if (name === 'timeline') {
       const data = await api('/api/timeline');
-      target.innerHTML = '<h2>Trajectory</h2>' + (data.entries.length === 0
+      let html = '<h2>Active Context</h2>';
+      if (data.meta && data.meta.length) {
+        html += '<table style="margin-bottom:16px;opacity:0.7">';
+        for (const m of data.meta) {
+          html += '<tr><td style="white-space:nowrap;padding-right:20px">' + escapeHtml(m.key) + '</td><td>' + escapeHtml(m.value) + '</td></tr>';
+        }
+        html += '</table>';
+      }
+      if (data.focus) {
+        html += '<h3>Focus</h3><p class="ok" style="font-size:1.05em">' + escapeHtml(data.focus) + '</p>';
+      }
+      if (data.backlog && data.backlog.length) {
+        html += '<h3>Backlog (' + data.backlog.length + ')</h3><ul>';
+        for (const item of data.backlog) {
+          html += '<li class="' + (item.done ? 'ok' : 'pending') + '">' + escapeHtml(item.text) + '</li>';
+        }
+        html += '</ul>';
+      }
+      const traj = data.trajectory || [];
+      html += '<h3>Trajectory</h3>' + (traj.length === 0
         ? '<p>No trajectory entries.</p>'
-        : '<ol>' + data.entries.map(e => '<li>' + escapeHtml(e) + '</li>').join('') + '</ol>');
+        : '<ol>' + traj.map(e => '<li>' + escapeHtml(e) + '</li>').join('') + '</ol>');
+      target.innerHTML = html;
     } else if (name === 'planning') {
       const data = await api('/api/planning');
       if (data.missing) {
@@ -243,7 +283,7 @@ function handleApi(req, res) {
     try {
         if (url === '/api/timeline') {
             const md = readActiveContext();
-            return send(200, { entries: extractTrajectory(md) });
+            return send(200, extractActiveContext(md));
         }
         if (url === '/api/archive') {
             return send(200, { files: listArchiveFiles() });
@@ -351,6 +391,7 @@ async function runInspectCommand(options = {}) {
 module.exports = {
     buildVerifyJson,
     extractTrajectory,
+    extractActiveContext,
     listArchiveFiles,
     runInspectCommand,
     startServer,
