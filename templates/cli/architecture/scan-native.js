@@ -3,6 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 const { MODULE_RULES, inferModule } = require('./infer-modules');
+const { getEvoConfig } = require('../runtime');
+const { validateProvider } = require('./provider-contract');
 
 // Directories to walk (relative to project root).
 // Each entry: { dir, recursive }
@@ -35,6 +37,72 @@ function walkDir(absDir, recursive, projectRoot) {
         }
     }
     return results;
+}
+
+function loadProviders(projectRoot, warnings) {
+    const config = getEvoConfig();
+    const providerPaths = Array.isArray(config.providers) ? config.providers : [];
+    const loaded = [];
+
+    for (const relPath of providerPaths) {
+        let provider;
+        try {
+            const absPath = path.resolve(projectRoot, relPath);
+            provider = require(absPath);
+        } catch (e) {
+            warnings.push({ level: 'warning', rule: 'P001', message: `Provider load failed (${relPath}): ${e.message}` });
+            continue;
+        }
+
+        const validation = validateProvider(provider);
+        if (!validation.valid) {
+            warnings.push({ level: 'warning', rule: 'P001', message: `Provider at ${relPath} invalid contract: ${validation.error}` });
+            continue;
+        }
+
+        let available = false;
+        try { available = provider.check(); } catch (_) {}
+        if (!available) {
+            warnings.push({ level: 'info', rule: 'P002', message: `Provider ${provider.id} not available (check() false)` });
+            continue;
+        }
+
+        loaded.push(provider);
+    }
+
+    return loaded;
+}
+
+function mergeProviderIR(ir, providerResult) {
+    if (!providerResult || typeof providerResult !== 'object') return;
+
+    // Files: provider wins if confidence > native
+    if (Array.isArray(providerResult.files)) {
+        const fileMap = new Map(ir.files.map(f => [f.path, f]));
+        for (const pf of providerResult.files) {
+            const existing = fileMap.get(pf.path);
+            if (!existing || (pf.confidence || 0) > (existing.confidence || 0)) {
+                fileMap.set(pf.path, Object.assign({}, existing, pf));
+            }
+        }
+        ir.files = Array.from(fileMap.values());
+    }
+
+    // Modules: provider wins if confidence > native
+    if (Array.isArray(providerResult.modules)) {
+        const modMap = new Map(ir.modules.map(m => [m.id, m]));
+        for (const pm of providerResult.modules) {
+            const existing = modMap.get(pm.id);
+            if (!existing || (pm.confidence || 0) > (existing.confidence || 0)) {
+                modMap.set(pm.id, Object.assign({}, existing, pm));
+            }
+        }
+        ir.modules = Array.from(modMap.values());
+    }
+
+    // Edges and flows are purely additive
+    if (Array.isArray(providerResult.edges)) ir.edges = [...(ir.edges || []), ...providerResult.edges];
+    if (Array.isArray(providerResult.flows)) ir.flows = [...(ir.flows || []), ...providerResult.flows];
 }
 
 function scanArchitecture(projectRoot) {
@@ -91,7 +159,7 @@ function scanArchitecture(projectRoot) {
         }
     }
 
-    return {
+    const ir = {
         version: 'evo-arch-ir@1',
         generatedAt: new Date().toISOString(),
         project: { name: path.basename(projectRoot), root: '.' },
@@ -100,6 +168,20 @@ function scanArchitecture(projectRoot) {
         files: fileObjects,
         warnings,
     };
+
+    // Apply optional providers declared in .evo-lite/config.json
+    const providers = loadProviders(projectRoot, ir.warnings);
+    for (const provider of providers) {
+        try {
+            const providerResult = provider.scan(projectRoot, ir);
+            mergeProviderIR(ir, providerResult);
+            ir.provider = provider.id;
+        } catch (e) {
+            ir.warnings.push({ level: 'warning', rule: 'P003', message: `Provider ${provider.id} scan() threw: ${e.message}` });
+        }
+    }
+
+    return ir;
 }
 
 function writeArchitectureIR(ir, projectRoot) {

@@ -113,6 +113,16 @@ function getTemplateCliDir() {
     return null;
 }
 
+function getEvoConfig() {
+    const configPath = path.join(getRuntimeRoot(), 'config.json');
+    if (!fs.existsSync(configPath)) return { providers: [] };
+    try {
+        return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch (_) {
+        return { providers: [] };
+    }
+}
+
 function getTemplateRootDir() {
     const explicit = process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
     if (explicit) {
@@ -145,6 +155,7 @@ module.exports = {
     getCacheDir,
     getCliDir,
     getDbPath,
+    getEvoConfig,
     getIndexMemoryDir,
     getIndexStatePath,
     getLogPath,

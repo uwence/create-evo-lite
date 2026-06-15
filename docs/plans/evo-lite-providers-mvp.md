@@ -39,27 +39,30 @@ Excluded from MVP:
 
 ### Phase 0: Dogfood documents
 
-- [ ] [task:add-providers-spec] Create spec file at docs/specs/
+- [x] [task:add-providers-spec] Create spec file at docs/specs/
   - files: docs/specs/evo-lite-providers.md
   - verify: human review — spec is parseable and contains id, goal, non-goals, requirements, acceptance criteria
   - evidence: git:6581bbc
 
 ### Phase 1: Provider infrastructure
 
-- [ ] [task:add-provider-contract] Define provider contract module with JSDoc interface
+- [x] [task:add-provider-contract] Define provider contract module with JSDoc interface
   - files: templates/cli/architecture/provider-contract.js
   - verify: node -e "const c = require('./templates/cli/architecture/provider-contract'); console.log(c.PROVIDER_INTERFACE)"
   - acceptance: exports PROVIDER_INTERFACE spec and validateProvider() checker
+  - evidence: git:pending
 
-- [ ] [task:add-provider-config] Implement .evo-lite/config.json loading in runtime.js
+- [x] [task:add-provider-config] Implement .evo-lite/config.json loading in runtime.js
   - files: templates/cli/runtime.js
   - verify: node -e "const r = require('./.evo-lite/cli/runtime'); console.log(r.getEvoConfig())"
   - acceptance: returns parsed config or empty defaults when file absent; no error thrown
+  - evidence: git:pending
 
-- [ ] [task:add-provider-loader] Implement provider loader in scan-native.js
+- [x] [task:add-provider-loader] Implement provider loader in scan-native.js
   - files: templates/cli/architecture/scan-native.js
   - verify: mem architecture scan with no providers config → same output as before
   - acceptance: absent config.json → native-only; bad provider check() → warning + skip; scan() throw → warning + skip
+  - evidence: git:pending
 
 ### Phase 2: GitNexus provider
 
