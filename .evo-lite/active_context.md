@@ -21,6 +21,7 @@ Rollout Stage 5: Project Control Dashboard default-on. Post-MVP planning.
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [44945f4] 2026-06-15 mcp-phase1-2: MCP server Phase 0+1+2 complete. 9/11 tasks done. 6 tools implemented and smoke-tested over stdio. R
 - [3c1bfb6] 2026-06-15 stage5-upgrade: Two dogfood cycles complete. Rollout Stage 5: default-on.
 - [3c1bfb6] 2026-06-15 dogfood-cycle-2: Cycle 2 stable: verify clean, arch-diff 0, plan-gaps R010x1 info (expected). Stage 5 conditions met
 - [cff52cc] 2026-06-15 inspector-active-context: Active Context tab now shows META/Focus/Backlog/Trajectory. META slim: removed stale 更新时间+项目状态, keep
@@ -30,7 +31,6 @@ Rollout Stage 5: Project Control Dashboard default-on. Post-MVP planning.
 - [e314952] 2026-06-15 feat(dashboard) e314952: Phase 5 complete: dashboard build, Architecture+Drift inspector tabs, project_control verify field —
 - [afe43c2] 2026-06-15 feat: Phase 4 drift engine complete. mem architecture diff (R001,R002,R007) + mem plan gaps (R003-R010). S
 - [2d9d54d] 2026-06-15 feat: Phase 3 architecture scanner complete. 9/14 dogfood tasks done. mem architecture scan: 9 modules, 34
-- [e3943e1] 2026-06-15 feat: Add /api/planning HTTP endpoint to inspector serving plan-ir.json. Add Planning nav tab with spec/pl
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
