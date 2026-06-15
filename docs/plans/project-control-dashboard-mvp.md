@@ -80,11 +80,11 @@ Excluded from MVP:
 
 ### Phase 3: Native architecture scanner
 
-- [ ] [task:add-architecture-ir-schema] Define Architecture IR schema
+- [x] [task:add-architecture-ir-schema] Define Architecture IR schema
   - files: docs/contracts/architecture-ir.schema.md
   - verify: schema documents modules, files, edges, flows, providers, confidence
 
-- [ ] [task:add-architecture-scanner] Implement native architecture scanner
+- [x] [task:add-architecture-scanner] Implement native architecture scanner
   - files: templates/cli/architecture.js, templates/cli/architecture/scan-native.js, templates/cli/architecture/infer-modules.js, templates/cli/memory.js
   - verify: node .evo-lite/cli/memory.js architecture scan
   - acceptance: scanner identifies CLI/runtime area, memory service area, inspector area, template area, agents workflow area, docs planning area
