@@ -171,36 +171,69 @@ async function load(name) {
       if (data.missing) {
         target.innerHTML = '<h2>Planning</h2><p class="pending">No plan-ir.json found.</p><pre>' + escapeHtml(data.hint) + '</pre>';
       } else {
-        let html = '<h2>Planning <small style="opacity:0.5;font-size:0.8em">' + escapeHtml(data.version) + '</small></h2>';
-        for (const spec of (data.specs || [])) {
-          html += '<h3>Spec: ' + escapeHtml(spec.id) + ' <span class="' + (spec.status === 'planned' ? 'pending' : 'ok') + '">[' + escapeHtml(spec.status) + ']</span></h3>';
-          html += '<p style="opacity:0.7">' + escapeHtml(spec.sourcePath) + '</p>';
-          if (spec.linkedPlans && spec.linkedPlans.length) {
-            html += '<p>Linked plans: ' + spec.linkedPlans.map(p => escapeHtml(p)).join(', ') + '</p>';
-          }
-          if (spec.acceptanceCriteria && spec.acceptanceCriteria.length) {
-            html += '<details><summary>Acceptance criteria (' + spec.acceptanceCriteria.length + ')</summary><ul>' +
-              spec.acceptanceCriteria.map(c => '<li>' + escapeHtml(c) + '</li>').join('') + '</ul></details>';
-          }
-        }
-        for (const plan of (data.plans || [])) {
-          const planTasks = (data.tasks || []).filter(t => t.linkedPlan === plan.id);
+        const specs = data.specs || [];
+        const plans = data.plans || [];
+        const tasks = data.tasks || [];
+        const linkedPlanIds = new Set();
+
+        function renderPlan(plan) {
+          const planTasks = tasks.filter(t => t.linkedPlan === plan.id);
           const done = planTasks.filter(t => t.status === 'implemented').length;
-          html += '<h3>Plan: ' + escapeHtml(plan.id) + ' <span class="' + (done === planTasks.length ? 'ok' : 'pending') + '">' + done + '/' + planTasks.length + ' done</span></h3>';
-          html += '<p style="opacity:0.7">' + escapeHtml(plan.sourcePath) + '</p>';
+          const allDone = planTasks.length > 0 && done === planTasks.length;
+          let h = '<div style="margin:8px 0 8px 16px;padding:8px 12px;border-left:3px solid ' + (allDone ? '#34d399' : '#fbbf24') + '">';
+          h += '<strong>Plan: ' + escapeHtml(plan.id) + '</strong> ';
+          h += '<span class="' + (allDone ? 'ok' : 'pending') + '">' + done + '/' + planTasks.length + ' tasks done</span>';
+          h += ' <span style="opacity:0.5;font-size:0.85em">' + escapeHtml(plan.status) + '</span>';
+          h += '<br><span style="opacity:0.5;font-size:0.8em">' + escapeHtml(plan.sourcePath) + '</span>';
           if (planTasks.length) {
-            html += '<table><tr><th>Task</th><th>Status</th><th>Phase</th><th>Linked files</th></tr>';
+            h += '<details style="margin-top:6px"><summary style="cursor:pointer;opacity:0.7">Tasks (' + done + '/' + planTasks.length + ')</summary>';
+            h += '<table style="margin-top:6px"><tr><th>Task</th><th>Status</th><th>Phase</th><th>Linked files</th></tr>';
             for (const t of planTasks) {
               const cls = t.status === 'implemented' ? 'ok' : 'pending';
-              html += '<tr><td>' + escapeHtml(t.id) + '</td><td class="' + cls + '">' + escapeHtml(t.status) + '</td>';
-              html += '<td>' + escapeHtml(t.phase || '') + '</td>';
-              html += '<td>' + (t.linkedFiles || []).map(f => escapeHtml(f)).join('<br>') + '</td></tr>';
+              h += '<tr><td>' + escapeHtml(t.id) + '</td><td class="' + cls + '">' + escapeHtml(t.status) + '</td>';
+              h += '<td>' + escapeHtml(t.phase || '') + '</td>';
+              h += '<td style="font-size:0.8em;opacity:0.7">' + (t.linkedFiles || []).map(f => escapeHtml(f)).join('<br>') + '</td></tr>';
             }
-            html += '</table>';
+            h += '</table></details>';
           }
+          h += '</div>';
+          return h;
         }
+
+        let html = '<h2>Planning <small style="opacity:0.5;font-size:0.8em">' + escapeHtml(data.version) + '</small></h2>';
+
+        // Spec + linked plans grouped
+        for (const spec of specs) {
+          const specCls = spec.status === 'active' ? 'ok' : 'pending';
+          html += '<div style="margin-bottom:16px;border:1px solid #2a2f3a;border-radius:6px;padding:12px">';
+          html += '<div><strong style="font-size:1.05em">Spec: ' + escapeHtml(spec.id) + '</strong> ';
+          html += '<span class="' + specCls + '">[' + escapeHtml(spec.status) + ']</span>';
+          html += ' <span style="opacity:0.5;font-size:0.8em">' + escapeHtml(spec.sourcePath) + '</span></div>';
+          if (spec.acceptanceCriteria && spec.acceptanceCriteria.length) {
+            html += '<details style="margin-top:4px"><summary style="cursor:pointer;opacity:0.6;font-size:0.85em">Acceptance criteria (' + spec.acceptanceCriteria.length + ')</summary><ul style="margin:4px 0">' +
+              spec.acceptanceCriteria.map(c => '<li style="font-size:0.85em">' + escapeHtml(c) + '</li>').join('') + '</ul></details>';
+          }
+          // Linked plans
+          const linked = plans.filter(p => (spec.linkedPlans || []).includes(p.id));
+          for (const plan of linked) {
+            linkedPlanIds.add(plan.id);
+            html += renderPlan(plan);
+          }
+          if (linked.length === 0 && spec.linkedPlans && spec.linkedPlans.length) {
+            html += '<div style="margin:8px 0 0 16px;opacity:0.5;font-size:0.85em">⚠ Linked plan not found: ' + spec.linkedPlans.map(p => escapeHtml(p)).join(', ') + '</div>';
+          }
+          html += '</div>';
+        }
+
+        // Orphan plans (not linked to any spec)
+        const orphans = plans.filter(p => !linkedPlanIds.has(p.id));
+        if (orphans.length) {
+          html += '<h3 style="opacity:0.7">Unlinked plans</h3>';
+          for (const plan of orphans) html += renderPlan(plan);
+        }
+
         if (data.warnings && data.warnings.length) {
-          html += '<details><summary>Warnings (' + data.warnings.length + ')</summary><ul>' +
+          html += '<details style="margin-top:12px"><summary>Warnings (' + data.warnings.length + ')</summary><ul>' +
             data.warnings.map(w => '<li class="' + (w.level === 'error' ? 'err' : 'pending') + '">[' + escapeHtml(w.level || 'warn') + '] ' + escapeHtml(w.message) + '</li>').join('') + '</ul></details>';
         }
         target.innerHTML = html;
