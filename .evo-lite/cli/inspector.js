@@ -10,7 +10,7 @@ const path = require('path');
 const memoryService = require('./memory.service');
 const { closeDb, getDb, getNamespaceCounts, getNamespaces, tableExists } = require('./db');
 const { getActiveEngineInfo } = require('./models');
-const { getActiveContextPath, getIndexMemoryDir, getRawMemoryDir } = require('./runtime');
+const { getActiveContextPath, getIndexMemoryDir, getRawMemoryDir, getWorkspaceRoot } = require('./runtime');
 
 function readActiveContext() {
     const p = getActiveContextPath();
@@ -87,6 +87,7 @@ function renderHtml() {
   <strong>Evo-Lite Inspector</strong> · <span style="opacity:0.6">read-only · 127.0.0.1 only</span>
   <nav style="margin-top:8px">
     <button data-tab="timeline" class="active">Active context</button>
+    <button data-tab="planning">Planning</button>
     <button data-tab="archive">Archive</button>
     <button data-tab="indexes">Index spaces</button>
     <button data-tab="verify">Verify</button>
@@ -94,6 +95,7 @@ function renderHtml() {
 </header>
 <main>
   <section id="tab-timeline"></section>
+  <section id="tab-planning" hidden></section>
   <section id="tab-archive" hidden></section>
   <section id="tab-indexes" hidden></section>
   <section id="tab-verify" hidden></section>
@@ -120,6 +122,45 @@ async function load(name) {
       target.innerHTML = '<h2>Trajectory</h2>' + (data.entries.length === 0
         ? '<p>No trajectory entries.</p>'
         : '<ol>' + data.entries.map(e => '<li>' + escapeHtml(e) + '</li>').join('') + '</ol>');
+    } else if (name === 'planning') {
+      const data = await api('/api/planning');
+      if (data.missing) {
+        target.innerHTML = '<h2>Planning</h2><p class="pending">No plan-ir.json found.</p><pre>' + escapeHtml(data.hint) + '</pre>';
+      } else {
+        let html = '<h2>Planning <small style="opacity:0.5;font-size:0.8em">' + escapeHtml(data.version) + '</small></h2>';
+        for (const spec of (data.specs || [])) {
+          html += '<h3>Spec: ' + escapeHtml(spec.id) + ' <span class="' + (spec.status === 'planned' ? 'pending' : 'ok') + '">[' + escapeHtml(spec.status) + ']</span></h3>';
+          html += '<p style="opacity:0.7">' + escapeHtml(spec.sourcePath) + '</p>';
+          if (spec.linkedPlans && spec.linkedPlans.length) {
+            html += '<p>Linked plans: ' + spec.linkedPlans.map(p => escapeHtml(p)).join(', ') + '</p>';
+          }
+          if (spec.acceptanceCriteria && spec.acceptanceCriteria.length) {
+            html += '<details><summary>Acceptance criteria (' + spec.acceptanceCriteria.length + ')</summary><ul>' +
+              spec.acceptanceCriteria.map(c => '<li>' + escapeHtml(c) + '</li>').join('') + '</ul></details>';
+          }
+        }
+        for (const plan of (data.plans || [])) {
+          const planTasks = (data.tasks || []).filter(t => t.linkedPlan === plan.id);
+          const done = planTasks.filter(t => t.status === 'implemented').length;
+          html += '<h3>Plan: ' + escapeHtml(plan.id) + ' <span class="' + (done === planTasks.length ? 'ok' : 'pending') + '">' + done + '/' + planTasks.length + ' done</span></h3>';
+          html += '<p style="opacity:0.7">' + escapeHtml(plan.sourcePath) + '</p>';
+          if (planTasks.length) {
+            html += '<table><tr><th>Task</th><th>Status</th><th>Phase</th><th>Linked files</th></tr>';
+            for (const t of planTasks) {
+              const cls = t.status === 'implemented' ? 'ok' : 'pending';
+              html += '<tr><td>' + escapeHtml(t.id) + '</td><td class="' + cls + '">' + escapeHtml(t.status) + '</td>';
+              html += '<td>' + escapeHtml(t.phase || '') + '</td>';
+              html += '<td>' + (t.linkedFiles || []).map(f => escapeHtml(f)).join('<br>') + '</td></tr>';
+            }
+            html += '</table>';
+          }
+        }
+        if (data.warnings && data.warnings.length) {
+          html += '<details><summary>Warnings (' + data.warnings.length + ')</summary><ul>' +
+            data.warnings.map(w => '<li class="' + (w.level === 'error' ? 'err' : 'pending') + '">[' + escapeHtml(w.level || 'warn') + '] ' + escapeHtml(w.message) + '</li>').join('') + '</ul></details>';
+        }
+        target.innerHTML = html;
+      }
     } else if (name === 'archive') {
       const data = await api('/api/archive');
       target.innerHTML = '<h2>Archive (' + data.files.length + ')</h2><table><tr><th>File</th><th>Indexed</th></tr>' +
@@ -167,6 +208,13 @@ function handleApi(req, res) {
         }
         if (url === '/api/verify') {
             return send(200, buildVerifyJson());
+        }
+        if (url === '/api/planning') {
+            const irPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            if (!fs.existsSync(irPath)) {
+                return send(200, { missing: true, hint: 'Run: mem plan scan' });
+            }
+            return send(200, JSON.parse(fs.readFileSync(irPath, 'utf8')));
         }
     } catch (error) {
         return send(500, { error: error.message });

@@ -73,7 +73,7 @@ Excluded from MVP:
 
 ### Phase 2: Inspector Plan tab
 
-- [ ] [task:add-inspector-plan-tab] Add Plan tab to inspector HTML
+- [x] [task:add-inspector-plan-tab] Add Plan tab to inspector HTML
   - files: templates/cli/inspector.js
   - verify: node .evo-lite/cli/memory.js inspect
   - acceptance: dashboard shows spec, MVP plan, task list, task statuses, linked files; missing generated data shows command hints
