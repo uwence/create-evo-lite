@@ -23,6 +23,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [0a7cbb9] 2026-06-15 feat: Add mem plan status and mem plan scan commands. Markdown parser reads docs/specs/ and docs/plans/ in
 - [a7a94f0] 2026-05-22 FTS5_Deplatform_Upgrade: 完成了 Evo-Lite 2.0 骨架架构重构与去平台化（De-platforming）。移除了 templates/ 下所有平台特定资产（如 .github, .codex, .claude 等），
 - [45977cb] 2026-05-14 HookProvenanceSidecar: Stabilized the Codex stop-hook JSON contract, synced the managed workflow templates back into the tr
 - [77f9a5a] 2026-05-14 WorkflowClosureHardening: Completed the managed template manifest pass, expanded recall-first takeover matching with alias/rul
@@ -32,7 +33,6 @@
 - [bc1ae84] 2026-05-13 BootstrapFlowHardening: Closed the dogfood feedback loop for empty-repo onboarding and takeover friction. The scaffold now a
 - [39d7cfc] 2026-05-13 HookOwnershipBoundary: Completed the Evo-Lite hook-ownership boundary split for scaffolded host assets. Narrowed managed Gi
 - [62e6dda] 2026-05-13 RuntimeBoundaryGuardrails: Added session_events observability as non-durable telemetry, introduced context events read path, an
-- [daf68c1] 2026-05-13 GitNexusLocalHookRefresh: Switched the Codex GitNexus post-tool hook from localhost-service-first behavior to a local-CLI-firs
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
