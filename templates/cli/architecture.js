@@ -59,6 +59,32 @@ function registerArchitectureCommands(program) {
             console.log(formatIRSummary(ir));
             console.log(`\nWritten: ${outPath}`);
         });
+
+    arch.command('diff')
+        .description('Run architecture drift checks (R001, R002, R007), write drift-report.json.')
+        .action(async () => {
+            const { runArchitectureDrift, loadReport, saveReport, mergeFindings } = require('./architecture/diff');
+            const archIRPath = path.join(projectRoot, '.evo-lite', 'generated', 'architecture', 'architecture-ir.json');
+            const archIR = fs.existsSync(archIRPath) ? JSON.parse(fs.readFileSync(archIRPath, 'utf8')) : null;
+
+            console.log('Running architecture drift checks...\n');
+            const newFindings = runArchitectureDrift(projectRoot, archIR);
+
+            const existing = loadReport(projectRoot);
+            existing.findings = mergeFindings(existing.findings, newFindings, 'architecture');
+            existing.project = { name: path.basename(projectRoot), root: '.' };
+            const outPath = saveReport(projectRoot, existing);
+
+            if (newFindings.length === 0) {
+                console.log('No architecture drift findings.');
+            } else {
+                for (const f of newFindings) {
+                    console.log(`[${f.level}] ${f.rule}: ${f.message}`);
+                    if (f.suggestedAction) console.log(`  → ${f.suggestedAction}`);
+                }
+            }
+            console.log(`\nWritten: ${outPath}`);
+        });
 }
 
 module.exports = { registerArchitectureCommands };

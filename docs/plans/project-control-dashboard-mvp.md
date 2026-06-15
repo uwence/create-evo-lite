@@ -91,11 +91,11 @@ Excluded from MVP:
 
 ### Phase 4: Drift MVP
 
-- [ ] [task:add-drift-report-schema] Define Drift Report schema
+- [x] [task:add-drift-report-schema] Define Drift Report schema
   - files: docs/contracts/drift-report.schema.md
   - verify: schema documents findings, severity, type, rule id, evidence
 
-- [ ] [task:add-drift-engine] Implement drift engine (R001–R010)
+- [x] [task:add-drift-engine] Implement drift engine (R001–R010)
   - files: templates/cli/architecture/diff.js, templates/cli/planning/gaps.js
   - verify: node .evo-lite/cli/memory.js architecture diff && node .evo-lite/cli/memory.js plan gaps
   - acceptance: detects R001–R010 where applicable; writes drift-report.json

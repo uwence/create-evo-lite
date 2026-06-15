@@ -65,6 +65,34 @@ function registerPlanCommands(program) {
             console.log(formatIRSummary(ir));
             console.log(`\nWritten: ${outPath}`);
         });
+
+    plan.command('gaps')
+        .description('Run planning drift checks (R003–R010), write drift-report.json.')
+        .action(async () => {
+            const { runPlanningDrift } = require('./planning/gaps');
+            const { loadReport, saveReport, mergeFindings } = require('./architecture/diff');
+            const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            const planIR = fs.existsSync(irPath) ? JSON.parse(fs.readFileSync(irPath, 'utf8')) : null;
+            if (!planIR) console.log('No plan-ir.json found. Run: mem plan scan first.\n');
+
+            console.log('Running planning drift checks...\n');
+            const newFindings = runPlanningDrift(projectRoot, planIR);
+
+            const existing = loadReport(projectRoot);
+            existing.findings = mergeFindings(existing.findings, newFindings, 'planning');
+            existing.project = { name: path.basename(projectRoot), root: '.' };
+            const outPath = saveReport(projectRoot, existing);
+
+            if (newFindings.length === 0) {
+                console.log('No planning drift findings.');
+            } else {
+                for (const f of newFindings) {
+                    console.log(`[${f.level}] ${f.rule}: ${f.message}`);
+                    if (f.suggestedAction) console.log(`  → ${f.suggestedAction}`);
+                }
+            }
+            console.log(`\nWritten: ${outPath}`);
+        });
 }
 
 module.exports = { registerPlanCommands };
