@@ -630,6 +630,8 @@ function buildProgram() {
         await runContextCommand('focus', text, options);
     });
 
+    require('./planning').registerPlanCommands(program);
+
     program.command('inspect')
         .description('Run the inspector HTTP server.')
         .option('--port <port>', 'Preferred port', value => parseInt(value, 10), 0)

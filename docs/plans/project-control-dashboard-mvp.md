@@ -55,20 +55,20 @@ Excluded from MVP:
 
 ### Phase 1: Planning scanner
 
-- [ ] [task:add-planning-ir-schema] Define Planning IR schema
+- [x] [task:add-planning-ir-schema] Define Planning IR schema
   - files: docs/contracts/planning-ir.schema.md
   - verify: schema documents specs, plans, tasks, evidence, confidence, warnings
 
-- [ ] [task:add-plan-command-skeleton] Add plan command skeleton to memory CLI
+- [x] [task:add-plan-command-skeleton] Add plan command skeleton to memory CLI
   - files: templates/cli/planning.js, templates/cli/memory.js
   - verify: node .evo-lite/cli/memory.js plan status
 
-- [ ] [task:add-markdown-parser] Implement Markdown planning parser
+- [x] [task:add-markdown-parser] Implement Markdown planning parser
   - files: templates/cli/planning/parse-markdown.js, templates/cli/planning/scan.js
   - verify: node .evo-lite/cli/memory.js plan scan
   - acceptance: parses frontmatter, H1 title, checkbox tasks, [task:id] notation, linked files, verify lines
 
-- [ ] [task:validate-plan-dogfood] Validate planning scanner against dogfood
+- [x] [task:validate-plan-dogfood] Validate planning scanner against dogfood
   - verify: plan-ir.json contains spec:project-control-dashboard and this plan's tasks
 
 ### Phase 2: Inspector Plan tab
