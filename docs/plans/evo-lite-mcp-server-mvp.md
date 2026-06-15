@@ -53,11 +53,13 @@ Excluded from MVP:
   - files: package.json
   - verify: node -e "require('@modelcontextprotocol/sdk/server/index.js')"
   - acceptance: SDK importable; no runtime errors
+  - evidence: git:44945f4
 
 - [x] [task:add-mcp-server-module] Implement mcp-server.js with stdio transport and tool registry
   - files: templates/cli/mcp-server.js, templates/cli/memory.js
   - verify: echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}' | node .evo-lite/cli/memory.js mcp
   - acceptance: server responds with valid MCP initialize response; exits cleanly on SIGINT
+  - evidence: git:44945f4
 
 ### Phase 2: Tool implementations
 
@@ -65,31 +67,37 @@ Excluded from MVP:
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_recall with query returns recall hits array
   - acceptance: same results as mem recall for identical query
+  - evidence: git:44945f4
 
 - [x] [task:add-mcp-tool-verify] Implement evo_verify tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_verify returns verify snapshot JSON
   - acceptance: matches output of buildVerifyJson()
+  - evidence: git:44945f4
 
 - [x] [task:add-mcp-tool-plan-status] Implement evo_plan_status tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_plan_status returns planning IR summary
   - acceptance: spec count, plan count, task counts correct
+  - evidence: git:44945f4
 
 - [x] [task:add-mcp-tool-architecture-status] Implement evo_architecture_status tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_architecture_status returns module list
   - acceptance: module count matches mem architecture status output
+  - evidence: git:44945f4
 
 - [x] [task:add-mcp-tool-drift-status] Implement evo_drift_status tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_drift_status returns findings array and summary
   - acceptance: live scan; no stale data
+  - evidence: git:44945f4
 
 - [x] [task:add-mcp-tool-active-context] Implement evo_active_context tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_active_context returns meta, focus, backlog, trajectory
   - acceptance: matches extractActiveContext() output
+  - evidence: git:44945f4
 
 ### Phase 3: Integration and docs
 
@@ -97,11 +105,13 @@ Excluded from MVP:
   - files: docs/contracts/mcp-server-config-sample.json
   - verify: human review — config is valid JSON with correct mcpServers entry
   - acceptance: copy-paste ready for .claude/settings.json or claude_desktop_config.json
+  - evidence: git:67d3ce7
 
 - [x] [task:validate-mcp-dogfood] Validate MCP server with Claude Code connection
   - files: .evo-lite/generated/mcp-validation.json
   - verify: Claude Code connects to mem mcp and successfully calls all six tools
   - acceptance: all tools return correct structured responses; no errors in MCP inspector
+  - evidence: git:67d3ce7
 
 ## Rollout Stages
 
