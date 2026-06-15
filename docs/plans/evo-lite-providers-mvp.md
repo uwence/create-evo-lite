@@ -66,15 +66,17 @@ Excluded from MVP:
 
 ### Phase 2: GitNexus provider
 
-- [ ] [task:add-gitnexus-provider] Implement GitNexus provider module
+- [x] [task:add-gitnexus-provider] Implement GitNexus provider module
   - files: templates/cli/architecture/providers/gitnexus.js
   - verify: node -e "const p = require('./templates/cli/architecture/providers/gitnexus'); console.log(p.check())"
   - acceptance: check() returns false when GitNexus MCP not active (no crash); when active, scan() returns module enrichment with higher confidence
+  - evidence: git:pending
 
-- [ ] [task:validate-gitnexus-dogfood] Validate GitNexus provider against create-evo-lite index
+- [x] [task:validate-gitnexus-dogfood] Validate GitNexus provider against create-evo-lite index
   - files: .evo-lite/generated/architecture/architecture-ir.json
   - verify: mem architecture scan with gitnexus provider active → modules show elevated confidence
   - acceptance: at least one module has confidence > 0.8 from GitNexus; no provider errors logged
+  - evidence: git:pending
 
 ### Phase 3: GitHub Issues provider
 

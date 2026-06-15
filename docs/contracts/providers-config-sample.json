@@ -1,0 +1,5 @@
+{
+  "providers": [
+    "./.evo-lite/cli/architecture/providers/gitnexus.js"
+  ]
+}
