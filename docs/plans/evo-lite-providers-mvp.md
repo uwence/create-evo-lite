@@ -50,19 +50,19 @@ Excluded from MVP:
   - files: templates/cli/architecture/provider-contract.js
   - verify: node -e "const c = require('./templates/cli/architecture/provider-contract'); console.log(c.PROVIDER_INTERFACE)"
   - acceptance: exports PROVIDER_INTERFACE spec and validateProvider() checker
-  - evidence: git:pending
+  - evidence: git:9b1f3e3
 
 - [x] [task:add-provider-config] Implement .evo-lite/config.json loading in runtime.js
   - files: templates/cli/runtime.js
   - verify: node -e "const r = require('./.evo-lite/cli/runtime'); console.log(r.getEvoConfig())"
   - acceptance: returns parsed config or empty defaults when file absent; no error thrown
-  - evidence: git:pending
+  - evidence: git:9b1f3e3
 
 - [x] [task:add-provider-loader] Implement provider loader in scan-native.js
   - files: templates/cli/architecture/scan-native.js
   - verify: mem architecture scan with no providers config → same output as before
   - acceptance: absent config.json → native-only; bad provider check() → warning + skip; scan() throw → warning + skip
-  - evidence: git:pending
+  - evidence: git:9b1f3e3
 
 ### Phase 2: GitNexus provider
 
