@@ -11,18 +11,19 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-完成 live runtime hook dogfood 验证，并收口 Codex 工作流语义澄清相关改动；确认 AGENTS.md / README / runtime hooks 路径一致后进入提交准备。
+Project Control Dashboard MVP — all 14 tasks complete, now in dogfood observation cycle (Rollout Stage 4→5)
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] 暂无活跃任务。
+- [ ] [2c4d] Observe Rollout Stage 4→5: two stable dogfood cycles before default-on
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [665815b] 2026-06-15 fix(drift) 665815b: Drift cleanup complete: R005/R007/R008/R009/R010 resolved; only R006 (auto-clears on commit) and R01
 - [a5bd27e] 2026-06-15 fix(inspector) a5bd27e: Fix inspector stale-data bug: APIs now run live in-memory scan on every request — no manual rescan n
 - [e314952] 2026-06-15 feat(dashboard) e314952: Phase 5 complete: dashboard build, Architecture+Drift inspector tabs, project_control verify field —
 - [afe43c2] 2026-06-15 feat: Phase 4 drift engine complete. mem architecture diff (R001,R002,R007) + mem plan gaps (R003-R010). S
@@ -32,7 +33,6 @@
 - [a7a94f0] 2026-05-22 FTS5_Deplatform_Upgrade: 完成了 Evo-Lite 2.0 骨架架构重构与去平台化（De-platforming）。移除了 templates/ 下所有平台特定资产（如 .github, .codex, .claude 等），
 - [45977cb] 2026-05-14 HookProvenanceSidecar: Stabilized the Codex stop-hook JSON contract, synced the managed workflow templates back into the tr
 - [77f9a5a] 2026-05-14 WorkflowClosureHardening: Completed the managed template manifest pass, expanded recall-first takeover matching with alias/rul
-- [4093d9c] 2026-05-14 WorkflowTemplateSync: Aligned root and template /evo workflow content, added .agents/workflows/evo.md to managed template-
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
