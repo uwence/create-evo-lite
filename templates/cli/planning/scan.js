@@ -3,11 +3,59 @@
 const fs = require('fs');
 const path = require('path');
 const { parseSpecFile, parsePlanFile } = require('./parse-markdown');
+const { getEvoConfig } = require('../runtime');
+const { validateProvider } = require('../architecture/provider-contract');
 
 const SCAN_DIRS = {
     specs: ['docs/specs', 'docs/superpowers/specs'],
     plans: ['docs/plans', 'docs/superpowers/plans'],
 };
+
+function loadPlanningProviders(projectRoot, warnings) {
+    const config = getEvoConfig();
+    const providerPaths = Array.isArray(config.providers) ? config.providers : [];
+    const loaded = [];
+
+    for (const relPath of providerPaths) {
+        let provider;
+        try {
+            provider = require(path.resolve(projectRoot, relPath));
+        } catch (e) {
+            warnings.push({ level: 'warning', rule: 'P001', message: `Planning provider load failed (${relPath}): ${e.message}` });
+            continue;
+        }
+
+        const v = validateProvider(provider);
+        if (!v.valid) {
+            warnings.push({ level: 'warning', rule: 'P001', message: `Provider at ${relPath} invalid contract: ${v.error}` });
+            continue;
+        }
+
+        if (typeof provider.scanPlanning !== 'function') continue;
+
+        let available = false;
+        try { available = provider.check(); } catch (_) {}
+        if (!available) {
+            warnings.push({ level: 'info', rule: 'P002', message: `Provider ${provider.id} not available (check() false)` });
+            continue;
+        }
+
+        loaded.push(provider);
+    }
+
+    return loaded;
+}
+
+function mergePlanningProviderResult(ir, enriched, warnings) {
+    if (!enriched || !Array.isArray(enriched.tasks)) return;
+    const taskMap = new Map(ir.tasks.map(t => [t.id, t]));
+    for (const et of enriched.tasks) {
+        if (taskMap.has(et.id)) {
+            taskMap.set(et.id, Object.assign({}, taskMap.get(et.id), et));
+        }
+    }
+    ir.tasks = Array.from(taskMap.values());
+}
 
 function collectMarkdownFiles(dirs, projectRoot) {
     const files = [];
@@ -85,7 +133,7 @@ function scanPlanning(projectRoot) {
         }
     }
 
-    return {
+    const ir = {
         version: 'evo-plan-ir@1',
         generatedAt: new Date().toISOString(),
         project: { name: path.basename(projectRoot), root: '.' },
@@ -95,6 +143,19 @@ function scanPlanning(projectRoot) {
         tasks,
         warnings,
     };
+
+    // Apply optional planning providers declared in .evo-lite/config.json
+    const planningProviders = loadPlanningProviders(projectRoot, ir.warnings);
+    for (const provider of planningProviders) {
+        try {
+            const enriched = provider.scanPlanning(projectRoot, ir);
+            mergePlanningProviderResult(ir, enriched, ir.warnings);
+        } catch (e) {
+            ir.warnings.push({ level: 'warning', rule: 'P003', message: `Provider ${provider.id} scanPlanning() threw: ${e.message}` });
+        }
+    }
+
+    return ir;
 }
 
 function writePlanIR(ir, projectRoot) {
