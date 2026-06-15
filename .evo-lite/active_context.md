@@ -23,6 +23,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [a5bd27e] 2026-06-15 fix(inspector) a5bd27e: Fix inspector stale-data bug: APIs now run live in-memory scan on every request — no manual rescan n
 - [e314952] 2026-06-15 feat(dashboard) e314952: Phase 5 complete: dashboard build, Architecture+Drift inspector tabs, project_control verify field —
 - [afe43c2] 2026-06-15 feat: Phase 4 drift engine complete. mem architecture diff (R001,R002,R007) + mem plan gaps (R003-R010). S
 - [2d9d54d] 2026-06-15 feat: Phase 3 architecture scanner complete. 9/14 dogfood tasks done. mem architecture scan: 9 modules, 34
@@ -32,7 +33,6 @@
 - [45977cb] 2026-05-14 HookProvenanceSidecar: Stabilized the Codex stop-hook JSON contract, synced the managed workflow templates back into the tr
 - [77f9a5a] 2026-05-14 WorkflowClosureHardening: Completed the managed template manifest pass, expanded recall-first takeover matching with alias/rul
 - [4093d9c] 2026-05-14 WorkflowTemplateSync: Aligned root and template /evo workflow content, added .agents/workflows/evo.md to managed template-
-- [229889e] 2026-05-14 RecallFirstTakeover: Implemented bounded recall-first takeover for bootstrap, mirrored live/template runtime and tests, d
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
