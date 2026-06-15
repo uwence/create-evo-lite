@@ -73,7 +73,7 @@ function scanPlanning(projectRoot) {
                         linkedPlan: plan.id,
                         linkedFiles: task.linkedFiles || [],
                         verify: task.verify || [],
-                        evidence: [],
+                        evidence: task.evidence || [],
                         confidence: task.status === 'implemented' ? 1.0 : 0.0,
                     });
                 }

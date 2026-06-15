@@ -53,6 +53,14 @@ const MODULE_RULES = [
         confidence: 1.0,
     },
     {
+        id: 'module:dashboard',
+        name: 'Dashboard',
+        description: 'Dashboard data aggregator: merges plan-ir, architecture-ir, drift-report into dashboard-data.json',
+        paths: ['templates/cli/dashboard-data.js'],
+        role: 'feature',
+        confidence: 1.0,
+    },
+    {
         id: 'module:runtime',
         name: 'Runtime',
         description: 'Infrastructure: path resolution, DB, models, safety, recall-rules, template-manifest',

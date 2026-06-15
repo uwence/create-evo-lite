@@ -48,6 +48,7 @@ function parseTaskAttrs(lines) {
     let linkedFiles = [];
     let verify = [];
     let acceptance = null;
+    let evidence = [];
 
     for (const line of lines) {
         const clean = line.trim();
@@ -57,10 +58,12 @@ function parseTaskAttrs(lines) {
             verify.push(clean.slice('- verify:'.length).trim());
         } else if (clean.startsWith('- acceptance:')) {
             acceptance = clean.slice('- acceptance:'.length).trim();
+        } else if (clean.startsWith('- evidence:')) {
+            evidence.push(clean.slice('- evidence:'.length).trim());
         }
     }
 
-    return { linkedFiles, verify, acceptance };
+    return { linkedFiles, verify, acceptance, evidence };
 }
 
 function extractTasks(body) {
@@ -104,6 +107,7 @@ function extractTasks(body) {
                 linkedFiles: attrs.linkedFiles,
                 verify: attrs.verify,
                 acceptance: attrs.acceptance,
+                evidence: attrs.evidence,
             });
             i = j;
             continue;

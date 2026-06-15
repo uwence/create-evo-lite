@@ -48,28 +48,35 @@ Excluded from MVP:
 - [x] [task:add-dogfood-spec] Create spec file at docs/specs/
   - files: docs/specs/project-control-dashboard.md
   - verify: human review — spec is parseable and contains id, goal, non-goals, requirements, acceptance criteria
+  - evidence: git:98940b7
 
 - [x] [task:add-dogfood-plan] Create MVP plan file at docs/plans/
   - files: docs/plans/project-control-dashboard-mvp.md
   - verify: human review — plan follows Markdown conventions, tasks have ids and linked files
+  - evidence: git:98940b7
 
 ### Phase 1: Planning scanner
 
 - [x] [task:add-planning-ir-schema] Define Planning IR schema
   - files: docs/contracts/planning-ir.schema.md
   - verify: schema documents specs, plans, tasks, evidence, confidence, warnings
+  - evidence: git:0a7cbb9
 
 - [x] [task:add-plan-command-skeleton] Add plan command skeleton to memory CLI
   - files: templates/cli/planning.js, templates/cli/memory.js
   - verify: node .evo-lite/cli/memory.js plan status
+  - evidence: git:0a7cbb9
 
 - [x] [task:add-markdown-parser] Implement Markdown planning parser
   - files: templates/cli/planning/parse-markdown.js, templates/cli/planning/scan.js
   - verify: node .evo-lite/cli/memory.js plan scan
   - acceptance: parses frontmatter, H1 title, checkbox tasks, [task:id] notation, linked files, verify lines
+  - evidence: git:0a7cbb9
 
 - [x] [task:validate-plan-dogfood] Validate planning scanner against dogfood
+  - files: .evo-lite/generated/planning/plan-ir.json
   - verify: plan-ir.json contains spec:project-control-dashboard and this plan's tasks
+  - evidence: git:0a7cbb9
 
 ### Phase 2: Inspector Plan tab
 
@@ -77,28 +84,33 @@ Excluded from MVP:
   - files: templates/cli/inspector.js
   - verify: node .evo-lite/cli/memory.js inspect
   - acceptance: dashboard shows spec, MVP plan, task list, task statuses, linked files; missing generated data shows command hints
+  - evidence: git:e3943e1
 
 ### Phase 3: Native architecture scanner
 
 - [x] [task:add-architecture-ir-schema] Define Architecture IR schema
   - files: docs/contracts/architecture-ir.schema.md
   - verify: schema documents modules, files, edges, flows, providers, confidence
+  - evidence: git:97faa9e
 
 - [x] [task:add-architecture-scanner] Implement native architecture scanner
   - files: templates/cli/architecture.js, templates/cli/architecture/scan-native.js, templates/cli/architecture/infer-modules.js, templates/cli/memory.js
   - verify: node .evo-lite/cli/memory.js architecture scan
   - acceptance: scanner identifies CLI/runtime area, memory service area, inspector area, template area, agents workflow area, docs planning area
+  - evidence: git:97faa9e
 
 ### Phase 4: Drift MVP
 
 - [x] [task:add-drift-report-schema] Define Drift Report schema
   - files: docs/contracts/drift-report.schema.md
   - verify: schema documents findings, severity, type, rule id, evidence
+  - evidence: git:afe43c2
 
 - [x] [task:add-drift-engine] Implement drift engine (R001–R010)
   - files: templates/cli/architecture/diff.js, templates/cli/planning/gaps.js
   - verify: node .evo-lite/cli/memory.js architecture diff && node .evo-lite/cli/memory.js plan gaps
   - acceptance: detects R001–R010 where applicable; writes drift-report.json
+  - evidence: git:afe43c2
 
 ### Phase 5: Dashboard build
 
@@ -106,16 +118,19 @@ Excluded from MVP:
   - files: templates/cli/dashboard-data.js, templates/cli/memory.js
   - verify: node .evo-lite/cli/memory.js dashboard build
   - acceptance: generates dashboard-data.json; inspector reads this file instead of re-running scan logic
+  - evidence: git:e314952
 
 - [x] [task:add-inspector-architecture-drift-tabs] Add Architecture and Drift tabs to inspector
   - files: templates/cli/inspector.js
   - verify: node .evo-lite/cli/memory.js inspect
   - acceptance: Architecture and Drift panels visible; existing timeline/verify endpoints unchanged
+  - evidence: git:e314952
 
 - [x] [task:add-verify-control-status] Extend verify to report project_control status
   - files: templates/cli/memory.service.js
   - verify: node .evo-lite/cli/memory.js verify
   - acceptance: verify reports project_control status without running expensive scans
+  - evidence: git:e314952
 
 ## Rollout Stages
 
