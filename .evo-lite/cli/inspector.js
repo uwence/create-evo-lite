@@ -252,25 +252,35 @@ function handleApi(req, res) {
             return send(200, buildVerifyJson());
         }
         if (url === '/api/planning') {
-            const irPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'planning', 'plan-ir.json');
-            if (!fs.existsSync(irPath)) {
-                return send(200, { missing: true, hint: 'Run: mem plan scan' });
-            }
-            return send(200, JSON.parse(fs.readFileSync(irPath, 'utf8')));
+            const { scanPlanning } = require('./planning/scan');
+            return send(200, scanPlanning(getWorkspaceRoot()));
         }
         if (url === '/api/architecture') {
-            const irPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'architecture', 'architecture-ir.json');
-            if (!fs.existsSync(irPath)) {
-                return send(200, { missing: true, hint: 'Run: mem architecture scan' });
-            }
-            return send(200, JSON.parse(fs.readFileSync(irPath, 'utf8')));
+            const { scanArchitecture } = require('./architecture/scan-native');
+            return send(200, scanArchitecture(getWorkspaceRoot()));
         }
         if (url === '/api/drift') {
-            const reportPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'architecture', 'drift-report.json');
-            if (!fs.existsSync(reportPath)) {
-                return send(200, { missing: true, hint: 'Run: mem architecture diff && mem plan gaps' });
-            }
-            return send(200, JSON.parse(fs.readFileSync(reportPath, 'utf8')));
+            const root = getWorkspaceRoot();
+            const { scanPlanning } = require('./planning/scan');
+            const { scanArchitecture } = require('./architecture/scan-native');
+            const { runPlanningDrift } = require('./planning/gaps');
+            const { runArchitectureDrift } = require('./architecture/diff');
+            const planIR = scanPlanning(root);
+            const archIR = scanArchitecture(root);
+            const findings = [
+                ...runArchitectureDrift(root, archIR),
+                ...runPlanningDrift(root, planIR),
+            ];
+            return send(200, {
+                version: 'evo-drift-report@1',
+                findings,
+                summary: {
+                    total: findings.length,
+                    warnings: findings.filter(f => f.level === 'warning').length,
+                    info: findings.filter(f => f.level === 'info').length,
+                    errors: findings.filter(f => f.level === 'error').length,
+                },
+            });
         }
     } catch (error) {
         return send(500, { error: error.message });
