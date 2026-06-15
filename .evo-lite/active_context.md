@@ -9,18 +9,20 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Project Control Dashboard MVP — all 14 tasks complete, now in dogfood observation cycle (Rollout Stage 4→5)
+Rollout Stage 5: Project Control Dashboard default-on. Post-MVP planning.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] [2c4d] Observe Rollout Stage 4→5: two stable dogfood cycles before default-on
+- [ ] 暂无活跃任务。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [3c1bfb6] 2026-06-15 stage5-upgrade: Two dogfood cycles complete. Rollout Stage 5: default-on.
+- [3c1bfb6] 2026-06-15 dogfood-cycle-2: Cycle 2 stable: verify clean, arch-diff 0, plan-gaps R010x1 info (expected). Stage 5 conditions met
 - [cff52cc] 2026-06-15 inspector-active-context: Active Context tab now shows META/Focus/Backlog/Trajectory. META slim: removed stale 更新时间+项目状态, keep
 - [8824fd2] 2026-06-15 dogfood-observation: Cycle 1 stable: verify clean, architecture diff 0 findings, plan gaps R010x1 info (expected backlog
 - [665815b] 2026-06-15 fix(drift) 665815b: Drift cleanup complete: R005/R007/R008/R009/R010 resolved; only R006 (auto-clears on commit) and R01
@@ -29,8 +31,6 @@ Project Control Dashboard MVP — all 14 tasks complete, now in dogfood observat
 - [afe43c2] 2026-06-15 feat: Phase 4 drift engine complete. mem architecture diff (R001,R002,R007) + mem plan gaps (R003-R010). S
 - [2d9d54d] 2026-06-15 feat: Phase 3 architecture scanner complete. 9/14 dogfood tasks done. mem architecture scan: 9 modules, 34
 - [e3943e1] 2026-06-15 feat: Add /api/planning HTTP endpoint to inspector serving plan-ir.json. Add Planning nav tab with spec/pl
-- [0a7cbb9] 2026-06-15 feat: Add mem plan status and mem plan scan commands. Markdown parser reads docs/specs/ and docs/plans/ in
-- [a7a94f0] 2026-05-22 FTS5_Deplatform_Upgrade: 完成了 Evo-Lite 2.0 骨架架构重构与去平台化（De-platforming）。移除了 templates/ 下所有平台特定资产（如 .github, .codex, .claude 等），
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
