@@ -84,14 +84,14 @@ Excluded from MVP:
   - files: templates/cli/architecture/providers/github-issues.js, templates/cli/planning/scan.js
   - verify: node -e "const p = require('./templates/cli/architecture/providers/github-issues'); console.log(p.check())"
   - acceptance: check() returns false when GH_TOKEN unset or gh CLI absent; when available, enriches Planning IR tasks with issueRefs array
-  - evidence: git:pending
+  - evidence: git:38d707f
 
 - [x] [task:validate-github-dogfood] Validate GitHub Issues provider with real GH_TOKEN
   - files: .evo-lite/generated/planning/plan-ir.json
   - verify: mem plan scan with github-issues provider active → tasks with issue refs show issueRefs field
   - verify: see issue:#2 (uwence/create-evo-lite) for integration test tracking
   - acceptance: at least one task gains issueRefs; no provider errors logged
-  - evidence: git:pending
+  - evidence: git:38d707f
 
 ## Rollout Stages
 
