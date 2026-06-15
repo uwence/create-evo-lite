@@ -2,8 +2,6 @@
 
 <!-- BEGIN_META -->
 
-> **更新时间**: 2026-03-21
-> **项目状态**: v2.0.5 — 完成初始化依赖补强、根目录纪律约束、verify/reranker 降级状态持久化与启动边界澄清；下一阶段转向 workflow 兼容 Codex 与 Claude Code。
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
 
 <!-- END_META -->
@@ -23,6 +21,7 @@ Project Control Dashboard MVP — all 14 tasks complete, now in dogfood observat
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [8824fd2] 2026-06-15 dogfood-observation: Cycle 1 stable: verify clean, architecture diff 0 findings, plan gaps R010x1 info (expected backlog 
 - [665815b] 2026-06-15 fix(drift) 665815b: Drift cleanup complete: R005/R007/R008/R009/R010 resolved; only R006 (auto-clears on commit) and R01
 - [a5bd27e] 2026-06-15 fix(inspector) a5bd27e: Fix inspector stale-data bug: APIs now run live in-memory scan on every request — no manual rescan n
 - [e314952] 2026-06-15 feat(dashboard) e314952: Phase 5 complete: dashboard build, Architecture+Drift inspector tabs, project_control verify field —
@@ -32,7 +31,6 @@ Project Control Dashboard MVP — all 14 tasks complete, now in dogfood observat
 - [0a7cbb9] 2026-06-15 feat: Add mem plan status and mem plan scan commands. Markdown parser reads docs/specs/ and docs/plans/ in
 - [a7a94f0] 2026-05-22 FTS5_Deplatform_Upgrade: 完成了 Evo-Lite 2.0 骨架架构重构与去平台化（De-platforming）。移除了 templates/ 下所有平台特定资产（如 .github, .codex, .claude 等），
 - [45977cb] 2026-05-14 HookProvenanceSidecar: Stabilized the Codex stop-hook JSON contract, synced the managed workflow templates back into the tr
-- [77f9a5a] 2026-05-14 WorkflowClosureHardening: Completed the managed template manifest pass, expanded recall-first takeover matching with alias/rul
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
