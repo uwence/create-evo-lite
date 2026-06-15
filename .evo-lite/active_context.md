@@ -21,6 +21,7 @@ Rollout Stage 5: Project Control Dashboard default-on. Post-MVP planning.
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [498e12f] 2026-06-15 feat(providers): all three phases complete: plan:evo-lite-providers-mvp 8/8 complete. Phase 1 provider contract+config loader+scan-native loader
 - [f9ed492] 2026-06-15 inspector-planning-layout: Planning tab redesigned: spec+plan grouped in cards, task list collapsible by default.
 - [67d3ce7] 2026-06-15 mcp-phase3: MCP server 11/11 tasks complete. Phase 3: config sample + validation script (6/6 tools OK). plan:evo
 - [44945f4] 2026-06-15 mcp-phase1-2: MCP server Phase 0+1+2 complete. 9/11 tasks done. 6 tools implemented and smoke-tested over stdio. R
@@ -30,7 +31,6 @@ Rollout Stage 5: Project Control Dashboard default-on. Post-MVP planning.
 - [8824fd2] 2026-06-15 dogfood-observation: Cycle 1 stable: verify clean, architecture diff 0 findings, plan gaps R010x1 info (expected backlog
 - [665815b] 2026-06-15 fix(drift) 665815b: Drift cleanup complete: R005/R007/R008/R009/R010 resolved; only R006 (auto-clears on commit) and R01
 - [a5bd27e] 2026-06-15 fix(inspector) a5bd27e: Fix inspector stale-data bug: APIs now run live in-memory scan on every request — no manual rescan n
-- [e314952] 2026-06-15 feat(dashboard) e314952: Phase 5 complete: dashboard build, Architecture+Drift inspector tabs, project_control verify field —
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
