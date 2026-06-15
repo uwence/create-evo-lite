@@ -643,6 +643,13 @@ function buildProgram() {
             await new Promise(() => {});
         });
 
+    program.command('mcp')
+        .description('Start the Evo-Lite MCP server (stdio transport).')
+        .action(async () => {
+            const { runMcpServer } = require('./mcp-server');
+            await runMcpServer();
+        });
+
     program.action(() => {
         program.outputHelp();
     });

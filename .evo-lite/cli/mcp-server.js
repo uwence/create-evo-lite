@@ -1,0 +1,181 @@
+'use strict';
+
+const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
+const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
+const { ListToolsRequestSchema, CallToolRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
+
+const { getWorkspaceRoot } = require('./runtime');
+const { buildVerifyJson, extractActiveContext } = require('./inspector');
+const memoryService = require('./memory.service');
+const fs = require('fs');
+const path = require('path');
+
+// ── Tool definitions ──────────────────────────────────────────────────────────
+
+const TOOLS = [
+    {
+        name: 'evo_recall',
+        description: 'Search Evo-Lite memory archive. Returns top-K recall hits for a query.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'Search query' },
+                k: { type: 'number', description: 'Max results (default 5)', default: 5 },
+            },
+            required: ['query'],
+        },
+    },
+    {
+        name: 'evo_verify',
+        description: 'Return Evo-Lite verify snapshot: engine, namespaces, archive health, safety state.',
+        inputSchema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'evo_plan_status',
+        description: 'Return Planning IR summary: specs, plans, task counts and statuses.',
+        inputSchema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'evo_architecture_status',
+        description: 'Return Architecture IR summary: modules, file counts, provider.',
+        inputSchema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'evo_drift_status',
+        description: 'Live-scan and return drift findings (architecture + planning). Never stale.',
+        inputSchema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'evo_active_context',
+        description: 'Return parsed active_context.md: meta, current focus, backlog, recent trajectory.',
+        inputSchema: { type: 'object', properties: {} },
+    },
+];
+
+// ── Tool handlers ─────────────────────────────────────────────────────────────
+
+function handleRecall(args) {
+    const query = args.query || '';
+    const k = Number(args.k) || 5;
+    const results = memoryService.recall({ query, k });
+    return { query, k, results };
+}
+
+function handleVerify() {
+    return buildVerifyJson();
+}
+
+function handlePlanStatus() {
+    const { scanPlanning } = require('./planning/scan');
+    const ir = scanPlanning(getWorkspaceRoot());
+    return {
+        version: ir.version,
+        specCount: ir.specs.length,
+        planCount: ir.plans.length,
+        taskCount: ir.tasks.length,
+        tasksByStatus: {
+            implemented: ir.tasks.filter(t => t.status === 'implemented').length,
+            todo: ir.tasks.filter(t => t.status === 'todo').length,
+        },
+        plans: ir.plans.map(p => {
+            const planTasks = ir.tasks.filter(t => t.linkedPlan === p.id);
+            const done = planTasks.filter(t => t.status === 'implemented').length;
+            return { id: p.id, title: p.title, status: p.status, tasks: planTasks.length, done };
+        }),
+        warnings: ir.warnings,
+    };
+}
+
+function handleArchitectureStatus() {
+    const { scanArchitecture } = require('./architecture/scan-native');
+    const ir = scanArchitecture(getWorkspaceRoot());
+    return {
+        version: ir.version,
+        provider: ir.provider,
+        moduleCount: (ir.modules || []).length,
+        fileCount: (ir.files || []).length,
+        unclassified: (ir.files || []).filter(f => !f.module).length,
+        modules: (ir.modules || []).map(m => ({
+            id: m.id, name: m.name, role: m.role, fileCount: m.fileCount,
+        })),
+    };
+}
+
+function handleDriftStatus() {
+    const root = getWorkspaceRoot();
+    const { scanPlanning } = require('./planning/scan');
+    const { scanArchitecture } = require('./architecture/scan-native');
+    const { runPlanningDrift } = require('./planning/gaps');
+    const { runArchitectureDrift } = require('./architecture/diff');
+    const planIR = scanPlanning(root);
+    const archIR = scanArchitecture(root);
+    const findings = [
+        ...runArchitectureDrift(root, archIR),
+        ...runPlanningDrift(root, planIR),
+    ];
+    return {
+        version: 'evo-drift-report@1',
+        findings,
+        summary: {
+            total: findings.length,
+            errors: findings.filter(f => f.level === 'error').length,
+            warnings: findings.filter(f => f.level === 'warning').length,
+            info: findings.filter(f => f.level === 'info').length,
+        },
+    };
+}
+
+function handleActiveContext() {
+    const p = path.join(getWorkspaceRoot(), '.evo-lite', 'active_context.md');
+    if (!fs.existsSync(p)) return { error: 'active_context.md not found' };
+    const md = fs.readFileSync(p, 'utf8');
+    return extractActiveContext(md);
+}
+
+// ── Dispatch ──────────────────────────────────────────────────────────────────
+
+function dispatch(name, args) {
+    switch (name) {
+        case 'evo_recall':            return handleRecall(args);
+        case 'evo_verify':            return handleVerify();
+        case 'evo_plan_status':       return handlePlanStatus();
+        case 'evo_architecture_status': return handleArchitectureStatus();
+        case 'evo_drift_status':      return handleDriftStatus();
+        case 'evo_active_context':    return handleActiveContext();
+        default: throw new Error(`Unknown tool: ${name}`);
+    }
+}
+
+// ── Server bootstrap ──────────────────────────────────────────────────────────
+
+async function runMcpServer() {
+    const server = new Server(
+        { name: 'evo-lite', version: require('../../package.json').version },
+        { capabilities: { tools: {} } },
+    );
+
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        const { name, arguments: args } = request.params;
+        try {
+            const result = dispatch(name, args || {});
+            return {
+                content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+        } catch (err) {
+            return {
+                content: [{ type: 'text', text: `Error: ${err.message}` }],
+                isError: true,
+            };
+        }
+    });
+
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+
+    process.once('SIGINT', async () => { await server.close(); process.exit(0); });
+    process.once('SIGTERM', async () => { await server.close(); process.exit(0); });
+}
+
+module.exports = { runMcpServer, TOOLS };

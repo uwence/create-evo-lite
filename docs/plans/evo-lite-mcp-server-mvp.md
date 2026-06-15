@@ -42,51 +42,51 @@ Excluded from MVP:
 
 ### Phase 0: Dogfood documents
 
-- [ ] [task:add-mcp-server-spec] Create spec file at docs/specs/
+- [x] [task:add-mcp-server-spec] Create spec file at docs/specs/
   - files: docs/specs/evo-lite-mcp-server.md
   - verify: human review — spec is parseable and contains id, goal, non-goals, requirements, acceptance criteria
   - evidence: git:6581bbc
 
 ### Phase 1: MCP foundation
 
-- [ ] [task:add-mcp-sdk-dep] Add @modelcontextprotocol/sdk to package.json
+- [x] [task:add-mcp-sdk-dep] Add @modelcontextprotocol/sdk to package.json
   - files: package.json
   - verify: node -e "require('@modelcontextprotocol/sdk/server/index.js')"
   - acceptance: SDK importable; no runtime errors
 
-- [ ] [task:add-mcp-server-module] Implement mcp-server.js with stdio transport and tool registry
+- [x] [task:add-mcp-server-module] Implement mcp-server.js with stdio transport and tool registry
   - files: templates/cli/mcp-server.js, templates/cli/memory.js
   - verify: echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}' | node .evo-lite/cli/memory.js mcp
   - acceptance: server responds with valid MCP initialize response; exits cleanly on SIGINT
 
 ### Phase 2: Tool implementations
 
-- [ ] [task:add-mcp-tool-recall] Implement evo_recall tool
+- [x] [task:add-mcp-tool-recall] Implement evo_recall tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_recall with query returns recall hits array
   - acceptance: same results as mem recall for identical query
 
-- [ ] [task:add-mcp-tool-verify] Implement evo_verify tool
+- [x] [task:add-mcp-tool-verify] Implement evo_verify tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_verify returns verify snapshot JSON
   - acceptance: matches output of buildVerifyJson()
 
-- [ ] [task:add-mcp-tool-plan-status] Implement evo_plan_status tool
+- [x] [task:add-mcp-tool-plan-status] Implement evo_plan_status tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_plan_status returns planning IR summary
   - acceptance: spec count, plan count, task counts correct
 
-- [ ] [task:add-mcp-tool-architecture-status] Implement evo_architecture_status tool
+- [x] [task:add-mcp-tool-architecture-status] Implement evo_architecture_status tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_architecture_status returns module list
   - acceptance: module count matches mem architecture status output
 
-- [ ] [task:add-mcp-tool-drift-status] Implement evo_drift_status tool
+- [x] [task:add-mcp-tool-drift-status] Implement evo_drift_status tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_drift_status returns findings array and summary
   - acceptance: live scan; no stale data
 
-- [ ] [task:add-mcp-tool-active-context] Implement evo_active_context tool
+- [x] [task:add-mcp-tool-active-context] Implement evo_active_context tool
   - files: templates/cli/mcp-server.js
   - verify: MCP tool call evo_active_context returns meta, focus, backlog, trajectory
   - acceptance: matches extractActiveContext() output
