@@ -21,7 +21,8 @@ Project Control Dashboard MVP — all 14 tasks complete, now in dogfood observat
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
-- [8824fd2] 2026-06-15 dogfood-observation: Cycle 1 stable: verify clean, architecture diff 0 findings, plan gaps R010x1 info (expected backlog 
+- [cff52cc] 2026-06-15 inspector-active-context: Active Context tab now shows META/Focus/Backlog/Trajectory. META slim: removed stale 更新时间+项目状态, keep
+- [8824fd2] 2026-06-15 dogfood-observation: Cycle 1 stable: verify clean, architecture diff 0 findings, plan gaps R010x1 info (expected backlog
 - [665815b] 2026-06-15 fix(drift) 665815b: Drift cleanup complete: R005/R007/R008/R009/R010 resolved; only R006 (auto-clears on commit) and R01
 - [a5bd27e] 2026-06-15 fix(inspector) a5bd27e: Fix inspector stale-data bug: APIs now run live in-memory scan on every request — no manual rescan n
 - [e314952] 2026-06-15 feat(dashboard) e314952: Phase 5 complete: dashboard build, Architecture+Drift inspector tabs, project_control verify field —
@@ -30,7 +31,6 @@ Project Control Dashboard MVP — all 14 tasks complete, now in dogfood observat
 - [e3943e1] 2026-06-15 feat: Add /api/planning HTTP endpoint to inspector serving plan-ir.json. Add Planning nav tab with spec/pl
 - [0a7cbb9] 2026-06-15 feat: Add mem plan status and mem plan scan commands. Markdown parser reads docs/specs/ and docs/plans/ in
 - [a7a94f0] 2026-05-22 FTS5_Deplatform_Upgrade: 完成了 Evo-Lite 2.0 骨架架构重构与去平台化（De-platforming）。移除了 templates/ 下所有平台特定资产（如 .github, .codex, .claude 等），
-- [45977cb] 2026-05-14 HookProvenanceSidecar: Stabilized the Codex stop-hook JSON contract, synced the managed workflow templates back into the tr
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
