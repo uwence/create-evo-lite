@@ -6,6 +6,9 @@ const { execFileSync } = require('child_process');
 
 function validateGitRef(ref, projectRoot) {
     const sha = ref.replace(/^git:/i, '');
+    if (!/^[a-f0-9]{4,40}$/i.test(sha)) {
+        return { ref, valid: false, summary: null };
+    }
     try {
         const out = execFileSync('git', ['show', '--stat', '--oneline', sha], {
             cwd: projectRoot, encoding: 'utf8', timeout: 5000,
@@ -28,6 +31,7 @@ function checkArchiveHits(taskId, projectRoot) {
     const rawDir = path.join(projectRoot, '.evo-lite', 'raw_memory');
     if (!fs.existsSync(rawDir)) return 0;
     const slug = taskId.replace(/^task:/, '');
+    if (!slug) return 0;
     return fs.readdirSync(rawDir).filter(f => f.endsWith('.md') && f.includes(slug)).length;
 }
 
@@ -86,7 +90,8 @@ function evaluateProgress(projectRoot) {
     const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
     if (!fs.existsSync(irPath)) return null;
 
-    const ir = JSON.parse(fs.readFileSync(irPath, 'utf8'));
+    let ir;
+    try { ir = JSON.parse(fs.readFileSync(irPath, 'utf8')); } catch { return null; }
     const tasks = (ir.tasks || []).map(t => evaluateTask(t, projectRoot));
 
     const count = { verified: 0, implemented: 0, in_progress: 0, todo: 0 };
