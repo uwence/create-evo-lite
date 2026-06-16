@@ -402,7 +402,7 @@ async function runInit(targetDirArg, options = {}) {
     const gitWorkspace = ensureGitWorkspace(targetDir, options);
 
     // 5. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
-    console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander)...');
+    console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander, @modelcontextprotocol/sdk)...');
     try {
         fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
             "name": "evo-lite-workspace",
@@ -412,11 +412,11 @@ async function runInit(targetDirArg, options = {}) {
                 "commander": "^14.0.2"
             }
         }, null, 2));
-        execSync('npm install better-sqlite3 tar commander', { cwd: evoLiteDir, stdio: 'inherit' });
+        execSync('npm install better-sqlite3 tar commander @modelcontextprotocol/sdk', { cwd: evoLiteDir, stdio: 'inherit' });
         console.log('✅ 依赖在线安装成功！');
     } catch (e) {
         console.warn('\n⚠️ 警告: npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)');
-        console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 tar commander');
+        console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 tar commander @modelcontextprotocol/sdk');
     }
     console.log('📡 运行时引擎已锁定为: sqlite-fts5-trigram');
 
