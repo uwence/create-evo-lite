@@ -37,7 +37,7 @@ todo        AND NOT hasPositiveEvidence                                         
 archiveHits boost: confidence = Math.min(confidence + archiveHits * 0.02, 1.0)
 ```
 
-- [ ] **Step 1: Create `templates/cli/planning/progress.js`**
+- [x] **Step 1: Create `templates/cli/planning/progress.js`**
 
 ```javascript
 'use strict';
@@ -163,7 +163,7 @@ function writeProgressReport(report, projectRoot) {
 module.exports = { evaluateProgress, writeProgressReport };
 ```
 
-- [ ] **Step 2: Smoke-test module loads**
+- [x] **Step 2: Smoke-test module loads**
 
 Run:
 ```bash
@@ -171,7 +171,7 @@ node -e "require('./templates/cli/planning/progress'); console.log('OK')"
 ```
 Expected: `OK`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add templates/cli/planning/progress.js
@@ -193,7 +193,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 **Context:** `registerPlanCommands` is already called by `memory.js:633`. Adding a new `plan.command('progress')` block is sufficient — no changes to `memory.js` needed. The command reads `plan-ir.json` before calling `evaluateProgress` so it can exit early with a clear error if the file is missing.
 
-- [ ] **Step 1: Add `plan progress` command to `planning.js`**
+- [x] **Step 1: Add `plan progress` command to `planning.js`**
 
 In `templates/cli/planning.js`, replace the closing of `registerPlanCommands`:
 
@@ -227,7 +227,7 @@ module.exports = { registerPlanCommands };
 
 Exact edit: find `}\n\nmodule.exports = { registerPlanCommands };` and replace with the block above.
 
-- [ ] **Step 2: Verify command is reachable**
+- [x] **Step 2: Verify command is reachable**
 
 Run:
 ```bash
@@ -237,7 +237,7 @@ Expected output includes `progress` in the command list.
 
 (Note: `.evo-lite/cli/` will be updated in Task 4 mirror sync. For now verify against `templates/cli/` directly if needed.)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add templates/cli/planning.js
@@ -259,7 +259,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 **Context:** `buildDashboardData` already reads `plan-ir.json`, `architecture-ir.json`, `drift-report.json` via `readJson`. Add `progress-report.json` read and inject a `progress` key into the `planning` object when present. Dashboard build output line stays unchanged.
 
-- [ ] **Step 1: Edit `buildDashboardData` in `templates/cli/dashboard-data.js`**
+- [x] **Step 1: Edit `buildDashboardData` in `templates/cli/dashboard-data.js`**
 
 Replace lines 13-31 (the `buildDashboardData` function body up through the `planning` object):
 
@@ -309,7 +309,7 @@ function buildDashboardData(projectRoot) {
     } : { missing: true, hint: 'Run: mem plan scan' };
 ```
 
-- [ ] **Step 2: Smoke-test `dashboard-data.js` loads**
+- [x] **Step 2: Smoke-test `dashboard-data.js` loads**
 
 Run:
 ```bash
@@ -317,7 +317,7 @@ node -e "require('./templates/cli/dashboard-data'); console.log('OK')"
 ```
 Expected: `OK`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add templates/cli/dashboard-data.js
@@ -339,7 +339,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 - Sync: `templates/cli/planning.js` → `.evo-lite/cli/planning.js`
 - Sync: `templates/cli/dashboard-data.js` → `.evo-lite/cli/dashboard-data.js`
 
-- [ ] **Step 1: Copy files to mirror**
+- [x] **Step 1: Copy files to mirror**
 
 Run (PowerShell):
 ```powershell
@@ -348,7 +348,7 @@ Copy-Item "templates/cli/planning.js" ".evo-lite/cli/planning.js" -Force
 Copy-Item "templates/cli/dashboard-data.js" ".evo-lite/cli/dashboard-data.js" -Force
 ```
 
-- [ ] **Step 2: Verify hashes match**
+- [x] **Step 2: Verify hashes match**
 
 Run (PowerShell):
 ```powershell
@@ -365,7 +365,7 @@ foreach ($pair in $files) {
 ```
 Expected: all three `IDENTICAL`
 
-- [ ] **Step 3: Verify `plan progress` absent plan-ir exits with error**
+- [x] **Step 3: Verify `plan progress` absent plan-ir exits with error**
 
 Delete plan-ir temporarily and verify error (then restore):
 ```bash
@@ -398,7 +398,7 @@ Rename-Item ".evo-lite/generated/planning/plan-ir.json.bak" "plan-ir.json"
 ```
 Expected: error message printed, non-zero exit.
 
-- [ ] **Step 4: Run `plan progress` end-to-end**
+- [x] **Step 4: Run `plan progress` end-to-end**
 
 Run:
 ```bash
@@ -414,7 +414,7 @@ Written: D:\...\create-evo-lite\.evo-lite\generated\planning\progress-report.jso
 ```
 And `progress-report.json` exists.
 
-- [ ] **Step 5: Spot-check output JSON**
+- [x] **Step 5: Spot-check output JSON**
 
 Run (PowerShell):
 ```powershell
@@ -424,7 +424,7 @@ $r.tasks | Where-Object { $_.derivedStatus -eq "verified" } | Select-Object id, 
 ```
 Expected: `summary` shows counts, verified tasks have `confidence` ≥ 0.95.
 
-- [ ] **Step 6: Run `dashboard build` and verify progress injected**
+- [x] **Step 6: Run `dashboard build` and verify progress injected**
 
 Run:
 ```bash
@@ -437,7 +437,7 @@ $d.planning.progress.summary
 ```
 Expected: `summary` object with `total`, `verified`, `implemented`, `in_progress`, `todo` counts.
 
-- [ ] **Step 7: Commit mirror sync**
+- [x] **Step 7: Commit mirror sync**
 
 ```bash
 git add .evo-lite/cli/planning/progress.js .evo-lite/cli/planning.js .evo-lite/cli/dashboard-data.js .evo-lite/generated/planning/progress-report.json .evo-lite/generated/dashboard/dashboard-data.json

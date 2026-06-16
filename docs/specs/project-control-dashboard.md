@@ -1,6 +1,6 @@
 ---
 id: spec:project-control-dashboard
-status: planned
+status: done
 owner: human
 created: 2026-06-15
 masterSpec: docs/Spec Evo-Lite Project Control Dashboard.md
