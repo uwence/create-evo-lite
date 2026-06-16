@@ -199,12 +199,17 @@ function parseSpecFile(filePath) {
 
     if (!frontmatter.id || !frontmatter.id.startsWith('spec:')) return null;
 
+    let linkedPlans = extractLinkedPlans(body);
+    if (linkedPlans.length === 0 && frontmatter.linkedPlan) {
+        linkedPlans = [frontmatter.linkedPlan];
+    }
+
     return {
         id: frontmatter.id,
         title: extractTitle(body),
         status: frontmatter.status || 'unknown',
         sourcePath: filePath,
-        linkedPlans: extractLinkedPlans(body),
+        linkedPlans,
         acceptanceCriteria: extractAcceptanceCriteria(body),
     };
 }
