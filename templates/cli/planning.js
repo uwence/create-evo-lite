@@ -153,7 +153,8 @@ function registerPlanCommands(program) {
             if (options.fix && results.fixed > 0) {
                 console.log(`\nFixed: ${results.fixed} file(s) — frontmatter injected.`);
             }
-            process.exitCode = results.issues.length > 0 && !options.fix ? 1 : 0;
+            const remaining = options.fix ? results.issues.length - results.fixed : results.issues.length;
+            process.exitCode = remaining > 0 ? 1 : 0;
         });
 }
 
