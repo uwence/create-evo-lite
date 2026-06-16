@@ -1703,6 +1703,31 @@ async function runTests() {
             console.log('✅ T9 plan lint passed');
         }
 
+        console.log('T10. Testing dashboard buildDashboardData includes freshness field ...');
+        {
+            // Clear require cache so we get the updated module
+            const dashPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'dashboard-data'));
+            delete require.cache[dashPath];
+            const dashModule = require(dashPath);
+            const tmpDashRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-fresh-'));
+            try {
+                // No IR files — ages should be null, stale flags false
+                const data = dashModule.buildDashboardData(tmpDashRoot);
+                assert.ok('freshness' in data, 'dashboard data must have freshness field');
+                assert.ok('planIrAge' in data.freshness, 'freshness must have planIrAge');
+                assert.ok('archIrAge' in data.freshness, 'freshness must have archIrAge');
+                assert.ok('lastCommitAge' in data.freshness, 'freshness must have lastCommitAge');
+                assert.ok('planStale' in data.freshness, 'freshness must have planStale');
+                assert.ok('archStale' in data.freshness, 'freshness must have archStale');
+                assert.strictEqual(data.freshness.planIrAge, null, 'planIrAge should be null when IR missing');
+                assert.strictEqual(data.freshness.planStale, false, 'planStale should be false when IR missing');
+                assert.strictEqual(data.freshness.archStale, false, 'archStale should be false when IR missing');
+            } finally {
+                fs.rmSync(tmpDashRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T10 dashboard freshness passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);

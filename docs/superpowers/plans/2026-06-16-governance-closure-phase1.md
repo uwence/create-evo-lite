@@ -236,7 +236,7 @@ git commit -m "feat(planning): plan lint command with --fix frontmatter injectio
 - Modify: `templates/cli/test.js` (add T10)
 - Sync: `.evo-lite/cli/dashboard-data.js`, `.evo-lite/cli/test.js`
 
-- [ ] **Step 1: Write failing test T10 in `templates/cli/test.js`**
+- [x] **Step 1: Write failing test T10 in `templates/cli/test.js`**
 
 Append after T9 block:
 
@@ -264,7 +264,7 @@ console.log('T10. Testing dashboard buildDashboardData includes freshness field 
 }
 ```
 
-- [ ] **Step 2: Run test to confirm T10 fails**
+- [x] **Step 2: Run test to confirm T10 fails**
 
 ```bash
 node templates/cli/test.js 2>&1 | grep -E "T10|freshness"
@@ -272,7 +272,7 @@ node templates/cli/test.js 2>&1 | grep -E "T10|freshness"
 
 Expected: `AssertionError: dashboard data must have freshness field`
 
-- [ ] **Step 3: Add `computeFreshness` to `templates/cli/dashboard-data.js`**
+- [x] **Step 3: Add `computeFreshness` to `templates/cli/dashboard-data.js`**
 
 Add after the `readJson` helper function (after line 11), before `buildDashboardData`:
 
@@ -310,7 +310,7 @@ function computeFreshness(projectRoot) {
 }
 ```
 
-- [ ] **Step 4: Add `freshness` field to `buildDashboardData` return value**
+- [x] **Step 4: Add `freshness` field to `buildDashboardData` return value**
 
 In `buildDashboardData`, in the `return` object (currently returns `version, generatedAt, project, planning, architecture, drift, memory, verify`), add `freshness: computeFreshness(projectRoot)`:
 
@@ -328,7 +328,7 @@ In `buildDashboardData`, in the `return` object (currently returns `version, gen
     };
 ```
 
-- [ ] **Step 5: Run test to confirm T10 passes**
+- [x] **Step 5: Run test to confirm T10 passes**
 
 ```bash
 node templates/cli/test.js 2>&1 | grep -E "T10|✅ T10"
@@ -336,7 +336,7 @@ node templates/cli/test.js 2>&1 | grep -E "T10|✅ T10"
 
 Expected: `✅ T10 dashboard freshness passed`
 
-- [ ] **Step 6: Sync to dogfood + commit**
+- [x] **Step 6: Sync to dogfood + commit**
 
 ```bash
 cp templates/cli/dashboard-data.js .evo-lite/cli/dashboard-data.js

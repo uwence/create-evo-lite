@@ -10,6 +10,38 @@ function readJson(filePath) {
     catch { return null; }
 }
 
+function computeFreshness(projectRoot) {
+    const genDir = path.join(projectRoot, '.evo-lite', 'generated');
+    const planIrPath = path.join(genDir, 'planning', 'plan-ir.json');
+    const archIrPath = path.join(genDir, 'architecture', 'architecture-ir.json');
+    const nowMs = Date.now();
+
+    function ageSecs(p) {
+        if (!fs.existsSync(p)) return null;
+        return Math.round((nowMs - fs.statSync(p).mtimeMs) / 1000);
+    }
+
+    let lastCommitAge = null;
+    try {
+        const { execFileSync } = require('child_process');
+        const ts = execFileSync('git', ['log', '-1', '--format=%ct'], {
+            cwd: projectRoot, encoding: 'utf8', timeout: 3000,
+        }).trim();
+        if (ts) lastCommitAge = Math.round((nowMs - parseInt(ts, 10) * 1000) / 1000);
+    } catch (_) {}
+
+    const planIrAge = ageSecs(planIrPath);
+    const archIrAge = ageSecs(archIrPath);
+
+    return {
+        planIrAge,
+        archIrAge,
+        lastCommitAge,
+        planStale: planIrAge !== null && lastCommitAge !== null && planIrAge > lastCommitAge,
+        archStale: archIrAge !== null && lastCommitAge !== null && archIrAge > lastCommitAge,
+    };
+}
+
 function buildDashboardData(projectRoot) {
     const genDir = path.join(projectRoot, '.evo-lite', 'generated');
     const planIR = readJson(path.join(genDir, 'planning', 'plan-ir.json'));
@@ -103,6 +135,7 @@ function buildDashboardData(projectRoot) {
         drift,
         memory,
         verify,
+        freshness: computeFreshness(projectRoot),
     };
 }
 
