@@ -17,11 +17,20 @@ function buildDashboardData(projectRoot) {
     const archIR = readJson(path.join(genDir, 'architecture', 'architecture-ir.json'));
     const driftReport = readJson(path.join(genDir, 'architecture', 'drift-report.json'));
 
+    const progressMap = progressReport
+        ? new Map(progressReport.tasks.map(t => [t.id, t]))
+        : new Map();
+
+    const enrichedTasks = planIR ? planIR.tasks.map(t => {
+        const pr = progressMap.get(t.id);
+        return pr ? { ...t, derivedStatus: pr.derivedStatus, confidence: pr.confidence } : t;
+    }) : [];
+
     const planning = planIR ? {
         version: planIR.version,
         specs: planIR.specs,
         plans: planIR.plans,
-        tasks: planIR.tasks,
+        tasks: enrichedTasks,
         warnings: planIR.warnings,
         summary: {
             specs: planIR.specs.length,

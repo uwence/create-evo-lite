@@ -178,7 +178,10 @@ async function load(name) {
 
         function renderPlan(plan) {
           const planTasks = tasks.filter(t => t.linkedPlan === plan.id);
-          const done = planTasks.filter(t => t.status === 'implemented').length;
+          const done = planTasks.filter(t => {
+            const ds = t.derivedStatus || t.status;
+            return ds === 'verified' || ds === 'implemented';
+          }).length;
           const allDone = planTasks.length > 0 && done === planTasks.length;
           let h = '<div style="margin:8px 0 8px 16px;padding:8px 12px;border-left:3px solid ' + (allDone ? '#34d399' : '#fbbf24') + '">';
           h += '<strong>Plan: ' + escapeHtml(plan.id) + '</strong> ';
@@ -189,8 +192,10 @@ async function load(name) {
             h += '<details style="margin-top:6px"><summary style="cursor:pointer;opacity:0.7">Tasks (' + done + '/' + planTasks.length + ')</summary>';
             h += '<table style="margin-top:6px"><tr><th>Task</th><th>Status</th><th>Phase</th><th>Linked files</th></tr>';
             for (const t of planTasks) {
-              const cls = t.status === 'implemented' ? 'ok' : 'pending';
-              h += '<tr><td>' + escapeHtml(t.id) + '</td><td class="' + cls + '">' + escapeHtml(t.status) + '</td>';
+              const displayStatus = t.derivedStatus || t.status;
+              const cls = (displayStatus === 'verified' || displayStatus === 'implemented') ? 'ok' : 'pending';
+              const conf = t.confidence != null ? ' <span style="opacity:0.5;font-size:0.8em">(' + Math.round(t.confidence * 100) + '%)</span>' : '';
+              h += '<tr><td>' + escapeHtml(t.id) + '</td><td class="' + cls + '">' + escapeHtml(displayStatus) + conf + '</td>';
               h += '<td>' + escapeHtml(t.phase || '') + '</td>';
               h += '<td style="font-size:0.8em;opacity:0.7">' + (t.linkedFiles || []).map(f => escapeHtml(f)).join('<br>') + '</td></tr>';
             }
