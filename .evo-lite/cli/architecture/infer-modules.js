@@ -7,9 +7,20 @@ const MODULE_RULES = [
     {
         id: 'module:cli-entry',
         name: 'CLI Entry',
-        description: 'Main CLI entry point and command router',
-        paths: ['templates/cli/memory.js'],
+        description: 'Main CLI entry point and command router (package entry + bin shim + runtime memory.js)',
+        paths: ['templates/cli/memory.js', 'index.js', 'bin/cli.js', 'package.json'],
         role: 'entry',
+        confidence: 1.0,
+    },
+    {
+        id: 'module:hook-scaffold',
+        name: 'Hook Scaffold',
+        description: 'Templated host-side hook integrations (git post-commit, Claude/Codex/Copilot wrappers)',
+        paths: [
+            'templates/.github/',
+            'templates/.codex/',
+        ],
+        role: 'governance',
         confidence: 1.0,
     },
     {
@@ -87,7 +98,7 @@ const MODULE_RULES = [
         id: 'module:docs-planning',
         name: 'Docs & Planning',
         description: 'Project specs, plans, contracts, and research documents',
-        paths: ['docs/specs/', 'docs/plans/', 'docs/contracts/', 'docs/'],
+        paths: ['docs/specs/', 'docs/plans/', 'docs/contracts/', 'docs/architecture/', 'docs/'],
         role: 'docs',
         confidence: 0.8,
     },

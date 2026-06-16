@@ -481,6 +481,10 @@ async function runGovernanceTests() {
                 assert.ok(hook.includes('plan progress'), 'hook must reference plan progress');
                 assert.ok(hook.includes('plan gaps --last-commit --changed-files-from-env'), 'hook must evaluate last-commit gaps');
                 assert.ok(hook.includes('dashboard build'), 'hook must reference dashboard build');
+                const reportWriteIdx = hook.indexOf('HOOK_REPORT_PATH');
+                const dashboardBuildIdx = hook.indexOf('run_and_record "dashboard build"');
+                assert.ok(reportWriteIdx > 0 && dashboardBuildIdx > 0, 'hook must contain both report write and dashboard build');
+                assert.ok(reportWriteIdx < dashboardBuildIdx, 'hook must write post-commit-last-run.json BEFORE dashboard build so the dashboard reflects this commit\'s governance status');
             } finally {
                 fs.rmSync(dir1, { recursive: true, force: true });
             }

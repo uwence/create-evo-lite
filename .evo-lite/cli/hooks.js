@@ -16,7 +16,7 @@ function buildHookBody() {
         'for f in $CHANGED; do',
         '  case "$f" in',
         '    docs/specs/*|docs/plans/*|docs/superpowers/specs/*|docs/superpowers/plans/*) PLAN_CHANGED=1 ;;',
-        '    templates/cli/*|index.js|bin/*|.agents/rules/*|.agents/workflows/*|docs/contracts/*|docs/architecture/*) ARCH_CHANGED=1 ;;',
+        '    templates/cli/*|templates/.github/*|templates/.codex/*|index.js|bin/*|package.json|.agents/rules/*|.agents/workflows/*|docs/contracts/*|docs/architecture/*) ARCH_CHANGED=1 ;;',
         '    .evo-lite/generated/*|.evo-lite/raw_memory/*|.evo-lite/index_memory/*|.evo-lite/.cache/*) ;;',
         '    *) CODE_CHANGED=1 ;;',
         '  esac',
@@ -48,8 +48,8 @@ function buildHookBody() {
         'run_and_record "plan progress" plan progress',
         '[ -n "$ARCH_CHANGED" ] && run_and_record "architecture diff" architecture diff',
         'EVO_LITE_CHANGED_FILES="$CHANGED" run_and_record "plan gaps" plan gaps --last-commit --changed-files-from-env',
+        'HOOK_CHANGED="$CHANGED" HOOK_PLAN_CHANGED="$PLAN_CHANGED" HOOK_ARCH_CHANGED="$ARCH_CHANGED" HOOK_CODE_CHANGED="$CODE_CHANGED" HOOK_COMMANDS="$COMMAND_RESULTS" HOOK_REPORT_PATH="$REPORT_PATH" "$NODE_BIN" -e "const fs=require(\'fs\'); const path=require(\'path\'); const execFileSync=require(\'child_process\').execFileSync; const changed=(process.env.HOOK_CHANGED||\'\').split(/\\s+/).filter(Boolean); const categories=[]; if(process.env.HOOK_PLAN_CHANGED) categories.push(\'plan\'); if(process.env.HOOK_ARCH_CHANGED) categories.push(\'architecture\'); if(process.env.HOOK_CODE_CHANGED) categories.push(\'code\'); const commands=(process.env.HOOK_COMMANDS||\'\').split(/\\n/).filter(Boolean).map(line=>{ const parts=line.split(/\\t/); return { name: parts[0], ok: parts[1]===\'true\' }; }); let commit=\'unknown\'; try { commit=execFileSync(\'git\', [\'rev-parse\', \'--short\', \'HEAD\'], { encoding: \'utf8\' }).trim() || \'unknown\'; } catch (_) {} const payload={ event:\'post-commit\', commit, changedFiles:changed, categories, commands, ok:commands.every(item=>item.ok), note:\'dashboard build runs after this report so the current dashboard reflects this report\' }; fs.mkdirSync(path.dirname(process.env.HOOK_REPORT_PATH), { recursive:true }); fs.writeFileSync(process.env.HOOK_REPORT_PATH, JSON.stringify(payload, null, 2), \'utf8\');"',
         'run_and_record "dashboard build" dashboard build',
-        'HOOK_CHANGED="$CHANGED" HOOK_PLAN_CHANGED="$PLAN_CHANGED" HOOK_ARCH_CHANGED="$ARCH_CHANGED" HOOK_CODE_CHANGED="$CODE_CHANGED" HOOK_COMMANDS="$COMMAND_RESULTS" HOOK_REPORT_PATH="$REPORT_PATH" "$NODE_BIN" -e "const fs=require(\'fs\'); const path=require(\'path\'); const execFileSync=require(\'child_process\').execFileSync; const changed=(process.env.HOOK_CHANGED||\'\').split(/\\s+/).filter(Boolean); const categories=[]; if(process.env.HOOK_PLAN_CHANGED) categories.push(\'plan\'); if(process.env.HOOK_ARCH_CHANGED) categories.push(\'architecture\'); if(process.env.HOOK_CODE_CHANGED) categories.push(\'code\'); const commands=(process.env.HOOK_COMMANDS||\'\').split(/\\n/).filter(Boolean).map(line=>{ const parts=line.split(/\\t/); return { name: parts[0], ok: parts[1]===\'true\' }; }); let commit=\'unknown\'; try { commit=execFileSync(\'git\', [\'rev-parse\', \'--short\', \'HEAD\'], { encoding: \'utf8\' }).trim() || \'unknown\'; } catch (_) {} const payload={ event:\'post-commit\', commit, changedFiles:changed, categories, commands, ok:commands.every(item=>item.ok) }; fs.mkdirSync(path.dirname(process.env.HOOK_REPORT_PATH), { recursive:true }); fs.writeFileSync(process.env.HOOK_REPORT_PATH, JSON.stringify(payload, null, 2), \'utf8\');"',
         SENTINEL_END,
     ];
     return lines.join('\n');

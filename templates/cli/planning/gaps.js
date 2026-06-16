@@ -7,7 +7,18 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const PLAN_SOURCE_PATHS = ['docs/specs', 'docs/plans', 'docs/superpowers/specs', 'docs/superpowers/plans'];
-const ARCH_SOURCE_PATHS = ['templates/cli', '.agents/rules', '.agents/workflows', 'index.js', 'bin/cli.js', 'docs/contracts', 'docs/architecture'];
+const ARCH_SOURCE_PATHS = [
+    'templates/cli',
+    'templates/.github',
+    'templates/.codex',
+    '.agents/rules',
+    '.agents/workflows',
+    'index.js',
+    'bin/cli.js',
+    'package.json',
+    'docs/contracts',
+    'docs/architecture',
+];
 
 function normalizePaths(list) {
     return list.map(item => item.replace(/\\/g, '/')).filter(Boolean);

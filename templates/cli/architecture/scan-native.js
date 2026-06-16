@@ -10,12 +10,23 @@ const { validateProvider } = require('./provider-contract');
 // Each entry: { dir, recursive }
 const WALK_TARGETS = [
     { dir: 'templates/cli', recursive: true },
-    { dir: '.agents/rules', recursive: false },
-    { dir: '.agents/workflows', recursive: false },
+    { dir: 'templates/.github', recursive: true },
+    { dir: 'templates/.codex', recursive: true },
+    { dir: '.agents/rules', recursive: true },
+    { dir: '.agents/workflows', recursive: true },
     { dir: 'docs/specs', recursive: false },
     { dir: 'docs/plans', recursive: false },
-    { dir: 'docs/contracts', recursive: false },
+    { dir: 'docs/contracts', recursive: true },
+    { dir: 'docs/architecture', recursive: true },
     { dir: 'docs', recursive: false },
+];
+
+// Single-file targets (relative to project root). Kept separate so the dir
+// walker stays simple. Covered by ARCH_SOURCE_PATHS so R009 stays consistent.
+const WALK_FILES = [
+    'index.js',
+    'bin/cli.js',
+    'package.json',
 ];
 
 // Extensions to include
@@ -118,6 +129,15 @@ function scanArchitecture(projectRoot) {
         } catch (e) {
             warnings.push({ level: 'error', message: `Walk failed for ${target.dir}: ${e.message}` });
         }
+    }
+
+    // Include single-file targets (root entries, package.json, etc.)
+    for (const relFile of WALK_FILES) {
+        const absFile = path.join(projectRoot, relFile);
+        if (!fs.existsSync(absFile)) continue;
+        const ext = path.extname(relFile).toLowerCase();
+        if (!INCLUDE_EXT.has(ext)) continue;
+        allFiles.push(relFile.replace(/\\/g, '/'));
     }
 
     // Deduplicate (docs root walk may overlap with docs/specs etc.)
