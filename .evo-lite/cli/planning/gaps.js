@@ -47,7 +47,7 @@ function checkR004(projectRoot) {
 function checkR005(planIR) {
     if (!planIR) return [];
     return (planIR.tasks || [])
-        .filter(t => t.status !== 'planning-only' && (!t.linkedFiles || t.linkedFiles.length === 0))
+        .filter(t => !t.readOnly && t.status !== 'planning-only' && (!t.linkedFiles || t.linkedFiles.length === 0))
         .map(t => ({
             id: `R005:${t.id}`, rule: 'R005', scope: 'planning', level: 'warning',
             type: 'no-linked-files',
@@ -89,7 +89,8 @@ function checkR006(projectRoot, planIR) {
 function checkR008(planIR) {
     if (!planIR) return [];
     return (planIR.tasks || [])
-        .filter(t => t.status === 'implemented' &&
+        .filter(t => !t.readOnly &&
+            t.status === 'implemented' &&
             (!t.evidence || t.evidence.length === 0) &&
             (!t.linkedFiles || t.linkedFiles.length === 0))
         .map(t => ({

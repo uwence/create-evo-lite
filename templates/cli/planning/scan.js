@@ -122,6 +122,7 @@ function scanPlanning(projectRoot) {
                         linkedFiles: task.linkedFiles || [],
                         verify: task.verify || [],
                         evidence: task.evidence || [],
+                        readOnly: task.readOnly || false,
                         confidence: task.status === 'implemented' ? 1.0 : 0.0,
                     });
                 }
