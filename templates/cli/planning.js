@@ -67,7 +67,7 @@ function registerPlanCommands(program) {
         });
 
     plan.command('gaps')
-        .description('Run planning drift checks (R003–R010), write drift-report.json.')
+        .description('Run planning drift checks (R003–R011), write drift-report.json.')
         .action(async () => {
             const { runPlanningDrift } = require('./planning/gaps');
             const { loadReport, saveReport, mergeFindings } = require('./architecture/diff');
@@ -112,6 +112,28 @@ function registerPlanCommands(program) {
             const outPath = writeProgressReport(report, projectRoot);
             const s = report.summary;
             console.log(`  total: ${s.total}  verified: ${s.verified}  implemented: ${s.implemented}  in_progress: ${s.in_progress}  todo: ${s.todo}`);
+            console.log(`\nWritten: ${outPath}`);
+        });
+    plan.command('trace')
+        .description('Build traceability matrix (spec→plan→task→file), write traceability.json.')
+        .action(async () => {
+            const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            if (!fs.existsSync(irPath)) {
+                console.error('No plan-ir.json found. Run: mem plan scan first.');
+                process.exit(1);
+            }
+            const { buildTraceability, writeTraceability } = require('./planning/traceability');
+            console.log('Building traceability matrix...\n');
+            const report = buildTraceability(projectRoot);
+            if (!report) {
+                console.error('Failed to build traceability. Run: mem plan scan first.');
+                process.exit(1);
+            }
+            const outPath = writeTraceability(report, projectRoot);
+            const s = report.summary;
+            console.log(`  specs: ${s.specCount}  plans: ${s.planCount}  tasks: ${s.taskCount}`);
+            console.log(`  chains: ${s.chainCount}  unlinked tasks: ${s.unlinkedTaskCount}`);
+            console.log(`  tasks with files: ${s.tasksWithFiles}  tasks with evidence: ${s.tasksWithEvidence}`);
             console.log(`\nWritten: ${outPath}`);
         });
 }
