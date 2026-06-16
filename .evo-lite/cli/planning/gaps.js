@@ -90,13 +90,13 @@ function checkR008(planIR) {
     if (!planIR) return [];
     return (planIR.tasks || [])
         .filter(t => !t.readOnly &&
-            t.status === 'implemented' &&
+            (t.status === 'implemented' || t.status === 'verified') &&
             (!t.evidence || t.evidence.length === 0) &&
             (!t.linkedFiles || t.linkedFiles.length === 0))
         .map(t => ({
             id: `R008:${t.id}`, rule: 'R008', scope: 'planning', level: 'warning',
             type: 'no-evidence',
-            message: `Task ${t.id} is implemented but has no archive evidence`,
+            message: `Task ${t.id} (${t.status}) has no archive evidence`,
             evidence: [t.sourcePath],
             suggestedAction: `Run mem archive after completing ${t.id} to record evidence`,
         }));
@@ -220,4 +220,4 @@ function runPlanningDrift(projectRoot, planIR) {
     ];
 }
 
-module.exports = { runPlanningDrift };
+module.exports = { runPlanningDrift, checkR008 };

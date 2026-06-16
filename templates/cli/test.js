@@ -351,6 +351,29 @@ async function runTests() {
         assert.ok(!lastRow.content.includes('alice@example.com'), 'warn-tier email should have been redacted in stored content');
         assert.ok(lastRow.content.includes('<REDACTED:email>'), 'warn-tier email should be replaced with a redaction marker');
 
+        console.log('T6. Testing R008 fires on verified tasks with no evidence ...');
+        {
+            const gapsPath = path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps.js');
+            delete require.cache[require.resolve(gapsPath)];
+            const gaps = require(gapsPath);
+            assert.strictEqual(typeof gaps.checkR008, 'function', 'checkR008 not exported from gaps.js');
+
+            const planIR = {
+                tasks: [
+                    { id: 'task:foo', title: 'Foo', status: 'verified', readOnly: false, evidence: [], linkedFiles: [] },
+                    { id: 'task:bar', title: 'Bar', status: 'implemented', readOnly: false, evidence: [], linkedFiles: [] },
+                    { id: 'task:baz', title: 'Baz', status: 'in-progress', readOnly: false, evidence: [], linkedFiles: [] },
+                ],
+            };
+
+            const findings = gaps.checkR008(planIR);
+            const ids = findings.map(f => f.id);
+            assert.ok(ids.some(id => id.includes('task:foo')), 'R008 did not fire on verified task:foo');
+            assert.ok(ids.some(id => id.includes('task:bar')), 'R008 did not fire on implemented task:bar');
+            assert.ok(!ids.some(id => id.includes('task:baz')), 'R008 should NOT fire on in-progress task:baz');
+            console.log('✅ T6 R008 fires on verified tasks passed');
+        }
+
         console.log('T4. Testing template manifest covers all cli modules ...');
         {
             const manifestPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'));
