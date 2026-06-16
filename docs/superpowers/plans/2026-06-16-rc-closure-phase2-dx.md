@@ -1,5 +1,6 @@
 ---
 linkedSpec: spec:rc-closure-phase2-dx
+r008Exempt: true
 ---
 
 # RC Closure Phase 2 — DX Implementation Plan

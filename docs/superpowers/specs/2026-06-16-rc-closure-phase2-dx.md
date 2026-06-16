@@ -1,6 +1,6 @@
 ---
 id: spec:rc-closure-phase2-dx
-status: draft
+status: done
 created: 2026-06-16
 linkedPlan: plan:rc-closure-phase2-dx
 ---
