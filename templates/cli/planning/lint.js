@@ -9,6 +9,11 @@ const PLAN_DIRS = [
     'docs/superpowers/plans',
 ];
 
+const SPEC_DIRS = [
+    'docs/specs',
+    'docs/superpowers/specs',
+];
+
 function lintPlans(projectRoot, fix) {
     const issues = [];
     let fixed = 0;
@@ -56,6 +61,30 @@ function lintPlans(projectRoot, fix) {
                     level: 'warning',
                     file: relPath,
                     message: `${frontmatter.id} has no linkedSpec`,
+                });
+            }
+        }
+    }
+
+    for (const dir of SPEC_DIRS) {
+        const abs = path.join(projectRoot, dir);
+        if (!fs.existsSync(abs)) continue;
+
+        for (const fname of fs.readdirSync(abs)) {
+            if (!fname.endsWith('.md')) continue;
+
+            const filePath = path.join(abs, fname);
+            const relPath = path.relative(projectRoot, filePath).replace(/\\/g, '/');
+            const content = fs.readFileSync(filePath, 'utf8');
+            const { frontmatter } = parseFrontmatter(content);
+
+            if (!frontmatter.id || !frontmatter.id.startsWith('spec:')) continue;
+
+            if (!frontmatter.linkedPlan) {
+                issues.push({
+                    level: 'info',
+                    file: relPath,
+                    message: `${frontmatter.id} has no linkedPlan`,
                 });
             }
         }

@@ -134,6 +134,22 @@ function scanPlanning(projectRoot) {
         }
     }
 
+    // Cross-validate spec↔plan links
+    const planIdSet = new Set(plans.map(p => p.id));
+    const specIdSet = new Set(specs.map(s => s.id));
+    for (const spec of specs) {
+        for (const linkedPlanId of (spec.linkedPlans || [])) {
+            if (!planIdSet.has(linkedPlanId)) {
+                warnings.push({ level: 'warning', message: `spec ${spec.id} references ${linkedPlanId} but no such plan found` });
+            }
+        }
+    }
+    for (const plan of plans) {
+        if (plan.linkedSpec && !specIdSet.has(plan.linkedSpec)) {
+            warnings.push({ level: 'warning', message: `plan ${plan.id} references ${plan.linkedSpec} but no such spec found` });
+        }
+    }
+
     const ir = {
         version: 'evo-plan-ir@1',
         generatedAt: new Date().toISOString(),

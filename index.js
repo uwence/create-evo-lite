@@ -5,6 +5,7 @@ const readline = require('readline/promises');
 const http = require('http');
 const { Command } = require('commander');
 const { buildManagedTemplateEntries } = require(path.join(__dirname, 'templates', 'cli', 'template-manifest'));
+const { installPostCommitHook } = require(path.join(__dirname, 'templates', 'cli', 'hooks'));
 
 const SELF_VERSION = require(path.join(__dirname, 'package.json')).version;
 const INITIAL_COMMIT_MESSAGE = 'chore: initialize Evo-Lite workspace';
@@ -476,53 +477,6 @@ async function runInit(targetDirArg, options = {}) {
     console.log('----------------------------------------------------');
 }
 
-function installPostCommitHook(targetDir) {
-    const SENTINEL_BEGIN = '# BEGIN evo-lite-hook';
-    const SENTINEL_END = '# END evo-lite-hook';
-    const hooksDir = path.join(targetDir, '.git', 'hooks');
-    if (!fs.existsSync(hooksDir)) return;
-
-    const hookLines = [
-        SENTINEL_BEGIN,
-        '# Managed by create-evo-lite. Do not edit this block manually.',
-        '[ -d ".evo-lite/cli" ] || exit 0',
-        'CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null || echo "")',
-        'PLAN_CHANGED="" ARCH_CHANGED=""',
-        'for f in $CHANGED; do',
-        '  case "$f" in',
-        '    docs/specs/*|docs/plans/*|docs/superpowers/specs/*|docs/superpowers/plans/*) PLAN_CHANGED=1 ;;',
-        '    templates/cli/*|index.js|bin/*) ARCH_CHANGED=1 ;;',
-        '  esac',
-        'done',
-        'NODE_BIN=$(command -v node 2>/dev/null)',
-        '[ -z "$NODE_BIN" ] && exit 0',
-        '[ -z "${PLAN_CHANGED}${ARCH_CHANGED}" ] && exit 0',
-        'MEM="$NODE_BIN .evo-lite/cli/memory.js"',
-        '[ -n "$PLAN_CHANGED" ] && { $MEM plan scan 2>/dev/null; true; }',
-        '[ -n "$ARCH_CHANGED" ] && { $MEM architecture scan 2>/dev/null; true; }',
-        '$MEM plan gaps 2>/dev/null; true',
-        '$MEM dashboard build 2>/dev/null; true',
-        SENTINEL_END,
-    ];
-    const hookBody = hookLines.join('\n');
-
-    const hookPath = path.join(hooksDir, 'post-commit');
-    if (fs.existsSync(hookPath)) {
-        let content = fs.readFileSync(hookPath, 'utf8');
-        if (content.includes(SENTINEL_BEGIN)) {
-            content = content.replace(
-                new RegExp(`${SENTINEL_BEGIN}[\\s\\S]*?${SENTINEL_END}`),
-                hookBody
-            );
-        } else {
-            content = content.trimEnd() + '\n\n' + hookBody + '\n';
-        }
-        fs.writeFileSync(hookPath, content);
-    } else {
-        fs.writeFileSync(hookPath, '#!/bin/sh\n' + hookBody + '\n');
-    }
-    try { fs.chmodSync(hookPath, '755'); } catch (_) {}
-}
 
 async function main(argv = process.argv) {
     const program = buildProgram();

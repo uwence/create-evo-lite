@@ -1776,6 +1776,47 @@ async function runTests() {
             console.log('✅ T11 post-commit hook installer passed');
         }
 
+        console.log('T12. Testing parseFrontmatter and extractSuperPowersTasks handle CRLF line endings ...');
+        {
+            const { parseFrontmatter, parsePlanFile } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown'));
+
+            // T12a: parseFrontmatter with CRLF — all fields must be parsed
+            const crlfFm = '---\r\nid: spec:test\r\nstatus: done\r\ncreated: 2026-01-01\r\nlinkedPlan: plan:test\r\n---\r\n\r\n# Body\r\n';
+            const { frontmatter } = parseFrontmatter(crlfFm);
+            assert.strictEqual(frontmatter.id, 'spec:test', 'CRLF frontmatter: id must parse');
+            assert.strictEqual(frontmatter.status, 'done', 'CRLF frontmatter: status must parse');
+            assert.strictEqual(frontmatter.created, '2026-01-01', 'CRLF frontmatter: created must parse');
+            assert.strictEqual(frontmatter.linkedPlan, 'plan:test', 'CRLF frontmatter: linkedPlan must parse');
+
+            // T12b: parsePlanFile (superpowers format) with CRLF — tasks must be extracted
+            const tmpCrlfPlan = path.join(os.tmpdir(), 'evo-crlf-plan.md');
+            const crlfPlanContent = [
+                '---\r\nlinkedSpec: spec:crlf-test\r\n---\r\n',
+                '# CRLF Test Plan\r\n',
+                '### Task 1: Do something\r\n',
+                '- [x] **Step 1: Write test**\r\n',
+                '- [x] **Step 2: Run test**\r\n',
+                '- [x] **Step 3: Commit**\r\n',
+                '### Task 2: Do more\r\n',
+                '- [x] **Step 1: Implement**\r\n',
+                '- [x] **Step 2: Commit**\r\n',
+            ].join('');
+            fs.writeFileSync(tmpCrlfPlan, crlfPlanContent, 'utf8');
+            try {
+                const plan = parsePlanFile(tmpCrlfPlan);
+                assert.ok(plan, 'CRLF plan file must parse successfully');
+                assert.strictEqual(plan.tasks.length, 2, 'CRLF plan must have 2 tasks');
+                assert.strictEqual(plan.tasks[0].status, 'implemented', 'CRLF task 1 must be implemented');
+                assert.strictEqual(plan.tasks[1].status, 'implemented', 'CRLF task 2 must be implemented');
+                assert.strictEqual(plan.status, 'done', 'CRLF plan status must be done when all tasks implemented');
+                assert.strictEqual(plan.linkedSpec, 'spec:crlf-test', 'CRLF plan linkedSpec must parse from frontmatter');
+            } finally {
+                fs.rmSync(tmpCrlfPlan, { force: true });
+            }
+
+            console.log('✅ T12 CRLF line-ending handling passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);

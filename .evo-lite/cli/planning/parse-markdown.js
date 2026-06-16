@@ -69,7 +69,7 @@ function parseTaskAttrs(lines) {
 
 function extractTasks(body) {
     const tasks = [];
-    const lines = body.split('\n');
+    const lines = body.split(/\r?\n/);
     let currentPhase = null;
     let i = 0;
 
@@ -140,7 +140,7 @@ function extractSuperPowersFiles(sectionLines) {
 }
 
 function extractSuperPowersTasks(content, planSlug) {
-    const lines = content.split('\n');
+    const lines = content.split(/\r?\n/);
     const tasks = [];
     let i = 0;
 

@@ -19,6 +19,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'template-manifest.js',
             'test.js',
             'planning.js',
+            'hooks.js',
             'planning/gaps.js',
             'planning/parse-markdown.js',
             'planning/progress.js',
