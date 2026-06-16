@@ -175,6 +175,36 @@ function checkR010(projectRoot, planIR) {
         }));
 }
 
+// --- R011 ---
+
+function checkR011(planIR) {
+    if (!planIR) return [];
+    const specMap = new Map((planIR.specs || []).map(s => [s.id, s]));
+    const findings = [];
+
+    for (const plan of (planIR.plans || [])) {
+        if (!plan.linkedSpec) continue;
+        const spec = specMap.get(plan.linkedSpec);
+        if (!spec || spec.status === 'done') continue;
+
+        const planTasks = (planIR.tasks || []).filter(t => t.linkedPlan === plan.id);
+        if (planTasks.length === 0) continue;
+        if (!planTasks.every(t => t.readOnly || t.status === 'implemented')) continue;
+
+        findings.push({
+            id: `R011:${spec.id}`,
+            rule: 'R011',
+            scope: 'planning',
+            level: 'warning',
+            type: 'spec-status-drift',
+            message: `Spec ${spec.id} is [${spec.status}] but linked plan ${plan.id} has all tasks implemented`,
+            evidence: [spec.sourcePath],
+            suggestedAction: `Update status in ${spec.sourcePath} to: status: done`,
+        });
+    }
+    return findings;
+}
+
 // --- Public ---
 
 function runPlanningDrift(projectRoot, planIR) {
@@ -186,6 +216,7 @@ function runPlanningDrift(projectRoot, planIR) {
         ...checkR008(planIR),
         ...checkR009(projectRoot),
         ...checkR010(projectRoot, planIR),
+        ...checkR011(planIR),
     ];
 }
 
