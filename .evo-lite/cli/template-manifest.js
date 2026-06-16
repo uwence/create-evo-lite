@@ -46,6 +46,21 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
         relativeDir: ['.agents', 'workflows'],
         files: ['evo.md', 'commit.md', 'mem.md', 'walkthrough.md'],
     },
+    {
+        key: 'hook-scaffold',
+        scope: 'sync-always',
+        activeRoot: 'workspace',
+        templateRoot: 'root',
+        relativeDir: [],
+        files: [
+            '.github/copilot-instructions.md',
+            '.github/hooks/evo-lite.json',
+            '.github/hooks/evo-lite-hook.js',
+            '.github/hooks/evo-lite-codex-stop-hook.js',
+            '.github/hooks/dogfood-commit-hook.js',
+            '.codex/hooks.json',
+        ],
+    },
 ]);
 
 function buildEntry(family, file, paths) {

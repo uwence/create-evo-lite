@@ -2,12 +2,24 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { getWorkspaceRoot } = require('./runtime');
+const { PLAN_SOURCE_PATHS, ARCH_SOURCE_PATHS } = require('./planning/gaps');
 
 function readJson(filePath) {
     if (!fs.existsSync(filePath)) return null;
     try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); }
     catch { return null; }
+}
+
+function hasManagedPostCommitHook(projectRoot) {
+    const hookPath = path.join(projectRoot, '.git', 'hooks', 'post-commit');
+    if (!fs.existsSync(hookPath)) return false;
+    try {
+        return fs.readFileSync(hookPath, 'utf8').includes('# BEGIN evo-lite-hook');
+    } catch {
+        return false;
+    }
 }
 
 function computeFreshness(projectRoot) {
@@ -21,9 +33,29 @@ function computeFreshness(projectRoot) {
         return Math.round((nowMs - fs.statSync(p).mtimeMs) / 1000);
     }
 
+    function newestSourceMtime(sourcePaths) {
+        let newest = null;
+
+        function visit(absPath) {
+            if (!fs.existsSync(absPath)) return;
+            const stat = fs.statSync(absPath);
+            if (stat.isFile()) {
+                newest = newest === null ? stat.mtimeMs : Math.max(newest, stat.mtimeMs);
+                return;
+            }
+            for (const entry of fs.readdirSync(absPath, { withFileTypes: true })) {
+                visit(path.join(absPath, entry.name));
+            }
+        }
+
+        for (const relPath of sourcePaths) {
+            visit(path.resolve(projectRoot, relPath));
+        }
+        return newest;
+    }
+
     let lastCommitAge = null;
     try {
-        const { execFileSync } = require('child_process');
         const ts = execFileSync('git', ['log', '-1', '--format=%ct'], {
             cwd: projectRoot, encoding: 'utf8', timeout: 3000,
         }).trim();
@@ -32,14 +64,74 @@ function computeFreshness(projectRoot) {
 
     const planIrAge = ageSecs(planIrPath);
     const archIrAge = ageSecs(archIrPath);
+    const planSourceMtime = newestSourceMtime(PLAN_SOURCE_PATHS);
+    const archSourceMtime = newestSourceMtime(ARCH_SOURCE_PATHS);
+    const planIrMtime = fs.existsSync(planIrPath) ? fs.statSync(planIrPath).mtimeMs : null;
+    const archIrMtime = fs.existsSync(archIrPath) ? fs.statSync(archIrPath).mtimeMs : null;
 
     return {
         planIrAge,
         archIrAge,
         lastCommitAge,
-        planStale: planIrAge !== null && lastCommitAge !== null && planIrAge > lastCommitAge,
-        archStale: archIrAge !== null && lastCommitAge !== null && archIrAge > lastCommitAge,
+        planStale: planIrMtime !== null && planSourceMtime !== null && planSourceMtime > planIrMtime,
+        archStale: archIrMtime !== null && archSourceMtime !== null && archSourceMtime > archIrMtime,
     };
+}
+
+function buildGovernanceSummary(projectRoot, freshness) {
+    const reportPath = path.join(projectRoot, '.evo-lite', 'generated', 'governance', 'post-commit-last-run.json');
+    const governance = {
+        status: 'missing',
+        hookInstalled: hasManagedPostCommitHook(projectRoot),
+        stale: Boolean(freshness && (freshness.planStale || freshness.archStale)),
+        reportPath,
+        lastRun: {
+            exists: false,
+            ok: null,
+            commit: null,
+            changedFiles: [],
+            categories: [],
+            commandCount: 0,
+            failedCommands: [],
+        },
+    };
+
+    if (!fs.existsSync(reportPath)) {
+        return governance;
+    }
+
+    try {
+        const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+        const commands = Array.isArray(report.commands) ? report.commands : [];
+        const failedCommands = commands
+            .filter(command => command && command.ok === false)
+            .map(command => command.name || 'unknown');
+        const ok = failedCommands.length === 0;
+
+        return {
+            ...governance,
+            status: ok ? 'healthy' : 'failed-last-run',
+            lastRun: {
+                exists: true,
+                ok,
+                commit: report.commit || null,
+                changedFiles: Array.isArray(report.changedFiles) ? report.changedFiles : [],
+                categories: Array.isArray(report.categories) ? report.categories : [],
+                commandCount: commands.length,
+                failedCommands,
+            },
+        };
+    } catch (error) {
+        return {
+            ...governance,
+            status: 'error',
+            error: error.message,
+            lastRun: {
+                ...governance.lastRun,
+                exists: true,
+            },
+        };
+    }
 }
 
 function buildDashboardData(projectRoot) {
@@ -126,6 +218,8 @@ function buildDashboardData(projectRoot) {
         generatedDataFresh: r009.length === 0,
     };
 
+    const freshness = computeFreshness(projectRoot);
+
     return {
         version: 'evo-dashboard@1',
         generatedAt: new Date().toISOString(),
@@ -135,7 +229,8 @@ function buildDashboardData(projectRoot) {
         drift,
         memory,
         verify,
-        freshness: computeFreshness(projectRoot),
+        freshness,
+        governance: buildGovernanceSummary(projectRoot, freshness),
     };
 }
 

@@ -1,0 +1,72 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-hook.js sessionstart",
+            "statusMessage": "Refreshing Evo-Lite session guidance..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-hook.js pretooluse",
+            "statusMessage": "Checking Evo-Lite architecture guard..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/dogfood-commit-hook.js pretooluse",
+            "statusMessage": "Checking dogfood evidence..."
+          }
+        ]
+      },
+      {
+        "matcher": "apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-hook.js pretooluse",
+            "statusMessage": "Checking Evo-Lite architecture guard..."
+          },
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/dogfood-commit-hook.js pretooluse",
+            "statusMessage": "Checking dogfood evidence..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-hook.js posttooluse",
+            "statusMessage": "Refreshing Evo-Lite closure guidance..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./.github/hooks/evo-lite-codex-stop-hook.js",
+            "statusMessage": "Checking Evo-Lite handoff state..."
+          }
+        ]
+      }
+    ]
+  }
+}

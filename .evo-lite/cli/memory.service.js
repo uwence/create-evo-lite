@@ -969,6 +969,11 @@ function splitTrajectoryEntries(trajectory) {
 
 function normalizeTemplateComparableContent(file, content) {
     const normalized = content.replace(/\r\n/g, '\n');
+    if (file === 'copilot-instructions.md') {
+        return normalized
+            .replace(/<!-- evo-lite:local-extensions:start -->[\s\S]*?<!-- evo-lite:local-extensions:end -->/g, '<!-- evo-lite:local-extensions:start -->\n\n<!-- evo-lite:local-extensions:end -->')
+            .trimEnd();
+    }
     if (file !== 'models.js') {
         return normalized.trimEnd();
     }
@@ -986,6 +991,77 @@ function buildTemplateSyncEntries(templateCliPath, templateRootPath) {
         templateCliPath,
         scopes: ['sync-always'],
     });
+}
+
+function buildHookScaffoldEntries(templateCliPath, templateRootPath) {
+    return buildManagedTemplateEntries({
+        workspaceRoot: getWorkspaceRoot(),
+        activeCliDir: __dirname,
+        templateRootPath,
+        templateCliPath,
+        scopes: ['sync-always'],
+    }).filter(entry => entry.family === 'hook-scaffold');
+}
+
+function inspectHookScaffold() {
+    const templateCliPath = getTemplateCliDir();
+    const templateRootPath = getTemplateRootDir();
+    const entries = (templateCliPath && templateRootPath)
+        ? buildHookScaffoldEntries(templateCliPath, templateRootPath)
+        : [];
+    const assets = entries.map(entry => ({
+        label: entry.label,
+        exists: fs.existsSync(entry.activeFile),
+        templateExists: fs.existsSync(entry.templateFile),
+    }));
+    const missing = assets.filter(asset => !asset.exists).map(asset => asset.label);
+    const missingTemplates = assets.filter(asset => !asset.templateExists).map(asset => asset.label);
+
+    return {
+        valid: missing.length === 0 && missingTemplates.length === 0,
+        assets,
+        missing,
+        missingTemplates,
+    };
+}
+
+function installHookScaffold(options = {}) {
+    const templateCliPath = getTemplateCliDir();
+    const templateRootPath = getTemplateRootDir();
+    const entries = (templateCliPath && templateRootPath)
+        ? buildHookScaffoldEntries(templateCliPath, templateRootPath)
+        : [];
+    const force = options.force === true;
+    const result = {
+        installed: [],
+        overwritten: [],
+        skipped: [],
+        missingTemplates: [],
+    };
+
+    for (const entry of entries) {
+        if (!fs.existsSync(entry.templateFile)) {
+            result.missingTemplates.push(entry.label);
+            continue;
+        }
+
+        const activeExists = fs.existsSync(entry.activeFile);
+        if (activeExists && !force) {
+            result.skipped.push(entry.label);
+            continue;
+        }
+
+        fs.mkdirSync(path.dirname(entry.activeFile), { recursive: true });
+        if (activeExists && force) {
+            fs.copyFileSync(entry.activeFile, `${entry.activeFile}.bak`);
+            result.overwritten.push(entry.label);
+        } else {
+            result.installed.push(entry.label);
+        }
+        fs.copyFileSync(entry.templateFile, entry.activeFile);
+    }
+
+    return result;
 }
 
 
@@ -1588,6 +1664,7 @@ async function verify(options = {}) {
         hasAlerts: false,
         localEngine: 'unknown',
         nextSteps: [],
+        governance: 'unknown',
         project_control: 'unknown',
         safety: null,
         templateSync: 'skipped',
@@ -1908,7 +1985,31 @@ async function verify(options = {}) {
         report.project_control = { error: true };
     }
 
+    const governanceRun = readGovernanceRunState(getWorkspaceRoot());
+    report.governance = governanceRun;
+    if (governanceRun.status === 'healthy') {
+        log('🪝 [治理运行]: last_run=healthy');
+    } else if (governanceRun.status === 'missing') {
+        log('🪝 [治理运行]: last_run=missing');
+    } else if (governanceRun.status === 'failed-last-run') {
+        log('🪝 [治理运行]: last_run=failed-last-run');
+        report.hasAlerts = true;
+        pushNextStep('Inspect `.evo-lite/generated/governance/post-commit-last-run.json` and rerun the failing governance command path.');
+    } else {
+        log(`🪝 [治理运行]: last_run=error (${governanceRun.error})`);
+        report.hasAlerts = true;
+        pushNextStep('Repair or delete the broken governance run report, then rerun the post-commit governance path.');
+    }
+
+    collectOperatorNextSteps(getWorkspaceRoot(), report, pushNextStep);
+
     if (!report.hasAlerts) {
+        if (report.nextSteps.length > 0) {
+            log('🧭 常用治理动作:');
+            for (const step of report.nextSteps) {
+                log(`- ${step}`);
+            }
+        }
         log('✅ Verify completed with no active alerts.');
         log('💡 建议下一步: 可以继续 `/evo` / `/commit` 工作流，或直接开始新的开发任务。');
     }
@@ -1979,6 +2080,58 @@ function summarizeTakeoverHit(result) {
         };
     }
     return null;
+}
+
+function hasPlanningSources(projectRoot) {
+    return [
+        path.join(projectRoot, 'docs', 'specs'),
+        path.join(projectRoot, 'docs', 'plans'),
+        path.join(projectRoot, 'docs', 'superpowers', 'specs'),
+        path.join(projectRoot, 'docs', 'superpowers', 'plans'),
+    ].some(target => fs.existsSync(target));
+}
+
+function collectOperatorNextSteps(projectRoot, report, pushNextStep) {
+    const planIrPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    const progressPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'progress-report.json');
+    const dashboardPath = path.join(projectRoot, '.evo-lite', 'generated', 'dashboard', 'dashboard-data.json');
+
+    if (report.git !== 'not-a-repo') {
+        pushNextStep('Run `node .evo-lite/cli/memory.js hook status` to verify post-commit governance is installed and active.');
+    }
+    if (hasPlanningSources(projectRoot) && !fs.existsSync(planIrPath)) {
+        pushNextStep('Run `node .evo-lite/cli/memory.js plan scan` to refresh planning IR from the current specs and plans.');
+    }
+    if (fs.existsSync(planIrPath) && !fs.existsSync(progressPath)) {
+        pushNextStep('Run `node .evo-lite/cli/memory.js plan progress` to refresh task-evidence status before reading the dashboard.');
+    }
+    if (fs.existsSync(planIrPath) && !fs.existsSync(dashboardPath)) {
+        pushNextStep('Run `node .evo-lite/cli/memory.js dashboard build` to regenerate the operator dashboard snapshot.');
+    }
+}
+
+function readGovernanceRunState(projectRoot) {
+    const reportPath = path.join(projectRoot, '.evo-lite', 'generated', 'governance', 'post-commit-last-run.json');
+    if (!fs.existsSync(reportPath)) {
+        return { status: 'missing', path: reportPath, report: null };
+    }
+    try {
+        const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+        const commands = Array.isArray(report.commands) ? report.commands : [];
+        const failed = commands.some(command => command && command.ok === false);
+        return {
+            status: failed ? 'failed-last-run' : 'healthy',
+            path: reportPath,
+            report,
+        };
+    } catch (error) {
+        return {
+            status: 'error',
+            path: reportPath,
+            report: null,
+            error: error.message,
+        };
+    }
 }
 
 function extractKeywordsFromContext(focusText, backlogArray) {
@@ -2116,7 +2269,9 @@ module.exports = {
     importMemories,
     inject,
     inspectActiveContextState,
+    inspectHookScaffold,
     inspectHookLifecycle,
+    installHookScaffold,
     inspectLocalState,
     list,
     memorize,

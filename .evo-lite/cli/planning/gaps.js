@@ -6,6 +6,49 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
+const PLAN_SOURCE_PATHS = ['docs/specs', 'docs/plans', 'docs/superpowers/specs', 'docs/superpowers/plans'];
+const ARCH_SOURCE_PATHS = ['templates/cli', '.agents/rules', '.agents/workflows', 'index.js', 'bin/cli.js', 'docs/contracts', 'docs/architecture'];
+
+function normalizePaths(list) {
+    return list.map(item => item.replace(/\\/g, '/')).filter(Boolean);
+}
+
+function readChangedFilesFromEnv() {
+    const raw = process.env.EVO_LITE_CHANGED_FILES;
+    if (!raw) return null;
+    const files = normalizePaths(raw.split(/\r?\n/).map(item => item.trim()));
+    return files.length > 0 ? files : null;
+}
+
+function getChangedFiles(projectRoot, options = {}) {
+    if (Array.isArray(options.changedFiles)) {
+        return normalizePaths(options.changedFiles);
+    }
+
+    if (options.changedFilesFromEnv) {
+        const envFiles = readChangedFilesFromEnv();
+        if (envFiles) return envFiles;
+    }
+
+    try {
+        const args = options.lastCommit
+            ? ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', 'HEAD']
+            : ['diff', '--name-only', 'HEAD'];
+        const out = execFileSync('git', args, {
+            cwd: projectRoot, encoding: 'utf8', timeout: 5000,
+        }).trim();
+        return out ? normalizePaths(out.split('\n')) : [];
+    } catch {
+        return [];
+    }
+}
+
+function hasArchiveEvidence(task) {
+    return (task.evidence || []).some(item =>
+        /^(archive:|raw:|mem_)/i.test(item) || /raw_memory\//i.test(item)
+    );
+}
+
 // --- R003 ---
 
 function checkR003(projectRoot) {
@@ -59,17 +102,9 @@ function checkR005(planIR) {
 
 // --- R006 ---
 
-function checkR006(projectRoot, planIR) {
+function checkR006(projectRoot, planIR, options = {}) {
     if (!planIR) return [];
-    let changedFiles;
-    try {
-        const out = execFileSync('git', ['diff', '--name-only', 'HEAD'], {
-            cwd: projectRoot, encoding: 'utf8', timeout: 5000,
-        }).trim();
-        changedFiles = out ? out.split('\n').filter(Boolean) : [];
-    } catch {
-        return [];
-    }
+    const changedFiles = getChangedFiles(projectRoot, options);
     if (changedFiles.length === 0) return [];
 
     const linkedFiles = new Set((planIR.tasks || []).flatMap(t => t.linkedFiles || []));
@@ -91,8 +126,7 @@ function checkR008(planIR) {
     return (planIR.tasks || [])
         .filter(t => !t.readOnly &&
             (t.status === 'implemented' || t.status === 'verified') &&
-            (!t.evidence || t.evidence.length === 0) &&
-            (!t.linkedFiles || t.linkedFiles.length === 0))
+            !hasArchiveEvidence(t))
         .map(t => ({
             id: `R008:${t.id}`, rule: 'R008', scope: 'planning', level: 'warning',
             type: 'no-evidence',
@@ -137,12 +171,12 @@ function checkR009(projectRoot) {
 
     check(
         path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
-        ['docs/specs', 'docs/plans', 'docs/superpowers/specs', 'docs/superpowers/plans'],
+        PLAN_SOURCE_PATHS,
         'plan'
     );
     check(
         path.join(projectRoot, '.evo-lite', 'generated', 'architecture', 'architecture-ir.json'),
-        ['templates/cli', '.agents/rules', '.agents/workflows', 'index.js', 'bin/cli.js'],
+        ARCH_SOURCE_PATHS,
         'architecture'
     );
     return findings;
@@ -213,12 +247,12 @@ function checkR011(planIR) {
 
 // --- Public ---
 
-function runPlanningDrift(projectRoot, planIR) {
+function runPlanningDrift(projectRoot, planIR, options = {}) {
     return [
         ...checkR003(projectRoot),
         ...checkR004(projectRoot),
         ...checkR005(planIR),
-        ...checkR006(projectRoot, planIR),
+        ...checkR006(projectRoot, planIR, options),
         ...checkR008(planIR),
         ...checkR009(projectRoot),
         ...checkR010(projectRoot, planIR),
@@ -226,4 +260,13 @@ function runPlanningDrift(projectRoot, planIR) {
     ];
 }
 
-module.exports = { runPlanningDrift, checkR008, checkR009 };
+module.exports = {
+    runPlanningDrift,
+    checkR006,
+    checkR008,
+    checkR009,
+    getChangedFiles,
+    hasArchiveEvidence,
+    PLAN_SOURCE_PATHS,
+    ARCH_SOURCE_PATHS,
+};

@@ -14,9 +14,29 @@ const SPEC_DIRS = [
     'docs/superpowers/specs',
 ];
 
+function collectSpecIds(projectRoot) {
+    const ids = new Set();
+    for (const dir of SPEC_DIRS) {
+        const abs = path.join(projectRoot, dir);
+        if (!fs.existsSync(abs)) continue;
+
+        for (const fname of fs.readdirSync(abs)) {
+            if (!fname.endsWith('.md')) continue;
+            const filePath = path.join(abs, fname);
+            const content = fs.readFileSync(filePath, 'utf8');
+            const { frontmatter } = parseFrontmatter(content);
+            if (frontmatter.id && frontmatter.id.startsWith('spec:')) {
+                ids.add(frontmatter.id);
+            }
+        }
+    }
+    return ids;
+}
+
 function lintPlans(projectRoot, fix) {
     const issues = [];
     let fixed = 0;
+    const specIds = collectSpecIds(projectRoot);
 
     for (const dir of PLAN_DIRS) {
         const abs = path.join(projectRoot, dir);
@@ -40,7 +60,8 @@ function lintPlans(projectRoot, fix) {
 
                 if (fix) {
                     const slug = fname.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.md$/, '');
-                    const block = `---\nid: plan:${slug}\nlinkedSpec: spec:${slug}\n---\n\n`;
+                    const linkedSpec = specIds.has(`spec:${slug}`) ? `spec:${slug}` : 'TODO';
+                    const block = `---\nid: plan:${slug}\nlinkedSpec: ${linkedSpec}\n---\n\n`;
                     fs.writeFileSync(filePath, block + content);
                     fixed++;
                 }
@@ -56,11 +77,11 @@ function lintPlans(projectRoot, fix) {
                 continue;
             }
 
-            if (!frontmatter.linkedSpec) {
+            if (!frontmatter.linkedSpec || !frontmatter.linkedSpec.startsWith('spec:')) {
                 issues.push({
                     level: 'warning',
                     file: relPath,
-                    message: `${frontmatter.id} has no linkedSpec`,
+                    message: `${frontmatter.id} has no linkedSpec / no valid linkedSpec (expected spec:*)`,
                 });
             }
         }

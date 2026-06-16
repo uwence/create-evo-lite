@@ -321,7 +321,15 @@ function handleApi(req, res) {
     try {
         if (url === '/api/timeline') {
             const md = readActiveContext();
-            return send(200, extractActiveContext(md));
+            const context = extractActiveContext(md);
+            return send(200, {
+                entries: context.trajectory || [],
+                meta: context.meta || [],
+                focus: context.focus || '',
+                backlog: context.backlog || [],
+                trajectory: context.trajectory || [],
+                context,
+            });
         }
         if (url === '/api/archive') {
             return send(200, { files: listArchiveFiles() });

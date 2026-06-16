@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseSpecFile, parsePlanFile } = require('./parse-markdown');
+const { parseSpecFile, parsePlanFile, parseFrontmatter } = require('./parse-markdown');
 const { getEvoConfig } = require('../runtime');
 const { validateProvider } = require('../architecture/provider-contract');
 
@@ -69,6 +69,41 @@ function collectMarkdownFiles(dirs, projectRoot) {
     return files;
 }
 
+function diagnosePlanParseFailure(content) {
+    const reasons = [];
+    const fixes = [];
+    const { frontmatter } = parseFrontmatter(content);
+
+    if (!frontmatter.id) {
+        reasons.push('no id: plan:* frontmatter');
+        fixes.push('add id: plan:<slug>');
+    } else if (!frontmatter.id.startsWith('plan:')) {
+        reasons.push(`invalid id "${frontmatter.id}" (expected plan:*)`);
+        fixes.push('rename id to plan:<slug>');
+    }
+
+    if (/^##\s+Task\s+\d+:/m.test(content) && !/^###\s+Task\s+\d+:/m.test(content)) {
+        reasons.push('found "## Task N:" but expected "### Task N:"');
+        fixes.push('use ### Task N: headings');
+    }
+
+    if (/^-\s+\[[xX ]\]\s+\*\*Step/m.test(content) && !/^###\s+Task\s+\d+:/m.test(content)) {
+        reasons.push('found Step checkboxes but no valid "### Task N:" heading');
+        fixes.push('add a Task heading before Step checkboxes');
+    }
+
+    if (frontmatter.linkedSpec && (!frontmatter.id || !frontmatter.id.startsWith('plan:'))) {
+        reasons.push('has linkedSpec but no valid plan id');
+    }
+
+    if (reasons.length === 0) {
+        reasons.push('missing id with plan: prefix');
+        fixes.push('add id: plan:<slug>');
+    }
+
+    return `Skipped plan file. Reason: ${reasons.join('; ')}. Fix: ${fixes.join('; ')}`;
+}
+
 function scanPlanning(projectRoot) {
     const warnings = [];
     const sources = [];
@@ -106,6 +141,7 @@ function scanPlanning(projectRoot) {
         const relPath = path.relative(projectRoot, filePath).replace(/\\/g, '/');
         sources.push({ type: 'plan', path: relPath });
         try {
+            const content = fs.readFileSync(filePath, 'utf8');
             const plan = parsePlanFile(filePath);
             if (plan) {
                 plan.sourcePath = relPath;
@@ -127,7 +163,7 @@ function scanPlanning(projectRoot) {
                     });
                 }
             } else {
-                warnings.push({ level: 'warning', message: `Skipped ${relPath}: missing id with plan: prefix` });
+                warnings.push({ level: 'warning', message: `Skipped ${relPath}: ${diagnosePlanParseFailure(content)}` });
             }
         } catch (e) {
             warnings.push({ level: 'error', message: `Failed to parse ${relPath}: ${e.message}` });

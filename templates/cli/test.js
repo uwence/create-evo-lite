@@ -11,6 +11,10 @@ const SHARED_CACHE_DIR = path.join(WORKSPACE_ROOT, '.evo-lite', '.cache');
 const TEMPLATE_CLI_DIR = path.join(WORKSPACE_ROOT, 'templates', 'cli');
 const TEMPLATE_ROOT_DIR = path.join(WORKSPACE_ROOT, 'templates');
 const INIT_ENTRY = path.join(WORKSPACE_ROOT, 'index.js');
+const TEST_SCOPE = process.argv[2] || 'all';
+function shouldRun(scope) {
+    return TEST_SCOPE === 'all' || TEST_SCOPE === scope;
+}
 process.env.NODE_PATH = path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules');
 require('module').Module._initPaths();
 
@@ -86,6 +90,93 @@ function ensureParent(filePath) {
 function writeText(filePath, content) {
     ensureParent(filePath);
     fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function runGit(cwd, args, extraEnv = {}) {
+    return childProcess.execFileSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, ...extraEnv },
+    }).trim();
+}
+
+function getGitShell() {
+    const candidates = [
+        path.join(process.env.ProgramFiles || '', 'Git', 'bin', 'sh.exe'),
+        path.join(process.env.ProgramFiles || '', 'Git', 'usr', 'bin', 'sh.exe'),
+        path.join(process.env['ProgramFiles(x86)'] || '', 'Git', 'bin', 'sh.exe'),
+        path.join(process.env['ProgramFiles(x86)'] || '', 'Git', 'usr', 'bin', 'sh.exe'),
+        'bash',
+        'sh',
+    ];
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        if (!candidate.includes(path.sep) || fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    throw new Error('No shell executable found for running git hook script');
+}
+
+function runPostCommitHook(cwd) {
+    return childProcess.execFileSync(getGitShell(), ['.git/hooks/post-commit'], {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env },
+    }).trim();
+}
+
+function createHookTestRepo(name, options = {}) {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), `evo-hook-test-${name}-`));
+    const hookLogPath = path.join(projectRoot, '.evo-lite', 'hook-log.ndjson');
+    const findingsPath = path.join(projectRoot, '.evo-lite', 'hook-findings.json');
+    const dashboardPath = path.join(projectRoot, '.evo-lite', 'dashboard-built.json');
+    const planIR = options.planIR || { version: 'evo-plan-ir@1', tasks: [] };
+    const gapsModulePath = JSON.stringify(path.join(WORKSPACE_ROOT, 'templates', 'cli', 'planning', 'gaps.js'));
+
+    writeText(path.join(projectRoot, '.evo-lite', 'cli', 'memory.js'), `
+'use strict';
+const fs = require('fs');
+const path = require('path');
+
+const logPath = ${JSON.stringify(hookLogPath)};
+const findingsPath = ${JSON.stringify(findingsPath)};
+const dashboardPath = ${JSON.stringify(dashboardPath)};
+const entry = { argv: process.argv.slice(2), changed: process.env.EVO_LITE_CHANGED_FILES || null };
+fs.mkdirSync(path.dirname(logPath), { recursive: true });
+fs.appendFileSync(logPath, JSON.stringify(entry) + '\\n');
+
+if (entry.argv[0] === 'plan' && entry.argv[1] === 'gaps') {
+    const { runPlanningDrift } = require(${gapsModulePath});
+    const irPath = path.join(process.cwd(), '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    const planIR = fs.existsSync(irPath) ? JSON.parse(fs.readFileSync(irPath, 'utf8')) : null;
+    const findings = runPlanningDrift(process.cwd(), planIR, {
+        lastCommit: entry.argv.includes('--last-commit'),
+        changedFilesFromEnv: entry.argv.includes('--changed-files-from-env'),
+    });
+    fs.writeFileSync(findingsPath, JSON.stringify(findings, null, 2), 'utf8');
+}
+
+if (entry.argv[0] === 'dashboard' && entry.argv[1] === 'build') {
+    fs.writeFileSync(dashboardPath, JSON.stringify({ built: true, argv: entry.argv }, null, 2), 'utf8');
+}
+`.trim() + '\n');
+    writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify(planIR, null, 2));
+
+    runGit(projectRoot, ['init']);
+    runGit(projectRoot, ['config', 'user.name', 'Evo Test']);
+    runGit(projectRoot, ['config', 'user.email', 'evo@example.com']);
+
+    const { installPostCommitHook } = require(INIT_ENTRY);
+    if (options.installHookBeforeInitialCommit) {
+        installPostCommitHook(projectRoot);
+        return { projectRoot, hookLogPath, findingsPath, dashboardPath };
+    }
+
+    runGit(projectRoot, ['add', '.']);
+    runGit(projectRoot, ['commit', '-m', 'chore: baseline']);
+    installPostCommitHook(projectRoot);
+    return { projectRoot, hookLogPath, findingsPath, dashboardPath };
 }
 
 function readNdjson(filePath) {
@@ -201,8 +292,11 @@ async function runInitializer(projectRoot, options = {}) {
 
 function resetCliModuleCache() {
     for (const file of ['runtime.js', 'db.js', 'models.js', 'memory.service.js', 'mcp-detect.js', 'memory.js']) {
-        delete require.cache[path.join(CLI_DIR, file)];
-        delete require.cache[require.resolve(path.join(CLI_DIR, file))];
+        const fullPath = path.join(CLI_DIR, file);
+        delete require.cache[fullPath];
+        if (fs.existsSync(fullPath)) {
+            delete require.cache[require.resolve(fullPath)];
+        }
     }
 }
 
@@ -261,7 +355,249 @@ async function withPatchedExecFileSync(impl, fn) {
     }
 }
 
+async function runGovernanceTests() {
+    console.log('--- Starting governance-focused CLI tests ---');
+
+    try {
+        console.log('T13. Testing verify reports governance-operational next steps ...');
+        {
+            const runtime = createTempRuntimeRoot('verify-governance-guidance');
+            const planningDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(planningDir, { recursive: true });
+            fs.writeFileSync(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [],
+                plans: [],
+                tasks: [],
+                warnings: [],
+            }, null, 2), 'utf8');
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                EVO_LITE_SKIP_GIT_STATUS: '1',
+            });
+            const output = await captureConsole(async () => {
+                await loaded.service.verify();
+            });
+            assert.ok(output.includes('plan progress'), 'verify should recommend `plan progress` when plan IR exists but progress has not been refreshed');
+            assert.ok(output.includes('dashboard build'), 'verify should recommend `dashboard build` when dashboard data has not been built');
+            console.log('✅ T13 governance verify guidance passed');
+        }
+
+        console.log('T14. Testing post-commit hook writes governance run report ...');
+        {
+            const repo = createHookTestRepo('hook-report');
+            try {
+                writeText(path.join(repo.projectRoot, 'src', 'report.js'), 'module.exports = 1;\n');
+                runGit(repo.projectRoot, ['add', 'src/report.js']);
+                runGit(repo.projectRoot, ['commit', '-m', 'feat: report']);
+                runPostCommitHook(repo.projectRoot);
+                const reportPath = path.join(repo.projectRoot, '.evo-lite', 'generated', 'governance', 'post-commit-last-run.json');
+                assert.ok(fs.existsSync(reportPath), 'hook must write last-run governance report');
+            } finally {
+                fs.rmSync(repo.projectRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T14 governance hook telemetry passed');
+        }
+
+        console.log('T14a. Testing governance slice covers dashboard freshness relevance rules ...');
+        {
+            const dashPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'dashboard-data'));
+            delete require.cache[dashPath];
+            const dashModule = require(dashPath);
+            const tmpDashRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-fresh-'));
+            try {
+                const data = dashModule.buildDashboardData(tmpDashRoot);
+                assert.ok('freshness' in data, 'dashboard data must have freshness field');
+                assert.strictEqual(data.freshness.planStale, false, 'planStale should be false when plan IR is missing');
+
+                const planSource = path.join(tmpDashRoot, 'docs', 'specs', 'feature.md');
+                const readme = path.join(tmpDashRoot, 'README.md');
+                const planIrPath = path.join(tmpDashRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+                writeText(planSource, '---\nid: spec:feature\n---\n# Feature\n');
+                writeText(readme, '# Notes\n');
+                writeText(planIrPath, JSON.stringify({ version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [] }, null, 2));
+
+                const oldTime = new Date(Date.now() - 60000);
+                const irTime = new Date(Date.now() - 30000);
+                const readmeTime = new Date(Date.now() - 5000);
+                fs.utimesSync(planSource, oldTime, oldTime);
+                fs.utimesSync(planIrPath, irTime, irTime);
+                fs.utimesSync(readme, readmeTime, readmeTime);
+
+                const readmeOnlyData = dashModule.buildDashboardData(tmpDashRoot);
+                assert.strictEqual(readmeOnlyData.freshness.planStale, false, 'README-only changes must not mark planStale');
+
+                const newerPlanSource = new Date(Date.now() - 1000);
+                fs.utimesSync(planSource, newerPlanSource, newerPlanSource);
+                const staleData = dashModule.buildDashboardData(tmpDashRoot);
+                assert.strictEqual(staleData.freshness.planStale, true, 'newer planning source must mark planStale');
+            } finally {
+                fs.rmSync(tmpDashRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T14a dashboard freshness relevance passed');
+        }
+
+        console.log('T15. Testing dashboard data surfaces governance runtime status ...');
+        {
+            const dashPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'dashboard-data'));
+            delete require.cache[dashPath];
+            const dashModule = require(dashPath);
+            const tmpDashRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-dash-'));
+            try {
+                writeText(
+                    path.join(tmpDashRoot, '.evo-lite', 'generated', 'governance', 'post-commit-last-run.json'),
+                    JSON.stringify({
+                        event: 'post-commit',
+                        commit: 'abc1234',
+                        changedFiles: ['src/foo.js'],
+                        categories: ['code'],
+                        commands: [
+                            { name: 'plan progress', ok: true },
+                            { name: 'plan gaps', ok: true },
+                            { name: 'dashboard build', ok: true },
+                        ],
+                        ok: true,
+                    }, null, 2)
+                );
+                const data = dashModule.buildDashboardData(tmpDashRoot);
+                assert.ok(data.governance, 'dashboard data must include governance runtime status');
+                assert.strictEqual(data.governance.status, 'healthy', 'dashboard governance status should classify a clean last run as healthy');
+                assert.strictEqual(data.governance.lastRun.exists, true, 'dashboard governance summary should note existing last-run telemetry');
+                assert.strictEqual(data.governance.lastRun.ok, true, 'dashboard governance summary should preserve hook success state');
+            } finally {
+                fs.rmSync(tmpDashRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T15 dashboard governance summary passed');
+        }
+
+        console.log('T15a. Testing installPostCommitHook keeps governance body intact ...');
+        {
+            const { installPostCommitHook } = require(INIT_ENTRY);
+            const dir1 = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-hook1-'));
+            try {
+                fs.mkdirSync(path.join(dir1, '.git', 'hooks'), { recursive: true });
+                installPostCommitHook(dir1);
+                const hook = fs.readFileSync(path.join(dir1, '.git', 'hooks', 'post-commit'), 'utf8');
+                assert.ok(hook.includes('# BEGIN evo-lite-hook'), 'hook must contain BEGIN sentinel');
+                assert.ok(hook.includes('plan progress'), 'hook must reference plan progress');
+                assert.ok(hook.includes('plan gaps --last-commit --changed-files-from-env'), 'hook must evaluate last-commit gaps');
+                assert.ok(hook.includes('dashboard build'), 'hook must reference dashboard build');
+            } finally {
+                fs.rmSync(dir1, { recursive: true, force: true });
+            }
+            console.log('✅ T15a governance hook body passed');
+        }
+
+        console.log('T15b. Testing governance slice catches code-only commit gaps ...');
+        {
+            const repo = createHookTestRepo('governance-code-only', {
+                planIR: { version: 'evo-plan-ir@1', tasks: [] },
+            });
+            try {
+                writeText(path.join(repo.projectRoot, 'src', 'foo.js'), 'module.exports = 1;\n');
+                runGit(repo.projectRoot, ['add', 'src/foo.js']);
+                runGit(repo.projectRoot, ['commit', '-m', 'feat: add foo']);
+                runPostCommitHook(repo.projectRoot);
+
+                const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
+                assert.ok(findings.some(f => f.id === 'R006:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
+            } finally {
+                fs.rmSync(repo.projectRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T15b code-only commit governance gap passed');
+        }
+
+        console.log('T15c. Testing governance slice refreshes plan/progress/dashboard on plan commits ...');
+        {
+            const repo = createHookTestRepo('governance-plan-refresh', {
+                planIR: { version: 'evo-plan-ir@1', tasks: [] },
+            });
+            try {
+                writeText(
+                    path.join(repo.projectRoot, 'docs', 'superpowers', 'plans', '2026-06-16-refresh.md'),
+                    '---\nid: plan:refresh\nlinkedSpec: spec:refresh\n---\n# Refresh\n### Task 1: Refresh\n- [x] **Step 1:** done\n'
+                );
+                runGit(repo.projectRoot, ['add', 'docs/superpowers/plans/2026-06-16-refresh.md']);
+                runGit(repo.projectRoot, ['commit', '-m', 'docs: add refresh plan']);
+                runPostCommitHook(repo.projectRoot);
+
+                const entries = readNdjson(repo.hookLogPath);
+                const commands = entries.map(entry => entry.argv.join(' '));
+                assert.ok(commands.includes('plan scan'), 'plan commit should trigger plan scan');
+                assert.ok(commands.includes('plan progress'), 'plan commit should trigger plan progress');
+                assert.ok(commands.includes('plan gaps --last-commit --changed-files-from-env'), 'plan commit should trigger last-commit gaps');
+                assert.ok(commands.includes('dashboard build'), 'plan commit should trigger dashboard build');
+            } finally {
+                fs.rmSync(repo.projectRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T15c plan commit refresh sequence passed');
+        }
+
+        console.log('T15d. Testing governance slice sees files in the root commit ...');
+        {
+            const repo = createHookTestRepo('governance-root-commit', {
+                planIR: { version: 'evo-plan-ir@1', tasks: [] },
+                installHookBeforeInitialCommit: true,
+            });
+            try {
+                writeText(path.join(repo.projectRoot, 'src', 'root.js'), 'module.exports = "root";\n');
+                runGit(repo.projectRoot, ['add', '.']);
+                runGit(repo.projectRoot, ['commit', '-m', 'feat: root commit']);
+                runPostCommitHook(repo.projectRoot);
+
+                const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
+                assert.ok(findings.some(f => f.id === 'R006:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
+            } finally {
+                fs.rmSync(repo.projectRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T15d root-commit file detection passed');
+        }
+
+        console.log('T16. Testing inspector timeline payload stays stable for operators ...');
+        {
+            const runtime = createTempRuntimeRoot('timeline-contract');
+            const originalRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
+            const inspectorPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'inspector'));
+            delete require.cache[inspectorPath];
+            const inspector = require(inspectorPath);
+            const handle = await inspector.startServer({ port: 0 });
+            try {
+                const res = await fetch(`${handle.url.replace(/\/$/, '')}/api/timeline`);
+                assert.strictEqual(res.status, 200, '/api/timeline should return 200');
+                const timeline = await res.json();
+                assert.ok(Array.isArray(timeline.entries), '/api/timeline must return an entries array');
+                assert.ok(Array.isArray(timeline.backlog), '/api/timeline must return a backlog array');
+                assert.ok(timeline.context && Array.isArray(timeline.context.trajectory), '/api/timeline must embed parsed context payload');
+                assert.deepStrictEqual(timeline.entries, timeline.context.trajectory, 'timeline entries should mirror parsed trajectory data');
+            } finally {
+                await handle.close();
+                if (originalRoot == null) {
+                    delete process.env.EVO_LITE_ROOT;
+                } else {
+                    process.env.EVO_LITE_ROOT = originalRoot;
+                }
+            }
+            console.log('✅ T16 inspector timeline contract passed');
+        }
+
+        console.log('--- Governance-focused CLI tests passed! ---');
+    } catch (error) {
+        console.error('❌ Governance test failed:', error);
+        process.exit(1);
+    }
+}
+
 async function runTests() {
+    if (!shouldRun('governance')) {
+        console.error(`Unknown test scope: ${TEST_SCOPE}`);
+        process.exit(1);
+    }
+
+    if (TEST_SCOPE === 'governance') {
+        await runGovernanceTests();
+        return;
+    }
+
     console.log('--- Starting CLI integration tests ---');
 
     try {
@@ -397,8 +733,9 @@ async function runTests() {
             const planIR = {
                 tasks: [
                     { id: 'task:foo', title: 'Foo', status: 'verified', readOnly: false, evidence: [], linkedFiles: [] },
-                    { id: 'task:bar', title: 'Bar', status: 'implemented', readOnly: false, evidence: [], linkedFiles: [] },
+                    { id: 'task:bar', title: 'Bar', status: 'implemented', readOnly: false, evidence: ['git:abc123'], linkedFiles: ['src/bar.js'] },
                     { id: 'task:baz', title: 'Baz', status: 'in-progress', readOnly: false, evidence: [], linkedFiles: [] },
+                    { id: 'task:qux', title: 'Qux', status: 'implemented', readOnly: false, evidence: ['archive:2026-06-16T10-00-00Z'], linkedFiles: [] },
                 ],
             };
 
@@ -407,6 +744,7 @@ async function runTests() {
             assert.ok(ids.some(id => id.includes('task:foo')), 'R008 did not fire on verified task:foo');
             assert.ok(ids.some(id => id.includes('task:bar')), 'R008 did not fire on implemented task:bar');
             assert.ok(!ids.some(id => id.includes('task:baz')), 'R008 should NOT fire on in-progress task:baz');
+            assert.ok(!ids.some(id => id.includes('task:qux')), 'R008 should NOT fire when archive evidence exists');
             console.log('✅ T6 R008 fires on verified tasks passed');
         }
 
@@ -1665,6 +2003,7 @@ async function runTests() {
         console.log('T9. Testing plan lint detects missing frontmatter and --fix injects it ...');
         {
             const { lintPlans } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'lint'));
+            const { scanPlanning } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'scan'));
             const tmpLintRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lint-'));
             try {
                 const plansDir = path.join(tmpLintRoot, 'docs', 'superpowers', 'plans');
@@ -1692,11 +2031,19 @@ async function runTests() {
                 const fixedContent = fs.readFileSync(path.join(plansDir, '2026-01-01-my-feature.md'), 'utf8');
                 assert.ok(fixedContent.startsWith('---\n'), 'fixed file should start with frontmatter');
                 assert.ok(fixedContent.includes('id: plan:my-feature'), 'fixed frontmatter should have id: plan:my-feature');
-                assert.ok(fixedContent.includes('linkedSpec: spec:my-feature'), 'fixed frontmatter should have linkedSpec');
+                assert.ok(fixedContent.includes('linkedSpec: TODO'), 'fixed frontmatter should use TODO when matching spec is absent');
 
                 // Idempotency: second --fix on already-fixed file should not re-inject
                 const fixAgain = lintPlans(tmpLintRoot, true);
                 assert.strictEqual(fixAgain.fixed, 0, '--fix is idempotent — no double-inject');
+
+                fs.writeFileSync(path.join(plansDir, '2026-01-04-bad-heading.md'),
+                    '---\nlinkedSpec: spec:bad-heading\n---\n# Bad Heading Plan\n## Task 1: Wrong level\n- [ ] **Step 1:** do thing\n');
+                const scanResult = scanPlanning(tmpLintRoot);
+                assert.ok(
+                    scanResult.warnings.some(w => w.message.includes('expected "### Task N:"')),
+                    'scanPlanning should diagnose malformed Superpowers task headings'
+                );
             } finally {
                 fs.rmSync(tmpLintRoot, { recursive: true, force: true });
             }
@@ -1722,6 +2069,28 @@ async function runTests() {
                 assert.strictEqual(data.freshness.planIrAge, null, 'planIrAge should be null when IR missing');
                 assert.strictEqual(data.freshness.planStale, false, 'planStale should be false when IR missing');
                 assert.strictEqual(data.freshness.archStale, false, 'archStale should be false when IR missing');
+
+                const planSource = path.join(tmpDashRoot, 'docs', 'specs', 'feature.md');
+                const readme = path.join(tmpDashRoot, 'README.md');
+                const planIrPath = path.join(tmpDashRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+                writeText(planSource, '---\nid: spec:feature\n---\n# Feature\n');
+                writeText(readme, '# Notes\n');
+                writeText(planIrPath, JSON.stringify({ version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [] }, null, 2));
+
+                const oldTime = new Date(Date.now() - 60000);
+                const irTime = new Date(Date.now() - 30000);
+                const readmeTime = new Date(Date.now() - 5000);
+                fs.utimesSync(planSource, oldTime, oldTime);
+                fs.utimesSync(planIrPath, irTime, irTime);
+                fs.utimesSync(readme, readmeTime, readmeTime);
+
+                const readmeOnlyData = dashModule.buildDashboardData(tmpDashRoot);
+                assert.strictEqual(readmeOnlyData.freshness.planStale, false, 'README-only changes must not mark planStale');
+
+                const newerPlanSource = new Date(Date.now() - 1000);
+                fs.utimesSync(planSource, newerPlanSource, newerPlanSource);
+                const staleData = dashModule.buildDashboardData(tmpDashRoot);
+                assert.strictEqual(staleData.freshness.planStale, true, 'newer planning source must mark planStale');
             } finally {
                 fs.rmSync(tmpDashRoot, { recursive: true, force: true });
             }
@@ -1741,6 +2110,8 @@ async function runTests() {
                 assert.ok(hook.includes('# BEGIN evo-lite-hook'), 'hook must contain BEGIN sentinel');
                 assert.ok(hook.includes('# END evo-lite-hook'), 'hook must contain END sentinel');
                 assert.ok(hook.includes('plan scan'), 'hook must reference plan scan');
+                assert.ok(hook.includes('plan progress'), 'hook must reference plan progress');
+                assert.ok(hook.includes('plan gaps --last-commit --changed-files-from-env'), 'hook must evaluate last-commit gaps');
                 assert.ok(hook.includes('dashboard build'), 'hook must reference dashboard build');
 
                 // T11b: idempotent — second install does not duplicate sentinel
@@ -1774,6 +2145,71 @@ async function runTests() {
             }
 
             console.log('✅ T11 post-commit hook installer passed');
+        }
+
+        console.log('T11a. Testing post-commit hook catches code-only commit governance gaps ...');
+        {
+            const repo = createHookTestRepo('code-only', {
+                planIR: { version: 'evo-plan-ir@1', tasks: [] },
+            });
+            try {
+                writeText(path.join(repo.projectRoot, 'src', 'foo.js'), 'module.exports = 1;\n');
+                runGit(repo.projectRoot, ['add', 'src/foo.js']);
+                runGit(repo.projectRoot, ['commit', '-m', 'feat: add foo']);
+                runPostCommitHook(repo.projectRoot);
+
+                const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
+                assert.ok(findings.some(f => f.id === 'R006:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
+            } finally {
+                fs.rmSync(repo.projectRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T11a code-only commit governance gap passed');
+        }
+
+        console.log('T11b. Testing post-commit hook refreshes plan/progress/dashboard on plan commits ...');
+        {
+            const repo = createHookTestRepo('plan-refresh', {
+                planIR: { version: 'evo-plan-ir@1', tasks: [] },
+            });
+            try {
+                writeText(
+                    path.join(repo.projectRoot, 'docs', 'superpowers', 'plans', '2026-06-16-refresh.md'),
+                    '---\nid: plan:refresh\nlinkedSpec: spec:refresh\n---\n# Refresh\n### Task 1: Refresh\n- [x] **Step 1:** done\n'
+                );
+                runGit(repo.projectRoot, ['add', 'docs/superpowers/plans/2026-06-16-refresh.md']);
+                runGit(repo.projectRoot, ['commit', '-m', 'docs: add refresh plan']);
+                runPostCommitHook(repo.projectRoot);
+
+                const entries = readNdjson(repo.hookLogPath);
+                const commands = entries.map(entry => entry.argv.join(' '));
+                assert.ok(commands.includes('plan scan'), 'plan commit should trigger plan scan');
+                assert.ok(commands.includes('plan progress'), 'plan commit should trigger plan progress');
+                assert.ok(commands.includes('plan gaps --last-commit --changed-files-from-env'), 'plan commit should trigger last-commit gaps');
+                assert.ok(commands.includes('dashboard build'), 'plan commit should trigger dashboard build');
+            } finally {
+                fs.rmSync(repo.projectRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T11b plan commit refresh sequence passed');
+        }
+
+        console.log('T11c. Testing post-commit hook sees files in the root commit ...');
+        {
+            const repo = createHookTestRepo('root-commit', {
+                planIR: { version: 'evo-plan-ir@1', tasks: [] },
+                installHookBeforeInitialCommit: true,
+            });
+            try {
+                writeText(path.join(repo.projectRoot, 'src', 'root.js'), 'module.exports = "root";\n');
+                runGit(repo.projectRoot, ['add', '.']);
+                runGit(repo.projectRoot, ['commit', '-m', 'feat: root commit']);
+                runPostCommitHook(repo.projectRoot);
+
+                const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
+                assert.ok(findings.some(f => f.id === 'R006:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
+            } finally {
+                fs.rmSync(repo.projectRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T11c root-commit file detection passed');
         }
 
         console.log('T12. Testing parseFrontmatter and extractSuperPowersTasks handle CRLF line endings ...');

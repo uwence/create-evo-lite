@@ -22,7 +22,8 @@
     ],
     "scripts": {
         "start": "node ./bin/cli.js",
-        "test": "node ./.evo-lite/cli/test.js"
+        "test": "node ./.evo-lite/cli/test.js",
+        "test:governance": "node ./.evo-lite/cli/test.js governance"
     },
     "keywords": [
         "evo-lite",

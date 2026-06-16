@@ -68,7 +68,9 @@ function registerPlanCommands(program) {
 
     plan.command('gaps')
         .description('Run planning drift checks (R003–R011), write drift-report.json.')
-        .action(async () => {
+        .option('--last-commit', 'Evaluate changed files from the last commit instead of the working tree.')
+        .option('--changed-files-from-env', 'Read changed files from EVO_LITE_CHANGED_FILES before falling back to git.')
+        .action(async (options) => {
             const { runPlanningDrift } = require('./planning/gaps');
             const { loadReport, saveReport, mergeFindings } = require('./architecture/diff');
             const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
@@ -76,7 +78,10 @@ function registerPlanCommands(program) {
             if (!planIR) console.log('No plan-ir.json found. Run: mem plan scan first.\n');
 
             console.log('Running planning drift checks...\n');
-            const newFindings = runPlanningDrift(projectRoot, planIR);
+            const newFindings = runPlanningDrift(projectRoot, planIR, {
+                lastCommit: !!options.lastCommit,
+                changedFilesFromEnv: !!options.changedFilesFromEnv,
+            });
 
             const existing = loadReport(projectRoot);
             existing.findings = mergeFindings(existing.findings, newFindings, 'planning');
