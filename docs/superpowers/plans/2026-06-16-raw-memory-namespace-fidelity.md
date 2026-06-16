@@ -15,7 +15,7 @@
 **Files:**
 - Modify: `templates/cli/memory.service.js:1261`
 
-- [ ] **Step 1: Verify current frontmatter template (baseline)**
+- [x] **Step 1: Verify current frontmatter template (baseline)**
 
 Run:
 ```bash
@@ -32,7 +32,7 @@ Expected output (current, broken):
     const fileContent = `---\nid: "${id}"\ntimestamp: "${timestamp}"\ntype: "${type}"\ntags: []\n---\n\n${markdownBody}`;
 ```
 
-- [ ] **Step 2: Edit line 1261 — add `namespace` field**
+- [x] **Step 2: Edit line 1261 — add `namespace` field**
 
 In `templates/cli/memory.service.js`, replace line 1261:
 
@@ -46,7 +46,7 @@ In `templates/cli/memory.service.js`, replace line 1261:
 
 `preflightCheck.namespace` is already in scope at this point (computed at line ~1238–1247). `DEFAULT_NAMESPACE` is imported from `./db` at line 7.
 
-- [ ] **Step 3: Verify the template string changed**
+- [x] **Step 3: Verify the template string changed**
 
 Run:
 ```bash
@@ -65,7 +65,7 @@ Expected: line now contains `namespace:`.
 **Files:**
 - Modify: `templates/cli/memory.service.js:1301-1310`
 
-- [ ] **Step 1: Verify current read block (baseline)**
+- [x] **Step 1: Verify current read block (baseline)**
 
 Run:
 ```bash
@@ -77,7 +77,7 @@ lines.slice(1300,1311).forEach((l,i)=>console.log(1301+i+': '+l));
 ```
 Expected: lines 1301-1303 show three regex matches (`idMatch`, `tsMatch`, `typeMatch`), no `nsMatch`. Line 1305-1310 shows `ingestArchiveFile` call without fifth argument.
 
-- [ ] **Step 2: Edit lines 1301-1310 — add nsMatch + pass namespace**
+- [x] **Step 2: Edit lines 1301-1310 — add nsMatch + pass namespace**
 
 In `templates/cli/memory.service.js`, replace lines 1301-1310:
 
@@ -111,7 +111,7 @@ In `templates/cli/memory.service.js`, replace lines 1301-1310:
 
 `DEFAULT_NAMESPACE` is already imported at line 7 and in scope inside `syncIndexMemory()`.
 
-- [ ] **Step 3: Verify read block changed**
+- [x] **Step 3: Verify read block changed**
 
 Run:
 ```bash
@@ -123,7 +123,7 @@ lines.slice(1300,1313).forEach((l,i)=>console.log(1301+i+': '+l));
 ```
 Expected: line 1304 shows `nsMatch`, `ingestArchiveFile` call now has fifth argument `{ namespace: ... }`.
 
-- [ ] **Step 4: Smoke-test module loads without error**
+- [x] **Step 4: Smoke-test module loads without error**
 
 Run:
 ```bash
@@ -137,7 +137,7 @@ Expected: `OK` (no syntax errors).
 
 **Files:** (read-only verification, no edits)
 
-- [ ] **Step 1: Write a test archive entry with non-default namespace**
+- [x] **Step 1: Write a test archive entry with non-default namespace**
 
 Run:
 ```bash
@@ -169,7 +169,7 @@ ms.archive('namespace-fidelity-test', 'task', { namespace: 'code' }).then(r => {
 ```
 Expected: prints `namespace: "code"`, exits 0.
 
-- [ ] **Step 2: Verify rebuild preserves namespace**
+- [x] **Step 2: Verify rebuild preserves namespace**
 
 Run:
 ```bash
@@ -196,7 +196,7 @@ ms.verify({ silent: false }).then(r => {
 ```
 Expected: `code chunks` value ≥ 1 (the test entry from Step 1).
 
-- [ ] **Step 3: Verify old files without namespace field rebuild to prose (backward compat)**
+- [x] **Step 3: Verify old files without namespace field rebuild to prose (backward compat)**
 
 Run:
 ```bash
@@ -221,14 +221,14 @@ Expected: shows count of files without namespace field (the pre-fix files). No c
 **Files:**
 - Sync: `templates/cli/memory.service.js` → `.evo-lite/cli/memory.service.js`
 
-- [ ] **Step 1: Copy template to mirror**
+- [x] **Step 1: Copy template to mirror**
 
 Run:
 ```bash
 cp templates/cli/memory.service.js .evo-lite/cli/memory.service.js
 ```
 
-- [ ] **Step 2: Verify mirror matches template**
+- [x] **Step 2: Verify mirror matches template**
 
 Run:
 ```bash
@@ -236,7 +236,7 @@ diff templates/cli/memory.service.js .evo-lite/cli/memory.service.js
 ```
 Expected: no output (files identical).
 
-- [ ] **Step 3: Smoke-test mirror**
+- [x] **Step 3: Smoke-test mirror**
 
 Run:
 ```bash
@@ -244,7 +244,7 @@ node -e "require('./.evo-lite/cli/memory.service.js'); console.log('OK')"
 ```
 Expected: `OK`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add templates/cli/memory.service.js .evo-lite/cli/memory.service.js

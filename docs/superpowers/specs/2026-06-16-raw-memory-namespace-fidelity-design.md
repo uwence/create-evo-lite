@@ -2,6 +2,7 @@
 id: spec:raw-memory-namespace-fidelity
 status: done
 created: 2026-06-16
+linkedPlan: plan:raw-memory-namespace-fidelity
 ---
 
 # Raw Memory Namespace Fidelity — Design Spec
