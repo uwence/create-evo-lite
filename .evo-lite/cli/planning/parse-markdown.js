@@ -122,6 +122,23 @@ function extractTasks(body) {
 
 // --- Superpowers plan format support ---
 
+function extractSuperPowersFiles(sectionLines) {
+    const files = [];
+    let inFiles = false;
+    for (const line of sectionLines) {
+        const t = line.trim();
+        if (/^\*\*Files:\*\*/.test(t)) { inFiles = true; continue; }
+        if (inFiles && /^\*\*[A-Z]/.test(t)) { inFiles = false; }
+        if (!inFiles) continue;
+        const m = t.match(/^-\s+(?:Create|Modify|Test|Sync):\s*`([^`]+)`/i);
+        if (m) {
+            const p = m[1].trim().replace(/:\d[\d-]*$/, '');
+            if (p) files.push(p);
+        }
+    }
+    return files;
+}
+
 function extractSuperPowersTasks(content, planSlug) {
     const lines = content.split('\n');
     const tasks = [];
@@ -152,7 +169,7 @@ function extractSuperPowersTasks(content, planSlug) {
                 title: taskTitle,
                 status,
                 phase: null,
-                linkedFiles: [],
+                linkedFiles: extractSuperPowersFiles(sectionLines),
                 verify: [],
                 acceptance: null,
                 evidence: [],
