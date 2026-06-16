@@ -359,7 +359,7 @@ git commit -m "feat(dashboard): add freshness field with planStale/archStale ind
 - Modify: `templates/cli/test.js` (add T11)
 - Sync: `.evo-lite/cli/test.js`
 
-- [ ] **Step 1: Write failing test T11 in `templates/cli/test.js`**
+- [x] **Step 1: Write failing test T11 in `templates/cli/test.js`**
 
 Append after T10 block:
 
@@ -413,7 +413,7 @@ console.log('T11. Testing installPostCommitHook creates and is idempotent ...');
 }
 ```
 
-- [ ] **Step 2: Run test to confirm T11 fails**
+- [x] **Step 2: Run test to confirm T11 fails**
 
 ```bash
 node templates/cli/test.js 2>&1 | grep -E "T11|installPostCommitHook"
@@ -421,7 +421,7 @@ node templates/cli/test.js 2>&1 | grep -E "T11|installPostCommitHook"
 
 Expected: `installPostCommitHook is not a function` or `Cannot destructure property`.
 
-- [ ] **Step 3: Add `installPostCommitHook` to `index.js`**
+- [x] **Step 3: Add `installPostCommitHook` to `index.js`**
 
 Add this function before the `main` function (around line 477):
 
@@ -475,7 +475,7 @@ function installPostCommitHook(targetDir) {
 }
 ```
 
-- [ ] **Step 4: Call `installPostCommitHook` in the `main` flow**
+- [x] **Step 4: Call `installPostCommitHook` in the `main` flow**
 
 Find the line that says `const gitWorkspace = ensureGitWorkspace(targetDir, options);` (around line 402). Add the hook call immediately after it:
 
@@ -484,7 +484,7 @@ Find the line that says `const gitWorkspace = ensureGitWorkspace(targetDir, opti
     installPostCommitHook(targetDir);
 ```
 
-- [ ] **Step 5: Export `installPostCommitHook` from `index.js` for tests**
+- [x] **Step 5: Export `installPostCommitHook` from `index.js` for tests**
 
 At the very end of `index.js`, after the `main(process.argv)` call:
 
@@ -494,7 +494,7 @@ if (require.main !== module) {
 }
 ```
 
-- [ ] **Step 6: Run test to confirm T11 passes**
+- [x] **Step 6: Run test to confirm T11 passes**
 
 ```bash
 node templates/cli/test.js 2>&1 | grep -E "T11|✅ T11"
@@ -502,7 +502,7 @@ node templates/cli/test.js 2>&1 | grep -E "T11|✅ T11"
 
 Expected: `✅ T11 post-commit hook installer passed`
 
-- [ ] **Step 7: Sync test.js to dogfood + commit**
+- [x] **Step 7: Sync test.js to dogfood + commit**
 
 ```bash
 cp templates/cli/test.js .evo-lite/cli/test.js

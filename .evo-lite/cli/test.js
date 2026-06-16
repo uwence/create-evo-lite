@@ -1728,6 +1728,54 @@ async function runTests() {
             console.log('✅ T10 dashboard freshness passed');
         }
 
+        console.log('T11. Testing installPostCommitHook creates hook with sentinel, idempotent ...');
+        {
+            const { installPostCommitHook } = require(INIT_ENTRY);
+
+            // T11a: fresh install creates hook with sentinel
+            const dir1 = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hook1-'));
+            try {
+                fs.mkdirSync(path.join(dir1, '.git', 'hooks'), { recursive: true });
+                installPostCommitHook(dir1);
+                const hook = fs.readFileSync(path.join(dir1, '.git', 'hooks', 'post-commit'), 'utf8');
+                assert.ok(hook.includes('# BEGIN evo-lite-hook'), 'hook must contain BEGIN sentinel');
+                assert.ok(hook.includes('# END evo-lite-hook'), 'hook must contain END sentinel');
+                assert.ok(hook.includes('plan scan'), 'hook must reference plan scan');
+                assert.ok(hook.includes('dashboard build'), 'hook must reference dashboard build');
+
+                // T11b: idempotent — second install does not duplicate sentinel
+                installPostCommitHook(dir1);
+                const hook2 = fs.readFileSync(path.join(dir1, '.git', 'hooks', 'post-commit'), 'utf8');
+                const sentinelCount = (hook2.match(/# BEGIN evo-lite-hook/g) || []).length;
+                assert.strictEqual(sentinelCount, 1, 'sentinel must appear exactly once after second install');
+            } finally {
+                fs.rmSync(dir1, { recursive: true, force: true });
+            }
+
+            // T11c: pre-existing hook — evo-lite section appended, original content preserved
+            const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hook2-'));
+            try {
+                fs.mkdirSync(path.join(dir2, '.git', 'hooks'), { recursive: true });
+                fs.writeFileSync(path.join(dir2, '.git', 'hooks', 'post-commit'), '#!/bin/sh\necho "custom hook"\n');
+                installPostCommitHook(dir2);
+                const hook3 = fs.readFileSync(path.join(dir2, '.git', 'hooks', 'post-commit'), 'utf8');
+                assert.ok(hook3.includes('custom hook'), 'pre-existing hook content must be preserved');
+                assert.ok(hook3.includes('# BEGIN evo-lite-hook'), 'evo-lite sentinel must be appended');
+            } finally {
+                fs.rmSync(dir2, { recursive: true, force: true });
+            }
+
+            // T11d: no .git/hooks dir — must not throw
+            const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hook3-'));
+            try {
+                installPostCommitHook(dir3);
+            } finally {
+                fs.rmSync(dir3, { recursive: true, force: true });
+            }
+
+            console.log('✅ T11 post-commit hook installer passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);
