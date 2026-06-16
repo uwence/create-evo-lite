@@ -1,6 +1,6 @@
 ---
 id: spec:raw-memory-namespace-fidelity
-status: draft
+status: done
 created: 2026-06-16
 ---
 
