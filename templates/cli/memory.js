@@ -422,7 +422,27 @@ async function runContextCommand(op, text, options = {}) {
         return;
     }
 
+    if (op === 'auto-refresh') {
+        const result = memoryService.autoRefreshContext();
+        printPayload(result, formatAutoRefreshResult, options);
+        return;
+    }
+
     throw new Error(`Unknown context operation: '${op}'.`);
+}
+
+function formatAutoRefreshResult(result) {
+    if (!result) return 'no-op';
+    if (result.status === 'no-plan-ir') return `no plan-ir.json: ${result.hint}`;
+    const lines = [];
+    if (result.focusChanged) {
+        lines.push(`focus: "${result.focusBefore || '<empty>'}" → "${result.focusAfter}"`);
+    } else {
+        lines.push(`focus: unchanged ("${result.focusAfter || result.focusBefore || '<empty>'}")`);
+    }
+    lines.push(`backlog pruned: ${result.backlogPruned.length}`);
+    for (const line of result.backlogPruned) lines.push(`  - ${line}`);
+    return lines.join('\n');
 }
 
 async function runBootstrapCommand(options = {}) {
@@ -604,6 +624,12 @@ function buildProgram() {
     ).action(async (text, options) => {
         await runContextCommand('focus', text, options);
     });
+    contextCommand.command('auto-refresh')
+        .description('Re-derive focus from active plan + prune backlog entries whose linked task is implemented. Idempotent.')
+        .option('--json', 'Print JSON output')
+        .action(async options => {
+            await runContextCommand('auto-refresh', '', options);
+        });
     withTextSourceOptions(
         contextCommand.command('inject [text]').description('Internal/experimental context inject command.')
     ).action(async (text, options) => {
@@ -634,6 +660,7 @@ function buildProgram() {
     require('./architecture').registerArchitectureCommands(program);
     require('./dashboard-data').registerDashboardCommands(program);
     require('./hooks').registerHookCommands(program);
+    require('./sync-runtime').registerSyncRuntimeCommands(program);
 
     program.command('inspect')
         .description('Run the inspector HTTP server.')

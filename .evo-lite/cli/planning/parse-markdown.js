@@ -207,6 +207,7 @@ function parseSuperPowersPlan(filePath, content) {
         status: allDone ? 'done' : 'draft',
         sourcePath: filePath,
         linkedSpec: frontmatter.linkedSpec || null,
+        r008Exempt: frontmatter.r008Exempt === true || frontmatter.r008Exempt === 'true',
         taskIds: tasks.map(t => t.id),
         tasks,
     };
@@ -251,6 +252,7 @@ function parsePlanFile(filePath) {
         status: frontmatter.status || 'unknown',
         sourcePath: filePath,
         linkedSpec: frontmatter.linkedSpec || null,
+        r008Exempt: frontmatter.r008Exempt === true || frontmatter.r008Exempt === 'true',
         taskIds: tasks.map(t => t.id),
         tasks,
     };

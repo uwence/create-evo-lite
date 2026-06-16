@@ -1,1 +1,8 @@
 .evo-lite.rar filter=lfs diff=lfs merge=lfs -text
+
+# Normalize text files to LF on commit, silence Windows CRLF warnings.
+# Keep .cmd / .ps1 as CRLF for native Windows tooling.
+*               text=auto eol=lf
+*.cmd           text eol=crlf
+*.ps1           text eol=crlf
+*.bat           text eol=crlf

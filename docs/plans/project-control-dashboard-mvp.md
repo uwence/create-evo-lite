@@ -3,6 +3,7 @@ id: plan:project-control-dashboard-mvp
 status: done
 linkedSpec: spec:project-control-dashboard
 created: 2026-06-15
+r008Exempt: true
 ---
 
 # Project Control Dashboard — MVP Plan

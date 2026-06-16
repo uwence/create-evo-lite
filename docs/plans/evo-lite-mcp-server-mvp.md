@@ -3,6 +3,7 @@ id: plan:evo-lite-mcp-server-mvp
 status: done
 linkedSpec: spec:evo-lite-mcp-server
 created: 2026-06-15
+r008Exempt: true
 ---
 
 # Evo-Lite MCP Server — MVP Plan

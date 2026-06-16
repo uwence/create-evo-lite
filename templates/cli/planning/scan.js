@@ -110,6 +110,8 @@ function scanPlanning(projectRoot) {
     const specs = [];
     const plans = [];
     const tasks = [];
+    const { loadArchiveEvidenceMap } = require('./backfill-evidence');
+    const archiveEvidenceMap = loadArchiveEvidenceMap(projectRoot);
 
     // Specs
     const specFiles = collectMarkdownFiles(SCAN_DIRS.specs, projectRoot);
@@ -145,8 +147,9 @@ function scanPlanning(projectRoot) {
             const plan = parsePlanFile(filePath);
             if (plan) {
                 plan.sourcePath = relPath;
-                plans.push({ id: plan.id, title: plan.title, status: plan.status, sourcePath: plan.sourcePath, linkedSpec: plan.linkedSpec, taskIds: plan.taskIds });
+                plans.push({ id: plan.id, title: plan.title, status: plan.status, sourcePath: plan.sourcePath, linkedSpec: plan.linkedSpec, r008Exempt: !!plan.r008Exempt, taskIds: plan.taskIds });
                 for (const task of plan.tasks) {
+                    const archiveEvidence = archiveEvidenceMap[task.id] || [];
                     tasks.push({
                         id: task.id,
                         title: task.title,
@@ -155,9 +158,10 @@ function scanPlanning(projectRoot) {
                         sourcePath: relPath,
                         linkedSpec: plan.linkedSpec || null,
                         linkedPlan: plan.id,
+                        planR008Exempt: !!plan.r008Exempt,
                         linkedFiles: task.linkedFiles || [],
                         verify: task.verify || [],
-                        evidence: task.evidence || [],
+                        evidence: [...(task.evidence || []), ...archiveEvidence],
                         readOnly: task.readOnly || false,
                         confidence: task.status === 'implemented' ? 1.0 : 0.0,
                     });

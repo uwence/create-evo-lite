@@ -10,6 +10,25 @@ const memoryService = require('./memory.service');
 const fs = require('fs');
 const path = require('path');
 
+// freshRequire: reload a local module if its source file mtime is newer than
+// the version sitting in require.cache. The MCP server is long-lived; without
+// this, edits to scan-native.js / scan.js / gaps.js / diff.js take effect only
+// after a server restart, producing the staleness the user observed during
+// dogfood (mem architecture scan wrote 11 modules to disk, MCP still returned
+// the 10 captured at MCP startup).
+const _moduleLoadMtimes = new Map();
+function freshRequire(relPath) {
+    const resolved = require.resolve(relPath);
+    let mtimeMs = 0;
+    try { mtimeMs = fs.statSync(resolved).mtimeMs; } catch (_) {}
+    const last = _moduleLoadMtimes.get(resolved);
+    if (last == null || mtimeMs > last) {
+        delete require.cache[resolved];
+        _moduleLoadMtimes.set(resolved, mtimeMs);
+    }
+    return require(resolved);
+}
+
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
 const TOOLS = [
@@ -66,7 +85,7 @@ function handleVerify() {
 }
 
 function handlePlanStatus() {
-    const { scanPlanning } = require('./planning/scan');
+    const { scanPlanning } = freshRequire('./planning/scan');
     const ir = scanPlanning(getWorkspaceRoot());
     return {
         version: ir.version,
@@ -87,7 +106,7 @@ function handlePlanStatus() {
 }
 
 function handleArchitectureStatus() {
-    const { scanArchitecture } = require('./architecture/scan-native');
+    const { scanArchitecture } = freshRequire('./architecture/scan-native');
     const ir = scanArchitecture(getWorkspaceRoot());
     return {
         version: ir.version,
@@ -103,10 +122,10 @@ function handleArchitectureStatus() {
 
 function handleDriftStatus() {
     const root = getWorkspaceRoot();
-    const { scanPlanning } = require('./planning/scan');
-    const { scanArchitecture } = require('./architecture/scan-native');
-    const { runPlanningDrift } = require('./planning/gaps');
-    const { runArchitectureDrift } = require('./architecture/diff');
+    const { scanPlanning } = freshRequire('./planning/scan');
+    const { scanArchitecture } = freshRequire('./architecture/scan-native');
+    const { runPlanningDrift } = freshRequire('./planning/gaps');
+    const { runArchitectureDrift } = freshRequire('./architecture/diff');
     const planIR = scanPlanning(root);
     const archIR = scanArchitecture(root);
     const findings = [
@@ -180,4 +199,4 @@ async function runMcpServer() {
     process.once('SIGTERM', async () => { await server.close(); process.exit(0); });
 }
 
-module.exports = { runMcpServer, TOOLS };
+module.exports = { runMcpServer, TOOLS, __freshRequire: freshRequire };

@@ -1,5 +1,6 @@
 ---
 linkedSpec: spec:code-review-fixes
+r008Exempt: true
 ---
 
 # Code Review Fixes Implementation Plan

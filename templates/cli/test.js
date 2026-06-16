@@ -584,6 +584,271 @@ async function runGovernanceTests() {
             console.log('✅ T16 inspector timeline contract passed');
         }
 
+        console.log('T17. Testing sync-runtime + lock detects template/runtime drift ...');
+        {
+            const { syncRuntime, verifyRuntimeLock } = require(path.join(TEMPLATE_CLI_DIR, 'sync-runtime'));
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-sync-runtime-'));
+            try {
+                fs.mkdirSync(path.join(tmpRoot, 'templates', 'cli'), { recursive: true });
+                writeText(path.join(tmpRoot, 'templates', 'cli', 'memory.js'), '// template-canonical-v1\n');
+                writeText(path.join(tmpRoot, 'templates', 'cli', 'db.js'), '// template-canonical-db\n');
+
+                process.env.EVO_LITE_TEMPLATE_CLI_DIR = path.join(tmpRoot, 'templates', 'cli');
+                process.env.EVO_LITE_TEMPLATE_ROOT_DIR = path.join(tmpRoot, 'templates');
+
+                const syncResult = syncRuntime(tmpRoot);
+                assert.ok(syncResult.copied.includes('memory.js'), 'sync-runtime should copy memory.js to .evo-lite/cli/');
+                assert.ok(syncResult.lockPath, 'sync-runtime should write a lock file');
+                assert.ok(fs.existsSync(path.join(tmpRoot, '.evo-lite', 'generated', 'runtime-mirror.lock.json')), 'lock file must exist');
+
+                const checkOk = verifyRuntimeLock(tmpRoot);
+                assert.strictEqual(checkOk.status, 'ok', 'lock should report ok immediately after sync');
+
+                writeText(path.join(tmpRoot, '.evo-lite', 'cli', 'memory.js'), '// drifted-by-hand\n');
+                const checkDrifted = verifyRuntimeLock(tmpRoot);
+                assert.strictEqual(checkDrifted.status, 'drifted', 'lock should detect drift after manual edit');
+                assert.ok(checkDrifted.mismatches.some(m => m.path.endsWith('memory.js')), 'lock drift report should name memory.js');
+
+                const syncResult2 = syncRuntime(tmpRoot);
+                assert.ok(syncResult2.copied.includes('memory.js'), 'second sync should re-copy drifted memory.js');
+                const checkAfter = verifyRuntimeLock(tmpRoot);
+                assert.strictEqual(checkAfter.status, 'ok', 'lock should return to ok after sync re-runs');
+            } finally {
+                delete process.env.EVO_LITE_TEMPLATE_CLI_DIR;
+                delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T17 sync-runtime + lock drift detection passed');
+        }
+
+        console.log('T18. Testing mcp-server freshRequire mtime-invalidates source modules ...');
+        {
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-mcp-fresh-'));
+            try {
+                const modPath = path.join(tmpRoot, 'arch-stub.js');
+                writeText(modPath, 'module.exports = { moduleCount: 10 };\n');
+
+                const mcpPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'mcp-server'));
+                delete require.cache[mcpPath];
+                const mcpModule = require(mcpPath);
+                const fresh = mcpModule.__freshRequire || null;
+                assert.ok(fresh, 'mcp-server must export __freshRequire helper for testing');
+
+                const first = fresh(modPath);
+                assert.strictEqual(first.moduleCount, 10, 'first load returns 10');
+
+                const oldMtime = fs.statSync(modPath).mtimeMs;
+                writeText(modPath, 'module.exports = { moduleCount: 11 };\n');
+                let attempts = 0;
+                while (fs.statSync(modPath).mtimeMs <= oldMtime && attempts < 20) {
+                    fs.utimesSync(modPath, new Date(), new Date(Date.now() + (++attempts) * 50));
+                }
+
+                const second = fresh(modPath);
+                assert.strictEqual(second.moduleCount, 11, 'freshRequire must reload after mtime bump (saw stale ' + second.moduleCount + ')');
+            } finally {
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T18 mcp-server freshRequire passed');
+        }
+
+        console.log('T19. Testing architecture where <file> reverse lookup ...');
+        {
+            const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-arch-where-'));
+            try {
+                const archPath = path.join(tmpRoot, '.evo-lite', 'generated', 'architecture', 'architecture-ir.json');
+                writeText(archPath, JSON.stringify({
+                    version: 'evo-arch-ir@1',
+                    modules: [
+                        { id: 'module:cli-entry', name: 'CLI Entry', role: 'entry', fileCount: 1, confidence: 1.0 },
+                    ],
+                    files: [
+                        { path: 'index.js', module: 'module:cli-entry', role: 'entry', confidence: 1.0 },
+                        { path: 'foo.txt', module: null, role: 'unknown', confidence: 0 },
+                    ],
+                    warnings: [],
+                }, null, 2));
+                const planPath = path.join(tmpRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+                writeText(planPath, JSON.stringify({
+                    version: 'evo-plan-ir@1',
+                    specs: [], plans: [],
+                    tasks: [
+                        { id: 'task:foo-1', linkedFiles: ['index.js'], status: 'todo' },
+                        { id: 'task:bar-1', linkedFiles: ['unrelated.js'], status: 'todo' },
+                    ],
+                    warnings: [],
+                }, null, 2));
+
+                const hit = lookupFile(tmpRoot, 'index.js');
+                assert.strictEqual(hit.status, 'ok');
+                assert.strictEqual(hit.module.id, 'module:cli-entry');
+                assert.deepStrictEqual(hit.linkedTasks, ['task:foo-1']);
+
+                const unclassified = lookupFile(tmpRoot, 'foo.txt');
+                assert.strictEqual(unclassified.status, 'unclassified');
+
+                const missing = lookupFile(tmpRoot, 'no-such-file.js');
+                assert.strictEqual(missing.status, 'not-found');
+
+                fs.rmSync(archPath);
+                const noIR = lookupFile(tmpRoot, 'index.js');
+                assert.strictEqual(noIR.status, 'no-arch-ir');
+            } finally {
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T19 architecture where reverse lookup passed');
+        }
+
+        console.log('T20. Testing context auto-refresh re-derives focus + prunes backlog ...');
+        {
+            const runtime = createTempRuntimeRoot('autorefresh');
+            const planningDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(planningDir, { recursive: true });
+            writeText(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [], warnings: [],
+                plans: [
+                    { id: 'plan:demo', title: 'Demo Plan', status: 'draft', taskIds: ['task:demo-1', 'task:demo-2'] },
+                ],
+                tasks: [
+                    { id: 'task:demo-1', title: 'First task', status: 'todo', linkedPlan: 'plan:demo' },
+                    { id: 'task:demo-2', title: 'Second task', status: 'implemented', linkedPlan: 'plan:demo' },
+                ],
+            }, null, 2));
+
+            // Pre-populate backlog with one stale entry referencing implemented task:demo-2
+            writeText(
+                path.join(runtime.runtimeRoot, 'active_context.md'),
+                '# Active Context\n<!-- BEGIN_META -->\n<!-- END_META -->\n## Focus\n<!-- BEGIN_FOCUS -->\nold focus\n<!-- END_FOCUS -->\n## Backlog\n<!-- BEGIN_BACKLOG -->\n- [ ] [aaaa] task:demo-1 still active\n- [ ] [bbbb] task:demo-2 finished but still listed\n<!-- END_BACKLOG -->\n## Trajectory\n<!-- BEGIN_TRAJECTORY -->\n<!-- END_TRAJECTORY -->\n'
+            );
+
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+            const result1 = loaded.service.autoRefreshContext();
+            assert.strictEqual(result1.status, 'ok', 'auto-refresh should succeed');
+            assert.strictEqual(result1.focusChanged, true, 'focus should change away from "old focus"');
+            assert.ok(result1.focusAfter.startsWith('Demo Plan:'), 'focus should be derived from plan title (saw: ' + result1.focusAfter + ')');
+            assert.strictEqual(result1.backlogPruned.length, 1, 'should prune exactly one stale backlog item');
+            assert.ok(result1.backlogPruned[0].includes('task:demo-2'), 'pruned item should reference task:demo-2');
+
+            const result2 = loaded.service.autoRefreshContext();
+            assert.strictEqual(result2.focusChanged, false, 'second call must be idempotent (focus)');
+            assert.strictEqual(result2.backlogPruned.length, 0, 'second call must be idempotent (backlog)');
+
+            console.log('✅ T20 context auto-refresh passed');
+        }
+
+        console.log('T21. Testing R008 amnesty (r008Exempt frontmatter) + backfill evidence ...');
+        {
+            const { backfillArchiveEvidence, loadArchiveEvidenceMap } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'backfill-evidence'));
+            const { checkR008 } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-r008-'));
+            try {
+                // Fixture archives — one references task:foo, one nothing.
+                writeText(
+                    path.join(tmpRoot, '.evo-lite', 'raw_memory', 'mem_2026-06-16_10-00-00_aaa_111.md'),
+                    '---\nid: "aaa_111"\n---\n\nBody mentions task:foo doing things.\n'
+                );
+                writeText(
+                    path.join(tmpRoot, '.evo-lite', 'raw_memory', 'mem_2026-06-16_10-05-00_bbb_222.md'),
+                    '---\nid: "bbb_222"\nlinkedTask: task:bar\n---\n\nUnrelated body.\n'
+                );
+                writeText(
+                    path.join(tmpRoot, '.evo-lite', 'raw_memory', 'mem_2026-06-16_10-10-00_ccc_333.md'),
+                    '---\nid: "ccc_333"\n---\n\nNo task references.\n'
+                );
+
+                const result = backfillArchiveEvidence(tmpRoot);
+                assert.strictEqual(result.archivesScanned, 3, 'should scan 3 archives');
+                assert.strictEqual(result.archivesMatched, 2, 'should match 2 archives to task ids');
+                assert.ok(result.taskIdToArchives['task:foo'], 'task:foo must be in the map');
+                assert.ok(result.taskIdToArchives['task:bar'], 'task:bar (from linkedTask frontmatter) must be in the map');
+
+                const map = loadArchiveEvidenceMap(tmpRoot);
+                assert.deepStrictEqual(Object.keys(map).sort(), ['task:bar', 'task:foo']);
+
+                // R008 amnesty: planR008Exempt flag suppresses warnings
+                const findingsExempt = checkR008({
+                    tasks: [
+                        { id: 'task:old', status: 'implemented', evidence: [], readOnly: false, planR008Exempt: true },
+                    ],
+                });
+                assert.strictEqual(findingsExempt.length, 0, 'planR008Exempt should suppress R008 finding');
+
+                // R008 fires normally when not exempt and no evidence
+                const findingsNormal = checkR008({
+                    tasks: [
+                        { id: 'task:new', status: 'implemented', evidence: [], readOnly: false, planR008Exempt: false },
+                    ],
+                });
+                assert.strictEqual(findingsNormal.length, 1, 'R008 should still fire on non-exempt tasks without evidence');
+
+                // R008 also satisfied by backfilled archive evidence
+                const findingsBackfilled = checkR008({
+                    tasks: [
+                        { id: 'task:foo', status: 'implemented', evidence: ['archive:mem_2026-06-16_10-00-00_aaa_111.md'], readOnly: false, planR008Exempt: false },
+                    ],
+                });
+                assert.strictEqual(findingsBackfilled.length, 0, 'backfilled archive evidence should satisfy R008');
+            } finally {
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T21 R008 amnesty + archive backfill passed');
+        }
+
+        console.log('T22. Testing hook diff detects drift + hook last parses report ...');
+        {
+            const { installPostCommitHook, diffInstalledHook } = require(INIT_ENTRY);
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hook-diff-'));
+            try {
+                fs.mkdirSync(path.join(tmpRoot, '.git', 'hooks'), { recursive: true });
+                installPostCommitHook(tmpRoot);
+
+                const fresh = diffInstalledHook(tmpRoot);
+                assert.strictEqual(fresh.status, 'in-sync', 'freshly installed hook should be in-sync');
+
+                const hookPath = path.join(tmpRoot, '.git', 'hooks', 'post-commit');
+                const mutated = fs.readFileSync(hookPath, 'utf8').replace('dashboard build', 'dashboard build  # operator manual drift');
+                fs.writeFileSync(hookPath, mutated);
+                const drifted = diffInstalledHook(tmpRoot);
+                assert.strictEqual(drifted.status, 'drifted', 'manual edit should be detected as drift');
+                assert.ok(drifted.text.includes('expected') && drifted.text.includes('installed'), 'diff text should label both sides');
+            } finally {
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T22 hook diff drift detection passed');
+        }
+
+        console.log('T23. Testing plan new scaffolds spec + plan stubs ...');
+        {
+            const { scaffoldPlanStubs } = require(path.join(TEMPLATE_CLI_DIR, 'planning'));
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-plan-new-'));
+            try {
+                const result = scaffoldPlanStubs(tmpRoot, 'My Test-Feature!', false);
+                assert.ok(result.specPath.endsWith('-my-test-feature.md'), 'spec path should use sanitized slug');
+                assert.ok(result.planPath.endsWith('-my-test-feature.md'), 'plan path should use sanitized slug');
+                const planAbs = path.join(tmpRoot, result.planPath);
+                const specAbs = path.join(tmpRoot, result.specPath);
+                assert.ok(fs.existsSync(planAbs), 'plan file written');
+                assert.ok(fs.existsSync(specAbs), 'spec file written');
+                const planContent = fs.readFileSync(planAbs, 'utf8');
+                assert.ok(planContent.includes('### Task 1: TODO'), 'plan stub contains a Task 1 heading the parser will pick up');
+                assert.ok(planContent.includes('linkedSpec: spec:my-test-feature'), 'plan frontmatter links spec');
+                const specContent = fs.readFileSync(specAbs, 'utf8');
+                assert.ok(specContent.includes('id: spec:my-test-feature'), 'spec frontmatter has id');
+
+                // Calling again should be no-op (files already exist)
+                const before = fs.readFileSync(planAbs, 'utf8');
+                scaffoldPlanStubs(tmpRoot, 'My Test-Feature!', false);
+                const after = fs.readFileSync(planAbs, 'utf8');
+                assert.strictEqual(before, after, 'plan new should not overwrite existing files');
+            } finally {
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T23 plan new scaffold passed');
+        }
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);

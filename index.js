@@ -5,7 +5,7 @@ const readline = require('readline/promises');
 const http = require('http');
 const { Command } = require('commander');
 const { buildManagedTemplateEntries } = require(path.join(__dirname, 'templates', 'cli', 'template-manifest'));
-const { installPostCommitHook } = require(path.join(__dirname, 'templates', 'cli', 'hooks'));
+const { installPostCommitHook, diffInstalledHook } = require(path.join(__dirname, 'templates', 'cli', 'hooks'));
 
 const SELF_VERSION = require(path.join(__dirname, 'package.json')).version;
 const INITIAL_COMMIT_MESSAGE = 'chore: initialize Evo-Lite workspace';
@@ -500,6 +500,7 @@ module.exports = {
     buildProgram,
     handleCliError,
     installPostCommitHook,
+    diffInstalledHook,
     main,
     runInit,
 };

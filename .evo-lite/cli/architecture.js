@@ -85,6 +85,78 @@ function registerArchitectureCommands(program) {
             }
             console.log(`\nWritten: ${outPath}`);
         });
+
+    arch.command('where <file>')
+        .description('Reverse lookup: which module owns <file>? Reads cached IRs.')
+        .option('--json', 'Emit JSON.')
+        .action((file, options) => {
+            const result = lookupFile(projectRoot, file);
+            if (options.json) {
+                console.log(JSON.stringify(result, null, 2));
+                return;
+            }
+            if (result.status === 'no-arch-ir') {
+                console.log('architecture-ir.json not found. Run `mem architecture scan` first.');
+                process.exitCode = 1;
+                return;
+            }
+            if (result.status === 'unclassified') {
+                console.log(`${result.path} → unclassified (no module rule matches)`);
+                console.log('  hint: add to MODULE_RULES in templates/cli/architecture/infer-modules.js');
+                return;
+            }
+            if (result.status === 'not-found') {
+                console.log(`${result.path} → not in architecture-ir.json files[]`);
+                console.log('  hint: file may be outside WALK_TARGETS, or run `mem architecture scan` to refresh');
+                process.exitCode = 1;
+                return;
+            }
+            console.log(`${result.path} → ${result.module.id} (role: ${result.module.role}, confidence: ${result.module.confidence})`);
+            console.log(`  module name: ${result.module.name}`);
+            if (result.linkedTasks && result.linkedTasks.length > 0) {
+                console.log(`  linked tasks: ${result.linkedTasks.join(', ')}`);
+            } else {
+                console.log('  linked tasks: none');
+            }
+        });
 }
 
-module.exports = { registerArchitectureCommands };
+function lookupFile(projectRoot, file) {
+    const archIRPath = path.join(projectRoot, '.evo-lite', 'generated', 'architecture', 'architecture-ir.json');
+    if (!fs.existsSync(archIRPath)) {
+        return { status: 'no-arch-ir', path: file };
+    }
+    const archIR = JSON.parse(fs.readFileSync(archIRPath, 'utf8'));
+    const normalized = String(file).replace(/\\/g, '/').replace(/^\.\//, '');
+    const fileEntry = (archIR.files || []).find(f => f.path === normalized);
+    if (!fileEntry) {
+        return { status: 'not-found', path: normalized };
+    }
+    if (!fileEntry.module) {
+        return { status: 'unclassified', path: normalized };
+    }
+    const moduleEntry = (archIR.modules || []).find(m => m.id === fileEntry.module);
+
+    let linkedTasks = [];
+    const planIRPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    if (fs.existsSync(planIRPath)) {
+        const planIR = JSON.parse(fs.readFileSync(planIRPath, 'utf8'));
+        linkedTasks = (planIR.tasks || [])
+            .filter(t => Array.isArray(t.linkedFiles) && t.linkedFiles.some(lf => lf === normalized))
+            .map(t => t.id);
+    }
+
+    return {
+        status: 'ok',
+        path: normalized,
+        module: {
+            id: moduleEntry ? moduleEntry.id : fileEntry.module,
+            name: moduleEntry ? moduleEntry.name : null,
+            role: fileEntry.role || (moduleEntry ? moduleEntry.role : null),
+            confidence: fileEntry.confidence || (moduleEntry ? moduleEntry.confidence : null),
+        },
+        linkedTasks,
+    };
+}
+
+module.exports = { registerArchitectureCommands, lookupFile };

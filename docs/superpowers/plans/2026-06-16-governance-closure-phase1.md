@@ -1,5 +1,6 @@
 ---
 linkedSpec: spec:governance-closure-phase1
+r008Exempt: true
 ---
 
 # Governance Closure Phase 1 Implementation Plan

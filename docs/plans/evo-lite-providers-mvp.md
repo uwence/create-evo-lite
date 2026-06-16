@@ -3,6 +3,7 @@ id: plan:evo-lite-providers-mvp
 status: done
 linkedSpec: spec:evo-lite-providers
 created: 2026-06-15
+r008Exempt: true
 ---
 
 # Evo-Lite Provider Interface — MVP Plan

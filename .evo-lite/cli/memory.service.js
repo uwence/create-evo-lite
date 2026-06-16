@@ -1430,6 +1430,81 @@ function setFocus(focus) {
     return focus;
 }
 
+function autoRefreshContext() {
+    ensureContextFile();
+    const planIRPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    if (!fs.existsSync(planIRPath)) {
+        return {
+            status: 'no-plan-ir',
+            focusChanged: false,
+            backlogPruned: [],
+            hint: 'Run `mem plan scan` first.',
+        };
+    }
+    const planIR = JSON.parse(fs.readFileSync(planIRPath, 'utf8'));
+    const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
+
+    const activePlan = pickActivePlan(planIR);
+    let focusAfter = null;
+    if (activePlan) {
+        const todoTask = (planIR.tasks || [])
+            .filter(t => t.linkedPlan === activePlan.id && t.status === 'todo')[0];
+        const fragment = todoTask ? todoTask.title : 'all tasks implemented';
+        focusAfter = `${activePlan.title}: ${fragment}`;
+    }
+
+    const focusBefore = (readSection(markdown, 'FOCUS') || '').trim();
+    let nextMarkdown = markdown;
+    let focusChanged = false;
+    if (focusAfter && focusAfter.trim() !== focusBefore) {
+        nextMarkdown = writeSection(nextMarkdown, 'FOCUS', focusAfter);
+        focusChanged = true;
+    }
+
+    const backlogBefore = readSection(nextMarkdown, 'BACKLOG') || '';
+    const implementedTaskIds = new Set(
+        (planIR.tasks || []).filter(t => t.status === 'implemented' || t.status === 'verified').map(t => t.id)
+    );
+    const backlogPruned = [];
+    const backlogLines = backlogBefore.split('\n').filter(Boolean);
+    const remaining = backlogLines.filter(line => {
+        const m = line.match(/task:[a-z0-9-]+/i);
+        if (m && implementedTaskIds.has(m[0])) {
+            backlogPruned.push(line);
+            return false;
+        }
+        return true;
+    });
+    let backlogChanged = false;
+    if (backlogPruned.length > 0) {
+        const nextBacklog = remaining.length > 0 ? remaining.join('\n') : '- [ ] 暂无活跃任务。';
+        nextMarkdown = writeSection(nextMarkdown, 'BACKLOG', nextBacklog);
+        backlogChanged = true;
+    }
+
+    if (focusChanged || backlogChanged) {
+        fs.writeFileSync(ACTIVE_CONTEXT_PATH, nextMarkdown, 'utf8');
+        appendLog('CONTEXT_AUTOREFRESH', JSON.stringify({ focusChanged, backlogPruned: backlogPruned.length }));
+    }
+
+    return {
+        status: 'ok',
+        focusChanged,
+        focusBefore,
+        focusAfter,
+        backlogPruned,
+    };
+}
+
+function pickActivePlan(planIR) {
+    const plans = planIR.plans || [];
+    const inProgress = plans.find(p => p.status === 'in_progress');
+    if (inProgress) return inProgress;
+    const draft = plans.find(p => p.status === 'draft');
+    if (draft) return draft;
+    return null;
+}
+
 function updateTrajectory(markdown, mechanism, details, trajectoryId = getCommitHash()) {
     const trajectory = readSection(markdown, 'TRAJECTORY') || '';
     const entries = splitTrajectoryEntries(trajectory);
@@ -1715,7 +1790,37 @@ async function verify(options = {}) {
                 outOfSync = true;
                 report.hasAlerts = true;
                 report.templateSync = 'out-of-sync';
-                pushNextStep('重新运行 `npx create-evo-lite@latest ./ --yes`，然后再次执行 `node .evo-lite/cli/memory.js verify`。');
+                pushNextStep('Run `node .evo-lite/cli/memory.js sync-runtime` to regenerate the runtime mirror from templates/cli/. NEVER edit .evo-lite/cli/ directly — templates/cli/ is canonical.');
+            }
+        }
+
+        // Runtime-mirror lock check: hard error if .evo-lite/cli/** drifted from
+        // the snapshot taken by the last `mem sync-runtime`. This is the forcing
+        // function that makes templates/cli/ the canonical source.
+        try {
+            const { verifyRuntimeLock } = require('./sync-runtime');
+            const lockResult = verifyRuntimeLock(getWorkspaceRoot());
+            if (lockResult.status === 'drifted') {
+                warn('❌ ERROR: runtime mirror (.evo-lite/cli/**) drifted from the locked templates/cli/ snapshot.');
+                for (const m of lockResult.mismatches.slice(0, 10)) {
+                    warn(`   drift: ${m.path}`);
+                }
+                if (lockResult.mismatches.length > 10) {
+                    warn(`   …and ${lockResult.mismatches.length - 10} more`);
+                }
+                for (const p of lockResult.missing.slice(0, 5)) {
+                    warn(`   missing: ${p}`);
+                }
+                outOfSync = true;
+                report.hasAlerts = true;
+                report.templateSync = 'lock-drift';
+                pushNextStep('Run `node .evo-lite/cli/memory.js sync-runtime` to restore canonical templates/cli/ snapshot. Edits to .evo-lite/cli/ will be overwritten — edit templates/cli/ instead.');
+            } else if (lockResult.status === 'no-lock') {
+                log('ℹ️ runtime-mirror lock not yet generated; run `mem sync-runtime` to create it.');
+            }
+        } catch (e) {
+            if (process.env.EVO_LITE_DEBUG === '1') {
+                warn(`runtime-mirror lock check failed: ${e.message}`);
             }
         }
 
@@ -2108,6 +2213,60 @@ function collectOperatorNextSteps(projectRoot, report, pushNextStep) {
     if (fs.existsSync(planIrPath) && !fs.existsSync(dashboardPath)) {
         pushNextStep('Run `node .evo-lite/cli/memory.js dashboard build` to regenerate the operator dashboard snapshot.');
     }
+    detectPlanForInFlightWork(projectRoot, planIrPath, pushNextStep);
+}
+
+// R2: when the operator is mid-edit on governance/code files but no plan is
+// in_progress and the backlog is the placeholder sentinel, prompt them to
+// scaffold one before more drift accumulates. This is what /evo should always
+// surface in the takeover snapshot when applicable.
+function detectPlanForInFlightWork(projectRoot, planIrPath, pushNextStep) {
+    try {
+        if (!fs.existsSync(planIrPath)) return;
+        const { PLAN_SOURCE_PATHS, ARCH_SOURCE_PATHS } = require('./planning/gaps');
+        const watched = new Set([...PLAN_SOURCE_PATHS, ...ARCH_SOURCE_PATHS]);
+        let porcelain;
+        try {
+            porcelain = require('child_process').execFileSync('git', ['status', '--porcelain'], {
+                cwd: projectRoot, encoding: 'utf8', timeout: 5000,
+            });
+        } catch (_) {
+            return;
+        }
+        const uncommitted = String(porcelain || '').split(/\r?\n/)
+            .map(line => line.slice(3).trim())
+            .filter(Boolean);
+        if (uncommitted.length === 0) return;
+
+        const touchesWatched = uncommitted.some(file => {
+            const normalized = file.replace(/\\/g, '/');
+            for (const watch of watched) {
+                if (normalized === watch || normalized.startsWith(watch + '/')) return true;
+            }
+            return false;
+        });
+        if (!touchesWatched) return;
+
+        const planIR = JSON.parse(fs.readFileSync(planIrPath, 'utf8'));
+        const activePlans = (planIR.plans || []).filter(p => p.status === 'in_progress' || p.status === 'draft');
+        if (activePlans.length > 0) return;
+
+        const ctxPath = path.join(projectRoot, '.evo-lite', 'active_context.md');
+        let backlogIsPlaceholder = true;
+        if (fs.existsSync(ctxPath)) {
+            const md = fs.readFileSync(ctxPath, 'utf8');
+            const m = md.match(/<!-- BEGIN_BACKLOG -->([\s\S]*?)<!-- END_BACKLOG -->/);
+            if (m) {
+                const items = m[1].split('\n').filter(line => /^- \[/.test(line.trim()));
+                backlogIsPlaceholder = items.every(line => /暂无活跃任务/.test(line));
+            }
+        }
+        if (!backlogIsPlaceholder) return;
+
+        pushNextStep('In-flight edits detected on governance/code files but no active plan + empty backlog. Run `node .evo-lite/cli/memory.js plan new <slug> --from-diff` to scaffold a spec + plan that links these files before continuing.');
+    } catch (_) {
+        // Defensive: this hint must never break verify.
+    }
 }
 
 function readGovernanceRunState(projectRoot) {
@@ -2289,6 +2448,7 @@ module.exports = {
     summarizeActiveContext,
     summarizeArchiveHealth,
     setFocus,
+    autoRefreshContext,
     syncIndexMemory,
     stats,
     track,

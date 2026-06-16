@@ -161,6 +161,88 @@ function registerPlanCommands(program) {
             const remaining = options.fix ? results.issues.length - results.fixed : results.issues.length;
             process.exitCode = remaining > 0 ? 1 : 0;
         });
+
+    plan.command('new <slug>')
+        .description('Scaffold a spec + plan stub under docs/superpowers/. Use this when /evo says "no active plan but in-flight edits".')
+        .option('--from-diff', 'Prefill the Linked Files block from `git status --porcelain` so R006 stops firing on the in-flight edits.')
+        .action((slug, options) => {
+            const result = scaffoldPlanStubs(projectRoot, slug, !!options.fromDiff);
+            console.log(`Spec stub: ${result.specPath}`);
+            console.log(`Plan stub: ${result.planPath}`);
+            if (result.linkedFiles.length > 0) {
+                console.log(`Linked ${result.linkedFiles.length} file(s) from current diff.`);
+            }
+            console.log('Next: edit the stubs, fill task steps, then `mem plan scan` to register.');
+        });
+
+    plan.command('archive-evidence')
+        .description('Scan .evo-lite/raw_memory/ and link archives to tasks by id heuristic. Writes archive-evidence.json consumed by plan scan.')
+        .option('--backfill', 'Generate the evidence map (default behavior; flag kept for clarity).')
+        .option('--json', 'Emit JSON output.')
+        .action(options => {
+            const { backfillArchiveEvidence } = require('./planning/backfill-evidence');
+            const result = backfillArchiveEvidence(projectRoot);
+            if (options.json) {
+                console.log(JSON.stringify(result, null, 2));
+                return;
+            }
+            const taskCount = Object.keys(result.taskIdToArchives).length;
+            console.log(`Scanned ${result.archivesScanned} archive(s).`);
+            console.log(`Matched ${result.archivesMatched} archive(s) to ${taskCount} unique task id(s).`);
+            if (result.outPath) {
+                console.log(`Written: ${path.relative(projectRoot, result.outPath).replace(/\\/g, '/')}`);
+                console.log('Re-run `mem plan scan` to merge archive evidence into the planning IR.');
+            }
+        });
 }
 
-module.exports = { registerPlanCommands };
+function scaffoldPlanStubs(projectRoot, slug, fromDiff) {
+    const normalizedSlug = String(slug || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    if (!normalizedSlug) {
+        throw new Error('plan new requires a slug like `kebab-case-name`.');
+    }
+    const date = new Date().toISOString().split('T')[0];
+    const specDir = path.join(projectRoot, 'docs', 'superpowers', 'specs');
+    const planDir = path.join(projectRoot, 'docs', 'superpowers', 'plans');
+    fs.mkdirSync(specDir, { recursive: true });
+    fs.mkdirSync(planDir, { recursive: true });
+
+    let linkedFiles = [];
+    if (fromDiff) {
+        try {
+            const porcelain = require('child_process').execFileSync('git', ['status', '--porcelain'], {
+                cwd: projectRoot, encoding: 'utf8', timeout: 5000,
+            });
+            linkedFiles = String(porcelain).split(/\r?\n/)
+                .map(line => line.slice(3).trim())
+                .filter(Boolean)
+                .filter(file => !file.startsWith('.evo-lite/generated/'));
+        } catch (_) {
+            linkedFiles = [];
+        }
+    }
+
+    const specPath = path.join(specDir, `${date}-${normalizedSlug}.md`);
+    const planPath = path.join(planDir, `${date}-${normalizedSlug}.md`);
+
+    if (!fs.existsSync(specPath)) {
+        const specBody = `---\nid: spec:${normalizedSlug}\nstatus: draft\ncreated: ${date}\nlinkedPlan: plan:${normalizedSlug}\n---\n\n# ${normalizedSlug} — Spec\n\n## Problem\n\nTODO\n\n## Goal\n\nTODO\n\n## Requirements\n\n### R1\n\nTODO\n\n## Verification\n\nTODO\n`;
+        fs.writeFileSync(specPath, specBody);
+    }
+
+    if (!fs.existsSync(planPath)) {
+        const filesBlock = linkedFiles.length > 0
+            ? `\n**Files:**\n${linkedFiles.map(f => `- Modify: \`${f}\``).join('\n')}\n`
+            : '\n**Files:**\n- Modify: `TODO`\n';
+        const planBody = `---\nlinkedSpec: spec:${normalizedSlug}\n---\n\n# ${normalizedSlug} — Implementation Plan\n\n### Task 1: TODO\n${filesBlock}\n- [ ] **Step 1:** TODO\n`;
+        fs.writeFileSync(planPath, planBody);
+    }
+
+    return {
+        specPath: path.relative(projectRoot, specPath).replace(/\\/g, '/'),
+        planPath: path.relative(projectRoot, planPath).replace(/\\/g, '/'),
+        linkedFiles,
+    };
+}
+
+module.exports = { registerPlanCommands, scaffoldPlanStubs };

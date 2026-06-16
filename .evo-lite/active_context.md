@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Rollout Stage 5: Project Control Dashboard default-on. Post-MVP planning.
+Dogfood Operator Experience Phase 1 Implementation Plan: Make /evo and verify operator-forward
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)

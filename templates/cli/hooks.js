@@ -95,13 +95,27 @@ function registerHookCommands(program) {
 
     hook.command('install')
         .description('Install (or upgrade) the post-commit governance hook in .git/hooks/.')
-        .action(() => {
+        .option('--explain', 'Print a diff of any change before applying.')
+        .action(options => {
             const projectRoot = getWorkspaceRoot();
             const hooksDir = path.join(projectRoot, '.git', 'hooks');
             if (!fs.existsSync(hooksDir)) {
                 console.error('No .git/hooks/ directory found. Is this a git repository?');
                 process.exitCode = 1;
                 return;
+            }
+            if (options.explain) {
+                const diff = diffInstalledHook(projectRoot);
+                if (diff.status === 'no-hook') {
+                    console.log('post-commit: not installed yet; install will create a fresh file.');
+                } else if (diff.status === 'in-sync') {
+                    console.log('post-commit: already in-sync with templates — install is a no-op.');
+                } else if (diff.status === 'no-block') {
+                    console.log('post-commit: file exists but contains no evo-lite block; install will append.');
+                } else {
+                    console.log('post-commit: drift detected. Diff (expected → installed):');
+                    console.log(diff.text);
+                }
             }
             installPostCommitHook(projectRoot);
             const hookPath = path.join(hooksDir, 'post-commit');
@@ -172,6 +186,88 @@ function registerHookCommands(program) {
                 process.exitCode = 2;
             }
         });
+
+    hook.command('diff')
+        .description('Compare installed post-commit hook body to current templates expected body.')
+        .option('--json', 'Print JSON output.')
+        .action(options => {
+            const result = diffInstalledHook(getWorkspaceRoot());
+            if (options.json) {
+                console.log(JSON.stringify(result, null, 2));
+            } else if (result.status === 'no-hook') {
+                console.log('post-commit: not installed. Run `mem hook install`.');
+                process.exitCode = 1;
+            } else if (result.status === 'no-block') {
+                console.log('post-commit: present but no evo-lite block. Run `mem hook install` to append.');
+                process.exitCode = 1;
+            } else if (result.status === 'in-sync') {
+                console.log('post-commit: in-sync with templates.');
+            } else {
+                console.log('post-commit: drifted from templates.');
+                console.log(result.text);
+                process.exitCode = 1;
+            }
+        });
+
+    hook.command('last')
+        .description('Pretty-print the last post-commit-last-run.json (commit, categories, command results).')
+        .option('--json', 'Emit raw JSON.')
+        .action(options => {
+            const projectRoot = getWorkspaceRoot();
+            const reportPath = path.join(projectRoot, '.evo-lite', 'generated', 'governance', 'post-commit-last-run.json');
+            if (!fs.existsSync(reportPath)) {
+                console.log('No post-commit-last-run.json yet. Make a commit to populate it.');
+                process.exitCode = 1;
+                return;
+            }
+            const payload = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+            if (options.json) {
+                console.log(JSON.stringify(payload, null, 2));
+                return;
+            }
+            console.log(`commit: ${payload.commit}`);
+            console.log(`categories: ${(payload.categories || []).join(', ') || '<none>'}`);
+            console.log(`ok: ${payload.ok}`);
+            console.log(`changedFiles (${(payload.changedFiles || []).length}):`);
+            for (const f of (payload.changedFiles || []).slice(0, 20)) console.log(`  ${f}`);
+            if ((payload.changedFiles || []).length > 20) {
+                console.log(`  …and ${(payload.changedFiles || []).length - 20} more`);
+            }
+            console.log('commands:');
+            for (const cmd of payload.commands || []) {
+                const mark = cmd.ok ? '✓' : '✗';
+                console.log(`  ${mark} ${cmd.name}`);
+            }
+        });
 }
 
-module.exports = { installPostCommitHook, registerHookCommands };
+function diffInstalledHook(projectRoot) {
+    const hookPath = path.join(projectRoot, '.git', 'hooks', 'post-commit');
+    if (!fs.existsSync(hookPath)) {
+        return { status: 'no-hook' };
+    }
+    const content = fs.readFileSync(hookPath, 'utf8');
+    if (!content.includes(SENTINEL_BEGIN)) {
+        return { status: 'no-block' };
+    }
+    const match = content.match(new RegExp(`${SENTINEL_BEGIN}[\\s\\S]*?${SENTINEL_END}`));
+    const installed = match ? match[0] : '';
+    const expected = buildHookBody();
+    if (installed === expected) {
+        return { status: 'in-sync' };
+    }
+    const expectedLines = expected.split('\n');
+    const installedLines = installed.split('\n');
+    const text = [];
+    const maxLines = Math.max(expectedLines.length, installedLines.length);
+    for (let i = 0; i < maxLines; i += 1) {
+        const e = expectedLines[i];
+        const a = installedLines[i];
+        if (e === a) continue;
+        if (e !== undefined) text.push(`- expected[${i}]: ${e}`);
+        if (a !== undefined) text.push(`+ installed[${i}]: ${a}`);
+    }
+    return { status: 'drifted', text: text.join('\n') };
+}
+
+module.exports = { installPostCommitHook, registerHookCommands, diffInstalledHook };

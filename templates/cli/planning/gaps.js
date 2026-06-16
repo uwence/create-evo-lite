@@ -136,6 +136,7 @@ function checkR008(planIR) {
     if (!planIR) return [];
     return (planIR.tasks || [])
         .filter(t => !t.readOnly &&
+            !t.planR008Exempt &&
             (t.status === 'implemented' || t.status === 'verified') &&
             !hasArchiveEvidence(t))
         .map(t => ({

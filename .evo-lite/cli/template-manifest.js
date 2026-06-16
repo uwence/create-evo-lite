@@ -26,6 +26,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'planning/scan.js',
             'planning/traceability.js',
             'planning/lint.js',
+            'planning/backfill-evidence.js',
             'architecture.js',
             'architecture/diff.js',
             'architecture/infer-modules.js',
@@ -36,6 +37,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'dashboard-data.js',
             'mcp-server.js',
             'mcp-validate.js',
+            'sync-runtime.js',
         ],
     },
     {
