@@ -24,6 +24,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'planning/progress.js',
             'planning/scan.js',
             'planning/traceability.js',
+            'planning/lint.js',
             'architecture.js',
             'architecture/diff.js',
             'architecture/infer-modules.js',

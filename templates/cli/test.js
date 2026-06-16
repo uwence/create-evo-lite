@@ -1662,6 +1662,47 @@ async function runTests() {
         const importedList = importedLoaded.service.list();
         assert.ok(importedList.some(item => item.content.includes('unique test memory fragment')), 'Imported runtime did not contain exported memory');
 
+        console.log('T9. Testing plan lint detects missing frontmatter and --fix injects it ...');
+        {
+            const { lintPlans } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'lint'));
+            const tmpLintRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lint-'));
+            try {
+                const plansDir = path.join(tmpLintRoot, 'docs', 'superpowers', 'plans');
+                fs.mkdirSync(plansDir, { recursive: true });
+
+                // Plan with no frontmatter
+                fs.writeFileSync(path.join(plansDir, '2026-01-01-my-feature.md'),
+                    '### Task 1: Do something\n- [ ] **Step 1:** do it\n');
+                // Plan with valid frontmatter — should not be reported
+                fs.writeFileSync(path.join(plansDir, '2026-01-02-good-plan.md'),
+                    '---\nid: plan:good-plan\nlinkedSpec: spec:good-plan\n---\n# Good Plan\n');
+                // Plan with frontmatter but missing linkedSpec
+                fs.writeFileSync(path.join(plansDir, '2026-01-03-partial.md'),
+                    '---\nid: plan:partial\n---\n# Partial Plan\n');
+
+                const result = lintPlans(tmpLintRoot, false);
+                assert.strictEqual(result.issues.length, 2, 'should find 2 issues');
+                assert.ok(result.issues.some(i => i.message.includes('no frontmatter')), 'should report no-frontmatter issue');
+                assert.ok(result.issues.some(i => i.message.includes('no linkedSpec')), 'should report no-linkedSpec issue');
+                assert.strictEqual(result.fixed, 0, 'fix=false should not modify files');
+
+                // --fix injects frontmatter for no-frontmatter case only
+                const fixResult = lintPlans(tmpLintRoot, true);
+                assert.strictEqual(fixResult.fixed, 1, '--fix should fix exactly the no-frontmatter file');
+                const fixedContent = fs.readFileSync(path.join(plansDir, '2026-01-01-my-feature.md'), 'utf8');
+                assert.ok(fixedContent.startsWith('---\n'), 'fixed file should start with frontmatter');
+                assert.ok(fixedContent.includes('id: plan:my-feature'), 'fixed frontmatter should have id: plan:my-feature');
+                assert.ok(fixedContent.includes('linkedSpec: spec:my-feature'), 'fixed frontmatter should have linkedSpec');
+
+                // Idempotency: second --fix on already-fixed file should not re-inject
+                const fixAgain = lintPlans(tmpLintRoot, true);
+                assert.strictEqual(fixAgain.fixed, 0, '--fix is idempotent — no double-inject');
+            } finally {
+                fs.rmSync(tmpLintRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T9 plan lint passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);

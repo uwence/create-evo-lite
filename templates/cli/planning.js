@@ -136,6 +136,25 @@ function registerPlanCommands(program) {
             console.log(`  tasks with files: ${s.tasksWithFiles}  tasks with evidence: ${s.tasksWithEvidence}`);
             console.log(`\nWritten: ${outPath}`);
         });
+
+    plan.command('lint')
+        .description('Check plan files for missing frontmatter / linkedSpec.')
+        .option('--fix', 'Auto-inject minimal frontmatter into plans that have none.')
+        .action(async (options) => {
+            const { lintPlans } = require('./planning/lint');
+            const results = lintPlans(projectRoot, !!options.fix);
+            if (results.issues.length === 0) {
+                console.log('All plan files have valid frontmatter.');
+            } else {
+                for (const issue of results.issues) {
+                    console.log(`[${issue.level}] ${issue.file}: ${issue.message}`);
+                }
+            }
+            if (options.fix && results.fixed > 0) {
+                console.log(`\nFixed: ${results.fixed} file(s) — frontmatter injected.`);
+            }
+            process.exitCode = results.issues.length > 0 && !options.fix ? 1 : 0;
+        });
 }
 
 module.exports = { registerPlanCommands };

@@ -43,7 +43,7 @@ linkedSpec: spec:governance-closure-phase1
 - Modify: `templates/cli/test.js` (add T9)
 - Sync: `.evo-lite/cli/planning/lint.js`, `.evo-lite/cli/planning.js`, `.evo-lite/cli/template-manifest.js`, `.evo-lite/cli/test.js`
 
-- [ ] **Step 1: Write failing test T9 in `templates/cli/test.js`**
+- [x] **Step 1: Write failing test T9 in `templates/cli/test.js`**
 
 Find the last test block (T8) and append after it, before the final `}` that closes `runTests`:
 
@@ -90,7 +90,7 @@ console.log('T9. Testing plan lint detects missing frontmatter and --fix injects
 }
 ```
 
-- [ ] **Step 2: Run test to confirm T9 fails**
+- [x] **Step 2: Run test to confirm T9 fails**
 
 ```bash
 node templates/cli/test.js 2>&1 | grep -A3 "T9\|lintPlans\|Cannot find"
@@ -98,7 +98,7 @@ node templates/cli/test.js 2>&1 | grep -A3 "T9\|lintPlans\|Cannot find"
 
 Expected: `Cannot find module '.../planning/lint'` or similar — module doesn't exist yet.
 
-- [ ] **Step 3: Create `templates/cli/planning/lint.js`**
+- [x] **Step 3: Create `templates/cli/planning/lint.js`**
 
 ```js
 'use strict';
@@ -170,7 +170,7 @@ function lintPlans(projectRoot, fix) {
 module.exports = { lintPlans };
 ```
 
-- [ ] **Step 4: Add `plan lint` subcommand to `templates/cli/planning.js`**
+- [x] **Step 4: Add `plan lint` subcommand to `templates/cli/planning.js`**
 
 Inside `registerPlanCommands`, after the last `plan.command('trace')` block (before the closing `}`):
 
@@ -195,7 +195,7 @@ Inside `registerPlanCommands`, after the last `plan.command('trace')` block (bef
         });
 ```
 
-- [ ] **Step 5: Add `planning/lint.js` to `templates/cli/template-manifest.js` core-cli `files` array**
+- [x] **Step 5: Add `planning/lint.js` to `templates/cli/template-manifest.js` core-cli `files` array**
 
 Find the `core-cli` family's `files` array. Add `'planning/lint.js'` after `'planning/traceability.js'`:
 
@@ -203,7 +203,7 @@ Find the `core-cli` family's `files` array. Add `'planning/lint.js'` after `'pla
 'planning/lint.js',
 ```
 
-- [ ] **Step 6: Run test to confirm T9 passes**
+- [x] **Step 6: Run test to confirm T9 passes**
 
 ```bash
 node templates/cli/test.js 2>&1 | grep -E "T9|✅ T9"
@@ -211,7 +211,7 @@ node templates/cli/test.js 2>&1 | grep -E "T9|✅ T9"
 
 Expected: `✅ T9 plan lint passed`
 
-- [ ] **Step 7: Sync to dogfood runtime + commit**
+- [x] **Step 7: Sync to dogfood runtime + commit**
 
 ```bash
 cp templates/cli/planning/lint.js .evo-lite/cli/planning/lint.js
