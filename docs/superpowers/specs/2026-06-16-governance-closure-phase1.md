@@ -2,6 +2,7 @@
 id: spec:governance-closure-phase1
 status: draft
 created: 2026-06-16
+linkedPlan: plan:governance-closure-phase1
 ---
 
 # Governance Closure Phase 1 — Spec

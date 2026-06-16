@@ -9,7 +9,7 @@ function parseFrontmatter(content) {
     const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
     if (!match) return { frontmatter: {}, body: content };
     const fm = {};
-    for (const line of match[1].split('\n')) {
+    for (const line of match[1].split(/\r?\n/)) {
         const kv = line.match(/^([\w-]+):\s*(.+)$/);
         if (kv) fm[kv[1]] = kv[2].trim();
     }
