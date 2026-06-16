@@ -351,6 +351,29 @@ async function runTests() {
         assert.ok(!lastRow.content.includes('alice@example.com'), 'warn-tier email should have been redacted in stored content');
         assert.ok(lastRow.content.includes('<REDACTED:email>'), 'warn-tier email should be replaced with a redaction marker');
 
+        console.log('T4. Testing template manifest covers all cli modules ...');
+        {
+            const manifestPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'));
+            delete require.cache[manifestPath];
+            const { MANAGED_TEMPLATE_FAMILIES } = require(manifestPath);
+            const coreCliFamily = MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli');
+            assert.ok(coreCliFamily, 'core-cli family not found in manifest');
+
+            const required = [
+                'planning.js', 'architecture.js', 'dashboard-data.js',
+                'mcp-server.js', 'mcp-validate.js', 'test.js',
+                'planning/gaps.js', 'planning/parse-markdown.js', 'planning/progress.js',
+                'planning/scan.js', 'planning/traceability.js',
+                'architecture/diff.js', 'architecture/infer-modules.js',
+                'architecture/provider-contract.js', 'architecture/scan-native.js',
+            ];
+
+            for (const f of required) {
+                assert.ok(coreCliFamily.files.includes(f), `core-cli manifest missing: ${f}`);
+            }
+            console.log('✅ T4 manifest covers all cli modules passed');
+        }
+
         console.log('1c. Testing P4 inspector HTTP API returns 200 + JSON shapes ...');
         const inspector = require(path.join(CLI_DIR, 'inspector.js'));
         const handle = await inspector.startServer({ port: 0 });
