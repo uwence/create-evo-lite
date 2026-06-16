@@ -59,6 +59,41 @@ function buildDashboardData(projectRoot) {
         summary: driftReport.summary,
     } : { missing: true, hint: 'Run: mem architecture diff && mem plan gaps' };
 
+    // memory: quick snapshot from raw_memory/ and active_context.md
+    const rawMemDir = path.join(projectRoot, '.evo-lite', 'raw_memory');
+    const archiveFiles = fs.existsSync(rawMemDir)
+        ? fs.readdirSync(rawMemDir).filter(f => f.endsWith('.md')).length
+        : 0;
+
+    function extractSection(text, marker) {
+        const m = text.match(new RegExp(`<!-- BEGIN_${marker} -->([\\s\\S]*?)<!-- END_${marker} -->`));
+        return m ? m[1].trim() : '';
+    }
+
+    const ctxPath = path.join(projectRoot, '.evo-lite', 'active_context.md');
+    const ctxText = fs.existsSync(ctxPath) ? fs.readFileSync(ctxPath, 'utf8') : '';
+    const memory = {
+        archiveFiles,
+        activeContextFocus: extractSection(ctxText, 'FOCUS'),
+        activeContextTrajectory: extractSection(ctxText, 'TRAJECTORY'),
+    };
+
+    // verify: lightweight summary from already-loaded IR (no extra scans)
+    const r009 = driftReport ? (driftReport.findings || []).filter(f => f.rule === 'R009') : [];
+    const verify = {
+        planScan: planIR ? {
+            exists: true,
+            taskCount: planIR.tasks.length,
+            implemented: planIR.tasks.filter(t => t.status === 'implemented').length,
+        } : { exists: false },
+        architectureScan: archIR ? {
+            exists: true,
+            moduleCount: archIR.modules.length,
+        } : { exists: false },
+        drift: driftReport ? driftReport.summary : null,
+        generatedDataFresh: r009.length === 0,
+    };
+
     return {
         version: 'evo-dashboard@1',
         generatedAt: new Date().toISOString(),
@@ -66,6 +101,8 @@ function buildDashboardData(projectRoot) {
         planning,
         architecture,
         drift,
+        memory,
+        verify,
     };
 }
 
