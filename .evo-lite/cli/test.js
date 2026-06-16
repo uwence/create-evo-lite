@@ -50,9 +50,7 @@ function createTempRuntimeRoot(name) {
 
 function createTempTemplateCli(name, mutate) {
     const templateRoot = fs.mkdtempSync(path.join(os.tmpdir(), `evo-lite-template-${name}-`));
-    for (const file of fs.readdirSync(TEMPLATE_CLI_DIR)) {
-        fs.copyFileSync(path.join(TEMPLATE_CLI_DIR, file), path.join(templateRoot, file));
-    }
+    copyRecursive(TEMPLATE_CLI_DIR, templateRoot);
     if (mutate) {
         mutate(templateRoot);
     }
@@ -267,6 +265,20 @@ async function runTests() {
     console.log('--- Starting CLI integration tests ---');
 
     try {
+        console.log('T2. Testing createTempTemplateCli copies cli subdirs ...');
+        {
+            let tempCliRoot;
+            try {
+                tempCliRoot = createTempTemplateCli('subdir-check');
+            } catch (e) {
+                assert.fail(`createTempTemplateCli threw: ${e.message}`);
+            }
+            assert.ok(fs.existsSync(path.join(tempCliRoot, 'planning')), 'planning/ missing in temp template cli');
+            assert.ok(fs.existsSync(path.join(tempCliRoot, 'architecture')), 'architecture/ missing in temp template cli');
+            fs.rmSync(tempCliRoot, { recursive: true, force: true });
+            console.log('✅ T2 createTempTemplateCli copies subdirs passed');
+        }
+
         console.log('1. Testing remember/recall/export...');
         const primary = createTempRuntimeRoot('memory');
         let primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
