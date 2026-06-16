@@ -523,7 +523,7 @@ git commit -m "feat(init): install post-commit governance hook — auto-scans pl
 - Create: `templates/.agents/rules/subagent-checkpoint.md`
 - Create: `.agents/rules/subagent-checkpoint.md`
 
-- [ ] **Step 1: Create `templates/.agents/rules/subagent-checkpoint.md`**
+- [x] **Step 1: Create `templates/.agents/rules/subagent-checkpoint.md`**
 
 ```markdown
 ---
@@ -561,13 +561,13 @@ The **controller** (orchestrator running subagent-driven-development) MUST:
 - If checkboxes are still `- [ ]`, ask the implementer to update them before proceeding
 ```
 
-- [ ] **Step 2: Copy to dogfood `.agents/rules/`**
+- [x] **Step 2: Copy to dogfood `.agents/rules/`**
 
 ```bash
 cp templates/.agents/rules/subagent-checkpoint.md .agents/rules/subagent-checkpoint.md
 ```
 
-- [ ] **Step 3: Verify both files exist**
+- [x] **Step 3: Verify both files exist**
 
 ```bash
 node -e "const fs=require('fs'); ['templates/.agents/rules/subagent-checkpoint.md','.agents/rules/subagent-checkpoint.md'].forEach(p=>{console.log(p,'exists:',fs.existsSync(p))})"
@@ -579,7 +579,7 @@ templates/.agents/rules/subagent-checkpoint.md exists: true
 .agents/rules/subagent-checkpoint.md exists: true
 ```
 
-- [ ] **Step 4: Update this task's checkboxes to `- [x]` and commit**
+- [x] **Step 4: Update this task's checkboxes to `- [x]` and commit**
 
 ```bash
 git add templates/.agents/rules/subagent-checkpoint.md .agents/rules/subagent-checkpoint.md docs/superpowers/plans/2026-06-16-governance-closure-phase1.md
