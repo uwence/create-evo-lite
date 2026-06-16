@@ -90,13 +90,13 @@ function checkR008(planIR) {
     if (!planIR) return [];
     return (planIR.tasks || [])
         .filter(t => !t.readOnly &&
-            t.status === 'implemented' &&
+            (t.status === 'implemented' || t.status === 'verified') &&
             (!t.evidence || t.evidence.length === 0) &&
             (!t.linkedFiles || t.linkedFiles.length === 0))
         .map(t => ({
             id: `R008:${t.id}`, rule: 'R008', scope: 'planning', level: 'warning',
             type: 'no-evidence',
-            message: `Task ${t.id} is implemented but has no archive evidence`,
+            message: `Task ${t.id} (${t.status}) has no archive evidence`,
             evidence: [t.sourcePath],
             suggestedAction: `Run mem archive after completing ${t.id} to record evidence`,
         }));
@@ -107,36 +107,42 @@ function checkR008(planIR) {
 function checkR009(projectRoot) {
     const findings = [];
 
-    function check(irPath, sourceDirs, label) {
+    function checkNewerThan(irMtime, absPath) {
+        if (!fs.existsSync(absPath)) return false;
+        const stat = fs.statSync(absPath);
+        if (stat.isFile()) return stat.mtimeMs > irMtime;
+        for (const entry of fs.readdirSync(absPath, { withFileTypes: true })) {
+            if (checkNewerThan(irMtime, path.join(absPath, entry.name))) return true;
+        }
+        return false;
+    }
+
+    function check(irPath, sourcePaths, label) {
         if (!fs.existsSync(irPath)) return;
         const irMtime = fs.statSync(irPath).mtimeMs;
-        for (const dir of sourceDirs) {
-            const abs = path.join(projectRoot, dir);
-            if (!fs.existsSync(abs)) continue;
-            for (const entry of fs.readdirSync(abs)) {
-                const filePath = path.join(abs, entry);
-                if (fs.statSync(filePath).isFile() && fs.statSync(filePath).mtimeMs > irMtime) {
-                    findings.push({
-                        id: `R009:${label}`, rule: 'R009', scope: 'planning', level: 'info',
-                        type: 'stale-ir',
-                        message: `${label} IR is stale — ${path.relative(projectRoot, filePath).replace(/\\/g, '/')} is newer`,
-                        evidence: [path.relative(projectRoot, irPath).replace(/\\/g, '/')],
-                        suggestedAction: label === 'plan' ? 'Run: mem plan scan' : 'Run: mem architecture scan',
-                    });
-                    return;
-                }
+        for (const src of sourcePaths) {
+            const abs = path.resolve(projectRoot, src);
+            if (checkNewerThan(irMtime, abs)) {
+                findings.push({
+                    id: `R009:${label}`, rule: 'R009', scope: 'planning', level: 'info',
+                    type: 'stale-ir',
+                    message: `${label} IR is stale — ${src} is newer`,
+                    evidence: [path.relative(projectRoot, irPath).replace(/\\/g, '/')],
+                    suggestedAction: label === 'plan' ? 'Run: mem plan scan' : 'Run: mem architecture scan',
+                });
+                return;
             }
         }
     }
 
     check(
         path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
-        ['docs/specs', 'docs/plans'],
+        ['docs/specs', 'docs/plans', 'docs/superpowers/specs', 'docs/superpowers/plans'],
         'plan'
     );
     check(
         path.join(projectRoot, '.evo-lite', 'generated', 'architecture', 'architecture-ir.json'),
-        ['templates/cli'],
+        ['templates/cli', '.agents/rules', '.agents/workflows', 'index.js', 'bin/cli.js'],
         'architecture'
     );
     return findings;
@@ -220,4 +226,4 @@ function runPlanningDrift(projectRoot, planIR) {
     ];
 }
 
-module.exports = { runPlanningDrift };
+module.exports = { runPlanningDrift, checkR008, checkR009 };

@@ -190,6 +190,7 @@ function extractSuperPowersTasks(content, planSlug) {
 function parseSuperPowersPlan(filePath, content) {
     if (!/^###\s+Task\s+\d+:/m.test(content)) return null;
 
+    const { frontmatter } = parseFrontmatter(content);
     const base = path.basename(filePath, '.md');
     const slug = base.replace(/^\d{4}-\d{2}-\d{2}-/, '');
     const planId = `plan:${slug}`;
@@ -205,7 +206,7 @@ function parseSuperPowersPlan(filePath, content) {
         title,
         status: allDone ? 'done' : 'draft',
         sourcePath: filePath,
-        linkedSpec: null,
+        linkedSpec: frontmatter.linkedSpec || null,
         taskIds: tasks.map(t => t.id),
         tasks,
     };

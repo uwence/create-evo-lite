@@ -289,7 +289,6 @@ async function runInit(targetDirArg, options = {}) {
 
     // 3.0 处理 cli 文件集
     const cliTemplatesDir = path.join(templatesDir, 'cli');
-    const cliFiles = fs.existsSync(cliTemplatesDir) ? fs.readdirSync(cliTemplatesDir) : [];
 
     // 3.1 递归复制函数
     let hasUpgraded = false;
@@ -353,11 +352,10 @@ async function runInit(targetDirArg, options = {}) {
         }).filter(entry => !['core-cli', 'root-host-adapters'].includes(entry.family))
     );
 
-    // 写入 cli 文件
-    cliFiles.forEach(file => {
-        const content = fs.readFileSync(path.join(cliTemplatesDir, file), 'utf8');
-        fs.writeFileSync(path.join(cliDir, file), content);
-    });
+    // 写入 cli 文件（递归支持 planning/ architecture/ 等子目录）
+    if (fs.existsSync(cliTemplatesDir)) {
+        copyRecursiveSync(cliTemplatesDir, cliDir);
+    }
 
     // active_context.md 处理：新项目用模板，老项目仅备份并保护内容。
     if (!fs.existsSync(activeContextPath)) {
@@ -404,7 +402,7 @@ async function runInit(targetDirArg, options = {}) {
     const gitWorkspace = ensureGitWorkspace(targetDir, options);
 
     // 5. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
-    console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander)...');
+    console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander, @modelcontextprotocol/sdk)...');
     try {
         fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
             "name": "evo-lite-workspace",
@@ -414,11 +412,11 @@ async function runInit(targetDirArg, options = {}) {
                 "commander": "^14.0.2"
             }
         }, null, 2));
-        execSync('npm install better-sqlite3 tar commander', { cwd: evoLiteDir, stdio: 'inherit' });
+        execSync('npm install better-sqlite3 tar commander @modelcontextprotocol/sdk', { cwd: evoLiteDir, stdio: 'inherit' });
         console.log('✅ 依赖在线安装成功！');
     } catch (e) {
         console.warn('\n⚠️ 警告: npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)');
-        console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 tar commander');
+        console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 tar commander @modelcontextprotocol/sdk');
     }
     console.log('📡 运行时引擎已锁定为: sqlite-fts5-trigram');
 

@@ -23,13 +23,19 @@ function createTempRuntimeRoot(name) {
         .replace(/\{\{DATE\}\}/g, new Date().toISOString().split('T')[0]);
     fs.writeFileSync(path.join(runtimeRoot, 'active_context.md'), template, 'utf8');
     for (const file of ['AGENTS.md', 'CLAUDE.md']) {
-        fs.copyFileSync(path.join(TEMPLATE_ROOT_DIR, file), path.join(workspaceRoot, file));
+        const src = path.join(TEMPLATE_ROOT_DIR, file);
+        if (fs.existsSync(src)) {
+            fs.copyFileSync(src, path.join(workspaceRoot, file));
+        }
     }
     const managedWorkflowDir = path.join(TEMPLATE_ROOT_DIR, '.agents', 'workflows');
     if (fs.existsSync(managedWorkflowDir)) {
         copyRecursive(managedWorkflowDir, path.join(workspaceRoot, '.agents', 'workflows'));
     }
-    copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.claude'), path.join(workspaceRoot, '.claude'));
+    const claudeTemplateDir = path.join(TEMPLATE_ROOT_DIR, '.claude');
+    if (fs.existsSync(claudeTemplateDir)) {
+        copyRecursive(claudeTemplateDir, path.join(workspaceRoot, '.claude'));
+    }
     if (fs.existsSync(path.join(TEMPLATE_ROOT_DIR, '.github'))) {
         copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.github'), path.join(workspaceRoot, '.github'));
     }
@@ -44,9 +50,7 @@ function createTempRuntimeRoot(name) {
 
 function createTempTemplateCli(name, mutate) {
     const templateRoot = fs.mkdtempSync(path.join(os.tmpdir(), `evo-lite-template-${name}-`));
-    for (const file of fs.readdirSync(TEMPLATE_CLI_DIR)) {
-        fs.copyFileSync(path.join(TEMPLATE_CLI_DIR, file), path.join(templateRoot, file));
-    }
+    copyRecursive(TEMPLATE_CLI_DIR, templateRoot);
     if (mutate) {
         mutate(templateRoot);
     }
@@ -261,6 +265,56 @@ async function runTests() {
     console.log('--- Starting CLI integration tests ---');
 
     try {
+        console.log('T8. Testing archiveHits finds task ID in file content ...');
+        {
+            const progressPath = path.join(TEMPLATE_CLI_DIR, 'planning', 'progress.js');
+            delete require.cache[require.resolve(progressPath)];
+            const progress = require(progressPath);
+            assert.strictEqual(typeof progress.checkArchiveHits, 'function', 'checkArchiveHits not exported from progress.js');
+
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-archivehit-'));
+            try {
+                const rawDir = path.join(tmpRoot, '.evo-lite', 'raw_memory');
+                fs.mkdirSync(rawDir, { recursive: true });
+
+                // File with task ID in content — should be counted
+                fs.writeFileSync(
+                    path.join(rawDir, 'mem_20260616_abc123_xyz.md'),
+                    'Completed work on task:dashboard-builder. Evidence: all tests pass.'
+                );
+                // File with slug (without prefix) — should also be counted
+                fs.writeFileSync(
+                    path.join(rawDir, 'mem_20260616_def456_uvw.md'),
+                    'Finished dashboard-builder implementation.'
+                );
+                // Unrelated file — should NOT be counted
+                fs.writeFileSync(
+                    path.join(rawDir, 'mem_20260616_ghi789_rst.md'),
+                    'Completed some other work on task:other-feature.'
+                );
+
+                const hits = progress.checkArchiveHits('task:dashboard-builder', tmpRoot);
+                assert.strictEqual(hits, 2, `Expected 2 hits, got ${hits}`);
+            } finally {
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T8 archiveHits finds content matches passed');
+        }
+
+        console.log('T2. Testing createTempTemplateCli copies cli subdirs ...');
+        {
+            let tempCliRoot;
+            try {
+                tempCliRoot = createTempTemplateCli('subdir-check');
+            } catch (e) {
+                assert.fail(`createTempTemplateCli threw: ${e.message}`);
+            }
+            assert.ok(fs.existsSync(path.join(tempCliRoot, 'planning')), 'planning/ missing in temp template cli');
+            assert.ok(fs.existsSync(path.join(tempCliRoot, 'architecture')), 'architecture/ missing in temp template cli');
+            fs.rmSync(tempCliRoot, { recursive: true, force: true });
+            console.log('✅ T2 createTempTemplateCli copies subdirs passed');
+        }
+
         console.log('1. Testing remember/recall/export...');
         const primary = createTempRuntimeRoot('memory');
         let primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
@@ -332,6 +386,87 @@ async function runTests() {
         const lastRow = afterRows[afterRows.length - 1];
         assert.ok(!lastRow.content.includes('alice@example.com'), 'warn-tier email should have been redacted in stored content');
         assert.ok(lastRow.content.includes('<REDACTED:email>'), 'warn-tier email should be replaced with a redaction marker');
+
+        console.log('T6. Testing R008 fires on verified tasks with no evidence ...');
+        {
+            const gapsPath = path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps.js');
+            delete require.cache[require.resolve(gapsPath)];
+            const gaps = require(gapsPath);
+            assert.strictEqual(typeof gaps.checkR008, 'function', 'checkR008 not exported from gaps.js');
+
+            const planIR = {
+                tasks: [
+                    { id: 'task:foo', title: 'Foo', status: 'verified', readOnly: false, evidence: [], linkedFiles: [] },
+                    { id: 'task:bar', title: 'Bar', status: 'implemented', readOnly: false, evidence: [], linkedFiles: [] },
+                    { id: 'task:baz', title: 'Baz', status: 'in-progress', readOnly: false, evidence: [], linkedFiles: [] },
+                ],
+            };
+
+            const findings = gaps.checkR008(planIR);
+            const ids = findings.map(f => f.id);
+            assert.ok(ids.some(id => id.includes('task:foo')), 'R008 did not fire on verified task:foo');
+            assert.ok(ids.some(id => id.includes('task:bar')), 'R008 did not fire on implemented task:bar');
+            assert.ok(!ids.some(id => id.includes('task:baz')), 'R008 should NOT fire on in-progress task:baz');
+            console.log('✅ T6 R008 fires on verified tasks passed');
+        }
+
+        console.log('T7. Testing R009 detects nested source file changes ...');
+        {
+            const gapsPath = path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps.js');
+            delete require.cache[require.resolve(gapsPath)];
+            const gaps = require(gapsPath);
+            assert.strictEqual(typeof gaps.checkR009, 'function', 'checkR009 not exported from gaps.js');
+
+            // Set up a minimal temp project structure
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-r009-'));
+            try {
+                // Create architecture IR (old timestamp)
+                const genDir = path.join(tmpRoot, '.evo-lite', 'generated', 'architecture');
+                fs.mkdirSync(genDir, { recursive: true });
+                const irPath = path.join(genDir, 'architecture-ir.json');
+                fs.writeFileSync(irPath, '{}');
+
+                // Make the IR appear OLD
+                const oldTime = new Date(Date.now() - 10000);
+                fs.utimesSync(irPath, oldTime, oldTime);
+
+                // Create a nested source file NEWER than the IR
+                const nestedSource = path.join(tmpRoot, 'templates', 'cli', 'planning', 'scan.js');
+                fs.mkdirSync(path.dirname(nestedSource), { recursive: true });
+                fs.writeFileSync(nestedSource, '// updated');
+                // nestedSource mtime is now (newer than IR)
+
+                const findings = gaps.checkR009(tmpRoot);
+                const r009Arch = findings.filter(f => f.id && f.id.startsWith('R009:architecture'));
+                assert.ok(r009Arch.length > 0, 'R009 did not fire — nested templates/cli/planning/scan.js change not detected');
+            } finally {
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T7 R009 detects nested source changes passed');
+        }
+
+        console.log('T4. Testing template manifest covers all cli modules ...');
+        {
+            const manifestPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'));
+            delete require.cache[manifestPath];
+            const { MANAGED_TEMPLATE_FAMILIES } = require(manifestPath);
+            const coreCliFamily = MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli');
+            assert.ok(coreCliFamily, 'core-cli family not found in manifest');
+
+            const required = [
+                'planning.js', 'architecture.js', 'dashboard-data.js',
+                'mcp-server.js', 'mcp-validate.js', 'test.js',
+                'planning/gaps.js', 'planning/parse-markdown.js', 'planning/progress.js',
+                'planning/scan.js', 'planning/traceability.js',
+                'architecture/diff.js', 'architecture/infer-modules.js',
+                'architecture/provider-contract.js', 'architecture/scan-native.js',
+            ];
+
+            for (const f of required) {
+                assert.ok(coreCliFamily.files.includes(f), `core-cli manifest missing: ${f}`);
+            }
+            console.log('✅ T4 manifest covers all cli modules passed');
+        }
 
         console.log('1c. Testing P4 inspector HTTP API returns 200 + JSON shapes ...');
         const inspector = require(path.join(CLI_DIR, 'inspector.js'));
@@ -1009,6 +1144,16 @@ async function runTests() {
             !modernInitCommands.some(entry => entry.command === 'git commit -m "chore: initialize Evo-Lite workspace"'),
             'initializer should not auto-commit when scaffolding into a non-empty existing directory'
         );
+
+        console.log('3aa. Testing initializer copies cli subdirs (planning/, architecture/) ...');
+        const subdirsInitRoot = createModernInitProject('subdirs');
+        const subdirsInitResult = await runInitializer(subdirsInitRoot, { stubExecSync: true });
+        const planningDir = path.join(subdirsInitRoot, '.evo-lite', 'cli', 'planning');
+        const archDir = path.join(subdirsInitRoot, '.evo-lite', 'cli', 'architecture');
+        assert.strictEqual(subdirsInitResult.status, 0, `Init failed: ${subdirsInitResult.stderr}`);
+        assert.ok(fs.existsSync(planningDir), 'planning/ subdir not copied to .evo-lite/cli/');
+        assert.ok(fs.existsSync(archDir), 'architecture/ subdir not copied to .evo-lite/cli/');
+        console.log('✅ testInitializerCopiesCliSubdirs passed');
 
         console.log('3ab. Testing initializer auto-creates a baseline commit for a fresh target ...');
         const freshInitParent = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lite-init-fresh-'));
