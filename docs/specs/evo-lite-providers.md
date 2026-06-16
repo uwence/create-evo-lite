@@ -1,6 +1,6 @@
 ---
 id: spec:evo-lite-providers
-status: planned
+status: done
 owner: human
 created: 2026-06-15
 ---

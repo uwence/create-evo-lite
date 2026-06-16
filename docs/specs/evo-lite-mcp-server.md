@@ -1,6 +1,6 @@
 ---
 id: spec:evo-lite-mcp-server
-status: planned
+status: done
 owner: human
 created: 2026-06-15
 ---
