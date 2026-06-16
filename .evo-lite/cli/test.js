@@ -23,13 +23,19 @@ function createTempRuntimeRoot(name) {
         .replace(/\{\{DATE\}\}/g, new Date().toISOString().split('T')[0]);
     fs.writeFileSync(path.join(runtimeRoot, 'active_context.md'), template, 'utf8');
     for (const file of ['AGENTS.md', 'CLAUDE.md']) {
-        fs.copyFileSync(path.join(TEMPLATE_ROOT_DIR, file), path.join(workspaceRoot, file));
+        const src = path.join(TEMPLATE_ROOT_DIR, file);
+        if (fs.existsSync(src)) {
+            fs.copyFileSync(src, path.join(workspaceRoot, file));
+        }
     }
     const managedWorkflowDir = path.join(TEMPLATE_ROOT_DIR, '.agents', 'workflows');
     if (fs.existsSync(managedWorkflowDir)) {
         copyRecursive(managedWorkflowDir, path.join(workspaceRoot, '.agents', 'workflows'));
     }
-    copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.claude'), path.join(workspaceRoot, '.claude'));
+    const claudeTemplateDir = path.join(TEMPLATE_ROOT_DIR, '.claude');
+    if (fs.existsSync(claudeTemplateDir)) {
+        copyRecursive(claudeTemplateDir, path.join(workspaceRoot, '.claude'));
+    }
     if (fs.existsSync(path.join(TEMPLATE_ROOT_DIR, '.github'))) {
         copyRecursive(path.join(TEMPLATE_ROOT_DIR, '.github'), path.join(workspaceRoot, '.github'));
     }
@@ -1009,6 +1015,16 @@ async function runTests() {
             !modernInitCommands.some(entry => entry.command === 'git commit -m "chore: initialize Evo-Lite workspace"'),
             'initializer should not auto-commit when scaffolding into a non-empty existing directory'
         );
+
+        console.log('3aa. Testing initializer copies cli subdirs (planning/, architecture/) ...');
+        const subdirsInitRoot = createModernInitProject('subdirs');
+        const subdirsInitResult = await runInitializer(subdirsInitRoot, { stubExecSync: true });
+        const planningDir = path.join(subdirsInitRoot, '.evo-lite', 'cli', 'planning');
+        const archDir = path.join(subdirsInitRoot, '.evo-lite', 'cli', 'architecture');
+        assert.strictEqual(subdirsInitResult.status, 0, `Init failed: ${subdirsInitResult.stderr}`);
+        assert.ok(fs.existsSync(planningDir), 'planning/ subdir not copied to .evo-lite/cli/');
+        assert.ok(fs.existsSync(archDir), 'architecture/ subdir not copied to .evo-lite/cli/');
+        console.log('✅ testInitializerCopiesCliSubdirs passed');
 
         console.log('3ab. Testing initializer auto-creates a baseline commit for a fresh target ...');
         const freshInitParent = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lite-init-fresh-'));

@@ -289,7 +289,6 @@ async function runInit(targetDirArg, options = {}) {
 
     // 3.0 处理 cli 文件集
     const cliTemplatesDir = path.join(templatesDir, 'cli');
-    const cliFiles = fs.existsSync(cliTemplatesDir) ? fs.readdirSync(cliTemplatesDir) : [];
 
     // 3.1 递归复制函数
     let hasUpgraded = false;
@@ -353,11 +352,8 @@ async function runInit(targetDirArg, options = {}) {
         }).filter(entry => !['core-cli', 'root-host-adapters'].includes(entry.family))
     );
 
-    // 写入 cli 文件
-    cliFiles.forEach(file => {
-        const content = fs.readFileSync(path.join(cliTemplatesDir, file), 'utf8');
-        fs.writeFileSync(path.join(cliDir, file), content);
-    });
+    // 写入 cli 文件（递归支持 planning/ architecture/ 等子目录）
+    copyRecursiveSync(cliTemplatesDir, cliDir);
 
     // active_context.md 处理：新项目用模板，老项目仅备份并保护内容。
     if (!fs.existsSync(activeContextPath)) {
