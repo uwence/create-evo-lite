@@ -93,6 +93,23 @@ function registerPlanCommands(program) {
             }
             console.log(`\nWritten: ${outPath}`);
         });
+
+    plan.command('progress')
+        .description('Evaluate task evidence (git refs, files, archive), write progress-report.json.')
+        .action(async () => {
+            const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            if (!fs.existsSync(irPath)) {
+                console.error('No plan-ir.json found. Run: mem plan scan first.');
+                process.exit(1);
+            }
+            const { evaluateProgress, writeProgressReport } = require('./planning/progress');
+            console.log('Evaluating task evidence...\n');
+            const report = evaluateProgress(projectRoot);
+            const outPath = writeProgressReport(report, projectRoot);
+            const s = report.summary;
+            console.log(`  total: ${s.total}  verified: ${s.verified}  implemented: ${s.implemented}  in_progress: ${s.in_progress}  todo: ${s.todo}`);
+            console.log(`\nWritten: ${outPath}`);
+        });
 }
 
 module.exports = { registerPlanCommands };

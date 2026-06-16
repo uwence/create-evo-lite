@@ -13,6 +13,7 @@ function readJson(filePath) {
 function buildDashboardData(projectRoot) {
     const genDir = path.join(projectRoot, '.evo-lite', 'generated');
     const planIR = readJson(path.join(genDir, 'planning', 'plan-ir.json'));
+    const progressReport = readJson(path.join(genDir, 'planning', 'progress-report.json'));
     const archIR = readJson(path.join(genDir, 'architecture', 'architecture-ir.json'));
     const driftReport = readJson(path.join(genDir, 'architecture', 'drift-report.json'));
 
@@ -28,6 +29,7 @@ function buildDashboardData(projectRoot) {
             tasks: planIR.tasks.length,
             implemented: planIR.tasks.filter(t => t.status === 'implemented').length,
         },
+        progress: progressReport ? { summary: progressReport.summary, byPlan: progressReport.byPlan } : null,
     } : { missing: true, hint: 'Run: mem plan scan' };
 
     const architecture = archIR ? {
