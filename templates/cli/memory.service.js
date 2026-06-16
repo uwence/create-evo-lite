@@ -1879,20 +1879,33 @@ async function verify(options = {}) {
         const dashPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'dashboard', 'dashboard-data.json');
         if (fs.existsSync(dashPath)) {
             const dash = JSON.parse(fs.readFileSync(dashPath, 'utf8'));
-            const missing = [dash.planning, dash.architecture, dash.drift].filter(d => d && d.missing).length;
-            const driftSummary = dash.drift && !dash.drift.missing ? dash.drift.summary : null;
-            if (missing === 0 && driftSummary && driftSummary.errors === 0 && driftSummary.warnings === 0) {
-                report.project_control = 'ok';
-            } else if (missing === 3) {
-                report.project_control = 'no-data';
-            } else {
-                report.project_control = driftSummary && driftSummary.errors > 0 ? 'error' : 'partial';
-            }
+            const planData = dash.planning && !dash.planning.missing ? dash.planning : null;
+            const archData = dash.architecture && !dash.architecture.missing ? dash.architecture : null;
+            const driftData = dash.drift && !dash.drift.missing ? dash.drift : null;
+            const r009 = driftData ? (driftData.findings || []).filter(f => f.rule === 'R009') : [];
+            report.project_control = {
+                planning: planData ? {
+                    planIrExists: true,
+                    stale: r009.some(f => f.message.startsWith('plan ')),
+                    taskCount: planData.summary.tasks,
+                    implemented: planData.summary.implemented,
+                } : { planIrExists: false },
+                architecture: archData ? {
+                    architectureIrExists: true,
+                    stale: r009.some(f => f.message.startsWith('architecture ')),
+                    moduleCount: archData.summary.modules,
+                } : { architectureIrExists: false },
+                drift: driftData ? {
+                    critical: driftData.summary.errors || 0,
+                    warning: driftData.summary.warnings || 0,
+                    info: driftData.summary.info || 0,
+                } : null,
+            };
         } else {
-            report.project_control = 'no-data';
+            report.project_control = { planning: { planIrExists: false }, architecture: { architectureIrExists: false }, drift: null };
         }
     } catch (_) {
-        report.project_control = 'error';
+        report.project_control = { error: true };
     }
 
     if (!report.hasAlerts) {
