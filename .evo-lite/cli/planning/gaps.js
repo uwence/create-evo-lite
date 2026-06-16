@@ -89,7 +89,9 @@ function checkR006(projectRoot, planIR) {
 function checkR008(planIR) {
     if (!planIR) return [];
     return (planIR.tasks || [])
-        .filter(t => t.status === 'implemented' && (!t.evidence || t.evidence.length === 0))
+        .filter(t => t.status === 'implemented' &&
+            (!t.evidence || t.evidence.length === 0) &&
+            (!t.linkedFiles || t.linkedFiles.length === 0))
         .map(t => ({
             id: `R008:${t.id}`, rule: 'R008', scope: 'planning', level: 'warning',
             type: 'no-evidence',

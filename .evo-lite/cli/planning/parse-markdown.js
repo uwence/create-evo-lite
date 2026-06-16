@@ -160,9 +160,12 @@ function extractSuperPowersTasks(content, planSlug) {
 
             const allSteps = sectionLines.filter(l => /^-\s+\[[xX ]\]\s+\*\*Step/.test(l));
             const doneSteps = sectionLines.filter(l => /^-\s+\[[xX]\]\s+\*\*Step/.test(l));
-            const status = allSteps.length > 0 && doneSteps.length === allSteps.length
-                ? 'implemented'
-                : 'todo';
+            const filesHeadLine = sectionLines.find(l => /^\*\*Files:\*\*/.test(l.trim()));
+            const isReadOnly = filesHeadLine && /read[-\s]only|no\s+edits/i.test(filesHeadLine);
+            const status = isReadOnly ? 'planning-only'
+                : allSteps.length > 0 && doneSteps.length === allSteps.length
+                    ? 'implemented'
+                    : 'todo';
 
             tasks.push({
                 id: taskId,
