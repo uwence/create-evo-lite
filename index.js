@@ -353,7 +353,9 @@ async function runInit(targetDirArg, options = {}) {
     );
 
     // 写入 cli 文件（递归支持 planning/ architecture/ 等子目录）
-    copyRecursiveSync(cliTemplatesDir, cliDir);
+    if (fs.existsSync(cliTemplatesDir)) {
+        copyRecursiveSync(cliTemplatesDir, cliDir);
+    }
 
     // active_context.md 处理：新项目用模板，老项目仅备份并保护内容。
     if (!fs.existsSync(activeContextPath)) {
