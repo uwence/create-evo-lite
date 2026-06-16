@@ -1876,7 +1876,7 @@ async function verify(options = {}) {
 
     // project_control: read dashboard-data.json for a quick status without running scans
     try {
-        const dashPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'dashboard-data.json');
+        const dashPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'dashboard', 'dashboard-data.json');
         if (fs.existsSync(dashPath)) {
             const dash = JSON.parse(fs.readFileSync(dashPath, 'utf8'));
             const missing = [dash.planning, dash.architecture, dash.drift].filter(d => d && d.missing).length;

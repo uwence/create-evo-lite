@@ -59,7 +59,7 @@ function buildDashboardData(projectRoot) {
 }
 
 function writeDashboardData(data, projectRoot) {
-    const outDir = path.join(projectRoot, '.evo-lite', 'generated');
+    const outDir = path.join(projectRoot, '.evo-lite', 'generated', 'dashboard');
     fs.mkdirSync(outDir, { recursive: true });
     const outPath = path.join(outDir, 'dashboard-data.json');
     fs.writeFileSync(outPath, JSON.stringify(data, null, 2), 'utf8');
