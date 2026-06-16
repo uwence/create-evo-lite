@@ -21,9 +21,8 @@ Dogfood Operator Experience Phase 1 Implementation Plan: Make /evo and verify op
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [8f59a44] 2026-06-16 rc-closure-phase2-dx-closure: Spec marked done (kills R011); plan r008Exempt (kills self-referential R008). Drift floor on dogfood
 - [c8ec3bb] 2026-06-16 rc-closure-phase2-dx: RC closure phase 2 delivers spec:rc-closure-phase2-dx end-to-end. Seven tasks landed.
-
-P0 sync-runti
 - [d2226a5] 2026-06-16 rc-closure-phase2-prep: Two RC blockers resolved.
 - [b256b86] 2026-06-16 DogFood: Dogfood governance operator pass: hardened code-only post-commit governance, last-commit plan gaps,
 - [ab967cb] 2026-06-16 mem plan gaps / plan trace / dashboard build / node fixtures/project-control/run-tests.js: dashboard+gaps: 完成 master spec §23 remaining production readiness — verify project_control struct, d
@@ -32,7 +31,6 @@ P0 sync-runti
 - [f9ed492] 2026-06-15 inspector-planning-layout: Planning tab redesigned: spec+plan grouped in cards, task list collapsible by default.
 - [67d3ce7] 2026-06-15 mcp-phase3: MCP server 11/11 tasks complete. Phase 3: config sample + validation script (6/6 tools OK). plan:evo
 - [44945f4] 2026-06-15 mcp-phase1-2: MCP server Phase 0+1+2 complete. 9/11 tasks done. 6 tools implemented and smoke-tested over stdio. R
-- [3c1bfb6] 2026-06-15 stage5-upgrade: Two dogfood cycles complete. Rollout Stage 5: default-on.
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
