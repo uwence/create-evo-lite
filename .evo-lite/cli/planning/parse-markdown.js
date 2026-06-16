@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 
 // --- Frontmatter ---
 
@@ -119,6 +120,77 @@ function extractTasks(body) {
     return tasks;
 }
 
+// --- Superpowers plan format support ---
+
+function extractSuperPowersTasks(content, planSlug) {
+    const lines = content.split('\n');
+    const tasks = [];
+    let i = 0;
+
+    while (i < lines.length) {
+        const taskMatch = lines[i].match(/^###\s+Task\s+(\d+):\s+(.+)$/);
+        if (taskMatch) {
+            const taskNum = taskMatch[1];
+            const taskTitle = taskMatch[2].trim().replace(/`/g, '');
+            const taskId = `task:${planSlug}-t${taskNum}`;
+
+            let j = i + 1;
+            const sectionLines = [];
+            while (j < lines.length && !/^#{2,3}\s/.test(lines[j])) {
+                sectionLines.push(lines[j]);
+                j++;
+            }
+
+            const allSteps = sectionLines.filter(l => /^-\s+\[[xX ]\]\s+\*\*Step/.test(l));
+            const doneSteps = sectionLines.filter(l => /^-\s+\[[xX]\]\s+\*\*Step/.test(l));
+            const status = allSteps.length > 0 && doneSteps.length === allSteps.length
+                ? 'implemented'
+                : 'todo';
+
+            tasks.push({
+                id: taskId,
+                title: taskTitle,
+                status,
+                phase: null,
+                linkedFiles: [],
+                verify: [],
+                acceptance: null,
+                evidence: [],
+            });
+
+            i = j;
+        } else {
+            i++;
+        }
+    }
+
+    return tasks;
+}
+
+function parseSuperPowersPlan(filePath, content) {
+    if (!/^###\s+Task\s+\d+:/m.test(content)) return null;
+
+    const base = path.basename(filePath, '.md');
+    const slug = base.replace(/^\d{4}-\d{2}-\d{2}-/, '');
+    const planId = `plan:${slug}`;
+
+    const titleMatch = content.match(/^#\s+(.+)$/m);
+    const title = titleMatch ? titleMatch[1].trim() : slug;
+
+    const tasks = extractSuperPowersTasks(content, slug);
+    const allDone = tasks.length > 0 && tasks.every(t => t.status === 'implemented');
+
+    return {
+        id: planId,
+        title,
+        status: allDone ? 'done' : 'draft',
+        sourcePath: filePath,
+        linkedSpec: null,
+        taskIds: tasks.map(t => t.id),
+        tasks,
+    };
+}
+
 // --- Public API ---
 
 function parseSpecFile(filePath) {
@@ -141,7 +213,9 @@ function parsePlanFile(filePath) {
     const content = fs.readFileSync(filePath, 'utf8');
     const { frontmatter, body } = parseFrontmatter(content);
 
-    if (!frontmatter.id || !frontmatter.id.startsWith('plan:')) return null;
+    if (!frontmatter.id || !frontmatter.id.startsWith('plan:')) {
+        return parseSuperPowersPlan(filePath, content);
+    }
 
     const tasks = extractTasks(body);
 

@@ -1,8 +1,8 @@
 ---
 id: spec:plan-progress
-status: draft
+status: done
 created: 2026-06-16
-linkedPlan: plan:plan-progress-mvp
+linkedPlan: plan:plan-progress
 ---
 
 # Plan Progress — Design Spec
