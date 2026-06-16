@@ -38,7 +38,8 @@ function checkArchiveHits(taskId, projectRoot) {
 }
 
 function evaluateTask(task, projectRoot) {
-    const evidenceRefs = (task.evidence || []).filter(e => /^git:[a-f0-9]+/i.test(e));
+    if (!task || !task.id) return null;
+    const evidenceRefs = (task.evidence || []).filter(e => /^git:[a-f0-9]{4,40}$/i.test(e));
     const gitRefs = evidenceRefs.map(ref => validateGitRef(ref, projectRoot));
     const validGitRefs = gitRefs.filter(r => r.valid).length;
 
@@ -94,7 +95,7 @@ function evaluateProgress(projectRoot) {
 
     let ir;
     try { ir = JSON.parse(fs.readFileSync(irPath, 'utf8')); } catch { return null; }
-    const tasks = (ir.tasks || []).map(t => evaluateTask(t, projectRoot));
+    const tasks = (ir.tasks || []).map(t => evaluateTask(t, projectRoot)).filter(Boolean);
 
     const count = { verified: 0, implemented: 0, in_progress: 0, todo: 0 };
     for (const t of tasks) { if (count[t.derivedStatus] !== undefined) count[t.derivedStatus]++; }
