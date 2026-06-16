@@ -374,6 +374,41 @@ async function runTests() {
             console.log('✅ T6 R008 fires on verified tasks passed');
         }
 
+        console.log('T7. Testing R009 detects nested source file changes ...');
+        {
+            const gapsPath = path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps.js');
+            delete require.cache[require.resolve(gapsPath)];
+            const gaps = require(gapsPath);
+            assert.strictEqual(typeof gaps.checkR009, 'function', 'checkR009 not exported from gaps.js');
+
+            // Set up a minimal temp project structure
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-r009-'));
+            try {
+                // Create architecture IR (old timestamp)
+                const genDir = path.join(tmpRoot, '.evo-lite', 'generated', 'architecture');
+                fs.mkdirSync(genDir, { recursive: true });
+                const irPath = path.join(genDir, 'architecture-ir.json');
+                fs.writeFileSync(irPath, '{}');
+
+                // Make the IR appear OLD
+                const oldTime = new Date(Date.now() - 10000);
+                fs.utimesSync(irPath, oldTime, oldTime);
+
+                // Create a nested source file NEWER than the IR
+                const nestedSource = path.join(tmpRoot, 'templates', 'cli', 'planning', 'scan.js');
+                fs.mkdirSync(path.dirname(nestedSource), { recursive: true });
+                fs.writeFileSync(nestedSource, '// updated');
+                // nestedSource mtime is now (newer than IR)
+
+                const findings = gaps.checkR009(tmpRoot);
+                const r009Arch = findings.filter(f => f.id && f.id.startsWith('R009:architecture'));
+                assert.ok(r009Arch.length > 0, 'R009 did not fire — nested templates/cli/planning/scan.js change not detected');
+            } finally {
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T7 R009 detects nested source changes passed');
+        }
+
         console.log('T4. Testing template manifest covers all cli modules ...');
         {
             const manifestPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'));
