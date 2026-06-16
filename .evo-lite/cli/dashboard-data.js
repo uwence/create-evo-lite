@@ -93,8 +93,10 @@ function registerDashboardCommands(program) {
             } else {
                 console.log(`  architecture: ${a.hint}`);
             }
-            if (!d.missing) {
+            if (!d.missing && d.summary) {
                 console.log(`  drift:        ${d.summary.total} findings (${d.summary.warnings} warnings, ${d.summary.errors} errors, ${d.summary.info} info)`);
+            } else if (!d.missing) {
+                console.log(`  drift:        (summary unavailable)`);
             } else {
                 console.log(`  drift:        ${d.hint}`);
             }

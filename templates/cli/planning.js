@@ -105,6 +105,10 @@ function registerPlanCommands(program) {
             const { evaluateProgress, writeProgressReport } = require('./planning/progress');
             console.log('Evaluating task evidence...\n');
             const report = evaluateProgress(projectRoot);
+            if (!report) {
+                console.error('Failed to evaluate progress: plan-ir.json may be corrupt. Run: mem plan scan first.');
+                process.exit(1);
+            }
             const outPath = writeProgressReport(report, projectRoot);
             const s = report.summary;
             console.log(`  total: ${s.total}  verified: ${s.verified}  implemented: ${s.implemented}  in_progress: ${s.in_progress}  todo: ${s.todo}`);
