@@ -10,8 +10,19 @@
         "commander": "^14.0.2",
         "@modelcontextprotocol/sdk": "^1.29.0"
     },
+    "files": [
+        "bin/",
+        "index.js",
+        "templates/",
+        "docs/",
+        "README.md",
+        "README_EN.md",
+        "LICENSE",
+        "package.json"
+    ],
     "scripts": {
-        "start": "node ./bin/cli.js"
+        "start": "node ./bin/cli.js",
+        "test": "node ./.evo-lite/cli/test.js"
     },
     "keywords": [
         "evo-lite",
