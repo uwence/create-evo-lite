@@ -265,6 +265,42 @@ async function runTests() {
     console.log('--- Starting CLI integration tests ---');
 
     try {
+        console.log('T8. Testing archiveHits finds task ID in file content ...');
+        {
+            const progressPath = path.join(TEMPLATE_CLI_DIR, 'planning', 'progress.js');
+            delete require.cache[require.resolve(progressPath)];
+            const progress = require(progressPath);
+            assert.strictEqual(typeof progress.checkArchiveHits, 'function', 'checkArchiveHits not exported from progress.js');
+
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-archivehit-'));
+            try {
+                const rawDir = path.join(tmpRoot, '.evo-lite', 'raw_memory');
+                fs.mkdirSync(rawDir, { recursive: true });
+
+                // File with task ID in content — should be counted
+                fs.writeFileSync(
+                    path.join(rawDir, 'mem_20260616_abc123_xyz.md'),
+                    'Completed work on task:dashboard-builder. Evidence: all tests pass.'
+                );
+                // File with slug (without prefix) — should also be counted
+                fs.writeFileSync(
+                    path.join(rawDir, 'mem_20260616_def456_uvw.md'),
+                    'Finished dashboard-builder implementation.'
+                );
+                // Unrelated file — should NOT be counted
+                fs.writeFileSync(
+                    path.join(rawDir, 'mem_20260616_ghi789_rst.md'),
+                    'Completed some other work on task:other-feature.'
+                );
+
+                const hits = progress.checkArchiveHits('task:dashboard-builder', tmpRoot);
+                assert.strictEqual(hits, 2, `Expected 2 hits, got ${hits}`);
+            } finally {
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T8 archiveHits finds content matches passed');
+        }
+
         console.log('T2. Testing createTempTemplateCli copies cli subdirs ...');
         {
             let tempCliRoot;

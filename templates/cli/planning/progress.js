@@ -32,9 +32,18 @@ function checkArchiveHits(taskId, projectRoot) {
     if (!fs.existsSync(rawDir)) return 0;
     const slug = taskId.replace(/^task:/, '');
     if (!slug) return 0;
-    try {
-        return fs.readdirSync(rawDir).filter(f => f.endsWith('.md') && f.includes(slug)).length;
-    } catch { return 0; }
+
+    let hits = 0;
+    for (const fname of fs.readdirSync(rawDir)) {
+        if (!fname.endsWith('.md')) continue;
+        try {
+            const content = fs.readFileSync(path.join(rawDir, fname), 'utf8');
+            if (content.includes(taskId) || content.includes(slug)) {
+                hits++;
+            }
+        } catch (_) { /* skip unreadable files */ }
+    }
+    return hits;
 }
 
 function evaluateTask(task, projectRoot) {
@@ -130,4 +139,4 @@ function writeProgressReport(report, projectRoot) {
     return outPath;
 }
 
-module.exports = { evaluateProgress, writeProgressReport };
+module.exports = { evaluateProgress, writeProgressReport, checkArchiveHits };
