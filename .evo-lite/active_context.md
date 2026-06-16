@@ -21,6 +21,7 @@ Rollout Stage 5: Project Control Dashboard default-on. Post-MVP planning.
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [ab967cb] 2026-06-16 mem plan gaps / plan trace / dashboard build / node fixtures/project-control/run-tests.js: dashboard+gaps: 完成 master spec §23 remaining production readiness — verify project_control struct, d
 - [5a3009d] 2026-06-16 fix(archive): namespace fidelity fix complete: archive() writes namespace to raw_memory frontmatter, syncIndexMemo
 - [498e12f] 2026-06-15 feat(providers): all three phases complete: plan:evo-lite-providers-mvp 8/8 complete. Phase 1 provider contract+config loader+scan-native loader
 - [f9ed492] 2026-06-15 inspector-planning-layout: Planning tab redesigned: spec+plan grouped in cards, task list collapsible by default.
@@ -30,7 +31,6 @@ Rollout Stage 5: Project Control Dashboard default-on. Post-MVP planning.
 - [3c1bfb6] 2026-06-15 dogfood-cycle-2: Cycle 2 stable: verify clean, arch-diff 0, plan-gaps R010x1 info (expected). Stage 5 conditions met
 - [cff52cc] 2026-06-15 inspector-active-context: Active Context tab now shows META/Focus/Backlog/Trajectory. META slim: removed stale 更新时间+项目状态, keep
 - [8824fd2] 2026-06-15 dogfood-observation: Cycle 1 stable: verify clean, architecture diff 0 findings, plan gaps R010x1 info (expected backlog
-- [665815b] 2026-06-15 fix(drift) 665815b: Drift cleanup complete: R005/R007/R008/R009/R010 resolved; only R006 (auto-clears on commit) and R01
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
