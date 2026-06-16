@@ -1258,7 +1258,7 @@ async function archive(content, type = 'task', options = {}) {
         ? `## 现象 (Symptom)\n${safeContent}\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n`
         : `## 实现细节 (Implementation)\n${safeContent}\n\n## 架构决策 (Architecture)\n未记录\n`;
 
-    const fileContent = `---\nid: "${id}"\ntimestamp: "${timestamp}"\ntype: "${type}"\ntags: []\n---\n\n${markdownBody}`;
+    const fileContent = `---\nid: "${id}"\ntimestamp: "${timestamp}"\ntype: "${type}"\nnamespace: "${preflightCheck.namespace ?? DEFAULT_NAMESPACE}"\ntags: []\n---\n\n${markdownBody}`;
     fs.writeFileSync(filePath, fileContent, 'utf8');
 
     const ingestion = await ingestArchiveFile(filePath, type, id, timestamp, {
@@ -1301,12 +1301,14 @@ async function syncIndexMemory() {
         const idMatch = markdown.match(/^id:\s*"([^"]+)"/m);
         const tsMatch = markdown.match(/^timestamp:\s*"([^"]+)"/m);
         const typeMatch = markdown.match(/^type:\s*"([^"]+)"/m);
+        const nsMatch = markdown.match(/^namespace:\s*"([^"]+)"/m);
 
         const ingestion = await ingestArchiveFile(
             filePath,
             typeMatch ? typeMatch[1] : 'task',
             idMatch ? idMatch[1] : path.basename(file, '.md'),
-            tsMatch ? tsMatch[1] : new Date().toISOString()
+            tsMatch ? tsMatch[1] : new Date().toISOString(),
+            { namespace: nsMatch ? nsMatch[1] : DEFAULT_NAMESPACE }
         );
         if (!ingestion.marked) {
             console.warn(`⚠️ 跳过损坏档案 ${file}: ${ingestion.invalidReason}`);
