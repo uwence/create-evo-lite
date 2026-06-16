@@ -32,7 +32,9 @@ function checkArchiveHits(taskId, projectRoot) {
     if (!fs.existsSync(rawDir)) return 0;
     const slug = taskId.replace(/^task:/, '');
     if (!slug) return 0;
-    return fs.readdirSync(rawDir).filter(f => f.endsWith('.md') && f.includes(slug)).length;
+    try {
+        return fs.readdirSync(rawDir).filter(f => f.endsWith('.md') && f.includes(slug)).length;
+    } catch { return 0; }
 }
 
 function evaluateTask(task, projectRoot) {
@@ -119,7 +121,11 @@ function writeProgressReport(report, projectRoot) {
     const outDir = path.join(projectRoot, '.evo-lite', 'generated', 'planning');
     fs.mkdirSync(outDir, { recursive: true });
     const outPath = path.join(outDir, 'progress-report.json');
-    fs.writeFileSync(outPath, JSON.stringify(report, null, 2), 'utf8');
+    try {
+        fs.writeFileSync(outPath, JSON.stringify(report, null, 2), 'utf8');
+    } catch (e) {
+        throw new Error(`Failed to write progress-report.json: ${e.message}`);
+    }
     return outPath;
 }
 
