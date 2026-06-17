@@ -122,6 +122,13 @@ function extractTasks(body) {
 
 // --- Superpowers plan format support ---
 
+const SUPERPOWERS_TASK_HEADING_RE = /^#{2,3}\s+Task\s+(\d+)\s*(?::|：|-|–|—)\s+(.+)$/;
+const SUPERPOWERS_TASK_HEADING_ANY_RE = /^#{2,3}\s+Task\s+\d+\s*(?::|：|-|–|—)\s+/m;
+
+function hasSuperPowersTaskHeadings(content) {
+    return SUPERPOWERS_TASK_HEADING_ANY_RE.test(content);
+}
+
 function extractSuperPowersFiles(sectionLines) {
     const files = [];
     let inFiles = false;
@@ -145,7 +152,7 @@ function extractSuperPowersTasks(content, planSlug) {
     let i = 0;
 
     while (i < lines.length) {
-        const taskMatch = lines[i].match(/^###\s+Task\s+(\d+):\s+(.+)$/);
+        const taskMatch = lines[i].match(SUPERPOWERS_TASK_HEADING_RE);
         if (taskMatch) {
             const taskNum = taskMatch[1];
             const taskTitle = taskMatch[2].trim().replace(/`/g, '');
@@ -153,7 +160,7 @@ function extractSuperPowersTasks(content, planSlug) {
 
             let j = i + 1;
             const sectionLines = [];
-            while (j < lines.length && !/^#{2,3}\s/.test(lines[j])) {
+            while (j < lines.length && !/^#{2,3}\s+Task\s+\d+\s*(?::|：|-|–|—)\s+/.test(lines[j])) {
                 sectionLines.push(lines[j]);
                 j++;
             }
@@ -188,23 +195,26 @@ function extractSuperPowersTasks(content, planSlug) {
 }
 
 function parseSuperPowersPlan(filePath, content) {
-    if (!/^###\s+Task\s+\d+:/m.test(content)) return null;
+    if (!hasSuperPowersTaskHeadings(content)) return null;
 
     const { frontmatter } = parseFrontmatter(content);
     const base = path.basename(filePath, '.md');
     const slug = base.replace(/^\d{4}-\d{2}-\d{2}-/, '');
-    const planId = `plan:${slug}`;
+    const planId = frontmatter.id && frontmatter.id.startsWith('plan:')
+        ? frontmatter.id
+        : `plan:${slug}`;
 
     const titleMatch = content.match(/^#\s+(.+)$/m);
     const title = titleMatch ? titleMatch[1].trim() : slug;
 
-    const tasks = extractSuperPowersTasks(content, slug);
+    const taskSlug = planId.replace(/^plan:/, '');
+    const tasks = extractSuperPowersTasks(content, taskSlug);
     const allDone = tasks.length > 0 && tasks.every(t => t.status === 'implemented');
 
     return {
         id: planId,
         title,
-        status: allDone ? 'done' : 'draft',
+        status: frontmatter.status || (allDone ? 'done' : 'draft'),
         sourcePath: filePath,
         linkedSpec: frontmatter.linkedSpec || null,
         r008Exempt: frontmatter.r008Exempt === true || frontmatter.r008Exempt === 'true',
@@ -239,12 +249,21 @@ function parseSpecFile(filePath) {
 function parsePlanFile(filePath) {
     const content = fs.readFileSync(filePath, 'utf8');
     const { frontmatter, body } = parseFrontmatter(content);
+    const format = String(frontmatter.format || '').toLowerCase();
+    const hasSuperPowers = hasSuperPowersTaskHeadings(content);
 
     if (!frontmatter.id || !frontmatter.id.startsWith('plan:')) {
         return parseSuperPowersPlan(filePath, content);
     }
 
+    if (format === 'superpowers' && hasSuperPowers) {
+        return parseSuperPowersPlan(filePath, content);
+    }
+
     const tasks = extractTasks(body);
+    if (tasks.length === 0 && hasSuperPowers) {
+        return parseSuperPowersPlan(filePath, content);
+    }
 
     return {
         id: frontmatter.id,
@@ -258,4 +277,4 @@ function parsePlanFile(filePath) {
     };
 }
 
-module.exports = { parseSpecFile, parsePlanFile, parseFrontmatter, extractTasks };
+module.exports = { parseSpecFile, parsePlanFile, parseFrontmatter, extractTasks, parseSuperPowersPlan };
