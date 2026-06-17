@@ -556,6 +556,41 @@ async function runGovernanceTests() {
             console.log('✅ T15d root-commit file detection passed');
         }
 
+        console.log('T15e. Testing governance slice triggers archive-evidence backfill on raw_memory commits ...');
+        {
+            const repo = createHookTestRepo('governance-evidence-commit', {
+                planIR: { version: 'evo-plan-ir@1', tasks: [] },
+            });
+            try {
+                const archiveRel = '.evo-lite/raw_memory/mem_2026-06-17_t15e_evidence.md';
+                writeText(
+                    path.join(repo.projectRoot, archiveRel),
+                    '---\nlinkedTask: task:t15e-demo\n---\n\n# Evidence snapshot\n\nWork on task:t15e-demo complete. Evidence captured.\n'
+                );
+                runGit(repo.projectRoot, ['add', archiveRel]);
+                runGit(repo.projectRoot, ['commit', '-m', 'chore(meta): snapshot evo-lite runtime state']);
+                runPostCommitHook(repo.projectRoot);
+
+                const entries = readNdjson(repo.hookLogPath);
+                const commands = entries.map(entry => entry.argv.join(' '));
+                assert.ok(commands.includes('plan archive-evidence --backfill'), 'evidence commit should trigger plan archive-evidence backfill');
+                assert.ok(commands.includes('plan scan'), 'evidence commit should trigger plan scan so backfilled evidence is merged into plan IR');
+                assert.ok(commands.includes('plan progress'), 'evidence commit should refresh plan progress');
+                assert.ok(commands.includes('plan gaps --last-commit --changed-files-from-env'), 'evidence commit should still run gap detection');
+                assert.ok(commands.includes('dashboard build'), 'evidence commit should rebuild dashboard');
+                assert.ok(!commands.includes('architecture scan'), 'pure evidence commit should NOT trigger architecture scan');
+
+                const reportPath = path.join(repo.projectRoot, '.evo-lite', 'generated', 'governance', 'post-commit-last-run.json');
+                assert.ok(fs.existsSync(reportPath), 'post-commit-last-run.json should be written');
+                const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+                assert.ok((report.categories || []).includes('evidence'), 'report categories should include "evidence" for raw_memory-only commits');
+                assert.ok(!(report.categories || []).includes('code'), 'evidence-only commit should not classify as code');
+            } finally {
+                fs.rmSync(repo.projectRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T15e evidence commit archive-evidence backfill passed');
+        }
+
         console.log('T16. Testing inspector timeline payload stays stable for operators ...');
         {
             const runtime = createTempRuntimeRoot('timeline-contract');
