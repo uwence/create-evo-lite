@@ -21,6 +21,9 @@ Dogfood Operator Experience Phase 1 Implementation Plan: Make /evo and verify op
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [63a60a6] 2026-06-17 rc-closure-phase3: RC closure phase 3 — last-mile consistency fixes before production dogfood:
+
+1. hooks.js: post-commi
 - [8f59a44] 2026-06-16 rc-closure-phase2-dx-closure: Spec marked done (kills R011); plan r008Exempt (kills self-referential R008). Drift floor on dogfood
 - [c8ec3bb] 2026-06-16 rc-closure-phase2-dx: RC closure phase 2 delivers spec:rc-closure-phase2-dx end-to-end. Seven tasks landed.
 - [d2226a5] 2026-06-16 rc-closure-phase2-prep: Two RC blockers resolved.
@@ -30,7 +33,6 @@ Dogfood Operator Experience Phase 1 Implementation Plan: Make /evo and verify op
 - [498e12f] 2026-06-15 feat(providers): all three phases complete: plan:evo-lite-providers-mvp 8/8 complete. Phase 1 provider contract+config loader+scan-native loader
 - [f9ed492] 2026-06-15 inspector-planning-layout: Planning tab redesigned: spec+plan grouped in cards, task list collapsible by default.
 - [67d3ce7] 2026-06-15 mcp-phase3: MCP server 11/11 tasks complete. Phase 3: config sample + validation script (6/6 tools OK). plan:evo
-- [44945f4] 2026-06-15 mcp-phase1-2: MCP server Phase 0+1+2 complete. 9/11 tasks done. 6 tools implemented and smoke-tested over stdio. R
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
