@@ -160,7 +160,7 @@ function registerSyncRuntimeCommands(program) {
                     for (const m of result.missing) console.log(`  missing: ${m}`);
                     console.log('Fix: run `mem sync-runtime` (do not edit .evo-lite/cli/ directly).');
                 }
-                if (result.status === 'drifted') {
+                if (result.status !== 'ok') {
                     process.exitCode = 1;
                 }
                 return;

@@ -834,6 +834,7 @@ async function runGovernanceTests() {
                 assert.ok(fs.existsSync(specAbs), 'spec file written');
                 const planContent = fs.readFileSync(planAbs, 'utf8');
                 assert.ok(planContent.includes('### Task 1: TODO'), 'plan stub contains a Task 1 heading the parser will pick up');
+                assert.ok(planContent.includes('id: plan:my-test-feature'), 'plan frontmatter has id satisfying lint');
                 assert.ok(planContent.includes('linkedSpec: spec:my-test-feature'), 'plan frontmatter links spec');
                 const specContent = fs.readFileSync(specAbs, 'utf8');
                 assert.ok(specContent.includes('id: spec:my-test-feature'), 'spec frontmatter has id');

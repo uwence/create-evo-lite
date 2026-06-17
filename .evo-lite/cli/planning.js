@@ -234,7 +234,7 @@ function scaffoldPlanStubs(projectRoot, slug, fromDiff) {
         const filesBlock = linkedFiles.length > 0
             ? `\n**Files:**\n${linkedFiles.map(f => `- Modify: \`${f}\``).join('\n')}\n`
             : '\n**Files:**\n- Modify: `TODO`\n';
-        const planBody = `---\nlinkedSpec: spec:${normalizedSlug}\n---\n\n# ${normalizedSlug} — Implementation Plan\n\n### Task 1: TODO\n${filesBlock}\n- [ ] **Step 1:** TODO\n`;
+        const planBody = `---\nid: plan:${normalizedSlug}\nlinkedSpec: spec:${normalizedSlug}\nformat: superpowers\nstatus: draft\n---\n\n# ${normalizedSlug} — Implementation Plan\n\n### Task 1: TODO\n${filesBlock}\n- [ ] **Step 1:** TODO\n`;
         fs.writeFileSync(planPath, planBody);
     }
 
