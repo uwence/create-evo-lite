@@ -54,6 +54,32 @@ function getChangedFiles(projectRoot, options = {}) {
     }
 }
 
+function isGovernanceRuntimeFile(file) {
+    const f = String(file || '').replace(/\\/g, '/').replace(/^\.\//, '');
+    // R006 is a business-code traceability rule. Evo-Lite runtime state,
+    // generated reports, local DB sidecars, raw archives, wrappers, and mirrors
+    // are governance infrastructure. They are handled by specialized rules
+    // such as archive-evidence backfill, freshness checks, and runtime-lock
+    // verification, so they must not be reported as unlinked product files.
+    return f === '.evo-lite' || f.startsWith('.evo-lite/');
+}
+
+function normalizeBacklogItem(line) {
+    return String(line || '')
+        .trim()
+        .replace(/^[-*]\s*/, '')
+        .replace(/^\[[ xX]\]\s*/, '')
+        .trim()
+        .toLowerCase();
+}
+
+function isPlaceholderBacklogItem(item) {
+    const normalized = String(item || '').trim();
+    return normalized === '' ||
+        /^暂无活跃任务[。.]?$/.test(normalized) ||
+        /^(no active tasks?|none|empty|n\/a)[.]?$/.test(normalized);
+}
+
 function hasArchiveEvidence(task) {
     return (task.evidence || []).some(item =>
         /^(archive:|raw:|mem_)/i.test(item) || /raw_memory\//i.test(item)
@@ -115,7 +141,8 @@ function checkR005(planIR) {
 
 function checkR006(projectRoot, planIR, options = {}) {
     if (!planIR) return [];
-    const changedFiles = getChangedFiles(projectRoot, options);
+    const changedFiles = getChangedFiles(projectRoot, options)
+        .filter(f => !isGovernanceRuntimeFile(f));
     if (changedFiles.length === 0) return [];
 
     const linkedFiles = new Set((planIR.tasks || []).flatMap(t => t.linkedFiles || []));
@@ -207,7 +234,8 @@ function checkR010(projectRoot, planIR) {
 
     const backlogItems = section[1].split('\n')
         .map(l => l.trim()).filter(l => l.startsWith('-'))
-        .map(l => l.replace(/^-\s*/, '').toLowerCase());
+        .map(normalizeBacklogItem)
+        .filter(item => !isPlaceholderBacklogItem(item));
     if (backlogItems.length === 0) return [];
 
     const taskTitles = (planIR.tasks || []).map(t => t.title.toLowerCase());
@@ -279,6 +307,9 @@ module.exports = {
     checkR009,
     getChangedFiles,
     hasArchiveEvidence,
+    isGovernanceRuntimeFile,
+    normalizeBacklogItem,
+    isPlaceholderBacklogItem,
     PLAN_SOURCE_PATHS,
     ARCH_SOURCE_PATHS,
 };
