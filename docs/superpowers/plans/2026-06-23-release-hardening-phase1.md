@@ -128,14 +128,14 @@ git commit -m "feat(release): ship versioned runtime manifest + lockfile, instal
 - Modify: `index.js`
 - Test: `templates/cli/test.js`
 
-- [ ] **Step 1: Add a failing fail-closed test**
+- [x] **Step 1: Add a failing fail-closed test**
 
 In `templates/cli/test.js`, add a case that drives the install path with a forced
 failure (e.g. an unresolvable registry or injected error) and asserts the
 initializer reports `runtime-not-ready` and a non-zero exit intent — NOT a
 success banner.
 
-- [ ] **Step 2: Run and confirm current fail-open behavior**
+- [x] **Step 2: Run and confirm current fail-open behavior**
 
 ```bash
 node ./.evo-lite/cli/test.js governance
@@ -143,14 +143,14 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: today the initializer swallows the error and still "succeeds" — test fails.
 
-- [ ] **Step 3: Implement fail-closed readiness**
+- [x] **Step 3: Implement fail-closed readiness**
 
 In `index.js`, make the install `catch` (around `index.js:417`) set an explicit
 readiness state and exit non-zero. Gate the "🎉 deployment complete" banner on
 readiness. Add `--skip-install` / `--offline` that report
 `scaffold-created / runtime-not-ready` (never success).
 
-- [ ] **Step 4: Sync runtime and rerun**
+- [x] **Step 4: Sync runtime and rerun**
 
 ```bash
 node ./.evo-lite/cli/memory.js sync-runtime
@@ -159,7 +159,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: forced install failure ⇒ non-zero exit + `runtime-not-ready`, no success banner.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add index.js templates/cli/test.js .evo-lite/cli/test.js
