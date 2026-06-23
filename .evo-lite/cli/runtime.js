@@ -16,6 +16,18 @@ function getCliDir() {
     return path.join(getRuntimeRoot(), 'cli');
 }
 
+function getRuntimeVersion() {
+    // Version lives in the runtime's own manifest (.evo-lite/package.json), written
+    // by the initializer. Never read the host project's root package.json — that
+    // crashes non-Node hosts and misreports the host app version as Evo-Lite's.
+    try {
+        const pkgPath = path.join(getRuntimeRoot(), 'package.json');
+        return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || 'unknown';
+    } catch (_) {
+        return 'unknown';
+    }
+}
+
 function getDbPath() {
     if (process.env.EVO_LITE_DB_PATH) {
         return path.resolve(process.env.EVO_LITE_DB_PATH);
@@ -163,6 +175,7 @@ module.exports = {
     getRerankerStatePath,
     getRawMemoryDir,
     getRuntimeRoot,
+    getRuntimeVersion,
     getTemplateCliDir,
     getTemplateRootDir,
     migrateLegacyIndexMemoryDir,

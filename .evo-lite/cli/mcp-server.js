@@ -171,7 +171,7 @@ async function runMcpServer() {
     try { require('./db').getDb(); } catch (_) {}
 
     const server = new Server(
-        { name: 'evo-lite', version: require('../../package.json').version },
+        { name: 'evo-lite', version: require('./runtime').getRuntimeVersion() },
         { capabilities: { tools: {} } },
     );
 

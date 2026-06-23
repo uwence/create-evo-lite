@@ -687,6 +687,27 @@ async function runGovernanceTests() {
             console.log('✅ T18 mcp-server freshRequire passed');
         }
 
+        console.log('T18a. Testing runtime.getRuntimeVersion reads runtime root, not host project ...');
+        {
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-ver-'));
+            const prev = process.env.EVO_LITE_ROOT;
+            try {
+                const runtime = require(path.join(TEMPLATE_CLI_DIR, 'runtime'));
+                assert.ok(typeof runtime.getRuntimeVersion === 'function', 'runtime must export getRuntimeVersion()');
+                // Runtime root carries its own package.json (.evo-lite/package.json) — the version must come from there.
+                fs.writeFileSync(path.join(tmpRoot, 'package.json'), JSON.stringify({ name: 'evo-lite-workspace', version: '9.9.9-test' }));
+                process.env.EVO_LITE_ROOT = tmpRoot;
+                assert.strictEqual(runtime.getRuntimeVersion(), '9.9.9-test', 'version must be read from the runtime root package.json');
+                // Non-Node host: no package.json at runtime root → safe fallback, never throw.
+                fs.rmSync(path.join(tmpRoot, 'package.json'));
+                assert.strictEqual(runtime.getRuntimeVersion(), 'unknown', 'missing runtime package.json must fall back to "unknown", not throw');
+            } finally {
+                if (prev === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prev;
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T18a runtime version resolution passed');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
