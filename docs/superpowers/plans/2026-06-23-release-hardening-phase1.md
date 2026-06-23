@@ -173,7 +173,7 @@ git commit -m "fix(release): fail-closed dependency install with explicit runtim
 **Files:**
 - Add: `.github/workflows/release-gate.yml`
 
-- [ ] **Step 1: Author the matrix workflow**
+- [x] **Step 1: Author the matrix workflow**
 
 Create `.github/workflows/release-gate.yml` running on push/PR to `main` across
 `ubuntu-latest` and `windows-latest` × Node `20` and `22`. Each job runs:
@@ -184,7 +184,7 @@ npm test
 npm pack
 ```
 
-- [ ] **Step 2: Consume the tarball on a non-Node host**
+- [x] **Step 2: Consume the tarball on a non-Node host**
 
 In the same job, scaffold an empty project that has NO root `package.json`,
 install the packed tarball into it, and prove readiness:
