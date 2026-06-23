@@ -25,7 +25,7 @@ artifacts, existing CLI integration test harness, existing `templates/cli → .e
 
 | File | Change |
 |------|--------|
-| `templates/cli/planning/gaps.js` | generalize `isGovernanceRuntimeFile()` exemption; add focus-health rule (R011) |
+| `templates/cli/planning/gaps.js` | generalize `isGovernanceRuntimeFile()` exemption; add focus-health rule (R012) |
 | `templates/cli/sync-runtime.js` | make `verifyRuntimeLock()` content-aware (mirror vs live templates) |
 | `templates/cli/memory.service.js` | content-aware lock verdict in `verify()`; surface focus-health + focus-staleness advice |
 | `templates/cli/hooks.js` | conservative commit-evidence focus auto-advance; post-merge self-heal |
@@ -41,7 +41,7 @@ artifacts, existing CLI integration test harness, existing `templates/cli → .e
 - Sync: `.evo-lite/cli/planning/gaps.js`
 - Test: `templates/cli/test.js`
 
-- [ ] **Step 1: Add a failing exemption test**
+- [x] **Step 1: Add a failing exemption test**
 
 In `templates/cli/test.js`, extend the governance slice with a case asserting
 that a changed host-adapter / meta file produces no `R006`:
@@ -56,7 +56,7 @@ console.log('T16. Testing R006 exempts host-adapter and meta files ...');
 }
 ```
 
-- [ ] **Step 2: Run the focused slice and confirm the gap**
+- [x] **Step 2: Run the focused slice and confirm the gap**
 
 ```bash
 node ./.evo-lite/cli/test.js governance
@@ -64,7 +64,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: `.claude/settings.local.json` and `CLAUDE.md` still flag `R006` before the fix.
 
-- [ ] **Step 3: Generalize the predicate**
+- [x] **Step 3: Generalize the predicate**
 
 In `templates/cli/planning/gaps.js`, widen `isGovernanceRuntimeFile()` from the
 current `.evo-lite/**`-only check to a single named predicate covering:
@@ -77,7 +77,7 @@ current `.evo-lite/**`-only check to a single named predicate covering:
 Keep it one predicate (rename to `isGovernanceInfraFile()` if clearer) so future
 additions are one-line edits, not new filter rules.
 
-- [ ] **Step 4: Sync runtime and rerun**
+- [x] **Step 4: Sync runtime and rerun**
 
 ```bash
 Copy-Item "templates/cli/planning/gaps.js" ".evo-lite/cli/planning/gaps.js" -Force
@@ -86,7 +86,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: the exemption test passes; no `R006` for host-adapter/meta files.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/planning/gaps.js .evo-lite/cli/planning/gaps.js templates/cli/test.js
@@ -103,7 +103,7 @@ git commit -m "fix(governance): exempt host-adapter and meta files from R006 tra
 - Sync: `.evo-lite/cli/sync-runtime.js`, `.evo-lite/cli/memory.service.js`
 - Test: `templates/cli/test.js`
 
-- [ ] **Step 1: Add a failing stale-lock test**
+- [x] **Step 1: Add a failing stale-lock test**
 
 In `templates/cli/test.js`, add a case that sets up a mirror byte-identical to
 `templates/cli/**` but with a stale/mismatched lock, then asserts the verdict is
@@ -121,7 +121,7 @@ console.log('T17. Testing stale lock with matching content is not a hard error .
 
 Add a second case asserting a mirror that differs from templates DOES still drift.
 
-- [ ] **Step 2: Run the slice and confirm the false ERROR**
+- [x] **Step 2: Run the slice and confirm the false ERROR**
 
 ```bash
 node ./.evo-lite/cli/test.js governance
@@ -129,7 +129,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: the stale-lock case fails (current code reports `drifted` purely from lock-hash mismatch).
 
-- [ ] **Step 3: Compare mirror against live templates, not just the lock**
+- [x] **Step 3: Compare mirror against live templates, not just the lock**
 
 In `templates/cli/sync-runtime.js`, change `verifyRuntimeLock()` so its verdict
 is driven by mirror-vs-live-`templates/cli/**` content:
@@ -139,7 +139,7 @@ is driven by mirror-vs-live-`templates/cli/**` content:
 - if any mirror file differs from its template → `status: 'drifted'`
 - preserve `no-lock` and `no-templates` outcomes
 
-- [ ] **Step 4: Downgrade the verify verdict and self-heal the lock**
+- [x] **Step 4: Downgrade the verify verdict and self-heal the lock**
 
 In `templates/cli/memory.service.js` (the lock block around the
 `'❌ ERROR: runtime mirror …'` warning), only emit the hard `ERROR` when mirror
@@ -147,7 +147,7 @@ content actually differs from templates. When content matches but the lock is
 stale, refresh the lock silently (or log an `info` naming `mem sync-runtime`) and
 do NOT set `report.hasAlerts`.
 
-- [ ] **Step 5: Sync runtime and rerun**
+- [x] **Step 5: Sync runtime and rerun**
 
 ```bash
 Copy-Item "templates/cli/sync-runtime.js" ".evo-lite/cli/sync-runtime.js" -Force
@@ -157,7 +157,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: stale-lock-with-matching-content passes as healthy; real mirror edits still error.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/sync-runtime.js .evo-lite/cli/sync-runtime.js templates/cli/memory.service.js .evo-lite/cli/memory.service.js templates/cli/test.js
@@ -166,7 +166,7 @@ git commit -m "fix(governance): make runtime-mirror lock content-aware, no false
 
 ---
 
-### Task 3: Add a focus-health planning drift rule (R011)
+### Task 3: Add a focus-health planning drift rule (R012)
 
 **Files:**
 - Modify: `templates/cli/planning/gaps.js`
@@ -174,31 +174,31 @@ git commit -m "fix(governance): make runtime-mirror lock content-aware, no false
 - Sync: `.evo-lite/cli/planning/gaps.js`, `.evo-lite/cli/memory.service.js`
 - Test: `templates/cli/test.js`
 
-- [ ] **Step 1: Add a failing focus-health test**
+- [x] **Step 1: Add a failing focus-health test**
 
 In `templates/cli/test.js`, add a case where `BEGIN_FOCUS` references a plan whose
-IR status is `draft` / `0-done`, and assert an R011 warning is produced:
+IR status is `draft` / `0-done`, and assert an R012 warning is produced:
 
 ```js
 console.log('T18. Testing focus pointing at a draft/0-done plan is flagged ...');
 {
-    const findings = checkR011(projectRoot, planIR, { focusText: 'plan:dogfood-operator-experience-phase1' });
-    assert.ok(findings.some(f => f.rule === 'R011' && f.level === 'warning'),
-        'focus on a draft/0-done plan must raise R011');
+    const findings = checkR012(projectRoot, planIR, { focusText: 'plan:dogfood-operator-experience-phase1' });
+    assert.ok(findings.some(f => f.rule === 'R012' && f.level === 'warning'),
+        'focus on a draft/0-done plan must raise R012');
 }
 ```
 
-- [ ] **Step 2: Run the slice and confirm the gap**
+- [x] **Step 2: Run the slice and confirm the gap**
 
 ```bash
 node ./.evo-lite/cli/test.js governance
 ```
 
-Expected: no R011 exists yet, test fails.
+Expected: no R012 exists yet, test fails.
 
-- [ ] **Step 3: Implement R011**
+- [x] **Step 3: Implement R012**
 
-In `templates/cli/planning/gaps.js`, add `checkR011(projectRoot, planIR, options)`
+In `templates/cli/planning/gaps.js`, add `checkR012(projectRoot, planIR, options)`
 following the existing R-rule shape (id/rule/scope/level/type/message/evidence/
 suggestedAction). It MUST:
 
@@ -209,13 +209,13 @@ suggestedAction). It MUST:
 
 Wire it into the aggregate finding list next to R009.
 
-- [ ] **Step 4: Surface it in verify**
+- [x] **Step 4: Surface it in verify**
 
-In `templates/cli/memory.service.js`, ensure `verify()` reports the R011 finding
+In `templates/cli/memory.service.js`, ensure `verify()` reports the R012 finding
 in its governance-health summary (alongside the existing freshness/staleness
 output), with an actionable hint (advance focus or start the plan).
 
-- [ ] **Step 5: Sync runtime and rerun**
+- [x] **Step 5: Sync runtime and rerun**
 
 ```bash
 Copy-Item "templates/cli/planning/gaps.js" ".evo-lite/cli/planning/gaps.js" -Force
@@ -223,13 +223,13 @@ Copy-Item "templates/cli/memory.service.js" ".evo-lite/cli/memory.service.js" -F
 node ./.evo-lite/cli/test.js governance
 ```
 
-Expected: R011 fires for a draft/0-done focus and is visible in verify output.
+Expected: R012 fires for a draft/0-done focus and is visible in verify output.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/planning/gaps.js .evo-lite/cli/planning/gaps.js templates/cli/memory.service.js .evo-lite/cli/memory.service.js templates/cli/test.js
-git commit -m "feat(governance): add R011 focus-health rule for draft/0-done focus"
+git commit -m "feat(governance): add R012 focus-health rule for draft/0-done focus"
 ```
 
 ---
@@ -242,7 +242,7 @@ git commit -m "feat(governance): add R011 focus-health rule for draft/0-done foc
 - Sync: `.evo-lite/cli/hooks.js`, `.evo-lite/cli/memory.service.js`
 - Test: `templates/cli/test.js`
 
-- [ ] **Step 1: Add a failing auto-advance test**
+- [x] **Step 1: Add a failing auto-advance test**
 
 In `templates/cli/test.js`, add two hook cases:
 
@@ -262,7 +262,7 @@ console.log('T20. Testing a bare snapshot/meta commit does NOT move focus ...');
 }
 ```
 
-- [ ] **Step 2: Run the slice and confirm the gap**
+- [x] **Step 2: Run the slice and confirm the gap**
 
 ```bash
 node ./.evo-lite/cli/test.js governance
@@ -270,7 +270,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: focus does not move yet; the advance test fails, the no-move test passes.
 
-- [ ] **Step 3: Implement a conservative detector + advance**
+- [x] **Step 3: Implement a conservative detector + advance**
 
 Add a helper (in `templates/cli/memory.service.js`, callable from `hooks.js`) that:
 
@@ -284,13 +284,13 @@ Add a helper (in `templates/cli/memory.service.js`, callable from `hooks.js`) th
 
 Wire the call into the post-commit path in `templates/cli/hooks.js`.
 
-- [ ] **Step 4: Make verify advise on staleness**
+- [x] **Step 4: Make verify advise on staleness**
 
 In `templates/cli/memory.service.js`, when focus is stale, have `verify()` state
 either the exact advance command or that auto-advance is enabled and will run on
 the next plan-referencing commit (instead of only ">24h stale").
 
-- [ ] **Step 5: Sync runtime and rerun**
+- [x] **Step 5: Sync runtime and rerun**
 
 ```bash
 Copy-Item "templates/cli/hooks.js" ".evo-lite/cli/hooks.js" -Force
@@ -300,7 +300,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: plan-referencing commit advances focus; bare commit leaves it; opt-out env disables it.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/hooks.js .evo-lite/cli/hooks.js templates/cli/memory.service.js .evo-lite/cli/memory.service.js templates/cli/test.js
@@ -320,6 +320,6 @@ git commit -m "feat(governance): conservative commit-evidence focus auto-advance
 **Placeholder scan:** No `TODO`, `TBD`, or "implement later" placeholders remain
 in the task steps.
 
-**Type consistency:** The plan consistently uses `R006`, `R011`,
+**Type consistency:** The plan consistently uses `R006`, `R012`,
 `isGovernanceInfraFile`, `verifyRuntimeLock`, `EVO_LITE_NO_FOCUS_AUTOADVANCE`,
 and `node ./.evo-lite/cli/test.js governance`.
