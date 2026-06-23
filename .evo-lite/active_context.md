@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Dogfood Operator Experience Phase 1 Implementation Plan: Make /evo and verify operator-forward
+RC closure complete; idle pending next initiative
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
