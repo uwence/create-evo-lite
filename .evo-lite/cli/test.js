@@ -719,6 +719,31 @@ async function runGovernanceTests() {
             console.log('✅ T18b node engine floor passed');
         }
 
+        console.log('T18c. Testing fail-closed runtime dependency install ...');
+        {
+            const initializer = require(path.join(WORKSPACE_ROOT, 'index.js'));
+            assert.ok(typeof initializer.installRuntimeDependencies === 'function', 'index must export installRuntimeDependencies()');
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-install-'));
+            try {
+                // Install failure must be fail-closed: not ready, no throw.
+                const failed = initializer.installRuntimeDependencies(tmp, { exec: () => { throw new Error('boom'); } });
+                assert.strictEqual(failed.ok, false, 'install failure must yield ok:false');
+                assert.strictEqual(failed.state, 'runtime-not-ready', 'failure state must be runtime-not-ready');
+                // --skip-install/--offline: not ready, marked skipped, npm never invoked.
+                let called = false;
+                const skipped = initializer.installRuntimeDependencies(tmp, { skipInstall: true, exec: () => { called = true; } });
+                assert.strictEqual(skipped.ok, false, 'skip-install must not report ready');
+                assert.strictEqual(skipped.skipped, true, 'skip-install must mark skipped');
+                assert.strictEqual(called, false, 'skip-install must not run npm');
+                // Success path reports ready.
+                const ok = initializer.installRuntimeDependencies(tmp, { exec: () => {} });
+                assert.strictEqual(ok.ok, true, 'successful install must report ready');
+            } finally {
+                fs.rmSync(tmp, { recursive: true, force: true });
+            }
+            console.log('✅ T18c fail-closed install passed');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));

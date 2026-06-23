@@ -25,6 +25,49 @@ function assertNodeVersion(versionString = process.versions.node) {
     return { ok: true, message: '' };
 }
 
+const RUNTIME_DEPENDENCIES = ['better-sqlite3', 'tar', 'commander', '@modelcontextprotocol/sdk'];
+
+function writeRuntimeManifest(evoLiteDir) {
+    fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
+        "name": "evo-lite-workspace",
+        "version": SELF_VERSION,
+        "private": true,
+        "dependencies": {
+            "commander": "^14.0.2"
+        }
+    }, null, 2));
+}
+
+// Fail-closed runtime dependency install. Returns an explicit readiness verdict
+// instead of swallowing failures: a missing toolchain, offline registry, or
+// --skip-install leaves state 'runtime-not-ready' so the caller can refuse to
+// declare success and exit non-zero. `exec` is injectable for testing.
+function installRuntimeDependencies(evoLiteDir, options = {}) {
+    const exec = options.exec || ((cmd, opts) => execSync(cmd, opts));
+    if (options.skipInstall) {
+        return {
+            ok: false,
+            state: 'runtime-not-ready',
+            skipped: true,
+            message: '依赖安装已按 --skip-install/--offline 跳过。',
+        };
+    }
+    try {
+        if (options.writeManifest !== false) {
+            writeRuntimeManifest(evoLiteDir);
+        }
+        exec(`npm install ${RUNTIME_DEPENDENCIES.join(' ')}`, { cwd: evoLiteDir, stdio: 'inherit' });
+        return { ok: true, state: 'runtime-ready', message: '依赖在线安装成功！' };
+    } catch (e) {
+        return {
+            ok: false,
+            state: 'runtime-not-ready',
+            error: getExecErrorText(e),
+            message: 'npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)',
+        };
+    }
+}
+
 function buildProgram() {
     return new Command()
         .name('create-evo-lite')
@@ -34,6 +77,8 @@ function buildProgram() {
         .option('-y, --yes', 'Use default initialization configuration')
         .option('--no-git', 'Skip git repository initialization')
         .option('--no-initial-commit', 'Skip automatic baseline scaffold commit')
+        .option('--skip-install', 'Scaffold only; skip runtime dependency install (reports runtime-not-ready)')
+        .option('--offline', 'Alias for --skip-install: no network install, reports runtime-not-ready')
         .showHelpAfterError();
 }
 
@@ -420,20 +465,14 @@ async function runInit(targetDirArg, options = {}) {
 
     // 5. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
     console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander, @modelcontextprotocol/sdk)...');
-    try {
-        fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
-            "name": "evo-lite-workspace",
-            "version": SELF_VERSION,
-            "private": true,
-            "dependencies": {
-                "commander": "^14.0.2"
-            }
-        }, null, 2));
-        execSync('npm install better-sqlite3 tar commander @modelcontextprotocol/sdk', { cwd: evoLiteDir, stdio: 'inherit' });
-        console.log('✅ 依赖在线安装成功！');
-    } catch (e) {
-        console.warn('\n⚠️ 警告: npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)');
-        console.warn('👉 请稍后手动在 .evo-lite 目录运行:\nnpm install better-sqlite3 tar commander @modelcontextprotocol/sdk');
+    const installResult = installRuntimeDependencies(evoLiteDir, {
+        skipInstall: !!(options.skipInstall || options.offline),
+    });
+    if (installResult.ok) {
+        console.log(`✅ ${installResult.message}`);
+    } else {
+        console.warn(`\n⚠️ 警告: ${installResult.message}`);
+        console.warn(`👉 请稍后手动在 .evo-lite 目录运行:\nnpm install ${RUNTIME_DEPENDENCIES.join(' ')}`);
     }
     console.log('📡 运行时引擎已锁定为: sqlite-fts5-trigram');
 
@@ -483,6 +522,15 @@ async function runInit(targetDirArg, options = {}) {
         isFreshTarget,
     });
 
+    if (!installResult.ok) {
+        console.error('\n⚠️ Evo-Lite 脚手架已创建，但运行时依赖未就绪 (scaffold-created / runtime-not-ready)。');
+        console.error('   在 .evo-lite 目录完成依赖安装前，bootstrap / 数据库 / archive / MCP 将不可用。');
+        console.error(`   修复: cd .evo-lite && npm install ${RUNTIME_DEPENDENCIES.join(' ')}`);
+        console.error('----------------------------------------------------');
+        process.exitCode = 1;
+        return;
+    }
+
     console.log('\n🎉 Evo-Lite 架构已全盘部署完成！');
     console.log('----------------------------------------------------');
     console.log(`👉 下一步:`);
@@ -520,6 +568,7 @@ function handleCliError(error) {
 
 module.exports = {
     assertNodeVersion,
+    installRuntimeDependencies,
     buildProgram,
     handleCliError,
     installPostCommitHook,
