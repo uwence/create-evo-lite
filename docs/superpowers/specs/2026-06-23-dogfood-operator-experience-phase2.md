@@ -1,6 +1,6 @@
 ---
 id: spec:dogfood-operator-experience-phase2
-status: draft
+status: done
 created: 2026-06-23
 linkedPlan: plan:dogfood-operator-experience-phase2
 ---
