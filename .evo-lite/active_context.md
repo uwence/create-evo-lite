@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Dogfood Operator Experience Phase 1 Implementation Plan: all tasks implemented
+Release Hardening Phase 1 Implementation Plan: Declare and enforce the Node-engine contract
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
