@@ -984,6 +984,51 @@ async function runGovernanceTests() {
             console.log('✅ T26 R012 focus-health passed');
         }
 
+        console.log('T27. Testing commit-evidence focus auto-advance is conservative ...');
+        {
+            const runtime = createTempRuntimeRoot('focus-advance');
+            const planningDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(planningDir, { recursive: true });
+            writeText(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], warnings: [],
+                plans: [{ id: 'plan:demo', title: 'Demo Plan', status: 'draft', taskIds: ['task:demo-1'] }],
+                tasks: [{ id: 'task:demo-1', title: 'First task', status: 'todo', linkedPlan: 'plan:demo' }],
+            }, null, 2));
+            writeText(
+                path.join(runtime.runtimeRoot, 'active_context.md'),
+                '# Active Context\n<!-- BEGIN_META -->\n<!-- END_META -->\n## Focus\n<!-- BEGIN_FOCUS -->\nold focus\n<!-- END_FOCUS -->\n## Backlog\n<!-- BEGIN_BACKLOG -->\n<!-- END_BACKLOG -->\n## Trajectory\n<!-- BEGIN_TRAJECTORY -->\n<!-- END_TRAJECTORY -->\n'
+            );
+
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+
+            // 1) commit referencing a known plan advances focus
+            const advanced = loaded.service.advanceFocusFromCommit({ commitMessage: 'feat(plan:demo): land first task' });
+            assert.strictEqual(advanced.status, 'ok', 'plan-referencing commit should advance focus');
+            assert.strictEqual(advanced.focusChanged, true, 'focus should change');
+            assert.ok(advanced.focusAfter.startsWith('Demo Plan:'), 'focus should derive from the referenced plan title (saw: ' + advanced.focusAfter + ')');
+
+            // 2) bare snapshot/meta commit leaves focus untouched
+            const bare = loaded.service.advanceFocusFromCommit({ commitMessage: 'chore(meta): snapshot runtime state' });
+            assert.strictEqual(bare.status, 'no-reference', 'a commit with no plan/spec reference must not move focus');
+            assert.strictEqual(bare.focusChanged, false, 'bare commit must not change focus');
+
+            // 3) opt-out env disables it entirely
+            process.env.EVO_LITE_NO_FOCUS_AUTOADVANCE = '1';
+            try {
+                const off = loaded.service.advanceFocusFromCommit({ commitMessage: 'feat(plan:demo): land first task' });
+                assert.strictEqual(off.status, 'disabled', 'opt-out env must disable auto-advance');
+                assert.strictEqual(off.focusChanged, false, 'disabled auto-advance must not change focus');
+            } finally {
+                delete process.env.EVO_LITE_NO_FOCUS_AUTOADVANCE;
+            }
+
+            // 4) the post-commit hook body wires the conservative advance in
+            const { buildHookBody } = require(path.join(TEMPLATE_CLI_DIR, 'hooks'));
+            assert.ok(buildHookBody().includes('context advance-focus'), 'post-commit hook must invoke context advance-focus');
+
+            console.log('✅ T27 commit-evidence focus auto-advance passed');
+        }
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);

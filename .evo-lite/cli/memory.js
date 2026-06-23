@@ -428,7 +428,28 @@ async function runContextCommand(op, text, options = {}) {
         return;
     }
 
+    if (op === 'advance-focus') {
+        const result = memoryService.advanceFocusFromCommit({
+            commitMessage: typeof options.message === 'string' ? options.message : undefined,
+        });
+        printPayload(result, formatAdvanceFocusResult, options);
+        return;
+    }
+
     throw new Error(`Unknown context operation: '${op}'.`);
+}
+
+function formatAdvanceFocusResult(result) {
+    if (!result) return 'no-op';
+    switch (result.status) {
+        case 'disabled': return 'focus auto-advance disabled (EVO_LITE_NO_FOCUS_AUTOADVANCE=1)';
+        case 'no-plan-ir': return 'no plan-ir.json; run `mem plan scan` first';
+        case 'no-reference': return 'commit references no plan/spec; focus unchanged';
+        case 'no-match': return `commit references ${result.ref} but no matching plan in IR; focus unchanged`;
+        case 'unchanged': return `focus already current for ${result.plan} ("${result.focusAfter}")`;
+        case 'ok': return `focus advanced from "${result.focusBefore || '<empty>'}" → "${result.focusAfter}" (${result.plan})`;
+        default: return `focus auto-advance: ${result.status}`;
+    }
 }
 
 function formatAutoRefreshResult(result) {
@@ -629,6 +650,13 @@ function buildProgram() {
         .option('--json', 'Print JSON output')
         .action(async options => {
             await runContextCommand('auto-refresh', '', options);
+        });
+    contextCommand.command('advance-focus')
+        .description('Conservatively advance focus to a plan referenced in the latest commit message. No-op unless the commit explicitly names a known plan/spec. Opt out with EVO_LITE_NO_FOCUS_AUTOADVANCE=1.')
+        .option('--message <text>', 'Override the commit message to inspect (defaults to HEAD).')
+        .option('--json', 'Print JSON output')
+        .action(async options => {
+            await runContextCommand('advance-focus', '', options);
         });
     withTextSourceOptions(
         contextCommand.command('inject [text]').description('Internal/experimental context inject command.')

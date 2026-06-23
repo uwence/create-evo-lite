@@ -1496,6 +1496,73 @@ function autoRefreshContext() {
     };
 }
 
+// Extract an explicit plan:<slug> / spec:<slug> reference from a commit message.
+// Matches Conventional-Commit scopes (feat(plan:slug): …), bare tokens, and
+// trailers. Conservative: a message with no such token returns null so a bare
+// snapshot or meta commit never moves focus.
+function extractPlanRefFromMessage(message) {
+    if (!message) return null;
+    const m = String(message).match(/\b(plan|spec):([a-z0-9][a-z0-9-]*)/i);
+    if (!m) return null;
+    return { kind: m[1].toLowerCase(), slug: m[2].toLowerCase(), token: `${m[1].toLowerCase()}:${m[2].toLowerCase()}` };
+}
+
+function readLatestCommitMessage() {
+    try {
+        return execFileSync('git', ['log', '-1', '--format=%B'], {
+            cwd: getWorkspaceRoot(), encoding: 'utf8', timeout: 5000,
+        }).trim();
+    } catch {
+        return '';
+    }
+}
+
+// Conservative, commit-evidence-driven focus advance. Only moves BEGIN_FOCUS
+// when the latest commit message explicitly references a known plan/spec, so
+// snapshots and meta commits never disturb focus. Opt out with
+// EVO_LITE_NO_FOCUS_AUTOADVANCE=1.
+function advanceFocusFromCommit(options = {}) {
+    if (process.env.EVO_LITE_NO_FOCUS_AUTOADVANCE === '1') {
+        return { status: 'disabled', focusChanged: false };
+    }
+    ensureContextFile();
+    const planIRPath = path.join(getWorkspaceRoot(), '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    if (!fs.existsSync(planIRPath)) {
+        return { status: 'no-plan-ir', focusChanged: false };
+    }
+
+    const message = options.commitMessage != null ? options.commitMessage : readLatestCommitMessage();
+    const ref = extractPlanRefFromMessage(message);
+    if (!ref) return { status: 'no-reference', focusChanged: false };
+
+    const planIR = JSON.parse(fs.readFileSync(planIRPath, 'utf8'));
+    let plan = null;
+    if (ref.kind === 'plan') {
+        plan = (planIR.plans || []).find(p => p.id === `plan:${ref.slug}`);
+    } else {
+        const spec = (planIR.specs || []).find(s => s.id === `spec:${ref.slug}`);
+        if (spec) {
+            plan = (planIR.plans || []).find(p => p.linkedSpec === spec.id || p.id === (spec.linkedPlan || ''));
+        }
+    }
+    if (!plan) return { status: 'no-match', focusChanged: false, ref: ref.token };
+
+    const todoTask = (planIR.tasks || [])
+        .filter(t => t.linkedPlan === plan.id && t.status === 'todo')[0];
+    const fragment = todoTask ? todoTask.title : 'all tasks implemented';
+    const focusAfter = `${plan.title}: ${fragment}`;
+
+    const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
+    const focusBefore = (readSection(markdown, 'FOCUS') || '').trim();
+    if (focusAfter.trim() === focusBefore) {
+        return { status: 'unchanged', focusChanged: false, focusBefore, focusAfter, plan: plan.id };
+    }
+
+    setFocus(focusAfter);
+    appendLog('CONTEXT_FOCUS_AUTOADVANCE', JSON.stringify({ plan: plan.id, from: focusBefore, to: focusAfter }));
+    return { status: 'ok', focusChanged: true, focusBefore, focusAfter, plan: plan.id };
+}
+
 function pickActivePlan(planIR) {
     const plans = planIR.plans || [];
     const inProgress = plans.find(p => p.status === 'in_progress');
@@ -2472,6 +2539,7 @@ module.exports = {
     summarizeArchiveHealth,
     setFocus,
     autoRefreshContext,
+    advanceFocusFromCommit,
     syncIndexMemory,
     stats,
     track,

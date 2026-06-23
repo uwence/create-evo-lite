@@ -48,6 +48,7 @@ function buildHookBody() {
         '[ -n "${PLAN_CHANGED}${EVIDENCE_CHANGED}" ] && run_and_record "plan scan" plan scan',
         '[ -n "$ARCH_CHANGED" ] && run_and_record "architecture scan" architecture scan',
         'run_and_record "plan progress" plan progress',
+        'run_and_record "focus auto-advance" context advance-focus',
         '[ -n "$ARCH_CHANGED" ] && run_and_record "architecture diff" architecture diff',
         'EVO_LITE_CHANGED_FILES="$CHANGED" run_and_record "plan gaps" plan gaps --last-commit --changed-files-from-env',
         'HOOK_CHANGED="$CHANGED" HOOK_PLAN_CHANGED="$PLAN_CHANGED" HOOK_ARCH_CHANGED="$ARCH_CHANGED" HOOK_CODE_CHANGED="$CODE_CHANGED" HOOK_EVIDENCE_CHANGED="$EVIDENCE_CHANGED" HOOK_COMMANDS="$COMMAND_RESULTS" HOOK_REPORT_PATH="$REPORT_PATH" "$NODE_BIN" -e "const fs=require(\'fs\'); const path=require(\'path\'); const execFileSync=require(\'child_process\').execFileSync; const changed=(process.env.HOOK_CHANGED||\'\').split(/\\s+/).filter(Boolean); const categories=[]; if(process.env.HOOK_PLAN_CHANGED) categories.push(\'plan\'); if(process.env.HOOK_ARCH_CHANGED) categories.push(\'architecture\'); if(process.env.HOOK_CODE_CHANGED) categories.push(\'code\'); if(process.env.HOOK_EVIDENCE_CHANGED) categories.push(\'evidence\'); const commands=(process.env.HOOK_COMMANDS||\'\').split(/\\n/).filter(Boolean).map(line=>{ const parts=line.split(/\\t/); return { name: parts[0], ok: parts[1]===\'true\' }; }); let commit=\'unknown\'; try { commit=execFileSync(\'git\', [\'rev-parse\', \'--short\', \'HEAD\'], { encoding: \'utf8\' }).trim() || \'unknown\'; } catch (_) {} const payload={ event:\'post-commit\', commit, changedFiles:changed, categories, commands, ok:commands.every(item=>item.ok), note:\'dashboard build runs after this report so the current dashboard reflects this report\' }; fs.mkdirSync(path.dirname(process.env.HOOK_REPORT_PATH), { recursive:true }); fs.writeFileSync(process.env.HOOK_REPORT_PATH, JSON.stringify(payload, null, 2), \'utf8\');"',
@@ -272,4 +273,4 @@ function diffInstalledHook(projectRoot) {
     return { status: 'drifted', text: text.join('\n') };
 }
 
-module.exports = { installPostCommitHook, registerHookCommands, diffInstalledHook };
+module.exports = { installPostCommitHook, registerHookCommands, diffInstalledHook, buildHookBody };
