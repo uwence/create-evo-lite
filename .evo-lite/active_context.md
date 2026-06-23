@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Release Hardening Phase 1 Implementation Plan: Declare and enforce the Node-engine contract
+Release Hardening Phase 1 Implementation Plan: Ship a reproducible runtime manifest
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
