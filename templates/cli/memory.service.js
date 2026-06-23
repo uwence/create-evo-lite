@@ -1798,7 +1798,7 @@ async function verify(options = {}) {
         // the snapshot taken by the last `mem sync-runtime`. This is the forcing
         // function that makes templates/cli/ the canonical source.
         try {
-            const { verifyRuntimeLock } = require('./sync-runtime');
+            const { verifyRuntimeLock, syncRuntime } = require('./sync-runtime');
             const lockResult = verifyRuntimeLock(getWorkspaceRoot());
             if (lockResult.status === 'drifted') {
                 warn('❌ ERROR: runtime mirror (.evo-lite/cli/**) drifted from the locked templates/cli/ snapshot.');
@@ -1817,6 +1817,19 @@ async function verify(options = {}) {
                 pushNextStep('Run `node .evo-lite/cli/memory.js sync-runtime` to restore canonical templates/cli/ snapshot. Edits to .evo-lite/cli/ will be overwritten — edit templates/cli/ instead.');
             } else if (lockResult.status === 'no-lock') {
                 log('ℹ️ runtime-mirror lock not yet generated; run `mem sync-runtime` to create it.');
+            } else if (lockResult.status === 'ok' && lockResult.lockStale) {
+                // Mirror content already matches the canonical templates, but the
+                // lock snapshot is stale (e.g. a git pull/rebase updated both trees
+                // together without regenerating the lock). Self-heal silently: the
+                // mirror is correct, so refresh the lock instead of crying drift.
+                try {
+                    syncRuntime(getWorkspaceRoot());
+                    log('ℹ️ runtime-mirror lock was stale but mirror content matches templates; lock refreshed automatically.');
+                } catch (refreshErr) {
+                    if (process.env.EVO_LITE_DEBUG === '1') {
+                        warn(`runtime-mirror lock refresh failed: ${refreshErr.message}`);
+                    }
+                }
             }
         } catch (e) {
             if (process.env.EVO_LITE_DEBUG === '1') {

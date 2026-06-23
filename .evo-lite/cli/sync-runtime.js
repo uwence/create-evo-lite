@@ -113,9 +113,51 @@ function verifyRuntimeLock(projectRoot) {
         return { status: 'no-lock', mismatches: [], missing: [], lockPath: null };
     }
     const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    const relLockPath = path.relative(projectRoot, lockPath).replace(/\\/g, '/');
+
+    // Content-aware verdict (preferred): compare the mirror against the LIVE
+    // template, not just the recorded lock hash. A `git pull`/`rebase` that
+    // updates templates/cli/** AND the .evo-lite/cli/** mirror together but
+    // leaves the lock stale must NOT read as drift — the mirror content is
+    // still canonical. Only a mirror that diverges from its template is real
+    // drift (e.g. someone edited .evo-lite/cli/ directly). When the content
+    // matches but the recorded hash is stale, we surface `lockStale` so the
+    // caller can silently refresh the lock instead of erroring.
+    const entries = readEntries(projectRoot);
+    if (entries) {
+        const mismatches = [];
+        const missing = [];
+        let lockStale = false;
+        const lockEntries = lock.entries || {};
+        for (const entry of entries) {
+            if (!fs.existsSync(entry.templateFile)) continue; // no template to compare against
+            const relActive = path.relative(projectRoot, entry.activeFile).replace(/\\/g, '/');
+            const templateHash = sha256(fs.readFileSync(entry.templateFile));
+            if (!fs.existsSync(entry.activeFile)) {
+                missing.push(relActive);
+                continue;
+            }
+            const activeHash = sha256(fs.readFileSync(entry.activeFile));
+            if (activeHash !== templateHash) {
+                mismatches.push({ path: relActive, expected: templateHash, actual: activeHash });
+            } else if (lockEntries[relActive] !== templateHash) {
+                lockStale = true;
+            }
+        }
+        return {
+            status: mismatches.length === 0 && missing.length === 0 ? 'ok' : 'drifted',
+            mismatches,
+            missing,
+            lockStale,
+            lockPath: relLockPath,
+            generatedAt: lock.generatedAt || null,
+        };
+    }
+
+    // Fallback (no templates available, e.g. an installed runtime without the
+    // templates/ tree): lock-only comparison, original behavior.
     const mismatches = [];
     const missing = [];
-
     for (const [relPath, expectedHash] of Object.entries(lock.entries || {})) {
         const absPath = path.join(projectRoot, relPath);
         if (!fs.existsSync(absPath)) {
@@ -132,7 +174,8 @@ function verifyRuntimeLock(projectRoot) {
         status: mismatches.length === 0 && missing.length === 0 ? 'ok' : 'drifted',
         mismatches,
         missing,
-        lockPath: path.relative(projectRoot, lockPath).replace(/\\/g, '/'),
+        lockStale: false,
+        lockPath: relLockPath,
         generatedAt: lock.generatedAt || null,
     };
 }

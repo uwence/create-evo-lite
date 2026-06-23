@@ -913,6 +913,43 @@ async function runGovernanceTests() {
             console.log('✅ T24 R006 host-adapter/meta exemption passed');
         }
 
+        console.log('T25. Testing stale lock with matching mirror content is not drift ...');
+        {
+            const { syncRuntime, verifyRuntimeLock } = require(path.join(TEMPLATE_CLI_DIR, 'sync-runtime'));
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-stale-'));
+            try {
+                fs.mkdirSync(path.join(tmpRoot, 'templates', 'cli'), { recursive: true });
+                writeText(path.join(tmpRoot, 'templates', 'cli', 'memory.js'), '// canonical-v2\n');
+                process.env.EVO_LITE_TEMPLATE_CLI_DIR = path.join(tmpRoot, 'templates', 'cli');
+                process.env.EVO_LITE_TEMPLATE_ROOT_DIR = path.join(tmpRoot, 'templates');
+
+                syncRuntime(tmpRoot); // mirror == template, lock fresh
+
+                // Simulate a pull/rebase that updated BOTH template + mirror together
+                // but left the lock stale: rewrite lock entries with a bogus old hash.
+                const lockPath = path.join(tmpRoot, '.evo-lite', 'generated', 'runtime-mirror.lock.json');
+                const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+                for (const k of Object.keys(lock.entries)) lock.entries[k] = 'deadbeef-stale-hash';
+                writeText(lockPath, JSON.stringify(lock, null, 2) + '\n');
+
+                const verdict = verifyRuntimeLock(tmpRoot);
+                assert.notStrictEqual(verdict.status, 'drifted', 'stale lock with matching mirror/template content must not be drift');
+                assert.strictEqual(verdict.status, 'ok', 'content-identical mirror should verify ok despite stale lock');
+                assert.strictEqual(verdict.lockStale, true, 'verdict should flag the lock as stale so the caller can refresh it');
+
+                // Real drift (mirror diverges from template) must still be detected.
+                writeText(path.join(tmpRoot, '.evo-lite', 'cli', 'memory.js'), '// hand-edited\n');
+                const drift = verifyRuntimeLock(tmpRoot);
+                assert.strictEqual(drift.status, 'drifted', 'a mirror edited away from its template must still drift');
+                assert.ok(drift.mismatches.some(m => m.path.endsWith('memory.js')), 'drift report should name memory.js');
+            } finally {
+                delete process.env.EVO_LITE_TEMPLATE_CLI_DIR;
+                delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T25 stale-lock content-aware verdict passed');
+        }
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);
