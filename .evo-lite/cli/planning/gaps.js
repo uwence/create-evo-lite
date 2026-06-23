@@ -54,14 +54,31 @@ function getChangedFiles(projectRoot, options = {}) {
     }
 }
 
-function isGovernanceRuntimeFile(file) {
+// Root-level project-meta files that are not product code. Listed explicitly
+// so the exemption stays a single, testable predicate rather than ad-hoc filters.
+const ROOT_META_FILES = new Set([
+    'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'RTK.md',
+    '.gitignore', '.gitattributes', '.editorconfig',
+    'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock',
+]);
+
+function isGovernanceInfraFile(file) {
     const f = String(file || '').replace(/\\/g, '/').replace(/^\.\//, '');
     // R006 is a business-code traceability rule. Evo-Lite runtime state,
-    // generated reports, local DB sidecars, raw archives, wrappers, and mirrors
-    // are governance infrastructure. They are handled by specialized rules
-    // such as archive-evidence backfill, freshness checks, and runtime-lock
-    // verification, so they must not be reported as unlinked product files.
-    return f === '.evo-lite' || f.startsWith('.evo-lite/');
+    // host-adapter config, and project-meta files are governance / host
+    // infrastructure, not product code, so they must not be reported as
+    // unlinked product files. Runtime state is also covered by specialized
+    // rules (archive-evidence backfill, freshness, runtime-lock verification).
+    if (f === '.evo-lite' || f.startsWith('.evo-lite/')) return true; // runtime state + mirror
+    if (f === '.claude' || f.startsWith('.claude/')) return true;     // host adapter: commands, settings, skills
+    // Root-level meta only (no path separator → top of repo), so nested
+    // product files like docs/README.md or src/foo.lock stay traceable.
+    const base = f.includes('/') ? '' : f;
+    if (!base) return false;
+    if (ROOT_META_FILES.has(base)) return true;
+    if (/^README[^/]*\.md$/i.test(base)) return true;                 // README.md, README.zh-CN.md, …
+    if (/\.lock$/i.test(base)) return true;                           // *.lock lockfiles
+    return false;
 }
 
 function normalizeBacklogItem(line) {
@@ -142,7 +159,7 @@ function checkR005(planIR) {
 function checkR006(projectRoot, planIR, options = {}) {
     if (!planIR) return [];
     const changedFiles = getChangedFiles(projectRoot, options)
-        .filter(f => !isGovernanceRuntimeFile(f));
+        .filter(f => !isGovernanceInfraFile(f));
     if (changedFiles.length === 0) return [];
 
     const linkedFiles = new Set((planIR.tasks || []).flatMap(t => t.linkedFiles || []));
@@ -307,7 +324,7 @@ module.exports = {
     checkR009,
     getChangedFiles,
     hasArchiveEvidence,
-    isGovernanceRuntimeFile,
+    isGovernanceInfraFile,
     normalizeBacklogItem,
     isPlaceholderBacklogItem,
     PLAN_SOURCE_PATHS,

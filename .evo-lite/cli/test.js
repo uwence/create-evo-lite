@@ -885,6 +885,34 @@ async function runGovernanceTests() {
             console.log('✅ T23 plan new scaffold passed');
         }
 
+        console.log('T24. Testing R006 exempts host-adapter and meta infrastructure ...');
+        {
+            const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            delete require.cache[gapsPath];
+            const { checkR006 } = require(gapsPath);
+            const planIR = { tasks: [] };
+
+            const exempt = checkR006(WORKSPACE_ROOT, planIR, {
+                changedFiles: [
+                    '.claude/settings.local.json',
+                    '.claude/commands/evo.md',
+                    'CLAUDE.md',
+                    'AGENTS.md',
+                    'README.md',
+                    '.gitignore',
+                    '.gitattributes',
+                    '.evo-lite/active_context.md',
+                ],
+            });
+            assert.strictEqual(exempt.length, 0, 'R006 must exempt .claude/**, root meta, and .evo-lite/** files');
+
+            const product = checkR006(WORKSPACE_ROOT, planIR, {
+                changedFiles: ['src/feature.js'],
+            });
+            assert.ok(product.some(f => f.rule === 'R006'), 'R006 must still flag unlinked product code');
+            console.log('✅ T24 R006 host-adapter/meta exemption passed');
+        }
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);
