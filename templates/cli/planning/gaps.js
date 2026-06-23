@@ -1,6 +1,6 @@
 'use strict';
 
-// Drift engine — planning scope: R003-R006, R008-R010
+// Drift engine — planning scope: R003-R006, R008-R012
 
 const fs = require('fs');
 const path = require('path');
@@ -302,6 +302,63 @@ function checkR011(planIR) {
     return findings;
 }
 
+// --- R012 ---
+
+// Squash to alphanumerics so "Phase 1" (prose) matches "phase1" (slug) and
+// punctuation/spacing differences never break the focus → plan resolution.
+function squashForMatch(value) {
+    return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function readFocusText(projectRoot) {
+    const focusPath = path.join(projectRoot, '.evo-lite', 'active_context.md');
+    if (!fs.existsSync(focusPath)) return '';
+    const md = fs.readFileSync(focusPath, 'utf8');
+    const m = md.match(/<!--\s*BEGIN_FOCUS\s*-->([\s\S]*?)<!--\s*END_FOCUS\s*-->/);
+    return m ? m[1].trim() : '';
+}
+
+// R012 — phantom focus: the current focus points at a plan that has not really
+// started (status: draft, or 0 tasks done). The >24h staleness alert only
+// caught this indirectly; this names the plan and its task count directly.
+function checkR012(projectRoot, planIR, options = {}) {
+    if (!planIR) return [];
+    const focusText = options.focusText != null ? options.focusText : readFocusText(projectRoot);
+    if (!focusText) return [];
+    const squashedFocus = squashForMatch(focusText);
+    if (!squashedFocus) return [];
+
+    const findings = [];
+    for (const plan of (planIR.plans || [])) {
+        const slug = String(plan.id || '').replace(/^plan:/, '');
+        const squashedSlug = squashForMatch(slug);
+        const squashedTitle = squashForMatch(plan.title);
+        const referenced =
+            (plan.id && focusText.includes(plan.id)) ||                       // literal plan:<slug>
+            (squashedSlug && squashedFocus.includes(squashedSlug)) ||         // slug words in prose
+            (squashedTitle && squashedFocus.includes(squashedTitle));         // plan title in prose
+        if (!referenced) continue;
+
+        const planTasks = (planIR.tasks || []).filter(t => t.linkedPlan === plan.id);
+        const total = planTasks.length;
+        const done = planTasks.filter(t => t.status === 'implemented' || t.status === 'verified').length;
+        const unstarted = plan.status === 'draft' || done === 0;
+        if (!unstarted) continue; // focus points at a started/advanced plan — healthy
+
+        findings.push({
+            id: `R012:${plan.id}`,
+            rule: 'R012',
+            scope: 'planning',
+            level: 'warning',
+            type: 'phantom-focus',
+            message: `Focus points at plan ${plan.id} [${plan.status}] with ${done}/${total} tasks done — it is not a started, active plan`,
+            evidence: [plan.sourcePath].filter(Boolean),
+            suggestedAction: `Advance focus to a started plan (mem focus), or begin ${plan.id}`,
+        });
+    }
+    return findings;
+}
+
 // --- Public ---
 
 function runPlanningDrift(projectRoot, planIR, options = {}) {
@@ -314,6 +371,7 @@ function runPlanningDrift(projectRoot, planIR, options = {}) {
         ...checkR009(projectRoot),
         ...checkR010(projectRoot, planIR),
         ...checkR011(planIR),
+        ...checkR012(projectRoot, planIR, options),
     ];
 }
 
@@ -322,6 +380,7 @@ module.exports = {
     checkR006,
     checkR008,
     checkR009,
+    checkR012,
     getChangedFiles,
     hasArchiveEvidence,
     isGovernanceInfraFile,

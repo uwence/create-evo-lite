@@ -950,6 +950,40 @@ async function runGovernanceTests() {
             console.log('✅ T25 stale-lock content-aware verdict passed');
         }
 
+        console.log('T26. Testing R012 flags focus pointing at a draft/0-done plan ...');
+        {
+            const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            delete require.cache[gapsPath];
+            const { checkR012 } = require(gapsPath);
+            const planIR = {
+                specs: [],
+                plans: [
+                    { id: 'plan:demo-feature', title: 'Demo Feature', status: 'draft', linkedSpec: 'spec:demo', sourcePath: 'docs/plans/demo.md' },
+                    { id: 'plan:shipped-feature', title: 'Shipped Feature', status: 'done', linkedSpec: 'spec:ship', sourcePath: 'docs/plans/ship.md' },
+                ],
+                tasks: [
+                    { id: 'plan:demo-feature/task-1', linkedPlan: 'plan:demo-feature', status: 'todo' },
+                    { id: 'plan:shipped-feature/task-1', linkedPlan: 'plan:shipped-feature', status: 'verified' },
+                ],
+            };
+
+            // focus references the draft/0-done plan by prose title → must warn
+            const phantom = checkR012(WORKSPACE_ROOT, planIR, { focusText: 'Demo Feature: build the thing' });
+            assert.ok(
+                phantom.some(f => f.rule === 'R012' && f.id === 'R012:plan:demo-feature' && f.level === 'warning'),
+                'R012 must flag focus on a draft/0-done plan',
+            );
+
+            // focus on a started/done plan → no warning
+            const healthy = checkR012(WORKSPACE_ROOT, planIR, { focusText: 'Shipped Feature: done and verified' });
+            assert.strictEqual(healthy.length, 0, 'R012 must not flag focus on a started/done plan');
+
+            // focus with no plan reference → no warning
+            const idle = checkR012(WORKSPACE_ROOT, planIR, { focusText: 'idle pending next initiative' });
+            assert.strictEqual(idle.length, 0, 'R012 must not fire when focus references no plan');
+            console.log('✅ T26 R012 focus-health passed');
+        }
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);

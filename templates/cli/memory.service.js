@@ -2078,10 +2078,12 @@ async function verify(options = {}) {
             const archData = dash.architecture && !dash.architecture.missing ? dash.architecture : null;
             const driftData = dash.drift && !dash.drift.missing ? dash.drift : null;
             const r009 = driftData ? (driftData.findings || []).filter(f => f.rule === 'R009') : [];
+            const r012 = driftData ? (driftData.findings || []).filter(f => f.rule === 'R012') : [];
             report.project_control = {
                 planning: planData ? {
                     planIrExists: true,
                     stale: r009.some(f => f.message.startsWith('plan ')),
+                    phantomFocus: r012.length > 0,
                     taskCount: planData.summary.tasks,
                     implemented: planData.summary.implemented,
                 } : { planIrExists: false },
@@ -2096,6 +2098,14 @@ async function verify(options = {}) {
                     info: driftData.summary.info || 0,
                 } : null,
             };
+            // Focus health (R012): surface a phantom focus directly so the operator
+            // sees WHY focus is suspect, not just a generic ">24h stale" note.
+            const phantom = driftData ? (driftData.findings || []).find(f => f.rule === 'R012') : null;
+            if (phantom) {
+                log(`🎯 [焦点健康] ${phantom.message}`);
+                pushNextStep(phantom.suggestedAction || 'Advance focus to a started plan (mem focus), or begin the referenced plan.');
+                report.hasAlerts = true;
+            }
         } else {
             report.project_control = { planning: { planIrExists: false }, architecture: { architectureIrExists: false }, drift: null };
         }
