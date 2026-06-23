@@ -708,6 +708,17 @@ async function runGovernanceTests() {
             console.log('✅ T18a runtime version resolution passed');
         }
 
+        console.log('T18b. Testing initializer enforces a Node.js engine floor ...');
+        {
+            const initializer = require(path.join(WORKSPACE_ROOT, 'index.js'));
+            assert.ok(typeof initializer.assertNodeVersion === 'function', 'index must export assertNodeVersion()');
+            assert.strictEqual(initializer.assertNodeVersion('18.20.4').ok, false, 'Node 18 must be rejected');
+            assert.strictEqual(initializer.assertNodeVersion('20.0.0').ok, true, 'Node 20 must be accepted');
+            assert.strictEqual(initializer.assertNodeVersion('22.5.1').ok, true, 'Node 22 must be accepted');
+            assert.ok(initializer.assertNodeVersion('18.20.4').message.includes('20'), 'rejection message must name the floor');
+            console.log('✅ T18b node engine floor passed');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));

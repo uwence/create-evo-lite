@@ -10,6 +10,10 @@
         "commander": "^14.0.2",
         "@modelcontextprotocol/sdk": "^1.29.0"
     },
+    "engines": {
+        "node": ">=20.0.0"
+    },
+    "engineStrict": true,
     "files": [
         "bin/",
         "index.js",

@@ -9,6 +9,21 @@ const { installPostCommitHook, diffInstalledHook } = require(path.join(__dirname
 
 const SELF_VERSION = require(path.join(__dirname, 'package.json')).version;
 const INITIAL_COMMIT_MESSAGE = 'chore: initialize Evo-Lite workspace';
+const MIN_NODE_MAJOR = 20;
+
+// Pure, testable Node-version preflight. The runtime depends on commander@14
+// (Node >=20) and a native better-sqlite3 build; scaffolding on an older Node
+// leaves a half-initialized workspace, so fail before writing anything.
+function assertNodeVersion(versionString = process.versions.node) {
+    const major = parseInt(String(versionString).split('.')[0], 10);
+    if (!Number.isFinite(major) || major < MIN_NODE_MAJOR) {
+        return {
+            ok: false,
+            message: `Evo-Lite requires Node.js >= ${MIN_NODE_MAJOR} (found ${versionString}).`,
+        };
+    }
+    return { ok: true, message: '' };
+}
 
 function buildProgram() {
     return new Command()
@@ -479,6 +494,13 @@ async function runInit(targetDirArg, options = {}) {
 
 
 async function main(argv = process.argv) {
+    const nodeCheck = assertNodeVersion();
+    if (!nodeCheck.ok) {
+        console.error(`❌ ${nodeCheck.message}`);
+        console.error('👉 请升级 Node.js 至 20 或更高版本后重试。');
+        process.exit(1);
+    }
+
     const program = buildProgram();
     program.parse(argv);
     const options = program.opts();
@@ -497,6 +519,7 @@ function handleCliError(error) {
 }
 
 module.exports = {
+    assertNodeVersion,
     buildProgram,
     handleCliError,
     installPostCommitHook,
