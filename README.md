@@ -300,6 +300,8 @@ read active_context
 → 给出当前 focus、风险、下一步
 ```
 
+说明：takeover 默认走 recall-first takeover —— 先做有界 recall 注入既有上下文；若没有可用的历史上下文，则按 fresh takeover 继续，不阻塞接管。
+
 ### `/commit`：闭环
 
 目标：完成一次小的、可追踪的开发闭环。

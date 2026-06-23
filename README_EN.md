@@ -300,6 +300,8 @@ read active_context
 → report current focus, risks, and next step
 ```
 
+Note: takeover defaults to a recall-first takeover — a bounded recall injects existing context first; when no usable prior context exists, it continues as a fresh takeover without blocking the handoff.
+
 ### `/commit`: closure
 
 Goal: complete a small, traceable development loop.
