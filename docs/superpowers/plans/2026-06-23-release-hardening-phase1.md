@@ -39,14 +39,14 @@ GitHub Actions, existing `.evo-lite/cli/memory.js verify` and `mcp-validate.js`.
 - Modify: `index.js`
 - Test: `templates/cli/test.js`
 
-- [ ] **Step 1: Add a failing preflight test**
+- [x] **Step 1: Add a failing preflight test**
 
 In `templates/cli/test.js`, add a case that invokes the initializer's
 Node-version preflight helper with a simulated old version and asserts it reports
 unsupported (exit-intent) rather than proceeding. Extract the check into a small
 pure helper (e.g. `assertNodeVersion(versionString)`) so it is unit-testable.
 
-- [ ] **Step 2: Run and confirm the gap**
+- [x] **Step 2: Run and confirm the gap**
 
 ```bash
 node ./.evo-lite/cli/test.js governance
@@ -54,7 +54,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: the preflight test fails (no helper / no enforcement yet).
 
-- [ ] **Step 3: Declare engines and add preflight**
+- [x] **Step 3: Declare engines and add preflight**
 
 In `package.json` add:
 
@@ -67,7 +67,7 @@ At the very top of the initializer `main()` in `index.js` (before any file
 writes or install), check `process.versions.node` against the floor and exit
 non-zero with a clear message when unmet.
 
-- [ ] **Step 4: Sync runtime and rerun**
+- [x] **Step 4: Sync runtime and rerun**
 
 ```bash
 node ./.evo-lite/cli/memory.js sync-runtime
@@ -76,7 +76,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: preflight test passes; Node <20 exits before scaffolding.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add package.json index.js templates/cli/test.js .evo-lite/cli/test.js
