@@ -37,7 +37,7 @@ linkedSpec: spec:dogfood-operator-experience-phase1
 - Sync: `.evo-lite/cli/memory.service.js`
 - Test: `templates/cli/test.js`
 
-- [ ] **Step 1: Add a failing verification test for operator guidance**
+- [x] **Step 1: Add a failing verification test for operator guidance**
 
 Add a test case near the existing `verify()` coverage in `templates/cli/test.js`:
 
@@ -55,7 +55,7 @@ console.log('T13. Testing verify reports governance-operational next steps ...')
 }
 ```
 
-- [ ] **Step 2: Run the focused test and confirm the current gap**
+- [x] **Step 2: Run the focused test and confirm the current gap**
 
 Run:
 
@@ -65,7 +65,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: the new guidance assertion fails before implementation.
 
-- [ ] **Step 3: Extend `/evo` and `verify` to emit action-oriented governance hints**
+- [x] **Step 3: Extend `/evo` and `verify` to emit action-oriented governance hints**
 
 Update `.agents/workflows/evo.md` so the takeover summary explicitly prefers actionable next commands over generic “continue development” language when governance surfaces are stale or missing.
 
@@ -76,7 +76,7 @@ pushNextStep('Run `node .evo-lite/cli/memory.js hook status` to verify post-comm
 pushNextStep('Run `node .evo-lite/cli/memory.js plan progress` to refresh task-evidence status before reading the dashboard.');
 ```
 
-- [ ] **Step 4: Sync dogfood runtime and rerun focused verification**
+- [x] **Step 4: Sync dogfood runtime and rerun focused verification**
 
 Run:
 
@@ -87,7 +87,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: the governance guidance test passes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .agents/workflows/evo.md templates/cli/memory.service.js .evo-lite/cli/memory.service.js templates/cli/test.js
@@ -104,7 +104,7 @@ git commit -m "feat(evo): add operator-facing governance guidance to takeover an
 - Sync: `.evo-lite/cli/hooks.js`, `.evo-lite/cli/memory.service.js`
 - Test: `templates/cli/test.js`
 
-- [ ] **Step 1: Add a failing hook telemetry test**
+- [x] **Step 1: Add a failing hook telemetry test**
 
 Extend the hook tests in `templates/cli/test.js` with a case that runs the generated hook and expects a last-run JSON report:
 
@@ -121,7 +121,7 @@ console.log('T14. Testing post-commit hook writes governance run report ...');
 }
 ```
 
-- [ ] **Step 2: Run the focused hook tests to verify failure**
+- [x] **Step 2: Run the focused hook tests to verify failure**
 
 Run:
 
@@ -131,7 +131,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: the hook-report test fails because no JSON report is written yet.
 
-- [ ] **Step 3: Implement lightweight hook telemetry**
+- [x] **Step 3: Implement lightweight hook telemetry**
 
 In `templates/cli/hooks.js`, add a tiny helper block inside the hook body that writes a JSON artifact such as:
 
@@ -158,7 +158,7 @@ and record fields such as:
 
 Then update `templates/cli/memory.service.js` `verify()` to read this file and classify it as healthy / missing / failed-last-run.
 
-- [ ] **Step 4: Sync runtime and rerun hook coverage**
+- [x] **Step 4: Sync runtime and rerun hook coverage**
 
 Run:
 
@@ -170,7 +170,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: hook telemetry test passes and verify can read the report.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/hooks.js .evo-lite/cli/hooks.js templates/cli/memory.service.js .evo-lite/cli/memory.service.js templates/cli/test.js
@@ -187,7 +187,7 @@ git commit -m "feat(governance): record post-commit last-run telemetry and surfa
 - Sync: `.evo-lite/cli/dashboard-data.js`, `.evo-lite/cli/inspector.js`
 - Test: `templates/cli/test.js`
 
-- [ ] **Step 1: Add failing dashboard/inspector tests**
+- [x] **Step 1: Add failing dashboard/inspector tests**
 
 Extend `templates/cli/test.js` with two checks:
 
@@ -198,7 +198,7 @@ assert.ok(Array.isArray(timeline.entries), '/api/timeline must return an entries
 
 The timeline assertion already exists and currently fails in the broad suite; keep it in the governance slice so it becomes part of the focused operator contract.
 
-- [ ] **Step 2: Implement dashboard governance summary**
+- [x] **Step 2: Implement dashboard governance summary**
 
 In `templates/cli/dashboard-data.js`, add a `governance` block alongside `freshness` and `verify`, for example:
 
@@ -210,7 +210,7 @@ governance: {
 }
 ```
 
-- [ ] **Step 3: Fix inspector API payload consistency**
+- [x] **Step 3: Fix inspector API payload consistency**
 
 In `templates/cli/inspector.js`, update `/api/timeline` to return a stable shape instead of raw `extractActiveContext(md)`:
 
@@ -227,7 +227,7 @@ if (url === '/api/timeline') {
 }
 ```
 
-- [ ] **Step 4: Sync runtime and rerun focused surface tests**
+- [x] **Step 4: Sync runtime and rerun focused surface tests**
 
 Run:
 
@@ -239,7 +239,7 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: governance dashboard assertion and `/api/timeline` contract both pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/dashboard-data.js .evo-lite/cli/dashboard-data.js templates/cli/inspector.js .evo-lite/cli/inspector.js templates/cli/test.js
@@ -254,7 +254,7 @@ git commit -m "feat(operator): surface governance health in dashboard and stabil
 - Modify: `templates/cli/test.js`
 - Modify: `package.json`
 
-- [ ] **Step 1: Add a simple test filter to the CLI test harness**
+- [x] **Step 1: Add a simple test filter to the CLI test harness**
 
 At the top of `templates/cli/test.js`, add a narrow filter based on `process.argv[2]`:
 
@@ -273,7 +273,7 @@ if (shouldRun('governance')) {
 }
 ```
 
-- [ ] **Step 2: Wire a package script**
+- [x] **Step 2: Wire a package script**
 
 In `package.json`, add:
 
@@ -285,7 +285,7 @@ In `package.json`, add:
 }
 ```
 
-- [ ] **Step 3: Move the governance-critical checks behind the new scope**
+- [x] **Step 3: Move the governance-critical checks behind the new scope**
 
 The governance slice MUST include:
 
@@ -295,7 +295,7 @@ The governance slice MUST include:
 - dashboard freshness checks
 - inspector `/api/timeline` payload contract
 
-- [ ] **Step 4: Run the new slice**
+- [x] **Step 4: Run the new slice**
 
 Run:
 
@@ -305,7 +305,7 @@ npm run test:governance
 
 Expected: governance-focused tests pass even if unrelated broad-suite areas still need separate cleanup.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/test.js package.json

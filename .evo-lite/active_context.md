@@ -41,4 +41,3 @@ Add T15e to governance test suite. Verifies that a post
 
 - 考虑 `raw_memory/` 原始文件层（YAML Frontmatter + Markdown），提升向量库抗毁性与换模型能力（参考 Gemini 设计文档讨论）。
 - [f9b1] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
-- [搁置] `dogfood-operator-experience-phase1` spec/plan 已落档但从未拆进 plan-IR（draft/0 task），不是活跃焦点。文件位于 `docs/superpowers/{specs,plans}/2026-06-16-dogfood-operator-experience-phase1.md`，待后续操作者决定真启动或删除。
