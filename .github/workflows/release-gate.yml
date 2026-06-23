@@ -1,0 +1,67 @@
+# Release gate for create-evo-lite.
+#
+# STATUS: drafted by release-hardening phase1 Task 4, NOT yet verified on a real
+# runner. It must run green on GitHub Actions once, then be made a REQUIRED check
+# for `main` in the repo branch-protection settings (that step needs repo-admin
+# access and cannot be done from the CLI).
+#
+# DEPENDENCY: the `runtime test suite` job step installs the runtime deps ad-hoc
+# until release-hardening Task 2 ships a runtime lockfile; Task 2 replaces that
+# step with a deterministic `npm ci` against the shipped lockfile.
+name: release-gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  consume:
+    name: pack + consume on ${{ matrix.os }} / node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Identity for scaffold commit
+        shell: bash
+        run: |
+          git config --global user.email "release-gate@example.com"
+          git config --global user.name "release-gate"
+
+      - name: Install root deps (reproducible)
+        run: npm ci
+
+      - name: Runtime test suite
+        # NOTE: ad-hoc runtime install until Task 2 ships a runtime lockfile.
+        shell: bash
+        run: |
+          npm install --prefix .evo-lite better-sqlite3 tar commander @modelcontextprotocol/sdk
+          npm test
+
+      - name: Pack the publishable tarball
+        run: npm pack
+
+      - name: Scaffold into an empty NON-Node project from the tarball
+        shell: bash
+        run: |
+          mkdir -p ../consume-test
+          TARBALL="$(ls create-evo-lite-*.tgz | head -n1)"
+          echo "consuming $TARBALL"
+          npm exec --yes --package "./$TARBALL" -- create-evo-lite ../consume-test --yes
+
+      - name: Prove runtime readiness on the scaffolded project
+        shell: bash
+        run: |
+          test ! -f ../consume-test/package.json  # consumer is a non-Node project
+          node ../consume-test/.evo-lite/cli/memory.js verify
+          node ../consume-test/.evo-lite/cli/mcp-validate.js ../consume-test
