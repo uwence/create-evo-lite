@@ -122,8 +122,8 @@ function extractTasks(body) {
 
 // --- Superpowers plan format support ---
 
-const SUPERPOWERS_TASK_HEADING_RE = /^#{2,3}\s+Task\s+(\d+)\s*(?::|：|-|–|—)\s+(.+)$/;
-const SUPERPOWERS_TASK_HEADING_ANY_RE = /^#{2,3}\s+Task\s+\d+\s*(?::|：|-|–|—)\s+/m;
+const SUPERPOWERS_TASK_HEADING_RE = /^###\s+Task\s+(\d+)\s*(?::|：|-|–|—)\s+(.+)$/;
+const SUPERPOWERS_TASK_HEADING_ANY_RE = /^###\s+Task\s+\d+\s*(?::|：|-|–|—)\s+/m;
 
 function hasSuperPowersTaskHeadings(content) {
     return SUPERPOWERS_TASK_HEADING_ANY_RE.test(content);
