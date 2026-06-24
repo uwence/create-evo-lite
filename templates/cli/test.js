@@ -212,6 +212,7 @@ function createModernInitProject(name) {
 async function runInitializer(projectRoot, options = {}) {
     const originalArgv = process.argv.slice();
     const originalExit = process.exit;
+    const originalExitCode = process.exitCode;
     const originalExecSync = childProcess.execSync;
     const originalCwd = process.cwd();
     const stdout = [];
@@ -274,6 +275,10 @@ async function runInitializer(projectRoot, options = {}) {
         delete require.cache[indexModulePath];
         process.argv = originalArgv;
         process.exit = originalExit;
+        // The initializer may set process.exitCode (e.g. fail-closed runtime-not-ready)
+        // to signal a non-zero exit without calling process.exit. That mutation must
+        // not leak into the shared test process, or a fully-passing run exits non-zero.
+        process.exitCode = originalExitCode;
         childProcess.execSync = originalExecSync;
         console.log = originalLog;
         console.warn = originalWarn;
