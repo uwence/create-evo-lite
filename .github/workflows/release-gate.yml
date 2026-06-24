@@ -5,9 +5,9 @@
 # for `main` in the repo branch-protection settings (that step needs repo-admin
 # access and cannot be done from the CLI).
 #
-# DEPENDENCY: the `runtime test suite` job step installs the runtime deps ad-hoc
-# until release-hardening Task 2 ships a runtime lockfile; Task 2 replaces that
-# step with a deterministic `npm ci` against the shipped lockfile.
+# The runtime test step restores the shipped runtime lockfile with `npm ci`
+# (templates/runtime/package-lock.json), matching the deterministic install the
+# initializer performs for consumers.
 name: release-gate
 
 on:
@@ -23,12 +23,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: [20, 22]
+        node: [20, 22, 24]
         exclude:
           # better-sqlite3 ships no node-20 win-x64 prebuild and the runner lacks a
           # node-gyp-detectable MSVC, so a build-tool-free install can't succeed on
-          # Windows + Node 20. Node 20 is also being deprecated on GitHub Actions.
-          # Node 20 stays covered on Linux; Windows is covered on Node 22.
+          # Windows + Node 20. Node 20 stays covered on Linux; Windows starts at Node 22.
           - os: windows-latest
             node: 20
     runs-on: ${{ matrix.os }}
@@ -49,10 +48,11 @@ jobs:
         run: npm ci
 
       - name: Runtime test suite
-        # Install the exact-pinned runtime deps (must match RUNTIME_DEPENDENCIES in index.js).
+        # Restore the shipped runtime lockfile deterministically (matches RUNTIME_DEPENDENCIES).
         shell: bash
         run: |
-          npm install --prefix .evo-lite better-sqlite3@12.11.1 tar@7.5.16 commander@15.0.0 @modelcontextprotocol/sdk@1.29.0
+          cp templates/runtime/package.json templates/runtime/package-lock.json .evo-lite/
+          npm ci --prefix .evo-lite
           npm test
 
       - name: Pack the publishable tarball
