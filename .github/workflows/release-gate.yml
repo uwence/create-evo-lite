@@ -49,10 +49,10 @@ jobs:
         run: npm ci
 
       - name: Runtime test suite
-        # NOTE: ad-hoc runtime install until Task 2 ships a runtime lockfile.
+        # Install the exact-pinned runtime deps (must match RUNTIME_DEPENDENCIES in index.js).
         shell: bash
         run: |
-          npm install --prefix .evo-lite better-sqlite3 tar commander @modelcontextprotocol/sdk
+          npm install --prefix .evo-lite better-sqlite3@12.11.1 tar@7.5.16 commander@15.0.0 @modelcontextprotocol/sdk@1.29.0
           npm test
 
       - name: Pack the publishable tarball

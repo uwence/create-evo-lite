@@ -25,16 +25,26 @@ function assertNodeVersion(versionString = process.versions.node) {
     return { ok: true, message: '' };
 }
 
-const RUNTIME_DEPENDENCIES = ['better-sqlite3', 'tar', 'commander', '@modelcontextprotocol/sdk'];
+// Exact-pinned runtime dependencies so a given create-evo-lite version always
+// installs the same runtime (P1: reproducible deps). Bump these deliberately;
+// the release-gate CI proves a pinned set installs across the supported matrix.
+const RUNTIME_DEPENDENCIES = {
+    'better-sqlite3': '12.11.1',
+    'tar': '7.5.16',
+    'commander': '15.0.0',
+    '@modelcontextprotocol/sdk': '1.29.0',
+};
+
+function runtimeInstallSpecs() {
+    return Object.entries(RUNTIME_DEPENDENCIES).map(([name, version]) => `${name}@${version}`);
+}
 
 function writeRuntimeManifest(evoLiteDir) {
     fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
         "name": "evo-lite-workspace",
         "version": SELF_VERSION,
         "private": true,
-        "dependencies": {
-            "commander": "^14.0.2"
-        }
+        "dependencies": { ...RUNTIME_DEPENDENCIES }
     }, null, 2));
 }
 
@@ -56,7 +66,8 @@ function installRuntimeDependencies(evoLiteDir, options = {}) {
         if (options.writeManifest !== false) {
             writeRuntimeManifest(evoLiteDir);
         }
-        exec(`npm install ${RUNTIME_DEPENDENCIES.join(' ')}`, { cwd: evoLiteDir, stdio: 'inherit' });
+        // Bare install reads the exact-pinned manifest written above — deterministic.
+        exec('npm install', { cwd: evoLiteDir, stdio: 'inherit' });
         return { ok: true, state: 'runtime-ready', message: '依赖在线安装成功！' };
     } catch (e) {
         return {
@@ -476,7 +487,7 @@ async function runInit(targetDirArg, options = {}) {
         console.log(`✅ ${installResult.message}`);
     } else {
         console.warn(`\n⚠️ 警告: ${installResult.message}`);
-        console.warn(`👉 请稍后手动在 .evo-lite 目录运行:\nnpm install ${RUNTIME_DEPENDENCIES.join(' ')}`);
+        console.warn(`👉 请稍后手动在 .evo-lite 目录运行:\nnpm install ${runtimeInstallSpecs().join(' ')}`);
     }
     console.log('📡 运行时引擎已锁定为: sqlite-fts5-trigram');
 
@@ -529,7 +540,7 @@ async function runInit(targetDirArg, options = {}) {
     if (!installResult.ok) {
         console.error('\n⚠️ Evo-Lite 脚手架已创建，但运行时依赖未就绪 (scaffold-created / runtime-not-ready)。');
         console.error('   在 .evo-lite 目录完成依赖安装前，bootstrap / 数据库 / archive / MCP 将不可用。');
-        console.error(`   修复: cd .evo-lite && npm install ${RUNTIME_DEPENDENCIES.join(' ')}`);
+        console.error(`   修复: cd .evo-lite && npm install ${runtimeInstallSpecs().join(' ')}`);
         console.error('----------------------------------------------------');
         process.exitCode = 1;
         return;
