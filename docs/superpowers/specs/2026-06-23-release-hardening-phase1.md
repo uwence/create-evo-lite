@@ -1,6 +1,6 @@
 ---
 id: spec:release-hardening-phase1
-status: draft
+status: done
 created: 2026-06-23
 linkedPlan: plan:release-hardening-phase1
 ---
