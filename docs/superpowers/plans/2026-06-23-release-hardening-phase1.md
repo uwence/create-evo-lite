@@ -206,14 +206,19 @@ node ./empty-non-node/.evo-lite/cli/mcp-validate.js ./empty-non-node
 > Windows/Node-20 better-sqlite3 prebuild gap (matrix exclude, commit 2232d2f).
 > Current matrix: Linux 20/22 + Windows 22, all passing.
 
-- [ ] **Step 3: Make the gate required**
+- [x] **Step 3: Make the gate required** — _resolved: informational gate, no branch rule (by decision)_
 
 Document (and configure, where the repo settings allow) that the release-gate
 check is required before merge to `main`.
 
-> **Pending — needs repo-admin, off-CLI.** Settings → Branches → branch
-> protection for `main` → require the `release-gate` status checks (the three
-> matrix contexts). This is the only remaining item in the phase.
+> **Decision (2026-06-24): informational gate, no branch protection rule.** A hard
+> required status check would block landing any unchecked commit on `main`,
+> forcing a branch → CI-green → push/merge flow even without requiring PRs. The
+> maintainer works by direct push to `main` and chose to keep that, so no branch
+> rule is added. The gate still runs: release-gate fires on every push to `main`
+> (`on: push`) and its ✓/✗ shows on each commit — visible, just not blocking.
+> Step closed as not-applicable-under-this-model; the gate is delivered and green,
+> only the hard-block was declined.
 
 - [x] **Step 4: Commit**
 
