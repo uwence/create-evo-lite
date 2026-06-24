@@ -91,7 +91,10 @@ but MUST report `scaffold-created / runtime-not-ready`, never success.
 CI MUST run on Linux and Windows across the supported Node range and MUST, at
 minimum: `npm ci`, `npm test`, `npm pack`, then install the packed tarball into a
 **non-Node** empty project and prove the runtime is ready
-(`memory.js verify` + `mcp-validate`). Merge to `main` MUST require this gate.
+(`memory.js verify` + `mcp-validate`). The gate MUST run green on CI for every PR and push to `main`. Promoting it to a
+**required** status check for `main` is a documented manual repo-admin step
+(branch-protection settings; not enforceable from the CLI) — it is therefore an
+informational gate by default, not an automatically-enforced merge block.
 
 ## Architecture
 
@@ -115,4 +118,5 @@ minimum: `npm ci`, `npm test`, `npm pack`, then install the packed tarball into 
   message, with no "deployment complete" banner.
 - CI runs the Linux+Windows × Node-range matrix, packs the tarball, installs it
   into an empty non-Node project, and passes `verify` + `mcp-validate`; the gate
-  is required before merge to `main`.
+  runs green and the required-check promotion is documented as a manual repo-admin
+  step.
