@@ -342,7 +342,11 @@ async function runInit(targetDirArg, options = {}) {
     console.log('📄 复制并配置记忆外挂模板文件...');
     const templatesDir = path.join(__dirname, 'templates');
     const activeContextTemplate = fs.readFileSync(path.join(templatesDir, 'active_context.md'), 'utf8');
-    const gitignoreTemplate = fs.readFileSync(path.join(templatesDir, '.gitignore'), 'utf8');
+    // Source asset is named `gitignore` (no dot): npm pack strips files named
+    // `.gitignore` from the published tarball, so a dotted template name ships as
+    // a missing file and breaks scaffolding. The initializer still writes the
+    // target project's `.gitignore` from this content.
+    const gitignoreTemplate = fs.readFileSync(path.join(templatesDir, 'gitignore'), 'utf8');
     const unixWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem'), 'utf8');
     const winWrapperContent = fs.readFileSync(path.join(templatesDir, 'mem.cmd'), 'utf8');
 

@@ -749,6 +749,28 @@ async function runGovernanceTests() {
             console.log('✅ T18c fail-closed install passed');
         }
 
+        console.log('T18d. Testing no template asset uses an npm-pack-stripped filename ...');
+        {
+            // npm pack silently drops files named .gitignore / .npmignore from the
+            // tarball; such a template ships as a missing file and breaks scaffolding
+            // (ENOENT in runInit). Template assets must use non-stripped names.
+            const templatesRoot = path.join(WORKSPACE_ROOT, 'templates');
+            const stripped = ['.gitignore', '.npmignore'];
+            const offenders = [];
+            (function walk(dir) {
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                    const full = path.join(dir, entry.name);
+                    if (entry.isDirectory()) {
+                        if (entry.name !== 'node_modules') walk(full);
+                    } else if (stripped.includes(entry.name)) {
+                        offenders.push(path.relative(WORKSPACE_ROOT, full));
+                    }
+                }
+            })(templatesRoot);
+            assert.deepStrictEqual(offenders, [], 'template assets must not use npm-pack-stripped names: ' + offenders.join(', '));
+            console.log('✅ T18d no pack-stripped template names passed');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
