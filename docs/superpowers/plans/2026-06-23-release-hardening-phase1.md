@@ -91,20 +91,20 @@ git commit -m "feat(release): declare engines.node>=20 and preflight node versio
 - Modify: `index.js`
 - Add: runtime manifest + lockfile template asset
 
-- [ ] **Step 1: Author the versioned runtime manifest**
+- [x] **Step 1: Author the versioned runtime manifest**
 
 Replace the ad-hoc `npm install better-sqlite3 tar commander @modelcontextprotocol/sdk`
 (`index.js:417`) with a shipped manifest that pins all four runtime dependencies,
 and generate a lockfile for it. The written `.evo-lite/package.json`
 (`index.js:409`) MUST list every runtime dependency, not just `commander`.
 
-- [ ] **Step 2: Install deterministically**
+- [x] **Step 2: Install deterministically**
 
 Change the initializer to install via `npm ci` against the shipped lockfile (fall
 back to pinned `npm install` only when no lockfile is present). Same package
 version ⇒ same runtime.
 
-- [ ] **Step 3: Verify reproducibility**
+- [x] **Step 3: Verify reproducibility**
 
 ```bash
 # from a clean scaffold, runtime deps resolve without prior .evo-lite/node_modules
@@ -113,12 +113,16 @@ node ./.evo-lite/cli/memory.js verify
 
 Expected: runtime engine ready from a deterministic install.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add index.js
 git commit -m "feat(release): ship versioned runtime manifest + lockfile, install via npm ci"
 ```
+
+> Implemented via the R2-permitted **exact pinned versions** path (not a committed
+> lockfile): shipping a static lockfile conflicts with the SELF_VERSION-injected
+> manifest version. Exact top-level pins give reproducibility without that coupling.
 
 ---
 
