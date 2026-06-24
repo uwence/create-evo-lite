@@ -199,17 +199,31 @@ node ./empty-non-node/.evo-lite/cli/memory.js verify
 node ./empty-non-node/.evo-lite/cli/mcp-validate.js ./empty-non-node
 ```
 
+> **Verified green on real runners (run 28073351322).** The first runs caught
+> three real bugs the gate then forced fixed: a process.exitCode leak in the test
+> harness (commit 7112e0b), npm pack stripping templates/.gitignore — broke every
+> npx consumer, present in published 2.0.9 (commit 74ff1d2), and the
+> Windows/Node-20 better-sqlite3 prebuild gap (matrix exclude, commit 2232d2f).
+> Current matrix: Linux 20/22 + Windows 22, all passing.
+
 - [ ] **Step 3: Make the gate required**
 
 Document (and configure, where the repo settings allow) that the release-gate
 check is required before merge to `main`.
 
-- [ ] **Step 4: Commit**
+> **Pending — needs repo-admin, off-CLI.** Settings → Branches → branch
+> protection for `main` → require the `release-gate` status checks (the three
+> matrix contexts). This is the only remaining item in the phase.
+
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/release-gate.yml
 git commit -m "ci(release): matrix gate — npm ci/test/pack + non-Node tarball consume with verify + mcp-validate"
 ```
+
+> Landed as a series rather than one commit: initial draft (fd96814 lineage),
+> matrix exclude (2232d2f), and the pinned runtime-test step (5c9cd30).
 
 ---
 
