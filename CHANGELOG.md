@@ -1,3 +1,15 @@
+## 2.0.10
+
+### Fixed
+- **Deterministic runtime install**: the scaffolded `.evo-lite/` now ships a
+  pinned `package.json` + `package-lock.json` and installs with `npm ci` instead
+  of bare `npm install`, so a given `create-evo-lite` version always restores the
+  same runtime dependency tree. Supersedes the ad-hoc install path.
+
+### Added
+- **Node 24 in the release gate**: the pack-and-consume CI matrix now covers
+  Node 24 alongside 20 (Linux) and 22, on Linux and Windows.
+
 ## Unreleased
 
 ### Fixed
