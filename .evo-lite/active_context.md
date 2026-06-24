@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Release Hardening Phase 1 Implementation Plan: Add a CI release gate that consumes the packed tarball
+Release Hardening Phase 1 Implementation Plan: all tasks implemented
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
