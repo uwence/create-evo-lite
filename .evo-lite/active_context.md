@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Release Hardening Phase 1 Implementation Plan: all tasks implemented
+Release Closure Patch (2.0.10) Implementation Plan: Ship runtime lockfile assets + switch installer to npm ci
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
