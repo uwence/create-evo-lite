@@ -24,6 +24,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         node: [20, 22]
+        exclude:
+          # better-sqlite3 ships no node-20 win-x64 prebuild and the runner lacks a
+          # node-gyp-detectable MSVC, so a build-tool-free install can't succeed on
+          # Windows + Node 20. Node 20 is also being deprecated on GitHub Actions.
+          # Node 20 stays covered on Linux; Windows is covered on Node 22.
+          - os: windows-latest
+            node: 20
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
