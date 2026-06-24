@@ -40,12 +40,13 @@ function runtimeInstallSpecs() {
 }
 
 function writeRuntimeManifest(evoLiteDir) {
-    fs.writeFileSync(path.join(evoLiteDir, 'package.json'), JSON.stringify({
-        "name": "evo-lite-workspace",
-        "version": SELF_VERSION,
-        "private": true,
-        "dependencies": { ...RUNTIME_DEPENDENCIES }
-    }, null, 2));
+    const runtimeTemplateDir = path.join(__dirname, 'templates', 'runtime');
+    fs.copyFileSync(
+        path.join(runtimeTemplateDir, 'package.json'),
+        path.join(evoLiteDir, 'package.json'));
+    fs.copyFileSync(
+        path.join(runtimeTemplateDir, 'package-lock.json'),
+        path.join(evoLiteDir, 'package-lock.json'));
 }
 
 // Fail-closed runtime dependency install. Returns an explicit readiness verdict
@@ -66,8 +67,8 @@ function installRuntimeDependencies(evoLiteDir, options = {}) {
         if (options.writeManifest !== false) {
             writeRuntimeManifest(evoLiteDir);
         }
-        // Bare install reads the exact-pinned manifest written above — deterministic.
-        exec('npm install', { cwd: evoLiteDir, stdio: 'inherit' });
+        // npm ci restores the exact shipped lockfile — deterministic, no resolution.
+        exec('npm ci', { cwd: evoLiteDir, stdio: 'inherit' });
         return { ok: true, state: 'runtime-ready', message: '依赖在线安装成功！' };
     } catch (e) {
         return {
@@ -487,7 +488,7 @@ async function runInit(targetDirArg, options = {}) {
         console.log(`✅ ${installResult.message}`);
     } else {
         console.warn(`\n⚠️ 警告: ${installResult.message}`);
-        console.warn(`👉 请稍后手动在 .evo-lite 目录运行:\nnpm install ${runtimeInstallSpecs().join(' ')}`);
+        console.warn(`👉 请稍后手动在 .evo-lite 目录运行:\nnpm ci`);
     }
     console.log('📡 运行时引擎已锁定为: sqlite-fts5-trigram');
 
@@ -584,6 +585,7 @@ function handleCliError(error) {
 module.exports = {
     assertNodeVersion,
     installRuntimeDependencies,
+    RUNTIME_DEPENDENCIES,
     buildProgram,
     handleCliError,
     installPostCommitHook,

@@ -771,6 +771,23 @@ async function runGovernanceTests() {
             console.log('✅ T18d no pack-stripped template names passed');
         }
 
+        console.log('T18e. Testing shipped runtime manifest matches RUNTIME_DEPENDENCIES ...');
+        {
+            const initializer = require(path.join(WORKSPACE_ROOT, 'index.js'));
+            const shipped = JSON.parse(fs.readFileSync(
+                path.join(WORKSPACE_ROOT, 'templates', 'runtime', 'package.json'), 'utf8'));
+            assert.ok(typeof initializer.RUNTIME_DEPENDENCIES === 'object',
+                'index must export RUNTIME_DEPENDENCIES');
+            assert.deepStrictEqual(shipped.dependencies, initializer.RUNTIME_DEPENDENCIES,
+                'templates/runtime/package.json dependencies must equal RUNTIME_DEPENDENCIES');
+            // The shipped lockfile must exist and agree on the root version.
+            const lock = JSON.parse(fs.readFileSync(
+                path.join(WORKSPACE_ROOT, 'templates', 'runtime', 'package-lock.json'), 'utf8'));
+            assert.strictEqual(lock.packages[''].version, shipped.version,
+                'lockfile root version must match shipped manifest version');
+            console.log('✅ T18e shipped runtime manifest matches RUNTIME_DEPENDENCIES');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
@@ -1913,7 +1930,7 @@ async function runTests() {
                     fs.mkdirSync(path.join(modernInitRoot, '.git'), { recursive: true });
                     return Buffer.from('Initialized empty Git repository\n');
                 }
-                if (command === 'npm install better-sqlite3 tar commander') {
+                if (command === 'npm ci') {
                     return Buffer.from('');
                 }
                 if (command.startsWith('git ')) {
@@ -2042,7 +2059,7 @@ async function runTests() {
                     fs.mkdirSync(path.join(freshInitRoot, '.git'), { recursive: true });
                     return Buffer.from('Initialized empty Git repository\n');
                 }
-                if (command === 'npm install better-sqlite3 tar commander') {
+                if (command === 'npm ci') {
                     return Buffer.from('');
                 }
                 if (command === 'git status --short') {

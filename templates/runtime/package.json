@@ -1,0 +1,11 @@
+{
+  "name": "evo-lite-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "better-sqlite3": "12.11.1",
+    "tar": "7.5.16",
+    "commander": "15.0.0",
+    "@modelcontextprotocol/sdk": "1.29.0"
+  }
+}
