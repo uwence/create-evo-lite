@@ -35,10 +35,6 @@ const RUNTIME_DEPENDENCIES = {
     '@modelcontextprotocol/sdk': '1.29.0',
 };
 
-function runtimeInstallSpecs() {
-    return Object.entries(RUNTIME_DEPENDENCIES).map(([name, version]) => `${name}@${version}`);
-}
-
 function writeRuntimeManifest(evoLiteDir) {
     const runtimeTemplateDir = path.join(__dirname, 'templates', 'runtime');
     fs.copyFileSync(
@@ -541,7 +537,7 @@ async function runInit(targetDirArg, options = {}) {
     if (!installResult.ok) {
         console.error('\n⚠️ Evo-Lite 脚手架已创建，但运行时依赖未就绪 (scaffold-created / runtime-not-ready)。');
         console.error('   在 .evo-lite 目录完成依赖安装前，bootstrap / 数据库 / archive / MCP 将不可用。');
-        console.error(`   修复: cd .evo-lite && npm install ${runtimeInstallSpecs().join(' ')}`);
+        console.error(`   修复: cd .evo-lite && npm ci`);
         console.error('----------------------------------------------------');
         process.exitCode = 1;
         return;
