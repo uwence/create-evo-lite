@@ -43,6 +43,12 @@ function writeRuntimeManifest(evoLiteDir) {
     fs.copyFileSync(
         path.join(runtimeTemplateDir, 'package-lock.json'),
         path.join(evoLiteDir, 'package-lock.json'));
+    // The shipped runtime manifest is version-pinned (decoupled from the product
+    // version to keep the lockfile stable), so the actual product version travels
+    // via a separate artifact the runtime reads for MCP version reporting.
+    fs.writeFileSync(
+        path.join(evoLiteDir, 'evo-lite-version.json'),
+        JSON.stringify({ version: SELF_VERSION }, null, 2) + '\n');
 }
 
 // Fail-closed runtime dependency install. Returns an explicit readiness verdict
@@ -51,6 +57,12 @@ function writeRuntimeManifest(evoLiteDir) {
 // declare success and exit non-zero. `exec` is injectable for testing.
 function installRuntimeDependencies(evoLiteDir, options = {}) {
     const exec = options.exec || ((cmd, opts) => execSync(cmd, opts));
+    // Always restore the runtime manifest + lockfile first — even when the install is
+    // skipped — so the documented `cd .evo-lite && npm ci` recovery actually has the
+    // files it needs. (`writeManifest: false` is a test-only escape hatch.)
+    if (options.writeManifest !== false) {
+        writeRuntimeManifest(evoLiteDir);
+    }
     if (options.skipInstall) {
         return {
             ok: false,
@@ -60,9 +72,6 @@ function installRuntimeDependencies(evoLiteDir, options = {}) {
         };
     }
     try {
-        if (options.writeManifest !== false) {
-            writeRuntimeManifest(evoLiteDir);
-        }
         // npm ci restores the exact shipped lockfile — deterministic, no resolution.
         exec('npm ci', { cwd: evoLiteDir, stdio: 'inherit' });
         return { ok: true, state: 'runtime-ready', message: '依赖在线安装成功！' };
@@ -581,7 +590,9 @@ function handleCliError(error) {
 module.exports = {
     assertNodeVersion,
     installRuntimeDependencies,
+    writeRuntimeManifest,
     RUNTIME_DEPENDENCIES,
+    SELF_VERSION,
     buildProgram,
     handleCliError,
     installPostCommitHook,

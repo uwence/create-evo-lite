@@ -17,11 +17,17 @@ function getCliDir() {
 }
 
 function getRuntimeVersion() {
-    // Version lives in the runtime's own manifest (.evo-lite/package.json), written
-    // by the initializer. Never read the host project's root package.json — that
-    // crashes non-Node hosts and misreports the host app version as Evo-Lite's.
+    // The runtime package.json (.evo-lite/package.json) is version-pinned for lockfile
+    // stability, so the product version is written by the initializer to a dedicated
+    // artifact. Prefer it; fall back to package.json (older scaffolds), then to 'unknown'
+    // on a non-Node host. Never read the host project's root package.json.
+    const root = getRuntimeRoot();
     try {
-        const pkgPath = path.join(getRuntimeRoot(), 'package.json');
+        const v = JSON.parse(fs.readFileSync(path.join(root, 'evo-lite-version.json'), 'utf8')).version;
+        if (v) return v;
+    } catch (_) { /* fall through to package.json */ }
+    try {
+        const pkgPath = path.join(root, 'package.json');
         return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || 'unknown';
     } catch (_) {
         return 'unknown';

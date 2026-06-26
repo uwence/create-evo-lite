@@ -36,11 +36,14 @@ closure" list. Each item was re-checked against the live code on
    this patch delivers the stronger `npm ci`-against-a-lockfile path R2 named
    first.
 
-2. **`--skip-install` could skip the manifest** — VERIFIED ALREADY FIXED.
-   `writeRuntimeManifest()` is called inside the install branch and the
-   skip-install branch returns before any install
-   ([index.js:57-70](../../../index.js)); no manifest-ordering bug remains. No
-   work.
+2. **`--skip-install` skipped the manifest** — VERDICT CORRECTED: WAS OPEN,
+   FIXED IN 2.0.10-rc2. The original "already fixed" judgment was wrong and is a
+   textbook non-machine-readable-criterion miss: the skip-install branch returned
+   *before* `writeRuntimeManifest()`, so `--offline`/`--skip-install` left
+   `.evo-lite/` with **no** `package.json`/`package-lock.json` while the fail hint
+   still told users to `cd .evo-lite && npm ci` — an unrunnable recovery. The rc2
+   patch moves the manifest copy ahead of the skip return; guard test T18f asserts
+   both assets exist after a skipped install.
 
 3. **Node support contract** — REDUCED. Decision (`2026-06-24`): keep the
    declared floor at `>=20` (phase-1 R1 stands; Node 20 stays covered on Linux);

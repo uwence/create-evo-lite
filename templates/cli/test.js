@@ -788,6 +788,61 @@ async function runGovernanceTests() {
             console.log('✅ T18e shipped runtime manifest matches RUNTIME_DEPENDENCIES');
         }
 
+        console.log('T18f. Testing --skip-install still restores runtime manifest + lockfile ...');
+        {
+            const initializer = require(path.join(WORKSPACE_ROOT, 'index.js'));
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-skip-manifest-'));
+            try {
+                // The fail path prints `cd .evo-lite && npm ci` as the recovery hint; that
+                // command needs both manifest assets, so skip-install must still copy them.
+                const skipped = initializer.installRuntimeDependencies(tmp, { skipInstall: true, exec: () => {} });
+                assert.strictEqual(skipped.skipped, true, 'skip-install must mark skipped');
+                assert.ok(fs.existsSync(path.join(tmp, 'package.json')),
+                    'skip-install must still copy package.json so `npm ci` recovery works');
+                assert.ok(fs.existsSync(path.join(tmp, 'package-lock.json')),
+                    'skip-install must still copy package-lock.json so `npm ci` recovery works');
+            } finally {
+                fs.rmSync(tmp, { recursive: true, force: true });
+            }
+            console.log('✅ T18f skip-install restores manifest + lockfile');
+        }
+
+        console.log('T18g. Testing scaffold product version propagates to getRuntimeVersion (no 1.0.0 regression) ...');
+        {
+            const initializer = require(path.join(WORKSPACE_ROOT, 'index.js'));
+            const runtime = require(path.join(TEMPLATE_CLI_DIR, 'runtime'));
+            assert.ok(typeof initializer.writeRuntimeManifest === 'function', 'index must export writeRuntimeManifest()');
+            assert.ok(typeof initializer.SELF_VERSION === 'string', 'index must export SELF_VERSION');
+            const selfVersion = require(path.join(WORKSPACE_ROOT, 'package.json')).version;
+            assert.strictEqual(initializer.SELF_VERSION, selfVersion,
+                'SELF_VERSION must equal create-evo-lite package.json version');
+            // The shipped runtime manifest is pinned (decoupled from product version) to keep the
+            // lockfile stable, so the product version must travel via a separate scaffold artifact.
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-ver-prop-'));
+            const prev = process.env.EVO_LITE_ROOT;
+            try {
+                initializer.writeRuntimeManifest(tmp);
+                process.env.EVO_LITE_ROOT = tmp;
+                assert.strictEqual(runtime.getRuntimeVersion(), selfVersion,
+                    'scaffolded runtime must advertise the product version, not the pinned 1.0.0 manifest');
+            } finally {
+                if (prev === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prev;
+                fs.rmSync(tmp, { recursive: true, force: true });
+            }
+            console.log('✅ T18g product version propagation');
+        }
+
+        console.log('T18h. Testing root package-lock.json version matches package.json ...');
+        {
+            const pkg = require(path.join(WORKSPACE_ROOT, 'package.json'));
+            const lock = JSON.parse(fs.readFileSync(path.join(WORKSPACE_ROOT, 'package-lock.json'), 'utf8'));
+            assert.strictEqual(lock.version, pkg.version,
+                'root lockfile .version must match package.json version');
+            assert.strictEqual(lock.packages[''].version, pkg.version,
+                'root lockfile packages[""].version must match package.json version');
+            console.log('✅ T18h root lockfile version consistency');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
@@ -1143,9 +1198,12 @@ async function runTests() {
         process.exit(1);
     }
 
-    if (TEST_SCOPE === 'governance') {
+    // 'all' MUST run both suites so `npm test` / CI exercise the governance guards too
+    // (previously 'all' ran integration only, so governance regressions shipped green);
+    // 'governance' runs only the governance suite.
+    if (TEST_SCOPE === 'governance' || TEST_SCOPE === 'all') {
         await runGovernanceTests();
-        return;
+        if (TEST_SCOPE === 'governance') return;
     }
 
     console.log('--- Starting CLI integration tests ---');

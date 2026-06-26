@@ -62,6 +62,17 @@
   pinned `package.json` + `package-lock.json` and installs with `npm ci` instead
   of bare `npm install`, so a given `create-evo-lite` version always restores the
   same runtime dependency tree. Supersedes the ad-hoc install path.
+- **rc2 — `--skip-install`/`--offline` recovery**: a skipped install now still
+  copies the runtime manifest + lockfile, so the documented `cd .evo-lite && npm ci`
+  recovery actually works (previously left an empty `.evo-lite/`).
+- **rc2 — MCP version reporting**: the scaffold now writes `evo-lite-version.json`
+  and the runtime reports the product version, fixing MCP servers advertising the
+  pinned manifest `1.0.0` instead of the real version.
+- **rc2 — version metadata consistency**: the root `package-lock.json` tracks
+  `package.json` (was left at `2.0.9`), guarded by a test.
+- **rc2 — test coverage gap**: `npm test` now runs the governance suite as well as
+  the integration suite (scope `all` previously ran integration only), so the
+  guards above actually execute in CI.
 
 ### Added
 - **Node 24 in the release gate**: the pack-and-consume CI matrix now covers

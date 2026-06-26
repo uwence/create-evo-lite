@@ -1,9 +1,9 @@
 # Release gate for create-evo-lite.
 #
-# STATUS: drafted by release-hardening phase1 Task 4, NOT yet verified on a real
-# runner. It must run green on GitHub Actions once, then be made a REQUIRED check
-# for `main` in the repo branch-protection settings (that step needs repo-admin
-# access and cannot be done from the CLI).
+# STATUS: this gate runs on every PR and push to `main`. It is an INFORMATIONAL
+# gate by default — promoting it to a REQUIRED status check for `main` is a
+# documented manual repo-admin step (branch-protection settings; not enforceable
+# from the CLI). See spec release-hardening-phase1 R4.
 #
 # The runtime test step restores the shipped runtime lockfile with `npm ci`
 # (templates/runtime/package-lock.json), matching the deterministic install the

@@ -105,7 +105,8 @@ informational gate by default, not an automatically-enforced merge block.
 3. **Fail-closed install layer** — install result drives an explicit readiness
    state and process exit code; the completion banner is gated on readiness.
 4. **Release-gate layer** — a GitHub Actions workflow doing the matrix +
-   pack-and-consume smoke test, made a required check on `main`.
+   pack-and-consume smoke test, running as an informational gate on `main`
+   (required-check promotion is a documented manual repo-admin step; see R4).
 
 ## Acceptance Criteria
 
