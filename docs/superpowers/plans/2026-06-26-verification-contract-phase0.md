@@ -43,7 +43,7 @@ governance` runner, the `templates/cli → .evo-lite/cli` mirror flow.
 **Interfaces:**
 - Produces: a JSON asset with `verifierTypes` (object: type → `{ requiredParams: string[], optionalParams: string[] }`), `verdictStates: string[]`, consumed by Task 2/3 validators and the dogfood file-exists criterion.
 
-- [ ] **Step 1: Write the failing test (T28)**
+- [x] **Step 1: Write the failing test (T28)**
 
 Add after the T18h block in [templates/cli/test.js](../../cli/test.js) (inside `runGovernanceTests`):
 
@@ -70,12 +70,12 @@ console.log('T28. Testing verification contract-schema asset shape ...');
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T28 — `ENOENT ... contract-schema.json`.
 
-- [ ] **Step 3: Create the schema asset**
+- [x] **Step 3: Create the schema asset**
 
 Create [templates/cli/verification/contract-schema.json](../../cli/verification/contract-schema.json):
 
@@ -93,7 +93,7 @@ Create [templates/cli/verification/contract-schema.json](../../cli/verification/
 }
 ```
 
-- [ ] **Step 4: Register the asset in the template manifest**
+- [x] **Step 4: Register the asset in the template manifest**
 
 In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add to the managed files array (after the `'planning/backfill-evidence.js'` line):
 
@@ -101,12 +101,12 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add to 
             'verification/contract-schema.json',
 ```
 
-- [ ] **Step 5: Run the test; verify it passes**
+- [x] **Step 5: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T28 contract-schema asset shape`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/contract-schema.json templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/
@@ -126,7 +126,7 @@ git commit -m "feat(verification): ship contract-schema asset (verifier enum + v
 - Consumes: `contract-schema.json` (Task 1) for the type enum + required params.
 - Produces: `validateCriteria(criteria: object[]) -> { id, level, message }[]` (empty array = valid). A finding has `level: 'error'`. Exported from `validate-contract.js`.
 
-- [ ] **Step 1: Write the failing test (T29)**
+- [x] **Step 1: Write the failing test (T29)**
 
 Add after T28 in [templates/cli/test.js](../../cli/test.js):
 
@@ -168,12 +168,12 @@ console.log('T29. Testing validateCriteria rejects malformed criteria ...');
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T29 — `Cannot find module ... validate-contract`.
 
-- [ ] **Step 3: Implement validateCriteria**
+- [x] **Step 3: Implement validateCriteria**
 
 Create [templates/cli/verification/validate-contract.js](../../cli/verification/validate-contract.js):
 
@@ -240,7 +240,7 @@ function validateCriteria(criteria) {
 module.exports = { validateCriteria, SCHEMA };
 ```
 
-- [ ] **Step 4: Register the module in the template manifest**
+- [x] **Step 4: Register the module in the template manifest**
 
 In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add after the `'verification/contract-schema.json'` line:
 
@@ -248,12 +248,12 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add aft
             'verification/validate-contract.js',
 ```
 
-- [ ] **Step 5: Run the test; verify it passes**
+- [x] **Step 5: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T29 validateCriteria`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/validate-contract.js templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/
@@ -272,7 +272,7 @@ git commit -m "feat(verification): validateCriteria — per-type params, depends
 - Consumes: `SCHEMA` (Task 2).
 - Produces: `validateEvidenceRecord(rec) -> finding[]` and `parseSpecCriteria(specText) -> { criteria: object[], error: string|null }`. Both exported from `validate-contract.js`.
 
-- [ ] **Step 1: Write the failing test (T30)**
+- [x] **Step 1: Write the failing test (T30)**
 
 Add after T29 in [templates/cli/test.js](../../cli/test.js):
 
@@ -310,12 +310,12 @@ console.log('T30. Testing validateEvidenceRecord + parseSpecCriteria ...');
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T30 — `validateEvidenceRecord is not a function`.
 
-- [ ] **Step 3: Implement both functions**
+- [x] **Step 3: Implement both functions**
 
 Append to [templates/cli/verification/validate-contract.js](../../cli/verification/validate-contract.js), before `module.exports`:
 
@@ -378,12 +378,12 @@ And update the exports line:
 module.exports = { validateCriteria, validateEvidenceRecord, parseSpecCriteria, SCHEMA };
 ```
 
-- [ ] **Step 4: Run the test; verify it passes**
+- [x] **Step 4: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T30 validateEvidenceRecord + parseSpecCriteria`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/validate-contract.js templates/cli/test.js .evo-lite/cli/
@@ -403,13 +403,13 @@ git commit -m "feat(verification): validateEvidenceRecord + parseSpecCriteria"
 - Consumes: `parseSpecCriteria`, `validateCriteria` (Tasks 2-3).
 - Produces: `registerVerificationCommands(program)` exported from `commands.js`; a `verify-contract lint <specPath>` subcommand printing findings and exiting non-zero on any error-level finding.
 
-- [ ] **Step 1: Confirm the spec's criteria block is authored as JSON**
+- [x] **Step 1: Confirm the spec's criteria block is authored as JSON**
 
 The phase-0 spec already carries its `## Acceptance Criteria` as a fenced ```json
 `{ "criteria": [...] }` block (3 criteria). No edit needed — this step is a
 precondition check: `parseSpecCriteria` (Task 3) must extract exactly those 3.
 
-- [ ] **Step 2: Write the failing test (T31)**
+- [x] **Step 2: Write the failing test (T31)**
 
 Add after T30 in [templates/cli/test.js](../../cli/test.js):
 
@@ -430,12 +430,12 @@ console.log('T31. Testing verify-contract lint validates the phase-0 spec (dogfo
 }
 ```
 
-- [ ] **Step 3: Run it; verify it fails**
+- [x] **Step 3: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T31 — `Cannot find module ... verification/commands`.
 
-- [ ] **Step 4: Implement the CLI command module**
+- [x] **Step 4: Implement the CLI command module**
 
 Create [templates/cli/verification/commands.js](../../cli/verification/commands.js):
 
@@ -477,7 +477,7 @@ function registerVerificationCommands(program) {
 module.exports = { registerVerificationCommands };
 ```
 
-- [ ] **Step 5: Mount the command + register both new files in the manifest**
+- [x] **Step 5: Mount the command + register both new files in the manifest**
 
 In [templates/cli/memory.js:687](../../cli/memory.js) add after the architecture registration:
 
@@ -491,22 +491,22 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add aft
             'verification/commands.js',
 ```
 
-- [ ] **Step 6: Run the test; verify it passes**
+- [x] **Step 6: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T31 verify-contract lint dogfood`.
 
-- [ ] **Step 7: Verify the CLI end-to-end**
+- [x] **Step 7: Verify the CLI end-to-end**
 
 Run: `node ./.evo-lite/cli/memory.js verify-contract lint docs/superpowers/specs/2026-06-26-verification-contract-phase0.md`
 Expected: `✅ 5 criteria valid in ...`.
 
-- [ ] **Step 8: Run the full suite both scopes; confirm green**
+- [x] **Step 8: Run the full suite both scopes; confirm green**
 
 Run: `node ./.evo-lite/cli/test.js governance && node ./.evo-lite/cli/test.js`
 Expected: both `--- ... passed! ---`; process exits 0.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add templates/cli/verification/commands.js templates/cli/memory.js templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/
@@ -526,7 +526,7 @@ git commit -m "feat(verification): mem verify-contract lint + dogfood the phase-
 - Consumes: nothing (pure; caller supplies `headSha` + `changedFiles`).
 - Produces: `deriveVerdicts(criteria, records, headSha, changedFiles) -> [{ criterionId, verdict, detail }]`, exported from `derive-verdicts.js`. `changedFiles` may be `null` (strict `commitSha !== headSha` fallback) or an array of repo-relative paths.
 
-- [ ] **Step 1: Write the failing test (T32)**
+- [x] **Step 1: Write the failing test (T32)**
 
 Add after T31 in [templates/cli/test.js](../../cli/test.js):
 
@@ -563,12 +563,12 @@ console.log('T32. Testing deriveVerdicts four-state model ...');
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T32 — `Cannot find module ... derive-verdicts`.
 
-- [ ] **Step 3: Implement deriveVerdicts**
+- [x] **Step 3: Implement deriveVerdicts**
 
 Create [templates/cli/verification/derive-verdicts.js](../../cli/verification/derive-verdicts.js):
 
@@ -624,7 +624,7 @@ function deriveVerdicts(criteria, records, headSha, changedFiles) {
 module.exports = { deriveVerdicts, globToRegExp };
 ```
 
-- [ ] **Step 4: Register the module in the template manifest**
+- [x] **Step 4: Register the module in the template manifest**
 
 In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add after the `'verification/commands.js'` line:
 
@@ -632,17 +632,17 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add aft
             'verification/derive-verdicts.js',
 ```
 
-- [ ] **Step 5: Run the test; verify it passes**
+- [x] **Step 5: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T32 deriveVerdicts`.
 
-- [ ] **Step 6: Run the full suite both scopes; confirm green**
+- [x] **Step 6: Run the full suite both scopes; confirm green**
 
 Run: `node ./.evo-lite/cli/test.js governance && node ./.evo-lite/cli/test.js`
 Expected: both `--- ... passed! ---`; process exits 0.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add templates/cli/verification/derive-verdicts.js templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/

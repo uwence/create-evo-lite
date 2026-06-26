@@ -1,6 +1,6 @@
 ---
 id: spec:verification-contract-phase0
-status: draft
+status: done
 created: 2026-06-26
 linkedPlan: plan:verification-contract-phase0
 ---
