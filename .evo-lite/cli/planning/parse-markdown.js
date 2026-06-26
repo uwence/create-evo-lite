@@ -137,7 +137,7 @@ function extractSuperPowersFiles(sectionLines) {
         if (/^\*\*Files:\*\*/.test(t)) { inFiles = true; continue; }
         if (inFiles && /^\*\*[A-Z]/.test(t)) { inFiles = false; }
         if (!inFiles) continue;
-        const m = t.match(/^-\s+(?:Create|Modify|Test|Sync):\s*`([^`]+)`/i);
+        const m = t.match(/^-\s+(?:Create|Add|Modify|Test|Sync):\s*`([^`]+)`/i);
         if (m) {
             const p = m[1].trim().replace(/:\d[\d-]*$/, '');
             if (p) files.push(p);

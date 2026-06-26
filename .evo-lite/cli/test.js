@@ -2803,6 +2803,31 @@ async function runTests() {
             console.log('✅ T12 CRLF line-ending handling passed');
         }
 
+        console.log('T12c. Testing extractSuperPowersFiles recognizes the "Add:" Files verb ...');
+        {
+            const { parsePlanFile } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown'));
+            const tmpAddPlan = path.join(os.tmpdir(), 'evo-add-verb-plan.md');
+            const addPlanContent = [
+                '---\nid: plan:add-verb-test\n---\n',
+                '# Add Verb Test Plan\n',
+                '### Task 1: Create a workflow\n',
+                '**Files:**\n',
+                '- Add: `.github/workflows/x.yml`\n',
+                '- [x] **Step 1: Author it**\n',
+                '- [x] **Step 2: Commit**\n',
+            ].join('');
+            fs.writeFileSync(tmpAddPlan, addPlanContent, 'utf8');
+            try {
+                const plan = parsePlanFile(tmpAddPlan);
+                assert.ok(plan, 'Add-verb plan must parse');
+                assert.deepStrictEqual(plan.tasks[0].linkedFiles, ['.github/workflows/x.yml'],
+                    '"- Add:" in a **Files:** block must register as a linkedFile');
+            } finally {
+                fs.rmSync(tmpAddPlan, { force: true });
+            }
+            console.log('✅ T12c Add: Files verb recognized');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);
