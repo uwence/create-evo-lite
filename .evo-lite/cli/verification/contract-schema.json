@@ -1,0 +1,11 @@
+{
+  "version": "evo-verification-contract@1",
+  "verdictStates": ["PASS", "FAIL", "UNVERIFIED", "STALE"],
+  "verifierTypes": {
+    "command":          { "requiredParams": ["cmd"],          "optionalParams": ["cwd", "scope"] },
+    "file-exists":      { "requiredParams": ["path"],         "optionalParams": [] },
+    "file-absent":      { "requiredParams": ["path"],         "optionalParams": [] },
+    "json-path-equals": { "requiredParams": ["file", "path"], "optionalParams": ["equals", "equalsJsonPath"] },
+    "manual":           { "requiredParams": ["reason"],       "optionalParams": [] }
+  }
+}

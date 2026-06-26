@@ -843,6 +843,27 @@ async function runGovernanceTests() {
             console.log('✅ T18h root lockfile version consistency');
         }
 
+        console.log('T28. Testing verification contract-schema asset shape ...');
+        {
+            const schema = JSON.parse(fs.readFileSync(
+                path.join(TEMPLATE_CLI_DIR, 'verification', 'contract-schema.json'), 'utf8'));
+            assert.deepStrictEqual(
+                Object.keys(schema.verifierTypes).sort(),
+                ['command', 'file-absent', 'file-exists', 'json-path-equals', 'manual'],
+                'verifierTypes must be exactly the closed Phase-0 enum');
+            assert.deepStrictEqual(
+                schema.verdictStates.slice().sort(),
+                ['FAIL', 'PASS', 'STALE', 'UNVERIFIED'],
+                'verdictStates must be the four-state model');
+            assert.deepStrictEqual(schema.verifierTypes['command'].requiredParams, ['cmd'],
+                'command requires cmd');
+            assert.deepStrictEqual(schema.verifierTypes['json-path-equals'].requiredParams, ['file', 'path'],
+                'json-path-equals requires file + path');
+            assert.deepStrictEqual(schema.verifierTypes['manual'].requiredParams, ['reason'],
+                'manual requires reason');
+            console.log('✅ T28 contract-schema asset shape');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
