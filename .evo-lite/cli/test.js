@@ -937,6 +937,36 @@ async function runGovernanceTests() {
             console.log('✅ T31 verify-contract lint dogfood');
         }
 
+        console.log('T32. Testing deriveVerdicts four-state model ...');
+        {
+            const { deriveVerdicts } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'derive-verdicts'));
+            const crit = (id, deps) => ({ id, description: 'x', dependsOn: deps, verifier: { type: 'command', params: { cmd: 'x' } } });
+            const criteria = [
+                crit('a', ['index.js']),
+                crit('b', ['index.js']),
+                crit('c', ['index.js']),
+                crit('d', ['templates/runtime/**']),
+                { id: 'e', description: 'x', dependsOn: ['index.js'], verifier: { type: 'manual', params: { reason: 'x' } } },
+            ];
+            const records = [
+                { criterionId: 'b', verdict: 'FAIL', commitSha: 'h', verifierType: 'command' },
+                { criterionId: 'c', verdict: 'PASS', commitSha: 'h', verifierType: 'command' },
+                { criterionId: 'd', verdict: 'PASS', commitSha: 'old', verifierType: 'command' },
+                { criterionId: 'e', verdict: 'PASS', commitSha: 'old', verifierType: 'manual', attestedBy: 'alice' },
+            ];
+            const changed = ['templates/runtime/package.json'];
+            const byId = Object.fromEntries(deriveVerdicts(criteria, records, 'h', changed).map(x => [x.criterionId, x.verdict]));
+            assert.strictEqual(byId.a, 'UNVERIFIED', 'no record → UNVERIFIED');
+            assert.strictEqual(byId.b, 'FAIL', 'recorded FAIL → FAIL');
+            assert.strictEqual(byId.c, 'PASS', 'machine PASS, deps untouched → PASS');
+            assert.strictEqual(byId.d, 'STALE', 'machine PASS, deps in changedFiles → STALE');
+            assert.strictEqual(byId.e, 'PASS', 'manual PASS is STALE-exempt');
+            const strict = deriveVerdicts([crit('c', ['index.js'])],
+                [{ criterionId: 'c', verdict: 'PASS', commitSha: 'old', verifierType: 'command' }], 'h', null);
+            assert.strictEqual(strict[0].verdict, 'STALE', 'no changedFiles + commit!=HEAD → strict STALE');
+            console.log('✅ T32 deriveVerdicts');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
