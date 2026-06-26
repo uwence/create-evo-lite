@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Release Closure Patch (2.0.10) Implementation Plan: all tasks implemented
+Verification Contract Phase 0 Implementation Plan: all tasks implemented
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -21,6 +21,7 @@ Release Closure Patch (2.0.10) Implementation Plan: all tasks implemented
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [f10d2fe] 2026-06-26 verification-contract-phase0-closure: Closure for plan:verification-contract-phase0 (spec done). All 5 tasks shipped TDD-green (governance
 - [f505704] 2026-06-26 release-closure-rc2: Implements plan:release-closure-rc2 (spec:release-closure-rc2). Fixes 3 release blockers an external
 - [7e4d29e] 2026-06-26 release-closure-patch-closure: Closure for plan:release-closure-patch. All 5 tasks verified shipped in code + green tests (exit=0)
 - [27589d7] 2026-06-17 rc-closure-phase3-tests: P2 regression guard requested in RC review:
@@ -30,7 +31,6 @@ Release Closure Patch (2.0.10) Implementation Plan: all tasks implemented
 - [d2226a5] 2026-06-16 rc-closure-phase2-prep: Two RC blockers resolved.
 - [b256b86] 2026-06-16 DogFood: Dogfood governance operator pass: hardened code-only post-commit governance, last-commit plan gaps,
 - [ab967cb] 2026-06-16 mem plan gaps / plan trace / dashboard build / node fixtures/project-control/run-tests.js: dashboard+gaps: 完成 master spec §23 remaining production readiness — verify project_control struct, d
-- [5a3009d] 2026-06-16 fix(archive): namespace fidelity fix complete: archive() writes namespace to raw_memory frontmatter, syncIndexMemo
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
