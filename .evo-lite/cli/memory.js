@@ -686,6 +686,7 @@ function buildProgram() {
 
     require('./planning').registerPlanCommands(program);
     require('./architecture').registerArchitectureCommands(program);
+    require('./verification/commands').registerVerificationCommands(program);
     require('./dashboard-data').registerDashboardCommands(program);
     require('./hooks').registerHookCommands(program);
     require('./sync-runtime').registerSyncRuntimeCommands(program);

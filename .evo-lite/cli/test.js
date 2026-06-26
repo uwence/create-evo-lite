@@ -922,6 +922,21 @@ async function runGovernanceTests() {
             console.log('✅ T30 validateEvidenceRecord + parseSpecCriteria');
         }
 
+        console.log('T31. Testing verify-contract lint validates the phase-0 spec (dogfood) ...');
+        {
+            const { parseSpecCriteria, validateCriteria } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const specPath = path.join(WORKSPACE_ROOT, 'docs', 'superpowers', 'specs', '2026-06-26-verification-contract-phase0.md');
+            const parsed = parseSpecCriteria(fs.readFileSync(specPath, 'utf8'));
+            assert.strictEqual(parsed.error, null, 'phase-0 spec criteria block must parse');
+            assert.ok(parsed.criteria.length >= 3, 'phase-0 spec must declare its own criteria');
+            assert.deepStrictEqual(validateCriteria(parsed.criteria), [],
+                'the phase-0 spec must satisfy its own contract (dogfood)');
+            const commands = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'commands'));
+            assert.strictEqual(typeof commands.registerVerificationCommands, 'function',
+                'commands.js must export registerVerificationCommands');
+            console.log('✅ T31 verify-contract lint dogfood');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
