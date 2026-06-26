@@ -30,7 +30,7 @@
 - Consumes: `RUNTIME_DEPENDENCIES` ([index.js:31-36](../../../index.js)), `evoLiteDir` (the scaffold's `.evo-lite/` absolute path), `options.exec` (injectable, default `execSync`), `options.skipInstall`.
 - Produces: `writeRuntimeManifest(evoLiteDir)` now copies both `templates/runtime/package.json` and `templates/runtime/package-lock.json` into `evoLiteDir`; `installRuntimeDependencies(evoLiteDir, options)` returns the same `{ ok, state, skipped?, error?, message }` shape but runs `npm ci` on the success path.
 
-- [ ] **Step 1: Create the shipped static runtime manifest**
+- [x] **Step 1: Create the shipped static runtime manifest**
 
 Create `templates/runtime/package.json` with a FIXED name/version (decoupled from `SELF_VERSION` so a create-evo-lite version bump never desyncs the lockfile):
 
@@ -48,7 +48,7 @@ Create `templates/runtime/package.json` with a FIXED name/version (decoupled fro
 }
 ```
 
-- [ ] **Step 2: Generate the matching lockfile (no node_modules)**
+- [x] **Step 2: Generate the matching lockfile (no node_modules)**
 
 Run from repo root (resolves the tree from registry metadata without installing or compiling better-sqlite3):
 
@@ -62,7 +62,7 @@ Expected: `templates/runtime/package-lock.json` is created with `"lockfileVersio
 test ! -d templates/runtime/node_modules && echo "OK: no node_modules"
 ```
 
-- [ ] **Step 3: Write the failing guard test (manifest deps == RUNTIME_DEPENDENCIES)**
+- [x] **Step 3: Write the failing guard test (manifest deps == RUNTIME_DEPENDENCIES)**
 
 Add to `templates/cli/test.js` after the T18d block (search `T18d. Testing no template asset`). Use the next free `T18e` id:
 
@@ -85,12 +85,12 @@ console.log('T18e. Testing shipped runtime manifest matches RUNTIME_DEPENDENCIES
 }
 ```
 
-- [ ] **Step 4: Run the guard test to verify it fails**
+- [x] **Step 4: Run the guard test to verify it fails**
 
 Run: `node ./.evo-lite/cli/test.js`
 Expected: FAIL at T18e — `index must export RUNTIME_DEPENDENCIES` (it is not exported yet) OR the deep-equal mismatch if export already present.
 
-- [ ] **Step 5: Export RUNTIME_DEPENDENCIES from index.js**
+- [x] **Step 5: Export RUNTIME_DEPENDENCIES from index.js**
 
 In the `module.exports` block at the bottom of [index.js](../../../index.js) (the one already exporting `installRuntimeDependencies` at line ~586), add `RUNTIME_DEPENDENCIES`:
 
@@ -102,7 +102,7 @@ module.exports = {
 };
 ```
 
-- [ ] **Step 6: Rewrite `writeRuntimeManifest` to copy the shipped assets**
+- [x] **Step 6: Rewrite `writeRuntimeManifest` to copy the shipped assets**
 
 Replace [index.js:42-49](../../../index.js):
 
@@ -118,7 +118,7 @@ function writeRuntimeManifest(evoLiteDir) {
 }
 ```
 
-- [ ] **Step 7: Switch the install command to `npm ci`**
+- [x] **Step 7: Switch the install command to `npm ci`**
 
 In `installRuntimeDependencies` replace the success-path command at [index.js:70](../../../index.js):
 
@@ -129,7 +129,7 @@ In `installRuntimeDependencies` replace the success-path command at [index.js:70
 
 Leave the `writeManifest !== false` guard, the skip-install branch, and the `catch` fail-closed return unchanged.
 
-- [ ] **Step 8: Reconcile the manual-recovery hint to npm ci**
+- [x] **Step 8: Reconcile the manual-recovery hint to npm ci**
 
 The fail-path hint at [index.js:490](../../../index.js) currently tells the user to `npm install <specs>`. Update it to the deterministic path:
 
@@ -139,7 +139,7 @@ The fail-path hint at [index.js:490](../../../index.js) currently tells the user
 
 (Keep `runtimeInstallSpecs()` defined — it is still used by the secondary hint at [index.js:543](../../../index.js); leave that line as-is, it is a different, build-tool-failure branch.)
 
-- [ ] **Step 9: Run tests; reconcile stale runInit harness matchers**
+- [x] **Step 9: Run tests; reconcile stale runInit harness matchers**
 
 Run: `node ./.evo-lite/cli/test.js`
 Two `runInit` integration harnesses stub `execSyncImpl` with a stale string `'npm install better-sqlite3 tar commander'` at [test.js:1916](../../cli/test.js) and [test.js:2045](../../cli/test.js). If either now throws `STOP_AFTER_CHECK` / `UNEXPECTED_COMMAND:npm ci`, change that matcher to the new command:
@@ -152,7 +152,7 @@ Two `runInit` integration harnesses stub `execSyncImpl` with a stale string `'np
 
 (Delete the old `'npm install better-sqlite3 tar commander'` branch — it is dead.)
 
-- [ ] **Step 10: Run the full suite to verify green**
+- [x] **Step 10: Run the full suite to verify green**
 
 Run: `node ./.evo-lite/cli/test.js`
 Expected: PASS — all checkpoints green, including T18c (fail-closed/skip-install) and the new T18e. Confirm the process exits 0:
@@ -162,7 +162,7 @@ node ./.evo-lite/cli/test.js; echo "exit=$?"
 ```
 Expected: final line `exit=0`.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add templates/runtime/package.json templates/runtime/package-lock.json index.js templates/cli/test.js
@@ -180,7 +180,7 @@ git commit -m "feat(runtime): ship lockfile + npm ci for deterministic runtime i
 - Consumes: the shipped `templates/runtime/package-lock.json` from Task 1 (so CI installs via `npm ci`, not ad-hoc).
 - Produces: a matrix proving the packed tarball + `npm ci` runtime install works on the Node-20→24 range.
 
-- [ ] **Step 1: Confirm better-sqlite3 node-24 prebuild availability**
+- [x] **Step 1: Confirm better-sqlite3 node-24 prebuild availability**
 
 better-sqlite3 `12.11.1` install on a runner uses `prebuild-install`. Check whether a Windows x64 node-24 (NODE_MODULE_VERSION 137) prebuild is published:
 
@@ -189,7 +189,7 @@ npm view better-sqlite3@12.11.1 dist.tarball
 ```
 Then inspect the project's prebuild releases on its repo for `better_sqlite3-v12.11.1-node-v137-win32-x64.tar.gz`. Decision rule for Step 2: if a win + node-24 prebuild exists → include `windows-latest` + `node: 24`; if NOT → exclude it with the same rationale already used for win + node-20.
 
-- [ ] **Step 2: Update the matrix**
+- [x] **Step 2: Update the matrix**
 
 In [.github/workflows/release-gate.yml](../../../.github/workflows/release-gate.yml) replace the `node: [20, 22]` line and the `exclude` block:
 
@@ -208,7 +208,7 @@ In [.github/workflows/release-gate.yml](../../../.github/workflows/release-gate.
 
 If Step 1 found a win+node-24 prebuild, delete the second `exclude` entry.
 
-- [ ] **Step 3: Switch the runtime install step to npm ci**
+- [x] **Step 3: Switch the runtime install step to npm ci**
 
 Replace the "Runtime test suite" step body at [.github/workflows/release-gate.yml:51-56](../../../.github/workflows/release-gate.yml):
 
@@ -222,7 +222,7 @@ Replace the "Runtime test suite" step body at [.github/workflows/release-gate.ym
           npm test
 ```
 
-- [ ] **Step 4: Update the stale header comment**
+- [x] **Step 4: Update the stale header comment**
 
 The header at [.github/workflows/release-gate.yml:8-10](../../../.github/workflows/release-gate.yml) says the npm-ci/lockfile work is pending in "Task 2". Replace those lines:
 
@@ -232,7 +232,7 @@ The header at [.github/workflows/release-gate.yml:8-10](../../../.github/workflo
 # initializer performs for consumers.
 ```
 
-- [ ] **Step 5: Validate the workflow YAML locally**
+- [x] **Step 5: Validate the workflow YAML locally**
 
 Run (Node parses YAML structure via the repo's existing deps, or use a quick check):
 
@@ -241,7 +241,7 @@ node -e "const y=require('fs').readFileSync('.github/workflows/release-gate.yml'
 ```
 Expected: `OK workflow updated`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add .github/workflows/release-gate.yml
@@ -259,7 +259,7 @@ git commit -m "ci(release-gate): add Node 24 matrix, install runtime via npm ci"
 - Consumes: nothing.
 - Produces: `SELF_VERSION` (read from `package.json` at [index.js:10](../../../index.js)) becomes `2.0.10`.
 
-- [ ] **Step 1: Bump the version**
+- [x] **Step 1: Bump the version**
 
 In [package.json](../../../package.json) change line 3:
 
@@ -267,7 +267,7 @@ In [package.json](../../../package.json) change line 3:
     "version": "2.0.10",
 ```
 
-- [ ] **Step 2: Add the changelog entry**
+- [x] **Step 2: Add the changelog entry**
 
 Prepend a `2.0.10` section at the top of the entries in [CHANGELOG.md](../../../CHANGELOG.md) (match the file's existing heading style — read the top of the file first and mirror it). Content:
 
@@ -285,7 +285,7 @@ Prepend a `2.0.10` section at the top of the entries in [CHANGELOG.md](../../../
   Node 24 alongside 20 (Linux) and 22, on Linux and Windows.
 ```
 
-- [ ] **Step 3: Verify version propagates**
+- [x] **Step 3: Verify version propagates**
 
 Run:
 
@@ -294,7 +294,7 @@ node -e "console.log(require('./package.json').version)"
 ```
 Expected: `2.0.10`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add package.json CHANGELOG.md
@@ -312,7 +312,7 @@ git commit -m "chore(release): bump version to 2.0.10 with changelog"
 - Consumes: nothing.
 - Produces: a spec whose R4 wording matches the informational gate that actually shipped, so governance drift carries no `error`-level finding about it.
 
-- [ ] **Step 1: Amend the R4 requirement text**
+- [x] **Step 1: Amend the R4 requirement text**
 
 In [docs/superpowers/specs/2026-06-23-release-hardening-phase1.md](../specs/2026-06-23-release-hardening-phase1.md) replace the last sentence of R4 (currently `Merge to `main` MUST require this gate.`) with:
 
@@ -323,7 +323,7 @@ The gate MUST run green on CI for every PR and push to `main`. Promoting it to a
 informational gate by default, not an automatically-enforced merge block.
 ```
 
-- [ ] **Step 2: Amend the matching Acceptance Criteria bullet**
+- [x] **Step 2: Amend the matching Acceptance Criteria bullet**
 
 Replace the final acceptance bullet (currently ends `... the gate is required before merge to `main`.`) with:
 
@@ -334,7 +334,7 @@ Replace the final acceptance bullet (currently ends `... the gate is required be
   step.
 ```
 
-- [ ] **Step 3: Verify no error-level drift remains about R4**
+- [x] **Step 3: Verify no error-level drift remains about R4**
 
 Run the Evo-Lite verify + planning drift:
 
@@ -344,7 +344,7 @@ node ./.evo-lite/cli/memory.js plan gaps
 ```
 Expected: `verify` reports no active alerts; `plan gaps` shows no `error`-level finding referencing the R4 required-check conflict.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-06-23-release-hardening-phase1.md
@@ -358,14 +358,14 @@ git commit -m "docs(spec:release-hardening-phase1): reconcile R4 to shipped info
 **Files:**
 - Modify: `docs/superpowers/specs/2026-06-24-release-closure-patch.md` (status → done, on green)
 
-- [ ] **Step 1: Full suite + exit-code check**
+- [x] **Step 1: Full suite + exit-code check**
 
 ```bash
 node ./.evo-lite/cli/test.js; echo "exit=$?"
 ```
 Expected: all checkpoints green; final line `exit=0`.
 
-- [ ] **Step 2: Prove the packed consumer path locally**
+- [x] **Step 2: Prove the packed consumer path locally**
 
 ```bash
 npm pack
@@ -373,11 +373,11 @@ node -e "const fs=require('fs');const t=fs.readdirSync('.').find(f=>/^create-evo
 ```
 Expected: `OK: tarball ships runtime/package.json + package-lock.json`. Clean up: `rm -rf .pack-check create-evo-lite-*.tgz`.
 
-- [ ] **Step 3: Mark this spec done**
+- [x] **Step 3: Mark this spec done**
 
 In [docs/superpowers/specs/2026-06-24-release-closure-patch.md](2026-06-24-release-closure-patch.md) change frontmatter `status: draft` → `status: done` only after Steps 1-2 are green.
 
-- [ ] **Step 4: Closure commit + governance track**
+- [x] **Step 4: Closure commit + governance track**
 
 ```bash
 git add docs/superpowers/specs/2026-06-24-release-closure-patch.md
