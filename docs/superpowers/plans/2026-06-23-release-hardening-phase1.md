@@ -175,7 +175,7 @@ git commit -m "fix(release): fail-closed dependency install with explicit runtim
 ### Task 4: Add a CI release gate that consumes the packed tarball
 
 **Files:**
-- Add: `.github/workflows/release-gate.yml`
+- Create: `.github/workflows/release-gate.yml`
 
 - [x] **Step 1: Author the matrix workflow**
 
