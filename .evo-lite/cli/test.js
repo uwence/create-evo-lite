@@ -864,6 +864,37 @@ async function runGovernanceTests() {
             console.log('✅ T28 contract-schema asset shape');
         }
 
+        console.log('T29. Testing validateCriteria rejects malformed criteria ...');
+        {
+            const { validateCriteria } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const ok = validateCriteria([{
+                id: 'ac-1', description: 'x', dependsOn: ['index.js'],
+                verifier: { type: 'file-exists', params: { path: 'a' } },
+            }]);
+            assert.deepStrictEqual(ok, [], 'a well-formed criterion must produce no findings');
+            const badType = validateCriteria([{
+                id: 'ac-2', description: 'x', dependsOn: ['a'],
+                verifier: { type: 'sniff', params: {} },
+            }]);
+            assert.ok(badType.some(f => /unknown verifier type/i.test(f.message)), 'unknown type must be flagged');
+            const badParam = validateCriteria([{
+                id: 'ac-3', description: 'x', dependsOn: ['a'],
+                verifier: { type: 'command', params: { scope: 'governance' } },
+            }]);
+            assert.ok(badParam.some(f => /missing required param.*cmd/i.test(f.message)), 'missing cmd must be flagged');
+            const noDeps = validateCriteria([{
+                id: 'ac-4', description: 'x', dependsOn: [],
+                verifier: { type: 'file-exists', params: { path: 'a' } },
+            }]);
+            assert.ok(noDeps.some(f => /dependsOn/i.test(f.message)), 'empty dependsOn must be flagged');
+            const dup = validateCriteria([
+                { id: 'ac-5', description: 'x', dependsOn: ['a'], verifier: { type: 'file-exists', params: { path: 'a' } } },
+                { id: 'ac-5', description: 'y', dependsOn: ['b'], verifier: { type: 'file-exists', params: { path: 'b' } } },
+            ]);
+            assert.ok(dup.some(f => /duplicate criterion id/i.test(f.message)), 'duplicate ids must be flagged');
+            console.log('✅ T29 validateCriteria');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));

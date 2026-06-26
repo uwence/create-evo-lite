@@ -28,6 +28,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'planning/lint.js',
             'planning/backfill-evidence.js',
             'verification/contract-schema.json',
+            'verification/validate-contract.js',
             'architecture.js',
             'architecture/diff.js',
             'architecture/infer-modules.js',
