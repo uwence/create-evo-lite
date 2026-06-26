@@ -57,4 +57,55 @@ function validateCriteria(criteria) {
     return findings;
 }
 
-module.exports = { validateCriteria, SCHEMA };
+function validateEvidenceRecord(rec) {
+    const findings = [];
+    const id = (rec && typeof rec.criterionId === 'string') ? rec.criterionId : '<record>';
+    if (!rec || typeof rec.criterionId !== 'string' || !rec.criterionId) {
+        findings.push(finding(id, 'evidence record needs a string criterionId'));
+    }
+    if (!rec || !SCHEMA.verdictStates.includes(rec.verdict)) {
+        findings.push(finding(id, `verdict must be one of ${SCHEMA.verdictStates.join(', ')}`));
+    }
+    if (!rec || typeof rec.commitSha !== 'string' || !rec.commitSha) {
+        findings.push(finding(id, 'evidence record needs a commitSha'));
+    }
+    if (!rec || !SCHEMA.verifierTypes[rec.verifierType]) {
+        findings.push(finding(id, 'verifierType must be a known type'));
+    }
+    const attested = rec && rec.attestedBy != null && rec.attestedBy !== '';
+    if (rec && rec.verifierType === 'manual' && !attested) {
+        findings.push(finding(id, 'manual evidence requires a non-null attestedBy'));
+    }
+    if (rec && rec.verifierType !== 'manual' && attested) {
+        findings.push(finding(id, 'machine evidence must not carry attestedBy'));
+    }
+    return findings;
+}
+
+function parseSpecCriteria(specText) {
+    const lines = String(specText).split(/\r?\n/);
+    const headIdx = lines.findIndex(l => /^##\s+Acceptance Criteria\s*$/.test(l));
+    if (headIdx === -1) {
+        return { criteria: [], error: 'no "## Acceptance Criteria" heading found' };
+    }
+    let start = -1;
+    for (let i = headIdx + 1; i < lines.length; i++) {
+        if (/^##\s+/.test(lines[i])) break;            // next section, no block
+        if (/^```json\s*$/.test(lines[i])) { start = i + 1; break; }
+    }
+    if (start === -1) {
+        return { criteria: [], error: 'no ```json criteria block under Acceptance Criteria' };
+    }
+    const end = lines.findIndex((l, i) => i >= start && /^```\s*$/.test(l));
+    if (end === -1) {
+        return { criteria: [], error: 'unterminated ```json block' };
+    }
+    try {
+        const parsed = JSON.parse(lines.slice(start, end).join('\n'));
+        return { criteria: Array.isArray(parsed.criteria) ? parsed.criteria : [], error: null };
+    } catch (e) {
+        return { criteria: [], error: `invalid JSON in criteria block: ${e.message}` };
+    }
+}
+
+module.exports = { validateCriteria, validateEvidenceRecord, parseSpecCriteria, SCHEMA };

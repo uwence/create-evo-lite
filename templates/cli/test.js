@@ -895,6 +895,33 @@ async function runGovernanceTests() {
             console.log('✅ T29 validateCriteria');
         }
 
+        console.log('T30. Testing validateEvidenceRecord + parseSpecCriteria ...');
+        {
+            const { validateEvidenceRecord, parseSpecCriteria } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            assert.deepStrictEqual(validateEvidenceRecord({
+                criterionId: 'ac-1', verdict: 'PASS', commitSha: 'abc123',
+                verifierType: 'file-exists', attestedBy: null,
+            }), [], 'a well-formed machine record must produce no findings');
+            assert.ok(validateEvidenceRecord({
+                criterionId: 'ac-1', verdict: 'GREENISH', commitSha: 'abc', verifierType: 'file-exists',
+            }).some(f => /verdict/i.test(f.message)), 'invalid verdict must be flagged');
+            assert.ok(validateEvidenceRecord({
+                criterionId: 'ac-1', verdict: 'PASS', commitSha: 'abc', verifierType: 'manual', attestedBy: null,
+            }).some(f => /attestedBy/i.test(f.message)), 'manual evidence must require attestedBy');
+            assert.ok(validateEvidenceRecord({
+                criterionId: 'ac-1', verdict: 'PASS', commitSha: 'abc', verifierType: 'file-exists', attestedBy: 'alice',
+            }).some(f => /attestedBy/i.test(f.message)), 'machine evidence must not carry attestedBy');
+            const specText = [
+                '# Spec', '', '## Acceptance Criteria', '',
+                '```json', '{ "criteria": [ { "id": "ac-x" } ] }', '```', '',
+            ].join('\n');
+            const parsed = parseSpecCriteria(specText);
+            assert.strictEqual(parsed.error, null, 'parse must succeed');
+            assert.strictEqual(parsed.criteria.length, 1, 'one criterion extracted');
+            assert.strictEqual(parsed.criteria[0].id, 'ac-x', 'criterion id extracted');
+            console.log('✅ T30 validateEvidenceRecord + parseSpecCriteria');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
