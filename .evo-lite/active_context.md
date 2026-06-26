@@ -21,7 +21,8 @@ Release Closure Patch (2.0.10) Implementation Plan: all tasks implemented
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
-- [7e4d29e] 2026-06-26 release-closure-patch-closure: Closure for plan:release-closure-patch. All 5 tasks verified shipped in code + green tests (exit=0) 
+- [f505704] 2026-06-26 release-closure-rc2: Implements plan:release-closure-rc2 (spec:release-closure-rc2). Fixes 3 release blockers an external
+- [7e4d29e] 2026-06-26 release-closure-patch-closure: Closure for plan:release-closure-patch. All 5 tasks verified shipped in code + green tests (exit=0)
 - [27589d7] 2026-06-17 rc-closure-phase3-tests: P2 regression guard requested in RC review:
 - [63a60a6] 2026-06-17 rc-closure-phase3: RC closure phase 3 — last-mile consistency fixes before production dogfood:
 - [8f59a44] 2026-06-16 rc-closure-phase2-dx-closure: Spec marked done (kills R011); plan r008Exempt (kills self-referential R008). Drift floor on dogfood
@@ -30,7 +31,6 @@ Release Closure Patch (2.0.10) Implementation Plan: all tasks implemented
 - [b256b86] 2026-06-16 DogFood: Dogfood governance operator pass: hardened code-only post-commit governance, last-commit plan gaps,
 - [ab967cb] 2026-06-16 mem plan gaps / plan trace / dashboard build / node fixtures/project-control/run-tests.js: dashboard+gaps: 完成 master spec §23 remaining production readiness — verify project_control struct, d
 - [5a3009d] 2026-06-16 fix(archive): namespace fidelity fix complete: archive() writes namespace to raw_memory frontmatter, syncIndexMemo
-- [498e12f] 2026-06-15 feat(providers): all three phases complete: plan:evo-lite-providers-mvp 8/8 complete. Phase 1 provider contract+config loader+scan-native loader
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
