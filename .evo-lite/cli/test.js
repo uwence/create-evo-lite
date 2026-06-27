@@ -997,6 +997,28 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T34. Testing evidence-store read/write (latest-per-criterion, validated) ...');
+        {
+            const store = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-evi-'));
+            try {
+                assert.deepStrictEqual(store.readEvidence(root, 'spec:x').records, {}, 'missing store reads as empty');
+                const rec = { criterionId: 'ac-1', verdict: 'PASS', commitSha: 'abc', verifierType: 'file-exists', ranAt: 't', detail: 'd', attestedBy: null };
+                store.writeRecord(root, 'spec:x', rec);
+                store.writeRecord(root, 'spec:x', { ...rec, commitSha: 'def', detail: 'd2' });
+                const back = store.readEvidence(root, 'spec:x');
+                assert.strictEqual(Object.keys(back.records).length, 1, 'latest-per-criterion: one record');
+                assert.strictEqual(back.records['ac-1'].commitSha, 'def', 'latest record wins');
+                assert.ok(store.evidencePath(root, 'spec:x').endsWith(path.join('verification', 'evidence-x.json')), 'slug strips spec: prefix');
+                assert.throws(() => store.writeRecord(root, 'spec:x', {
+                    criterionId: 'ac-2', verdict: 'PASS', commitSha: 'abc', verifierType: 'manual', ranAt: 't', detail: 'd', attestedBy: null,
+                }), /attestedBy|invalid evidence/i, 'invalid record must throw');
+                console.log('✅ T34 evidence-store');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
