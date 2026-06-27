@@ -1308,6 +1308,36 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T43. Testing close-commands wires --apply and requires a mode flag ...');
+        {
+            const { registerCloseCommands } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-commands'));
+            // Capture the action handler by faking a minimal commander program.
+            let handler = null; const opts = [];
+            const fakeCmd = {
+                description() { return this; },
+                option(flag) { opts.push(flag); return this; },
+                action(fn) { handler = fn; return this; },
+            };
+            const program = { command() { return fakeCmd; } };
+            registerCloseCommands(program);
+            assert.ok(typeof handler === 'function', 'close command registers an action handler');
+            assert.ok(opts.some(o => /--apply/.test(o)), 'an --apply option is declared');
+
+            const logs = []; const errs = [];
+            const origLog = console.log; const origErr = console.error;
+            console.log = (...a) => logs.push(a.join(' '));
+            console.error = (...a) => errs.push(a.join(' '));
+            try {
+                process.exitCode = 0;
+                handler('some-spec.md', { /* neither flag */ });
+                assert.ok(errs.some(e => /specify --preview or --apply/.test(e)), 'neither flag errors');
+                assert.strictEqual(process.exitCode, 1, 'neither flag exits non-zero');
+            } finally {
+                console.log = origLog; console.error = origErr; process.exitCode = 0;
+            }
+            console.log('✅ T43 close-commands --apply wiring');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
