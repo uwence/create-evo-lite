@@ -16,7 +16,7 @@ function defaultBackfill(root) {
 
 function defaultScan(root) {
     const { scanPlanning, writePlanIR } = require('../planning/scan');
-    return writePlanIR(root, scanPlanning(root));
+    return writePlanIR(scanPlanning(root), root);
 }
 
 function slugFor(fm, specPath) {
@@ -115,4 +115,4 @@ function applyClose(specPath, opts = {}) {
     return { applied: true, readiness: 'READY', actions, journalPath, staged };
 }
 
-module.exports = { applyClose, setStatusDone, slugFor };
+module.exports = { applyClose, setStatusDone, slugFor, defaultScan, defaultBackfill };
