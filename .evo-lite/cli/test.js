@@ -1174,6 +1174,170 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T40. Testing applyClose fail-closed gates (dirty tree / not READY) ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-apply-gate-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                const body = [
+                    '---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '',
+                    '# T', '', '## Acceptance Criteria', '',
+                    '```json', '{ "criteria": [ { "id": "ac-1", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } } ] }', '```', '',
+                ].join('\n');
+                fs.writeFileSync(specPath, body);
+
+                // dirty tree → refuse before any preview/mutation
+                let previewCalled = false;
+                const dirty = applyClose(specPath, {
+                    root,
+                    exec: () => 'M some/file.js\n',
+                    previewFn: () => { previewCalled = true; return { readiness: 'READY' }; },
+                });
+                assert.strictEqual(dirty.applied, false, 'dirty tree must refuse');
+                assert.strictEqual(dirty.refused, 'dirty-tree', 'refusal reason names dirty tree');
+                assert.strictEqual(previewCalled, false, 'dirty-tree gate runs before previewClose');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), body, 'dirty refusal mutates nothing');
+
+                // clean tree but BLOCKED → refuse, surface blockers
+                const blocked = applyClose(specPath, {
+                    root,
+                    exec: () => '',
+                    previewFn: () => ({ readiness: 'BLOCKED', blockers: [{ criterionId: 'ac-1', verdict: 'STALE', remedy: 're-run' }] }),
+                });
+                assert.strictEqual(blocked.applied, false, 'BLOCKED must refuse');
+                assert.strictEqual(blocked.refused, 'BLOCKED', 'refusal reason is the readiness');
+                assert.strictEqual(blocked.blockers[0].criterionId, 'ac-1', 'blockers passed through');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), body, 'BLOCKED refusal mutates nothing');
+
+                // NO-CONTRACT → refuse with note
+                const none = applyClose(specPath, {
+                    root,
+                    exec: () => '',
+                    previewFn: () => ({ readiness: 'NO-CONTRACT', note: 'no machine-readable acceptance criteria' }),
+                });
+                assert.strictEqual(none.applied, false, 'NO-CONTRACT must refuse');
+                assert.strictEqual(none.refused, 'NO-CONTRACT', 'refusal reason is NO-CONTRACT');
+                assert.ok(/no machine-readable/.test(none.note), 'NO-CONTRACT note passed through');
+
+                console.log('✅ T40 applyClose gates');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T41. Testing applyClose performs all three mutations on READY ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-apply-do-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, [
+                    '---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', '',
+                ].join('\n'));
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                fs.writeFileSync(planAbs, '# P\n\n- [ ] Step one\n- [ ] Step two\n');
+
+                const staged = [];
+                const result = applyClose(specPath, {
+                    root,
+                    now: '2026-06-27T00:00:00.000Z',
+                    exec: (args) => { if (args[0] === 'status') return ''; if (args[0] === 'add') { staged.push(...args.slice(1)); return ''; } return ''; },
+                    previewFn: () => ({ readiness: 'READY', blockers: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, tasksTotal: 2, uncheckedBoxes: 2 } }),
+                    backfillFn: (r) => { fs.mkdirSync(path.join(r, '.evo-lite', 'generated', 'planning'), { recursive: true }); fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'archive-evidence.json'), '{"backfilled":true}\n'); },
+                    scanFn: (r) => { fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), '{"rescanned":true}\n'); },
+                });
+
+                assert.strictEqual(result.applied, true, 'READY → applied');
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), '# P\n\n- [x] Step one\n- [x] Step two\n', 'all checkboxes flipped');
+                assert.ok(/^status: done$/m.test(fs.readFileSync(specPath, 'utf8')), 'spec status set to done');
+                assert.ok(fs.existsSync(path.join(root, '.evo-lite', 'generated', 'planning', 'archive-evidence.json')), 'R008 backfill ran');
+                assert.ok(fs.existsSync(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json')), 'IR rescan ran');
+                assert.ok(result.journalPath && fs.existsSync(result.journalPath), 'journal written');
+                const journal = JSON.parse(fs.readFileSync(result.journalPath, 'utf8'));
+                assert.strictEqual(journal.status, 'applied', 'journal marked applied on success');
+                assert.strictEqual(journal.createdAt, '2026-06-27T00:00:00.000Z', 'journal records supplied now');
+                assert.ok(staged.includes(planRel), 'plan file staged');
+                assert.ok(result.actions.some(a => /flip/.test(a)) && result.actions.some(a => /status: done/.test(a)) && result.actions.some(a => /R008/.test(a)), 'actions describe all three mutations');
+
+                console.log('✅ T41 applyClose mutations');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T42. Testing applyClose rolls back every file on mid-apply failure ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-apply-rb-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                const specBefore = ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n');
+                fs.writeFileSync(specPath, specBefore);
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                const planBefore = '# P\n\n- [ ] Step one\n- [ ] Step two\n';
+                fs.writeFileSync(planAbs, planBefore);
+
+                const result = applyClose(specPath, {
+                    root,
+                    now: '2026-06-27T00:00:00.000Z',
+                    exec: (args) => (args[0] === 'status' ? '' : ''),
+                    previewFn: () => ({ readiness: 'READY', blockers: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, tasksTotal: 2, uncheckedBoxes: 2 } }),
+                    backfillFn: () => { throw new Error('boom in backfill'); },
+                    scanFn: () => { throw new Error('should not reach scan'); },
+                });
+
+                assert.strictEqual(result.applied, false, 'failed apply is not applied');
+                assert.strictEqual(result.aborted, true, 'result flags aborted');
+                assert.ok(/boom/.test(result.error), 'error surfaced');
+                // Files restored byte-for-byte (mutations before the throw are undone).
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), planBefore, 'plan restored to prior bytes');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specBefore, 'spec restored to prior bytes');
+                const journal = JSON.parse(fs.readFileSync(result.journalPath, 'utf8'));
+                assert.strictEqual(journal.status, 'aborted', 'journal marked aborted');
+
+                console.log('✅ T42 applyClose rollback');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T43. Testing close-commands wires --apply and requires a mode flag ...');
+        {
+            const { registerCloseCommands } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-commands'));
+            // Capture the action handler by faking a minimal commander program.
+            let handler = null; const opts = [];
+            const fakeCmd = {
+                description() { return this; },
+                option(flag) { opts.push(flag); return this; },
+                action(fn) { handler = fn; return this; },
+            };
+            const program = { command() { return fakeCmd; } };
+            registerCloseCommands(program);
+            assert.ok(typeof handler === 'function', 'close command registers an action handler');
+            assert.ok(opts.some(o => /--apply/.test(o)), 'an --apply option is declared');
+
+            const logs = []; const errs = [];
+            const origLog = console.log; const origErr = console.error;
+            console.log = (...a) => logs.push(a.join(' '));
+            console.error = (...a) => errs.push(a.join(' '));
+            try {
+                process.exitCode = 0;
+                handler('some-spec.md', { /* neither flag */ });
+                assert.ok(errs.some(e => /specify --preview or --apply/.test(e)), 'neither flag errors');
+                assert.strictEqual(process.exitCode, 1, 'neither flag exits non-zero');
+            } finally {
+                console.log = origLog; console.error = origErr; process.exitCode = 0;
+            }
+            console.log('✅ T43 close-commands --apply wiring');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
