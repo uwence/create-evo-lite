@@ -1150,6 +1150,30 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T39. Testing close-commands export + previewClose is read-only ...');
+        {
+            const commands = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-commands'));
+            const { previewClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            assert.strictEqual(typeof commands.registerCloseCommands, 'function', 'close-commands must export registerCloseCommands');
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-close-ro-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                const body = [
+                    '---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '',
+                    '# T', '', '## Acceptance Criteria', '',
+                    '```json', '{ "criteria": [ { "id": "ac-1", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } } ] }', '```', '',
+                ].join('\n');
+                fs.writeFileSync(specPath, body);
+                const before = fs.readdirSync(root).sort();
+                previewClose(specPath, { root, planStateFn: () => ({ planId: 'plan:t', found: false, tasksTotal: 0, tasksImplemented: 0, uncheckedBoxes: 0 }), statusFn: () => [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }] });
+                assert.deepStrictEqual(fs.readdirSync(root).sort(), before, 'previewClose must not create/remove files');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), body, 'previewClose must not modify the spec');
+                console.log('✅ T39 close-commands + read-only');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
