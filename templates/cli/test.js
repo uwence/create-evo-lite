@@ -1269,6 +1269,45 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T42. Testing applyClose rolls back every file on mid-apply failure ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-apply-rb-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                const specBefore = ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n');
+                fs.writeFileSync(specPath, specBefore);
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                const planBefore = '# P\n\n- [ ] Step one\n- [ ] Step two\n';
+                fs.writeFileSync(planAbs, planBefore);
+
+                const result = applyClose(specPath, {
+                    root,
+                    now: '2026-06-27T00:00:00.000Z',
+                    exec: (args) => (args[0] === 'status' ? '' : ''),
+                    previewFn: () => ({ readiness: 'READY', blockers: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, tasksTotal: 2, uncheckedBoxes: 2 } }),
+                    backfillFn: () => { throw new Error('boom in backfill'); },
+                    scanFn: () => { throw new Error('should not reach scan'); },
+                });
+
+                assert.strictEqual(result.applied, false, 'failed apply is not applied');
+                assert.strictEqual(result.aborted, true, 'result flags aborted');
+                assert.ok(/boom/.test(result.error), 'error surfaced');
+                // Files restored byte-for-byte (mutations before the throw are undone).
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), planBefore, 'plan restored to prior bytes');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specBefore, 'spec restored to prior bytes');
+                const journal = JSON.parse(fs.readFileSync(result.journalPath, 'utf8'));
+                assert.strictEqual(journal.status, 'aborted', 'journal marked aborted');
+
+                console.log('✅ T42 applyClose rollback');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
