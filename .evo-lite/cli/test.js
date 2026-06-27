@@ -1338,6 +1338,25 @@ async function runGovernanceTests() {
             console.log('✅ T43 close-commands --apply wiring');
         }
 
+        console.log('T44. Testing applyClose defaultScan/defaultBackfill call planning with the real signature ...');
+        {
+            // Regression: T41 injects scanFn, masking the real defaultScan. The live --apply
+            // dogfood caught writePlanIR(ir, root) being called as writePlanIR(root, ir).
+            // Exercise the REAL defaultScan/defaultBackfill against a temp root.
+            const { defaultScan, defaultBackfill } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-apply-scan-'));
+            try {
+                const irPath = defaultScan(root);
+                assert.strictEqual(typeof irPath, 'string', 'defaultScan returns the plan-ir path (string), not a thrown Object-as-path');
+                assert.ok(fs.existsSync(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json')), 'defaultScan writes plan-ir.json');
+                const bf = defaultBackfill(root);
+                assert.ok(bf && typeof bf === 'object', 'defaultBackfill returns a result object');
+                console.log('✅ T44 applyClose real planning signature');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
