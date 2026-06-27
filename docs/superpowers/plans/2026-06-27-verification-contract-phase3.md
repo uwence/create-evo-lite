@@ -28,7 +28,7 @@
 - Consumes: `previewClose(specPath, opts)` from `./close-preview` (Phase 2) returning `{ readiness, blockers, note, plan, actions }`.
 - Produces: `applyClose(specPath, opts) -> { applied, refused?, readiness, blockers?, note?, message? }`. `opts`: `{ root, exec, previewFn, now, backfillFn, scanFn }`. `exec(argsArray) -> string` is a git runner (default: `git` via `execFileSync` in `root`). `previewFn(specPath) -> previewResult` (default: `previewClose(specPath, { root })`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add this block immediately after the `T39` block (before the `T19.` block) in the `runGovernanceTests()` function in `templates/cli/test.js`:
 
@@ -86,12 +86,12 @@ Add this block immediately after the `T39` block (before the `T19.` block) in th
         }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL — `Cannot find module '.../verification/close-apply'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `templates/cli/verification/close-apply.js`:
 
@@ -133,12 +133,12 @@ function applyClose(specPath, opts = {}) {
 module.exports = { applyClose };
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T40 applyClose gates`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/close-apply.js templates/cli/test.js
@@ -158,7 +158,7 @@ git commit -m "feat(verification): applyClose fail-closed gates (dirty-tree / no
 - Consumes: `backfillArchiveEvidence(root)` from `../planning/backfill-evidence`; `scanPlanning(root)` + `writePlanIR(root, ir)` from `../planning/scan`; `parseFrontmatter` from `../planning/parse-markdown`.
 - Produces: on READY, `applyClose` returns `{ applied: true, readiness: 'READY', actions: string[], journalPath: string, staged: string[] }` and writes `.evo-lite/verification/close-journal-<slug>.json` with `status: 'applied'`. `opts.backfillFn(root)` and `opts.scanFn(root)` are injectable (defaults call the planning modules); `opts.now` is the journal `createdAt` string.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add this block immediately after the `T40` block in `runGovernanceTests()`:
 
@@ -175,7 +175,7 @@ Add this block immediately after the `T40` block in `runGovernanceTests()`:
                 ].join('\n'));
                 const planRel = 'docs/p.md';
                 const planAbs = path.join(root, planRel);
-                fs.writeFileSync(planAbs, '# P\n\n- [ ] Step one\n- [ ] Step two\n');
+                fs.writeFileSync(planAbs, '# P\n\n- [x] Step one\n- [x] Step two\n');
 
                 const staged = [];
                 const result = applyClose(specPath, {
@@ -207,12 +207,12 @@ Add this block immediately after the `T40` block in `runGovernanceTests()`:
         }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL — `READY → applied` (`applied` is `false`, returns `not-implemented`).
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Replace the entire `close-apply.js` body with the full engine. Note the added requires, the `slugFor`/`setStatusDone`/`defaultBackfill`/`defaultScan`/`writeJournal` helpers, and the journal-then-apply block that replaces the Task-1 `not-implemented` stub:
 
@@ -337,12 +337,12 @@ function applyClose(specPath, opts = {}) {
 module.exports = { applyClose, setStatusDone, slugFor };
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T41 applyClose mutations` (and `T40` still green).
 
-- [ ] **Step 5: Register the managed file**
+- [x] **Step 5: Register the managed file**
 
 In `templates/cli/template-manifest.js`, add `'verification/close-apply.js',` to the `core-cli` family `files` array, immediately after the `'verification/close-commands.js',` line (currently line 39):
 
@@ -351,7 +351,7 @@ In `templates/cli/template-manifest.js`, add `'verification/close-apply.js',` to
             'verification/close-apply.js',
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/close-apply.js templates/cli/template-manifest.js templates/cli/test.js
@@ -368,7 +368,7 @@ git commit -m "feat(verification): applyClose journaled mutations + staging on R
 **Interfaces:**
 - Consumes: `applyClose` from Task 2 (the `try/catch` rollback path is already implemented; this task proves it). No production code change expected — if the test fails, fix the rollback block in `close-apply.js`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add this block immediately after the `T41` block in `runGovernanceTests()`:
 
@@ -384,7 +384,7 @@ Add this block immediately after the `T41` block in `runGovernanceTests()`:
                 fs.writeFileSync(specPath, specBefore);
                 const planRel = 'docs/p.md';
                 const planAbs = path.join(root, planRel);
-                const planBefore = '# P\n\n- [ ] Step one\n- [ ] Step two\n';
+                const planBefore = '# P\n\n- [x] Step one\n- [x] Step two\n';
                 fs.writeFileSync(planAbs, planBefore);
 
                 const result = applyClose(specPath, {
@@ -413,14 +413,14 @@ Add this block immediately after the `T41` block in `runGovernanceTests()`:
         }
 ```
 
-- [ ] **Step 2: Run test to verify it passes (rollback already implemented in Task 2)**
+- [x] **Step 2: Run test to verify it passes (rollback already implemented in Task 2)**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T42 applyClose rollback`. The checkbox flip and spec-status write happen before `backfillFn` throws, so this proves both are reverted.
 
 If it FAILS (files not restored), the bug is in the `catch` block of `close-apply.js`: ensure it iterates `entries` and rewrites `priorBytes` (or `unlinkSync` when `priorBytes === null`) before returning.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add templates/cli/test.js
@@ -439,7 +439,7 @@ git commit -m "test(verification): applyClose rollback restores prior bytes on f
 - Consumes: `applyClose` from `./close-apply`.
 - Produces: `mem close <spec> --apply [--json]` calls `applyClose` and prints actions/journal/staged; `--json` emits the result object; passing neither `--preview` nor `--apply` errors `specify --preview or --apply` with exit 1.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add this block immediately after the `T42` block in `runGovernanceTests()`:
 
@@ -475,12 +475,12 @@ Add this block immediately after the `T42` block in `runGovernanceTests()`:
         }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL — `an --apply option is declared` (the option exists but the neither-flag message is still `--apply not yet implemented (Phase 3); use --preview`, so `specify --preview or --apply` is not found / exit logic differs).
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Replace the body of `templates/cli/verification/close-commands.js` with:
 
@@ -545,12 +545,12 @@ function registerCloseCommands(program) {
 module.exports = { registerCloseCommands };
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T43 close-commands --apply wiring`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/close-commands.js templates/cli/test.js
@@ -569,19 +569,19 @@ git commit -m "feat(verification): mem close --apply CLI wiring (preview|apply r
 **Interfaces:**
 - Consumes: the `mem` CLI from the synced `.evo-lite/cli` mirror; `mem verify-contract run|status`, `mem close --preview|--apply`.
 
-- [ ] **Step 1: Run the full test suite (both scopes)**
+- [x] **Step 1: Run the full test suite (both scopes)**
 
 Run: `npm test`
 Expected: TWO `passed!` lines (governance T13–T43 then integration), exit 0. If governance modules can't be found via the mirror, that is expected here — `npm test` runs against `templates/cli`. Fix any real failure before continuing.
 
-- [ ] **Step 2: Sync the runtime mirror so the live CLI sees `close-apply.js`**
+- [x] **Step 2: Sync the runtime mirror so the live CLI sees `close-apply.js`**
 
 Run (PowerShell): `.\.evo-lite\mem.cmd sync-runtime` — repeat 2–3× if the report shows a partial `copied:` count (known partial-mirror self-brick; see memory). Then hand-verify the new file mirrored:
 
 Run (bash): `ls .evo-lite/cli/verification/close-apply.js`
 Expected: the file exists. If sync refuses to copy it, hand-copy: `cp templates/cli/verification/close-apply.js .evo-lite/cli/verification/close-apply.js` and re-run sync once to update the lock.
 
-- [ ] **Step 3: Bind contract evidence at a clean HEAD, then dogfood the closure**
+- [x] **Step 3: Bind contract evidence at a clean HEAD, then dogfood the closure**
 
 The Phase-3 spec declares 5 criteria whose verifier is `node ./.evo-lite/cli/test.js governance`. With the working tree committed clean:
 
@@ -592,7 +592,7 @@ git status --porcelain   # must be empty
 ```
 Expected: `run` writes 5 PASS records (all `dependsOn` files exist, governance suite exits 0); `close --preview --strict` prints `readiness: READY` and exits 0. If BLOCKED, read the blocker remedy, resolve, re-run.
 
-- [ ] **Step 4: Capstone — actually close the spec with `--apply`**
+- [x] **Step 4: Capstone — actually close the spec with `--apply`**
 
 ```bash
 .\.evo-lite\mem.cmd close docs/superpowers/specs/2026-06-27-verification-contract-phase3.md --apply
@@ -604,7 +604,7 @@ git diff --cached --name-only   # the staged closure files
 ```
 Expected: plan + spec + `archive-evidence.json` + `plan-ir.json`. The plan's checkboxes are all `- [x]`, the spec frontmatter is `status: done`, and `.evo-lite/verification/close-journal-verification-contract-phase3.json` has `status: "applied"`.
 
-- [ ] **Step 5: Confirm drift is clean and commit the closure**
+- [x] **Step 5: Confirm drift is clean and commit the closure**
 
 ```bash
 .\.evo-lite\mem.cmd plan scan
