@@ -967,6 +967,36 @@ async function runGovernanceTests() {
             console.log('✅ T32 deriveVerdicts');
         }
 
+        console.log('T33. Testing runVerifier for the four machine verifier types ...');
+        {
+            const { runVerifier } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'run-verifiers'));
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-verify-'));
+            try {
+                const passCmd = runVerifier({ verifier: { type: 'command', params: { cmd: 'x' } } },
+                    { repoRoot: tmp, exec: () => 'ok' });
+                assert.strictEqual(passCmd.verdict, 'PASS', 'command exit 0 → PASS');
+                const failCmd = runVerifier({ verifier: { type: 'command', params: { cmd: 'x' } } },
+                    { repoRoot: tmp, exec: () => { const e = new Error('boom'); e.status = 2; throw e; } });
+                assert.strictEqual(failCmd.verdict, 'FAIL', 'command non-zero → FAIL');
+                fs.writeFileSync(path.join(tmp, 'here.txt'), 'x');
+                assert.strictEqual(runVerifier({ verifier: { type: 'file-exists', params: { path: 'here.txt' } } }, { repoRoot: tmp }).verdict, 'PASS');
+                assert.strictEqual(runVerifier({ verifier: { type: 'file-exists', params: { path: 'nope.txt' } } }, { repoRoot: tmp }).verdict, 'FAIL');
+                assert.strictEqual(runVerifier({ verifier: { type: 'file-absent', params: { path: 'nope.txt' } } }, { repoRoot: tmp }).verdict, 'PASS');
+                fs.writeFileSync(path.join(tmp, 'lock.json'), JSON.stringify({ packages: { '': { version: '2.0.10' } } }));
+                fs.writeFileSync(path.join(tmp, 'pkg.json'), JSON.stringify({ version: '2.0.10' }));
+                const jeq = runVerifier({ verifier: { type: 'json-path-equals', params: {
+                    file: 'lock.json', path: ['packages', '', 'version'],
+                    equalsJsonPath: { file: 'pkg.json', path: ['version'] } } } }, { repoRoot: tmp });
+                assert.strictEqual(jeq.verdict, 'PASS', 'matching json paths (incl empty key) → PASS');
+                const jne = runVerifier({ verifier: { type: 'json-path-equals', params: {
+                    file: 'lock.json', path: ['packages', '', 'version'], equals: '9.9.9' } } }, { repoRoot: tmp });
+                assert.strictEqual(jne.verdict, 'FAIL', 'mismatching literal → FAIL');
+                console.log('✅ T33 runVerifier');
+            } finally {
+                fs.rmSync(tmp, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));

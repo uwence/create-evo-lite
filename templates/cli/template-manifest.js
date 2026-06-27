@@ -31,6 +31,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'verification/validate-contract.js',
             'verification/commands.js',
             'verification/derive-verdicts.js',
+            'verification/run-verifiers.js',
             'architecture.js',
             'architecture/diff.js',
             'architecture/infer-modules.js',
