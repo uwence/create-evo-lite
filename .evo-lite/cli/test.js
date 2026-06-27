@@ -1019,6 +1019,29 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T35. Testing computeLiveVerdicts per-criterion changedFiles ...');
+        {
+            const { computeLiveVerdicts } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'compute-status'));
+            const crit = (id, deps) => ({ id, description: 'x', dependsOn: deps, verifier: { type: 'command', params: { cmd: 'x' } } });
+            const criteria = [crit('a', ['index.js']), crit('b', ['index.js']), crit('c', ['src/**']), crit('d', ['index.js'])];
+            const records = {
+                b: { criterionId: 'b', verdict: 'PASS', commitSha: 'sha-b', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null },
+                c: { criterionId: 'c', verdict: 'PASS', commitSha: 'sha-c', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null },
+                d: { criterionId: 'd', verdict: 'PASS', commitSha: 'gone', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null },
+            };
+            const gitDiff = (sha) => {
+                if (sha === 'sha-b') return [];
+                if (sha === 'sha-c') return ['src/app.js'];
+                return null;
+            };
+            const byId = Object.fromEntries(computeLiveVerdicts(criteria, records, 'HEAD', gitDiff).map(v => [v.criterionId, v.verdict]));
+            assert.strictEqual(byId.a, 'UNVERIFIED', 'no record → UNVERIFIED');
+            assert.strictEqual(byId.b, 'PASS', 'record, deps untouched → PASS');
+            assert.strictEqual(byId.c, 'STALE', 'record, deps changed since its commit → STALE');
+            assert.strictEqual(byId.d, 'STALE', 'unreachable commit → STALE');
+            console.log('✅ T35 computeLiveVerdicts');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
