@@ -47,7 +47,7 @@ mirror flow.
 - Consumes: nothing (pure; `exec`/`fs` via opts/defaults).
 - Produces: `runVerifier(criterion, opts) -> { verdict: 'PASS'|'FAIL', detail: string }`. `opts`: `{ repoRoot?, exec? }`. `exec(cmd, options)` returns stdout (throws with `.status`/`.stdout` on non-zero, like `execSync`).
 
-- [ ] **Step 1: Write the failing test (T33)**
+- [x] **Step 1: Write the failing test (T33)**
 
 Add after the T32 block in [templates/cli/test.js](../../cli/test.js):
 
@@ -86,12 +86,12 @@ console.log('T33. Testing runVerifier for the four machine verifier types ...');
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T33 — `Cannot find module ... run-verifiers`.
 
-- [ ] **Step 3: Implement run-verifiers.js**
+- [x] **Step 3: Implement run-verifiers.js**
 
 Create [templates/cli/verification/run-verifiers.js](../../cli/verification/run-verifiers.js):
 
@@ -183,7 +183,7 @@ function runVerifier(criterion, opts = {}) {
 module.exports = { runVerifier, getByKeyPath };
 ```
 
-- [ ] **Step 4: Register in the manifest**
+- [x] **Step 4: Register in the manifest**
 
 In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add after the `'verification/derive-verdicts.js'` line:
 
@@ -191,12 +191,12 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add aft
             'verification/run-verifiers.js',
 ```
 
-- [ ] **Step 5: Run the test; verify it passes**
+- [x] **Step 5: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T33 runVerifier`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/run-verifiers.js templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/
@@ -216,7 +216,7 @@ git commit -m "feat(verification): runVerifier — execute the four machine veri
 - Consumes: `validateEvidenceRecord` (Phase 0).
 - Produces: `evidencePath(root, specId)`, `readEvidence(root, specId) -> { version, specId, records }`, `writeRecord(root, specId, record) -> store` (throws on an invalid record). Slug strips the `spec:` prefix.
 
-- [ ] **Step 1: Write the failing test (T34)**
+- [x] **Step 1: Write the failing test (T34)**
 
 Add after T33 in [templates/cli/test.js](../../cli/test.js):
 
@@ -246,12 +246,12 @@ console.log('T34. Testing evidence-store read/write (latest-per-criterion, valid
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T34 — `Cannot find module ... evidence-store`.
 
-- [ ] **Step 3: Implement evidence-store.js**
+- [x] **Step 3: Implement evidence-store.js**
 
 Create [templates/cli/verification/evidence-store.js](../../cli/verification/evidence-store.js):
 
@@ -294,7 +294,7 @@ function writeRecord(root, specId, record) {
 module.exports = { evidenceSlug, evidencePath, readEvidence, writeRecord };
 ```
 
-- [ ] **Step 4: Register in the manifest**
+- [x] **Step 4: Register in the manifest**
 
 In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add after the `'verification/run-verifiers.js'` line:
 
@@ -302,12 +302,12 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add aft
             'verification/evidence-store.js',
 ```
 
-- [ ] **Step 5: Run the test; verify it passes**
+- [x] **Step 5: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T34 evidence-store`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/evidence-store.js templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/
@@ -327,7 +327,7 @@ git commit -m "feat(verification): evidence-store — latest-per-criterion valid
 - Consumes: `deriveVerdicts` (Phase 0).
 - Produces: `computeLiveVerdicts(criteria, records, headSha, gitDiff) -> [{ criterionId, verdict, detail }]`. `records` is the `{ criterionId: record }` map. `gitDiff(commitSha) -> string[] | null` (null = unreachable commit → STALE).
 
-- [ ] **Step 1: Write the failing test (T35)**
+- [x] **Step 1: Write the failing test (T35)**
 
 Add after T34 in [templates/cli/test.js](../../cli/test.js):
 
@@ -357,12 +357,12 @@ console.log('T35. Testing computeLiveVerdicts per-criterion changedFiles ...');
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T35 — `Cannot find module ... compute-status`.
 
-- [ ] **Step 3: Implement compute-status.js**
+- [x] **Step 3: Implement compute-status.js**
 
 Create [templates/cli/verification/compute-status.js](../../cli/verification/compute-status.js):
 
@@ -395,7 +395,7 @@ function computeLiveVerdicts(criteria, records, headSha, gitDiff) {
 module.exports = { computeLiveVerdicts };
 ```
 
-- [ ] **Step 4: Register in the manifest**
+- [x] **Step 4: Register in the manifest**
 
 In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add after the `'verification/evidence-store.js'` line:
 
@@ -403,12 +403,12 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add aft
             'verification/compute-status.js',
 ```
 
-- [ ] **Step 5: Run the test; verify it passes**
+- [x] **Step 5: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T35 computeLiveVerdicts`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/compute-status.js templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/
@@ -428,7 +428,7 @@ git commit -m "feat(verification): computeLiveVerdicts — per-criterion changed
 - Consumes: `parseSpecCriteria` (Phase 0), `parseFrontmatter` (`../planning/parse-markdown`), `runVerifier` (Task 1), `writeRecord` (Task 2).
 - Produces: `runSpec(specPath, opts) -> { ok, error?, written: [{ criterionId, verdict }] }`. `opts`: `{ root?, exec?, headSha?, ranAt?, porcelain? }`. `porcelain` (test seam) overrides the `git status --porcelain` read; non-empty → `{ ok:false, error:'dirty-tree' }`.
 
-- [ ] **Step 1: Write the failing test (T36)**
+- [x] **Step 1: Write the failing test (T36)**
 
 Add after T35 in [templates/cli/test.js](../../cli/test.js):
 
@@ -466,12 +466,12 @@ console.log('T36. Testing runSpec writes evidence and is dirty-tree fail-closed 
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T36 — `Cannot find module ... engine`.
 
-- [ ] **Step 3: Implement engine.js (runSpec)**
+- [x] **Step 3: Implement engine.js (runSpec)**
 
 Create [templates/cli/verification/engine.js](../../cli/verification/engine.js):
 
@@ -525,7 +525,7 @@ function runSpec(specPath, opts = {}) {
 module.exports = { runSpec, specIdOf };
 ```
 
-- [ ] **Step 4: Register in the manifest**
+- [x] **Step 4: Register in the manifest**
 
 In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add after the `'verification/compute-status.js'` line:
 
@@ -533,12 +533,12 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add aft
             'verification/engine.js',
 ```
 
-- [ ] **Step 5: Run the test; verify it passes**
+- [x] **Step 5: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T36 runSpec dirty-tree fail-closed`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/engine.js templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/
@@ -557,7 +557,7 @@ git commit -m "feat(verification): runSpec — dirty-tree fail-closed evidence w
 - Consumes: `computeLiveVerdicts` (Task 3), `readEvidence`/`writeRecord` (Task 2), `parseSpecCriteria`/`specIdOf` (Task 4).
 - Produces: `statusSpec(specPath, opts) -> [{ criterionId, verdict, detail }]` (opts: `{ root?, exec?, headSha?, gitDiff? }`); `attestSpec(specPath, criterionId, opts) -> record` (opts: `{ root?, exec?, headSha?, ranAt?, by, note? }`). `commands.js` gains `verify-contract run|status|attest`; `status --strict` exits non-zero on any non-PASS.
 
-- [ ] **Step 1: Write the failing test (T37)**
+- [x] **Step 1: Write the failing test (T37)**
 
 Add after T36 in [templates/cli/test.js](../../cli/test.js):
 
@@ -599,12 +599,12 @@ console.log('T37. Testing statusSpec + attestSpec (run→status→attest closed 
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T37 — `engine.statusSpec is not a function`.
 
-- [ ] **Step 3: Add statusSpec + attestSpec to engine.js**
+- [x] **Step 3: Add statusSpec + attestSpec to engine.js**
 
 In [templates/cli/verification/engine.js](../../cli/verification/engine.js), add the requires at the top (after the existing requires):
 
@@ -658,7 +658,7 @@ And update the exports line:
 module.exports = { runSpec, statusSpec, attestSpec, specIdOf };
 ```
 
-- [ ] **Step 4: Wire the CLI subcommands in commands.js**
+- [x] **Step 4: Wire the CLI subcommands in commands.js**
 
 In [templates/cli/verification/commands.js](../../cli/verification/commands.js), add the engine require after the existing require:
 
@@ -708,12 +708,12 @@ Then, inside `registerVerificationCommands`, after the existing `vc.command('lin
         });
 ```
 
-- [ ] **Step 5: Run the governance suite; verify T37 passes**
+- [x] **Step 5: Run the governance suite; verify T37 passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T37 statusSpec + attestSpec`. If a `Cannot find module './engine'` error appears (mirror half-synced), run `cp templates/cli/verification/engine.js .evo-lite/cli/verification/engine.js` then re-run.
 
-- [ ] **Step 6: Verify the CLI end-to-end on a real fixture**
+- [x] **Step 6: Verify the CLI end-to-end on a real fixture**
 
 Run:
 
@@ -722,12 +722,12 @@ node ./.evo-lite/cli/memory.js verify-contract status docs/superpowers/specs/202
 ```
 Expected: a table of 5 criteria, each `UNVERIFIED` (no evidence written yet). Exit 0 (no `--strict`).
 
-- [ ] **Step 7: Run the full suite both scopes; confirm green**
+- [x] **Step 7: Run the full suite both scopes; confirm green**
 
 Run: `node ./.evo-lite/cli/test.js governance && node ./.evo-lite/cli/test.js`
 Expected: both `--- ... passed! ---`; process exits 0.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add templates/cli/verification/engine.js templates/cli/verification/commands.js templates/cli/test.js .evo-lite/cli/

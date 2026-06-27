@@ -9,6 +9,8 @@ node_modules/
 !.evo-lite/raw_memory/**/*.md
 !.evo-lite/vect_memory/
 !.evo-lite/vect_memory/**/*.md
+!.evo-lite/verification/
+!.evo-lite/verification/**/*.json
 .agents/
 !templates/.agents/
 !templates/.agents/workflows/
