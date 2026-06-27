@@ -1042,6 +1042,36 @@ async function runGovernanceTests() {
             console.log('✅ T35 computeLiveVerdicts');
         }
 
+        console.log('T36. Testing runSpec writes evidence and is dirty-tree fail-closed ...');
+        {
+            const { runSpec } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const { readEvidence } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-engine-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, [
+                    '---', 'id: spec:fix', 'status: draft', 'linkedPlan: plan:fix', '---', '',
+                    '# Fix', '', '## Acceptance Criteria', '',
+                    '```json',
+                    '{ "criteria": [ { "id": "ac-ok", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "true" } } } ] }',
+                    '```', '',
+                ].join('\n'));
+                const dirty = runSpec(specPath, { root, headSha: 'sha1', ranAt: 't', porcelain: ' M index.js', exec: () => '' });
+                assert.strictEqual(dirty.ok, false, 'dirty tree must fail-closed');
+                assert.strictEqual(dirty.error, 'dirty-tree', 'error names the dirty tree');
+                assert.deepStrictEqual(readEvidence(root, 'spec:fix').records, {}, 'no evidence written on dirty tree');
+                const clean = runSpec(specPath, { root, headSha: 'sha1', ranAt: 't', porcelain: '', exec: () => 'ok' });
+                assert.strictEqual(clean.ok, true, 'clean tree runs');
+                const rec = readEvidence(root, 'spec:fix').records['ac-ok'];
+                assert.strictEqual(rec.verdict, 'PASS', 'command exit 0 → PASS record');
+                assert.strictEqual(rec.commitSha, 'sha1', 'record bound to HEAD sha');
+                assert.strictEqual(rec.verifierType, 'command', 'record carries verifierType');
+                console.log('✅ T36 runSpec dirty-tree fail-closed');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
