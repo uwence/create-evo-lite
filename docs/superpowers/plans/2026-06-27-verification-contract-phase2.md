@@ -42,7 +42,7 @@ runner, the `templates/cli → .evo-lite/cli` mirror flow.
 - Consumes: `parseSpecCriteria`/`parseFrontmatter` (Phase 0), `statusSpec` (Phase 1, default `statusFn`), `plan-ir.json` (default `planStateFn`).
 - Produces: `previewClose(specPath, opts) -> { readiness, criteria, plan, blockers, actions, note? }`. `opts`: `{ root?, statusFn?(specPath)->verdicts[], planStateFn?(root, linkedPlanId)->planState }`. `blockers`: `[{ criterionId, verdict, remedy }]`. `actions`: `string[]`. Also exports `remedyFor(verdict, verifierType)`.
 
-- [ ] **Step 1: Write the failing test (T38)**
+- [x] **Step 1: Write the failing test (T38)**
 
 Add after the T37 block in [templates/cli/test.js](../../cli/test.js):
 
@@ -96,12 +96,12 @@ console.log('T38. Testing previewClose readiness (READY/BLOCKED/NO-CONTRACT) ...
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T38 — `Cannot find module ... close-preview`.
 
-- [ ] **Step 3: Implement close-preview.js**
+- [x] **Step 3: Implement close-preview.js**
 
 Create [templates/cli/verification/close-preview.js](../../cli/verification/close-preview.js):
 
@@ -183,7 +183,7 @@ function previewClose(specPath, opts = {}) {
 module.exports = { previewClose, remedyFor, defaultPlanState };
 ```
 
-- [ ] **Step 4: Register in the manifest**
+- [x] **Step 4: Register in the manifest**
 
 In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add after the `'verification/engine.js'` line:
 
@@ -191,12 +191,12 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add aft
             'verification/close-preview.js',
 ```
 
-- [ ] **Step 5: Run the test; verify it passes**
+- [x] **Step 5: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T38 previewClose readiness`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/close-preview.js templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/
@@ -216,7 +216,7 @@ git commit -m "feat(verification): previewClose — three-state closure readines
 - Consumes: `previewClose` (Task 1).
 - Produces: `registerCloseCommands(program)` exported from `close-commands.js`; `mem close <spec> --preview [--strict] [--json]`. Without `--preview` → errors "--apply not yet implemented (Phase 3)". `--strict` exits non-zero unless READY. Read-only.
 
-- [ ] **Step 1: Write the failing test (T39)**
+- [x] **Step 1: Write the failing test (T39)**
 
 Add after T38 in [templates/cli/test.js](../../cli/test.js):
 
@@ -246,12 +246,12 @@ console.log('T39. Testing close-commands export + previewClose is read-only ...'
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: FAIL at T39 — `Cannot find module ... close-commands`.
 
-- [ ] **Step 3: Implement close-commands.js**
+- [x] **Step 3: Implement close-commands.js**
 
 Create [templates/cli/verification/close-commands.js](../../cli/verification/close-commands.js):
 
@@ -291,7 +291,7 @@ function registerCloseCommands(program) {
 module.exports = { registerCloseCommands };
 ```
 
-- [ ] **Step 4: Mount in memory.js + register in the manifest**
+- [x] **Step 4: Mount in memory.js + register in the manifest**
 
 In [templates/cli/memory.js](../../cli/memory.js), after the `require('./verification/commands').registerVerificationCommands(program);` line, add:
 
@@ -305,12 +305,12 @@ In [templates/cli/template-manifest.js](../../cli/template-manifest.js), add aft
             'verification/close-commands.js',
 ```
 
-- [ ] **Step 5: Run the test; verify it passes**
+- [x] **Step 5: Run the test; verify it passes**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/memory.js sync-runtime; node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T39 close-commands + read-only`. If a `Cannot find module './close-commands'` error appears (mirror half-synced), run `cp templates/cli/verification/close-commands.js .evo-lite/cli/verification/close-commands.js` then re-run.
 
-- [ ] **Step 6: Verify the CLI end-to-end (dogfood)**
+- [x] **Step 6: Verify the CLI end-to-end (dogfood)**
 
 Run:
 
@@ -319,12 +319,12 @@ node ./.evo-lite/cli/memory.js close docs/superpowers/specs/2026-06-27-verificat
 ```
 Expected: `readiness: BLOCKED` (its own command criteria are UNVERIFIED until run) with per-criterion remedies, plus an action list. Exit 0 (no `--strict`).
 
-- [ ] **Step 7: Run the full suite both scopes; confirm green**
+- [x] **Step 7: Run the full suite both scopes; confirm green**
 
 Run: `node ./.evo-lite/cli/test.js governance && node ./.evo-lite/cli/test.js`
 Expected: both `--- ... passed! ---`; process exits 0.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add templates/cli/verification/close-commands.js templates/cli/memory.js templates/cli/template-manifest.js templates/cli/test.js .evo-lite/cli/
