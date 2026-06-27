@@ -5,45 +5,45 @@
     "ac-apply-when-ready": {
       "criterionId": "ac-apply-when-ready",
       "verdict": "PASS",
-      "commitSha": "1083fba127c1444a57cb93c6148058c2680b34cb",
+      "commitSha": "930219fe299ea391323ebd29c987d0ea4108bd01",
       "verifierType": "command",
-      "ranAt": "2026-06-27T15:11:42.448Z",
+      "ranAt": "2026-06-27T15:22:14.754Z",
       "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
       "attestedBy": null
     },
     "ac-refuse-when-not-ready": {
       "criterionId": "ac-refuse-when-not-ready",
       "verdict": "PASS",
-      "commitSha": "1083fba127c1444a57cb93c6148058c2680b34cb",
+      "commitSha": "930219fe299ea391323ebd29c987d0ea4108bd01",
       "verifierType": "command",
-      "ranAt": "2026-06-27T15:11:42.448Z",
+      "ranAt": "2026-06-27T15:22:14.754Z",
       "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
       "attestedBy": null
     },
     "ac-rollback-on-failure": {
       "criterionId": "ac-rollback-on-failure",
       "verdict": "PASS",
-      "commitSha": "1083fba127c1444a57cb93c6148058c2680b34cb",
+      "commitSha": "930219fe299ea391323ebd29c987d0ea4108bd01",
       "verifierType": "command",
-      "ranAt": "2026-06-27T15:11:42.448Z",
+      "ranAt": "2026-06-27T15:22:14.754Z",
       "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
       "attestedBy": null
     },
     "ac-dirty-tree-fail-closed": {
       "criterionId": "ac-dirty-tree-fail-closed",
       "verdict": "PASS",
-      "commitSha": "1083fba127c1444a57cb93c6148058c2680b34cb",
+      "commitSha": "930219fe299ea391323ebd29c987d0ea4108bd01",
       "verifierType": "command",
-      "ranAt": "2026-06-27T15:11:42.448Z",
+      "ranAt": "2026-06-27T15:22:14.754Z",
       "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
       "attestedBy": null
     },
     "ac-cli-apply-wiring": {
       "criterionId": "ac-cli-apply-wiring",
       "verdict": "PASS",
-      "commitSha": "1083fba127c1444a57cb93c6148058c2680b34cb",
+      "commitSha": "930219fe299ea391323ebd29c987d0ea4108bd01",
       "verifierType": "command",
-      "ranAt": "2026-06-27T15:11:42.448Z",
+      "ranAt": "2026-06-27T15:22:14.754Z",
       "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
       "attestedBy": null
     }
