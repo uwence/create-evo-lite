@@ -16,16 +16,16 @@ function printPreview(r) {
 function printApply(r) {
     if (!r.applied) {
         if (r.refused === 'dirty-tree') { console.error(r.message); return; }
+        if (r.aborted) { console.error(`aborted (rolled back): ${r.error}`); return; }
         console.error(`refused: ${r.readiness || r.refused}`);
         if (r.note) console.error(`  ${r.note}`);
         for (const b of (r.blockers || [])) console.error(`  ✗ ${b.criterionId} [${b.verdict}] → ${b.remedy}`);
-        if (r.aborted) console.error(`  aborted (rolled back): ${r.error}`);
         return;
     }
     console.log('readiness: READY — closed (staged, not committed)');
     for (const a of r.actions) console.log(`  • ${a}`);
     console.log(`journal: ${r.journalPath}`);
-    if (r.staged.length) console.log(`staged: ${r.staged.join(', ')}`);
+    if ((r.staged || []).length) console.log(`staged: ${r.staged.join(', ')}`);
 }
 
 function registerCloseCommands(program) {
