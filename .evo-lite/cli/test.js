@@ -1072,6 +1072,40 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T37. Testing statusSpec + attestSpec (run→status→attest closed loop) ...');
+        {
+            const engine = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const commands = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'commands'));
+            assert.strictEqual(typeof engine.statusSpec, 'function', 'engine must export statusSpec');
+            assert.strictEqual(typeof engine.attestSpec, 'function', 'engine must export attestSpec');
+            assert.strictEqual(typeof commands.registerVerificationCommands, 'function', 'commands still exports registration');
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-status-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, [
+                    '---', 'id: spec:s', 'status: draft', 'linkedPlan: plan:s', '---', '',
+                    '# S', '', '## Acceptance Criteria', '',
+                    '```json',
+                    '{ "criteria": [' +
+                    ' { "id": "ac-cmd", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "true" } } },' +
+                    ' { "id": "ac-man", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "manual", "params": { "reason": "branch protection" } } } ] }',
+                    '```', '',
+                ].join('\n'));
+                engine.runSpec(specPath, { root, headSha: 'sha1', ranAt: 't', porcelain: '', exec: () => 'ok' });
+                const noDiff = () => [];
+                let v = Object.fromEntries(engine.statusSpec(specPath, { root, headSha: 'sha1', gitDiff: noDiff, exec: () => 'sha1' }).map(x => [x.criterionId, x.verdict]));
+                assert.strictEqual(v['ac-cmd'], 'PASS', 'machine criterion PASS after run');
+                assert.strictEqual(v['ac-man'], 'UNVERIFIED', 'manual criterion UNVERIFIED until attested');
+                engine.attestSpec(specPath, 'ac-man', { root, headSha: 'sha1', ranAt: 't', by: 'alice', note: 'enabled in repo settings' });
+                v = Object.fromEntries(engine.statusSpec(specPath, { root, headSha: 'sha9', gitDiff: () => ['index.js'], exec: () => 'sha9' }).map(x => [x.criterionId, x.verdict]));
+                assert.strictEqual(v['ac-man'], 'PASS', 'attested manual stays PASS even when deps changed (STALE-exempt)');
+                assert.strictEqual(v['ac-cmd'], 'STALE', 'machine criterion STALE once its deps changed');
+                console.log('✅ T37 statusSpec + attestSpec');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
