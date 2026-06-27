@@ -13,3 +13,5 @@ node_modules/
 !.evo-lite/vect_memory/**/*.md
 !.evo-lite/verification/
 !.evo-lite/verification/**/*.json
+# close --apply rollback journals are transient operational records; keep evidence tracked, journals not
+.evo-lite/verification/close-journal-*.json
