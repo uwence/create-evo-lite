@@ -108,7 +108,11 @@ function applyClose(specPath, opts = {}) {
         return { applied: false, aborted: true, error: err.message, journalPath };
     }
 
-    const staged = targets.filter(p => fs.existsSync(p)).map(p => path.relative(root, p).replace(/\\/g, '/'));
+    // Stage only the git-tracked source mutations (plan + spec). archPath/irPath are
+    // regenerated artifacts under .evo-lite/generated (gitignored) — they are journaled
+    // for rollback but must NOT be `git add`-ed (git refuses ignored paths and would fail).
+    const sourceTargets = [planAbs, willSetStatus ? specPath : null].filter(Boolean);
+    const staged = sourceTargets.filter(p => fs.existsSync(p)).map(p => path.relative(root, p).replace(/\\/g, '/'));
     if (staged.length) exec(['add', ...staged]);
     writeJournal(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));
 

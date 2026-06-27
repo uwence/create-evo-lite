@@ -1261,6 +1261,9 @@ async function runGovernanceTests() {
                 assert.strictEqual(journal.status, 'applied', 'journal marked applied on success');
                 assert.strictEqual(journal.createdAt, '2026-06-27T00:00:00.000Z', 'journal records supplied now');
                 assert.ok(staged.includes(planRel), 'plan file staged');
+                // Only git-tracked source files are staged; gitignored generated artifacts are not.
+                assert.ok(!staged.some(s => /plan-ir\.json|archive-evidence\.json/.test(s)), 'generated planning JSON is NOT staged (gitignored)');
+                assert.ok(!result.staged.some(s => /plan-ir\.json|archive-evidence\.json/.test(s)), 'result.staged excludes generated artifacts');
                 assert.ok(result.actions.some(a => /flip/.test(a)) && result.actions.some(a => /status: done/.test(a)) && result.actions.some(a => /R008/.test(a)), 'actions describe all three mutations');
 
                 console.log('✅ T41 applyClose mutations');
