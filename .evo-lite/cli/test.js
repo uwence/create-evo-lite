@@ -1106,6 +1106,50 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T38. Testing previewClose readiness (READY/BLOCKED/NO-CONTRACT) ...');
+        {
+            const { previewClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-close-'));
+            try {
+                const writeSpec = (name, criteriaJson, status) => {
+                    const p = path.join(root, name);
+                    fs.writeFileSync(p, [
+                        '---', 'id: spec:t', `status: ${status || 'draft'}`, 'linkedPlan: plan:t', '---', '',
+                        '# T', '', '## Acceptance Criteria', '', '```json', criteriaJson, '```', '',
+                    ].join('\n'));
+                    return p;
+                };
+                const oneCmd = '{ "criteria": [ { "id": "ac-1", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } } ] }';
+                const oneManual = '{ "criteria": [ { "id": "ac-m", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "manual", "params": { "reason": "r" } } } ] }';
+                const planStateFn = () => ({ planId: 'plan:t', found: true, planPath: 'docs/p.md', planStatus: 'draft', tasksTotal: 2, tasksImplemented: 0, uncheckedBoxes: 4 });
+
+                const ready = previewClose(writeSpec('ready.md', oneCmd), {
+                    root, planStateFn, statusFn: () => [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }] });
+                assert.strictEqual(ready.readiness, 'READY', 'all PASS → READY');
+                assert.strictEqual(ready.blockers.length, 0, 'no blockers when READY');
+                assert.ok(ready.actions.some(a => /flip 4 unchecked/.test(a)), 'action list reports flips');
+                assert.ok(ready.actions.some(a => /status: done/.test(a)), 'action list sets spec done');
+
+                const blocked = previewClose(writeSpec('blocked.md', oneCmd), {
+                    root, planStateFn, statusFn: () => [{ criterionId: 'ac-1', verdict: 'STALE', detail: 'd' }] });
+                assert.strictEqual(blocked.readiness, 'BLOCKED', 'non-PASS → BLOCKED');
+                assert.strictEqual(blocked.blockers[0].criterionId, 'ac-1', 'blocker names the criterion');
+                assert.ok(/re-run|verify-contract run/.test(blocked.blockers[0].remedy), 'STALE machine remedy says re-run');
+
+                const manual = previewClose(writeSpec('manual.md', oneManual), {
+                    root, planStateFn, statusFn: () => [{ criterionId: 'ac-m', verdict: 'UNVERIFIED', detail: 'd' }] });
+                assert.ok(/attest/.test(manual.blockers[0].remedy), 'manual UNVERIFIED remedy says attest');
+
+                const none = previewClose(writeSpec('none.md', '{ "criteria": [] }'), { root, planStateFn, statusFn: () => [] });
+                assert.strictEqual(none.readiness, 'NO-CONTRACT', 'zero criteria → NO-CONTRACT');
+                assert.strictEqual(none.blockers.length, 0, 'NO-CONTRACT has no blockers');
+
+                console.log('✅ T38 previewClose readiness');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
