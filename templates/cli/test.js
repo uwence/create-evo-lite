@@ -1226,6 +1226,49 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T41. Testing applyClose performs all three mutations on READY ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-apply-do-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, [
+                    '---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', '',
+                ].join('\n'));
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                fs.writeFileSync(planAbs, '# P\n\n- [ ] Step one\n- [ ] Step two\n');
+
+                const staged = [];
+                const result = applyClose(specPath, {
+                    root,
+                    now: '2026-06-27T00:00:00.000Z',
+                    exec: (args) => { if (args[0] === 'status') return ''; if (args[0] === 'add') { staged.push(...args.slice(1)); return ''; } return ''; },
+                    previewFn: () => ({ readiness: 'READY', blockers: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, tasksTotal: 2, uncheckedBoxes: 2 } }),
+                    backfillFn: (r) => { fs.mkdirSync(path.join(r, '.evo-lite', 'generated', 'planning'), { recursive: true }); fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'archive-evidence.json'), '{"backfilled":true}\n'); },
+                    scanFn: (r) => { fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), '{"rescanned":true}\n'); },
+                });
+
+                assert.strictEqual(result.applied, true, 'READY → applied');
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), '# P\n\n- [x] Step one\n- [x] Step two\n', 'all checkboxes flipped');
+                assert.ok(/^status: done$/m.test(fs.readFileSync(specPath, 'utf8')), 'spec status set to done');
+                assert.ok(fs.existsSync(path.join(root, '.evo-lite', 'generated', 'planning', 'archive-evidence.json')), 'R008 backfill ran');
+                assert.ok(fs.existsSync(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json')), 'IR rescan ran');
+                assert.ok(result.journalPath && fs.existsSync(result.journalPath), 'journal written');
+                const journal = JSON.parse(fs.readFileSync(result.journalPath, 'utf8'));
+                assert.strictEqual(journal.status, 'applied', 'journal marked applied on success');
+                assert.strictEqual(journal.createdAt, '2026-06-27T00:00:00.000Z', 'journal records supplied now');
+                assert.ok(staged.includes(planRel), 'plan file staged');
+                assert.ok(result.actions.some(a => /flip/.test(a)) && result.actions.some(a => /status: done/.test(a)) && result.actions.some(a => /R008/.test(a)), 'actions describe all three mutations');
+
+                console.log('✅ T41 applyClose mutations');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
