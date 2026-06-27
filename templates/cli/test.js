@@ -1174,6 +1174,58 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T40. Testing applyClose fail-closed gates (dirty tree / not READY) ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-apply-gate-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                const body = [
+                    '---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '',
+                    '# T', '', '## Acceptance Criteria', '',
+                    '```json', '{ "criteria": [ { "id": "ac-1", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } } ] }', '```', '',
+                ].join('\n');
+                fs.writeFileSync(specPath, body);
+
+                // dirty tree → refuse before any preview/mutation
+                let previewCalled = false;
+                const dirty = applyClose(specPath, {
+                    root,
+                    exec: () => 'M some/file.js\n',
+                    previewFn: () => { previewCalled = true; return { readiness: 'READY' }; },
+                });
+                assert.strictEqual(dirty.applied, false, 'dirty tree must refuse');
+                assert.strictEqual(dirty.refused, 'dirty-tree', 'refusal reason names dirty tree');
+                assert.strictEqual(previewCalled, false, 'dirty-tree gate runs before previewClose');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), body, 'dirty refusal mutates nothing');
+
+                // clean tree but BLOCKED → refuse, surface blockers
+                const blocked = applyClose(specPath, {
+                    root,
+                    exec: () => '',
+                    previewFn: () => ({ readiness: 'BLOCKED', blockers: [{ criterionId: 'ac-1', verdict: 'STALE', remedy: 're-run' }] }),
+                });
+                assert.strictEqual(blocked.applied, false, 'BLOCKED must refuse');
+                assert.strictEqual(blocked.refused, 'BLOCKED', 'refusal reason is the readiness');
+                assert.strictEqual(blocked.blockers[0].criterionId, 'ac-1', 'blockers passed through');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), body, 'BLOCKED refusal mutates nothing');
+
+                // NO-CONTRACT → refuse with note
+                const none = applyClose(specPath, {
+                    root,
+                    exec: () => '',
+                    previewFn: () => ({ readiness: 'NO-CONTRACT', note: 'no machine-readable acceptance criteria' }),
+                });
+                assert.strictEqual(none.applied, false, 'NO-CONTRACT must refuse');
+                assert.strictEqual(none.refused, 'NO-CONTRACT', 'refusal reason is NO-CONTRACT');
+                assert.ok(/no machine-readable/.test(none.note), 'NO-CONTRACT note passed through');
+
+                console.log('✅ T40 applyClose gates');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
