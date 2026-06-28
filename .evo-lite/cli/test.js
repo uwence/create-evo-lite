@@ -1096,7 +1096,7 @@ async function runGovernanceTests() {
                 let v = Object.fromEntries(engine.statusSpec(specPath, { root, headSha: 'sha1', gitDiff: noDiff, exec: () => 'sha1' }).map(x => [x.criterionId, x.verdict]));
                 assert.strictEqual(v['ac-cmd'], 'PASS', 'machine criterion PASS after run');
                 assert.strictEqual(v['ac-man'], 'UNVERIFIED', 'manual criterion UNVERIFIED until attested');
-                engine.attestSpec(specPath, 'ac-man', { root, headSha: 'sha1', ranAt: 't', by: 'alice', note: 'enabled in repo settings' });
+                engine.attestSpec(specPath, 'ac-man', { root, headSha: 'sha1', ranAt: 't', by: 'alice', note: 'enabled in repo settings', exec: (cmd) => (/status --porcelain/.test(cmd) ? '' : 'sha1') });
                 v = Object.fromEntries(engine.statusSpec(specPath, { root, headSha: 'sha9', gitDiff: () => ['index.js'], exec: () => 'sha9' }).map(x => [x.criterionId, x.verdict]));
                 assert.strictEqual(v['ac-man'], 'PASS', 'attested manual stays PASS even when deps changed (STALE-exempt)');
                 assert.strictEqual(v['ac-cmd'], 'STALE', 'machine criterion STALE once its deps changed');
@@ -1358,6 +1358,123 @@ async function runGovernanceTests() {
             } finally {
                 fs.rmSync(root, { recursive: true, force: true });
             }
+        }
+
+        console.log('T45. Testing attestSpec trust gate (manual-only, exists, clean tree) ...');
+        {
+            const engine = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const { readEvidence } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-attest-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, [
+                    '---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '',
+                    '# T', '', '## Acceptance Criteria', '',
+                    '```json',
+                    '{ "criteria": [' +
+                    ' { "id": "ac-machine", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } },' +
+                    ' { "id": "ac-manual", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "manual", "params": { "reason": "r" } } } ] }',
+                    '```', '',
+                ].join('\n'));
+                const cleanExec = (cmd) => (/(status --porcelain)/.test(cmd) ? '' : 'sha1');
+
+                // Forge attempt: attesting a MACHINE criterion must throw and write nothing.
+                assert.throws(() => engine.attestSpec(specPath, 'ac-machine', { root, by: 'alice', exec: cleanExec }),
+                    /not manual|only manual/i, 'attesting a machine criterion must be refused');
+                // Nonexistent criterion must throw.
+                assert.throws(() => engine.attestSpec(specPath, 'ac-nope', { root, by: 'alice', exec: cleanExec }),
+                    /not found/i, 'attesting an unknown criterion must be refused');
+                // Dirty tree must throw.
+                assert.throws(() => engine.attestSpec(specPath, 'ac-manual', { root, by: 'alice', exec: () => ' M f.js' }),
+                    /dirty/i, 'attest must refuse on a dirty tree');
+                assert.deepStrictEqual(readEvidence(root, 'spec:t').records, {}, 'no record written by any refused attest');
+
+                // Legit: manual criterion, clean tree → writes a manual PASS.
+                const rec = engine.attestSpec(specPath, 'ac-manual', { root, by: 'alice', ranAt: 't', headSha: 'sha1', exec: cleanExec });
+                assert.strictEqual(rec.verifierType, 'manual', 'manual attestation recorded');
+                assert.strictEqual(rec.attestedBy, 'alice', 'attestedBy set');
+                assert.strictEqual(readEvidence(root, 'spec:t').records['ac-manual'].verdict, 'PASS', 'manual PASS persisted');
+                console.log('✅ T45 attestSpec trust gate');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T46. Testing verifier path containment + evidence slug rejects traversal ...');
+        {
+            const { runVerifier } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'run-verifiers'));
+            const store = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-contain-'));
+            try {
+                // A spec-supplied path that escapes the project root must never PASS.
+                const esc = runVerifier({ verifier: { type: 'file-exists', params: { path: '../../../../../../etc/hosts' } } }, { repoRoot: root });
+                assert.strictEqual(esc.verdict, 'FAIL', 'escaping file-exists path must not PASS');
+                assert.ok(/escapes project root/.test(esc.detail), 'detail names the containment refusal');
+                const escAbsent = runVerifier({ verifier: { type: 'file-absent', params: { path: '../../secret' } } }, { repoRoot: root });
+                assert.strictEqual(escAbsent.verdict, 'FAIL', 'escaping file-absent path must not PASS');
+                const escJson = runVerifier({ verifier: { type: 'json-path-equals', params: { file: '../../x.json', path: ['a'], equals: 1 } } }, { repoRoot: root });
+                assert.strictEqual(escJson.verdict, 'FAIL', 'escaping json-path file must not PASS');
+
+                // A malicious spec id must not let the evidence slug escape the verification dir.
+                assert.throws(() => store.evidenceSlug('spec:../../evil'), /invalid spec id/i, 'traversal slug must be rejected');
+                assert.throws(() => store.evidencePath(root, 'spec:a/b'), /invalid spec id/i, 'separator slug must be rejected');
+                assert.strictEqual(store.evidenceSlug('spec:verification-contract-phase3'), 'verification-contract-phase3', 'normal slug passes');
+                console.log('✅ T46 path + slug containment');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T47. Testing loadValidatedContract states + fail-closed wiring ...');
+        {
+            const { loadValidatedContract } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const engine = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const { previewClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            const mk = (block) => ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', '', '## Acceptance Criteria', '', '```json', block, '```', ''].join('\n');
+            const good = '{ "criteria": [ { "id": "ac-1", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "file-exists", "params": { "path": "a" } } } ] }';
+
+            const okC = loadValidatedContract(mk(good));
+            assert.ok(okC.ok && !okC.noContract, 'valid contract → ok, not noContract');
+            const none = loadValidatedContract(['---', 'id: spec:t', '---', '', '# T', '', 'body'].join('\n'));
+            assert.ok(none.ok && none.noContract, 'no criteria block → ok + noContract (opt-out)');
+            assert.ok(!loadValidatedContract(mk('{ not json')).ok, 'malformed json block → not ok');
+            assert.ok(!loadValidatedContract(mk('{ "criteria":[{"id":"a","description":"x","dependsOn":["i"],"verifier":{"type":"sniff","params":{}}}] }')).ok, 'unknown verifier type → not ok');
+
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-loader-'));
+            try {
+                const sp = path.join(root, 'spec.md');
+                fs.writeFileSync(sp, mk('{ not json'));
+                const r = engine.runSpec(sp, { root, porcelain: '', headSha: 'h', ranAt: 't', exec: () => '' });
+                assert.strictEqual(r.ok, false, 'runSpec refuses malformed contract');
+                assert.ok(/contract invalid/.test(r.error), 'runSpec error names contract invalid');
+                const v = engine.statusSpec(sp, { root, headSha: 'h', exec: () => '', gitDiff: () => [] });
+                assert.ok(v.some(x => x.verdict === 'INVALID'), 'statusSpec returns INVALID for malformed contract');
+                const pc = previewClose(sp, { root, planStateFn: () => ({ planId: 'plan:t', found: false, tasksTotal: 0, tasksImplemented: 0, uncheckedBoxes: 0 }) });
+                assert.strictEqual(pc.readiness, 'BLOCKED', 'malformed contract → preview BLOCKED');
+                assert.ok(pc.blockers.some(b => b.verdict === 'INVALID'), 'preview surfaces INVALID blocker');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+            console.log('✅ T47 loadValidatedContract + fail-closed wiring');
+        }
+
+        console.log('T48. Testing close-commands rejects both --preview and --apply ...');
+        {
+            const { registerCloseCommands } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-commands'));
+            let handler = null;
+            const fakeCmd = { description() { return this; }, option() { return this; }, action(fn) { handler = fn; return this; } };
+            registerCloseCommands({ command() { return fakeCmd; } });
+            const errs = []; const origErr = console.error;
+            console.error = (...a) => errs.push(a.join(' '));
+            try {
+                process.exitCode = 0;
+                handler('spec.md', { preview: true, apply: true });
+                assert.ok(errs.some(e => /only one of --preview or --apply/.test(e)), 'both flags rejected');
+                assert.strictEqual(process.exitCode, 1, 'both flags exits non-zero');
+            } finally {
+                console.error = origErr; process.exitCode = 0;
+            }
+            console.log('✅ T48 close-commands preview/apply XOR');
         }
 
         console.log('T19. Testing architecture where <file> reverse lookup ...');

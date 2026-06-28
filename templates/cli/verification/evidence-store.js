@@ -5,7 +5,13 @@ const path = require('path');
 const { validateEvidenceRecord } = require('./validate-contract');
 
 function evidenceSlug(specId) {
-    return String(specId).replace(/^spec:/, '');
+    const slug = String(specId).replace(/^spec:/, '');
+    // Reject anything that could escape the verification dir (path separators, `..`).
+    // The slug becomes a filename — a malicious spec id must not write outside it.
+    if (!/^[a-z0-9._-]+$/i.test(slug)) {
+        throw new Error(`invalid spec id for evidence slug: ${specId}`);
+    }
+    return slug;
 }
 
 function evidencePath(root, specId) {

@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const { execSync } = require('child_process');
-const { parseSpecCriteria } = require('./validate-contract');
+const { loadValidatedContract } = require('./validate-contract');
 const { parseFrontmatter } = require('../planning/parse-markdown');
 const { runVerifier } = require('./run-verifiers');
 const { writeRecord, readEvidence } = require('./evidence-store');
@@ -30,10 +30,13 @@ function runSpec(specPath, opts = {}) {
     }
     const headSha = opts.headSha || String(exec('git rev-parse HEAD', { cwd: root })).trim();
     const ranAt = opts.ranAt || new Date().toISOString();
-    const parsed = parseSpecCriteria(specText);
-    if (parsed.error) return { ok: false, error: parsed.error, written: [] };
+    // Fail-closed on a malformed contract; a spec with no criteria block is a no-op.
+    const contract = loadValidatedContract(specText);
+    if (!contract.ok) {
+        return { ok: false, error: 'contract invalid: ' + contract.findings.map(f => f.message).join('; '), written: [] };
+    }
     const written = [];
-    for (const c of parsed.criteria) {
+    for (const c of contract.criteria) {
         if (c.verifier && c.verifier.type === 'manual') continue;
         const { verdict, detail } = runVerifier(c, { repoRoot: root, exec });
         writeRecord(root, specId, {
@@ -51,7 +54,12 @@ function statusSpec(specPath, opts = {}) {
     const specText = fs.readFileSync(specPath, 'utf8');
     const specId = specIdOf(specText);
     const headSha = opts.headSha || String(exec('git rev-parse HEAD', { cwd: root })).trim();
-    const parsed = parseSpecCriteria(specText);
+    // Fail-closed on a malformed contract — surface it as a single INVALID verdict
+    // rather than silently deriving over garbage criteria.
+    const contract = loadValidatedContract(specText);
+    if (!contract.ok) {
+        return contract.findings.map(f => ({ criterionId: f.id, verdict: 'INVALID', detail: f.message }));
+    }
     const store = readEvidence(root, specId);
     const gitDiff = opts.gitDiff || function (sha) {
         try {
@@ -61,17 +69,38 @@ function statusSpec(specPath, opts = {}) {
             return null;   // unreachable commit → STALE
         }
     };
-    return computeLiveVerdicts(parsed.criteria, store.records, headSha, gitDiff);
+    return computeLiveVerdicts(contract.criteria, store.records, headSha, gitDiff);
 }
 
 function attestSpec(specPath, criterionId, opts = {}) {
     const root = opts.root || process.cwd();
     const exec = opts.exec || defaultExec;
+    if (!opts.by) throw new Error('attest requires --by <name>');
     const specText = fs.readFileSync(specPath, 'utf8');
-    const specId = specIdOf(specText);
+
+    // Trust gate: a human attestation may ONLY stand in for a `manual` verifier.
+    // Without this, attest could forge a machine criterion into a STALE-exempt
+    // manual PASS, bypassing its verifier and defeating the whole contract.
+    const contract = loadValidatedContract(specText);
+    if (!contract.ok) {
+        throw new Error('contract invalid — cannot attest: ' + contract.findings.map(f => f.message).join('; '));
+    }
+    const crit = contract.criteria.find(c => c.id === criterionId);
+    if (!crit) {
+        throw new Error(`criterion not found: ${criterionId}`);
+    }
+    if (!crit.verifier || crit.verifier.type !== 'manual') {
+        throw new Error(`criterion ${criterionId} is type "${crit.verifier && crit.verifier.type}", not manual — only manual criteria can be attested; run its verifier instead`);
+    }
+    // Clean-tree fail-closed: an attestation binds to a real committed state.
+    const porcelain = String(exec('git status --porcelain', { cwd: root })).trim();
+    if (porcelain) {
+        throw new Error('working tree is dirty — commit or stash first; attestation must bind a real commit');
+    }
+
+    const specId = contract.specId;
     const headSha = opts.headSha || String(exec('git rev-parse HEAD', { cwd: root })).trim();
     const ranAt = opts.ranAt || new Date().toISOString();
-    if (!opts.by) throw new Error('attest requires --by <name>');
     const record = {
         criterionId, verdict: 'PASS', commitSha: headSha, verifierType: 'manual',
         ranAt, detail: opts.note || 'manual attestation', attestedBy: opts.by,

@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { parseFrontmatter } = require('../planning/parse-markdown');
 
 const SCHEMA = JSON.parse(
     fs.readFileSync(path.join(__dirname, 'contract-schema.json'), 'utf8'));
@@ -108,4 +109,25 @@ function parseSpecCriteria(specText) {
     }
 }
 
-module.exports = { validateCriteria, validateEvidenceRecord, parseSpecCriteria, SCHEMA };
+// The single fail-closed entry every run/status/preview/apply/attest path uses:
+// parse frontmatter id + criteria, then validate. ok=false when the criteria block
+// is missing/malformed OR any criterion fails validation — callers must refuse.
+function loadValidatedContract(specText) {
+    const fm = parseFrontmatter(specText).frontmatter || {};
+    const specId = fm.id;
+    const parsed = parseSpecCriteria(specText);
+    if (parsed.error) {
+        // A missing heading / missing json block means the spec simply opts out of
+        // the contract (NO-CONTRACT) — ok, no criteria, not a failure. A present-but-
+        // malformed block (bad/unterminated JSON) is invalid → fail-closed.
+        const optedOut = /no "## Acceptance Criteria"|no ```json criteria block/.test(parsed.error);
+        if (optedOut) {
+            return { ok: true, noContract: true, specId, criteria: [], findings: [] };
+        }
+        return { ok: false, noContract: false, specId, criteria: [], findings: [finding('contract', parsed.error)] };
+    }
+    const findings = validateCriteria(parsed.criteria);
+    return { ok: findings.length === 0, noContract: parsed.criteria.length === 0, specId, criteria: parsed.criteria, findings };
+}
+
+module.exports = { validateCriteria, validateEvidenceRecord, parseSpecCriteria, loadValidatedContract, SCHEMA };

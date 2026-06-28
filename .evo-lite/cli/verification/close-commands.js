@@ -36,6 +36,11 @@ function registerCloseCommands(program) {
         .option('--strict', 'With --preview: exit non-zero unless READY')
         .option('--json', 'Print JSON output')
         .action((specPath, options) => {
+            if (options.preview && options.apply) {
+                console.error('use only one of --preview or --apply');
+                process.exitCode = 1;
+                return;
+            }
             if (!options.preview && !options.apply) {
                 console.error('specify --preview or --apply');
                 process.exitCode = 1;

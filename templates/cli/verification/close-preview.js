@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseSpecCriteria } = require('./validate-contract');
+const { loadValidatedContract } = require('./validate-contract');
 const { parseFrontmatter } = require('../planning/parse-markdown');
 
 function remedyFor(verdict, verifierType) {
@@ -44,9 +44,9 @@ function previewClose(specPath, opts = {}) {
     const root = opts.root || process.cwd();
     const specText = fs.readFileSync(specPath, 'utf8');
     const fm = parseFrontmatter(specText).frontmatter || {};
-    const parsed = parseSpecCriteria(specText);
+    const contract = loadValidatedContract(specText);
     const typeById = {};
-    for (const c of parsed.criteria) typeById[c.id] = c.verifier && c.verifier.type;
+    for (const c of contract.criteria) typeById[c.id] = c.verifier && c.verifier.type;
 
     const planState = (opts.planStateFn || defaultPlanState)(root, fm.linkedPlan);
 
@@ -57,7 +57,16 @@ function previewClose(specPath, opts = {}) {
     if (fm.status !== 'done') actions.push('set spec status: done');
     if (planState.tasksTotal > 0) actions.push(`backfill R008 evidence for ${planState.tasksTotal} task(s)`);
 
-    if (parsed.criteria.length === 0) {
+    // Malformed contract (present but invalid) → fail-closed, never READY.
+    if (!contract.ok) {
+        return {
+            readiness: 'BLOCKED', criteria: [], plan: planState, actions,
+            blockers: contract.findings.map(f => ({ criterionId: f.id, verdict: 'INVALID', remedy: f.message })),
+            note: 'contract is invalid — fix the criteria block (mem verify-contract lint <spec>)',
+        };
+    }
+
+    if (contract.noContract) {
         return {
             readiness: 'NO-CONTRACT', criteria: [], plan: planState, blockers: [], actions: [],
             note: 'no machine-readable acceptance criteria — add a criteria block for a real gate, or close manually',

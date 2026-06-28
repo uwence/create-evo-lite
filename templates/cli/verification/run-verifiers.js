@@ -9,6 +9,17 @@ function truncate(s, n = 500) {
     return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
+// Resolve a spec-supplied relative path but refuse to escape the project root.
+// A criterion from an untrusted spec must not probe `../../etc/passwd`.
+function resolveWithin(repoRoot, rel) {
+    const root = path.resolve(repoRoot);
+    const abs = path.resolve(root, String(rel == null ? '' : rel));
+    if (abs !== root && !abs.startsWith(root + path.sep)) {
+        throw new Error(`path escapes project root: ${rel}`);
+    }
+    return abs;
+}
+
 function getByKeyPath(obj, keys) {
     let cur = obj;
     for (const k of keys) {
@@ -21,7 +32,7 @@ function getByKeyPath(obj, keys) {
 function runJsonPathEquals(repoRoot, p) {
     let data;
     try {
-        data = JSON.parse(fs.readFileSync(path.resolve(repoRoot, p.file), 'utf8'));
+        data = JSON.parse(fs.readFileSync(resolveWithin(repoRoot, p.file), 'utf8'));
     } catch (e) {
         return { verdict: 'FAIL', detail: `cannot read ${p.file}: ${e.message}` };
     }
@@ -33,7 +44,7 @@ function runJsonPathEquals(repoRoot, p) {
     } else if (p.equalsJsonPath) {
         let d2;
         try {
-            d2 = JSON.parse(fs.readFileSync(path.resolve(repoRoot, p.equalsJsonPath.file), 'utf8'));
+            d2 = JSON.parse(fs.readFileSync(resolveWithin(repoRoot, p.equalsJsonPath.file), 'utf8'));
         } catch (e) {
             return { verdict: 'FAIL', detail: `cannot read ${p.equalsJsonPath.file}: ${e.message}` };
         }
@@ -65,11 +76,11 @@ function runVerifier(criterion, opts = {}) {
                 }
             }
             case 'file-exists':
-                return fs.existsSync(path.resolve(repoRoot, p.path))
+                return fs.existsSync(resolveWithin(repoRoot, p.path))
                     ? { verdict: 'PASS', detail: `${p.path} exists` }
                     : { verdict: 'FAIL', detail: `${p.path} missing` };
             case 'file-absent':
-                return !fs.existsSync(path.resolve(repoRoot, p.path))
+                return !fs.existsSync(resolveWithin(repoRoot, p.path))
                     ? { verdict: 'PASS', detail: `${p.path} absent` }
                     : { verdict: 'FAIL', detail: `${p.path} present` };
             case 'json-path-equals':
