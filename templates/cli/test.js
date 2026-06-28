@@ -1477,6 +1477,23 @@ async function runGovernanceTests() {
             console.log('✅ T48 close-commands preview/apply XOR');
         }
 
+        console.log('T49. Testing criterionDigest is stable + semantic ...');
+        {
+            const { criterionDigest } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const base = { id: 'ac-1', description: 'hello', dependsOn: ['a', 'b'],
+                verifier: { type: 'command', params: { cmd: 'x', scope: 'governance' } } };
+            const d = criterionDigest(base);
+            assert.ok(/^sha256:[0-9a-f]{64}$/.test(d), 'digest is sha256:<64 hex>');
+            const reordered = { id: 'ac-1', description: 'hello', dependsOn: ['a', 'b'],
+                verifier: { type: 'command', params: { scope: 'governance', cmd: 'x' } } };
+            assert.strictEqual(criterionDigest(reordered), d, 'param key order must not change digest');
+            assert.strictEqual(criterionDigest({ ...base, description: 'totally different prose' }), d, 'description must not change digest');
+            assert.notStrictEqual(criterionDigest({ ...base, verifier: { type: 'command', params: { cmd: 'y' } } }), d, 'cmd change must change digest');
+            assert.notStrictEqual(criterionDigest({ ...base, dependsOn: ['a'] }), d, 'dependsOn change must change digest');
+            assert.notStrictEqual(criterionDigest({ ...base, dependsOn: ['b', 'a'] }), d, 'dependsOn reorder changes digest');
+            console.log('✅ T49 criterionDigest stable + semantic');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
