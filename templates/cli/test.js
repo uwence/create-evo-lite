@@ -1593,6 +1593,39 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T54. Testing applyClose rolls back when git add fails (staging inside the txn) ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-stage-fail-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                const specBefore = ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n');
+                fs.writeFileSync(specPath, specBefore);
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                const planBefore = '# P\n\n- [ ] Step one\n- [ ] Step two\n';
+                fs.writeFileSync(planAbs, planBefore);
+                const result = applyClose(specPath, {
+                    root, now: '2026-06-28T00:00:00.000Z',
+                    exec: (args) => { if (args[0] === 'add') throw new Error('git add boom'); return ''; },
+                    previewFn: () => ({ readiness: 'READY', blockers: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, tasksTotal: 2, uncheckedBoxes: 2 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                });
+                assert.strictEqual(result.applied, false, 'staging failure is not applied');
+                assert.strictEqual(result.aborted, true, 'staging failure rolls back (aborted)');
+                assert.ok(/git add boom/.test(result.error), 'staging error surfaced');
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), planBefore, 'plan restored after staging failure');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specBefore, 'spec restored after staging failure');
+                const journal = JSON.parse(fs.readFileSync(result.journalPath, 'utf8'));
+                assert.strictEqual(journal.status, 'aborted', 'journal marked aborted on staging failure');
+                console.log('✅ T54 staging-failure rollback');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));

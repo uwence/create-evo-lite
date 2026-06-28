@@ -86,6 +86,7 @@ function applyClose(specPath, opts = {}) {
     writeJournal(journalPath, journal);
 
     const actions = [];
+    let staged = [];
     try {
         if (planAbs) {
             const txt = fs.readFileSync(planAbs, 'utf8');
@@ -99,6 +100,12 @@ function applyClose(specPath, opts = {}) {
         backfillFn(root);
         scanFn(root);
         actions.push('backfill R008 archive evidence + rescan plan IR');
+        // Stage tracked source (plan + spec) INSIDE the txn so a git-add failure rolls
+        // back too. archPath/irPath are gitignored regenerated artifacts — journaled for
+        // rollback but never `git add`-ed (git refuses ignored paths and would fail).
+        const sourceTargets = [planAbs, willSetStatus ? specPath : null].filter(Boolean);
+        staged = sourceTargets.filter(p => fs.existsSync(p)).map(p => path.relative(root, p).replace(/\\/g, '/'));
+        if (staged.length) exec(['add', ...staged]);
     } catch (err) {
         for (const e of entries) {
             if (e.priorBytes === null) { if (fs.existsSync(e.path)) fs.unlinkSync(e.path); }
@@ -108,12 +115,6 @@ function applyClose(specPath, opts = {}) {
         return { applied: false, aborted: true, error: err.message, journalPath };
     }
 
-    // Stage only the git-tracked source mutations (plan + spec). archPath/irPath are
-    // regenerated artifacts under .evo-lite/generated (gitignored) — they are journaled
-    // for rollback but must NOT be `git add`-ed (git refuses ignored paths and would fail).
-    const sourceTargets = [planAbs, willSetStatus ? specPath : null].filter(Boolean);
-    const staged = sourceTargets.filter(p => fs.existsSync(p)).map(p => path.relative(root, p).replace(/\\/g, '/'));
-    if (staged.length) exec(['add', ...staged]);
     writeJournal(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));
 
     return { applied: true, readiness: 'READY', actions, journalPath, staged };
