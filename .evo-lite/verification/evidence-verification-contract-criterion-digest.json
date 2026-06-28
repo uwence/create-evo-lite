@@ -1,0 +1,46 @@
+{
+  "version": "evo-verification-evidence@1",
+  "specId": "spec:verification-contract-criterion-digest",
+  "records": {
+    "ac-digest-stable-semantic": {
+      "criterionId": "ac-digest-stable-semantic",
+      "verdict": "PASS",
+      "commitSha": "6e0fbfeda91f12a29f22ebc18ab3f16fecd613ce",
+      "verifierType": "command",
+      "ranAt": "2026-06-28T06:17:31.542Z",
+      "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
+      "attestedBy": null,
+      "criterionDigest": "sha256:44ce31b27eead1d3984b1b5151835f1bb481be6950584008ca1100573f5dad4f"
+    },
+    "ac-machine-stale-on-redef": {
+      "criterionId": "ac-machine-stale-on-redef",
+      "verdict": "PASS",
+      "commitSha": "6e0fbfeda91f12a29f22ebc18ab3f16fecd613ce",
+      "verifierType": "command",
+      "ranAt": "2026-06-28T06:17:31.542Z",
+      "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
+      "attestedBy": null,
+      "criterionDigest": "sha256:3d899b944a466dea9bfdcdc269fffb508b46fbbeaa21ede667484a89c52e14b4"
+    },
+    "ac-manual-stale-on-redef": {
+      "criterionId": "ac-manual-stale-on-redef",
+      "verdict": "PASS",
+      "commitSha": "6e0fbfeda91f12a29f22ebc18ab3f16fecd613ce",
+      "verifierType": "command",
+      "ranAt": "2026-06-28T06:17:31.542Z",
+      "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
+      "attestedBy": null,
+      "criterionDigest": "sha256:59d5a00eb922618ba4d13bc66790acc5d1900f8400ea4b9d598ef1e6d4db5d76"
+    },
+    "ac-writers-set-digest": {
+      "criterionId": "ac-writers-set-digest",
+      "verdict": "PASS",
+      "commitSha": "6e0fbfeda91f12a29f22ebc18ab3f16fecd613ce",
+      "verifierType": "command",
+      "ranAt": "2026-06-28T06:17:31.542Z",
+      "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
+      "attestedBy": null,
+      "criterionDigest": "sha256:894f6709bf52f0ded31ad209e57302bd68f33715dfcb447d78e3662142378fff"
+    }
+  }
+}
