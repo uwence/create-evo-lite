@@ -940,19 +940,19 @@ async function runGovernanceTests() {
         console.log('T32. Testing deriveVerdicts four-state model ...');
         {
             const { deriveVerdicts } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'derive-verdicts'));
+            const { criterionDigest } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
             const crit = (id, deps) => ({ id, description: 'x', dependsOn: deps, verifier: { type: 'command', params: { cmd: 'x' } } });
-            const criteria = [
-                crit('a', ['index.js']),
-                crit('b', ['index.js']),
-                crit('c', ['index.js']),
-                crit('d', ['templates/runtime/**']),
-                { id: 'e', description: 'x', dependsOn: ['index.js'], verifier: { type: 'manual', params: { reason: 'x' } } },
-            ];
+            const cA = crit('a', ['index.js']);
+            const cB = crit('b', ['index.js']);
+            const cC = crit('c', ['index.js']);
+            const cD = crit('d', ['templates/runtime/**']);
+            const cE = { id: 'e', description: 'x', dependsOn: ['index.js'], verifier: { type: 'manual', params: { reason: 'x' } } };
+            const criteria = [cA, cB, cC, cD, cE];
             const records = [
                 { criterionId: 'b', verdict: 'FAIL', commitSha: 'h', verifierType: 'command' },
-                { criterionId: 'c', verdict: 'PASS', commitSha: 'h', verifierType: 'command' },
-                { criterionId: 'd', verdict: 'PASS', commitSha: 'old', verifierType: 'command' },
-                { criterionId: 'e', verdict: 'PASS', commitSha: 'old', verifierType: 'manual', attestedBy: 'alice' },
+                { criterionId: 'c', verdict: 'PASS', commitSha: 'h', verifierType: 'command', criterionDigest: criterionDigest(cC) },
+                { criterionId: 'd', verdict: 'PASS', commitSha: 'old', verifierType: 'command', criterionDigest: criterionDigest(cD) },
+                { criterionId: 'e', verdict: 'PASS', commitSha: 'old', verifierType: 'manual', attestedBy: 'alice', criterionDigest: criterionDigest(cE) },
             ];
             const changed = ['templates/runtime/package.json'];
             const byId = Object.fromEntries(deriveVerdicts(criteria, records, 'h', changed).map(x => [x.criterionId, x.verdict]));
@@ -961,8 +961,9 @@ async function runGovernanceTests() {
             assert.strictEqual(byId.c, 'PASS', 'machine PASS, deps untouched → PASS');
             assert.strictEqual(byId.d, 'STALE', 'machine PASS, deps in changedFiles → STALE');
             assert.strictEqual(byId.e, 'PASS', 'manual PASS is STALE-exempt');
-            const strict = deriveVerdicts([crit('c', ['index.js'])],
-                [{ criterionId: 'c', verdict: 'PASS', commitSha: 'old', verifierType: 'command' }], 'h', null);
+            const cS = crit('c', ['index.js']);
+            const strict = deriveVerdicts([cS],
+                [{ criterionId: 'c', verdict: 'PASS', commitSha: 'old', verifierType: 'command', criterionDigest: criterionDigest(cS) }], 'h', null);
             assert.strictEqual(strict[0].verdict, 'STALE', 'no changedFiles + commit!=HEAD → strict STALE');
             console.log('✅ T32 deriveVerdicts');
         }
@@ -1022,12 +1023,17 @@ async function runGovernanceTests() {
         console.log('T35. Testing computeLiveVerdicts per-criterion changedFiles ...');
         {
             const { computeLiveVerdicts } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'compute-status'));
+            const { criterionDigest } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
             const crit = (id, deps) => ({ id, description: 'x', dependsOn: deps, verifier: { type: 'command', params: { cmd: 'x' } } });
-            const criteria = [crit('a', ['index.js']), crit('b', ['index.js']), crit('c', ['src/**']), crit('d', ['index.js'])];
+            const critA = crit('a', ['index.js']);
+            const critB = crit('b', ['index.js']);
+            const critC = crit('c', ['src/**']);
+            const critD = crit('d', ['index.js']);
+            const criteria = [critA, critB, critC, critD];
             const records = {
-                b: { criterionId: 'b', verdict: 'PASS', commitSha: 'sha-b', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null },
-                c: { criterionId: 'c', verdict: 'PASS', commitSha: 'sha-c', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null },
-                d: { criterionId: 'd', verdict: 'PASS', commitSha: 'gone', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null },
+                b: { criterionId: 'b', verdict: 'PASS', commitSha: 'sha-b', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null, criterionDigest: criterionDigest(critB) },
+                c: { criterionId: 'c', verdict: 'PASS', commitSha: 'sha-c', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null, criterionDigest: criterionDigest(critC) },
+                d: { criterionId: 'd', verdict: 'PASS', commitSha: 'gone', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null, criterionDigest: criterionDigest(critD) },
             };
             const gitDiff = (sha) => {
                 if (sha === 'sha-b') return [];
@@ -1475,6 +1481,87 @@ async function runGovernanceTests() {
                 console.error = origErr; process.exitCode = 0;
             }
             console.log('✅ T48 close-commands preview/apply XOR');
+        }
+
+        console.log('T49. Testing criterionDigest is stable + semantic ...');
+        {
+            const { criterionDigest } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const base = { id: 'ac-1', description: 'hello', dependsOn: ['a', 'b'],
+                verifier: { type: 'command', params: { cmd: 'x', scope: 'governance' } } };
+            const d = criterionDigest(base);
+            assert.ok(/^sha256:[0-9a-f]{64}$/.test(d), 'digest is sha256:<64 hex>');
+            const reordered = { id: 'ac-1', description: 'hello', dependsOn: ['a', 'b'],
+                verifier: { type: 'command', params: { scope: 'governance', cmd: 'x' } } };
+            assert.strictEqual(criterionDigest(reordered), d, 'param key order must not change digest');
+            assert.strictEqual(criterionDigest({ ...base, description: 'totally different prose' }), d, 'description must not change digest');
+            assert.notStrictEqual(criterionDigest({ ...base, verifier: { type: 'command', params: { cmd: 'y' } } }), d, 'cmd change must change digest');
+            assert.notStrictEqual(criterionDigest({ ...base, dependsOn: ['a'] }), d, 'dependsOn change must change digest');
+            assert.notStrictEqual(criterionDigest({ ...base, dependsOn: ['b', 'a'] }), d, 'dependsOn reorder changes digest');
+            console.log('✅ T49 criterionDigest stable + semantic');
+        }
+
+        console.log('T50. Testing deriveVerdicts STALEs a machine PASS on digest change/absent ...');
+        {
+            const { deriveVerdicts } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'derive-verdicts'));
+            const { criterionDigest } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const crit = { id: 'm', description: 'x', dependsOn: ['index.js'], verifier: { type: 'command', params: { cmd: 'x' } } };
+            const baseRec = { criterionId: 'm', verdict: 'PASS', commitSha: 'h', verifierType: 'command', ranAt: 't', detail: 'd', attestedBy: null };
+            const okRec = { ...baseRec, criterionDigest: criterionDigest(crit) };
+            assert.strictEqual(deriveVerdicts([crit], [okRec], 'h', [])[0].verdict, 'PASS', 'matching digest, deps untouched → PASS');
+            assert.strictEqual(deriveVerdicts([crit], [baseRec], 'h', [])[0].verdict, 'STALE', 'absent digest → STALE');
+            const redefined = { ...crit, verifier: { type: 'command', params: { cmd: 'DIFFERENT' } } };
+            assert.strictEqual(deriveVerdicts([redefined], [okRec], 'h', [])[0].verdict, 'STALE', 'digest mismatch → STALE');
+            console.log('✅ T50 machine digest STALE');
+        }
+
+        console.log('T51. Testing deriveVerdicts manual: STALE on digest change, exempt from deps/commit ...');
+        {
+            const { deriveVerdicts } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'derive-verdicts'));
+            const { criterionDigest } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const crit = { id: 'man', description: 'x', dependsOn: ['index.js'], verifier: { type: 'manual', params: { reason: 'r' } } };
+            const rec = { criterionId: 'man', verdict: 'PASS', commitSha: 'old', verifierType: 'manual', ranAt: 't', detail: 'd', attestedBy: 'alice', criterionDigest: criterionDigest(crit) };
+            assert.strictEqual(deriveVerdicts([crit], [rec], 'newhead', ['index.js'])[0].verdict, 'PASS', 'manual PASS survives deps/commit change when digest matches');
+            const redefined = { ...crit, verifier: { type: 'manual', params: { reason: 'DIFFERENT' } } };
+            assert.strictEqual(deriveVerdicts([redefined], [rec], 'newhead', ['index.js'])[0].verdict, 'STALE', 'manual STALEs on digest change');
+            const legacy = { ...rec }; delete legacy.criterionDigest;
+            assert.strictEqual(deriveVerdicts([crit], [legacy], 'h', [])[0].verdict, 'STALE', 'manual absent digest → STALE');
+            console.log('✅ T51 manual digest STALE');
+        }
+
+        console.log('T52. Testing runSpec + attestSpec stamp criterionDigest ...');
+        {
+            const engine = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const { readEvidence } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            const vc = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-digest-write-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, [
+                    '---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '',
+                    '# T', '', '## Acceptance Criteria', '',
+                    '```json',
+                    '{ "criteria": [' +
+                    ' { "id": "ac-cmd", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } },' +
+                    ' { "id": "ac-man", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "manual", "params": { "reason": "r" } } } ] }',
+                    '```', '',
+                ].join('\n'));
+                const cleanExec = (cmd) => (/status --porcelain/.test(cmd) ? '' : 'sha1');
+
+                engine.runSpec(specPath, { root, headSha: 'sha1', ranAt: 't', porcelain: '', exec: () => 'ok' });
+                const cmdRec = readEvidence(root, 'spec:t').records['ac-cmd'];
+                assert.ok(cmdRec.criterionDigest && /^sha256:/.test(cmdRec.criterionDigest), 'runSpec stamps criterionDigest');
+
+                engine.attestSpec(specPath, 'ac-man', { root, headSha: 'sha1', ranAt: 't', by: 'alice', exec: cleanExec });
+                const manRec = readEvidence(root, 'spec:t').records['ac-man'];
+                assert.ok(manRec.criterionDigest && /^sha256:/.test(manRec.criterionDigest), 'attestSpec stamps criterionDigest');
+
+                const parsed = vc.loadValidatedContract(fs.readFileSync(specPath, 'utf8'));
+                const cmdCrit = parsed.criteria.find(c => c.id === 'ac-cmd');
+                assert.strictEqual(cmdRec.criterionDigest, vc.criterionDigest(cmdCrit), 'stamped digest equals recomputed digest');
+                console.log('✅ T52 writers stamp criterionDigest');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
         }
 
         console.log('T19. Testing architecture where <file> reverse lookup ...');

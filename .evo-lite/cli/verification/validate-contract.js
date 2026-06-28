@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { parseFrontmatter } = require('../planning/parse-markdown');
 
 const SCHEMA = JSON.parse(
@@ -130,4 +131,28 @@ function loadValidatedContract(specText) {
     return { ok: findings.length === 0, noContract: parsed.criteria.length === 0, specId, criteria: parsed.criteria, findings };
 }
 
-module.exports = { validateCriteria, validateEvidenceRecord, parseSpecCriteria, loadValidatedContract, SCHEMA };
+// Recursively sort object keys so the JSON is canonical regardless of author key order.
+function canonicalize(value) {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (value && typeof value === 'object') {
+        const out = {};
+        for (const k of Object.keys(value).sort()) out[k] = canonicalize(value[k]);
+        return out;
+    }
+    return value;
+}
+
+// Fingerprint of a criterion's VERIFICATION SEMANTICS only (id + verifier + dependsOn).
+// description is excluded (prose). Used to STALE evidence when the criterion is redefined.
+function criterionDigest(criterion) {
+    const c = criterion || {};
+    const v = c.verifier || {};
+    const norm = canonicalize({
+        id: c.id,
+        verifier: { type: v.type, params: v.params || {} },
+        dependsOn: c.dependsOn || [],
+    });
+    return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex');
+}
+
+module.exports = { validateCriteria, validateEvidenceRecord, parseSpecCriteria, loadValidatedContract, criterionDigest, SCHEMA };

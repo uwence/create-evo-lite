@@ -1,5 +1,7 @@
 'use strict';
 
+const { criterionDigest } = require('./validate-contract');
+
 // Minimal glob → RegExp: ** spans path segments, * stays within a segment.
 function globToRegExp(glob) {
     let re = '';
@@ -32,8 +34,16 @@ function deriveVerdicts(criteria, records, headSha, changedFiles) {
         if (!rec) return { criterionId: c.id, verdict: 'UNVERIFIED', detail: 'no evidence record' };
         if (rec.verdict === 'FAIL') return { criterionId: c.id, verdict: 'FAIL', detail: rec.detail || 'recorded FAIL' };
         if (rec.verdict !== 'PASS') return { criterionId: c.id, verdict: 'UNVERIFIED', detail: `raw verdict ${rec.verdict}` };
+        // Evidence must match the criterion it claims to verify. Absent or mismatched
+        // digest → STALE (covers both machine and manual; legacy records have none).
+        if (!rec.criterionDigest) {
+            return { criterionId: c.id, verdict: 'STALE', detail: 'evidence predates criterion digest' };
+        }
+        if (rec.criterionDigest !== criterionDigest(c)) {
+            return { criterionId: c.id, verdict: 'STALE', detail: 'criterion definition changed since evidence' };
+        }
         if (rec.verifierType === 'manual') {
-            return { criterionId: c.id, verdict: 'PASS', detail: 'manual attestation (STALE-exempt)' };
+            return { criterionId: c.id, verdict: 'PASS', detail: 'manual attestation (digest matches)' };
         }
         if (changedFiles == null) {
             return rec.commitSha !== headSha
