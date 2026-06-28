@@ -11,6 +11,7 @@ function printPreview(r) {
         console.log('actions --apply would run:');
         for (const a of r.actions) console.log(`  • ${a}`);
     }
+    for (const w of (r.warnings || [])) console.log(`  ⚠ ${w.message}`);
 }
 
 function printApply(r) {

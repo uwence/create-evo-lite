@@ -50,6 +50,13 @@ function previewClose(specPath, opts = {}) {
 
     const planState = (opts.planStateFn || defaultPlanState)(root, fm.linkedPlan);
 
+    // Advisory only — NEVER affects readiness. criteria-all-PASS stays the sole hard gate.
+    const warnings = [];
+    if (planState.found && planState.tasksImplemented < planState.tasksTotal) {
+        warnings.push({ kind: 'tasks-incomplete',
+            message: `${planState.tasksTotal - planState.tasksImplemented} of ${planState.tasksTotal} linked tasks are not implemented — closing will mark the spec done anyway` });
+    }
+
     const actions = [];
     if (planState.uncheckedBoxes > 0) {
         actions.push(`flip ${planState.uncheckedBoxes} unchecked checkbox(es) in ${planState.planPath || fm.linkedPlan}`);
@@ -60,7 +67,7 @@ function previewClose(specPath, opts = {}) {
     // Malformed contract (present but invalid) → fail-closed, never READY.
     if (!contract.ok) {
         return {
-            readiness: 'BLOCKED', criteria: [], plan: planState, actions,
+            readiness: 'BLOCKED', criteria: [], plan: planState, actions, warnings,
             blockers: contract.findings.map(f => ({ criterionId: f.id, verdict: 'INVALID', remedy: f.message })),
             note: 'contract is invalid — fix the criteria block (mem verify-contract lint <spec>)',
         };
@@ -68,7 +75,7 @@ function previewClose(specPath, opts = {}) {
 
     if (contract.noContract) {
         return {
-            readiness: 'NO-CONTRACT', criteria: [], plan: planState, blockers: [], actions: [],
+            readiness: 'NO-CONTRACT', criteria: [], plan: planState, blockers: [], actions: [], warnings,
             note: 'no machine-readable acceptance criteria — add a criteria block for a real gate, or close manually',
         };
     }
@@ -78,7 +85,7 @@ function previewClose(specPath, opts = {}) {
     const blockers = verdicts.filter(v => v.verdict !== 'PASS').map(v => ({
         criterionId: v.criterionId, verdict: v.verdict, remedy: remedyFor(v.verdict, typeById[v.criterionId]),
     }));
-    return { readiness: blockers.length ? 'BLOCKED' : 'READY', criteria: verdicts, plan: planState, blockers, actions };
+    return { readiness: blockers.length ? 'BLOCKED' : 'READY', criteria: verdicts, plan: planState, blockers, actions, warnings };
 }
 
 module.exports = { previewClose, remedyFor, defaultPlanState };

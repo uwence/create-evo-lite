@@ -1564,6 +1564,102 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T53. Testing previewClose task-incomplete warning (advisory, not a blocker) ...');
+        {
+            const { previewClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-warn-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, [
+                    '---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '',
+                    '# T', '', '## Acceptance Criteria', '',
+                    '```json', '{ "criteria": [ { "id": "ac-1", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } } ] }', '```', '',
+                ].join('\n'));
+                const allPass = () => [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }];
+                const incomplete = previewClose(specPath, {
+                    root, statusFn: allPass,
+                    planStateFn: () => ({ planId: 'plan:t', found: true, planPath: 'docs/p.md', tasksTotal: 3, tasksImplemented: 1, uncheckedBoxes: 4 }) });
+                assert.strictEqual(incomplete.readiness, 'READY', 'task incompleteness must NOT block READY');
+                assert.ok(Array.isArray(incomplete.warnings), 'preview returns a warnings array');
+                assert.ok(incomplete.warnings.some(w => w.kind === 'tasks-incomplete' && /2 of 3/.test(w.message)), 'warns 2 of 3 tasks not implemented');
+                const complete = previewClose(specPath, {
+                    root, statusFn: allPass,
+                    planStateFn: () => ({ planId: 'plan:t', found: true, planPath: 'docs/p.md', tasksTotal: 3, tasksImplemented: 3, uncheckedBoxes: 0 }) });
+                assert.strictEqual(complete.readiness, 'READY', 'complete tasks still READY');
+                assert.deepStrictEqual(complete.warnings, [], 'no warning when tasks complete');
+                console.log('✅ T53 previewClose task warning');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T54. Testing applyClose rolls back when git add fails (staging inside the txn) ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-stage-fail-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                const specBefore = ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n');
+                fs.writeFileSync(specPath, specBefore);
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                const planBefore = '# P\n\n- [ ] Step one\n- [ ] Step two\n';
+                fs.writeFileSync(planAbs, planBefore);
+                const result = applyClose(specPath, {
+                    root, now: '2026-06-28T00:00:00.000Z',
+                    exec: (args) => { if (args[0] === 'add') throw new Error('git add boom'); return ''; },
+                    previewFn: () => ({ readiness: 'READY', blockers: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, tasksTotal: 2, uncheckedBoxes: 2 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                });
+                assert.strictEqual(result.applied, false, 'staging failure is not applied');
+                assert.strictEqual(result.aborted, true, 'staging failure rolls back (aborted)');
+                assert.ok(/git add boom/.test(result.error), 'staging error surfaced');
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), planBefore, 'plan restored after staging failure');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specBefore, 'spec restored after staging failure');
+                const journal = JSON.parse(fs.readFileSync(result.journalPath, 'utf8'));
+                assert.strictEqual(journal.status, 'aborted', 'journal marked aborted on staging failure');
+                console.log('✅ T54 staging-failure rollback');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T55. Testing applyClose advisory lock (fresh refuses, stale proceeds, removed after) ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                fs.mkdirSync(path.join(root, '.evo-lite', 'verification'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n'));
+                const planRel = 'docs/p.md';
+                fs.writeFileSync(path.join(root, planRel), '# P\n\n- [ ] One\n');
+                const lockPath = path.join(root, '.evo-lite', 'verification', 'close.lock');
+                const now = '2026-06-28T12:00:00.000Z';
+                const okOpts = {
+                    root, now,
+                    exec: (args) => (args[0] === 'add' ? '' : ''),
+                    previewFn: () => ({ readiness: 'READY', blockers: [], plan: { planId: 'plan:t', found: true, planPath: planRel, tasksTotal: 1, uncheckedBoxes: 1 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                };
+                fs.writeFileSync(lockPath, JSON.stringify({ pid: 999, startedAt: now }) + '\n');
+                const refused = applyClose(specPath, okOpts);
+                assert.strictEqual(refused.applied, false, 'fresh lock → not applied');
+                assert.strictEqual(refused.refused, 'locked', 'fresh lock → refused:locked');
+                const stale = new Date(Date.parse(now) - (11 * 60 * 1000)).toISOString();
+                fs.writeFileSync(lockPath, JSON.stringify({ pid: 999, startedAt: stale }) + '\n');
+                const applied = applyClose(specPath, okOpts);
+                assert.strictEqual(applied.applied, true, 'stale lock → proceeds and applies');
+                assert.ok(!fs.existsSync(lockPath), 'lock removed after a successful apply');
+                console.log('✅ T55 advisory lock');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
