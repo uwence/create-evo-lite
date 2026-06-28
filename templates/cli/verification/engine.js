@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const { execSync } = require('child_process');
-const { loadValidatedContract } = require('./validate-contract');
+const { loadValidatedContract, criterionDigest } = require('./validate-contract');
 const { parseFrontmatter } = require('../planning/parse-markdown');
 const { runVerifier } = require('./run-verifiers');
 const { writeRecord, readEvidence } = require('./evidence-store');
@@ -42,6 +42,7 @@ function runSpec(specPath, opts = {}) {
         writeRecord(root, specId, {
             criterionId: c.id, verdict, commitSha: headSha,
             verifierType: c.verifier.type, ranAt, detail, attestedBy: null,
+            criterionDigest: criterionDigest(c),
         });
         written.push({ criterionId: c.id, verdict });
     }
@@ -104,6 +105,7 @@ function attestSpec(specPath, criterionId, opts = {}) {
     const record = {
         criterionId, verdict: 'PASS', commitSha: headSha, verifierType: 'manual',
         ranAt, detail: opts.note || 'manual attestation', attestedBy: opts.by,
+        criterionDigest: criterionDigest(crit),
     };
     writeRecord(root, specId, record);
     return record;
