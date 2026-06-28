@@ -1,6 +1,6 @@
 ---
 id: spec:verification-contract-closure-hardening
-status: draft
+status: done
 created: 2026-06-28
 linkedPlan: plan:verification-contract-closure-hardening
 ---

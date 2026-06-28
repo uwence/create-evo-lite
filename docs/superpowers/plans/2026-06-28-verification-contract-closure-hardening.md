@@ -29,7 +29,7 @@
 **Interfaces:**
 - Produces: `previewClose(specPath, opts)` return objects all gain `warnings: [{ kind, message }]`. `tasks-incomplete` warning fires when `planState.found && planState.tasksImplemented < planState.tasksTotal`. `readiness` is unchanged.
 
-- [ ] **Step 1: Write the failing test (T53)**
+- [x] **Step 1: Write the failing test (T53)**
 
 Add after the T52 block inside `runGovernanceTests()` in `templates/cli/test.js`:
 
@@ -66,12 +66,12 @@ console.log('T53. Testing previewClose task-incomplete warning (advisory, not a 
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T53 — `preview returns a warnings array` (`warnings` is undefined).
 
-- [ ] **Step 3: Implement the warning**
+- [x] **Step 3: Implement the warning**
 
 In `templates/cli/verification/close-preview.js`, inside `previewClose`, right after the `const planState = ...` line (currently line 51), add:
 
@@ -88,12 +88,12 @@ Then add `warnings` to EACH of the three return objects in `previewClose`:
 - the `noContract` `return { readiness: 'NO-CONTRACT', ... }` — add `warnings,`
 - the final `return { readiness: blockers.length ? 'BLOCKED' : 'READY', criteria: verdicts, plan: planState, blockers, actions };` — change to `return { readiness: blockers.length ? 'BLOCKED' : 'READY', criteria: verdicts, plan: planState, blockers, actions, warnings };`
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T53 previewClose task warning`.
 
-- [ ] **Step 5: Surface warnings in the CLI**
+- [x] **Step 5: Surface warnings in the CLI**
 
 In `templates/cli/verification/close-commands.js`, the `printPreview(r)` helper prints readiness/blockers/actions. After it prints the blockers loop and before/after actions, add a warnings loop. Locate `function printPreview(r) {` and add, right before its closing `}`:
 
@@ -103,12 +103,12 @@ In `templates/cli/verification/close-commands.js`, the `printPreview(r)` helper 
 
 (The `--json` path already serializes the whole result object, so `warnings` is included automatically.)
 
-- [ ] **Step 6: Run governance again; confirm still green**
+- [x] **Step 6: Run governance again; confirm still green**
 
 Run: `node templates/cli/test.js governance`
 Expected: `--- Governance-focused CLI tests passed! ---`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add templates/cli/verification/close-preview.js templates/cli/verification/close-commands.js templates/cli/test.js
@@ -127,7 +127,7 @@ git commit -m "feat(verification): preview surfaces unimplemented-task warning (
 - Consumes: nothing new.
 - Produces: `applyClose` stages (`git add`) inside the try block; a staging failure now returns `{ applied: false, aborted: true, error, journalPath }` with every target restored, identical to a mutation failure. Success return shape unchanged (`{ applied: true, ..., staged }`).
 
-- [ ] **Step 1: Write the failing test (T54)**
+- [x] **Step 1: Write the failing test (T54)**
 
 Add after T53 in `templates/cli/test.js`:
 
@@ -143,7 +143,7 @@ console.log('T54. Testing applyClose rolls back when git add fails (staging insi
         fs.writeFileSync(specPath, specBefore);
         const planRel = 'docs/p.md';
         const planAbs = path.join(root, planRel);
-        const planBefore = '# P\n\n- [ ] Step one\n- [ ] Step two\n';
+        const planBefore = '# P\n\n- [x] Step one\n- [x] Step two\n';
         fs.writeFileSync(planAbs, planBefore);
 
         // status clean → passes Gate 1; `add` throws → must roll back.
@@ -168,12 +168,12 @@ console.log('T54. Testing applyClose rolls back when git add fails (staging insi
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T54 — currently staging is AFTER the catch, so the `git add` throw escapes uncaught (the test sees an exception, not an `aborted` result). The plan + spec are left mutated.
 
-- [ ] **Step 3: Move staging into the try**
+- [x] **Step 3: Move staging into the try**
 
 In `templates/cli/verification/close-apply.js`, change the `const actions = [];` line to also declare staged:
 
@@ -209,12 +209,12 @@ Delete the OLD staging lines that were after the catch (the `// Stage only the g
     return { applied: true, readiness: 'READY', actions, journalPath, staged };
 ```
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T54 staging-failure rollback`; T41 (happy-path apply) still green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/close-apply.js templates/cli/test.js
@@ -233,7 +233,7 @@ git commit -m "fix(verification): stage inside the close txn so a git-add failur
 **Interfaces:**
 - Produces: `applyClose` acquires `.evo-lite/verification/close.lock` (atomic `wx`) before its gates and removes it in a `finally`. A FRESH lock → `{ applied: false, refused: 'locked', message }`. A lock older than 10 min (by `opts.now`) → overwritten and run proceeds. Module also exports `LOCK_STALE_MS`.
 
-- [ ] **Step 1: Write the failing test (T55)**
+- [x] **Step 1: Write the failing test (T55)**
 
 Add after T54 in `templates/cli/test.js`:
 
@@ -249,7 +249,7 @@ console.log('T55. Testing applyClose advisory lock (fresh refuses, stale proceed
         const specPath = path.join(root, 'spec.md');
         fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n'));
         const planRel = 'docs/p.md';
-        fs.writeFileSync(path.join(root, planRel), '# P\n\n- [ ] One\n');
+        fs.writeFileSync(path.join(root, planRel), '# P\n\n- [x] One\n');
         const lockPath = path.join(root, '.evo-lite', 'verification', 'close.lock');
         const now = '2026-06-28T12:00:00.000Z';
         const okOpts = {
@@ -278,12 +278,12 @@ console.log('T55. Testing applyClose advisory lock (fresh refuses, stale proceed
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T55 — `fresh lock → refused:locked` (no lock logic yet; the run ignores the lock and applies).
 
-- [ ] **Step 3: Implement the lock**
+- [x] **Step 3: Implement the lock**
 
 In `templates/cli/verification/close-apply.js`, add near the top (after the `writeJournal` helper):
 
@@ -337,12 +337,12 @@ Then indent the rest of the existing body (from `// Gate 1` through the final `r
 
 Add `LOCK_STALE_MS` to `module.exports`.
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T55 advisory lock`; T40/T41/T54 still green (all return paths now flow through the finally).
 
-- [ ] **Step 5: Gitignore close.lock (both trees)**
+- [x] **Step 5: Gitignore close.lock (both trees)**
 
 In `.gitignore`, after the `.evo-lite/verification/close-journal-*.json` line, add:
 
@@ -352,12 +352,12 @@ In `.gitignore`, after the `.evo-lite/verification/close-journal-*.json` line, a
 
 In `templates/gitignore`, after its matching `close-journal-*.json` line, add the same line.
 
-- [ ] **Step 6: Verify close.lock is now ignored**
+- [x] **Step 6: Verify close.lock is now ignored**
 
 Run: `printf '' > .evo-lite/verification/close.lock && git check-ignore .evo-lite/verification/close.lock && rm -f .evo-lite/verification/close.lock`
 Expected: prints `.evo-lite/verification/close.lock` (ignored). If it prints nothing, the ignore line is wrong.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add templates/cli/verification/close-apply.js .gitignore templates/gitignore templates/cli/test.js
@@ -373,7 +373,7 @@ git commit -m "feat(verification): advisory close.lock (stale-tolerant) + gitign
 - Modify: `docs/superpowers/specs/2026-06-28-verification-contract-closure-hardening.md` (status → done)
 - Modify: `docs/superpowers/plans/2026-06-28-verification-contract-closure-hardening.md` (checkboxes)
 
-- [ ] **Step 1: Sync the runtime mirror**
+- [x] **Step 1: Sync the runtime mirror**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime` (repeat once; expect 2nd run `copied: 0`). Confirm the three modified files match the mirror:
 
@@ -382,12 +382,12 @@ node -e "['close-preview.js','close-apply.js','close-commands.js'].forEach(f=>{c
 ```
 Expected: all three `OK`.
 
-- [ ] **Step 2: Full suite both scopes**
+- [x] **Step 2: Full suite both scopes**
 
 Run: `npm test`
 Expected: TWO `passed!` lines (governance incl. T53–T55, then integration), exit 0.
 
-- [ ] **Step 3: Dogfood — bind evidence and close this spec**
+- [x] **Step 3: Dogfood — bind evidence and close this spec**
 
 Commit Tasks 1–3 first so the tree is clean. Then:
 
@@ -400,7 +400,7 @@ node ./.evo-lite/cli/memory.js close docs/superpowers/specs/2026-06-28-verificat
 ```
 Expected: 3 PASS records; `close --preview --strict` prints `readiness: READY`, exits 0. (It may also print a `⚠` task-incomplete warning — that is expected and does NOT change READY.)
 
-- [ ] **Step 4: Apply, archive, confirm clean tree**
+- [x] **Step 4: Apply, archive, confirm clean tree**
 
 ```bash
 node ./.evo-lite/cli/memory.js close docs/superpowers/specs/2026-06-28-verification-contract-closure-hardening.md --apply
