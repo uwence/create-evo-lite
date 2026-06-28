@@ -1,6 +1,6 @@
 ---
 id: spec:verification-contract-criterion-digest
-status: draft
+status: done
 created: 2026-06-28
 linkedPlan: plan:verification-contract-criterion-digest
 ---

@@ -30,7 +30,7 @@
 **Interfaces:**
 - Produces: `criterionDigest(criterion) -> "sha256:<hex>"` — pure; canonical JSON of `{ id, verifier:{type,params}, dependsOn }` with recursively sorted keys. Exported from `validate-contract.js`.
 
-- [ ] **Step 1: Write the failing test (T49)**
+- [x] **Step 1: Write the failing test (T49)**
 
 Add after the T48 block inside `runGovernanceTests()` in `templates/cli/test.js`:
 
@@ -58,12 +58,12 @@ console.log('T49. Testing criterionDigest is stable + semantic ...');
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T49 — `criterionDigest is not a function`.
 
-- [ ] **Step 3: Implement criterionDigest**
+- [x] **Step 3: Implement criterionDigest**
 
 In `templates/cli/verification/validate-contract.js`, add `const crypto = require('crypto');` to the top requires, then add before `module.exports`:
 
@@ -95,12 +95,12 @@ function criterionDigest(criterion) {
 
 Add `criterionDigest` to the `module.exports` object.
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T49 criterionDigest stable + semantic`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/validate-contract.js templates/cli/test.js
@@ -120,7 +120,7 @@ git commit -m "feat(verification): criterionDigest — fingerprint verifier+depe
 - Consumes: `criterionDigest` (Task 1).
 - Produces: `deriveVerdicts(criteria, records, headSha, changedFiles)` unchanged signature; PASS now requires `record.criterionDigest === criterionDigest(currentCriterion)` for both machine and manual.
 
-- [ ] **Step 1: Write the failing tests (T50 machine, T51 manual)**
+- [x] **Step 1: Write the failing tests (T50 machine, T51 manual)**
 
 Add after T49 in `templates/cli/test.js`:
 
@@ -160,12 +160,12 @@ console.log('T51. Testing deriveVerdicts manual: STALE on digest change, exempt 
 }
 ```
 
-- [ ] **Step 2: Run; verify the new tests fail**
+- [x] **Step 2: Run; verify the new tests fail**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T50 — absent-digest record currently returns PASS (digest rule not implemented yet).
 
-- [ ] **Step 3: Implement the digest STALE rule**
+- [x] **Step 3: Implement the digest STALE rule**
 
 Replace the PASS-path block in `templates/cli/verification/derive-verdicts.js`. Add the require at the top (after the file's opening `'use strict';`):
 
@@ -200,7 +200,7 @@ Then replace the body of `deriveVerdicts`'s `.map` callback from the `if (rec.ve
 
 (The lines above `if (rec.verdict !== 'PASS')` — the `if (!rec)` and `if (rec.verdict === 'FAIL')` guards — stay unchanged.)
 
-- [ ] **Step 4: Update T35 records to carry matching digests**
+- [x] **Step 4: Update T35 records to carry matching digests**
 
 T35 ("computeLiveVerdicts per-criterion changedFiles") builds records with no digest, which now STALE. Make the PASS/STALE intents explicit. In the T35 block in `templates/cli/test.js`, add after the `const { computeLiveVerdicts } = require(...)` line:
 
@@ -225,12 +225,12 @@ Then in the same block, for each of the three records (`b`, `c`, `d`) add a `cri
 
 This REPLACES the existing `const criteria = [...]` and `const records = {...}` lines in T35 (the `crit`, `gitDiff`, and assertions below stay as-is). Result: `a` UNVERIFIED (no record), `b` PASS (digest matches, deps untouched), `c` STALE (deps changed), `d` STALE (unreachable commit) — same intents as before, now digest-clean.
 
-- [ ] **Step 5: Run; verify all pass**
+- [x] **Step 5: Run; verify all pass**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T50`, `✅ T51`, and `✅ T35` (updated) all green; no other governance regressions.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/derive-verdicts.js templates/cli/test.js
@@ -249,7 +249,7 @@ git commit -m "feat(verification): deriveVerdicts STALEs PASS on criterion-diges
 - Consumes: `criterionDigest` (Task 1).
 - Produces: evidence records written by `runSpec` (per machine criterion) and `attestSpec` (the manual criterion) now include `criterionDigest`.
 
-- [ ] **Step 1: Write the failing test (T52)**
+- [x] **Step 1: Write the failing test (T52)**
 
 Add after T51 in `templates/cli/test.js`:
 
@@ -292,12 +292,12 @@ console.log('T52. Testing runSpec + attestSpec stamp criterionDigest ...');
 }
 ```
 
-- [ ] **Step 2: Run; verify it fails**
+- [x] **Step 2: Run; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T52 — `runSpec stamps criterionDigest` (field is undefined).
 
-- [ ] **Step 3: Implement digest stamping**
+- [x] **Step 3: Implement digest stamping**
 
 In `templates/cli/verification/engine.js`, add `criterionDigest` to the validate-contract require (it currently imports `loadValidatedContract`):
 
@@ -343,12 +343,12 @@ Add `criterionDigest: criterionDigest(crit),`:
     };
 ```
 
-- [ ] **Step 4: Run; verify it passes**
+- [x] **Step 4: Run; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T52 writers stamp criterionDigest`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/engine.js templates/cli/test.js
@@ -364,7 +364,7 @@ git commit -m "feat(verification): runSpec + attestSpec stamp criterionDigest in
 - Modify: `docs/superpowers/specs/2026-06-28-verification-contract-criterion-digest.md` (status → done)
 - Modify: `docs/superpowers/plans/2026-06-28-verification-contract-criterion-digest.md` (checkboxes)
 
-- [ ] **Step 1: Sync the runtime mirror**
+- [x] **Step 1: Sync the runtime mirror**
 
 Run: `node ./.evo-lite/cli/memory.js sync-runtime` (repeat once; expect a 2nd run to report `copied: 0`). Confirm the three modified files mirrored:
 
@@ -373,12 +373,12 @@ node -e "['validate-contract.js','derive-verdicts.js','engine.js'].forEach(f=>{c
 ```
 Expected: all three `OK`.
 
-- [ ] **Step 2: Full suite both scopes**
+- [x] **Step 2: Full suite both scopes**
 
 Run: `npm test`
 Expected: TWO `passed!` lines (governance incl. T49–T52, then integration), exit 0. Investigate any failure before continuing.
 
-- [ ] **Step 3: Dogfood — rebind this spec's evidence and close it**
+- [x] **Step 3: Dogfood — rebind this spec's evidence and close it**
 
 The working tree must be clean (commit Tasks 1–3 first). Then:
 
@@ -391,7 +391,7 @@ node ./.evo-lite/cli/memory.js close docs/superpowers/specs/2026-06-28-verificat
 ```
 Expected: 4 PASS records written (each criterion's command runs the governance suite, exit 0); `close --preview --strict` prints `readiness: READY` and exits 0.
 
-- [ ] **Step 4: Apply the closure**
+- [x] **Step 4: Apply the closure**
 
 ```bash
 node ./.evo-lite/cli/memory.js close docs/superpowers/specs/2026-06-28-verification-contract-criterion-digest.md --apply
@@ -404,7 +404,7 @@ git add -A
 git commit -m "feat(verification): PR2 criterion-digest shipped + self-closed; archive evidence"
 ```
 
-- [ ] **Step 5: Confirm drift clean**
+- [x] **Step 5: Confirm drift clean**
 
 Run: `node ./.evo-lite/cli/memory.js plan gaps`
 Expected: `No planning drift findings` (drift 0). The PR2 spec is `done`, its plan tasks all implemented with archive evidence.
