@@ -1564,6 +1564,35 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T53. Testing previewClose task-incomplete warning (advisory, not a blocker) ...');
+        {
+            const { previewClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-warn-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, [
+                    '---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '',
+                    '# T', '', '## Acceptance Criteria', '',
+                    '```json', '{ "criteria": [ { "id": "ac-1", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } } ] }', '```', '',
+                ].join('\n'));
+                const allPass = () => [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }];
+                const incomplete = previewClose(specPath, {
+                    root, statusFn: allPass,
+                    planStateFn: () => ({ planId: 'plan:t', found: true, planPath: 'docs/p.md', tasksTotal: 3, tasksImplemented: 1, uncheckedBoxes: 4 }) });
+                assert.strictEqual(incomplete.readiness, 'READY', 'task incompleteness must NOT block READY');
+                assert.ok(Array.isArray(incomplete.warnings), 'preview returns a warnings array');
+                assert.ok(incomplete.warnings.some(w => w.kind === 'tasks-incomplete' && /2 of 3/.test(w.message)), 'warns 2 of 3 tasks not implemented');
+                const complete = previewClose(specPath, {
+                    root, statusFn: allPass,
+                    planStateFn: () => ({ planId: 'plan:t', found: true, planPath: 'docs/p.md', tasksTotal: 3, tasksImplemented: 3, uncheckedBoxes: 0 }) });
+                assert.strictEqual(complete.readiness, 'READY', 'complete tasks still READY');
+                assert.deepStrictEqual(complete.warnings, [], 'no warning when tasks complete');
+                console.log('✅ T53 previewClose task warning');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
