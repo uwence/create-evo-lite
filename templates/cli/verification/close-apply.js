@@ -153,7 +153,8 @@ function applyClose(specPath, opts = {}) {
 
     writeJournal(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));
 
-    return { applied: true, readiness: 'READY', actions, journalPath, staged };
+    return { applied: true, readiness: 'READY', actions, journalPath, staged,
+        warnings: preview.warnings || [] };
 
     } finally {
         try { fs.unlinkSync(lockPath); } catch (_) { /* already gone */ }

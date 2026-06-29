@@ -1695,6 +1695,34 @@ async function runGovernanceTests() {
             console.log('✅ T57 identity validation');
         }
 
+        console.log('T58. Testing applyClose propagates preview warnings on a direct --apply ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-applywarn-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n'));
+                const planRel = 'docs/p.md';
+                fs.writeFileSync(path.join(root, planRel), '---\nid: plan:t\nstatus: draft\n---\n\n# P\n\n- [ ] One\n');
+                const warning = { kind: 'tasks-incomplete', message: '1 of 2 linked tasks are not implemented — closing will mark the spec done anyway' };
+                const r = applyClose(specPath, {
+                    root, now: '2026-06-28T12:00:00.000Z',
+                    exec: () => '',
+                    previewFn: () => ({ readiness: 'READY', blockers: [], warnings: [warning],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, planStatus: 'draft', tasksTotal: 2, tasksImplemented: 1, uncheckedBoxes: 1 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                });
+                assert.strictEqual(r.applied, true, 'applies (warning is advisory, never blocks)');
+                assert.deepStrictEqual(r.warnings, [warning], 'warnings propagated to the apply result');
+                const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-commands.js'), 'utf8');
+                assert.ok(/r\.warnings/.test(src) && /⚠/.test(src), 'printApply prints warnings with ⚠');
+                console.log('✅ T58 apply propagates warnings');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
