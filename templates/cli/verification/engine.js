@@ -61,6 +61,10 @@ function statusSpec(specPath, opts = {}) {
     if (!contract.ok) {
         return contract.findings.map(f => ({ criterionId: f.id, verdict: 'INVALID', detail: f.message }));
     }
+    if (contract.noContract) {
+        return [{ criterionId: '<contract>', verdict: 'NO-CONTRACT',
+            detail: 'no machine-readable acceptance criteria' }];
+    }
     const store = readEvidence(root, specId);
     const gitDiff = opts.gitDiff || function (sha) {
         try {

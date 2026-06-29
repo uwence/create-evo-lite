@@ -1660,6 +1660,23 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T56. Testing statusSpec emits a NO-CONTRACT verdict so --strict fails ...');
+        {
+            const { statusSpec } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-nocontract-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', '---', '', '# T', 'no criteria block here', ''].join('\n'));
+                const verdicts = statusSpec(specPath, { root, exec: () => 'abc123\n' });
+                assert.strictEqual(verdicts.length, 1, 'exactly one synthetic verdict for NO-CONTRACT');
+                assert.strictEqual(verdicts[0].verdict, 'NO-CONTRACT', 'verdict is NO-CONTRACT');
+                assert.ok(verdicts[0].verdict !== 'PASS', 'NO-CONTRACT is not PASS → --strict exits non-zero');
+                console.log('✅ T56 statusSpec NO-CONTRACT verdict');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
