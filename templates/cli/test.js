@@ -1765,6 +1765,28 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T60. Testing closure journal slug uses evidenceSlug (no path traversal) ...');
+        {
+            const closeApply = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const { evidenceSlug } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            assert.throws(() => evidenceSlug('spec:a/b'), /invalid spec id/, 'separator id rejected by evidenceSlug');
+            assert.strictEqual(closeApply.slugFor({ id: 'spec:t' }), 't', 'slugFor returns the validated slug');
+            assert.throws(() => closeApply.slugFor({ id: 'spec:../evil' }), /invalid spec id/, 'slugFor rejects traversal');
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-slug-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:../../evil', 'status: draft', '---', '', '# T', ''].join('\n'));
+                const r = closeApply.applyClose(specPath, { root, now: '2026-06-28T12:00:00.000Z', exec: () => '', backfillFn: () => {}, scanFn: () => {} });
+                assert.strictEqual(r.applied, false, 'traversal id → not applied (fail-closed at preview)');
+                const vdir = path.join(root, '.evo-lite', 'verification');
+                const journals = fs.existsSync(vdir) ? fs.readdirSync(vdir).filter(f => f.startsWith('close-journal')) : [];
+                assert.strictEqual(journals.length, 0, 'no journal written for a fail-closed traversal id');
+                console.log('✅ T60 safe journal slug');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));

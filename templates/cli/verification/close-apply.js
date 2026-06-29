@@ -5,6 +5,7 @@ const path = require('path');
 const childProcess = require('child_process');
 const { previewClose } = require('./close-preview');
 const { parseFrontmatter } = require('../planning/parse-markdown');
+const { evidenceSlug } = require('./evidence-store');
 
 function defaultExec(root) {
     return (args) => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' });
@@ -19,9 +20,8 @@ function defaultScan(root) {
     return writePlanIR(scanPlanning(root), root);
 }
 
-function slugFor(fm, specPath) {
-    const id = String(fm.id || '').replace(/^spec:/, '').trim();
-    return id || path.basename(specPath).replace(/\.md$/, '');
+function slugFor(fm) {
+    return evidenceSlug(fm && fm.id);
 }
 
 // Set frontmatter `status:` to done (rewrite the key, or insert if absent).
@@ -118,7 +118,7 @@ function applyClose(specPath, opts = {}) {
 
     // Journal: snapshot prior bytes (null = file absent).
     const entries = targets.map(p => ({ path: p, priorBytes: fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null }));
-    const journalPath = path.join(root, '.evo-lite', 'verification', `close-journal-${slugFor(fm, specPath)}.json`);
+    const journalPath = path.join(root, '.evo-lite', 'verification', `close-journal-${evidenceSlug(fm.id)}.json`);
     const journal = { version: 'evo-close-journal@1', spec: specPath, createdAt: now, status: 'applying',
         entries: entries.map(e => ({ path: path.relative(root, e.path).replace(/\\/g, '/'), existed: e.priorBytes !== null })) };
     writeJournal(journalPath, journal);
