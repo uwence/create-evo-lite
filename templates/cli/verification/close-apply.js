@@ -105,7 +105,9 @@ function applyClose(specPath, opts = {}) {
     const plan = preview.plan || {};
 
     // Build target list (every file --apply may overwrite).
-    const planAbs = (plan.uncheckedBoxes > 0 && plan.planPath) ? path.join(root, plan.planPath) : null;
+    const planNeedsMutation = !!plan.planPath &&
+        (plan.uncheckedBoxes > 0 || (plan.planStatus && plan.planStatus !== 'done'));
+    const planAbs = planNeedsMutation ? path.join(root, plan.planPath) : null;
     const willSetStatus = fm.status !== 'done';
     const archPath = path.join(root, '.evo-lite', 'generated', 'planning', 'archive-evidence.json');
     const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
@@ -125,9 +127,12 @@ function applyClose(specPath, opts = {}) {
     let staged = [];
     try {
         if (planAbs) {
-            const txt = fs.readFileSync(planAbs, 'utf8');
-            fs.writeFileSync(planAbs, txt.replace(/- \[ \] /g, '- [x] '));
-            actions.push(`flip ${plan.uncheckedBoxes} checkbox(es) in ${plan.planPath}`);
+            let txt = fs.readFileSync(planAbs, 'utf8');
+            if (plan.uncheckedBoxes > 0) txt = txt.replace(/- \[ \] /g, '- [x] ');
+            fs.writeFileSync(planAbs, setStatusDone(txt));
+            actions.push(plan.uncheckedBoxes > 0
+                ? `flip ${plan.uncheckedBoxes} checkbox(es) + set plan status: done in ${plan.planPath}`
+                : `set plan status: done in ${plan.planPath}`);
         }
         if (willSetStatus) {
             fs.writeFileSync(specPath, setStatusDone(specText));

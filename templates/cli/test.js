@@ -1723,6 +1723,48 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T59. Testing applyClose sets plan status: done independent of unchecked boxes ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-planstatus-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: done', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n'));
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                // Case A: plan already fully checked but still draft → status must reach done.
+                fs.writeFileSync(planAbs, ['---', 'id: plan:t', 'status: draft', '---', '', '# P', '', '- [x] One', ''].join('\n'));
+                let added = false;
+                const rA = applyClose(specPath, {
+                    root, now: '2026-06-28T12:00:00.000Z',
+                    exec: (args) => { if (args[0] === 'add') added = true; return ''; },
+                    previewFn: () => ({ readiness: 'READY', blockers: [], warnings: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, planStatus: 'draft', tasksTotal: 1, tasksImplemented: 1, uncheckedBoxes: 0 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                });
+                assert.strictEqual(rA.applied, true, 'A: applies');
+                assert.ok(/^status: done$/m.test(fs.readFileSync(planAbs, 'utf8')), 'A: plan rewritten to status: done even with 0 unchecked boxes');
+                assert.ok(added, 'A: plan was staged');
+                // Case B: plan already done + 0 boxes → no-op (file untouched, not staged).
+                fs.writeFileSync(planAbs, ['---', 'id: plan:t', 'status: done', '---', '', '# P', '', '- [x] One', ''].join('\n'));
+                const before = fs.readFileSync(planAbs, 'utf8');
+                const rB = applyClose(specPath, {
+                    root, now: '2026-06-28T12:00:00.000Z',
+                    exec: () => '',
+                    previewFn: () => ({ readiness: 'READY', blockers: [], warnings: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, planStatus: 'done', tasksTotal: 1, tasksImplemented: 1, uncheckedBoxes: 0 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                });
+                assert.strictEqual(rB.applied, true, 'B: applies (spec already done, plan no-op)');
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), before, 'B: fully-closed plan untouched');
+                assert.ok(!(rB.staged || []).includes(planRel), 'B: plan not staged when it is a no-op');
+                console.log('✅ T59 plan status done box-count-independent');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
