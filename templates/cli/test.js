@@ -1787,6 +1787,45 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T61. Testing success-journal write failure rolls back + unstages (write inside txn) ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-jtxn-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                const specPrior = ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n');
+                fs.writeFileSync(specPath, specPrior);
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                const planPrior = ['---', 'id: plan:t', 'status: draft', '---', '', '# P', '', '- [ ] One', ''].join('\n');
+                fs.writeFileSync(planAbs, planPrior);
+                const resetCalls = [];
+                const r = applyClose(specPath, {
+                    root, now: '2026-06-28T12:00:00.000Z',
+                    exec: (args) => { if (args[0] === 'reset') resetCalls.push(args); return ''; },
+                    previewFn: () => ({ readiness: 'READY', blockers: [], warnings: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, planStatus: 'draft', tasksTotal: 1, tasksImplemented: 1, uncheckedBoxes: 1 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                    writeJournalFn: (p, payload) => {
+                        if (payload.status === 'applied') throw new Error('disk full on success journal');
+                        fs.mkdirSync(path.dirname(p), { recursive: true });
+                        fs.writeFileSync(p, JSON.stringify(payload, null, 2) + '\n');
+                    },
+                });
+                assert.strictEqual(r.applied, false, 'not applied');
+                assert.strictEqual(r.aborted, true, 'aborted');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specPrior, 'spec restored to prior bytes');
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), planPrior, 'plan restored to prior bytes');
+                assert.ok(resetCalls.length >= 1, 'rollback unstaged via git reset');
+                const journal = JSON.parse(fs.readFileSync(r.journalPath, 'utf8'));
+                assert.strictEqual(journal.status, 'aborted', 'journal records aborted');
+                console.log('✅ T61 success-journal failure rolls back + unstages');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));

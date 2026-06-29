@@ -76,6 +76,7 @@ function applyClose(specPath, opts = {}) {
     const backfillFn = opts.backfillFn || defaultBackfill;
     const scanFn = opts.scanFn || defaultScan;
     const now = opts.now || new Date().toISOString();
+    const writeJournalFn = opts.writeJournalFn || writeJournal;
 
     // Advisory lock around the whole apply (gates + mutations) so two concurrent runs
     // cannot both pass Gate 1 and then race on the regenerated planning artifacts.
@@ -121,7 +122,7 @@ function applyClose(specPath, opts = {}) {
     const journalPath = path.join(root, '.evo-lite', 'verification', `close-journal-${evidenceSlug(fm.id)}.json`);
     const journal = { version: 'evo-close-journal@1', spec: specPath, createdAt: now, status: 'applying',
         entries: entries.map(e => ({ path: path.relative(root, e.path).replace(/\\/g, '/'), existed: e.priorBytes !== null })) };
-    writeJournal(journalPath, journal);
+    writeJournalFn(journalPath, journal);
 
     const actions = [];
     let staged = [];
@@ -147,16 +148,17 @@ function applyClose(specPath, opts = {}) {
         const sourceTargets = [planAbs, willSetStatus ? specPath : null].filter(Boolean);
         staged = sourceTargets.filter(p => fs.existsSync(p)).map(p => path.relative(root, p).replace(/\\/g, '/'));
         if (staged.length) exec(['add', ...staged]);
+        writeJournalFn(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));
     } catch (err) {
         for (const e of entries) {
             if (e.priorBytes === null) { if (fs.existsSync(e.path)) fs.unlinkSync(e.path); }
             else fs.writeFileSync(e.path, e.priorBytes);
         }
-        writeJournal(journalPath, Object.assign({}, journal, { status: 'aborted', error: err.message }));
+        // Unstage anything we git-add-ed so a rollback leaves the index clean too.
+        try { if (staged.length) exec(['reset', '--', ...staged]); } catch (_) { /* best-effort */ }
+        writeJournalFn(journalPath, Object.assign({}, journal, { status: 'aborted', error: err.message }));
         return { applied: false, aborted: true, error: err.message, journalPath };
     }
-
-    writeJournal(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));
 
     return { applied: true, readiness: 'READY', actions, journalPath, staged,
         warnings: preview.warnings || [] };
