@@ -108,25 +108,46 @@ the only hard gate. This only makes a silent `--apply` no longer silent.
 
 ### 4. Plan frontmatter status: done (close-apply.js)
 
-When `planAbs` is being mutated, also set its frontmatter `status: done` via the
-existing `setStatusDone` helper, in the same write:
+Two coupled bugs. (a) The plan frontmatter `status:` is never set to `done`, so a
+standard `mem plan new` plan stays `draft`. (b) `planAbs` is computed as
+`(plan.uncheckedBoxes > 0 && plan.planPath) ? ... : null` (close-apply.js:108), so a
+plan whose boxes are *already* all checked but whose status is still `draft` (a
+re-run, or a plan ticked by hand) is never touched — its status can never reach
+`done`. The status flip must be independent of the unchecked-box count.
+
+Resolve `planAbs` whenever the plan exists and *either* it has unchecked boxes *or*
+its status is not yet `done`:
+
+```js
+const planNeedsMutation = !!plan.planPath &&
+    (plan.uncheckedBoxes > 0 || (plan.planStatus && plan.planStatus !== 'done'));
+const planAbs = planNeedsMutation ? path.join(root, plan.planPath) : null;
+```
+
+(`plan.planStatus` is already exposed by `defaultPlanState`, close-preview.js:36.)
+
+In the mutation block, flip boxes only when there are any, but always set the status:
 
 ```js
 if (planAbs) {
-    const txt = fs.readFileSync(planAbs, 'utf8');
-    const flipped = txt.replace(/- \[ \] /g, '- [x] ');
-    fs.writeFileSync(planAbs, setStatusDone(flipped));
-    actions.push(`flip ${plan.uncheckedBoxes} checkbox(es) + set plan status: done in ${plan.planPath}`);
+    let txt = fs.readFileSync(planAbs, 'utf8');
+    if (plan.uncheckedBoxes > 0) txt = txt.replace(/- \[ \] /g, '- [x] ');
+    fs.writeFileSync(planAbs, setStatusDone(txt));
+    actions.push(plan.uncheckedBoxes > 0
+        ? `flip ${plan.uncheckedBoxes} checkbox(es) + set plan status: done in ${plan.planPath}`
+        : `set plan status: done in ${plan.planPath}`);
 }
 ```
 
 `setStatusDone` is idempotent (rewrites the `status:` key if present, inserts if
-absent), so a plan already `done` or with no `status` key is handled. The plan was
-already a journaled rollback target, so a later failure still restores it.
+absent). Because `planNeedsMutation` is false when `planStatus === 'done'` and
+`uncheckedBoxes === 0`, a fully-closed plan is a clean no-op (no spurious journal
+target). The plan was already a journaled rollback target, so a later failure still
+restores it.
 
 Note: the global `- [ ] → - [x]` regex is **unchanged** here (P1-5, the
 parser-driven replacement, is deferred — see Non-Goals). This task only adds the
-frontmatter status flip, which is the standard-plan correctness bug.
+frontmatter status flip + the box-count-independent `planAbs` resolution.
 
 ### 5. Safe journal slug (close-apply.js)
 
@@ -153,6 +174,30 @@ of the `try` block, before the success return — so a write failure there hits 
 same catch, rolls back the mutation + staging, and records `aborted`. The catch
 already restores every journaled target.
 
+But moving the write inside the `try` exposes a second gap: once staging has run
+(close-apply.js:144), the git **index** holds the mutated `plan.md`/`spec.md`. If the
+success-journal write then throws, the catch restores the files on disk to their
+prior bytes but leaves those staged blobs in the index — an "aborted" run that still
+dirties the tree, violating the clean-tree restore contract. The catch must
+best-effort unstage what it staged:
+
+```js
+} catch (err) {
+    for (const e of entries) {
+        if (e.priorBytes === null) { if (fs.existsSync(e.path)) fs.unlinkSync(e.path); }
+        else fs.writeFileSync(e.path, e.priorBytes);
+    }
+    // Unstage anything we git-add-ed so a rollback leaves the index clean too.
+    try { if (staged.length) exec(['reset', '--', ...staged]); } catch (_) { /* best-effort */ }
+    writeJournal(journalPath, Object.assign({}, journal, { status: 'aborted', error: err.message }));
+    return { applied: false, aborted: true, error: err.message, journalPath };
+}
+```
+
+`staged` is already declared with `let staged = []` (close-apply.js:125) above the
+`try`, so it is in scope in the catch and is `[]` if the failure happened before
+staging.
+
 ## Acceptance Criteria
 
 ```json
@@ -171,7 +216,7 @@ already restores every journaled target.
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/verification/close-commands.js", "templates/cli/test.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
     { "id": "ac-plan-status-done",
-      "description": "applyClose sets the linked plan frontmatter status: done (not just the spec) when it flips the plan checkboxes.",
+      "description": "applyClose sets the linked plan frontmatter status: done (not just the spec), both when flipping checkboxes and when the plan has zero unchecked boxes but status is still draft.",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
     { "id": "ac-safe-journal-slug",
@@ -179,7 +224,7 @@ already restores every journaled target.
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
     { "id": "ac-journal-write-in-txn",
-      "description": "A failure of the success-journal write rolls back the mutation and records aborted (the write is inside the rollback try, not after it).",
+      "description": "A failure of the success-journal write rolls back the mutation, unstages anything git-add-ed (clean index), and records aborted (the write is inside the rollback try, not after it).",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } }
   ]
@@ -213,8 +258,14 @@ already restores every journaled target.
   function body references `r.warnings`.)
 - Plan status: `applyClose` on a fixture plan with `status: draft` and unchecked
   boxes → after apply, the plan text matches `/^status: done$/m` in its frontmatter.
+  Also the box-count-independent case: a `status: draft` plan with **zero** unchecked
+  boxes (planStateFn returning `uncheckedBoxes: 0, planStatus: 'draft'`) → after apply
+  the plan is still rewritten to `status: done`; and a `planStatus: 'done', uncheckedBoxes: 0`
+  plan is a no-op (plan file untouched, not in `staged`).
 - Safe slug: `applyClose` with a spec whose `fm.id` is `spec:../../evil` → preview
   fail-closes (BLOCKED, no journal written); assert no file is created outside
   `.evo-lite/verification/`. And a unit assert that `evidenceSlug('spec:a/b')` throws.
 - Journal-in-txn: inject a `writeJournalFn`/`exec` such that the **success** journal
-  write throws → assert result is `aborted`, files restored, journal status `aborted`.
+  write throws → assert result is `aborted`, files restored, journal status `aborted`,
+  and the injected `exec` received a `['reset', '--', ...]` call for the staged paths
+  (rollback unstaged the index).
