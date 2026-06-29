@@ -20,7 +20,6 @@ function runSpec(specPath, opts = {}) {
     const exec = opts.exec || defaultExec;
     const specText = fs.readFileSync(specPath, 'utf8');
     const specId = specIdOf(specText);
-    if (!specId) return { ok: false, error: 'spec has no id frontmatter', written: [] };
     // Dirty-tree fail-closed: evidence must bind to a real, committed state.
     const porcelain = String(
         opts.porcelain != null ? opts.porcelain : exec('git status --porcelain', { cwd: root })

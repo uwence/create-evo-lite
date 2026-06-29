@@ -110,12 +110,26 @@ function parseSpecCriteria(specText) {
     }
 }
 
+const SPEC_ID_RE = /^spec:[a-z0-9][a-z0-9._-]*$/;
+const PLAN_ID_RE = /^plan:[a-z0-9][a-z0-9._-]*$/;
+
 // The single fail-closed entry every run/status/preview/apply/attest path uses:
 // parse frontmatter id + criteria, then validate. ok=false when the criteria block
 // is missing/malformed OR any criterion fails validation — callers must refuse.
 function loadValidatedContract(specText) {
     const fm = parseFrontmatter(specText).frontmatter || {};
     const specId = fm.id;
+    const linkedPlan = fm.linkedPlan;
+    // Identity is checked BEFORE the NO-CONTRACT opt-out: a spec with no criteria
+    // block is still legal, but it must carry a valid spec:<slug> id to be one.
+    if (typeof specId !== 'string' || !SPEC_ID_RE.test(specId)) {
+        return { ok: false, noContract: false, specId, linkedPlan, criteria: [],
+            findings: [finding('id', `spec frontmatter id must match spec:<slug> (got ${JSON.stringify(specId)})`)] };
+    }
+    if (linkedPlan != null && !PLAN_ID_RE.test(String(linkedPlan))) {
+        return { ok: false, noContract: false, specId, linkedPlan, criteria: [],
+            findings: [finding('linkedPlan', `linkedPlan must match plan:<slug> (got ${JSON.stringify(linkedPlan)})`)] };
+    }
     const parsed = parseSpecCriteria(specText);
     if (parsed.error) {
         // A missing heading / missing json block means the spec simply opts out of
@@ -123,12 +137,12 @@ function loadValidatedContract(specText) {
         // malformed block (bad/unterminated JSON) is invalid → fail-closed.
         const optedOut = /no "## Acceptance Criteria"|no ```json criteria block/.test(parsed.error);
         if (optedOut) {
-            return { ok: true, noContract: true, specId, criteria: [], findings: [] };
+            return { ok: true, noContract: true, specId, linkedPlan, criteria: [], findings: [] };
         }
-        return { ok: false, noContract: false, specId, criteria: [], findings: [finding('contract', parsed.error)] };
+        return { ok: false, noContract: false, specId, linkedPlan, criteria: [], findings: [finding('contract', parsed.error)] };
     }
     const findings = validateCriteria(parsed.criteria);
-    return { ok: findings.length === 0, noContract: parsed.criteria.length === 0, specId, criteria: parsed.criteria, findings };
+    return { ok: findings.length === 0, noContract: parsed.criteria.length === 0, specId, linkedPlan, criteria: parsed.criteria, findings };
 }
 
 // Recursively sort object keys so the JSON is canonical regardless of author key order.

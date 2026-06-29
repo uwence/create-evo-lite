@@ -1677,6 +1677,24 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T57. Testing loadValidatedContract identity validation (id + linkedPlan) ...');
+        {
+            const { loadValidatedContract } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const mk = (fm) => ['---', ...fm, '---', '', '# T', 'no criteria', ''].join('\n');
+            const noId = loadValidatedContract(mk(['status: draft']));
+            assert.strictEqual(noId.ok, false, 'missing id → ok:false');
+            assert.strictEqual(noId.findings[0].id, 'id', 'finding is about id');
+            assert.strictEqual(loadValidatedContract(mk(['id: nope'])).ok, false, 'bad id prefix → ok:false');
+            const badPlan = loadValidatedContract(mk(['id: spec:ok', 'linkedPlan: bad']));
+            assert.strictEqual(badPlan.ok, false, 'bad linkedPlan → ok:false');
+            assert.strictEqual(badPlan.findings[0].id, 'linkedPlan', 'finding is about linkedPlan');
+            const ok = loadValidatedContract(mk(['id: spec:ok', 'linkedPlan: plan:ok']));
+            assert.strictEqual(ok.ok, true, 'valid id, no criteria → ok:true');
+            assert.strictEqual(ok.noContract, true, 'no criteria block → noContract');
+            assert.strictEqual(ok.linkedPlan, 'plan:ok', 'linkedPlan exposed on the result');
+            console.log('✅ T57 identity validation');
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));
