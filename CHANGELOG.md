@@ -1,5 +1,7 @@
 ## Unreleased
 
+## 2.1.0 - 2026-06-30
+
 ### Fixed
 - Restored missing CLI protocol-layer commands and behaviors across the memory runtime, including `export`, `import`, `archive`, `sync`, `vectorize`, and `context add/focus/track --resolve`.
 - Fixed `context add` / `context focus` argument parsing so subcommand names are no longer written into state by mistake.
