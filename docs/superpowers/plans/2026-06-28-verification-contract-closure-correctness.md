@@ -31,7 +31,7 @@
 - Consumes: `statusSpec(specPath, opts)` (unchanged signature).
 - Produces: `statusSpec` returns `[{ criterionId: '<contract>', verdict: 'NO-CONTRACT', detail: '...' }]` for a NO-CONTRACT spec (previously `[]`). The CLI strict check `verdicts.some(v => v.verdict !== 'PASS')` is unchanged and now exits non-zero.
 
-- [ ] **Step 1: Write the failing test (T56)**
+- [x] **Step 1: Write the failing test (T56)**
 
 Insert immediately after the T55 block (after its closing `}` near `templates/cli/test.js:1661`), before the `console.log('T19. ...')` line:
 
@@ -54,12 +54,12 @@ console.log('T56. Testing statusSpec emits a NO-CONTRACT verdict so --strict fai
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T56 — `verdicts.length` is `0` (statusSpec returns `[]` for noContract).
 
-- [ ] **Step 3: Implement the synthetic verdict**
+- [x] **Step 3: Implement the synthetic verdict**
 
 In `templates/cli/verification/engine.js`, in `statusSpec`, right after the `if (!contract.ok) { return contract.findings.map(...); }` block, add:
 
@@ -70,12 +70,12 @@ In `templates/cli/verification/engine.js`, in `statusSpec`, right after the `if 
     }
 ```
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T56 statusSpec NO-CONTRACT verdict`. All prior tests still green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/engine.js templates/cli/test.js
@@ -94,7 +94,7 @@ git commit -m "fix(verification): statusSpec emits NO-CONTRACT verdict so --stri
 **Interfaces:**
 - Produces: `loadValidatedContract(specText)` now returns `ok: false` with a `findings: [{ id: 'id', ... }]` when the spec id is missing or not `spec:*`, or `findings: [{ id: 'linkedPlan', ... }]` when `linkedPlan` is present but not `plan:*`. The returned object also carries `linkedPlan`. A valid id with no criteria block still returns `ok: true, noContract: true`.
 
-- [ ] **Step 1: Write the failing test (T57)**
+- [x] **Step 1: Write the failing test (T57)**
 
 Insert after the T56 block:
 
@@ -118,12 +118,12 @@ console.log('T57. Testing loadValidatedContract identity validation (id + linked
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T57 — `noId.ok` is `true` today (the loader does not validate the id).
 
-- [ ] **Step 3: Implement identity validation**
+- [x] **Step 3: Implement identity validation**
 
 In `templates/cli/verification/validate-contract.js`, add the two regexes just above `function loadValidatedContract` (after `parseSpecCriteria`):
 
@@ -170,12 +170,12 @@ Then in `templates/cli/verification/engine.js`, in `runSpec`, delete the now-red
 
 (`runSpec` already calls `loadValidatedContract`, which now fail-closes a bad id before any `writeRecord`. Verified: no test asserts the old `'spec has no id frontmatter'` string.)
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T57 identity validation`. T36/T37/T38/T47 (which use valid `id: spec:t`, `linkedPlan: plan:t` fixtures) stay green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/validate-contract.js templates/cli/verification/engine.js templates/cli/test.js
@@ -195,7 +195,7 @@ git commit -m "fix(verification): loadValidatedContract validates spec:/plan: id
 - Consumes: `preview.warnings` (already produced by `previewClose`).
 - Produces: `applyClose(...)` success result gains `warnings: preview.warnings || []`. `printApply(r)` iterates `r.warnings` and prints `  ⚠ ${w.message}`.
 
-- [ ] **Step 1: Write the failing test (T58)**
+- [x] **Step 1: Write the failing test (T58)**
 
 Insert after the T57 block:
 
@@ -209,7 +209,7 @@ console.log('T58. Testing applyClose propagates preview warnings on a direct --a
         const specPath = path.join(root, 'spec.md');
         fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n'));
         const planRel = 'docs/p.md';
-        fs.writeFileSync(path.join(root, planRel), '---\nid: plan:t\nstatus: draft\n---\n\n# P\n\n- [ ] One\n');
+        fs.writeFileSync(path.join(root, planRel), '---\nid: plan:t\nstatus: draft\n---\n\n# P\n\n- [x] One\n');
         const warning = { kind: 'tasks-incomplete', message: '1 of 2 linked tasks are not implemented — closing will mark the spec done anyway' };
         const r = applyClose(specPath, {
             root, now: '2026-06-28T12:00:00.000Z',
@@ -229,12 +229,12 @@ console.log('T58. Testing applyClose propagates preview warnings on a direct --a
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T58 — `r.warnings` is `undefined` (success return omits it).
 
-- [ ] **Step 3: Implement propagation + printing**
+- [x] **Step 3: Implement propagation + printing**
 
 In `templates/cli/verification/close-apply.js`, change the success return (currently `return { applied: true, readiness: 'READY', actions, journalPath, staged };`) to:
 
@@ -249,12 +249,12 @@ In `templates/cli/verification/close-commands.js`, in `printApply`, after the `f
     for (const w of (r.warnings || [])) console.log(`  ⚠ ${w.message}`);
 ```
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T58 apply propagates warnings`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/close-apply.js templates/cli/verification/close-commands.js templates/cli/test.js
@@ -273,7 +273,7 @@ git commit -m "fix(verification): applyClose propagates + printApply prints task
 - Consumes: `plan.planStatus` (already exposed by `defaultPlanState`, close-preview.js:36).
 - Produces: `applyClose` resolves `planAbs` when the plan exists AND (`uncheckedBoxes > 0` OR `planStatus !== 'done'`); it always writes `setStatusDone` to the plan, flipping checkboxes only when there are any. A `planStatus === 'done'` plan with zero unchecked boxes is a clean no-op (not staged).
 
-- [ ] **Step 1: Write the failing test (T59)**
+- [x] **Step 1: Write the failing test (T59)**
 
 Insert after the T58 block:
 
@@ -321,12 +321,12 @@ console.log('T59. Testing applyClose sets plan status: done independent of unche
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T59 case A — with `uncheckedBoxes: 0` the current `planAbs` is `null`, so the plan is never rewritten to `status: done`.
 
-- [ ] **Step 3: Implement box-count-independent plan closure**
+- [x] **Step 3: Implement box-count-independent plan closure**
 
 In `templates/cli/verification/close-apply.js`, replace the `planAbs` line (currently `const planAbs = (plan.uncheckedBoxes > 0 && plan.planPath) ? path.join(root, plan.planPath) : null;`) with:
 
@@ -361,12 +361,12 @@ with:
 
 (`setStatusDone` is already defined and exported in this file.)
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T59 plan status done box-count-independent`. T41/T55 (which use `uncheckedBoxes: 1`) stay green since the `box > 0` path is unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/close-apply.js templates/cli/test.js
@@ -385,7 +385,7 @@ git commit -m "fix(verification): close --apply sets plan status:done regardless
 - Consumes: `evidenceSlug(specId)` from `evidence-store.js` (throws on a path separator).
 - Produces: the journal filename is `close-journal-${evidenceSlug(fm.id)}.json`. `slugFor(fm)` stays exported but delegates to `evidenceSlug(fm.id)` (the basename fallback is dropped — a valid `spec:*` id is mandatory). A traversal id fail-closes at preview (Task 2) before any journal is written.
 
-- [ ] **Step 1: Write the failing test (T60)**
+- [x] **Step 1: Write the failing test (T60)**
 
 Insert after the T59 block:
 
@@ -413,12 +413,12 @@ console.log('T60. Testing closure journal slug uses evidenceSlug (no path traver
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T60 — `closeApply.slugFor({ id: 'spec:../evil' })` returns `'../evil'` today (basename fallback never validates).
 
-- [ ] **Step 3: Implement the safe slug**
+- [x] **Step 3: Implement the safe slug**
 
 In `templates/cli/verification/close-apply.js`, add to the top requires:
 
@@ -450,12 +450,12 @@ Change the journal-path line (currently `` `close-journal-${slugFor(fm, specPath
         `close-journal-${evidenceSlug(fm.id)}.json`);
 ```
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T60 safe journal slug`. The valid-id close tests (T41/T55) keep working (`evidenceSlug('spec:t') === 't'`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/close-apply.js templates/cli/test.js
@@ -473,7 +473,7 @@ git commit -m "fix(verification): closure journal filename uses validated eviden
 **Interfaces:**
 - Produces: `applyClose` accepts `opts.writeJournalFn` (defaults to the module `writeJournal`). The success-journal write (`status: 'applied'`) runs as the last statement inside the `try`; if it throws, the existing `catch` restores every journaled target, best-effort `git reset -- <staged>` to unstage the index, writes `status: 'aborted'`, and returns `{ applied: false, aborted: true }`.
 
-- [ ] **Step 1: Write the failing test (T61)**
+- [x] **Step 1: Write the failing test (T61)**
 
 Insert after the T60 block:
 
@@ -489,7 +489,7 @@ console.log('T61. Testing success-journal write failure rolls back + unstages (w
         fs.writeFileSync(specPath, specPrior);
         const planRel = 'docs/p.md';
         const planAbs = path.join(root, planRel);
-        const planPrior = ['---', 'id: plan:t', 'status: draft', '---', '', '# P', '', '- [ ] One', ''].join('\n');
+        const planPrior = ['---', 'id: plan:t', 'status: draft', '---', '', '# P', '', '- [x] One', ''].join('\n');
         fs.writeFileSync(planAbs, planPrior);
         const resetCalls = [];
         const r = applyClose(specPath, {
@@ -518,12 +518,12 @@ console.log('T61. Testing success-journal write failure rolls back + unstages (w
 }
 ```
 
-- [ ] **Step 2: Run it; verify it fails**
+- [x] **Step 2: Run it; verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at T61 — today the success-journal write is OUTSIDE the `try`, so its throw is uncaught (the test throws rather than getting `aborted`), and the catch never unstages.
 
-- [ ] **Step 3: Implement the injectable + in-transaction write + unstage**
+- [x] **Step 3: Implement the injectable + in-transaction write + unstage**
 
 In `templates/cli/verification/close-apply.js`, inside `applyClose`, after `const now = opts.now || new Date().toISOString();`, add:
 
@@ -552,12 +552,12 @@ Move the success-journal write to be the LAST statement inside the `try` block (
 
 Delete the old success-journal write that sat AFTER the `try` (the standalone `writeJournal(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));` line), leaving the success `return { applied: true, ... }` after the `try`.
 
-- [ ] **Step 4: Run it; verify it passes**
+- [x] **Step 4: Run it; verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T61 success-journal failure rolls back + unstages`. T41/T42/T55 (happy-path + existing rollback) stay green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/verification/close-apply.js templates/cli/test.js
@@ -575,21 +575,21 @@ git commit -m "fix(verification): success-journal write inside the rollback try 
 - Consumes: all six fixes (Tasks 1-6) on a clean tree.
 - Produces: green mirror suite, a PASS verification record for this spec's `ac-*` criteria, the spec closed (`status: done`), drift 0/0/0.
 
-- [ ] **Step 1: Sync the runtime mirror**
+- [x] **Step 1: Sync the runtime mirror**
 
 ```bash
 node ./.evo-lite/cli/memory.js sync-runtime
 ```
 Run it 2–3× if it reports a partial sync. Expected: the six modified `templates/cli/**` files are mirrored into `.evo-lite/cli/**`.
 
-- [ ] **Step 2: Run the mirror suite**
+- [x] **Step 2: Run the mirror suite**
 
 ```bash
 npm test
 ```
 Expected: all governance tests PASS via the mirror (T56–T61 included).
 
-- [ ] **Step 3: Run the contract verifier on this spec (clean HEAD)**
+- [x] **Step 3: Run the contract verifier on this spec (clean HEAD)**
 
 Ensure the tree is clean (all task commits landed), then:
 
@@ -599,7 +599,7 @@ node ./.evo-lite/cli/memory.js verify-contract status docs/superpowers/specs/202
 ```
 Expected: all six `ac-*` criteria PASS (each runs `node ./.evo-lite/cli/test.js governance`).
 
-- [ ] **Step 4: Preview + apply closure**
+- [x] **Step 4: Preview + apply closure**
 
 ```bash
 node ./.evo-lite/cli/memory.js close docs/superpowers/specs/2026-06-28-verification-contract-closure-correctness.md --preview
@@ -607,7 +607,7 @@ node ./.evo-lite/cli/memory.js close docs/superpowers/specs/2026-06-28-verificat
 ```
 Expected preview: `readiness: READY`. Apply: spec `status: done`, the linked plan's checkboxes flipped + plan `status: done`, R008 archive evidence backfilled, journal `applied`.
 
-- [ ] **Step 5: Commit the closure + verify drift**
+- [x] **Step 5: Commit the closure + verify drift**
 
 ```bash
 git add -A
