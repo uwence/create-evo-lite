@@ -1660,6 +1660,172 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T56. Testing statusSpec emits a NO-CONTRACT verdict so --strict fails ...');
+        {
+            const { statusSpec } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-nocontract-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', '---', '', '# T', 'no criteria block here', ''].join('\n'));
+                const verdicts = statusSpec(specPath, { root, exec: () => 'abc123\n' });
+                assert.strictEqual(verdicts.length, 1, 'exactly one synthetic verdict for NO-CONTRACT');
+                assert.strictEqual(verdicts[0].verdict, 'NO-CONTRACT', 'verdict is NO-CONTRACT');
+                assert.ok(verdicts[0].verdict !== 'PASS', 'NO-CONTRACT is not PASS → --strict exits non-zero');
+                console.log('✅ T56 statusSpec NO-CONTRACT verdict');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T57. Testing loadValidatedContract identity validation (id + linkedPlan) ...');
+        {
+            const { loadValidatedContract } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const mk = (fm) => ['---', ...fm, '---', '', '# T', 'no criteria', ''].join('\n');
+            const noId = loadValidatedContract(mk(['status: draft']));
+            assert.strictEqual(noId.ok, false, 'missing id → ok:false');
+            assert.strictEqual(noId.findings[0].id, 'id', 'finding is about id');
+            assert.strictEqual(loadValidatedContract(mk(['id: nope'])).ok, false, 'bad id prefix → ok:false');
+            const badPlan = loadValidatedContract(mk(['id: spec:ok', 'linkedPlan: bad']));
+            assert.strictEqual(badPlan.ok, false, 'bad linkedPlan → ok:false');
+            assert.strictEqual(badPlan.findings[0].id, 'linkedPlan', 'finding is about linkedPlan');
+            const ok = loadValidatedContract(mk(['id: spec:ok', 'linkedPlan: plan:ok']));
+            assert.strictEqual(ok.ok, true, 'valid id, no criteria → ok:true');
+            assert.strictEqual(ok.noContract, true, 'no criteria block → noContract');
+            assert.strictEqual(ok.linkedPlan, 'plan:ok', 'linkedPlan exposed on the result');
+            console.log('✅ T57 identity validation');
+        }
+
+        console.log('T58. Testing applyClose propagates preview warnings on a direct --apply ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-applywarn-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n'));
+                const planRel = 'docs/p.md';
+                fs.writeFileSync(path.join(root, planRel), '---\nid: plan:t\nstatus: draft\n---\n\n# P\n\n- [ ] One\n');
+                const warning = { kind: 'tasks-incomplete', message: '1 of 2 linked tasks are not implemented — closing will mark the spec done anyway' };
+                const r = applyClose(specPath, {
+                    root, now: '2026-06-28T12:00:00.000Z',
+                    exec: () => '',
+                    previewFn: () => ({ readiness: 'READY', blockers: [], warnings: [warning],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, planStatus: 'draft', tasksTotal: 2, tasksImplemented: 1, uncheckedBoxes: 1 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                });
+                assert.strictEqual(r.applied, true, 'applies (warning is advisory, never blocks)');
+                assert.deepStrictEqual(r.warnings, [warning], 'warnings propagated to the apply result');
+                const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-commands.js'), 'utf8');
+                assert.ok(/r\.warnings/.test(src) && /⚠/.test(src), 'printApply prints warnings with ⚠');
+                console.log('✅ T58 apply propagates warnings');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T59. Testing applyClose sets plan status: done independent of unchecked boxes ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-planstatus-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: done', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n'));
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                // Case A: plan already fully checked but still draft → status must reach done.
+                fs.writeFileSync(planAbs, ['---', 'id: plan:t', 'status: draft', '---', '', '# P', '', '- [x] One', ''].join('\n'));
+                let added = false;
+                const rA = applyClose(specPath, {
+                    root, now: '2026-06-28T12:00:00.000Z',
+                    exec: (args) => { if (args[0] === 'add') added = true; return ''; },
+                    previewFn: () => ({ readiness: 'READY', blockers: [], warnings: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, planStatus: 'draft', tasksTotal: 1, tasksImplemented: 1, uncheckedBoxes: 0 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                });
+                assert.strictEqual(rA.applied, true, 'A: applies');
+                assert.ok(/^status: done$/m.test(fs.readFileSync(planAbs, 'utf8')), 'A: plan rewritten to status: done even with 0 unchecked boxes');
+                assert.ok(added, 'A: plan was staged');
+                // Case B: plan already done + 0 boxes → no-op (file untouched, not staged).
+                fs.writeFileSync(planAbs, ['---', 'id: plan:t', 'status: done', '---', '', '# P', '', '- [x] One', ''].join('\n'));
+                const before = fs.readFileSync(planAbs, 'utf8');
+                const rB = applyClose(specPath, {
+                    root, now: '2026-06-28T12:00:00.000Z',
+                    exec: () => '',
+                    previewFn: () => ({ readiness: 'READY', blockers: [], warnings: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, planStatus: 'done', tasksTotal: 1, tasksImplemented: 1, uncheckedBoxes: 0 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                });
+                assert.strictEqual(rB.applied, true, 'B: applies (spec already done, plan no-op)');
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), before, 'B: fully-closed plan untouched');
+                assert.ok(!(rB.staged || []).includes(planRel), 'B: plan not staged when it is a no-op');
+                console.log('✅ T59 plan status done box-count-independent');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T60. Testing closure journal slug uses evidenceSlug (no path traversal) ...');
+        {
+            const closeApply = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const { evidenceSlug } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            assert.throws(() => evidenceSlug('spec:a/b'), /invalid spec id/, 'separator id rejected by evidenceSlug');
+            assert.strictEqual(closeApply.slugFor({ id: 'spec:t' }), 't', 'slugFor returns the validated slug');
+            assert.throws(() => closeApply.slugFor({ id: 'spec:../evil' }), /invalid spec id/, 'slugFor rejects traversal');
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-slug-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:../../evil', 'status: draft', '---', '', '# T', ''].join('\n'));
+                const r = closeApply.applyClose(specPath, { root, now: '2026-06-28T12:00:00.000Z', exec: () => '', backfillFn: () => {}, scanFn: () => {} });
+                assert.strictEqual(r.applied, false, 'traversal id → not applied (fail-closed at preview)');
+                const vdir = path.join(root, '.evo-lite', 'verification');
+                const journals = fs.existsSync(vdir) ? fs.readdirSync(vdir).filter(f => f.startsWith('close-journal')) : [];
+                assert.strictEqual(journals.length, 0, 'no journal written for a fail-closed traversal id');
+                console.log('✅ T60 safe journal slug');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
+        console.log('T61. Testing success-journal write failure rolls back + unstages (write inside txn) ...');
+        {
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-jtxn-'));
+            try {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                const specPrior = ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n');
+                fs.writeFileSync(specPath, specPrior);
+                const planRel = 'docs/p.md';
+                const planAbs = path.join(root, planRel);
+                const planPrior = ['---', 'id: plan:t', 'status: draft', '---', '', '# P', '', '- [ ] One', ''].join('\n');
+                fs.writeFileSync(planAbs, planPrior);
+                const resetCalls = [];
+                const r = applyClose(specPath, {
+                    root, now: '2026-06-28T12:00:00.000Z',
+                    exec: (args) => { if (args[0] === 'reset') resetCalls.push(args); return ''; },
+                    previewFn: () => ({ readiness: 'READY', blockers: [], warnings: [],
+                        plan: { planId: 'plan:t', found: true, planPath: planRel, planStatus: 'draft', tasksTotal: 1, tasksImplemented: 1, uncheckedBoxes: 1 } }),
+                    backfillFn: () => {}, scanFn: () => {},
+                    writeJournalFn: (p, payload) => {
+                        if (payload.status === 'applied') throw new Error('disk full on success journal');
+                        fs.mkdirSync(path.dirname(p), { recursive: true });
+                        fs.writeFileSync(p, JSON.stringify(payload, null, 2) + '\n');
+                    },
+                });
+                assert.strictEqual(r.applied, false, 'not applied');
+                assert.strictEqual(r.aborted, true, 'aborted');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specPrior, 'spec restored to prior bytes');
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), planPrior, 'plan restored to prior bytes');
+                assert.ok(resetCalls.length >= 1, 'rollback unstaged via git reset');
+                const journal = JSON.parse(fs.readFileSync(r.journalPath, 'utf8'));
+                assert.strictEqual(journal.status, 'aborted', 'journal records aborted');
+                console.log('✅ T61 success-journal failure rolls back + unstages');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T19. Testing architecture where <file> reverse lookup ...');
         {
             const { lookupFile } = require(path.join(TEMPLATE_CLI_DIR, 'architecture'));

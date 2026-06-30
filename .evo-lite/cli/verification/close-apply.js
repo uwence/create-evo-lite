@@ -5,6 +5,7 @@ const path = require('path');
 const childProcess = require('child_process');
 const { previewClose } = require('./close-preview');
 const { parseFrontmatter } = require('../planning/parse-markdown');
+const { evidenceSlug } = require('./evidence-store');
 
 function defaultExec(root) {
     return (args) => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' });
@@ -19,9 +20,8 @@ function defaultScan(root) {
     return writePlanIR(scanPlanning(root), root);
 }
 
-function slugFor(fm, specPath) {
-    const id = String(fm.id || '').replace(/^spec:/, '').trim();
-    return id || path.basename(specPath).replace(/\.md$/, '');
+function slugFor(fm) {
+    return evidenceSlug(fm && fm.id);
 }
 
 // Set frontmatter `status:` to done (rewrite the key, or insert if absent).
@@ -76,6 +76,7 @@ function applyClose(specPath, opts = {}) {
     const backfillFn = opts.backfillFn || defaultBackfill;
     const scanFn = opts.scanFn || defaultScan;
     const now = opts.now || new Date().toISOString();
+    const writeJournalFn = opts.writeJournalFn || writeJournal;
 
     // Advisory lock around the whole apply (gates + mutations) so two concurrent runs
     // cannot both pass Gate 1 and then race on the regenerated planning artifacts.
@@ -105,7 +106,9 @@ function applyClose(specPath, opts = {}) {
     const plan = preview.plan || {};
 
     // Build target list (every file --apply may overwrite).
-    const planAbs = (plan.uncheckedBoxes > 0 && plan.planPath) ? path.join(root, plan.planPath) : null;
+    const planNeedsMutation = !!plan.planPath &&
+        (plan.uncheckedBoxes > 0 || (plan.planStatus && plan.planStatus !== 'done'));
+    const planAbs = planNeedsMutation ? path.join(root, plan.planPath) : null;
     const willSetStatus = fm.status !== 'done';
     const archPath = path.join(root, '.evo-lite', 'generated', 'planning', 'archive-evidence.json');
     const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
@@ -116,18 +119,21 @@ function applyClose(specPath, opts = {}) {
 
     // Journal: snapshot prior bytes (null = file absent).
     const entries = targets.map(p => ({ path: p, priorBytes: fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null }));
-    const journalPath = path.join(root, '.evo-lite', 'verification', `close-journal-${slugFor(fm, specPath)}.json`);
+    const journalPath = path.join(root, '.evo-lite', 'verification', `close-journal-${evidenceSlug(fm.id)}.json`);
     const journal = { version: 'evo-close-journal@1', spec: specPath, createdAt: now, status: 'applying',
         entries: entries.map(e => ({ path: path.relative(root, e.path).replace(/\\/g, '/'), existed: e.priorBytes !== null })) };
-    writeJournal(journalPath, journal);
+    writeJournalFn(journalPath, journal);
 
     const actions = [];
     let staged = [];
     try {
         if (planAbs) {
-            const txt = fs.readFileSync(planAbs, 'utf8');
-            fs.writeFileSync(planAbs, txt.replace(/- \[ \] /g, '- [x] '));
-            actions.push(`flip ${plan.uncheckedBoxes} checkbox(es) in ${plan.planPath}`);
+            let txt = fs.readFileSync(planAbs, 'utf8');
+            if (plan.uncheckedBoxes > 0) txt = txt.replace(/- \[ \] /g, '- [x] ');
+            fs.writeFileSync(planAbs, setStatusDone(txt));
+            actions.push(plan.uncheckedBoxes > 0
+                ? `flip ${plan.uncheckedBoxes} checkbox(es) + set plan status: done in ${plan.planPath}`
+                : `set plan status: done in ${plan.planPath}`);
         }
         if (willSetStatus) {
             fs.writeFileSync(specPath, setStatusDone(specText));
@@ -142,18 +148,20 @@ function applyClose(specPath, opts = {}) {
         const sourceTargets = [planAbs, willSetStatus ? specPath : null].filter(Boolean);
         staged = sourceTargets.filter(p => fs.existsSync(p)).map(p => path.relative(root, p).replace(/\\/g, '/'));
         if (staged.length) exec(['add', ...staged]);
+        writeJournalFn(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));
     } catch (err) {
         for (const e of entries) {
             if (e.priorBytes === null) { if (fs.existsSync(e.path)) fs.unlinkSync(e.path); }
             else fs.writeFileSync(e.path, e.priorBytes);
         }
-        writeJournal(journalPath, Object.assign({}, journal, { status: 'aborted', error: err.message }));
+        // Unstage anything we git-add-ed so a rollback leaves the index clean too.
+        try { if (staged.length) exec(['reset', '--', ...staged]); } catch (_) { /* best-effort */ }
+        writeJournalFn(journalPath, Object.assign({}, journal, { status: 'aborted', error: err.message }));
         return { applied: false, aborted: true, error: err.message, journalPath };
     }
 
-    writeJournal(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));
-
-    return { applied: true, readiness: 'READY', actions, journalPath, staged };
+    return { applied: true, readiness: 'READY', actions, journalPath, staged,
+        warnings: preview.warnings || [] };
 
     } finally {
         try { fs.unlinkSync(lockPath); } catch (_) { /* already gone */ }

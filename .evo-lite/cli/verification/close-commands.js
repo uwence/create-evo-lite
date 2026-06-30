@@ -25,6 +25,7 @@ function printApply(r) {
     }
     console.log('readiness: READY — closed (staged, not committed)');
     for (const a of r.actions) console.log(`  • ${a}`);
+    for (const w of (r.warnings || [])) console.log(`  ⚠ ${w.message}`);
     console.log(`journal: ${r.journalPath}`);
     if ((r.staged || []).length) console.log(`staged: ${r.staged.join(', ')}`);
 }
