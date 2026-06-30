@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Verification Contract Phase 2 Implementation Plan: all tasks implemented
+PR-CC verification-contract closure-correctness SHIPPED (drift 0/0/0, spec+plan self-closed, 6 fixes T56-T61). Initiative through PR-CC complete. Next (all deferred-by-decision): PR5 packed CI + README/CHANGELOG + bump 2.1.0; P1-8 command shell-exec trust boundary; evidence durability (split test.js, per-criterion verifiers, atomic write); P1-5 parser-driven checkbox flip.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -21,6 +21,7 @@ Verification Contract Phase 2 Implementation Plan: all tasks implemented
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [83992b3] 2026-06-30 SDD + mem close --apply: verification-contract-closure-correctness: PR-CC 6 closure-path bug fixes (T56-T61) shipped via suba
 - [689453e] 2026-06-27 verification-contract-phase2-closure: Closure for plan:verification-contract-phase2 (spec done), TDD-green (T38-T39 + integration, both sc
 - [b31ae02] 2026-06-27 verification-contract-phase1-closure: Closure for plan:verification-contract-phase1 (spec done), engine TDD-green (T33-T37 + integration,
 - [f10d2fe] 2026-06-26 verification-contract-phase0-closure: Closure for plan:verification-contract-phase0 (spec done). All 5 tasks shipped TDD-green (governance
@@ -30,7 +31,6 @@ Verification Contract Phase 2 Implementation Plan: all tasks implemented
 - [63a60a6] 2026-06-17 rc-closure-phase3: RC closure phase 3 — last-mile consistency fixes before production dogfood:
 - [8f59a44] 2026-06-16 rc-closure-phase2-dx-closure: Spec marked done (kills R011); plan r008Exempt (kills self-referential R008). Drift floor on dogfood
 - [c8ec3bb] 2026-06-16 rc-closure-phase2-dx: RC closure phase 2 delivers spec:rc-closure-phase2-dx end-to-end. Seven tasks landed.
-- [d2226a5] 2026-06-16 rc-closure-phase2-prep: Two RC blockers resolved.
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
