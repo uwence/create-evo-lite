@@ -569,6 +569,7 @@ git commit -m "fix(verification): success-journal write inside the rollback try 
 ### Task 7: Sync mirror, mirror-test, dogfood self-closure
 
 **Files:**
+- Modify: `.evo-lite/cli/test.js` (the synced runtime mirror this task regenerates + npm-tests)
 - Modify (generated, via CLI): `.evo-lite/cli/**` (mirror), `.evo-lite/generated/**`, `docs/superpowers/specs/2026-06-28-verification-contract-closure-correctness.md` (spec status), the linked plan checkboxes/status
 
 **Interfaces:**
