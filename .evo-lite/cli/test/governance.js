@@ -1817,6 +1817,30 @@ async function runGovernanceTests() {
             console.log('✅ T27 commit-evidence focus auto-advance passed');
         }
 
+        console.log('T-precision. Testing per-suite dependsOn breaks the STALE cascade ...');
+        {
+            const { deriveVerdicts } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'derive-verdicts.js'));
+            const { criterionDigest } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract.js'));
+            const criterion = {
+                id: 'ac-x',
+                dependsOn: ['templates/cli/test/governance.js', 'templates/cli/test/harness.js'],
+                verifier: { type: 'command', params: { cmd: 'node ./.evo-lite/cli/test.js governance', scope: 'governance' } },
+            };
+            const record = {
+                criterionId: 'ac-x', verdict: 'PASS', verifierType: 'command',
+                commitSha: 'abc123', criterionDigest: criterionDigest(criterion),
+            };
+            // A change confined to the integration suite must NOT stale a governance criterion.
+            const clean = deriveVerdicts([criterion], [record], 'HEADSHA', ['templates/cli/test/integration.js']);
+            assert.strictEqual(clean[0].verdict, 'PASS', 'integration-only change must not stale a governance criterion');
+            // A change to the governance suite (or harness) MUST stale it.
+            const staleGov = deriveVerdicts([criterion], [record], 'HEADSHA', ['templates/cli/test/governance.js']);
+            assert.strictEqual(staleGov[0].verdict, 'STALE', 'governance-suite change must stale the governance criterion');
+            const staleHarness = deriveVerdicts([criterion], [record], 'HEADSHA', ['templates/cli/test/harness.js']);
+            assert.strictEqual(staleHarness[0].verdict, 'STALE', 'harness change must stale the governance criterion');
+        }
+        console.log('✅ T-precision per-suite dependsOn isolation passed');
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);
