@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-PR-CC verification-contract closure-correctness SHIPPED (drift 0/0/0, spec+plan self-closed, 6 fixes T56-T61). Initiative through PR-CC complete. Next (all deferred-by-decision): PR5 packed CI + README/CHANGELOG + bump 2.1.0; P1-8 command shell-exec trust boundary; evidence durability (split test.js, per-criterion verifiers, atomic write); P1-5 parser-driven checkbox flip.
+PR5 release 2.1.0 SHIPPED as tag-only: pkg+lock 2.0.10->2.1.0, CHANGELOG cut, tests+pack green, code 6ab1c55 / runtime 8564f65, tag v2.1.0 pushed to origin. DEFERRED by user: npm publish (2.1.0 not yet on npm; tarball verified green). Next candidates (all deferred-by-decision): npm publish 2.1.0 when ready; P1-8 command shell-exec trust boundary; evidence durability (split test.js, per-criterion verifiers, atomic write); P1-5 parser-driven checkbox flip.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
