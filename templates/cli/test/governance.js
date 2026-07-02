@@ -1820,7 +1820,7 @@ async function runGovernanceTests() {
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);
-        process.exit(1);
+        throw error;
     }
 }
 
