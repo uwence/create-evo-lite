@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-PR5 release 2.1.0 SHIPPED as tag-only: pkg+lock 2.0.10->2.1.0, CHANGELOG cut, tests+pack green, code 6ab1c55 / runtime 8564f65, tag v2.1.0 pushed to origin. DEFERRED by user: npm publish (2.1.0 not yet on npm; tarball verified green). Next candidates (all deferred-by-decision): npm publish 2.1.0 when ready; P1-8 command shell-exec trust boundary; evidence durability (split test.js, per-criterion verifiers, atomic write); P1-5 parser-driven checkbox flip.
+Evidence-durability STALE-cascade split SHIPPED to main (merged ff, HEAD c79f6d0, 8 commits): test.js monolith -> thin dispatcher + test/{harness,governance,integration}.js across both mirrors, manifest-registered, T-precision regression test, spec:evidence-durability-stale-cascade dogfooded 4 PASS. Final whole-branch review (opus) YES 0Crit/0Imp. NOT pushed (gated). Next candidates (all deferred): push main + npm publish 2.1.0; retarget 7 historical specs' test.js dependsOn (follow-up, split already de-churns); P1-8 command shell-exec trust boundary; P1-5 parser-driven checkbox flip.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
