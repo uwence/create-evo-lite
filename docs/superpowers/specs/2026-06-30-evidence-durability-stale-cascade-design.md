@@ -123,15 +123,19 @@ self-healing.
 {
   "criteria": [
     { "id": "ac-suite-split",
+      "description": "test.js is a thin scope dispatcher over test/governance.js, test/integration.js, and test/harness.js; the governance scope runs green against the extracted suite.",
       "dependsOn": ["templates/cli/test.js", "templates/cli/test/governance.js", "templates/cli/test/integration.js", "templates/cli/test/harness.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
     { "id": "ac-precision-no-cascade",
+      "description": "A change confined to test/integration.js must not stale a governance criterion; a change to test/governance.js or test/harness.js must, per the T-precision regression test.",
       "dependsOn": ["templates/cli/test/governance.js", "templates/cli/test/harness.js", "templates/cli/verification/derive-verdicts.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
     { "id": "ac-full-suite-green",
+      "description": "npm test (scope all) stays green: every extracted suite still runs and passes end to end.",
       "dependsOn": ["templates/cli/test.js", "templates/cli/test/governance.js", "templates/cli/test/integration.js", "templates/cli/test/harness.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "scope": "all" } } },
     { "id": "ac-mirror-parity",
+      "description": "templates/cli/test/* and .evo-lite/cli/test/* stay byte-identical across the split suite files and the manifest registration.",
       "dependsOn": ["templates/cli/test/governance.js", "templates/cli/test/integration.js", "templates/cli/test/harness.js", "templates/cli/template-manifest.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } }
   ]
