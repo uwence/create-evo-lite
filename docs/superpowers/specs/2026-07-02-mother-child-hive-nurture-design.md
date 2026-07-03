@@ -241,8 +241,9 @@ The fixture fallback alone is **not** enough: the governance suite references
 `TEMPLATE_CLI_DIR` ~65 times (T17 sync-runtime, the T18 pack/manifest series,
 initializer tests via `INIT_ENTRY`) — those tests are inherently *mother-bound*
 and cannot run where no `templates/` tree exists. Policy: harness exports
-`IS_CHILD_RUNTIME = !fs.existsSync(TEMPLATE_CLI_DIR)`; each mother-bound test
-block gates on it and **self-skips with an explicit `⏭️ skipped (child runtime)`
+`IS_CHILD_RUNTIME = !fs.existsSync(TEMPLATE_CLI_DIR)`; mother-bound tests gate
+on it (individually, or via a suite-entry gate that **names the skipped
+blocks**) and **self-skip with an explicit `⏭️ skipped (child runtime)`
 notice** — never a silent pass. In a child, the suite runs the runtime-local
 tests, prints the skip count, and exits 0; in the mother nothing changes. A
 skipped test must be visibly skipped so a child-side green run cannot be
