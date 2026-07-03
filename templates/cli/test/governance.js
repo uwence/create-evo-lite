@@ -1841,6 +1841,24 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-precision per-suite dependsOn isolation passed');
 
+        console.log('T-hive-manifest. Testing manifest object-form file entries with mergeAnchors ...');
+        {
+            const manifest = require(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'));
+            const family = {
+                key: 'fixture', scope: 'sync-always', activeRoot: 'cli', templateRoot: 'cli', relativeDir: [],
+                files: ['plain.js', { path: 'docs/hybrid.md', mergeAnchors: [['BEGIN_LOCAL', 'END_LOCAL']] }],
+            };
+            const paths = { workspaceRoot: 'W', activeCliDir: 'A', templateRootPath: 'R', templateCliPath: 'C' };
+            const entries = family.files.map(f => manifest.buildEntry ? manifest.buildEntry(family, f, paths) : null);
+            assert.ok(manifest.buildEntry, 'buildEntry must be exported');
+            assert.strictEqual(entries[0].label, 'plain.js', 'string entry label unchanged');
+            assert.deepStrictEqual(entries[0].mergeAnchors, [], 'string entry has empty mergeAnchors');
+            assert.strictEqual(entries[1].label, 'docs/hybrid.md', 'object entry label from path');
+            assert.deepStrictEqual(entries[1].mergeAnchors, [['BEGIN_LOCAL', 'END_LOCAL']], 'anchors pass through');
+            assert.ok(entries[1].activeFile.includes('docs'), 'object entry resolves subdir path');
+        }
+        console.log('✅ T-hive-manifest object-form entries passed');
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);

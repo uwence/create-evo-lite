@@ -80,7 +80,8 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
 ]);
 
 function buildEntry(family, file, paths) {
-    const relativeParts = [...family.relativeDir, ...file.split('/')];
+    const spec = typeof file === 'string' ? { path: file } : file;
+    const relativeParts = [...family.relativeDir, ...spec.path.split('/')];
     const label = path.posix.join(...relativeParts);
     const activeBase = family.activeRoot === 'cli' ? paths.activeCliDir : paths.workspaceRoot;
     const templateBase = family.templateRoot === 'cli' ? paths.templateCliPath : paths.templateRootPath;
@@ -89,6 +90,7 @@ function buildEntry(family, file, paths) {
         family: family.key,
         scope: family.scope,
         label,
+        mergeAnchors: Array.isArray(spec.mergeAnchors) ? spec.mergeAnchors : [],
         activeFile: path.join(activeBase, ...relativeParts),
         templateFile: path.join(templateBase, ...relativeParts),
     };
@@ -109,5 +111,6 @@ function buildManagedTemplateEntries(options = {}) {
 
 module.exports = {
     MANAGED_TEMPLATE_FAMILIES,
+    buildEntry,
     buildManagedTemplateEntries,
 };
