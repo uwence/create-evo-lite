@@ -80,9 +80,16 @@ function registerHiveCommands(program) {
             if (!requireMother(root)) return;
             const child = registry.findChild(root, id);
             if (!child) { console.error(`❌ unknown child: ${id} (run: mem hive register <path>)`); process.exitCode = 1; return; }
-            const report = require('./nurture').nurtureChild(root, child, {
-                family: options.family, dryRun: options.dryRun, check: options.check, force: options.force,
-            });
+            let report;
+            try {
+                report = require('./nurture').nurtureChild(root, child, {
+                    family: options.family, dryRun: options.dryRun, check: options.check, force: options.force,
+                });
+            } catch (error) {
+                console.error(`❌ ${error.message}`);
+                process.exitCode = 1;
+                return;
+            }
             if (options.json) console.log(JSON.stringify(report, null, 2));
             else {
                 console.log(`status: ${report.status}  copied=${report.copied.length} skipped=${report.skipped.length}`);

@@ -98,8 +98,14 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     let gitAvailable = true;
     try {
         const managedRel = entries.map(e => path.relative(childRoot, e.activeFile).replace(/\\/g, '/'));
-        const porcelain = exec(['status', '--porcelain', '--', ...managedRel], childRoot);
-        report.dirtyFiles = String(porcelain).split('\n').filter(Boolean).map(l => l.slice(3));
+        // Guard empty pathspec: `git status --porcelain --` (no paths) reports the
+        // WHOLE repo as dirty. Nothing managed → nothing to be dirty about.
+        if (managedRel.length > 0) {
+            const porcelain = exec(['status', '--porcelain', '--', ...managedRel], childRoot);
+            report.dirtyFiles = String(porcelain).split('\n').filter(Boolean).map(l => l.slice(3));
+        } else {
+            exec(['rev-parse', '--is-inside-work-tree'], childRoot); // still detect non-git for the refuse path
+        }
     } catch {
         gitAvailable = false;
     }
