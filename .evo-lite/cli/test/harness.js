@@ -18,12 +18,30 @@ function shouldRun(scope) {
 process.env.NODE_PATH = path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules');
 require('module').Module._initPaths();
 
+const IS_CHILD_RUNTIME = !fs.existsSync(TEMPLATE_CLI_DIR);
+
+// Minimal stand-in for templates/active_context.md so createTempRuntimeRoot
+// works inside a child hive (no templates/ tree). Same anchors, same {{DATE}}.
+const EMBEDDED_CONTEXT_FIXTURE = [
+    '# 🧠 Evo-Lite Active Context (EvoRouter)', '',
+    '<!-- BEGIN_META -->', '> **核心目标**: (embedded child-runtime fixture)', '<!-- END_META -->', '',
+    '## 🎯 当前焦点', '', '<!-- BEGIN_FOCUS -->', '暂无焦点。({{DATE}})', '<!-- END_FOCUS -->', '',
+    '## 🚧 活跃任务 (≤ 5 条)', '', '<!-- BEGIN_BACKLOG -->', '- [ ] 暂无活跃任务。', '<!-- END_BACKLOG -->', '',
+    '## 🔄 最近轨迹 (≤ 10 条)', '', '<!-- BEGIN_TRAJECTORY -->', '<!-- END_TRAJECTORY -->', '',
+].join('\n');
+
+function loadContextTemplate(contextPath) {
+    if (fs.existsSync(contextPath)) {
+        return fs.readFileSync(contextPath, 'utf8');
+    }
+    return EMBEDDED_CONTEXT_FIXTURE;
+}
+
 function createTempRuntimeRoot(name) {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), `evo-lite-${name}-`));
     const runtimeRoot = path.join(workspaceRoot, '.evo-lite');
     fs.mkdirSync(runtimeRoot, { recursive: true });
-    const template = fs
-        .readFileSync(TEMPLATE_CONTEXT_PATH, 'utf8')
+    const template = loadContextTemplate(TEMPLATE_CONTEXT_PATH)
         .replace(/\{\{DATE\}\}/g, new Date().toISOString().split('T')[0]);
     fs.writeFileSync(path.join(runtimeRoot, 'active_context.md'), template, 'utf8');
     for (const file of ['AGENTS.md', 'CLAUDE.md']) {
@@ -368,4 +386,5 @@ module.exports = {
     createHookTestRepo, runInitializer,
     readNdjson, createLegacyInitProject, createModernInitProject,
     resetCliModuleCache, loadCli, bootstrapRuntime, captureConsole, withPatchedExecFileSync,
+    IS_CHILD_RUNTIME, loadContextTemplate, EMBEDDED_CONTEXT_FIXTURE,
 };

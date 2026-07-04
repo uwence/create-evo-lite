@@ -10,6 +10,13 @@ const {
 } = require('./harness');
 
 async function runGovernanceTests() {
+    const { IS_CHILD_RUNTIME } = require('./harness');
+    if (IS_CHILD_RUNTIME) {
+        console.log('⏭️ skipped (child runtime): T13–T27, T-precision, T-hive-manifest, T-hive-portable — mother-bound (need templates/ tree)');
+        await runChildRuntimeTests();
+        console.log('--- Governance-focused CLI tests passed! (child mode) ---');
+        return;
+    }
     console.log('--- Starting governance-focused CLI tests ---');
 
     try {
@@ -1859,11 +1866,30 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-hive-manifest object-form entries passed');
 
+        console.log('T-hive-portable. Testing harness child-runtime fallback ...');
+        {
+            const harness = require('./harness');
+            assert.strictEqual(typeof harness.IS_CHILD_RUNTIME, 'boolean', 'IS_CHILD_RUNTIME exported');
+            assert.strictEqual(harness.IS_CHILD_RUNTIME, false, 'mother repo is not a child runtime');
+            const fallback = harness.loadContextTemplate(path.join(os.tmpdir(), 'evo-nonexistent-' + Date.now(), 'active_context.md'));
+            assert.ok(fallback.includes('BEGIN_FOCUS') && fallback.includes('END_TRAJECTORY'), 'fallback fixture has anchor markers');
+            assert.ok(fallback.includes('{{DATE}}'), 'fallback fixture has DATE placeholder');
+            const real = harness.loadContextTemplate(path.join(WORKSPACE_ROOT, 'templates', 'active_context.md'));
+            assert.ok(real.includes('BEGIN_FOCUS'), 'real template still read when present');
+        }
+        console.log('✅ T-hive-portable harness fallback passed');
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);
         throw error;
     }
+}
+
+// Tests safe to run inside a child hive: they build their own temp mother/child
+// fixtures and never touch the repo's templates/ tree. Tasks 3-5 append here.
+async function runChildRuntimeTests() {
+    console.log('(child-safe hive tests run here)');
 }
 
 module.exports = { runGovernanceTests };
