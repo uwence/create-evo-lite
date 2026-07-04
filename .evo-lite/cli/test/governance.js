@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-    WORKSPACE_ROOT, TEMPLATE_CLI_DIR, INIT_ENTRY,
+    WORKSPACE_ROOT, TEMPLATE_CLI_DIR, CLI_DIR, INIT_ENTRY,
     createTempRuntimeRoot, writeText, runGit, runPostCommitHook,
     createHookTestRepo, readNdjson, bootstrapRuntime, captureConsole,
 } = require('./harness');
@@ -1879,6 +1879,8 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-hive-portable harness fallback passed');
 
+        await runChildRuntimeTests();
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);
@@ -1889,7 +1891,43 @@ async function runGovernanceTests() {
 // Tests safe to run inside a child hive: they build their own temp mother/child
 // fixtures and never touch the repo's templates/ tree. Tasks 3-5 append here.
 async function runChildRuntimeTests() {
-    console.log('(child-safe hive tests run here)');
+    console.log('T-hive-registry. Testing child registry round-trip + guards ...');
+    {
+        const reg = require(path.join(CLI_DIR, 'hive', 'registry.js'));
+        assert.strictEqual(reg.validChildId('snake-game.v2'), true, 'normal id valid');
+        assert.strictEqual(reg.validChildId('a/b'), false, 'path separator rejected');
+        assert.strictEqual(reg.validChildId('a\\b'), false, 'backslash rejected');
+        assert.strictEqual(reg.validChildId('a..b'), false, 'dotdot rejected');
+
+        const mother = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hive-mother-'));
+        const child = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hive-child-'));
+        fs.mkdirSync(path.join(child, '.evo-lite', 'cli'), { recursive: true });
+        fs.writeFileSync(path.join(child, '.evo-lite', 'package.json'), '{"version":"2.0.8","dependencies":{}}');
+
+        const e1 = reg.registerChild(mother, child, { id: 'kid-a', now: () => '2026-07-03T00:00:00.000Z' });
+        assert.strictEqual(e1.id, 'kid-a');
+        assert.strictEqual(e1.registeredAt, '2026-07-03T00:00:00.000Z');
+        const stored = reg.readRegistry(mother);
+        assert.strictEqual(stored.version, 'evo-hive-registry@1');
+        assert.strictEqual(stored.children.length, 1);
+
+        reg.registerChild(mother, child, { id: 'kid-a' }); // upsert, not duplicate
+        assert.strictEqual(reg.readRegistry(mother).children.length, 1, 're-register updates in place');
+        assert.ok(reg.findChild(mother, 'kid-a'), 'findChild resolves');
+
+        assert.throws(() => reg.registerChild(mother, os.tmpdir(), { id: 'not-a-child' }), /\.evo-lite/, 'non-child path rejected');
+        assert.throws(() => reg.registerChild(mother, child, { id: 'bad/id' }), /invalid/i, 'invalid id rejected');
+    }
+    console.log('✅ T-hive-registry passed');
+
+    console.log('T-hive-guard. Testing hive commands are mother-only ...');
+    {
+        const { isMotherRoot } = require(path.join(CLI_DIR, 'hive', 'commands.js'));
+        if (!require('./harness').IS_CHILD_RUNTIME) assert.strictEqual(isMotherRoot(WORKSPACE_ROOT), true, 'this repo is a mother');
+        const notMother = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hive-notmother-'));
+        assert.strictEqual(isMotherRoot(notMother), false, 'dir without templates/cli is not a mother');
+    }
+    console.log('✅ T-hive-guard passed');
 }
 
 module.exports = { runGovernanceTests };

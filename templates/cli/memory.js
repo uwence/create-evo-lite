@@ -688,6 +688,7 @@ function buildProgram() {
     require('./architecture').registerArchitectureCommands(program);
     require('./verification/commands').registerVerificationCommands(program);
     require('./verification/close-commands').registerCloseCommands(program);
+    require('./hive/commands').registerHiveCommands(program);
     require('./dashboard-data').registerDashboardCommands(program);
     require('./hooks').registerHookCommands(program);
     require('./sync-runtime').registerSyncRuntimeCommands(program);
