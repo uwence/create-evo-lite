@@ -68,6 +68,34 @@ function registerHiveCommands(program) {
             }
         });
 
+    hive.command('nurture <id>')
+        .description('Push managed gene families from this mother into a registered child.')
+        .option('--family <key>', 'Push only one managed family (core-cli | agents-workflows | hook-scaffold)')
+        .option('--check', 'Report only; exit non-zero when the child is not up-to-date')
+        .option('--dry-run', 'Report the copy/skip/missing sets without writing')
+        .option('--force', 'Proceed past a dirty child working tree / missing git')
+        .option('--json', 'Print JSON output')
+        .action((id, options) => {
+            const root = getWorkspaceRoot();
+            if (!requireMother(root)) return;
+            const child = registry.findChild(root, id);
+            if (!child) { console.error(`❌ unknown child: ${id} (run: mem hive register <path>)`); process.exitCode = 1; return; }
+            const report = require('./nurture').nurtureChild(root, child, {
+                family: options.family, dryRun: options.dryRun, check: options.check, force: options.force,
+            });
+            if (options.json) console.log(JSON.stringify(report, null, 2));
+            else {
+                console.log(`status: ${report.status}  copied=${report.copied.length} skipped=${report.skipped.length}`);
+                if (report.tag) console.log(`rollback tag: ${report.tag}`);
+                if (report.missingSources.length) console.log(`❌ missing mother sources: ${report.missingSources.join(', ')}`);
+                if (report.dirtyFiles.length) console.log(`⚠️ dirty in child: ${report.dirtyFiles.join(', ')} (use --force to override)`);
+                if (report.depGap.missing.length) console.log(`⚠️ child missing deps: ${report.depGap.missing.join(', ')} — run npm install in <child>/.evo-lite`);
+                if (report.depGap.versionDiffs.length) console.log(`ℹ️ version ranges differ: ${report.depGap.versionDiffs.map(d => d.name).join(', ')}`);
+            }
+            if (report.status === 'refused' || report.status === 'aborted' || report.status === 'unreachable') process.exitCode = 1;
+            if (options.check && !report.upToDate) process.exitCode = 1;
+        });
+
     return hive;
 }
 

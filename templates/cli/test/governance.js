@@ -1965,6 +1965,109 @@ async function runChildRuntimeTests() {
         assert.strictEqual(gone.status, 'unreachable');
     }
     console.log('✅ T-hive-status passed');
+
+    console.log('T-hive-nurture. Testing gene push: genes-only, dry-run, family, anchors, receipt, all-or-nothing ...');
+    {
+        const { nurtureChild, mergeAnchoredContent } = require(path.join(CLI_DIR, 'hive', 'nurture.js'));
+        const { sha256 } = require(path.join(CLI_DIR, 'hive', 'status.js'));
+        const noGit = () => { throw new Error('not a git repo'); };
+
+        // anchor merge is pure — test first
+        const motherDoc = '# Doc\n<!-- BEGIN_LOCAL -->\n(mother default)\n<!-- END_LOCAL -->\ntail v2\n';
+        const childDoc = '# Doc\n<!-- BEGIN_LOCAL -->\nchild custom kept\n<!-- END_LOCAL -->\ntail v1\n';
+        const merged = mergeAnchoredContent(motherDoc, childDoc, [['BEGIN_LOCAL', 'END_LOCAL']]);
+        assert.ok(merged.includes('child custom kept'), 'child anchor content preserved');
+        assert.ok(merged.includes('tail v2'), 'mother body outside anchors wins');
+
+        const FAM = [
+            { key: 'core-cli', scope: 'sync-always', activeRoot: 'cli', templateRoot: 'cli', relativeDir: [], files: ['gene.js'] },
+            { key: 'agents-workflows', scope: 'sync-always', activeRoot: 'workspace', templateRoot: 'root', relativeDir: ['.agents', 'workflows'],
+              files: [{ path: 'evo.md', mergeAnchors: [['BEGIN_LOCAL', 'END_LOCAL']] }] },
+        ];
+
+        const mkMother = () => {
+            const m = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hn-mother-'));
+            fs.writeFileSync(path.join(m, 'package.json'), '{"version":"9.9.9"}');
+            fs.mkdirSync(path.join(m, 'templates', 'cli'), { recursive: true });
+            fs.mkdirSync(path.join(m, 'templates', '.agents', 'workflows'), { recursive: true });
+            fs.mkdirSync(path.join(m, 'templates', 'runtime'), { recursive: true });
+            fs.writeFileSync(path.join(m, 'templates', 'cli', 'gene.js'), 'module.exports = 2;\n');
+            fs.writeFileSync(path.join(m, 'templates', '.agents', 'workflows', 'evo.md'), motherDoc);
+            fs.writeFileSync(path.join(m, 'templates', 'runtime', 'package.json'),
+                '{"dependencies":{"commander":"15.0.0","@modelcontextprotocol/sdk":"1.29.0"}}');
+            return m;
+        };
+        const mkChild = () => {
+            const c = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hn-child-'));
+            fs.mkdirSync(path.join(c, '.evo-lite', 'cli'), { recursive: true });
+            fs.mkdirSync(path.join(c, '.agents', 'workflows'), { recursive: true });
+            fs.writeFileSync(path.join(c, '.evo-lite', 'package.json'), '{"version":"9.0.0","dependencies":{"commander":"^14.0.3"}}');
+            fs.writeFileSync(path.join(c, '.evo-lite', 'cli', 'gene.js'), 'module.exports = 1;\n');
+            fs.writeFileSync(path.join(c, '.agents', 'workflows', 'evo.md'), childDoc);
+            fs.writeFileSync(path.join(c, '.evo-lite', 'active_context.md'), 'CHILD STATE\n');
+            return c;
+        };
+
+        // dry-run writes nothing
+        const m1 = mkMother(); const c1 = mkChild(); const e1 = { id: 'kid', path: c1 };
+        const before = sha256(fs.readFileSync(path.join(c1, '.evo-lite', 'cli', 'gene.js')));
+        const dry = nurtureChild(m1, e1, { dryRun: true, exec: noGit, force: true, familiesOverride: FAM });
+        assert.strictEqual(dry.status, 'dry-run');
+        assert.ok(dry.copied.includes('gene.js'), 'dry-run reports pending copy');
+        assert.deepStrictEqual(dry.depGap.missing, ['@modelcontextprotocol/sdk'], 'dep gap named');
+        assert.strictEqual(sha256(fs.readFileSync(path.join(c1, '.evo-lite', 'cli', 'gene.js'))), before, 'dry-run wrote nothing');
+
+        // apply: genes copied, anchors merged, state untouched, receipt + lock + bump + registry
+        const regMod = require(path.join(CLI_DIR, 'hive', 'registry.js'));
+        fs.mkdirSync(path.join(m1, '.evo-lite', 'hive'), { recursive: true });
+        regMod.writeRegistry(m1, { version: 'evo-hive-registry@1', children: [{ id: 'kid', path: c1.replace(/\\/g, '/'), registeredAt: 'x', lastNurturedAt: null, lastNurturedVersion: null }] });
+        const applied = nurtureChild(m1, e1, { exec: noGit, force: true, familiesOverride: FAM, now: () => '2026-07-03T01:00:00.000Z' });
+        assert.strictEqual(applied.status, 'applied');
+        assert.strictEqual(fs.readFileSync(path.join(c1, '.evo-lite', 'cli', 'gene.js'), 'utf8'), 'module.exports = 2;\n', 'gene updated');
+        const mergedOut = fs.readFileSync(path.join(c1, '.agents', 'workflows', 'evo.md'), 'utf8');
+        assert.ok(mergedOut.includes('child custom kept') && mergedOut.includes('tail v2'), 'anchor-merge applied on push');
+        assert.strictEqual(fs.readFileSync(path.join(c1, '.evo-lite', 'active_context.md'), 'utf8'), 'CHILD STATE\n', 'project state untouched');
+        const receipt = JSON.parse(fs.readFileSync(path.join(c1, '.evo-lite', 'hive', 'nurture-received.json'), 'utf8'));
+        assert.strictEqual(receipt.motherVersion, '9.9.9');
+        assert.ok(receipt.files.includes('gene.js'), 'receipt lists files');
+        assert.ok(fs.existsSync(path.join(c1, '.evo-lite', 'generated', 'runtime-mirror.lock.json')), 'child lock written');
+        assert.strictEqual(JSON.parse(fs.readFileSync(path.join(c1, '.evo-lite', 'package.json'), 'utf8')).version, '9.9.9', 'child version bumped');
+        assert.strictEqual(regMod.findChild(m1, 'kid').lastNurturedVersion, '9.9.9', 'mother registry updated');
+
+        // family filter: only selected family written
+        const m2 = mkMother(); const c2 = mkChild();
+        nurtureChild(m2, { id: 'k2', path: c2 }, { exec: noGit, force: true, family: 'agents-workflows', familiesOverride: FAM });
+        assert.strictEqual(fs.readFileSync(path.join(c2, '.evo-lite', 'cli', 'gene.js'), 'utf8'), 'module.exports = 1;\n', 'other family untouched');
+        assert.ok(fs.readFileSync(path.join(c2, '.agents', 'workflows', 'evo.md'), 'utf8').includes('tail v2'), 'selected family pushed');
+
+        // all-or-nothing: missing mother source → zero writes
+        const m3 = mkMother(); const c3 = mkChild();
+        fs.rmSync(path.join(m3, 'templates', 'cli', 'gene.js'));
+        const aborted = nurtureChild(m3, { id: 'k3', path: c3 }, { exec: noGit, force: true, familiesOverride: FAM });
+        assert.strictEqual(aborted.status, 'aborted');
+        assert.deepStrictEqual(aborted.missingSources, ['gene.js']);
+        assert.strictEqual(fs.readFileSync(path.join(c3, '.agents', 'workflows', 'evo.md'), 'utf8'), childDoc, 'zero writes on abort');
+        assert.ok(!fs.existsSync(path.join(c3, '.evo-lite', 'hive', 'nurture-received.json')), 'no receipt on abort');
+
+        // dirty child without --force refused; rollback tag when clean git
+        const m4 = mkMother(); const c4 = mkChild();
+        const fakeGit = calls => (args, cwd) => {
+            calls.push(args.join(' '));
+            if (args[0] === 'status') return ' M .evo-lite/cli/gene.js\n';
+            return '';
+        };
+        const dirtyCalls = [];
+        const refused = nurtureChild(m4, { id: 'k4', path: c4 }, { exec: fakeGit(dirtyCalls), familiesOverride: FAM });
+        assert.strictEqual(refused.status, 'refused');
+        assert.ok(refused.dirtyFiles.length > 0, 'dirty files named');
+        const cleanCalls = [];
+        const cleanGit = (args, cwd) => { cleanCalls.push(args.join(' ')); return args[0] === 'status' ? '' : ''; };
+        const tagged = nurtureChild(m4, { id: 'k4', path: c4 }, { exec: cleanGit, familiesOverride: FAM });
+        assert.strictEqual(tagged.status, 'applied');
+        assert.strictEqual(tagged.tag, 'evo-nurture-pre-9.9.9');
+        assert.ok(cleanCalls.some(c => c.startsWith('tag -a evo-nurture-pre-9.9.9')), 'rollback tag created');
+    }
+    console.log('✅ T-hive-nurture passed');
 }
 
 module.exports = { runGovernanceTests };
