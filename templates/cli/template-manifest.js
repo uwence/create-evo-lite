@@ -52,6 +52,10 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'mcp-server.js',
             'mcp-validate.js',
             'sync-runtime.js',
+            'hive/registry.js',
+            'hive/status.js',
+            'hive/nurture.js',
+            'hive/commands.js',
         ],
     },
     {
