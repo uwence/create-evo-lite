@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Evidence-durability STALE-cascade split SHIPPED to main (merged ff, HEAD c79f6d0, 8 commits): test.js monolith -> thin dispatcher + test/{harness,governance,integration}.js across both mirrors, manifest-registered, T-precision regression test, spec:evidence-durability-stale-cascade dogfooded 4 PASS. Final whole-branch review (opus) YES 0Crit/0Imp. NOT pushed (gated). Next candidates (all deferred): push main + npm publish 2.1.0; retarget 7 historical specs' test.js dependsOn (follow-up, split already de-churns); P1-8 command shell-exec trust boundary; P1-5 parser-driven checkbox flip.
+Mother-child hive nurture SHIPPED to main (ff, HEAD ee80d5d, 10 commits): mem hive register/list/status/nurture — split-root gene push (genes-only, all-or-nothing preflight, family filter, anchor-merge, git-tag rollback, child receipt, dep report), harness child-mode portability. 8 criteria PASS. CAPSTONE: real child hungersnakegame4 nurtured via command (status drifted->apply->up-to-date, rollback tag evo-nurture-pre-2.1.0, child-mode governance suite live-green). Final review opus 0Crit/0Imp/2Minor-fixed. NOT pushed (gated). NEXT candidates: push main + npm publish 2.1.0; mem hive harvest (child->mother evolution, human-gated) when 2nd child diverges; create-evo-lite auto-register on scaffold.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
