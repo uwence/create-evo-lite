@@ -1,0 +1,12 @@
+{
+  "version": "evo-hive-registry@1",
+  "children": [
+    {
+      "id": "hungersnakegame4",
+      "path": "D:/Data/ProjectAgent/hungersnakegame4",
+      "registeredAt": "2026-07-04T22:49:26.116Z",
+      "lastNurturedAt": "2026-07-04T22:50:04.224Z",
+      "lastNurturedVersion": "2.1.0"
+    }
+  ]
+}
