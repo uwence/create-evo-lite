@@ -52,6 +52,22 @@ function registerHiveCommands(program) {
             }
         });
 
+    hive.command('status [id]')
+        .description('Compare each registered child against the mother genes and version.')
+        .option('--json', 'Print JSON output')
+        .action((id, options) => {
+            const root = getWorkspaceRoot();
+            if (!requireMother(root)) return;
+            const results = require('./status').hiveStatus(root, { id });
+            if (options.json) { console.log(JSON.stringify(results, null, 2)); return; }
+            if (results.length === 0) { console.log(id ? `unknown child: ${id}` : 'no children registered'); process.exitCode = id ? 1 : 0; return; }
+            for (const r of results) {
+                const detail = r.status === 'behind' ? ` (${r.childVersion} → ${r.motherVersion})`
+                    : r.status === 'drifted' ? ` (${r.driftedFiles.join(', ')})` : '';
+                console.log(`${r.id}: ${r.status}${detail}`);
+            }
+        });
+
     return hive;
 }
 

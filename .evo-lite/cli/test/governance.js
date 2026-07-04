@@ -1928,6 +1928,43 @@ async function runChildRuntimeTests() {
         assert.strictEqual(isMotherRoot(notMother), false, 'dir without templates/cli is not a mother');
     }
     console.log('✅ T-hive-guard passed');
+
+    console.log('T-hive-status. Testing per-child status verdicts ...');
+    {
+        const reg = require(path.join(CLI_DIR, 'hive', 'registry.js'));
+        const { childStatus } = require(path.join(CLI_DIR, 'hive', 'status.js'));
+        const FAM = [{ key: 'core-cli', scope: 'sync-always', activeRoot: 'cli', templateRoot: 'cli', relativeDir: [], files: ['gene.js'] }];
+
+        const mother = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hs-mother-'));
+        fs.mkdirSync(path.join(mother, 'templates', 'cli'), { recursive: true });
+        fs.writeFileSync(path.join(mother, 'package.json'), '{"version":"9.9.9"}');
+        fs.writeFileSync(path.join(mother, 'templates', 'cli', 'gene.js'), 'module.exports = 1;\n');
+
+        const mkChild = version => {
+            const c = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hs-child-'));
+            fs.mkdirSync(path.join(c, '.evo-lite', 'cli'), { recursive: true });
+            fs.writeFileSync(path.join(c, '.evo-lite', 'package.json'), JSON.stringify({ version, dependencies: {} }));
+            fs.writeFileSync(path.join(c, '.evo-lite', 'cli', 'gene.js'), 'module.exports = 1;\n');
+            return c;
+        };
+
+        const upToDate = childStatus(mother, { id: 'a', path: mkChild('9.9.9') }, { familiesOverride: FAM });
+        assert.strictEqual(upToDate.status, 'up-to-date');
+
+        const behind = childStatus(mother, { id: 'b', path: mkChild('9.0.0') }, { familiesOverride: FAM });
+        assert.strictEqual(behind.status, 'behind');
+        assert.strictEqual(behind.childVersion, '9.0.0');
+
+        const driftedChild = mkChild('9.9.9');
+        fs.writeFileSync(path.join(driftedChild, '.evo-lite', 'cli', 'gene.js'), '// hand-edited\n');
+        const drifted = childStatus(mother, { id: 'c', path: driftedChild }, { familiesOverride: FAM });
+        assert.strictEqual(drifted.status, 'drifted');
+        assert.deepStrictEqual(drifted.driftedFiles, ['gene.js'], 'drift names the file');
+
+        const gone = childStatus(mother, { id: 'd', path: path.join(os.tmpdir(), 'evo-hs-gone-' + Date.now()) }, { familiesOverride: FAM });
+        assert.strictEqual(gone.status, 'unreachable');
+    }
+    console.log('✅ T-hive-status passed');
 }
 
 module.exports = { runGovernanceTests };
