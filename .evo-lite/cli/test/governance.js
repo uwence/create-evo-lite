@@ -2221,6 +2221,44 @@ async function runChildRuntimeTests() {
             fs.rmSync(tmp, { recursive: true, force: true });
             console.log('✅ T-evidence-no-shell passed');
         }
+
+        console.log('T-evidence-validated-read. readEvidence validates file + records ...');
+        {
+            const store = require('../verification/evidence-store');
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evid-read-'));
+            const evDir = path.join(tmp, '.evo-lite', 'verification');
+            fs.mkdirSync(evDir, { recursive: true });
+            const fp = path.join(evDir, 'evidence-t.json');
+
+            // (a) unparseable file -> throw (fail-closed)
+            fs.writeFileSync(fp, '{ not json');
+            assert.throws(() => store.readEvidence(tmp, 'spec:t'), /evidence.*(JSON|parse|malformed)/i);
+
+            // (b) wrong top-level shape (records not an object) -> throw
+            fs.writeFileSync(fp, JSON.stringify({ version: 'x', specId: 'spec:t', records: [] }));
+            assert.throws(() => store.readEvidence(tmp, 'spec:t'), /records/i);
+
+            // (c) one invalid record excluded loudly, valid one kept
+            fs.writeFileSync(fp, JSON.stringify({
+                version: 'evo-verification-evidence@1', specId: 'spec:t', records: {
+                    good: { criterionId: 'good', verdict: 'PASS', commitSha: 'abc123', verifierType: 'file-exists', attestedBy: null },
+                    bad:  { criterionId: 'bad', verdict: 'GREENISH', commitSha: 'abc', verifierType: 'file-exists' },
+                },
+            }));
+            const warned = [];
+            const origWarn = console.warn; console.warn = (m) => warned.push(String(m));
+            let back;
+            try { back = store.readEvidence(tmp, 'spec:t'); } finally { console.warn = origWarn; }
+            assert.ok(back.records.good, 'valid record kept');
+            assert.ok(!back.records.bad, 'invalid record excluded');
+            assert.ok(warned.some(m => /bad/.test(m)), 'exclusion is loud (names the record)');
+
+            // (d) absent file still reads as empty store (unchanged)
+            fs.rmSync(fp);
+            assert.deepStrictEqual(store.readEvidence(tmp, 'spec:t').records, {}, 'absent -> empty');
+            fs.rmSync(tmp, { recursive: true, force: true });
+            console.log('✅ T-evidence-validated-read passed');
+        }
 }
 
 module.exports = { runGovernanceTests };

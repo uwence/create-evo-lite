@@ -23,7 +23,28 @@ function readEvidence(root, specId) {
     if (!fs.existsSync(fp)) {
         return { version: 'evo-verification-evidence@1', specId, records: {} };
     }
-    return JSON.parse(fs.readFileSync(fp, 'utf8'));
+    let store;
+    try {
+        store = JSON.parse(fs.readFileSync(fp, 'utf8'));
+    } catch (e) {
+        // Fail-closed: a malformed evidence file must never be silently treated as
+        // "no evidence" — that would flip a real FAIL to UNVERIFIED-by-absence.
+        throw new Error(`malformed evidence file ${path.basename(fp)}: not valid JSON (${e.message})`);
+    }
+    if (!store || typeof store !== 'object' || Array.isArray(store) ||
+        typeof store.records !== 'object' || store.records === null || Array.isArray(store.records)) {
+        throw new Error(`malformed evidence file ${path.basename(fp)}: records must be an object`);
+    }
+    // Individually invalid records are dropped LOUDLY (never silently) so a
+    // tampered/legacy record can't masquerade as a valid verdict.
+    for (const [key, rec] of Object.entries(store.records)) {
+        const findings = validateEvidenceRecord(rec);
+        if (findings.length) {
+            console.warn(`⚠ evidence record "${key}" excluded (${findings.map(f => f.message).join('; ')})`);
+            delete store.records[key];
+        }
+    }
+    return store;
 }
 
 function writeRecord(root, specId, record) {
