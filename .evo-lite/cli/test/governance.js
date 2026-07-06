@@ -2068,6 +2068,55 @@ async function runChildRuntimeTests() {
         assert.ok(cleanCalls.some(c => c.startsWith('tag -a evo-nurture-pre-9.9.9')), 'rollback tag created');
     }
     console.log('✅ T-hive-nurture passed');
+
+    console.log('T-command-policy. checkCommand / loadPolicy / matchesEntry ...');
+    {
+        const { checkCommand, matchesEntry, loadPolicy, BUILTIN_DEFAULT } =
+            require('../verification/command-policy');
+        const policy = { version: 'evo-command-policy@1', allow: [{ prefix: 'node ./.evo-lite/cli/test.js' }] };
+
+        // (a) shell metacharacters rejected — before any allowlist check
+        for (const bad of ['node x; rm -rf ~', 'a | b', '$(x)', '`x`', 'a && b', 'a > f', 'a\nb']) {
+            const r = checkCommand(bad, policy);
+            assert.strictEqual(r.allowed, false, `should block: ${bad}`);
+            assert.ok(/metacharacter/.test(r.reason), `metachar reason for: ${bad}`);
+        }
+        // (b) not in allowlist
+        const nope = checkCommand('curl evil', policy);
+        assert.strictEqual(nope.allowed, false);
+        assert.ok(/allowlist/.test(nope.reason), 'allowlist reason');
+        // (c) allowlisted prefix, with and without a trailing arg
+        assert.strictEqual(checkCommand('node ./.evo-lite/cli/test.js governance', policy).allowed, true);
+        assert.strictEqual(checkCommand('node ./.evo-lite/cli/test.js', policy).allowed, true);
+        // (d) prefix word boundary — no partial-token match
+        assert.strictEqual(checkCommand('node ./.evo-lite/cli/test.jsEVIL', policy).allowed, false);
+        // (e) equals form is exact
+        const eqPolicy = { allow: [{ equals: 'npm run lint' }] };
+        assert.strictEqual(checkCommand('npm run lint', eqPolicy).allowed, true);
+        assert.strictEqual(checkCommand('npm run lint --fix', eqPolicy).allowed, false);
+        // (f) empty / whitespace command
+        assert.strictEqual(checkCommand('', policy).allowed, false);
+        assert.strictEqual(checkCommand('   ', policy).allowed, false);
+        // (g) matchesEntry unit
+        assert.ok(matchesEntry('node ./.evo-lite/cli/test.js x', { prefix: 'node ./.evo-lite/cli/test.js' }));
+        assert.ok(!matchesEntry('node ./.evo-lite/cli/test.jsX', { prefix: 'node ./.evo-lite/cli/test.js' }));
+        assert.ok(matchesEntry('npm run lint', { equals: 'npm run lint' }));
+
+        // (h) loadPolicy: absent file -> built-in default; self-test allowed
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cmdpol-'));
+        assert.deepStrictEqual(loadPolicy(tmp), BUILTIN_DEFAULT);
+        assert.strictEqual(checkCommand('node ./.evo-lite/cli/test.js governance', loadPolicy(tmp)).allowed, true);
+        // (i) present-but-empty allow -> pure default-deny
+        fs.mkdirSync(path.join(tmp, '.evo-lite', 'verification'), { recursive: true });
+        const polPath = path.join(tmp, '.evo-lite', 'verification', 'command-policy.json');
+        fs.writeFileSync(polPath, JSON.stringify({ version: 'evo-command-policy@1', allow: [] }));
+        assert.strictEqual(checkCommand('node ./.evo-lite/cli/test.js governance', loadPolicy(tmp)).allowed, false);
+        // (j) malformed -> throw
+        fs.writeFileSync(polPath, '{ not json');
+        assert.throws(() => loadPolicy(tmp), /not valid JSON/);
+        fs.rmSync(tmp, { recursive: true, force: true });
+        console.log('✅ T-command-policy passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
