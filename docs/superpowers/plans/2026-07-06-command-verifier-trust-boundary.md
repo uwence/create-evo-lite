@@ -48,7 +48,7 @@
   - `matchesEntry(cmd: string, entry) -> boolean`.
   - Exports also `SHELL_META` (RegExp), `POLICY_REL` (string[]), `BUILTIN_DEFAULT` (frozen object).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append inside the `try` block of `runGovernanceTests` in `templates/cli/test/governance.js`, immediately after the T-hive-nurture block:
 
@@ -103,12 +103,12 @@ Append inside the `try` block of `runGovernanceTests` in `templates/cli/test/gov
         }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: FAIL — `Cannot find module '../verification/command-policy'` (the file and its manifest registration do not exist yet).
 
-- [ ] **Step 3: Create the module**
+- [x] **Step 3: Create the module**
 
 Create `templates/cli/verification/command-policy.js`:
 
@@ -182,7 +182,7 @@ function checkCommand(cmd, policy) {
 module.exports = { loadPolicy, checkCommand, matchesEntry, SHELL_META, POLICY_REL, BUILTIN_DEFAULT };
 ```
 
-- [ ] **Step 4: Register the gene in the manifest**
+- [x] **Step 4: Register the gene in the manifest**
 
 In `templates/cli/template-manifest.js`, in the `core-cli` family's `files` array, add the line immediately after `'verification/run-verifiers.js',`:
 
@@ -194,12 +194,12 @@ In `templates/cli/template-manifest.js`, in the `core-cli` family's `files` arra
 
 (The `evidence-store.js` line already follows; insert the new line between them.)
 
-- [ ] **Step 5: Sync the mirror and run the test**
+- [x] **Step 5: Sync the mirror and run the test**
 
 Run: `node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T-command-policy passed`, and the governance suite completes green. Sync must report `command-policy.js` copied to the mirror.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/verification/command-policy.js templates/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/verification/command-policy.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js .evo-lite/generated/runtime-mirror.lock.json
@@ -224,7 +224,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `runVerifier(criterion, opts)` now returns `{ verdict:'UNVERIFIED', detail, blocked:true }` when a `command` verifier is policy-blocked; `opts.policy` (a policy object) is honored if provided, else `loadPolicy(repoRoot)` is called.
   - `runSpec(...).written[i]` may now carry `{ criterionId, verdict:'UNVERIFIED', blocked:true, detail }` for blocked criteria; no evidence record is written for them.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append inside the `try` block, after the `T-command-policy` block:
 
@@ -280,12 +280,12 @@ Append inside the `try` block, after the `T-command-policy` block:
         }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: FAIL — `T-command-blocked` fails because the current `case 'command'` executes unconditionally (`execCalls` becomes 1 for the blocked command / verdict is FAIL not UNVERIFIED).
 
-- [ ] **Step 3: Consult the policy in run-verifiers.js**
+- [x] **Step 3: Consult the policy in run-verifiers.js**
 
 In `templates/cli/verification/run-verifiers.js`, add the require near the top (after the existing `execSync` require):
 
@@ -312,7 +312,7 @@ Replace the `case 'command'` block with:
             }
 ```
 
-- [ ] **Step 4: Skip evidence for blocked criteria in engine.js**
+- [x] **Step 4: Skip evidence for blocked criteria in engine.js**
 
 In `templates/cli/verification/engine.js`, replace the criterion loop in `runSpec` (currently lines ~38-47) with:
 
@@ -335,7 +335,7 @@ In `templates/cli/verification/engine.js`, replace the criterion loop in `runSpe
     }
 ```
 
-- [ ] **Step 5: Print a blocked line in the run CLI**
+- [x] **Step 5: Print a blocked line in the run CLI**
 
 In `templates/cli/verification/commands.js`, replace the `run` action's printout loop (line ~46) with:
 
@@ -350,17 +350,17 @@ In `templates/cli/verification/commands.js`, replace the `run` action's printout
             console.log(`ran ${res.written.length} machine verifier(s)`);
 ```
 
-- [ ] **Step 6: Sync the mirror and run the test**
+- [x] **Step 6: Sync the mirror and run the test**
 
 Run: `node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T-command-blocked passed` and `✅ T-command-blocked-runspec passed`, suite green.
 
-- [ ] **Step 7: Run the full default suite (no regression)**
+- [x] **Step 7: Run the full default suite (no regression)**
 
 Run: `npm test`
 Expected: PASS — the default integration suite is green (the 45 existing `command` criteria are unaffected: their `node ./.evo-lite/cli/test.js ...` commands match the built-in default allowlist).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add templates/cli/verification/run-verifiers.js templates/cli/verification/engine.js templates/cli/verification/commands.js templates/cli/test/governance.js .evo-lite/cli/verification/run-verifiers.js .evo-lite/cli/verification/engine.js .evo-lite/cli/verification/commands.js .evo-lite/cli/test/governance.js .evo-lite/generated/runtime-mirror.lock.json
@@ -381,7 +381,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `MANAGED_TEMPLATE_FAMILIES` from `../template-manifest`; the shipped enforcement from Tasks 1-2.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append inside the `try` block, after the `T-command-blocked-runspec` block:
 
@@ -401,12 +401,12 @@ Append inside the `try` block, after the `T-command-blocked-runspec` block:
         }
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 
 Run: `node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance`
 Expected: PASS — `✅ T-command-policy-manifest passed`. (This asserts the state Task 1 already produced: `command-policy.js` registered, no `.json` gene. It is a guard, so it passes immediately.)
 
-- [ ] **Step 3: Create the mother baseline policy file**
+- [x] **Step 3: Create the mother baseline policy file**
 
 Create `.evo-lite/verification/command-policy.json`:
 
@@ -419,7 +419,7 @@ Create `.evo-lite/verification/command-policy.json`:
 }
 ```
 
-- [ ] **Step 4: Commit the implementation + policy so the tree is clean for the dogfood**
+- [x] **Step 4: Commit the implementation + policy so the tree is clean for the dogfood**
 
 ```bash
 git add templates/cli/test/governance.js .evo-lite/cli/test/governance.js .evo-lite/generated/runtime-mirror.lock.json .evo-lite/verification/command-policy.json
@@ -428,12 +428,12 @@ git commit -m "feat(verify): mother baseline command-policy.json + not-a-gene gu
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 5: Dogfood — run the contract on its own spec**
+- [x] **Step 5: Dogfood — run the contract on its own spec**
 
 Run: `node .evo-lite/cli/memory.js verify-contract run docs/superpowers/specs/2026-07-06-command-verifier-trust-boundary-design.md`
 Expected: five `✅ ac-... PASS` lines (each AC's verifier is `node ./.evo-lite/cli/test.js governance`, which is allowlisted and passes), and `ran 5 machine verifier(s)`. No ⚠ blocked lines. An evidence file `.evo-lite/verification/evidence-command-verifier-trust-boundary.json` is written with 5 PASS records.
 
-- [ ] **Step 6: Confirm READY and commit the evidence**
+- [x] **Step 6: Confirm READY and commit the evidence**
 
 Run: `node .evo-lite/cli/memory.js verify-contract status docs/superpowers/specs/2026-07-06-command-verifier-trust-boundary-design.md --strict`
 Expected: five `PASS ac-...` lines, exit 0.

@@ -1,6 +1,6 @@
 ---
 id: spec:command-verifier-trust-boundary
-status: draft
+status: done
 linkedPlan: plan:command-verifier-trust-boundary
 ---
 
