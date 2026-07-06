@@ -229,7 +229,8 @@ Governance suite (`test/governance.js`), new T-numbers, all driving the pure
 ## Acceptance Criteria
 
 ```json
-[
+{
+  "criteria": [
   {
     "id": "ac-policy-default-deny",
     "description": "A command not in the allowlist yields UNVERIFIED and is never executed.",
@@ -260,7 +261,8 @@ Governance suite (`test/governance.js`), new T-numbers, all driving the pure
     "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
     "dependsOn": ["templates/cli/verification/command-policy.js", "templates/cli/test/governance.js"]
   }
-]
+  ]
+}
 ```
 
 ## Manifest & Mirror
