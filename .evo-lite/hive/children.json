@@ -7,6 +7,13 @@
       "registeredAt": "2026-07-04T22:49:26.116Z",
       "lastNurturedAt": "2026-07-06T01:16:32.972Z",
       "lastNurturedVersion": "2.1.0"
+    },
+    {
+      "id": "CodePLC",
+      "path": "D:/Data/ProjectAgent/CodePLC",
+      "registeredAt": "2026-07-06T08:09:19.066Z",
+      "lastNurturedAt": null,
+      "lastNurturedVersion": null
     }
   ]
 }
