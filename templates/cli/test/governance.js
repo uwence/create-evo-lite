@@ -2321,6 +2321,54 @@ async function runChildRuntimeTests() {
             fs.rmSync(child, { recursive: true, force: true });
             console.log('✅ T-nurture-preserves-manifest passed');
         }
+
+        console.log('T-transaction. snapshot/rollback restores files on apply failure ...');
+        {
+            const txn = require('../transaction');
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'txn-'));
+            const a = path.join(tmp, 'a.txt'); const b = path.join(tmp, 'b.txt');
+            fs.writeFileSync(a, 'A0');            // a exists before
+            // b does not exist before
+            const journalPath = path.join(tmp, 'j.json');
+            const res = txn.runTransaction({
+                root: tmp, targets: [a, b], journalPath, now: '2026-07-06T00:00:00Z',
+                apply: () => {
+                    fs.writeFileSync(a, 'A1');    // mutate existing
+                    fs.writeFileSync(b, 'B1');    // create new
+                    throw new Error('boom');      // force rollback
+                },
+            });
+            assert.strictEqual(res.ok, false, 'transaction reports failure');
+            assert.strictEqual(fs.readFileSync(a, 'utf8'), 'A0', 'existing file restored');
+            assert.ok(!fs.existsSync(b), 'created file removed on rollback');
+            assert.ok(JSON.parse(fs.readFileSync(journalPath, 'utf8')).status === 'aborted', 'journal marked aborted');
+            fs.rmSync(tmp, { recursive: true, force: true });
+            console.log('✅ T-transaction passed');
+        }
+
+        console.log('T-nurture-transactional. a mid-apply failure restores every snapshotted file ...');
+        {
+            const nurtureMod = require('../hive/nurture');
+            const motherRoot = process.cwd();
+            const child = fs.mkdtempSync(path.join(os.tmpdir(), 'nurt-txn-'));
+            const evo = path.join(child, '.evo-lite');
+            fs.mkdirSync(path.join(evo, 'cli'), { recursive: true });
+            fs.writeFileSync(path.join(evo, 'package.json'), JSON.stringify({ name: 'x', version: '1.0.0' }, null, 2));
+            fs.writeFileSync(path.join(evo, 'evo-lite-version.json'), JSON.stringify({ version: '0.0.1' }, null, 2));
+            // Inject a receipt-writer that throws, simulating a mid-apply failure AFTER
+            // some files are written. Nurture must restore the product version file.
+            const before = fs.readFileSync(path.join(evo, 'evo-lite-version.json'), 'utf8');
+            const rep = nurtureMod.nurtureChild(motherRoot, { id: 'cT', path: child }, {
+                familiesOverride: [], force: true, now: () => '2026-07-06T00:00:00Z',
+                exec: (() => { const f = () => ''; f.__argv = true; return f; })(),
+                failAfterWrites: true, // hook the impl reads to throw post-write (see Step 3)
+            });
+            assert.ok(rep.status === 'aborted' || rep.aborted, 'nurture reports aborted on mid-apply failure');
+            assert.strictEqual(fs.readFileSync(path.join(evo, 'evo-lite-version.json'), 'utf8'), before,
+                'product version file restored on rollback');
+            fs.rmSync(child, { recursive: true, force: true });
+            console.log('✅ T-nurture-transactional passed');
+        }
 }
 
 module.exports = { runGovernanceTests };

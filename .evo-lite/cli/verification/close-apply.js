@@ -6,6 +6,7 @@ const childProcess = require('child_process');
 const { previewClose } = require('./close-preview');
 const { parseFrontmatter } = require('../planning/parse-markdown');
 const { evidenceSlug } = require('./evidence-store');
+const { snapshotFiles, rollbackFiles } = require('../transaction');
 
 function defaultExec(root) {
     return (args) => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' });
@@ -118,7 +119,7 @@ function applyClose(specPath, opts = {}) {
     targets.push(archPath, irPath);
 
     // Journal: snapshot prior bytes (null = file absent).
-    const entries = targets.map(p => ({ path: p, priorBytes: fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null }));
+    const entries = snapshotFiles(targets);
     const journalPath = path.join(root, '.evo-lite', 'verification', `close-journal-${evidenceSlug(fm.id)}.json`);
     const journal = { version: 'evo-close-journal@1', spec: specPath, createdAt: now, status: 'applying',
         entries: entries.map(e => ({ path: path.relative(root, e.path).replace(/\\/g, '/'), existed: e.priorBytes !== null })) };
@@ -150,10 +151,7 @@ function applyClose(specPath, opts = {}) {
         if (staged.length) exec(['add', ...staged]);
         writeJournalFn(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));
     } catch (err) {
-        for (const e of entries) {
-            if (e.priorBytes === null) { if (fs.existsSync(e.path)) fs.unlinkSync(e.path); }
-            else fs.writeFileSync(e.path, e.priorBytes);
-        }
+        rollbackFiles(entries);
         // Unstage anything we git-add-ed so a rollback leaves the index clean too.
         try { if (staged.length) exec(['reset', '--', ...staged]); } catch (_) { /* best-effort */ }
         writeJournalFn(journalPath, Object.assign({}, journal, { status: 'aborted', error: err.message }));
