@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Mother-child hive nurture SHIPPED to main (ff, HEAD ee80d5d, 10 commits): mem hive register/list/status/nurture — split-root gene push (genes-only, all-or-nothing preflight, family filter, anchor-merge, git-tag rollback, child receipt, dep report), harness child-mode portability. 8 criteria PASS. CAPSTONE: real child hungersnakegame4 nurtured via command (status drifted->apply->up-to-date, rollback tag evo-nurture-pre-2.1.0, child-mode governance suite live-green). Final review opus 0Crit/0Imp/2Minor-fixed. NOT pushed (gated). NEXT candidates: push main + npm publish 2.1.0; mem hive harvest (child->mother evolution, human-gated) when 2nd child diverges; create-evo-lite auto-register on scaffold.
+P1-8 command-verifier trust boundary SHIPPED (main a2c3c64): default-deny the verification-contract command verifier — command-policy.js rejects shell metacharacters + enforces a human-curated git-committed allowlist; blocked commands write no evidence (UNVERIFIED by absence). Gene registered; command-policy.json is project-state (not a gene) so nurture never overwrites a child's allowlist; built-in default keeps fresh children self-hosting. 3 SDD tasks all reviewed clean; opus final review Ready-to-merge YES 0/0; dogfood self-run 5/5 PASS. NEXT candidates: push main (7 commits unpushed) + npm publish; later hardening pass (loadPolicy throw-branch tests + deep-freeze BUILTIN_DEFAULT); mem hive harvest (child->mother, human-gated + protected gene paths) when a 2nd child diverges.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
