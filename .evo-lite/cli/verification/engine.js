@@ -1,7 +1,7 @@
 'use strict';
 
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const { loadValidatedContract, criterionDigest } = require('./validate-contract');
 const { parseFrontmatter } = require('../planning/parse-markdown');
 const { runVerifier } = require('./run-verifiers');
@@ -71,9 +71,17 @@ function statusSpec(specPath, opts = {}) {
             detail: 'no machine-readable acceptance criteria' }];
     }
     const store = readEvidence(root, specId);
+    // Evidence-derived sha is untrusted input. Refuse anything that is not a bare
+    // Git OID before it reaches git at all — a non-OID (tampered or legacy) record
+    // is treated as unreachable → STALE, never executed. And use argv-form git so
+    // even a malformed sha cannot be interpreted by a shell.
+    const OID_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
     const gitDiff = opts.gitDiff || function (sha) {
+        if (typeof sha !== 'string' || !OID_RE.test(sha)) return null;
         try {
-            const out = String(exec(`git diff ${sha}..HEAD --name-only`, { cwd: root }));
+            const out = String(execFileSync('git',
+                ['diff', '--name-only', `${sha}..HEAD`, '--'],
+                { cwd: root, encoding: 'utf8' }));
             return out.split(/\r?\n/).filter(Boolean);
         } catch (_) {
             return null;   // unreachable commit → STALE

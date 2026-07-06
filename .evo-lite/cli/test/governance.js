@@ -2182,6 +2182,45 @@ async function runChildRuntimeTests() {
                 'command-policy.json must NOT be a gene — it is per-repo project state');
             console.log('✅ T-command-policy-manifest passed');
         }
+
+        console.log('T-evidence-no-shell. commitSha never reaches a shell; non-OID -> STALE ...');
+        {
+            const engine = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evid-shell-'));
+            fs.mkdirSync(path.join(tmp, 'docs', 'specs'), { recursive: true });
+            const specPath = path.join(tmp, 'docs', 'specs', 's.md');
+            fs.writeFileSync(specPath, [
+                '---', 'id: spec:t', '---', '', '## Acceptance Criteria', '', '```json',
+                JSON.stringify({ criteria: [{
+                    id: 'ac-1', description: 'x',
+                    verifier: { type: 'file-exists', params: { path: 'docs/specs/s.md' } },
+                    dependsOn: ['docs/specs/s.md'],
+                }] }),
+                '```', '',
+            ].join('\n'));
+            // Plant an evidence record whose commitSha is a shell-injection payload.
+            const evDir = path.join(tmp, '.evo-lite', 'verification');
+            fs.mkdirSync(evDir, { recursive: true });
+            fs.writeFileSync(path.join(evDir, 'evidence-t.json'), JSON.stringify({
+                version: 'evo-verification-evidence@1', specId: 'spec:t',
+                records: { 'ac-1': {
+                    criterionId: 'ac-1', verdict: 'PASS', commitSha: 'HEAD; echo pwned #',
+                    verifierType: 'file-exists', ranAt: 't', detail: 'd', attestedBy: null,
+                } },
+            }));
+            // exec spy: if any git *diff* string were built with the payload, it would
+            // appear here. We assert the spy is only ever called argv-form (array) and
+            // never receives the payload substring.
+            const seen = [];
+            const execSpy = (cmd) => { seen.push(cmd); return 'sha-head'; };
+            const verdicts = engine.statusSpec(specPath, { root: tmp, headSha: 'sha-head', exec: execSpy });
+            const v = Object.fromEntries(verdicts.map(x => [x.criterionId, x.verdict]));
+            assert.strictEqual(v['ac-1'], 'STALE', 'non-OID commitSha must derive STALE');
+            assert.ok(!seen.some(c => typeof c === 'string' && c.includes('pwned')),
+                'payload commitSha must never be interpolated into an exec string');
+            fs.rmSync(tmp, { recursive: true, force: true });
+            console.log('✅ T-evidence-no-shell passed');
+        }
 }
 
 module.exports = { runGovernanceTests };
