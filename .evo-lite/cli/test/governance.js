@@ -2366,6 +2366,13 @@ async function runChildRuntimeTests() {
             assert.ok(rep.status === 'aborted' || rep.aborted, 'nurture reports aborted on mid-apply failure');
             assert.strictEqual(fs.readFileSync(path.join(evo, 'evo-lite-version.json'), 'utf8'), before,
                 'product version file restored on rollback');
+            // Real rollback proof: the mirror lock WAS written before the injected throw
+            // and did NOT exist beforehand, so a correct rollback must unlink it. (The
+            // product-version assertion above is necessary but not sufficient — with an
+            // empty family override that file is only written AFTER the throw, so it stays
+            // untouched whether or not rollback runs.)
+            assert.ok(!fs.existsSync(path.join(evo, 'generated', 'runtime-mirror.lock.json')),
+                'mirror lock written before the throw must be removed on rollback');
             fs.rmSync(child, { recursive: true, force: true });
             console.log('✅ T-nurture-transactional passed');
         }
