@@ -2259,6 +2259,43 @@ async function runChildRuntimeTests() {
             fs.rmSync(tmp, { recursive: true, force: true });
             console.log('✅ T-evidence-validated-read passed');
         }
+
+        console.log('T-hive-version-truth. hive reads evo-lite-version.json, package.json only as legacy ...');
+        {
+            const { childStatus } = require('../hive/status');
+            const motherRoot = process.cwd(); // real templates/ tree for gene parity
+            const motherVersion = require(path.join(motherRoot, 'package.json')).version;
+
+            function makeChild(withVersionFile) {
+                const c = fs.mkdtempSync(path.join(os.tmpdir(), 'hive-ver-'));
+                const evo = path.join(c, '.evo-lite');
+                fs.mkdirSync(path.join(evo, 'cli'), { recursive: true });
+                // Real initializer shape: runtime manifest pinned to 1.0.0.
+                fs.writeFileSync(path.join(evo, 'package.json'), JSON.stringify({ name: 'x', version: '1.0.0' }));
+                if (withVersionFile) {
+                    fs.writeFileSync(path.join(evo, 'evo-lite-version.json'), JSON.stringify({ version: motherVersion }));
+                }
+                return c;
+            }
+
+            // (a) fresh scaffold: product version file present == mother -> up-to-date
+            const fresh = makeChild(true);
+            const s1 = childStatus(motherRoot, { id: 'c1', path: fresh },
+                { familiesOverride: [] }); // no gene files to diff -> status hinges on version
+            assert.strictEqual(s1.childVersion, motherVersion, 'reads product version from evo-lite-version.json');
+            assert.strictEqual(s1.status, 'up-to-date', 'fresh child with matching product version is up-to-date');
+            assert.ok(/evo-lite-version/.test(s1.versionSource), 'versionSource names the product file');
+
+            // (b) legacy child: no version file -> package.json fallback, marked legacy
+            const legacy = makeChild(false);
+            const s2 = childStatus(motherRoot, { id: 'c2', path: legacy }, { familiesOverride: [] });
+            assert.strictEqual(s2.childVersion, '1.0.0', 'legacy fallback reads package.json');
+            assert.ok(/legacy/.test(s2.versionSource), 'legacy source is marked');
+
+            fs.rmSync(fresh, { recursive: true, force: true });
+            fs.rmSync(legacy, { recursive: true, force: true });
+            console.log('✅ T-hive-version-truth passed');
+        }
 }
 
 module.exports = { runGovernanceTests };

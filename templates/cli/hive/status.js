@@ -33,12 +33,23 @@ function childEntries(motherRoot, childRoot, options = {}) {
         .flatMap(f => f.files.map(file => manifest.buildEntry(f, file, paths)));
 }
 
+function readChildVersion(childEvoDir) {
+    const productPath = path.join(childEvoDir, 'evo-lite-version.json');
+    if (fs.existsSync(productPath)) {
+        return { version: readVersion(productPath), source: 'evo-lite-version.json' };
+    }
+    // Legacy child scaffolded before the manifest/product split — fall back to the
+    // runtime manifest, but mark it so the ambiguity is visible, not silent.
+    return { version: readVersion(path.join(childEvoDir, 'package.json')), source: 'package.json (legacy)' };
+}
+
 function childStatus(motherRoot, entry, options = {}) {
     const motherVersion = readVersion(path.join(motherRoot, 'package.json'));
-    if (!fs.existsSync(path.join(entry.path, '.evo-lite'))) {
-        return { id: entry.id, status: 'unreachable', motherVersion, childVersion: null, driftedFiles: [] };
+    const childEvoDir = path.join(entry.path, '.evo-lite');
+    if (!fs.existsSync(childEvoDir)) {
+        return { id: entry.id, status: 'unreachable', motherVersion, childVersion: null, versionSource: null, driftedFiles: [] };
     }
-    const childVersion = readVersion(path.join(entry.path, '.evo-lite', 'package.json'));
+    const { version: childVersion, source: versionSource } = readChildVersion(childEvoDir);
     const driftedFiles = [];
     for (const e of childEntries(motherRoot, entry.path, options)) {
         if (!fs.existsSync(e.templateFile)) continue; // mother-side gap is nurture's preflight problem
@@ -50,7 +61,7 @@ function childStatus(motherRoot, entry, options = {}) {
     let status = 'up-to-date';
     if (driftedFiles.length) status = 'drifted';
     else if (childVersion !== motherVersion) status = 'behind';
-    return { id: entry.id, status, motherVersion, childVersion, driftedFiles };
+    return { id: entry.id, status, motherVersion, childVersion, versionSource, driftedFiles };
 }
 
 function hiveStatus(motherRoot, options = {}) {
