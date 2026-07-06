@@ -2168,6 +2168,20 @@ async function runChildRuntimeTests() {
             fs.rmSync(tmp, { recursive: true, force: true });
             console.log('✅ T-command-blocked-runspec passed');
         }
+
+        console.log('T-command-policy-manifest. command-policy.js is a gene; the .json is not ...');
+        {
+            const { MANAGED_TEMPLATE_FAMILIES } = require('../template-manifest');
+            const core = MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli');
+            assert.ok(core, 'core-cli family exists');
+            assert.ok(core.files.includes('verification/command-policy.js'),
+                'command-policy.js must be a managed gene');
+            const allFiles = MANAGED_TEMPLATE_FAMILIES.flatMap(
+                f => f.files.map(x => typeof x === 'string' ? x : x.path));
+            assert.ok(!allFiles.some(f => f.endsWith('command-policy.json')),
+                'command-policy.json must NOT be a gene — it is per-repo project state');
+            console.log('✅ T-command-policy-manifest passed');
+        }
 }
 
 module.exports = { runGovernanceTests };

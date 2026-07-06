@@ -1,0 +1,6 @@
+{
+  "version": "evo-command-policy@1",
+  "allow": [
+    { "prefix": "node ./.evo-lite/cli/test.js" }
+  ]
+}
