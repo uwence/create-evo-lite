@@ -2419,6 +2419,37 @@ async function runChildRuntimeTests() {
             fs.rmSync(repo, { recursive: true, force: true });
             console.log('✅ T-symlink-containment passed');
         }
+
+        console.log('T-r013-remote-drift. R013 fires on stale META git state, silent when matching ...');
+        {
+            const gaps = require('../planning/gaps');
+            assert.strictEqual(typeof gaps.checkR013, 'function', 'gaps must export checkR013');
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'r013-'));
+            fs.mkdirSync(path.join(tmp, '.evo-lite'), { recursive: true });
+            const ctx = (meta) => path.join(tmp, '.evo-lite', 'active_context.md');
+            function writeCtx(headSha) {
+                fs.writeFileSync(path.join(tmp, '.evo-lite', 'active_context.md'),
+                    ['# ctx', '<!-- BEGIN_META -->', `> headSha: ${headSha}`, '> ahead: 0', '> behind: 0', '<!-- END_META -->'].join('\n'));
+            }
+            // Injected git state: real HEAD is 'realhead', META claims 'stalehead'.
+            const gitState = { headSha: 'realhead', isAncestorOfHead: (s) => s === 'realhead', ahead: 0, behind: 0, hasUpstream: true };
+
+            writeCtx('stalehead');
+            const stale = gaps.checkR013(tmp, { gitState });
+            assert.ok(stale.some(f => f.rule === 'R013'), 'R013 fires when META headSha is not HEAD/ancestor');
+
+            writeCtx('realhead');
+            const fresh = gaps.checkR013(tmp, { gitState });
+            assert.strictEqual(fresh.filter(f => f.rule === 'R013').length, 0, 'R013 silent when META matches reality');
+
+            // no-upstream repo skips the ahead/behind arm
+            writeCtx('realhead');
+            const noUp = gaps.checkR013(tmp, { gitState: { ...gitState, hasUpstream: false, behind: 99 } });
+            assert.strictEqual(noUp.filter(f => f.rule === 'R013').length, 0, 'no upstream -> ahead/behind not checked');
+
+            fs.rmSync(tmp, { recursive: true, force: true });
+            console.log('✅ T-r013-remote-drift passed');
+        }
 }
 
 module.exports = { runGovernanceTests };

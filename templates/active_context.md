@@ -4,6 +4,11 @@
 > **更新时间**: {{DATE}}
 > **项目状态**: 刚刚通过 create-evo-lite 初始化。
 > **核心目标**: 请手动填写项目的最终目标。
+> headSha:
+> upstreamSha:
+> ahead:
+> behind:
+> focusUpdatedAt:
 <!-- END_META -->
 
 ## 🎯 当前焦点

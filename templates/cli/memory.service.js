@@ -1572,6 +1572,39 @@ function pickActivePlan(planIR) {
     return null;
 }
 
+// Refresh the structured META git fields (headSha/upstreamSha/ahead/behind/
+// focusUpdatedAt) inside <!-- BEGIN_META --> ... <!-- END_META --> from live
+// argv-form git — never a template-string shell call. Failures degrade
+// gracefully (non-git dir, no upstream) rather than throwing.
+function updateMetaGitState(markdown, projectRoot) {
+    const git = (args) => {
+        try { return String(execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' })).trim(); }
+        catch (_) { return ''; }
+    };
+    const headSha = git(['rev-parse', 'HEAD']);
+    let upstreamSha = '', ahead = '0', behind = '0';
+    const up = git(['rev-parse', '@{u}']);
+    if (up) {
+        upstreamSha = up;
+        const lr = git(['rev-list', '--left-right', '--count', '@{u}...HEAD']).split(/\s+/);
+        if (lr.length === 2) { behind = lr[0]; ahead = lr[1]; }
+    }
+    const now = new Date().toISOString();
+    const m = markdown.match(/<!--\s*BEGIN_META\s*-->([\s\S]*?)<!--\s*END_META\s*-->/);
+    if (!m) return markdown;
+    const setField = (block, name, val) =>
+        new RegExp(`(>\\s*${name}:).*`, 'i').test(block)
+            ? block.replace(new RegExp(`(>\\s*${name}:).*`, 'i'), `$1 ${val}`)
+            : block + `\n> ${name}: ${val}`;
+    let block = m[1].replace(/\s*$/, '');
+    block = setField(block, 'headSha', headSha);
+    block = setField(block, 'upstreamSha', upstreamSha);
+    block = setField(block, 'ahead', ahead);
+    block = setField(block, 'behind', behind);
+    block = setField(block, 'focusUpdatedAt', now);
+    return markdown.replace(m[0], `<!-- BEGIN_META -->${block}\n<!-- END_META -->`);
+}
+
 function updateTrajectory(markdown, mechanism, details, trajectoryId = getCommitHash()) {
     const trajectory = readSection(markdown, 'TRAJECTORY') || '';
     const entries = splitTrajectoryEntries(trajectory);
@@ -1624,6 +1657,7 @@ async function track(mechanism, details, options = {}) {
 
     let markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
     markdown = updateTrajectory(markdown, mechanism, details, getCommitHash());
+    markdown = updateMetaGitState(markdown, getWorkspaceRoot());
 
     let resolvedLine = null;
     if (options.resolve) {

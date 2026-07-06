@@ -359,6 +359,77 @@ function checkR012(projectRoot, planIR, options = {}) {
     return findings;
 }
 
+// --- R013 ---
+
+// Read the structured META git fields from active_context.md. These are the ONLY
+// machine-checkable git-state source R013 trusts — FOCUS prose is never parsed.
+function readMetaGitState(projectRoot) {
+    const p = path.join(projectRoot, '.evo-lite', 'active_context.md');
+    if (!fs.existsSync(p)) return null;
+    const md = fs.readFileSync(p, 'utf8');
+    const m = md.match(/<!--\s*BEGIN_META\s*-->([\s\S]*?)<!--\s*END_META\s*-->/);
+    if (!m) return null;
+    const block = m[1];
+    const field = (name) => {
+        const fm = block.match(new RegExp(`${name}:\\s*(\\S+)`, 'i'));
+        return fm ? fm[1] : null;
+    };
+    return { headSha: field('headSha'), ahead: field('ahead'), behind: field('behind') };
+}
+
+// Read live git state via argv-form git (never string-interpolated). Injectable
+// via options.gitState for tests.
+function liveGitState(projectRoot) {
+    const git = (args) => String(execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' })).trim();
+    try {
+        const headSha = git(['rev-parse', 'HEAD']);
+        let hasUpstream = true, ahead = 0, behind = 0;
+        try {
+            const lr = git(['rev-list', '--left-right', '--count', '@{u}...HEAD']).split(/\s+/);
+            behind = parseInt(lr[0], 10) || 0; ahead = parseInt(lr[1], 10) || 0;
+        } catch (_) { hasUpstream = false; }
+        return {
+            headSha, ahead, behind, hasUpstream,
+            isAncestorOfHead: (sha) => {
+                if (sha === headSha) return true;
+                try { execFileSync('git', ['merge-base', '--is-ancestor', sha, 'HEAD'], { cwd: projectRoot }); return true; }
+                catch (_) { return false; }
+            },
+        };
+    } catch (_) {
+        return null; // not a git repo — R013 cannot check, stays silent
+    }
+}
+
+function checkR013(projectRoot, options = {}) {
+    const meta = options.metaState != null ? options.metaState : readMetaGitState(projectRoot);
+    if (!meta || !meta.headSha) return []; // no structured state to check
+    const git = options.gitState != null ? options.gitState : liveGitState(projectRoot);
+    if (!git) return [];
+    const findings = [];
+    if (!git.isAncestorOfHead(meta.headSha)) {
+        findings.push({
+            id: 'R013:head', rule: 'R013', scope: 'planning', level: 'warning', type: 'active-context-remote-drift',
+            message: `active_context META headSha ${meta.headSha} is not HEAD (${git.headSha}) nor an ancestor — the recorded project position is stale`,
+            evidence: ['.evo-lite/active_context.md'],
+            suggestedAction: 'Run `mem commit` / `context track` to refresh the META git fields, or update focus',
+        });
+    }
+    if (git.hasUpstream) {
+        const metaAhead = meta.ahead == null ? null : parseInt(meta.ahead, 10);
+        const metaBehind = meta.behind == null ? null : parseInt(meta.behind, 10);
+        if ((metaAhead != null && metaAhead !== git.ahead) || (metaBehind != null && metaBehind !== git.behind)) {
+            findings.push({
+                id: 'R013:sync', rule: 'R013', scope: 'planning', level: 'warning', type: 'active-context-remote-drift',
+                message: `active_context META ahead/behind (${meta.ahead}/${meta.behind}) disagrees with git (${git.ahead}/${git.behind})`,
+                evidence: ['.evo-lite/active_context.md'],
+                suggestedAction: 'Refresh META via `mem commit` / `context track`',
+            });
+        }
+    }
+    return findings;
+}
+
 // --- Public ---
 
 function runPlanningDrift(projectRoot, planIR, options = {}) {
@@ -372,6 +443,7 @@ function runPlanningDrift(projectRoot, planIR, options = {}) {
         ...checkR010(projectRoot, planIR),
         ...checkR011(planIR),
         ...checkR012(projectRoot, planIR, options),
+        ...checkR013(projectRoot, options),
     ];
 }
 
@@ -381,6 +453,7 @@ module.exports = {
     checkR008,
     checkR009,
     checkR012,
+    checkR013,
     getChangedFiles,
     hasArchiveEvidence,
     isGovernanceInfraFile,
