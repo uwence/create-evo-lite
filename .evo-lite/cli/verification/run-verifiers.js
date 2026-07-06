@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { loadPolicy, checkCommand } = require('./command-policy');
 
 function truncate(s, n = 500) {
     s = String(s == null ? '' : s);
@@ -68,6 +69,11 @@ function runVerifier(criterion, opts = {}) {
     try {
         switch (v.type) {
             case 'command': {
+                const policy = opts.policy || loadPolicy(repoRoot);
+                const check = checkCommand(p.cmd, policy);
+                if (!check.allowed) {
+                    return { verdict: 'UNVERIFIED', detail: check.reason, blocked: true };
+                }
                 try {
                     const out = exec(p.cmd, { cwd: repoRoot, timeout: 120000 });
                     return { verdict: 'PASS', detail: `exit=0 ${truncate(out)}`.trim() };

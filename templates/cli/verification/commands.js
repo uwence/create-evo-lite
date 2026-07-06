@@ -43,7 +43,13 @@ function registerVerificationCommands(program) {
                 process.exitCode = 1;
                 return;
             }
-            for (const w of res.written) console.log(`${w.verdict === 'PASS' ? '✅' : '❌'} ${w.criterionId} ${w.verdict}`);
+            for (const w of res.written) {
+                if (w.blocked) {
+                    console.log(`⚠ ${w.criterionId} UNVERIFIED — ${w.detail}`);
+                    continue;
+                }
+                console.log(`${w.verdict === 'PASS' ? '✅' : '❌'} ${w.criterionId} ${w.verdict}`);
+            }
             console.log(`ran ${res.written.length} machine verifier(s)`);
         });
 

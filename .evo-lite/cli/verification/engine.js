@@ -37,13 +37,19 @@ function runSpec(specPath, opts = {}) {
     const written = [];
     for (const c of contract.criteria) {
         if (c.verifier && c.verifier.type === 'manual') continue;
-        const { verdict, detail } = runVerifier(c, { repoRoot: root, exec });
+        const result = runVerifier(c, { repoRoot: root, exec });
+        if (result.blocked) {
+            // Policy-blocked: write no evidence — the criterion stays UNVERIFIED
+            // by absence, preserving stored-verdict ∈ {PASS,FAIL}. Reported below.
+            written.push({ criterionId: c.id, verdict: 'UNVERIFIED', blocked: true, detail: result.detail });
+            continue;
+        }
         writeRecord(root, specId, {
-            criterionId: c.id, verdict, commitSha: headSha,
-            verifierType: c.verifier.type, ranAt, detail, attestedBy: null,
+            criterionId: c.id, verdict: result.verdict, commitSha: headSha,
+            verifierType: c.verifier.type, ranAt, detail: result.detail, attestedBy: null,
             criterionDigest: criterionDigest(c),
         });
-        written.push({ criterionId: c.id, verdict });
+        written.push({ criterionId: c.id, verdict: result.verdict });
     }
     return { ok: true, written };
 }

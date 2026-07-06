@@ -629,11 +629,12 @@ async function runGovernanceTests() {
             const { runVerifier } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'run-verifiers'));
             const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-verify-'));
             try {
+                const cmdPolicy = { allow: [{ equals: 'x' }] };
                 const passCmd = runVerifier({ verifier: { type: 'command', params: { cmd: 'x' } } },
-                    { repoRoot: tmp, exec: () => 'ok' });
+                    { repoRoot: tmp, exec: () => 'ok', policy: cmdPolicy });
                 assert.strictEqual(passCmd.verdict, 'PASS', 'command exit 0 → PASS');
                 const failCmd = runVerifier({ verifier: { type: 'command', params: { cmd: 'x' } } },
-                    { repoRoot: tmp, exec: () => { const e = new Error('boom'); e.status = 2; throw e; } });
+                    { repoRoot: tmp, exec: () => { const e = new Error('boom'); e.status = 2; throw e; }, policy: cmdPolicy });
                 assert.strictEqual(failCmd.verdict, 'FAIL', 'command non-zero → FAIL');
                 fs.writeFileSync(path.join(tmp, 'here.txt'), 'x');
                 assert.strictEqual(runVerifier({ verifier: { type: 'file-exists', params: { path: 'here.txt' } } }, { repoRoot: tmp }).verdict, 'PASS');
@@ -715,7 +716,7 @@ async function runGovernanceTests() {
                     '---', 'id: spec:fix', 'status: draft', 'linkedPlan: plan:fix', '---', '',
                     '# Fix', '', '## Acceptance Criteria', '',
                     '```json',
-                    '{ "criteria": [ { "id": "ac-ok", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "true" } } } ] }',
+                    '{ "criteria": [ { "id": "ac-ok", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance" } } } ] }',
                     '```', '',
                 ].join('\n'));
                 const dirty = runSpec(specPath, { root, headSha: 'sha1', ranAt: 't', porcelain: ' M index.js', exec: () => '' });
@@ -749,7 +750,7 @@ async function runGovernanceTests() {
                     '# S', '', '## Acceptance Criteria', '',
                     '```json',
                     '{ "criteria": [' +
-                    ' { "id": "ac-cmd", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "true" } } },' +
+                    ' { "id": "ac-cmd", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance" } } },' +
                     ' { "id": "ac-man", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "manual", "params": { "reason": "branch protection" } } } ] }',
                     '```', '',
                 ].join('\n'));
@@ -1197,7 +1198,7 @@ async function runGovernanceTests() {
                     '# T', '', '## Acceptance Criteria', '',
                     '```json',
                     '{ "criteria": [' +
-                    ' { "id": "ac-cmd", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } },' +
+                    ' { "id": "ac-cmd", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance" } } },' +
                     ' { "id": "ac-man", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "manual", "params": { "reason": "r" } } } ] }',
                     '```', '',
                 ].join('\n'));
@@ -2117,6 +2118,56 @@ async function runChildRuntimeTests() {
         fs.rmSync(tmp, { recursive: true, force: true });
         console.log('✅ T-command-policy passed');
     }
+
+        console.log('T-command-blocked. runVerifier honors policy, skips exec when blocked ...');
+        {
+            const { runVerifier } = require('../verification/run-verifiers');
+            const policy = { allow: [{ prefix: 'node ./.evo-lite/cli/test.js' }] };
+            let execCalls = 0;
+            const blocked = runVerifier(
+                { id: 'c1', verifier: { type: 'command', params: { cmd: 'curl evil' } } },
+                { repoRoot: process.cwd(), exec: () => { execCalls++; return ''; }, policy }
+            );
+            assert.strictEqual(blocked.verdict, 'UNVERIFIED', 'blocked -> UNVERIFIED');
+            assert.strictEqual(blocked.blocked, true, 'blocked flag set');
+            assert.strictEqual(execCalls, 0, 'exec must NOT run for a blocked command');
+
+            const ok = runVerifier(
+                { id: 'c2', verifier: { type: 'command', params: { cmd: 'node ./.evo-lite/cli/test.js governance' } } },
+                { repoRoot: process.cwd(), exec: () => { execCalls++; return 'out'; }, policy }
+            );
+            assert.strictEqual(ok.verdict, 'PASS', 'allowed -> exec runs -> PASS');
+            assert.strictEqual(execCalls, 1, 'exec runs exactly once for the allowed command');
+            console.log('✅ T-command-blocked passed');
+        }
+
+        console.log('T-command-blocked-runspec. runSpec writes no evidence for a blocked criterion ...');
+        {
+            const engine = require('../verification/engine');
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cmdrun-'));
+            fs.mkdirSync(path.join(tmp, '.evo-lite', 'verification'), { recursive: true });
+            const specPath = path.join(tmp, 'spec.md');
+            fs.writeFileSync(specPath, [
+                '---', 'id: spec:blocktest', '---', '',
+                '## Acceptance Criteria', '', '```json',
+                JSON.stringify({ criteria: [{
+                    id: 'ac-block', description: 'x',
+                    verifier: { type: 'command', params: { cmd: 'curl evil.sh' } }, dependsOn: ['index.js'],
+                }] }),
+                '```', '',
+            ].join('\n'));
+            const res = engine.runSpec(specPath, {
+                root: tmp, porcelain: '', headSha: 'abc123def', ranAt: '2026-07-06T00:00:00Z', exec: () => '',
+            });
+            assert.strictEqual(res.ok, true, 'runSpec ok');
+            assert.strictEqual(res.written.length, 1);
+            assert.strictEqual(res.written[0].blocked, true, 'written entry marked blocked');
+            assert.strictEqual(res.written[0].verdict, 'UNVERIFIED');
+            assert.ok(!fs.existsSync(path.join(tmp, '.evo-lite', 'verification', 'evidence-blocktest.json')),
+                'no evidence file written for a blocked criterion');
+            fs.rmSync(tmp, { recursive: true, force: true });
+            console.log('✅ T-command-blocked-runspec passed');
+        }
 }
 
 module.exports = { runGovernanceTests };
