@@ -1,8 +1,11 @@
 {
   "version": "evo-verification-contract@1",
+  "notes": {
+    "command.scope": "Informational label only — it appears inside `cmd` and has NO execution effect; command verifiers always run at the repository root. `cwd` was removed: executing at a spec-chosen directory is unimplemented attack surface with no consumer."
+  },
   "verdictStates": ["PASS", "FAIL", "UNVERIFIED", "STALE"],
   "verifierTypes": {
-    "command":          { "requiredParams": ["cmd"],          "optionalParams": ["cwd", "scope"] },
+    "command":          { "requiredParams": ["cmd"],          "optionalParams": ["scope"] },
     "file-exists":      { "requiredParams": ["path"],         "optionalParams": [] },
     "file-absent":      { "requiredParams": ["path"],         "optionalParams": [] },
     "json-path-equals": { "requiredParams": ["file", "path"], "optionalParams": ["equals", "equalsJsonPath"] },

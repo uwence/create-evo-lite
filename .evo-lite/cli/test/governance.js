@@ -2376,6 +2376,22 @@ async function runChildRuntimeTests() {
             fs.rmSync(child, { recursive: true, force: true });
             console.log('✅ T-nurture-transactional passed');
         }
+
+        console.log('T-contract-honesty. command verifier: scope accepted, cwd rejected ...');
+        {
+            const { validateCriteria } = require('../verification/validate-contract');
+            const base = (params) => ([{
+                id: 'ac', description: 'd', dependsOn: ['x'],
+                verifier: { type: 'command', params },
+            }]);
+            // scope still allowed (informational)
+            assert.strictEqual(validateCriteria(base({ cmd: 'node ./.evo-lite/cli/test.js governance', scope: 'governance' })).length, 0,
+                'scope is an accepted informational param');
+            // cwd now rejected as unknown
+            const withCwd = validateCriteria(base({ cmd: 'x', cwd: '..' }));
+            assert.ok(withCwd.some(f => /unknown param "cwd"/.test(f.message)), 'cwd must be rejected');
+            console.log('✅ T-contract-honesty passed');
+        }
 }
 
 module.exports = { runGovernanceTests };
