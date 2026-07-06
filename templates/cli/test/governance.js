@@ -2311,14 +2311,13 @@ async function runChildRuntimeTests() {
             // Empty family override -> no gene copy, but the version-file update still runs.
             const rep = nurtureChild(motherRoot, { id: 'cN', path: child },
                 { familiesOverride: [], force: true, now: () => '2026-07-06T00:00:00Z' });
-            assert.ok(['applied', 'dry-run'].includes(rep.status) || rep.status === 'refused',
-                'nurture returns a terminal status');
-            if (rep.status === 'applied') {
-                assert.strictEqual(require(path.join(evo, 'package.json')).version, '1.0.0',
-                    'runtime manifest version MUST be untouched');
-                assert.strictEqual(JSON.parse(fs.readFileSync(path.join(evo, 'evo-lite-version.json'), 'utf8')).version,
-                    motherVersion, 'product version file updated to mother version');
-            }
+            // Fixture (non-repo tmpdir + force:true) is built to ALWAYS reach `applied`;
+            // hard-require it so the assertions below can never be vacuously skipped.
+            assert.strictEqual(rep.status, 'applied', 'nurture must reach applied in this fixture');
+            assert.strictEqual(require(path.join(evo, 'package.json')).version, '1.0.0',
+                'runtime manifest version MUST be untouched');
+            assert.strictEqual(JSON.parse(fs.readFileSync(path.join(evo, 'evo-lite-version.json'), 'utf8')).version,
+                motherVersion, 'product version file updated to mother version');
             fs.rmSync(child, { recursive: true, force: true });
             console.log('✅ T-nurture-preserves-manifest passed');
         }
