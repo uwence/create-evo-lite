@@ -597,7 +597,7 @@ Check:
 
 ---
 
-## Hive (Mother-Child Projects)
+## Hive
 
 If this repository (the mother) has spawned downstream evo-lite child projects, `hive` provides a set of mother-child commands so a child can keep up with the mother's governance rules and version without hand-copying files:
 

@@ -2426,7 +2426,6 @@ async function runChildRuntimeTests() {
             assert.strictEqual(typeof gaps.checkR013, 'function', 'gaps must export checkR013');
             const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'r013-'));
             fs.mkdirSync(path.join(tmp, '.evo-lite'), { recursive: true });
-            const ctx = (meta) => path.join(tmp, '.evo-lite', 'active_context.md');
             function writeCtx(headSha) {
                 fs.writeFileSync(path.join(tmp, '.evo-lite', 'active_context.md'),
                     ['# ctx', '<!-- BEGIN_META -->', `> headSha: ${headSha}`, '> ahead: 0', '> behind: 0', '<!-- END_META -->'].join('\n'));

@@ -1,6 +1,6 @@
 'use strict';
 
-// Drift engine — planning scope: R003-R006, R008-R012
+// Drift engine — planning scope: R003-R006, R008-R013
 
 const fs = require('fs');
 const path = require('path');
