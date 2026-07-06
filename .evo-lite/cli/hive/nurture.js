@@ -147,10 +147,11 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     fs.mkdirSync(path.dirname(report.receiptPath), { recursive: true });
     fs.writeFileSync(report.receiptPath, JSON.stringify(receipt, null, 2) + '\n');
 
-    const childPkgPath = path.join(childRoot, '.evo-lite', 'package.json');
-    const childPkg = readJson(childPkgPath);
-    childPkg.version = motherVersion;
-    fs.writeFileSync(childPkgPath, JSON.stringify(childPkg, null, 2) + '\n');
+    // Product version travels via evo-lite-version.json — the same artifact the
+    // runtime reads and hive/status compares. The runtime manifest package.json
+    // is version-pinned by design (lockfile stability); nurture must NOT touch it.
+    const productVersionPath = path.join(childRoot, '.evo-lite', 'evo-lite-version.json');
+    fs.writeFileSync(productVersionPath, JSON.stringify({ version: motherVersion }, null, 2) + '\n');
 
     const reg = registry.readRegistry(motherRoot);
     const regEntry = reg.children.find(c => c.id === entry.id);

@@ -2032,7 +2032,8 @@ async function runChildRuntimeTests() {
         assert.strictEqual(receipt.motherVersion, '9.9.9');
         assert.ok(receipt.files.includes('gene.js'), 'receipt lists files');
         assert.ok(fs.existsSync(path.join(c1, '.evo-lite', 'generated', 'runtime-mirror.lock.json')), 'child lock written');
-        assert.strictEqual(JSON.parse(fs.readFileSync(path.join(c1, '.evo-lite', 'package.json'), 'utf8')).version, '9.9.9', 'child version bumped');
+        assert.strictEqual(JSON.parse(fs.readFileSync(path.join(c1, '.evo-lite', 'package.json'), 'utf8')).version, '9.0.0', 'runtime manifest version MUST be untouched by nurture');
+        assert.strictEqual(JSON.parse(fs.readFileSync(path.join(c1, '.evo-lite', 'evo-lite-version.json'), 'utf8')).version, '9.9.9', 'product version file bumped');
         assert.strictEqual(regMod.findChild(m1, 'kid').lastNurturedVersion, '9.9.9', 'mother registry updated');
 
         // family filter: only selected family written
@@ -2295,6 +2296,31 @@ async function runChildRuntimeTests() {
             fs.rmSync(fresh, { recursive: true, force: true });
             fs.rmSync(legacy, { recursive: true, force: true });
             console.log('✅ T-hive-version-truth passed');
+        }
+
+        console.log('T-nurture-preserves-manifest. nurture updates product file, not the manifest ...');
+        {
+            const { nurtureChild } = require('../hive/nurture');
+            const motherRoot = process.cwd();
+            const motherVersion = require(path.join(motherRoot, 'package.json')).version;
+            const child = fs.mkdtempSync(path.join(os.tmpdir(), 'nurt-man-'));
+            const evo = path.join(child, '.evo-lite');
+            fs.mkdirSync(path.join(evo, 'cli'), { recursive: true });
+            fs.writeFileSync(path.join(evo, 'package.json'), JSON.stringify({ name: 'x', version: '1.0.0' }, null, 2));
+            fs.writeFileSync(path.join(evo, 'evo-lite-version.json'), JSON.stringify({ version: '0.0.1' }, null, 2));
+            // Empty family override -> no gene copy, but the version-file update still runs.
+            const rep = nurtureChild(motherRoot, { id: 'cN', path: child },
+                { familiesOverride: [], force: true, now: () => '2026-07-06T00:00:00Z' });
+            assert.ok(['applied', 'dry-run'].includes(rep.status) || rep.status === 'refused',
+                'nurture returns a terminal status');
+            if (rep.status === 'applied') {
+                assert.strictEqual(require(path.join(evo, 'package.json')).version, '1.0.0',
+                    'runtime manifest version MUST be untouched');
+                assert.strictEqual(JSON.parse(fs.readFileSync(path.join(evo, 'evo-lite-version.json'), 'utf8')).version,
+                    motherVersion, 'product version file updated to mother version');
+            }
+            fs.rmSync(child, { recursive: true, force: true });
+            console.log('✅ T-nurture-preserves-manifest passed');
         }
 }
 
