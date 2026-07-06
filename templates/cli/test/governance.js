@@ -2185,7 +2185,7 @@ async function runChildRuntimeTests() {
 
         console.log('T-evidence-no-shell. commitSha never reaches a shell; non-OID -> STALE ...');
         {
-            const engine = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const engine = require('../verification/engine');
             const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evid-shell-'));
             fs.mkdirSync(path.join(tmp, 'docs', 'specs'), { recursive: true });
             const specPath = path.join(tmp, 'docs', 'specs', 's.md');
