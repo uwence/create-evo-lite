@@ -2392,6 +2392,33 @@ async function runChildRuntimeTests() {
             assert.ok(withCwd.some(f => /unknown param "cwd"/.test(f.message)), 'cwd must be rejected');
             console.log('✅ T-contract-honesty passed');
         }
+
+        console.log('T-symlink-containment. realpath-based containment rejects symlink escape ...');
+        {
+            const rv = require('../verification/run-verifiers');
+            // run-verifiers does not export resolveWithin; assert via a file-exists
+            // verifier pointed through a symlink that escapes the repo.
+            const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'outside-'));
+            fs.writeFileSync(path.join(outside, 'secret.txt'), 'S');
+            const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-'));
+            let symlinked = true;
+            try {
+                fs.symlinkSync(outside, path.join(repo, 'link'), 'dir');
+            } catch (_) { symlinked = false; }
+            if (symlinked) {
+                const res = rv.runVerifier(
+                    { verifier: { type: 'file-exists', params: { path: 'link/secret.txt' } } },
+                    { repoRoot: repo });
+                // The escape must be refused (verifier error), NOT reported PASS.
+                assert.strictEqual(res.verdict, 'FAIL', 'symlink escape must not resolve to PASS');
+                assert.ok(/escapes project root/.test(res.detail), 'reason names the escape');
+            } else {
+                console.log('   (symlink unavailable on this FS — skipped)');
+            }
+            fs.rmSync(outside, { recursive: true, force: true });
+            fs.rmSync(repo, { recursive: true, force: true });
+            console.log('✅ T-symlink-containment passed');
+        }
 }
 
 module.exports = { runGovernanceTests };

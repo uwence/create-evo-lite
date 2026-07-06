@@ -18,6 +18,24 @@ function resolveWithin(repoRoot, rel) {
     if (abs !== root && !abs.startsWith(root + path.sep)) {
         throw new Error(`path escapes project root: ${rel}`);
     }
+    // String containment is not enough: a symlink inside the repo can point outside
+    // it. Resolve reality. For an existing target, realpath the target; for a
+    // not-yet-existing one, realpath the nearest existing ancestor. Realpath the
+    // root too, so a symlinked repo root itself (e.g. macOS /var -> /private/var)
+    // does not cause false-positive escapes.
+    const rootReal = fs.realpathSync(root);
+    let probe = abs;
+    while (!fs.existsSync(probe)) {
+        const parent = path.dirname(probe);
+        if (parent === probe) break;
+        probe = parent;
+    }
+    let real;
+    try { real = fs.realpathSync(probe); }
+    catch (_) { return abs; } // cannot resolve — fall back to the string-checked abs
+    if (real !== rootReal && !real.startsWith(rootReal + path.sep)) {
+        throw new Error(`path escapes project root (via symlink): ${rel}`);
+    }
     return abs;
 }
 
