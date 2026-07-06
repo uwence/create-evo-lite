@@ -1,5 +1,53 @@
 ## Unreleased
 
+## 2.2.0 - 2026-07-06
+
+### Security
+- Closed an evidence `commitSha` shell-injection path: `git diff` is now invoked
+  in argv form (never through a shell), gated by a strict OID-format check, so
+  a hostile `commitSha` can no longer reach a shell.
+- `readEvidence` now validates the evidence store's shape and every individual
+  record. A malformed evidence file fails closed (throws) instead of silently
+  reading as "no evidence" and flipping a real FAIL into UNVERIFIED; an invalid
+  record is excluded with a loud warning instead of passing through unchecked.
+- Verifier path resolution (`resolveWithin`) is now symlink-aware: containment
+  is re-checked via `realpath` after the existing string-prefix check, closing
+  an escape where a symlink inside the repo pointed at a file outside it.
+- Removed the declared-but-dead `cwd` parameter from the command-verifier
+  schema (an attack surface with no real behavior behind it); `scope` is now
+  documented as informational-only.
+
+### Added
+- Mother-child hive (`mem hive register|status|nurture`): register a child
+  evo-lite project into a mother's registry, compare each child's gene/version
+  drift against the mother (up-to-date / behind / drifted / unreachable), and
+  push the mother's managed governance files into a child.
+- `nurture` and `mem close --apply` now share one transaction module
+  (snapshot → journal → apply, with automatic rollback on failure), making
+  both operations atomic.
+- Verification-contract command policy: a default-deny allowlist trust
+  boundary for machine verifiers (P1-8), enforced on the run/engine path.
+- `mem verify-contract lint|run|status|attest`: validate a spec's
+  machine-readable acceptance-criteria block, run its machine verifiers and
+  write commit-bound evidence, show live four-state verdicts per criterion,
+  and record manual attestations for human-judged criteria.
+- `mem close --preview|--apply`: preview a spec's closure readiness, or
+  atomically apply it (flip plan checkboxes, mark status done, backfill
+  missing evidence).
+- R013 `active-context-remote-drift` rule: flags a stale `active_context.md`
+  META block against live git state. `context track` now refreshes structured
+  META git fields (`headSha`/`upstreamSha`/`ahead`/`behind`/`focusUpdatedAt`)
+  so the recorded state stops drifting from reality.
+
+### Changed
+- Hive now reads a child's product version from `evo-lite-version.json`
+  instead of the child's pinned runtime `package.json`; `package.json` is
+  used only as a documented legacy fallback for children scaffolded before
+  the version file existed.
+- `nurture` writes the pushed version into the child's
+  `evo-lite-version.json` and never mutates the child's pinned runtime
+  manifest version.
+
 ## 2.1.0 - 2026-06-30
 
 ### Fixed

@@ -436,6 +436,36 @@ You usually do not need to run this manually. The post-commit hook runs it autom
 
 ---
 
+## Spec Verification & Closure
+
+A spec can carry a machine-readable acceptance criteria block alongside its frontmatter. `verify-contract` provides four actions around that block:
+
+```bash
+# Validate that the spec's acceptance criteria are well-formed
+./.evo-lite/mem verify-contract lint docs/superpowers/specs/my-feature.md
+
+# Run the machine-verifiable criteria and write commit-bound evidence (requires a clean working tree)
+./.evo-lite/mem verify-contract run docs/superpowers/specs/my-feature.md
+
+# Show the live verdict for each criterion: PASS / FAIL / STALE / UNVERIFIED
+./.evo-lite/mem verify-contract status docs/superpowers/specs/my-feature.md
+
+# Record a manual attestation for a manually-judged criterion (who, when, note)
+./.evo-lite/mem verify-contract attest docs/superpowers/specs/my-feature.md <criterion-id> --by=you --note="..."
+```
+
+Once all criteria are green, `close` performs the actual closure of the spec: it flips the checkboxes in the plan, marks status as done, and backfills any missing evidence. Preview first, then apply once it looks right:
+
+```bash
+# Read-only preview: what is still missing before this spec can close
+./.evo-lite/mem close docs/superpowers/specs/my-feature.md --preview
+
+# Actually perform the closure (only takes effect when the preview reports READY; the change is atomic — staged in one shot, never auto-committed)
+./.evo-lite/mem close docs/superpowers/specs/my-feature.md --apply
+```
+
+---
+
 ## Architecture System
 
 Refresh Architecture IR:
@@ -564,6 +594,28 @@ Check:
 ```
 
 `sync-runtime --check` returns a non-zero exit code on no-lock or drift, making it suitable for CI or agent checkpoints.
+
+---
+
+## Hive (Mother-Child Projects)
+
+If this repository (the mother) has spawned downstream evo-lite child projects, `hive` provides a set of mother-child commands so a child can keep up with the mother's governance rules and version without hand-copying files:
+
+```bash
+# Register a child project into the mother's registry
+./.evo-lite/mem hive register ../child-project
+
+# Show every registered child's version/file drift relative to the mother
+./.evo-lite/mem hive status
+
+# Show a single child
+./.evo-lite/mem hive status <child-id>
+
+# Push the mother's governance files ("genes") into a child; the change is atomic and rolls back entirely on failure
+./.evo-lite/mem hive nurture <child-id>
+```
+
+`nurture` only updates the child's `evo-lite-version.json`; it never touches the pinned runtime version in the child's `.evo-lite/package.json`. Hive commands only work from the mother repository (the one that has `templates/cli/`).
 
 ---
 
@@ -766,6 +818,21 @@ If Planning IR or dashboard data is stale:
 # runtime mirror
 ./.evo-lite/mem sync-runtime
 ./.evo-lite/mem sync-runtime --check
+
+# spec verification contract
+./.evo-lite/mem verify-contract lint docs/superpowers/specs/my-feature.md
+./.evo-lite/mem verify-contract run docs/superpowers/specs/my-feature.md
+./.evo-lite/mem verify-contract status docs/superpowers/specs/my-feature.md
+./.evo-lite/mem verify-contract attest docs/superpowers/specs/my-feature.md <criterion-id> --by=you --note="..."
+
+# spec closure
+./.evo-lite/mem close docs/superpowers/specs/my-feature.md --preview
+./.evo-lite/mem close docs/superpowers/specs/my-feature.md --apply
+
+# mother-child hive
+./.evo-lite/mem hive register ../child-project
+./.evo-lite/mem hive status
+./.evo-lite/mem hive nurture <child-id>
 
 # MCP
 ./.evo-lite/mem mcp

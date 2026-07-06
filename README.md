@@ -436,6 +436,36 @@ status: draft
 
 ---
 
+## Spec Verification & Closure / 契约验证与收尾
+
+一个 spec 可以在 frontmatter 之外附带一段机器可读的 acceptance criteria，`verify-contract` 围绕这段 criteria 提供四个动作：
+
+```bash
+# 校验 spec 里的 acceptance criteria 是否格式合法
+./.evo-lite/mem verify-contract lint docs/superpowers/specs/my-feature.md
+
+# 跑机器可验证的 criteria，把结果写成绑定当前 commit 的证据（要求工作区干净）
+./.evo-lite/mem verify-contract run docs/superpowers/specs/my-feature.md
+
+# 查看每条 criteria 的实时判定：PASS / FAIL / STALE / UNVERIFIED
+./.evo-lite/mem verify-contract status docs/superpowers/specs/my-feature.md
+
+# 为人工判定的 criteria 记一条签核（谁、何时、备注）
+./.evo-lite/mem verify-contract attest docs/superpowers/specs/my-feature.md <criterion-id> --by=you --note="..."
+```
+
+criteria 全部转绿之后，`close` 负责把 spec 真正合上：勾掉 plan 里的复选框、把状态标记为完成、回填缺失的 evidence。先预览，确认无误后再落地：
+
+```bash
+# 只读预览：还差什么才能收尾
+./.evo-lite/mem close docs/superpowers/specs/my-feature.md --preview
+
+# 真正执行收尾（仅当预览显示 READY 时才会生效；改动是原子的，一次性 stage，不会自动 commit）
+./.evo-lite/mem close docs/superpowers/specs/my-feature.md --apply
+```
+
+---
+
 ## Architecture System / 架构系统
 
 刷新 architecture IR：
@@ -564,6 +594,28 @@ templates/cli/      canonical source
 ```
 
 `sync-runtime --check` 在 no-lock 或 drift 时会返回非零 exit code，适合 CI 或 agent checkpoint。
+
+---
+
+## Hive / 母子体系
+
+如果这个仓库（母体）孕育了下游的 evo-lite 子项目，`hive` 提供一组母子协作命令，让子项目跟上母体的治理规则和版本，而不需要手动复制文件：
+
+```bash
+# 把一个子项目登记进母体的 registry
+./.evo-lite/mem hive register ../child-project
+
+# 查看所有已登记子项目相对母体的版本/文件差异
+./.evo-lite/mem hive status
+
+# 查看单个子项目
+./.evo-lite/mem hive status <child-id>
+
+# 把母体的治理文件（gene）推送进子项目；改动是原子的，失败会整体回滚
+./.evo-lite/mem hive nurture <child-id>
+```
+
+`nurture` 只会更新子项目的 `evo-lite-version.json`，不会碰子项目 `.evo-lite/package.json` 里固定的运行时版本号。只在母体仓库（存在 `templates/cli/` 的仓库）里可用。
 
 ---
 
@@ -766,6 +818,21 @@ node .evo-lite/cli/memory.js verify
 # runtime mirror
 ./.evo-lite/mem sync-runtime
 ./.evo-lite/mem sync-runtime --check
+
+# spec verification contract
+./.evo-lite/mem verify-contract lint docs/superpowers/specs/my-feature.md
+./.evo-lite/mem verify-contract run docs/superpowers/specs/my-feature.md
+./.evo-lite/mem verify-contract status docs/superpowers/specs/my-feature.md
+./.evo-lite/mem verify-contract attest docs/superpowers/specs/my-feature.md <criterion-id> --by=you --note="..."
+
+# spec closure
+./.evo-lite/mem close docs/superpowers/specs/my-feature.md --preview
+./.evo-lite/mem close docs/superpowers/specs/my-feature.md --apply
+
+# mother-child hive
+./.evo-lite/mem hive register ../child-project
+./.evo-lite/mem hive status
+./.evo-lite/mem hive nurture <child-id>
 
 # MCP
 ./.evo-lite/mem mcp
