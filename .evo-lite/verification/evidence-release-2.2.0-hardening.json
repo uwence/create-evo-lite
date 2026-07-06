@@ -81,6 +81,16 @@
       "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
       "attestedBy": null,
       "criterionDigest": "sha256:676819b18cbfb9eaa1acfe8553b5a6bd31089ff3ac3d7cbf94775e3e4a1c1081"
+    },
+    "ac-release-closure-2.2.0": {
+      "criterionId": "ac-release-closure-2.2.0",
+      "verdict": "PASS",
+      "commitSha": "dc1e2d317a05f034d035140d8f791b2d24ab8e66",
+      "verifierType": "manual",
+      "ranAt": "2026-07-06T13:09:40.114Z",
+      "detail": "Dogfood-only closure: 2.2.0 hardening merged to main, 8 machine criteria PASS. Not publishing to npm this round; branch-protection/tag-publish deferred until a real external release.",
+      "attestedBy": "uwence",
+      "criterionDigest": "sha256:2975bc1ce3c92654de67923a1483bb0032f1d6335b6599b439eecc6275c863c8"
     }
   }
 }
