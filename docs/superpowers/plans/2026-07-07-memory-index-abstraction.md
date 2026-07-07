@@ -23,7 +23,7 @@ status: draft
 - **Behavior-preserving.** The existing `recall`/`memorize`/`forget`/`stats` integration suite must stay green unchanged. No schema change, no engine-label change, no `_meta` key change.
 - **No new capability.** No `searchVector`/`searchExact`/`rebuild()` on the interface (YAGNI — deferred to a later Zvec spec).
 - **Engine label stays** `db.DEFAULT_ENGINE` = `'sqlite-fts5-trigram'`.
-- **Verifier command** is always `node ./.evo-lite/cli/test.js <scope>` (the only allowlisted command per `command-policy.json`). Scopes used: `governance`, `integration`.
+- **Verifier command** is always `node ./.evo-lite/cli/test.js <scope>` (the only allowlisted command per `command-policy.json`). Valid scopes are `governance` (governance suite only) and `all` (governance + integration); there is no standalone `integration` scope — use `all` to exercise integration.
 - **No circular require:** `memory-index.js` may require `./db` and `./runtime` only — never `./memory.service`.
 
 ---
@@ -349,21 +349,21 @@ Committed as `fb4176a` (bundle also carried the T3 gene registration + harness r
 - Consumes (from `./memory-index`, produced by Task 1): `getMemoryIndex`.
 - Produces: unchanged public signatures — `recall(query, topK, options)`, `memorize(text, options)`, `forget(id)`, `stats()`. Consumers (`memory.js`, `mcp-server.js`, `inspector.js`, `architecture/infer-modules.js`, `test/integration.js`) require no change.
 
-- [ ] **Step 1: Confirm the integration suite is green BEFORE changes** (baseline). Run:
+- [x] **Step 1: Confirm the integration suite is green BEFORE changes** (baseline). Run:
 
 ```bash
-node ./.evo-lite/cli/test.js integration
+node ./.evo-lite/cli/test.js all
 ```
 
 Expected: exit 0. Record the pass — Step 6 must reproduce it.
 
-- [ ] **Step 2: Add the require.** Near the top of `templates/cli/memory.service.js`, after the existing `require('./db')` block, add:
+- [x] **Step 2: Add the require.** Near the top of `templates/cli/memory.service.js`, after the existing `require('./db')` block, add:
 
 ```js
 const { getMemoryIndex } = require('./memory-index');
 ```
 
-- [ ] **Step 3: Delegate the four public functions.**
+- [x] **Step 3: Delegate the four public functions.**
 
 Replace the body of `recall` (currently `const results = recallViaText(query, topK, options); ...`) with:
 
@@ -422,7 +422,7 @@ function stats() {
 }
 ```
 
-- [ ] **Step 4: Delete the now-dead code from `memory.service.js`.** Remove these functions entirely (their logic now lives in `memory-index.js`): `recallViaText`, `generateTrigramQuery`, `bm25RankToScore`, `generateSnippet`. Before deleting, grep to confirm none is used elsewhere or exported:
+- [x] **Step 4: Delete the now-dead code from `memory.service.js`.** Remove these functions entirely (their logic now lives in `memory-index.js`): `recallViaText`, `generateTrigramQuery`, `bm25RankToScore`, `generateSnippet`. Before deleting, grep to confirm none is used elsewhere or exported:
 
 ```bash
 grep -nE "recallViaText|generateTrigramQuery|bm25RankToScore|generateSnippet" templates/cli/memory.service.js
@@ -430,7 +430,7 @@ grep -nE "recallViaText|generateTrigramQuery|bm25RankToScore|generateSnippet" te
 
 Expected after deletion: zero matches. If any match remains outside the four definitions (e.g. an entry in `module.exports`), remove that reference too. Keep `appendLog` in `memory.service.js` — it is still used by many other functions in the file.
 
-- [ ] **Step 5: Mirror to runtime.** Run:
+- [x] **Step 5: Mirror to runtime.** Run:
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime
@@ -438,15 +438,15 @@ node .evo-lite/cli/memory.js sync-runtime
 
 Expected: `memory.service.js` copied, no parity error.
 
-- [ ] **Step 6: Run integration + governance — expect PASS (behavior preserved).** Run:
+- [x] **Step 6: Run integration + governance — expect PASS (behavior preserved).** Run:
 
 ```bash
-node ./.evo-lite/cli/test.js integration && node ./.evo-lite/cli/test.js governance
+node ./.evo-lite/cli/test.js all && node ./.evo-lite/cli/test.js governance
 ```
 
 Expected: both exit 0. Integration proves `recall`/`memorize`/`forget`/`stats` behave identically through the seam; governance re-proves the `T-MI-*` cases.
 
-- [ ] **Step 7: Commit.**
+- [x] **Step 7: Commit.**
 
 ```bash
 git add templates/cli/memory.service.js .evo-lite/cli/memory.service.js
@@ -495,7 +495,7 @@ Expected: `template-manifest.js` copied; the runtime-mirror lock now includes `m
 - [ ] **Step 4: Prove full-suite green + mirror parity.** Run:
 
 ```bash
-node ./.evo-lite/cli/test.js governance && node ./.evo-lite/cli/test.js integration && node .evo-lite/cli/memory.js sync-runtime
+node ./.evo-lite/cli/test.js governance && node ./.evo-lite/cli/test.js all && node .evo-lite/cli/memory.js sync-runtime
 ```
 
 Expected: both scopes exit 0; the final `sync-runtime` reports the mirror already in parity (no files copied on the second run) — this is the byte-identical proof for `ac-mirror-parity`.

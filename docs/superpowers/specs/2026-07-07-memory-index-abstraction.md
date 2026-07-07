@@ -220,13 +220,13 @@ New governance/unit coverage for the seam itself (`test/governance.js` or a
     {
       "id": "ac-index-seam-exists",
       "description": "memory-index.js exports SqliteFtsIndex + getMemoryIndex; memory.service.js delegates recall/memorize/forget/stats/rebuild to it and no longer accesses raw_memory/raw_memory_fts SQL inline.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js integration", "scope": "integration" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "scope": "all" } },
       "dependsOn": ["templates/cli/memory-index.js", "templates/cli/memory.service.js"]
     },
     {
       "id": "ac-behavior-preserved",
       "description": "The existing recall/memorize/forget/stats integration suite stays green after the refactor — behavior is byte-preserved.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js integration", "scope": "integration" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "scope": "all" } },
       "dependsOn": ["templates/cli/memory-index.js", "templates/cli/memory.service.js", "templates/cli/test/integration.js"]
     },
     {
