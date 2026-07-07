@@ -41,7 +41,7 @@ Both engines need `generateSnippet`; it currently lives private inside `memory-i
 **Interfaces:**
 - Produces: `memory-index-util.js` exports `generateSnippet(content, query, maxChars = 200) → string`.
 
-- [ ] **Step 1: Create the util module.** Create `templates/cli/memory-index-util.js`:
+- [x] **Step 1: Create the util module.** Create `templates/cli/memory-index-util.js`:
 
 ```js
 'use strict';
@@ -82,7 +82,7 @@ function generateSnippet(content, query, maxChars = 200) {
 module.exports = { generateSnippet };
 ```
 
-- [ ] **Step 2: Rewire `memory-index.js` to import it.** In `templates/cli/memory-index.js`, add near the top (after the `./runtime` require):
+- [x] **Step 2: Rewire `memory-index.js` to import it.** In `templates/cli/memory-index.js`, add near the top (after the `./runtime` require):
 
 ```js
 const { generateSnippet } = require('./memory-index-util');
@@ -90,7 +90,7 @@ const { generateSnippet } = require('./memory-index-util');
 
 Then **delete** the local `function generateSnippet(content, query, maxChars = 200) { … }` definition (the whole function). Leave `generateTrigramQuery` and `bm25RankToScore` in place — they are SQLite-only.
 
-- [ ] **Step 3: Register the gene + mirror (two-pass).** In `templates/cli/template-manifest.js`, add `'memory-index-util.js'` to the `core-cli` family `files` array next to `'memory-index.js'`. Then:
+- [x] **Step 3: Register the gene + mirror (two-pass).** In `templates/cli/template-manifest.js`, add `'memory-index-util.js'` to the `core-cli` family `files` array next to `'memory-index.js'`. Then:
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime && node .evo-lite/cli/memory.js sync-runtime
@@ -98,7 +98,7 @@ node .evo-lite/cli/memory.js sync-runtime && node .evo-lite/cli/memory.js sync-r
 
 Expected: first pass copies `template-manifest.js`; second pass copies `memory-index-util.js`; `ls .evo-lite/cli/memory-index-util.js` exists.
 
-- [ ] **Step 4: Prove behavior preserved.** Run:
+- [x] **Step 4: Prove behavior preserved.** Run:
 
 ```bash
 node ./.evo-lite/cli/test.js all
@@ -106,7 +106,7 @@ node ./.evo-lite/cli/test.js all
 
 Expected: exit 0, "All CLI integration tests passed!" (recall/snippet unchanged).
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add templates/cli/memory-index-util.js .evo-lite/cli/memory-index-util.js templates/cli/memory-index.js .evo-lite/cli/memory-index.js templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js
