@@ -2,7 +2,7 @@
 id: plan:memory-index-abstraction
 linkedSpec: spec:memory-index-abstraction
 format: superpowers
-status: draft
+status: done
 ---
 
 # Memory Index Abstraction Implementation Plan

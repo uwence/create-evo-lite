@@ -1,6 +1,6 @@
 ---
 id: spec:memory-index-abstraction
-status: draft
+status: done
 created: 2026-07-07
 linkedPlan: plan:memory-index-abstraction
 ---
