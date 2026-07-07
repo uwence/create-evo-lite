@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-P1-8 command-verifier trust boundary SHIPPED (main a2c3c64): default-deny the verification-contract command verifier — command-policy.js rejects shell metacharacters + enforces a human-curated git-committed allowlist; blocked commands write no evidence (UNVERIFIED by absence). Gene registered; command-policy.json is project-state (not a gene) so nurture never overwrites a child's allowlist; built-in default keeps fresh children self-hosting. 3 SDD tasks all reviewed clean; opus final review Ready-to-merge YES 0/0; dogfood self-run 5/5 PASS. NEXT candidates: push main (7 commits unpushed) + npm publish; later hardening pass (loadPolicy throw-branch tests + deep-freeze BUILTIN_DEFAULT); mem hive harvest (child->mother, human-gated + protected gene paths) when a 2nd child diverges.
+release-2.2.0-hardening SHIPPED + closed (spec 9/9 PASS, dogfood-only closure, commit c7826c1). command-verifier trust boundary (P1-8) live on main: default-deny, shell-metachar reject + git-committed allowlist, blocked cmds write no evidence (UNVERIFIED by absence). Hive: CodePLC (2nd child) nurtured to 2.2.0 on 2026-07-06, live-validated version-truth + transaction fixes. Branch synced with origin/main. NEXT candidates: (a) evaluate Zvec as next-gen local memory index vs current sqlite-fts5-trigram — abstract MemoryIndex/RecallStore interface first, prototype ZvecMemoryIndex FTS-only, dual-write/dual-query A-B on real archive before default; (b) residual hardening: loadPolicy throw-branch tests + BUILTIN_DEFAULT deep-freeze; (c) mem hive harvest (child->mother, human-gated) when a 3rd child diverges.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
