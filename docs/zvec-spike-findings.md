@@ -11,7 +11,12 @@ not `queryString`).
 
 ## Environment / maturity
 
-- `@zvec/zvec@0.5.0`, installed clean on Windows x64 / Node v22.22.2.
+- `@zvec/zvec@0.5.0`, installed clean on Windows x64 / Node v22.22.2. **This is the
+  latest npm release** — the npm `latest` dist-tag is 0.5.0 and `@zvec/zvec@0.5.1`
+  returns E404. The "0.5.1 (2026-06-24)" figure is the **core C++ project's GitHub
+  release** (`alibaba/zvec`), which versions independently of the Node binding. The
+  binding lags the core release — an adoption-risk data point (young dep, binding
+  publish cadence trails the core).
 - Native binding `@zvec/bindings-win32-x64` resolved and **`require()` loaded fine**
   — unlike the codex CLI's broken win32 binary; Zvec's own binding is healthy here.
 - In-process, WAL-durable, single-writer / multi-reader. jieba dict ships bundled
