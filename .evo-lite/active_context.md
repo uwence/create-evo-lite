@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Memory Index Abstraction Implementation Plan: Rewire memory.service.js to delegate, remove moved code
+Memory Index Abstraction Implementation Plan: all tasks implemented
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
