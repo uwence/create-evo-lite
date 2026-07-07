@@ -1975,6 +1975,30 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-ZV ZvecMemoryIndex passed');
 
+        console.log('T-ENGINE. Testing engine selection + fallback ...');
+        {
+            const { selectEngine, resolveEngine, SqliteFtsIndex } = require(path.join(CLI_DIR, 'memory-index.js'));
+
+            // default: no zvec
+            assert.ok(selectEngine('sqlite-fts5-trigram') instanceof SqliteFtsIndex, 'default is SqliteFtsIndex');
+
+            // zvec configured but unavailable -> fall back to SqliteFtsIndex
+            const fallback = selectEngine('zvec', () => null);
+            assert.ok(fallback instanceof SqliteFtsIndex, 'zvec-unavailable falls back to SqliteFtsIndex');
+
+            // zvec configured + available (fake class) -> uses it
+            class FakeZvec { get engine() { return 'zvec-jieba-fts'; } }
+            const picked = selectEngine('zvec', () => FakeZvec);
+            assert.strictEqual(picked.engine, 'zvec-jieba-fts', 'zvec-available is used');
+
+            // env overrides json config
+            const prev = process.env.EVO_LITE_MEMORY_ENGINE;
+            process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+            assert.strictEqual(resolveEngine(), 'zvec', 'env overrides config');
+            if (prev === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE; else process.env.EVO_LITE_MEMORY_ENGINE = prev;
+        }
+        console.log('✅ T-ENGINE selection passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

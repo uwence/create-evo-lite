@@ -11,10 +11,11 @@ const {
     isValidNamespace,
     tableExists,
 } = require('./db');
-const { getLogPath } = require('./runtime');
+const { getLogPath, getDbPath } = require('./runtime');
 const { generateSnippet } = require('./memory-index-util');
 
 const fs = require('fs');
+const path = require('path');
 
 const LOG_PATH = getLogPath();
 
@@ -162,13 +163,48 @@ class SqliteFtsIndex {
     }
 }
 
+const DEFAULT_ENGINE_CHOICE = 'sqlite-fts5-trigram';
+
+function resolveEngine() {
+    const env = process.env.EVO_LITE_MEMORY_ENGINE;
+    if (env) return env;
+    try {
+        const cfgPath = path.join(path.dirname(getDbPath()), 'memory-engine.json');
+        if (fs.existsSync(cfgPath)) {
+            const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+            if (cfg && typeof cfg.engine === 'string') return cfg.engine;
+        }
+    } catch (_) {}
+    return DEFAULT_ENGINE_CHOICE;
+}
+
+// loadZvecIndex: () => ZvecMemoryIndex class | null. Injected so tests can
+// simulate "@zvec/zvec unavailable" without touching the module system.
+function defaultLoadZvecIndex() {
+    try {
+        require('@zvec/zvec');                       // fail fast if the optional dep is absent
+        return require('./memory-index-zvec').ZvecMemoryIndex;
+    } catch (_) {
+        return null;
+    }
+}
+
+function selectEngine(engine, loadZvecIndex = defaultLoadZvecIndex) {
+    if (engine === 'zvec') {
+        const ZvecIdx = loadZvecIndex();
+        if (ZvecIdx) return new ZvecIdx();
+        console.warn('⚠️ memory engine "zvec" selected but @zvec/zvec is unavailable — falling back to SqliteFtsIndex.');
+    }
+    return new SqliteFtsIndex();
+}
+
 let active = null;
 
 function getMemoryIndex() {
     if (!active) {
-        active = new SqliteFtsIndex();
+        active = selectEngine(resolveEngine());
     }
     return active;
 }
 
-module.exports = { SqliteFtsIndex, getMemoryIndex };
+module.exports = { SqliteFtsIndex, getMemoryIndex, resolveEngine, selectEngine };
