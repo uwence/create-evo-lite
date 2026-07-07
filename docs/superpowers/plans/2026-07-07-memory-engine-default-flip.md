@@ -583,7 +583,7 @@ Flip `DEFAULT_ENGINE_CHOICE` to `'zvec'`, update the T-ENGINE default assertion,
 - Consumes: `DEFAULT_ENGINE_CHOICE` export (added in Task 5); `selectEngine`, `resolveEngine`.
 - Produces: default (no env, no `memory-engine.json`) resolves to `'zvec'`; the depless fallback to `SqliteFtsIndex` is now the default-experience guarantee for children without the prebuild.
 
-- [ ] **Step 1: Write the failing test** — in `templates/cli/test/governance.js`, extend the T-ENGINE block. Add these assertions inside it (after the existing `class FakeZvec ...` / env-override assertions, before the closing brace):
+- [x] **Step 1: Write the failing test** — in `templates/cli/test/governance.js`, extend the T-ENGINE block. Add these assertions inside it (after the existing `class FakeZvec ...` / env-override assertions, before the closing brace):
 
 ```js
             // default flipped: the module constant is now zvec
@@ -595,12 +595,12 @@ Flip `DEFAULT_ENGINE_CHOICE` to `'zvec'`, update the T-ENGINE default assertion,
             assert.ok(deplessDefault instanceof SqliteFtsIndex, 'depless default falls back to SqliteFtsIndex');
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 Expected: FAIL — `default engine flipped to zvec` (constant is still `'sqlite-fts5-trigram'`).
 
-- [ ] **Step 3: Flip the constant** — in `templates/cli/memory-index.js` line 166:
+- [x] **Step 3: Flip the constant** — in `templates/cli/memory-index.js` line 166:
 
 ```js
 const DEFAULT_ENGINE_CHOICE = 'sqlite-fts5-trigram';
@@ -612,17 +612,17 @@ const DEFAULT_ENGINE_CHOICE = 'sqlite-fts5-trigram';
 const DEFAULT_ENGINE_CHOICE = 'zvec';
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node ./.evo-lite/cli/test.js all`
 Expected: PASS — T-ENGINE green, full suite green. (T-ZV/T-REBUILD-ZVEC still skip cleanly if `@zvec/zvec` is absent; T-ENGINE's new assertions do not require the native dep.)
 
-- [ ] **Step 5: Mirror to runtime**
+- [x] **Step 5: Mirror to runtime**
 
 Run: `node .evo-lite/cli/memory.js sync-runtime`
 Expected: two files copied; a second run reports 0 (parity).
 
-- [ ] **Step 6: Migrate the mother's memory into zvec** — the mother now defaults to zvec but its docs live in the frozen SQLite `raw_memory` table; repopulate the zvec collection from the archive:
+- [x] **Step 6: Migrate the mother's memory into zvec** — the mother now defaults to zvec but its docs live in the frozen SQLite `raw_memory` table; repopulate the zvec collection from the archive:
 
 Run: `node .evo-lite/cli/memory.js rebuild`
 Expected: "旧 Zvec collection 已清除，将从 raw_memory 全量重建" then a rebuild summary with `rebuilt_archives`/`rebuilt_chunks` > 0.
@@ -632,7 +632,7 @@ Then smoke-test recall against the live (now default = zvec) engine:
 Run: `node .evo-lite/cli/memory.js recall "task:zvec-memory-index-t5"`
 Expected: non-empty results (the colon-query matchString path over the freshly-built zvec collection).
 
-- [ ] **Step 7: Update the engine docs** — in `docs/zvec-spike-findings.md`, "Choosing the memory engine" section, change the opening line `The default engine is \`sqlite-fts5-trigram\`. To try Zvec:` to state Zvec is now the default with SQLite as the config-only opt-out / rollback. Replace that paragraph with:
+- [x] **Step 7: Update the engine docs** — in `docs/zvec-spike-findings.md`, "Choosing the memory engine" section, change the opening line `The default engine is \`sqlite-fts5-trigram\`. To try Zvec:` to state Zvec is now the default with SQLite as the config-only opt-out / rollback. Replace that paragraph with:
 
 ```markdown
 The default engine is now **`zvec`** (flipped in `spec:memory-engine-default-flip`,
@@ -650,7 +650,7 @@ truth. Rollback is config-only and lossless: the SQLite index is never deleted b
 adopting Zvec (each engine owns its own derived store).
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add templates/cli/memory-index.js templates/cli/test/governance.js docs/zvec-spike-findings.md .evo-lite/cli/memory-index.js .evo-lite/cli/test/governance.js
