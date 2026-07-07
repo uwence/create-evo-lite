@@ -1884,7 +1884,13 @@ async function runGovernanceTests() {
         {
             const runtime = createTempRuntimeRoot('memory-index-seam');
             const loaded = await bootstrapRuntime(runtime.runtimeRoot);
-            const { getMemoryIndex, SqliteFtsIndex } = require(path.join(CLI_DIR, 'memory-index.js'));
+            const { getMemoryIndex, SqliteFtsIndex, resetMemoryIndex } = require(path.join(CLI_DIR, 'memory-index.js'));
+
+            // Pin the SQLite engine — this suite exercises SqliteFtsIndex specifics
+            // (trigram, match_source 'fts'), independent of the flipped default.
+            const miPrevEngine = process.env.EVO_LITE_MEMORY_ENGINE;
+            process.env.EVO_LITE_MEMORY_ENGINE = 'sqlite-fts5-trigram';
+            resetMemoryIndex();
 
             // T-MI-1: singleton + engine label
             const a = getMemoryIndex();
@@ -1921,6 +1927,9 @@ async function runGovernanceTests() {
             for (const key of ['chunks', 'count', 'namespaces', 'first', 'last']) {
                 assert.ok(key in s, `stats missing ${key}`);
             }
+
+            if (miPrevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE; else process.env.EVO_LITE_MEMORY_ENGINE = miPrevEngine;
+            resetMemoryIndex();
         }
         console.log('✅ T-MI MemoryIndex seam passed');
 
@@ -1996,6 +2005,13 @@ async function runGovernanceTests() {
             process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
             assert.strictEqual(resolveEngine(), 'zvec', 'env overrides config');
             if (prev === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE; else process.env.EVO_LITE_MEMORY_ENGINE = prev;
+
+            // default flipped: the module constant is now zvec
+            const { DEFAULT_ENGINE_CHOICE } = require(path.join(CLI_DIR, 'memory-index.js'));
+            assert.strictEqual(DEFAULT_ENGINE_CHOICE, 'zvec', 'default engine flipped to zvec');
+            // a depless instance still degrades to SqliteFtsIndex (children-not-forced holds under the flip)
+            const deplessDefault = selectEngine(DEFAULT_ENGINE_CHOICE, () => null);
+            assert.ok(deplessDefault instanceof SqliteFtsIndex, 'depless default falls back to SqliteFtsIndex');
         }
         console.log('✅ T-ENGINE selection passed');
 

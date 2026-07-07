@@ -26,6 +26,8 @@ function zvecRoot() {
 class ZvecMemoryIndex {
     constructor() {
         this._col = null;
+        this._dirty = false;      // writes pending an FTS optimize
+        this._exitHooked = false;
         this._dir = zvecRoot();
         this._colPath = path.join(this._dir, 'collection');
         this._idFile = path.join(this._dir, 'nextid.json');
@@ -55,9 +57,28 @@ class ZvecMemoryIndex {
         this._col = fs.existsSync(this._colPath)
             ? z.ZVecOpen(this._colPath)
             : z.ZVecCreateAndOpen(this._colPath, this._schema());
+        if (!this._exitHooked) {
+            // Zvec FTS segments only become queryable after optimizeSync(); the
+            // evo-lite CLI is one-shot per command, so without finalizing on exit
+            // a write is invisible to the next `recall` process. Finalize once at
+            // process exit (optimize only if we actually wrote).
+            process.once('exit', () => { try { this._finalizeSync(); } catch (_) {} });
+            this._exitHooked = true;
+        }
         if (!fs.existsSync(this._idFile)) {
             fs.writeFileSync(this._idFile, JSON.stringify({ next: this._maxId() + 1 }), 'utf8');
         }
+    }
+
+    // Persist the FTS index (optimize if dirty) and release the collection.
+    _finalizeSync() {
+        if (!this._col) return;
+        if (this._dirty) {
+            try { this._col.optimizeSync(); } catch (_) {}
+            this._dirty = false;
+        }
+        try { this._col.closeSync(); } catch (_) {}
+        this._col = null;
     }
 
     _col_() {
@@ -96,6 +117,7 @@ class ZvecMemoryIndex {
             namespace: doc.namespace,
             timestamp: doc.timestamp,
         } }]);
+        this._dirty = true;
         return { id };
     }
 
@@ -137,7 +159,9 @@ class ZvecMemoryIndex {
     delete(id) {
         const col = this._col_();
         const st = col.deleteSync(String(id));
-        return { changes: st && st.ok ? 1 : 0 };
+        const changed = st && st.ok ? 1 : 0;
+        if (changed) this._dirty = true;
+        return { changes: changed };
     }
 
     stats() {
@@ -174,10 +198,7 @@ class ZvecMemoryIndex {
     }
 
     close() {
-        if (this._col) {
-            try { this._col.closeSync(); } catch (_) {}
-            this._col = null;
-        }
+        this._finalizeSync();
     }
 }
 

@@ -76,20 +76,32 @@ both jieba and standard. So a `ZvecMemoryIndex` must:
 
 Probe scripts: `scratchpad/zvec-probe/ab.js`, `ab2.js` (throwaway, not committed).
 
-## Choosing the memory engine (shipped in spec:zvec-memory-index)
+## Choosing the memory engine (default flipped in spec:memory-engine-default-flip)
 
-The default engine is `sqlite-fts5-trigram`. To try Zvec:
+The default engine is now **`zvec`** (jieba FTS), flipped 2026-07-07 on the
+graded-rubric evidence in `docs/memory-engine-flip-evidence.md` (zvec mean
+precision 72% vs 63%, hit-parity 11/12). An instance without the `@zvec/zvec`
+prebuild degrades to `SqliteFtsIndex` with one warning — no child is broken by
+lacking the optional dep (`selectEngine` fallback).
 
-1. `npm i @zvec/zvec` (it is an `optionalDependency` — absent on unsupported
-   platforms, in which case the runtime stays on SQLite automatically).
-2. Select it, either:
-   - write `.evo-lite/memory-engine.json` → `{ "engine": "zvec" }` (committable,
-     inspectable project state — nurture never overwrites a child's choice), or
-   - set `EVO_LITE_MEMORY_ENGINE=zvec` (env overrides the file).
-3. `node .evo-lite/cli/memory.js memory-ab` prints a SQLite-vs-Zvec recall
-   divergence table over your real archive — the evidence for whether to flip.
+To **pin SQLite** (the config-only, lossless rollback):
 
-If `engine=zvec` is configured but `@zvec/zvec` cannot load, `getMemoryIndex()`
-warns once and falls back to `SqliteFtsIndex`, so a hive child never breaks for
-lacking the native dependency. The default is not flipped — that is a separate,
-evidence-gated decision.
+1. write `.evo-lite/memory-engine.json` → `{ "engine": "sqlite-fts5-trigram" }`
+   (committable, inspectable project state — nurture never overwrites a child's
+   choice), or
+2. set `EVO_LITE_MEMORY_ENGINE=sqlite-fts5-trigram` (env overrides the file).
+
+Operational notes:
+
+- After a fresh clone or an engine change, run `node .evo-lite/cli/memory.js rebuild`
+  to (re)build the **active** engine's index from `raw_memory/*.md` — the single
+  source of truth. `rebuild` is engine-aware (zvec: wipes `.evo-lite/zvec/` and
+  repopulates via the seam). Rollback is lossless: the SQLite index is never deleted
+  by adopting Zvec — each engine owns its own derived store.
+- `node .evo-lite/cli/memory.js memory-ab` reruns the graded SQLite-vs-Zvec
+  comparison over your archive at any time.
+- Zvec FTS segments become searchable only after `optimizeSync()`; the CLI is
+  one-shot per command, so `ZvecMemoryIndex` finalizes (optimize + close) on process
+  exit when it wrote — without this a `memorize` would be invisible to the next
+  `recall`. Follow-up: the `dogfood cycle` short-phrase ranking regression
+  (jieba-OR BM25 vs exact phrase) is tracked for a phrase-aware router.

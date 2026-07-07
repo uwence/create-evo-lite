@@ -17,6 +17,15 @@ const {
 async function runIntegrationTests() {
     console.log('--- Starting CLI integration tests ---');
 
+    // This suite validates the SQLite reference implementation and memory flows
+    // against SQLite storage (it inserts into / reads from raw_memory directly and
+    // asserts trigram match_source='fts'). The default engine flipped to zvec
+    // (spec:memory-engine-default-flip); the Zvec engine has its own governance
+    // coverage (T-ZV, T-REBUILD-ZVEC, T-AB, T-LIST). Pin SQLite here so this suite
+    // keeps testing what it was written to test. Each bootstrapRuntime reloads the
+    // seam singleton, so this pin takes effect for every runtime built below.
+    process.env.EVO_LITE_MEMORY_ENGINE = 'sqlite-fts5-trigram';
+
     try {
         console.log('T8. Testing archiveHits finds task ID in file content ...');
         {

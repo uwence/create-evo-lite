@@ -167,7 +167,7 @@ class SqliteFtsIndex {
     }
 }
 
-const DEFAULT_ENGINE_CHOICE = 'sqlite-fts5-trigram';
+const DEFAULT_ENGINE_CHOICE = 'zvec';
 
 function resolveEngine() {
     const env = process.env.EVO_LITE_MEMORY_ENGINE;
