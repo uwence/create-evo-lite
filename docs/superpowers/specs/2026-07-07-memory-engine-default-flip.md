@@ -36,6 +36,25 @@ Phase A tasks are **conditional**: the plan's decision-gate task presents Phase 
 evidence and asks the user GO/NO-GO. On NO-GO the spec closes having delivered the
 rubric + evidence only (default untouched); on GO, Phase A executes.
 
+## Decision (2026-07-07): NO-GO
+
+The gate returned **NO-GO**. Evidence: `docs/memory-engine-flip-evidence.md`
+(`mem memory-ab --from-logs`, 12 scorable queries). Zvec is competitive
+(mean precision 72% vs SQLite 63%, hit parity on 11/12) but **fails the GO
+threshold**: one per-query hit regression (`dogfood cycle` — jieba-OR BM25 ranks
+the exact-phrase doc out of top-5) and one `sqlite-better` counterexample. Zvec's
+headline advantages (Chinese jieba, colon `task:`-id recall) are **not exercised**
+by the current archive (15/27 queries have no literally-containing doc). Flipping
+now would trade a real regression for advantages the corpus cannot yet demonstrate.
+
+**Outcome:** the default stays `sqlite-fts5-trigram`; Zvec remains the
+config-selectable engine and `mem memory-ab` the reusable gate. Phase A (list()
+seam fix, engine-aware rebuild, default flip) is **not executed** here and moves to
+a follow-up spec — revisit when the archive accumulates Chinese/colon content, or
+when the Zvec router gains a phrase-aware path that closes the `dogfood cycle`
+regression class. This spec is therefore scoped to Phase B: the criteria set below
+retains only `ac-graded-rubric`, `ac-flip-evidence-artifact`, `ac-mirror-parity`.
+
 ## Phase B — Content-Level Recall Rubric
 
 `mem memory-ab` today prints an id-divergence table. Phase B extends it into a
@@ -178,24 +197,6 @@ config alone.
       "description": "docs/memory-engine-flip-evidence.md exists with the graded quantitative table, the judged from-logs sample (5-8 rows with zvec-better/sqlite-better/tie verdicts), and a GO/NO-GO verdict paragraph.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
       "dependsOn": ["docs/memory-engine-flip-evidence.md"]
-    },
-    {
-      "id": "ac-engine-aware-rebuild",
-      "description": "rebuild is engine-aware: with engine=zvec it wipes .evo-lite/zvec/collection + nextid.json and repopulates from raw_memory/*.md via the seam; with engine=sqlite it keeps today's behavior. Full-rebuild idempotent. Skips cleanly when @zvec/zvec is absent.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "scope": "all" } },
-      "dependsOn": ["templates/cli/memory.service.js", "templates/cli/test/governance.js"]
-    },
-    {
-      "id": "ac-list-through-seam",
-      "description": "MemoryIndex contract has a list()/all() method; SqliteFtsIndex and ZvecMemoryIndex both implement it with the same shape; service list() routes through getMemoryIndex().list() so inspection reflects the active engine.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
-      "dependsOn": ["templates/cli/memory-index.js", "templates/cli/memory-index-zvec.js", "templates/cli/memory.service.js"]
-    },
-    {
-      "id": "ac-default-flip-fallback",
-      "description": "DEFAULT_ENGINE_CHOICE is 'zvec'; no-config selection resolves to ZvecMemoryIndex when @zvec/zvec is available and falls back to SqliteFtsIndex with a warning when it is mocked unavailable; an explicit memory-engine.json pin to sqlite-fts5-trigram overrides (rollback path).",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
-      "dependsOn": ["templates/cli/memory-index.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-mirror-parity",
