@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Memory Engine Default-Flip Implementation Plan: all tasks implemented
+Default memory engine FLIPPED to zvec (jieba FTS) — spec:memory-engine-default-flip done 6/6, pushed c42d39a. Graded memory-ab rubric (zvec mean prec 72% vs 63%, hit-parity 11/12) → user GO. list() routed through seam; engine-aware rebuild (zvec wipes .evo-lite/zvec + repopulates from raw_memory); config-only lossless rollback (memory-engine.json pin sqlite). Mother migrated (99 archives). Two flip-surfaced bugs fixed: (1) ZvecMemoryIndex FTS not durable across one-shot CLI — now optimizeSync+close on process exit (dirty-gated); (2) _allDocs topk 1000000 exceeded Zvec 1000 cap (silent empty). SQLite pinned for integration + T-MI reference suites. FOLLOW-UPS: verify memory-space display still reads SQLite _meta (not active engine); dogfood-cycle short-phrase ranking regression (jieba-OR vs exact phrase) → phrase-aware/exact-boost router; fix codex win32 OOM for delegation.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
