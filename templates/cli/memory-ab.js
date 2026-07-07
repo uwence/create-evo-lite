@@ -39,6 +39,38 @@ function buildZvecFromArchive(ZvecMemoryIndex) {
     return idx;
 }
 
+// Every raw_memory archive body, verbatim — the ground-truth corpus for grading.
+function loadArchiveCorpus() {
+    const dir = getRawMemoryDir();
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir)
+        .filter(f => f.endsWith('.md'))
+        .map(f => fs.readFileSync(path.join(dir, f), 'utf8'));
+}
+
+// Ground truth = literal, case-insensitive substring containment. Engine-independent
+// and reproducible; matches this project's literal recall targets (paths, code
+// symbols, task:-ids, hashes, verbatim Chinese words).
+function contains(content, q) {
+    return String(content || '').toLowerCase().includes(String(q).toLowerCase());
+}
+
+// Grade one engine's result list for one query: was any returned doc on-topic
+// (hit), and what fraction were on-topic (precision@K)?
+function gradeHits(results, query) {
+    const onTopic = results.filter(r => contains(r.content, query)).length;
+    return {
+        hit: onTopic > 0,
+        precision: results.length ? onTopic / results.length : 0,
+        returned: results.length,
+        onTopic,
+    };
+}
+
+function mean(nums) {
+    return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+}
+
 async function runMemoryAb(opts = {}) {
     let ZvecMemoryIndex;
     try {
@@ -46,7 +78,7 @@ async function runMemoryAb(opts = {}) {
         ZvecMemoryIndex = require('./memory-index-zvec').ZvecMemoryIndex;
     } catch (_) {
         console.log('⏭️  @zvec/zvec is not installed — run `npm i @zvec/zvec` to enable the A/B. Nothing to compare.');
-        return { rows: [], agreement: null };
+        return { rows: [], agreement: null, graded: null };
     }
 
     // Force the SQLite engine directly (NOT recall(), which honours memory-engine.json
@@ -55,27 +87,52 @@ async function runMemoryAb(opts = {}) {
     const sqlite = new SqliteFtsIndex();
     sqlite.initialize();
     const zvec = buildZvecFromArchive(ZvecMemoryIndex);
+    const corpus = loadArchiveCorpus();
 
     const queries = BUILTIN_QUERIES.concat(opts.fromLogs ? sampleLogQueries() : []);
     const rows = [];
+    const gradeRows = [];
     for (const q of queries) {
-        const sqliteHits = sqlite.searchText(q, { topK: 5 }).map(r => Number(r.id)).sort((a, b) => a - b);
-        const zvecHits = zvec.searchText(q, { topK: 5 }).map(r => Number(r.id)).sort((a, b) => a - b);
-        const agree = JSON.stringify(sqliteHits) === JSON.stringify(zvecHits);
-        rows.push({ query: q, sqlite: sqliteHits, zvec: zvecHits, agree });
+        const sqliteRes = sqlite.searchText(q, { topK: 5 });
+        const zvecRes = zvec.searchText(q, { topK: 5 });
+        const sqliteHits = sqliteRes.map(r => Number(r.id)).sort((a, b) => a - b);
+        const zvecHits = zvecRes.map(r => Number(r.id)).sort((a, b) => a - b);
+        rows.push({ query: q, sqlite: sqliteHits, zvec: zvecHits, agree: JSON.stringify(sqliteHits) === JSON.stringify(zvecHits) });
+        gradeRows.push({
+            query: q,
+            ground: corpus.filter(c => contains(c, q)).length,
+            sqlite: gradeHits(sqliteRes, q),
+            zvec: gradeHits(zvecRes, q),
+        });
     }
     zvec.close();
 
+    // Aggregate only over queries whose ground truth is non-empty — a query no
+    // archived doc contains cannot fairly be scored as a hit or a miss.
+    const scorable = gradeRows.filter(r => r.ground > 0);
+    const graded = {
+        rows: gradeRows,
+        sqliteHitRate: scorable.length ? scorable.filter(r => r.sqlite.hit).length / scorable.length : null,
+        zvecHitRate: scorable.length ? scorable.filter(r => r.zvec.hit).length / scorable.length : null,
+        sqliteMeanPrec: mean(scorable.map(r => r.sqlite.precision)),
+        zvecMeanPrec: mean(scorable.map(r => r.zvec.precision)),
+    };
+
     const agreement = rows.length ? rows.filter(r => r.agree).length / rows.length : null;
     console.log('\n🔬 Memory engine A/B — SQLite (default) vs Zvec (jieba FTS)\n');
-    console.log('query'.padEnd(38), 'agree', 'sqlite → zvec');
-    for (const r of rows) {
-        console.log(r.query.slice(0, 37).padEnd(38), (r.agree ? ' ✓ ' : ' ✗ '),
-            `${JSON.stringify(r.sqlite)} → ${JSON.stringify(r.zvec)}`.slice(0, 60));
+    console.log('query'.padEnd(38), 'grnd', 'sqlite hit/prec', 'zvec hit/prec');
+    for (const r of gradeRows) {
+        const fmt = e => `${e.hit ? 'HIT' : 'miss'} ${(e.precision * 100).toFixed(0)}%`;
+        console.log(r.query.slice(0, 37).padEnd(38), String(r.ground).padEnd(4),
+            fmt(r.sqlite).padEnd(15), fmt(r.zvec));
     }
-    console.log(`\nagreement: ${agreement === null ? 'n/a' : (agreement * 100).toFixed(0) + '%'} (${rows.length} queries)`);
-    console.log('Note: SQLite and Zvec assign ids independently; id-set divergence is expected — read this as a recall-shape comparison, not id equality.');
-    return { rows, agreement };
+    const pct = v => (v === null ? 'n/a' : (v * 100).toFixed(0) + '%');
+    console.log(`\nscorable queries: ${scorable.length}/${gradeRows.length}`);
+    console.log(`hit-rate   sqlite ${pct(graded.sqliteHitRate)}   zvec ${pct(graded.zvecHitRate)}`);
+    console.log(`mean prec  sqlite ${pct(graded.sqliteMeanPrec)}   zvec ${pct(graded.zvecMeanPrec)}`);
+    console.log(`id-set agreement: ${pct(agreement)} (${rows.length} queries)`);
+    console.log('Note: ids are engine-independent; grading is by content substring, not id equality.');
+    return { rows, agreement, graded };
 }
 
-module.exports = { runMemoryAb, BUILTIN_QUERIES, sampleLogQueries };
+module.exports = { runMemoryAb, BUILTIN_QUERIES, sampleLogQueries, loadArchiveCorpus, gradeHits };

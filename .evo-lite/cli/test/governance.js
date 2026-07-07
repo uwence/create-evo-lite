@@ -1999,14 +1999,36 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-ENGINE selection passed');
 
-        console.log('T-AB. Testing memory-ab wiring ...');
+        console.log('T-AB. Testing memory-ab wiring + graded rubric ...');
         {
             const ab = require(path.join(CLI_DIR, 'memory-ab.js'));
             assert.ok(Array.isArray(ab.BUILTIN_QUERIES) && ab.BUILTIN_QUERIES.includes('R008'), 'builtin query set present');
             assert.strictEqual(typeof ab.runMemoryAb, 'function', 'runMemoryAb exported');
-            // With @zvec present this rebuilds + compares; without it returns { rows: [] }. Either way it must not throw.
+            assert.strictEqual(typeof ab.gradeHits, 'function', 'gradeHits exported');
+
+            // gradeHits: ground truth = literal substring containment on r.content.
+            const g = ab.gradeHits(
+                [{ content: 'about memory.service.js recall' }, { content: 'unrelated doc' }],
+                'memory.service'
+            );
+            assert.strictEqual(g.hit, true, 'gradeHits reports a hit when a returned doc contains the query');
+            assert.strictEqual(g.onTopic, 1, 'gradeHits counts on-topic docs');
+            assert.ok(Math.abs(g.precision - 0.5) < 1e-9, 'gradeHits precision = onTopic / returned');
+            const gMiss = ab.gradeHits([{ content: 'nothing here' }], 'R008');
+            assert.strictEqual(gMiss.hit, false, 'gradeHits reports a miss when no returned doc contains the query');
+
+            // With @zvec present this rebuilds + compares + grades; without it returns { rows: [], graded: null }.
             const res = await ab.runMemoryAb({ fromLogs: false });
             assert.ok(res && Array.isArray(res.rows), 'runMemoryAb returns rows array');
+            if (res.graded) {
+                assert.ok(Array.isArray(res.graded.rows), 'graded.rows is an array');
+                for (const r of res.graded.rows) {
+                    for (const key of ['hit', 'precision', 'returned', 'onTopic']) {
+                        assert.ok(key in r.sqlite && key in r.zvec, `graded row missing ${key}`);
+                    }
+                }
+                assert.ok(res.graded.zvecHitRate === null || (res.graded.zvecHitRate >= 0 && res.graded.zvecHitRate <= 1), 'zvecHitRate in [0,1] or null');
+            }
         }
         console.log('✅ T-AB memory-ab passed');
 
