@@ -40,7 +40,7 @@ Turn the id-divergence table into a graded (hit/precision) comparison. Ground tr
 - Consumes: `SqliteFtsIndex` / `ZvecMemoryIndex` `searchText(query, {topK})` → `[{id, content, namespace, timestamp, score, snippet, match_source}]`; `getRawMemoryDir()`.
 - Produces: `runMemoryAb({fromLogs})` → `{ rows, agreement, graded }` where `graded` is `null` when `@zvec/zvec` is absent, else `{ rows: [{query, ground, sqlite:{hit,precision,returned,onTopic}, zvec:{hit,precision,returned,onTopic}}], sqliteHitRate, zvecHitRate, sqliteMeanPrec, zvecMeanPrec }`. Also exports `loadArchiveCorpus()`, `gradeHits(results, query)`.
 
-- [ ] **Step 1: Write the failing test** — extend the T-AB block in `templates/cli/test/governance.js`. Replace the existing T-AB block (currently ~lines 2002–2011) with:
+- [x] **Step 1: Write the failing test** — extend the T-AB block in `templates/cli/test/governance.js`. Replace the existing T-AB block (currently ~lines 2002–2011) with:
 
 ```js
         console.log('T-AB. Testing memory-ab wiring + graded rubric ...');
@@ -77,12 +77,12 @@ Turn the id-divergence table into a graded (hit/precision) comparison. Ground tr
         console.log('✅ T-AB memory-ab passed');
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node ./.evo-lite/cli/test.js all`
 Expected: FAIL — `gradeHits exported` assertion trips (`ab.gradeHits` is `undefined`).
 
-- [ ] **Step 3: Implement the graded rubric** — edit `templates/cli/memory-ab.js`. Add the corpus loader + grader and wire them into `runMemoryAb`. Replace the file body from the `buildZvecFromArchive` function through the end with:
+- [x] **Step 3: Implement the graded rubric** — edit `templates/cli/memory-ab.js`. Add the corpus loader + grader and wire them into `runMemoryAb`. Replace the file body from the `buildZvecFromArchive` function through the end with:
 
 ```js
 // Build a throwaway ZvecMemoryIndex from every raw_memory archive body.
@@ -199,17 +199,17 @@ async function runMemoryAb(opts = {}) {
 module.exports = { runMemoryAb, BUILTIN_QUERIES, sampleLogQueries, loadArchiveCorpus, gradeHits };
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node ./.evo-lite/cli/test.js all`
 Expected: PASS — `✅ T-AB memory-ab passed` and the full suite green.
 
-- [ ] **Step 5: Mirror to runtime**
+- [x] **Step 5: Mirror to runtime**
 
 Run: `node .evo-lite/cli/memory.js sync-runtime`
 Expected: reports the two changed files copied; a second run reports 0 (parity).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/memory-ab.js templates/cli/test/governance.js .evo-lite/cli/memory-ab.js .evo-lite/cli/test/governance.js
@@ -229,14 +229,14 @@ Run the graded rubric for real against the mother's archive and author the decis
 - Consumes: `node .evo-lite/cli/memory.js memory-ab --from-logs` output (graded table + aggregate + id table) from Task 1.
 - Produces: `docs/memory-engine-flip-evidence.md` — the file `ac-flip-evidence-artifact` depends on and the gate (Task 3) reads.
 
-- [ ] **Step 1: Capture the graded run**
+- [x] **Step 1: Capture the graded run**
 
 Run: `node .evo-lite/cli/memory.js memory-ab --from-logs`
 Expected: the graded table (per-query HIT/miss + precision for both engines), `hit-rate` and `mean prec` aggregate lines, and the id-set agreement line. Copy this output verbatim for the artifact.
 
-- [ ] **Step 2: Judge a from-logs disagreement sample** — from the `--from-logs` rows where the engines disagree, pick 5–8 and for each open the returned docs' content (via `node .evo-lite/cli/memory.js list` or reading `raw_memory/*.md`) and assign a verdict: `zvec-better` / `sqlite-better` / `tie`. `tie` = both returned on-topic docs and the id difference is cosmetic.
+- [x] **Step 2: Judge a from-logs disagreement sample** — from the `--from-logs` rows where the engines disagree, pick 5–8 and for each open the returned docs' content (via `node .evo-lite/cli/memory.js list` or reading `raw_memory/*.md`) and assign a verdict: `zvec-better` / `sqlite-better` / `tie`. `tie` = both returned on-topic docs and the id difference is cosmetic.
 
-- [ ] **Step 3: Write the evidence artifact** — create `docs/memory-engine-flip-evidence.md`:
+- [x] **Step 3: Write the evidence artifact** — create `docs/memory-engine-flip-evidence.md`:
 
 ```markdown
 # Memory Engine Flip — Evidence (2026-07-07)
@@ -269,7 +269,7 @@ one-line reason. -->
 
 Fill every `<...>` and the pasted table from the real Step 1/Step 2 data. No placeholders may remain.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/memory-engine-flip-evidence.md
