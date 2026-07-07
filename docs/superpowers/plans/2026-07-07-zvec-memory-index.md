@@ -129,7 +129,7 @@ git commit -m "refactor(memory): extract generateSnippet to shared memory-index-
 - Consumes: `./memory-index-util` `generateSnippet`; `./db` `getNamespaces`; `./runtime` `getDbPath`.
 - Produces: `memory-index-zvec.js` exports `{ ZvecMemoryIndex }`. `ZvecMemoryIndex` implements `initialize() / searchText(query,{topK,scope}) / upsert({content,namespace,timestamp})→{id} / delete(id)→{changes} / stats() / close()` + `engine` getter (`'zvec-jieba-fts'`).
 
-- [ ] **Step 1: Add the optional dependency.** In `package.json`, add:
+- [x] **Step 1: Add the optional dependency.** In `package.json`, add:
 
 ```json
   "optionalDependencies": {
@@ -145,7 +145,7 @@ npm install
 
 Expected: `@zvec/zvec` + `@zvec/bindings-win32-x64` appear under `node_modules/@zvec/`. (On a platform without a prebuild, npm skips it silently — that is the intended optional behavior.)
 
-- [ ] **Step 2: Write `templates/cli/memory-index-zvec.js`:**
+- [x] **Step 2: Write `templates/cli/memory-index-zvec.js`:**
 
 ```js
 'use strict';
@@ -319,7 +319,7 @@ class ZvecMemoryIndex {
 module.exports = { ZvecMemoryIndex };
 ```
 
-- [ ] **Step 3: Register gene + reset-cache + mirror (two-pass).** In `templates/cli/template-manifest.js` add `'memory-index-zvec.js'` to `core-cli` `files`. In `templates/cli/test/harness.js` `resetCliModuleCache`, add `'memory-index-zvec.js'` to the file list. Then:
+- [x] **Step 3: Register gene + reset-cache + mirror (two-pass).** In `templates/cli/template-manifest.js` add `'memory-index-zvec.js'` to `core-cli` `files`. In `templates/cli/test/harness.js` `resetCliModuleCache`, add `'memory-index-zvec.js'` to the file list. Then:
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime && node .evo-lite/cli/memory.js sync-runtime
@@ -327,7 +327,7 @@ node .evo-lite/cli/memory.js sync-runtime && node .evo-lite/cli/memory.js sync-r
 
 Expected: `.evo-lite/cli/memory-index-zvec.js` exists.
 
-- [ ] **Step 4: Add skip-if-unavailable unit tests to `templates/cli/test/governance.js`.** Add, before `await runChildRuntimeTests();`:
+- [x] **Step 4: Add skip-if-unavailable unit tests to `templates/cli/test/governance.js`.** Add, before `await runChildRuntimeTests();`:
 
 ```js
 console.log('T-ZV. Testing ZvecMemoryIndex (skips if @zvec/zvec absent) ...');
@@ -382,7 +382,7 @@ console.log('T-ZV. Testing ZvecMemoryIndex (skips if @zvec/zvec absent) ...');
 console.log('✅ T-ZV ZvecMemoryIndex passed');
 ```
 
-- [ ] **Step 5: Mirror + run governance.**
+- [x] **Step 5: Mirror + run governance.**
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance
@@ -390,7 +390,7 @@ node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js govern
 
 Expected: exit 0; `T-ZV` runs (this machine has `@zvec/zvec`) and passes.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add package.json package-lock.json templates/cli/memory-index-zvec.js .evo-lite/cli/memory-index-zvec.js templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js templates/cli/test/harness.js .evo-lite/cli/test/harness.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js
