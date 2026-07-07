@@ -523,7 +523,7 @@ git commit -m "feat(memory): engine selection + zvec-unavailable fallback in get
 - Consumes: `./memory-index` `SqliteFtsIndex` (forced SQLite side); `./memory-index-zvec` `ZvecMemoryIndex`; the raw_memory dir from `./runtime` `getRawMemoryDir`.
 - Produces: `memory-ab.js` exports `runMemoryAb({ fromLogs = false }) → { rows, agreement }` and prints a table. `rows[i] = { query, sqlite: number[], zvec: number[], agree: boolean }`.
 
-- [ ] **Step 1: Write `templates/cli/memory-ab.js`:**
+- [x] **Step 1: Write `templates/cli/memory-ab.js`:**
 
 ```js
 'use strict';
@@ -611,7 +611,7 @@ module.exports = { runMemoryAb, BUILTIN_QUERIES, sampleLogQueries };
 
 > Note: because the two engines assign ids independently, id-set equality will usually be low. That is fine — the A/B's value is showing **which queries return hits at all** and relative hit counts per engine. The printed caveat says so. (A later default-flip spec can add content-hash-based matching if id-agnostic comparison is needed.)
 
-- [ ] **Step 2: Register the `memory-ab` command in `templates/cli/memory.js`.** Find where other commands are registered (`program.command('archive')` etc.) and add, matching the surrounding style:
+- [x] **Step 2: Register the `memory-ab` command in `templates/cli/memory.js`.** Find where other commands are registered (`program.command('archive')` etc.) and add, matching the surrounding style:
 
 ```js
 program
@@ -624,7 +624,7 @@ program
     });
 ```
 
-- [ ] **Step 3: Register gene + mirror (two-pass).** Add `'memory-ab.js'` to `core-cli` `files` in `template-manifest.js`, then:
+- [x] **Step 3: Register gene + mirror (two-pass).** Add `'memory-ab.js'` to `core-cli` `files` in `template-manifest.js`, then:
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime && node .evo-lite/cli/memory.js sync-runtime
@@ -632,7 +632,7 @@ node .evo-lite/cli/memory.js sync-runtime && node .evo-lite/cli/memory.js sync-r
 
 Expected: `.evo-lite/cli/memory-ab.js` exists.
 
-- [ ] **Step 4: Add a smoke test to `templates/cli/test/governance.js`** (before `await runChildRuntimeTests();`):
+- [x] **Step 4: Add a smoke test to `templates/cli/test/governance.js`** (before `await runChildRuntimeTests();`):
 
 ```js
 console.log('T-AB. Testing memory-ab wiring ...');
@@ -647,7 +647,7 @@ console.log('T-AB. Testing memory-ab wiring ...');
 console.log('✅ T-AB memory-ab passed');
 ```
 
-- [ ] **Step 5: Mirror + full suite + eyeball the command.**
+- [x] **Step 5: Mirror + full suite + eyeball the command.**
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js all && node .evo-lite/cli/memory.js memory-ab
@@ -655,7 +655,7 @@ node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js all &&
 
 Expected: tests exit 0; the `memory-ab` run prints the divergence table (real A/B on the mother's own archive).
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add templates/cli/memory-ab.js .evo-lite/cli/memory-ab.js templates/cli/memory.js .evo-lite/cli/memory.js templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js
