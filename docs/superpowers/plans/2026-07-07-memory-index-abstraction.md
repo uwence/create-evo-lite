@@ -47,7 +47,7 @@ status: draft
   - `SqliteFtsIndex#close()` → void (delegates `db.closeDb()`).
   - `SqliteFtsIndex#engine` (getter) → `db.DEFAULT_ENGINE`.
 
-- [ ] **Step 1: Write the new module.** Create `templates/cli/memory-index.js` with exactly:
+- [x] **Step 1: Write the new module.** Create `templates/cli/memory-index.js` with exactly:
 
 ```js
 'use strict';
@@ -256,7 +256,7 @@ function getMemoryIndex() {
 module.exports = { SqliteFtsIndex, getMemoryIndex };
 ```
 
-- [ ] **Step 2: Add unit tests to `templates/cli/test/governance.js`.** Open the file, find the pattern the existing governance cases follow (each is a `test('...', () => { ... })`-style entry or a numbered `T##` block — match the surrounding style exactly). Add cases that require `../memory-index` and `../db`, seed a temp DB via `initDB()`, and assert:
+- [x] **Step 2: Add unit tests to `templates/cli/test/governance.js`.** Open the file, find the pattern the existing governance cases follow (each is a `test('...', () => { ... })`-style entry or a numbered `T##` block — match the surrounding style exactly). Add cases that require `../memory-index` and `../db`, seed a temp DB via `initDB()`, and assert:
 
 ```js
 // --- MemoryIndex seam (spec:memory-index-abstraction) ---
@@ -311,15 +311,16 @@ const { getMemoryIndex, SqliteFtsIndex } = require('../memory-index');
 
 > Note: if `governance.js` uses a shared temp-DB fixture/`beforeEach`, reuse it instead of calling `initDB()` inline. Adapt the seed/teardown to the file's existing convention; keep the assertions identical.
 
-- [ ] **Step 3: Mirror to runtime.** Run:
+- [x] **Step 3: Mirror to runtime.** Run:
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime
 ```
 
 Expected: reports `memory-index.js` copied and mirror lock refreshed, no parity error.
+(Executed inline: the new gene required registering in template-manifest.js first — see T3 Step 2 — then a two-pass sync per the self-brick note; final sync = 0 copied, parity confirmed.)
 
-- [ ] **Step 4: Run the governance suite — expect PASS.** Run:
+- [x] **Step 4: Run the governance suite — expect PASS.** Run:
 
 ```bash
 node ./.evo-lite/cli/test.js governance
@@ -327,12 +328,14 @@ node ./.evo-lite/cli/test.js governance
 
 Expected: exit 0, the five `T-MI-*` assertions pass. (The module is standalone; `memory.service.js` is untouched, so nothing else changes yet.)
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add templates/cli/memory-index.js .evo-lite/cli/memory-index.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js
 git commit -m "feat(memory): add SqliteFtsIndex seam + unit coverage (spec:memory-index-abstraction T1)"
 ```
+
+Committed as `fb4176a` (bundle also carried the T3 gene registration + harness reset-list change, pulled forward for self-brick avoidance).
 
 ---
 
@@ -462,7 +465,7 @@ git commit -m "refactor(memory): delegate recall/memorize/forget/stats to Sqlite
 - Consumes: nothing new.
 - Produces: `memory-index.js` registered under `MANAGED_TEMPLATE_FAMILIES.core-cli.files`, so nurture propagates the engine gene to children.
 
-- [ ] **Step 1: Inspect the manifest structure.** Run:
+- [x] **Step 1: Inspect the manifest structure.** Run:
 
 ```bash
 grep -nE "core-cli|memory\.service\.js|files:\s*\[" templates/cli/template-manifest.js
@@ -470,7 +473,7 @@ grep -nE "core-cli|memory\.service\.js|files:\s*\[" templates/cli/template-manif
 
 Expected: shows the `core-cli` family and its `files` array containing `memory.service.js` and sibling cli modules.
 
-- [ ] **Step 2: Add the gene.** In `templates/cli/template-manifest.js`, add `'memory-index.js'` to the `core-cli` family `files` array, adjacent to the existing `'memory.service.js'` entry, matching the surrounding quote/indent/trailing-comma style exactly.
+- [x] **Step 2: Add the gene.** In `templates/cli/template-manifest.js`, add `'memory-index.js'` to the `core-cli` family `files` array, adjacent to the existing `'memory.service.js'` entry, matching the surrounding quote/indent/trailing-comma style exactly. (Done in T1 bundle `fb4176a` — had to precede sync-runtime.)
 
 - [ ] **Step 3: Mirror to runtime.** Run:
 
