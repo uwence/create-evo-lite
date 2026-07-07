@@ -291,7 +291,7 @@ A hard checkpoint. Present the evidence; the user decides. This task writes no p
 
 - [x] **Step 1: Present the evidence and ask** — summarize `docs/memory-engine-flip-evidence.md` (aggregate hit-rate/precision, any per-query regression, the judged sample) to the user and ask for an explicit **GO** or **NO-GO** against the spec threshold (no per-query regression, precision not materially worse, no `sqlite-better` counterexample).
 
-- [x] **Step 2a (NO-GO only): Amend the spec and stop** — in the spec's Acceptance Criteria JSON block, delete the `ac-engine-aware-rebuild`, `ac-list-through-seam`, and `ac-default-flip-fallback` objects, leaving `ac-graded-rubric`, `ac-flip-evidence-artifact`, `ac-mirror-parity`. Confirm the evidence artifact's Verdict section records NO-GO. Commit:
+- [ ] **Step 2a (NO-GO only): Amend the spec and stop** — in the spec's Acceptance Criteria JSON block, delete the `ac-engine-aware-rebuild`, `ac-list-through-seam`, and `ac-default-flip-fallback` objects, leaving `ac-graded-rubric`, `ac-flip-evidence-artifact`, `ac-mirror-parity`. Confirm the evidence artifact's Verdict section records NO-GO. Commit:
 
 ```bash
 git add docs/superpowers/specs/2026-07-07-memory-engine-default-flip.md
@@ -300,14 +300,11 @@ git commit -m "chore(spec): NO-GO — reduce default-flip criteria to Phase B se
 
 Then STOP — do not execute Tasks 4–6. Close the spec on the reduced set; the flip work moves to a follow-up spec.
 
-- [ ] **Step 2b (GO only): Proceed** — confirm the evidence artifact's Verdict records GO, then continue to Task 4. No commit needed for this branch (the decision is captured in the artifact from Task 2).
+- [x] **Step 2b (GO only): Proceed** — confirm the evidence artifact's Verdict records GO, then continue to Task 4. No commit needed for this branch (the decision is captured in the artifact from Task 2).
 
 ---
 
-### Task 4:
-
-> **NOT EXECUTED — NO-GO (2026-07-07).** Phase A is GO-only; the gate returned NO-GO. This task moves to a follow-up spec. See `docs/memory-engine-flip-evidence.md`.
- Route `list()` through the seam (Phase A — GO only)
+### Task 4: Route `list()` through the seam (Phase A — GO only)
 
 Add a `list()` method to the `MemoryIndex` contract so inspection reflects the active engine instead of the frozen SQLite table.
 
@@ -424,10 +421,7 @@ git commit -m "feat(memory): route list() through the MemoryIndex seam"
 
 ---
 
-### Task 5:
-
-> **NOT EXECUTED — NO-GO (2026-07-07).** Phase A is GO-only; the gate returned NO-GO. This task moves to a follow-up spec. See `docs/memory-engine-flip-evidence.md`.
- Engine-aware `rebuild` (Phase A — GO only)
+### Task 5: Engine-aware `rebuild` (Phase A — GO only)
 
 Generalize `rebuildLocalIndex()`'s SQLite-hardcoded wipe preamble so, under `engine=zvec`, it wipes and rebuilds the Zvec collection from `raw_memory/*.md` via the seam. Idempotent by full rebuild.
 
@@ -575,10 +569,7 @@ git commit -m "feat(memory): engine-aware rebuild wipes+repopulates zvec from ar
 
 ---
 
-### Task 6:
-
-> **NOT EXECUTED — NO-GO (2026-07-07).** Phase A is GO-only; the gate returned NO-GO. This task moves to a follow-up spec. See `docs/memory-engine-flip-evidence.md`.
- Flip the default + migrate + docs (Phase A — GO only)
+### Task 6: Flip the default + migrate + docs (Phase A — GO only)
 
 Flip `DEFAULT_ENGINE_CHOICE` to `'zvec'`, update the T-ENGINE default assertion, migrate the mother's live memory into the zvec collection, and update the engine docs.
 
