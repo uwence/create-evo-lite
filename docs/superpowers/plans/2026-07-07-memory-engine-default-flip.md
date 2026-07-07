@@ -319,7 +319,7 @@ Add a `list()` method to the `MemoryIndex` contract so inspection reflects the a
 - Consumes: `SqliteFtsIndex` `getDb()`; `ZvecMemoryIndex._allDocs()` → `[{id, fields:{content,namespace,timestamp}}]`.
 - Produces: `MemoryIndex.list()` → `[{id:number, content, namespace, timestamp}]` sorted by ascending id, on both implementations; service `list()` delegates to `getMemoryIndex().list()`.
 
-- [ ] **Step 1: Write the failing test** — add a T-LIST block immediately after the `✅ T-ENGINE selection passed` line in `templates/cli/test/governance.js`:
+- [x] **Step 1: Write the failing test** — add a T-LIST block immediately after the `✅ T-ENGINE selection passed` line in `templates/cli/test/governance.js`:
 
 ```js
         console.log('T-LIST. Testing list() routes through the seam ...');
@@ -358,12 +358,12 @@ Add a `list()` method to the `MemoryIndex` contract so inspection reflects the a
         console.log('✅ T-LIST passed');
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 Expected: FAIL — `sq.list is not a function`.
 
-- [ ] **Step 3a: Add `SqliteFtsIndex.list()`** — in `templates/cli/memory-index.js`, add a `list()` method to the `SqliteFtsIndex` class, immediately after `stats()` (before `close()`):
+- [x] **Step 3a: Add `SqliteFtsIndex.list()`** — in `templates/cli/memory-index.js`, add a `list()` method to the `SqliteFtsIndex` class, immediately after `stats()` (before `close()`):
 
 ```js
     list() {
@@ -371,7 +371,7 @@ Expected: FAIL — `sq.list is not a function`.
     }
 ```
 
-- [ ] **Step 3b: Add `ZvecMemoryIndex.list()`** — in `templates/cli/memory-index-zvec.js`, add a `list()` method to the `ZvecMemoryIndex` class, immediately after `stats()` (before `close()`):
+- [x] **Step 3b: Add `ZvecMemoryIndex.list()`** — in `templates/cli/memory-index-zvec.js`, add a `list()` method to the `ZvecMemoryIndex` class, immediately after `stats()` (before `close()`):
 
 ```js
     list() {
@@ -386,7 +386,7 @@ Expected: FAIL — `sq.list is not a function`.
     }
 ```
 
-- [ ] **Step 3c: Route the service `list()`** — in `templates/cli/memory.service.js`, replace the current `list()` (line ~690–692):
+- [x] **Step 3c: Route the service `list()`** — in `templates/cli/memory.service.js`, replace the current `list()` (line ~690–692):
 
 ```js
 function list() {
@@ -402,17 +402,17 @@ function list() {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node ./.evo-lite/cli/test.js all`
 Expected: PASS — `✅ T-LIST passed` and full suite green.
 
-- [ ] **Step 5: Mirror to runtime**
+- [x] **Step 5: Mirror to runtime**
 
 Run: `node .evo-lite/cli/memory.js sync-runtime`
 Expected: three files copied; a second run reports 0 (parity).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/memory-index.js templates/cli/memory-index-zvec.js templates/cli/memory.service.js templates/cli/test/governance.js .evo-lite/cli/memory-index.js .evo-lite/cli/memory-index-zvec.js .evo-lite/cli/memory.service.js .evo-lite/cli/test/governance.js
