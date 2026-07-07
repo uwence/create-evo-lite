@@ -13,6 +13,7 @@ node_modules/
 !.evo-lite/verification/**/*.json
 !.evo-lite/hive/
 !.evo-lite/hive/**/*.json
+!.evo-lite/memory-engine.json
 # close --apply rollback journals are transient operational records; keep evidence tracked, journals not
 .evo-lite/verification/close-journal-*.json
 .evo-lite/verification/close.lock

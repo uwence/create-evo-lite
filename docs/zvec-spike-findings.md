@@ -75,3 +75,21 @@ both jieba and standard. So a `ZvecMemoryIndex` must:
    children self-hosting during nurture) is the remaining adoption risk, not recall.
 
 Probe scripts: `scratchpad/zvec-probe/ab.js`, `ab2.js` (throwaway, not committed).
+
+## Choosing the memory engine (shipped in spec:zvec-memory-index)
+
+The default engine is `sqlite-fts5-trigram`. To try Zvec:
+
+1. `npm i @zvec/zvec` (it is an `optionalDependency` — absent on unsupported
+   platforms, in which case the runtime stays on SQLite automatically).
+2. Select it, either:
+   - write `.evo-lite/memory-engine.json` → `{ "engine": "zvec" }` (committable,
+     inspectable project state — nurture never overwrites a child's choice), or
+   - set `EVO_LITE_MEMORY_ENGINE=zvec` (env overrides the file).
+3. `node .evo-lite/cli/memory.js memory-ab` prints a SQLite-vs-Zvec recall
+   divergence table over your real archive — the evidence for whether to flip.
+
+If `engine=zvec` is configured but `@zvec/zvec` cannot load, `getMemoryIndex()`
+warns once and falls back to `SqliteFtsIndex`, so a hive child never breaks for
+lacking the native dependency. The default is not flipped — that is a separate,
+evidence-gated decision.

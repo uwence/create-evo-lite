@@ -671,7 +671,7 @@ git commit -m "feat(memory): mem memory-ab offline SQLite-vs-Zvec recall compari
 - Modify: `README.md` or `docs/` (document opting into Zvec) — a short note
 - Mirror + verify
 
-- [ ] **Step 1: Un-ignore `memory-engine.json`.** In both root `.gitignore` and `templates/gitignore`, after the existing `.evo-lite/` un-ignore block, add:
+- [x] **Step 1: Un-ignore `memory-engine.json`.** In both root `.gitignore` and `templates/gitignore`, after the existing `.evo-lite/` un-ignore block, add:
 
 ```
 !.evo-lite/memory-engine.json
@@ -679,9 +679,9 @@ git commit -m "feat(memory): mem memory-ab offline SQLite-vs-Zvec recall compari
 
 (`.evo-lite/zvec/` stays ignored — do not add an exception for it.)
 
-- [ ] **Step 2: Document opting in.** Append a short "Choosing the memory engine" section to `docs/zvec-spike-findings.md` (or the project README) stating: default is `sqlite-fts5-trigram`; to try Zvec, `npm i @zvec/zvec` then write `.evo-lite/memory-engine.json` `{"engine":"zvec"}` (or set `EVO_LITE_MEMORY_ENGINE=zvec`); run `mem memory-ab` to compare recall; children fall back to SQLite automatically if the dep is absent.
+- [x] **Step 2: Document opting in.** Append a short "Choosing the memory engine" section to `docs/zvec-spike-findings.md` (or the project README) stating: default is `sqlite-fts5-trigram`; to try Zvec, `npm i @zvec/zvec` then write `.evo-lite/memory-engine.json` `{"engine":"zvec"}` (or set `EVO_LITE_MEMORY_ENGINE=zvec`); run `mem memory-ab` to compare recall; children fall back to SQLite automatically if the dep is absent.
 
-- [ ] **Step 3: Mirror + prove parity + full green.**
+- [x] **Step 3: Mirror + prove parity + full green.**
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js governance && node ./.evo-lite/cli/test.js all && node .evo-lite/cli/memory.js sync-runtime
@@ -689,7 +689,7 @@ node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js govern
 
 Expected: both scopes exit 0; the trailing `sync-runtime` reports `copied: 0` (byte-identical mirror — proves `ac-mirror-parity`).
 
-- [ ] **Step 4: Commit, then dogfood the contract.**
+- [x] **Step 4: Commit, then dogfood the contract.**
 
 ```bash
 git add .gitignore templates/gitignore docs/zvec-spike-findings.md
@@ -699,7 +699,7 @@ node .evo-lite/cli/memory.js verify-contract run docs/superpowers/specs/2026-07-
 
 Expected: all five criteria PASS (`ac-zvec-index-contract`, `ac-engine-selection-fallback`, `ac-memory-ab-command`, `ac-zvec-optional-not-gene-config`, `ac-mirror-parity`). `verify-contract` takes the spec **file path** and is fail-closed on a dirty tree — commit pending state first.
 
-- [ ] **Step 5: Commit the evidence.**
+- [x] **Step 5: Commit the evidence.**
 
 ```bash
 git add .evo-lite/verification/evidence-zvec-memory-index.json
