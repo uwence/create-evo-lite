@@ -8,6 +8,7 @@ const { generateSnippet } = require('./memory-index-util');
 
 const ENGINE = 'zvec-jieba-fts';
 const COLLECTION_NAME = 'evomemory';
+const MAX_ENUM = 1000; // Zvec querySync topk hard limit
 
 let Z = null;
 function loadZvec() {
@@ -64,9 +65,12 @@ class ZvecMemoryIndex {
         return this._col;
     }
 
+    // Zvec caps querySync topk at 1000; enumerate up to that. At the current
+    // archive scale (~10^2 docs) this is the full set. TODO(follow-up): paginate
+    // if a collection ever exceeds MAX_ENUM docs (stats/list/_maxId would undercount).
     _allDocs() {
         try {
-            return this._col_().querySync({ topk: 1000000, filter: 'namespace != ""' }) || [];
+            return this._col_().querySync({ topk: MAX_ENUM, filter: 'namespace != ""' }) || [];
         } catch (_) {
             return [];
         }
@@ -156,6 +160,17 @@ class ZvecMemoryIndex {
             namespaces[ns] = { chunks: count, present: count > 0, model: ENGINE, dims: '1' };
         }
         return { chunks: all.length, count: all.length, namespaces, first, last };
+    }
+
+    list() {
+        return this._allDocs()
+            .map(d => ({
+                id: Number(d.id),
+                content: d.fields.content,
+                namespace: d.fields.namespace,
+                timestamp: d.fields.timestamp,
+            }))
+            .sort((a, b) => a.id - b.id);
     }
 
     close() {

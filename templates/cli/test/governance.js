@@ -1999,6 +1999,41 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-ENGINE selection passed');
 
+        console.log('T-LIST. Testing list() routes through the seam ...');
+        {
+            const { SqliteFtsIndex } = require(path.join(CLI_DIR, 'memory-index.js'));
+            const runtime = createTempRuntimeRoot('list-seam');
+            await bootstrapRuntime(runtime.runtimeRoot);
+            const sq = new SqliteFtsIndex();
+            sq.initialize();
+            sq.upsert({ content: 'list seam sqlite doc', namespace: 'prose', timestamp: '2026-07-07T00:00:00Z' });
+            const sqList = sq.list();
+            assert.ok(Array.isArray(sqList) && sqList.length >= 1, 'SqliteFtsIndex.list() returns rows');
+            for (const key of ['id', 'content', 'namespace', 'timestamp']) {
+                assert.ok(key in sqList[0], `sqlite list row missing ${key}`);
+            }
+            assert.strictEqual(typeof sqList[0].id, 'number', 'sqlite list id is a number');
+
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (zvecAvailable) {
+                const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                const zi = new ZvecMemoryIndex();
+                zi.initialize();
+                zi.upsert({ content: 'list seam zvec doc', namespace: 'prose', timestamp: '2026-07-07T00:00:00Z' });
+                const zList = zi.list();
+                assert.ok(Array.isArray(zList) && zList.length >= 1, 'ZvecMemoryIndex.list() returns rows');
+                for (const key of ['id', 'content', 'namespace', 'timestamp']) {
+                    assert.ok(key in zList[0], `zvec list row missing ${key}`);
+                }
+                assert.strictEqual(typeof zList[0].id, 'number', 'zvec list id is a number');
+                zi.close();
+            } else {
+                console.log('   ⏭️ zvec list() subtest skipped — @zvec/zvec not installed');
+            }
+        }
+        console.log('✅ T-LIST passed');
+
         console.log('T-AB. Testing memory-ab wiring + graded rubric ...');
         {
             const ab = require(path.join(CLI_DIR, 'memory-ab.js'));

@@ -688,7 +688,7 @@ function forget(id) {
 }
 
 function list() {
-    return getDb().prepare('SELECT id, content, namespace, timestamp FROM raw_memory ORDER BY id ASC').all();
+    return getMemoryIndex().list();
 }
 
 function stats() {
