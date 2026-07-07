@@ -30,7 +30,7 @@ const {
     getTemplateRootDir,
     getWorkspaceRoot,
 } = require('./runtime');
-const { getMemoryIndex } = require('./memory-index');
+const { getMemoryIndex, resolveEngine, resetMemoryIndex } = require('./memory-index');
 
 const ACTIVE_CONTEXT_PATH = getActiveContextPath();
 const DB_PATH = getDbPath();
@@ -1643,8 +1643,20 @@ async function rebuildLocalIndex() {
     console.log('\n🧠 本地记忆索引重建管线 (Local Rebuild Pipeline) 🧠');
     console.log(`此操作将会从 ${files.length} 个原始记忆档案重建本地 FTS 索引。`);
 
+    const engine = resolveEngine();
     let backupName = null;
-    if (fs.existsSync(DB_PATH)) {
+    if (engine === 'zvec') {
+        // Zvec branch: close any open collection, drop the singleton, then wipe the
+        // derived collection dir. syncIndexMemory() below repopulates it from the
+        // raw_memory/*.md source of truth via the seam. Full-rebuild idempotent.
+        try { getMemoryIndex().close(); } catch (_) {}
+        resetMemoryIndex();
+        const zvecDir = path.join(path.dirname(DB_PATH), 'zvec');
+        if (fs.existsSync(zvecDir)) {
+            fs.rmSync(zvecDir, { recursive: true, force: true });
+            console.log('📦 旧 Zvec collection 已清除，将从 raw_memory 全量重建。');
+        }
+    } else if (fs.existsSync(DB_PATH)) {
         closeDb();
         const backupPath = `${DB_PATH}.${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
         fs.copyFileSync(DB_PATH, backupPath);

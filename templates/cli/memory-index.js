@@ -211,4 +211,10 @@ function getMemoryIndex() {
     return active;
 }
 
-module.exports = { SqliteFtsIndex, getMemoryIndex, resolveEngine, selectEngine };
+// Drop the cached engine so the next getMemoryIndex() re-initializes. Used by
+// rebuild after wiping a derived store so no stale handle points at a removed dir.
+function resetMemoryIndex() {
+    active = null;
+}
+
+module.exports = { SqliteFtsIndex, getMemoryIndex, resetMemoryIndex, resolveEngine, selectEngine, DEFAULT_ENGINE_CHOICE };

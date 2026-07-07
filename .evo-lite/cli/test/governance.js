@@ -2034,6 +2034,46 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-LIST passed');
 
+        console.log('T-REBUILD-ZVEC. Testing engine-aware rebuild (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
+            } else {
+                const runtime = createTempRuntimeRoot('rebuild-zvec');
+                await bootstrapRuntime(runtime.runtimeRoot);
+                const prevEngine = process.env.EVO_LITE_MEMORY_ENGINE;
+                process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+                try {
+                    delete require.cache[require.resolve(path.join(CLI_DIR, 'memory-index.js'))];
+                    delete require.cache[require.resolve(path.join(CLI_DIR, 'memory.service.js'))];
+                    const svc = require(path.join(CLI_DIR, 'memory.service.js'));
+                    const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+
+                    // Archive a doc — writes raw_memory/*.md AND upserts into the zvec engine.
+                    await svc.archive('rebuild probe doc mentioning memory.service recall', 'task');
+                    assert.strictEqual(mi.getMemoryIndex().stats().count, 1, 'one doc in zvec pre-rebuild');
+                    assert.ok(mi.getMemoryIndex().searchText('rebuild probe', { topK: 5 }).length > 0, 'doc recallable pre-rebuild');
+
+                    // Engine-aware rebuild: wipes .evo-lite/zvec, repopulates from raw_memory/*.md.
+                    await svc.rebuildLocalIndex();
+
+                    // Wipe proof: still exactly one doc (a no-wipe rebuild would double it to 2).
+                    assert.strictEqual(mi.getMemoryIndex().stats().count, 1, 'exactly one doc after wipe+rebuild (not doubled)');
+                    const after = mi.getMemoryIndex().searchText('rebuild probe', { topK: 5 });
+                    assert.ok(after.length > 0, 'doc still recallable after zvec rebuild (repopulated from archive)');
+                } finally {
+                    // Release the collection lock so later tests can open a zvec collection.
+                    try { require(path.join(CLI_DIR, 'memory-index.js')).getMemoryIndex().close(); } catch (_) {}
+                    if (prevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE; else process.env.EVO_LITE_MEMORY_ENGINE = prevEngine;
+                    delete require.cache[require.resolve(path.join(CLI_DIR, 'memory-index.js'))];
+                    delete require.cache[require.resolve(path.join(CLI_DIR, 'memory.service.js'))];
+                }
+            }
+        }
+        console.log('✅ T-REBUILD-ZVEC passed');
+
         console.log('T-AB. Testing memory-ab wiring + graded rubric ...');
         {
             const ab = require(path.join(CLI_DIR, 'memory-ab.js'));
