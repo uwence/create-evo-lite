@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Zvec Memory Index Implementation Plan: all tasks implemented
+ZvecMemoryIndex SHIPPED + closed (spec:zvec-memory-index done, 5/5 PASS, plan 5/5). Selectable non-default engine behind the MemoryIndex seam: jieba FTS, engine selection (EVO_LITE_MEMORY_ENGINE / .evo-lite/memory-engine.json) + @zvec/zvec-unavailable fallback to SQLite (children never forced), mem memory-ab offline recall A/B. SQLite still default. Real A/B on mother archive: Zvec recalls full task: ids + Chinese semantic docs that SQLite trigram misses. Executed inline (codex 0.142.5 OOM on Windows). NEXT candidates: (a) default-flip spec — flip engine to Zvec after mem memory-ab shows acceptable parity on a real archive (mother first, children opt-in); (b) content_exact 2nd field if A/B reveals code-symbol gaps the jieba+matchString router misses; (c) embeddings->hybrid recall once a local embedding model is chosen; (d) fix codex win32 binary; (e) residual command-verifier hardening.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
