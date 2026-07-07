@@ -1,6 +1,6 @@
 ---
 id: spec:memory-engine-default-flip
-status: draft
+status: done
 created: 2026-07-07
 linkedPlan: plan:memory-engine-default-flip
 ---

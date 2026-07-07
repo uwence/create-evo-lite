@@ -1,6 +1,6 @@
 ---
 id: plan:memory-engine-default-flip
-status: draft
+status: done
 created: 2026-07-07
 linkedSpec: spec:memory-engine-default-flip
 ---
@@ -291,7 +291,7 @@ A hard checkpoint. Present the evidence; the user decides. This task writes no p
 
 - [x] **Step 1: Present the evidence and ask** — summarize `docs/memory-engine-flip-evidence.md` (aggregate hit-rate/precision, any per-query regression, the judged sample) to the user and ask for an explicit **GO** or **NO-GO** against the spec threshold (no per-query regression, precision not materially worse, no `sqlite-better` counterexample).
 
-- [ ] **Step 2a (NO-GO only): Amend the spec and stop** — in the spec's Acceptance Criteria JSON block, delete the `ac-engine-aware-rebuild`, `ac-list-through-seam`, and `ac-default-flip-fallback` objects, leaving `ac-graded-rubric`, `ac-flip-evidence-artifact`, `ac-mirror-parity`. Confirm the evidence artifact's Verdict section records NO-GO. Commit:
+- [x] **Step 2a (NO-GO only): Amend the spec and stop** — in the spec's Acceptance Criteria JSON block, delete the `ac-engine-aware-rebuild`, `ac-list-through-seam`, and `ac-default-flip-fallback` objects, leaving `ac-graded-rubric`, `ac-flip-evidence-artifact`, `ac-mirror-parity`. Confirm the evidence artifact's Verdict section records NO-GO. Commit:
 
 ```bash
 git add docs/superpowers/specs/2026-07-07-memory-engine-default-flip.md
