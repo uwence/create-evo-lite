@@ -10,6 +10,9 @@
         "commander": "^14.0.2",
         "@modelcontextprotocol/sdk": "^1.29.0"
     },
+    "optionalDependencies": {
+        "@zvec/zvec": "^0.5.0"
+    },
     "engines": {
         "node": ">=20.0.0"
     },

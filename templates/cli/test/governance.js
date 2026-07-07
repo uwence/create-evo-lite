@@ -1924,6 +1924,57 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-MI MemoryIndex seam passed');
 
+        console.log('T-ZV. Testing ZvecMemoryIndex (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
+            } else {
+                const runtime = createTempRuntimeRoot('zvec-index');
+                await bootstrapRuntime(runtime.runtimeRoot);
+                const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                const idx = new ZvecMemoryIndex();
+                idx.initialize();
+
+                // round-trip + engine label
+                assert.strictEqual(idx.engine, 'zvec-jieba-fts');
+                const { id } = idx.upsert({ content: 'zvec seam probe memory.service recall', namespace: 'prose', timestamp: '2026-07-07T00:00:00Z' });
+                assert.strictEqual(typeof id, 'number');
+                const hits = idx.searchText('recall', { topK: 5 });
+                assert.ok(hits.some(h => h.id === id), 'upserted doc recallable');
+                assert.strictEqual(hits[0].match_source, 'zvec-fts');
+
+                // colon query -> matchString fallback, no throw
+                idx.upsert({ content: 'closure for task:zvec-memory-index-t2 evidence', namespace: 'prose', timestamp: '2026-07-07T00:01:00Z' });
+                const colon = idx.searchText('task:zvec-memory-index-t2', { topK: 5 });
+                assert.ok(colon.length > 0, 'colon query returns via matchString');
+                assert.strictEqual(colon[0].match_source, 'zvec-match');
+
+                // jieba Chinese recall
+                idx.upsert({ content: '向量数据库与机器学习结合用于语义检索', namespace: 'prose', timestamp: '2026-07-07T00:02:00Z' });
+                const zh = idx.searchText('机器学习', { topK: 5 });
+                assert.ok(zh.length > 0, 'jieba recalls Chinese word');
+
+                // scope filter
+                idx.upsert({ content: 'code namespace doc recall', namespace: 'code', timestamp: '2026-07-07T00:03:00Z' });
+                const scoped = idx.searchText('recall', { topK: 10, scope: 'code' });
+                assert.ok(scoped.every(r => r.namespace === 'code'), 'scope filters to code');
+
+                // delete changes
+                assert.strictEqual(idx.delete(id).changes, 1);
+                assert.strictEqual(idx.delete(9999999).changes, 0);
+
+                // stats shape parity with SqliteFtsIndex.stats
+                const s = idx.stats();
+                for (const key of ['chunks', 'count', 'namespaces', 'first', 'last']) {
+                    assert.ok(key in s, `stats missing ${key}`);
+                }
+                idx.close();
+            }
+        }
+        console.log('✅ T-ZV ZvecMemoryIndex passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
