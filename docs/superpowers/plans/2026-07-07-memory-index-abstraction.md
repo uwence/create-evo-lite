@@ -475,7 +475,7 @@ Expected: shows the `core-cli` family and its `files` array containing `memory.s
 
 - [x] **Step 2: Add the gene.** In `templates/cli/template-manifest.js`, add `'memory-index.js'` to the `core-cli` family `files` array, adjacent to the existing `'memory.service.js'` entry, matching the surrounding quote/indent/trailing-comma style exactly. (Done in T1 bundle `fb4176a` — had to precede sync-runtime.)
 
-- [ ] **Step 3: Mirror to runtime.** Run:
+- [x] **Step 3: Mirror to runtime.** Run:
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime
@@ -492,7 +492,7 @@ Expected: `template-manifest.js` copied; the runtime-mirror lock now includes `m
 > `templates/cli/memory-index.js` → `.evo-lite/cli/memory-index.js` once and
 > re-run. This is expected for new-file registration, not a code bug.
 
-- [ ] **Step 4: Prove full-suite green + mirror parity.** Run:
+- [x] **Step 4: Prove full-suite green + mirror parity.** Run:
 
 ```bash
 node ./.evo-lite/cli/test.js governance && node ./.evo-lite/cli/test.js all && node .evo-lite/cli/memory.js sync-runtime
@@ -500,19 +500,19 @@ node ./.evo-lite/cli/test.js governance && node ./.evo-lite/cli/test.js all && n
 
 Expected: both scopes exit 0; the final `sync-runtime` reports the mirror already in parity (no files copied on the second run) — this is the byte-identical proof for `ac-mirror-parity`.
 
-- [ ] **Step 5: Verify the contract criteria (dogfood the spec).** Run:
+- [x] **Step 5: Verify the contract criteria (dogfood the spec).** Run:
 
 ```bash
-node .evo-lite/cli/memory.js verify-contract run --spec spec:memory-index-abstraction
+node .evo-lite/cli/memory.js verify-contract run docs/superpowers/specs/2026-07-07-memory-index-abstraction.md
 ```
 
-Expected: all five criteria (`ac-index-seam-exists`, `ac-behavior-preserved`, `ac-index-unit-coverage`, `ac-gene-registered`, `ac-mirror-parity`) PASS or record evidence; no blocked/UNVERIFIED lines. (If the CLI flag differs, run `node .evo-lite/cli/memory.js verify-contract --help` and use the shown invocation.)
+Expected: all five criteria (`ac-index-seam-exists`, `ac-behavior-preserved`, `ac-index-unit-coverage`, `ac-gene-registered`, `ac-mirror-parity`) PASS. Note: `verify-contract` takes the spec **file path**, not the `spec:<id>` — and it is fail-closed on a dirty tree, so commit pending state first. All five PASS; evidence written to `.evo-lite/verification/evidence-memory-index-abstraction.json`.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.** (Gene registration itself landed in the T1 bundle `fb4176a` for self-brick avoidance; T3 here is the verification + evidence commit.)
 
 ```bash
-git add templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js
-git commit -m "feat(hive): register memory-index.js gene for nurture (spec:memory-index-abstraction T3)"
+git add .evo-lite/verification/evidence-memory-index-abstraction.json docs/superpowers/plans/2026-07-07-memory-index-abstraction.md
+git commit -m "test(memory): dogfood spec:memory-index-abstraction — 5/5 criteria PASS (T3)"
 ```
 
 ---
