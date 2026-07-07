@@ -435,7 +435,7 @@ Generalize `rebuildLocalIndex()`'s SQLite-hardcoded wipe preamble so, under `eng
 - Consumes: `resolveEngine()` → engine string; `getMemoryIndex().close()`; `getRawMemoryDir()`, `syncIndexMemory()`, `DB_PATH`.
 - Produces: `resetMemoryIndex()` (memory-index.js) clears the module `active` singleton so the next `getMemoryIndex()` re-initializes against a freshly-wiped collection; `rebuildLocalIndex()` becomes engine-aware.
 
-- [ ] **Step 1: Write the failing test** — add a T-REBUILD-ZVEC block immediately after `✅ T-LIST passed` in `templates/cli/test/governance.js`:
+- [x] **Step 1: Write the failing test** — add a T-REBUILD-ZVEC block immediately after `✅ T-LIST passed` in `templates/cli/test/governance.js`:
 
 ```js
         console.log('T-REBUILD-ZVEC. Testing engine-aware rebuild (skips if @zvec/zvec absent) ...');
@@ -475,12 +475,12 @@ Generalize `rebuildLocalIndex()`'s SQLite-hardcoded wipe preamble so, under `eng
         console.log('✅ T-REBUILD-ZVEC passed');
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 Expected: FAIL — after `rebuildLocalIndex()` the SQLite-only wipe leaves the zvec collection handle pointing at a stale dir (or the doc is not repopulated into zvec), so `after.length > 0` fails. (If `@zvec/zvec` is absent the block skips — run on a box where it is installed to see the red.)
 
-- [ ] **Step 3a: Add `resetMemoryIndex()`** — in `templates/cli/memory-index.js`, add after `getMemoryIndex()` and update the exports:
+- [x] **Step 3a: Add `resetMemoryIndex()`** — in `templates/cli/memory-index.js`, add after `getMemoryIndex()` and update the exports:
 
 ```js
 function resetMemoryIndex() {
@@ -492,7 +492,7 @@ module.exports = { SqliteFtsIndex, getMemoryIndex, resetMemoryIndex, resolveEngi
 
 (Replace the existing `module.exports = { SqliteFtsIndex, getMemoryIndex, resolveEngine, selectEngine };` line. `DEFAULT_ENGINE_CHOICE` is exported now so Task 6 can assert on it.)
 
-- [ ] **Step 3b: Import the new helpers in the service** — in `templates/cli/memory.service.js`, replace the seam import at line 33:
+- [x] **Step 3b: Import the new helpers in the service** — in `templates/cli/memory.service.js`, replace the seam import at line 33:
 
 ```js
 const { getMemoryIndex } = require('./memory-index');
@@ -504,7 +504,7 @@ with:
 const { getMemoryIndex, resolveEngine, resetMemoryIndex } = require('./memory-index');
 ```
 
-- [ ] **Step 3c: Make the wipe engine-aware** — in `templates/cli/memory.service.js`, replace the wipe preamble inside `rebuildLocalIndex()` (the block from `let backupName = null;` through `initDB();`, currently ~lines 1646–1656):
+- [x] **Step 3c: Make the wipe engine-aware** — in `templates/cli/memory.service.js`, replace the wipe preamble inside `rebuildLocalIndex()` (the block from `let backupName = null;` through `initDB();`, currently ~lines 1646–1656):
 
 ```js
     let backupName = null;
@@ -550,17 +550,17 @@ with:
 
 (`initDB()` stays unconditional — it only ensures the SQLite schema for non-memory tables; under zvec the memory docs live in the collection, not `raw_memory`.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node ./.evo-lite/cli/test.js all`
 Expected: PASS — `✅ T-REBUILD-ZVEC passed` and full suite green.
 
-- [ ] **Step 5: Mirror to runtime**
+- [x] **Step 5: Mirror to runtime**
 
 Run: `node .evo-lite/cli/memory.js sync-runtime`
 Expected: three files copied; a second run reports 0 (parity).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/memory-index.js templates/cli/memory.service.js templates/cli/test/governance.js .evo-lite/cli/memory-index.js .evo-lite/cli/memory.service.js .evo-lite/cli/test/governance.js
