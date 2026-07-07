@@ -1,6 +1,6 @@
 ---
 id: spec:zvec-memory-index
-status: draft
+status: done
 created: 2026-07-07
 linkedPlan: plan:zvec-memory-index
 ---

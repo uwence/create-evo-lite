@@ -2,7 +2,7 @@
 id: plan:zvec-memory-index
 linkedSpec: spec:zvec-memory-index
 format: superpowers
-status: draft
+status: done
 ---
 
 # Zvec Memory Index Implementation Plan
