@@ -409,7 +409,7 @@ git commit -m "feat(memory): ZvecMemoryIndex (jieba FTS) + optional dep + unit t
 **Interfaces:**
 - Produces (exported for tests): `resolveEngine() → 'zvec' | 'sqlite-fts5-trigram'`; `selectEngine(engine, loadZvecIndex) → MemoryIndex`. `loadZvecIndex()` returns the `ZvecMemoryIndex` **class** or `null` when unavailable.
 
-- [ ] **Step 1: Add selection logic to `templates/cli/memory-index.js`.** Add these near the factory (they use `fs`/`path`/`getDbPath` — add `const fs = require('fs'); const path = require('path');` and `const { getDbPath } = require('./runtime');` if not already imported; check the existing requires first and only add what is missing):
+- [x] **Step 1: Add selection logic to `templates/cli/memory-index.js`.** Add these near the factory (they use `fs`/`path`/`getDbPath` — add `const fs = require('fs'); const path = require('path');` and `const { getDbPath } = require('./runtime');` if not already imported; check the existing requires first and only add what is missing):
 
 ```js
 const DEFAULT_ENGINE_CHOICE = 'sqlite-fts5-trigram';
@@ -465,7 +465,7 @@ Extend `module.exports` to add `resolveEngine` and `selectEngine`:
 module.exports = { SqliteFtsIndex, getMemoryIndex, resolveEngine, selectEngine };
 ```
 
-- [ ] **Step 2: Add selection tests to `templates/cli/test/governance.js`** (run always — no Zvec needed), before `await runChildRuntimeTests();`:
+- [x] **Step 2: Add selection tests to `templates/cli/test/governance.js`** (run always — no Zvec needed), before `await runChildRuntimeTests();`:
 
 ```js
 console.log('T-ENGINE. Testing engine selection + fallback ...');
@@ -493,7 +493,7 @@ console.log('T-ENGINE. Testing engine selection + fallback ...');
 console.log('✅ T-ENGINE selection passed');
 ```
 
-- [ ] **Step 3: Mirror + full suite.**
+- [x] **Step 3: Mirror + full suite.**
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js all
@@ -501,7 +501,7 @@ node .evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/test.js all
 
 Expected: exit 0; `T-ENGINE` passes; default behavior (SQLite) unchanged.
 
-- [ ] **Step 4: Commit.**
+- [x] **Step 4: Commit.**
 
 ```bash
 git add templates/cli/memory-index.js .evo-lite/cli/memory-index.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js
