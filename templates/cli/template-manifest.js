@@ -11,6 +11,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'memory.js',
             'db.js',
             'models.js',
+            'memory-index.js',
             'memory.service.js',
             'runtime.js',
             'safety.js',

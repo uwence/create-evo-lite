@@ -314,7 +314,7 @@ async function runInitializer(projectRoot, options = {}) {
 }
 
 function resetCliModuleCache() {
-    for (const file of ['runtime.js', 'db.js', 'models.js', 'memory.service.js', 'mcp-detect.js', 'memory.js']) {
+    for (const file of ['runtime.js', 'db.js', 'models.js', 'memory-index.js', 'memory.service.js', 'mcp-detect.js', 'memory.js']) {
         const fullPath = path.join(CLI_DIR, file);
         delete require.cache[fullPath];
         if (fs.existsSync(fullPath)) {

@@ -1880,6 +1880,50 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-hive-portable harness fallback passed');
 
+        console.log('T-MI. Testing MemoryIndex seam (SqliteFtsIndex) ...');
+        {
+            const runtime = createTempRuntimeRoot('memory-index-seam');
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot);
+            const { getMemoryIndex, SqliteFtsIndex } = require(path.join(CLI_DIR, 'memory-index.js'));
+
+            // T-MI-1: singleton + engine label
+            const a = getMemoryIndex();
+            const b = getMemoryIndex();
+            assert.strictEqual(a, b, 'getMemoryIndex must be a singleton');
+            assert.ok(a instanceof SqliteFtsIndex, 'getMemoryIndex returns SqliteFtsIndex');
+            assert.strictEqual(a.engine, loaded.db.DEFAULT_ENGINE, 'engine label matches db.DEFAULT_ENGINE');
+
+            // T-MI-2: upsert returns numeric id, doc is immediately recallable via fts
+            const idx = getMemoryIndex();
+            idx.initialize();
+            const { id } = idx.upsert({
+                content: 'memory-index seam trigram probe zzqqxx',
+                namespace: 'prose',
+                timestamp: new Date().toISOString(),
+            });
+            assert.strictEqual(typeof id, 'number', 'upsert returns numeric id');
+            const hits = idx.searchText('zzqqxx', { topK: 5 });
+            assert.ok(hits.length > 0, 'upserted doc must be recallable');
+            assert.strictEqual(hits[0].match_source, 'fts', 'trigram hit reports fts source');
+
+            // T-MI-3: searchText scope filtering
+            const scoped = idx.searchText('zzqqxx', { topK: 5, scope: 'prose' });
+            assert.ok(scoped.every(r => r.namespace === 'prose'), 'scope filters to prose namespace');
+
+            // T-MI-4: delete returns { changes }; missing id does not throw
+            const missing = idx.delete(99999999);
+            assert.strictEqual(missing.changes, 0, 'delete of missing id returns changes: 0');
+            const existing = idx.delete(id);
+            assert.strictEqual(existing.changes, 1, 'delete of existing id returns changes: 1');
+
+            // T-MI-5: stats shape
+            const s = idx.stats();
+            for (const key of ['chunks', 'count', 'namespaces', 'first', 'last']) {
+                assert.ok(key in s, `stats missing ${key}`);
+            }
+        }
+        console.log('✅ T-MI MemoryIndex seam passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
