@@ -1,3 +1,10 @@
+---
+id: spec:memory-engine-default-flip
+status: draft
+created: 2026-07-07
+linkedPlan: plan:memory-engine-default-flip
+---
+
 # Spec: Memory Engine Default-Flip (Evidence → Decision → Execution)
 
 **Date:** 2026-07-07
