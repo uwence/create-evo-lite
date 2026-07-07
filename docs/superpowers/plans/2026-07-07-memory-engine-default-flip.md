@@ -283,7 +283,7 @@ git commit -m "docs(evidence): graded SQLite-vs-Zvec recall + flip verdict"
 A hard checkpoint. Present the evidence; the user decides. This task writes no product code; its deliverable is a recorded decision and a criteria set that matches it.
 
 **Files:**
-- Modify (NO-GO branch only): `docs/superpowers/specs/2026-07-07-memory-engine-default-flip.md` (delete the 3 GO-only criteria from the JSON block)
+- Modify: `docs/superpowers/specs/2026-07-07-memory-engine-default-flip.md` (NO-GO branch only — delete the 3 GO-only criteria from the JSON block)
 
 **Interfaces:**
 - Consumes: `docs/memory-engine-flip-evidence.md` (Task 2).
