@@ -9,7 +9,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Memory Index Abstraction Implementation Plan: all tasks implemented
+MemoryIndex seam SHIPPED + closed (spec:memory-index-abstraction done, 5/5 criteria PASS, plan 3/3, commit 8f0f190). SqliteFtsIndex owns all raw_memory/raw_memory_fts access; memory.service.js delegates recall/memorize/forget/stats; behavior-preserving (governance+integration green), gene registered, mirrors byte-identical. Executed inline (codex 0.142.5 OOM-crashed on Windows) per execution-model fallback. NEXT candidates: (a) ZvecMemoryIndex FTS-only spike behind the seam — gated on real code-symbol/path recall A/B (jieba + content_exact dual-field) vs trigram + native-binding maturity review; (b) engine-selection config so getMemoryIndex() returns a non-default engine (+ children choose during nurture); (c) fix/replace codex win32 binary before next delegation; (d) residual command-verifier hardening (loadPolicy throw-branch tests + BUILTIN_DEFAULT deep-freeze).
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
