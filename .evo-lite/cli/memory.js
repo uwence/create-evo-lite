@@ -599,6 +599,14 @@ function buildProgram() {
         await memoryService.rebuildLocalIndex();
     });
 
+    program.command('memory-ab')
+        .description('Offline A/B: compare SQLite vs Zvec recall over the raw_memory archive.')
+        .option('--from-logs', 'also sample queries from RECALL log lines')
+        .action(async (options) => {
+            const { runMemoryAb } = require('./memory-ab');
+            await runMemoryAb({ fromLogs: Boolean(options.fromLogs) });
+        });
+
     program.command('wash').description('Compatibility entry that points you to rebuild / /wash workflow.').action(() => {
         memoryService.wash();
     });

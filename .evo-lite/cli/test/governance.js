@@ -1999,6 +1999,17 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-ENGINE selection passed');
 
+        console.log('T-AB. Testing memory-ab wiring ...');
+        {
+            const ab = require(path.join(CLI_DIR, 'memory-ab.js'));
+            assert.ok(Array.isArray(ab.BUILTIN_QUERIES) && ab.BUILTIN_QUERIES.includes('R008'), 'builtin query set present');
+            assert.strictEqual(typeof ab.runMemoryAb, 'function', 'runMemoryAb exported');
+            // With @zvec present this rebuilds + compares; without it returns { rows: [] }. Either way it must not throw.
+            const res = await ab.runMemoryAb({ fromLogs: false });
+            assert.ok(res && Array.isArray(res.rows), 'runMemoryAb returns rows array');
+        }
+        console.log('✅ T-AB memory-ab passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
