@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 8cf8cb5d61e1961feac3f6ba5abb84e6b100a852
+> headSha: 6e83d68af6f98c955139bde6c3f862c9bca15a2a
 > upstreamSha: bdaa841fdb82d482b79f4cc79bfd684b923c20ab
-> ahead: 1
+> ahead: 4
 > behind: 0
-> focusUpdatedAt: 2026-07-08T01:08:34.760Z
+> focusUpdatedAt: 2026-07-08T06:53:39.309Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -25,6 +25,7 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [6e83d68] 2026-07-08 impl-keyed rebuild drop + degradation WARN + nurture engine preflight; closes plan hive-nurture-engine-migration: Closes plan:hive-nurture-engine-migration (all 5 tasks). Fixes destructive genes-vs-state engine-mig
 - [8cf8cb5] 2026-07-08 exact-boost-router + active-engine-display: Two zvec-flip follow-ups closed. P1 exact-boost router: multi-token recall now tier-ranks literal-ph
 - [6ab1c55] 2026-06-30 release-cut-2.1.0: PR5 release cut: package.json + package-lock.json 2.0.10->2.1.0 (T18h lockfile sync), CHANGELOG Unre
 - [83992b3] 2026-06-30 SDD + mem close --apply: verification-contract-closure-correctness: PR-CC 6 closure-path bug fixes (T56-T61) shipped via suba
@@ -34,7 +35,6 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 - [f505704] 2026-06-26 release-closure-rc2: Implements plan:release-closure-rc2 (spec:release-closure-rc2). Fixes 3 release blockers an external
 - [7e4d29e] 2026-06-26 release-closure-patch-closure: Closure for plan:release-closure-patch. All 5 tasks verified shipped in code + green tests (exit=0)
 - [27589d7] 2026-06-17 rc-closure-phase3-tests: P2 regression guard requested in RC review:
-- [63a60a6] 2026-06-17 rc-closure-phase3: RC closure phase 3 — last-mile consistency fixes before production dogfood:
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
