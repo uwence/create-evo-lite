@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 6e83d68af6f98c955139bde6c3f862c9bca15a2a
-> upstreamSha: bdaa841fdb82d482b79f4cc79bfd684b923c20ab
-> ahead: 4
+> headSha: 8a319d3de1fab20703f2428d8820424d7792d9b1
+> upstreamSha: 553469cdd74bbfebd42b3e385a8e7d8992af7be6
+> ahead: 1
 > behind: 0
-> focusUpdatedAt: 2026-07-08T06:53:39.309Z
+> focusUpdatedAt: 2026-07-08T07:50:48.831Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -25,6 +25,7 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [8a319d3] 2026-07-08 verify config-retrieval line sources active engine from live index; complements P2 memory-space fix: Fixes residual half of the engine-display bug: [配置/检索] top line read a stale models.js const (always
 - [6e83d68] 2026-07-08 impl-keyed rebuild drop + degradation WARN + nurture engine preflight; closes plan hive-nurture-engine-migration: Closes plan:hive-nurture-engine-migration (all 5 tasks). Fixes destructive genes-vs-state engine-mig
 - [8cf8cb5] 2026-07-08 exact-boost-router + active-engine-display: Two zvec-flip follow-ups closed. P1 exact-boost router: multi-token recall now tier-ranks literal-ph
 - [6ab1c55] 2026-06-30 release-cut-2.1.0: PR5 release cut: package.json + package-lock.json 2.0.10->2.1.0 (T18h lockfile sync), CHANGELOG Unre
@@ -34,7 +35,6 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 - [f10d2fe] 2026-06-26 verification-contract-phase0-closure: Closure for plan:verification-contract-phase0 (spec done). All 5 tasks shipped TDD-green (governance
 - [f505704] 2026-06-26 release-closure-rc2: Implements plan:release-closure-rc2 (spec:release-closure-rc2). Fixes 3 release blockers an external
 - [7e4d29e] 2026-06-26 release-closure-patch-closure: Closure for plan:release-closure-patch. All 5 tasks verified shipped in code + green tests (exit=0)
-- [27589d7] 2026-06-17 rc-closure-phase3-tests: P2 regression guard requested in RC review:
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
