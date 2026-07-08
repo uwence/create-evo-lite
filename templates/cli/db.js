@@ -259,6 +259,8 @@ function closeDb() {
 }
 
 module.exports = {
+    DEFAULT_ENGINE,
+    DEFAULT_ENGINE_VERSION,
     DEFAULT_NAMESPACE,
     NAMESPACES,
     closeDb,

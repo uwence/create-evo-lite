@@ -1898,6 +1898,10 @@ async function runGovernanceTests() {
             assert.strictEqual(a, b, 'getMemoryIndex must be a singleton');
             assert.ok(a instanceof SqliteFtsIndex, 'getMemoryIndex returns SqliteFtsIndex');
             assert.strictEqual(a.engine, loaded.db.DEFAULT_ENGINE, 'engine label matches db.DEFAULT_ENGINE');
+            // Assert the literal too — `undefined === undefined` would let a db.js
+            // that forgot to export DEFAULT_ENGINE pass this vacuously (it did, and
+            // surfaced as `[配置/检索]: undefined` on a sqlite-mode child).
+            assert.strictEqual(a.engine, 'sqlite-fts5-trigram', 'SqliteFtsIndex.engine must be the concrete engine id, not undefined');
 
             // T-MI-2: upsert returns numeric id, doc is immediately recallable via fts
             const idx = getMemoryIndex();
@@ -2040,6 +2044,30 @@ async function runGovernanceTests() {
                     if (prevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
                     else process.env.EVO_LITE_MEMORY_ENGINE = prevEngine;
                 }
+            }
+        }
+        // sqlite-mode sub-case: ALWAYS runs (no zvec dep). Guards the concrete
+        // engine id in the [配置/检索] line — a sqlite-mode or zvec-degraded child
+        // showed `undefined` here when db.js failed to export DEFAULT_ENGINE.
+        {
+            const prevEngine = process.env.EVO_LITE_MEMORY_ENGINE;
+            process.env.EVO_LITE_MEMORY_ENGINE = 'sqlite-fts5-trigram';
+            try {
+                const runtime = createTempRuntimeRoot('verify-config-retrieval-sqlite');
+                const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+                await loaded.service.memorize('config-retrieval sqlite probe: the top line must name a concrete engine.');
+                const output = await captureConsole(async () => {
+                    await loaded.service.verify();
+                });
+                const cfgLines = output.split('\n').filter(l => l.includes('[配置/检索]'));
+                assert.ok(cfgLines.length > 0, 'verify should emit a [配置/检索] line');
+                assert.ok(cfgLines.some(l => l.includes('sqlite-fts5-trigram')),
+                    '[配置/检索] must name the concrete sqlite engine when sqlite is active');
+                assert.ok(!cfgLines.some(l => l.includes('undefined')),
+                    '[配置/检索] must never render undefined (db.js must export DEFAULT_ENGINE)');
+            } finally {
+                if (prevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
+                else process.env.EVO_LITE_MEMORY_ENGINE = prevEngine;
             }
         }
         console.log('✅ T-CONFIG-RETRIEVAL verify retrieval-engine display passed');
