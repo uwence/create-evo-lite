@@ -4,9 +4,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-    WORKSPACE_ROOT, TEMPLATE_CLI_DIR, CLI_DIR, INIT_ENTRY,
+    WORKSPACE_ROOT, TEMPLATE_CLI_DIR, CLI_DIR, INIT_ENTRY, SHARED_CACHE_DIR,
     createTempRuntimeRoot, writeText, runGit, runPostCommitHook,
-    createHookTestRepo, readNdjson, bootstrapRuntime, captureConsole,
+    createHookTestRepo, readNdjson, bootstrapRuntime, captureConsole, resetCliModuleCache,
 } = require('./harness');
 
 async function runGovernanceTests() {
@@ -2016,7 +2016,7 @@ async function runGovernanceTests() {
 
         console.log('T-ENGINE. Testing engine selection + fallback ...');
         {
-            const { selectEngine, resolveEngine, SqliteFtsIndex } = require(path.join(CLI_DIR, 'memory-index.js'));
+            const { selectEngine, resolveEngine, resolveActiveImpl, SqliteFtsIndex } = require(path.join(CLI_DIR, 'memory-index.js'));
 
             // default: no zvec
             assert.ok(selectEngine('sqlite-fts5-trigram') instanceof SqliteFtsIndex, 'default is SqliteFtsIndex');
@@ -2042,8 +2042,132 @@ async function runGovernanceTests() {
             // a depless instance still degrades to SqliteFtsIndex (children-not-forced holds under the flip)
             const deplessDefault = selectEngine(DEFAULT_ENGINE_CHOICE, () => null);
             assert.ok(deplessDefault instanceof SqliteFtsIndex, 'depless default falls back to SqliteFtsIndex');
+
+            assert.strictEqual(typeof resolveActiveImpl, 'function', 'resolveActiveImpl must be exported');
+            const activePrev = process.env.EVO_LITE_MEMORY_ENGINE;
+            process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+            try {
+                assert.deepStrictEqual(
+                    resolveActiveImpl(() => null),
+                    { choice: 'zvec', impl: 'sqlite', degraded: true },
+                    'zvec choice with absent dep reports sqlite degradation'
+                );
+                class FakeActiveZvec {}
+                assert.deepStrictEqual(
+                    resolveActiveImpl(() => FakeActiveZvec),
+                    { choice: 'zvec', impl: 'zvec', degraded: false },
+                    'zvec choice with available dep reports active zvec impl'
+                );
+            } finally {
+                if (activePrev === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
+                else process.env.EVO_LITE_MEMORY_ENGINE = activePrev;
+            }
         }
         console.log('✅ T-ENGINE selection passed');
+
+        console.log('T-ENGINE-DEGRADE-WARN. Testing verify surfaces zvec-to-sqlite degradation ...');
+        {
+            const warningNeedle = '⚠️ [引擎降级]';
+            async function captureVerifyWithEngine(label, engine, patchMemoryIndex) {
+                const runtime = createTempRuntimeRoot(label);
+                await bootstrapRuntime(runtime.runtimeRoot, {
+                    EVO_LITE_MEMORY_ENGINE: 'sqlite-fts5-trigram',
+                    EVO_LITE_SKIP_GIT_STATUS: '1',
+                });
+                try { require(path.join(CLI_DIR, 'memory-index.js')).getMemoryIndex().close(); } catch (_) {}
+                try { require(path.join(CLI_DIR, 'db.js')).closeDb(); } catch (_) {}
+
+                resetCliModuleCache();
+                process.env.EVO_LITE_CACHE_DIR = SHARED_CACHE_DIR;
+                process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
+                process.env.EVO_LITE_SKIP_GIT_GUARD = '1';
+                process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
+                process.env.EVO_LITE_MEMORY_ENGINE = engine;
+                process.env.EVO_LITE_SKIP_GIT_STATUS = '1';
+
+                const memoryIndex = require(path.join(CLI_DIR, 'memory-index.js'));
+                if (patchMemoryIndex) patchMemoryIndex(memoryIndex);
+                const service = require(path.join(CLI_DIR, 'memory.service.js'));
+                return captureConsole(async () => {
+                    await service.verify();
+                });
+            }
+
+            const degradedOutput = await captureVerifyWithEngine('verify-engine-degraded', 'zvec', memoryIndex => {
+                const realResolveActiveImpl = memoryIndex.resolveActiveImpl;
+                const realSelectEngine = memoryIndex.selectEngine;
+                let singleton = null;
+                memoryIndex.resolveActiveImpl = () => realResolveActiveImpl(() => null);
+                memoryIndex.getMemoryIndex = () => {
+                    if (!singleton) singleton = realSelectEngine('zvec', () => null);
+                    return singleton;
+                };
+                memoryIndex.resetMemoryIndex = () => {
+                    try { if (singleton && typeof singleton.close === 'function') singleton.close(); } catch (_) {}
+                    singleton = null;
+                };
+            });
+            assert.ok(degradedOutput.includes(warningNeedle), 'verify must warn when zvec choice degrades to sqlite');
+            assert.ok(degradedOutput.includes('@zvec/zvec'), 'degradation warning must name missing @zvec/zvec dependency');
+            assert.ok(degradedOutput.includes('memory-engine.json') && degradedOutput.includes('sqlite-fts5-trigram'), 'degradation warning must name sqlite pin fix');
+
+            async function captureRebuildWithDegradedEngine() {
+                const runtime = createTempRuntimeRoot('rebuild-engine-degraded-warn');
+                const seeded = await bootstrapRuntime(runtime.runtimeRoot, {
+                    EVO_LITE_MEMORY_ENGINE: 'sqlite-fts5-trigram',
+                    EVO_LITE_SKIP_GIT_STATUS: '1',
+                });
+                await seeded.service.archive('rebuild degradation warning fixture must be written once', 'task', {
+                    id: 'rebuild-degraded-warn',
+                    timestamp: '2026-07-08T00:10:00Z',
+                    silent: true,
+                });
+                try { require(path.join(CLI_DIR, 'memory-index.js')).getMemoryIndex().close(); } catch (_) {}
+                try { require(path.join(CLI_DIR, 'db.js')).closeDb(); } catch (_) {}
+                fs.rmSync(path.join(runtime.runtimeRoot, 'index_memory'), { recursive: true, force: true });
+
+                resetCliModuleCache();
+                process.env.EVO_LITE_CACHE_DIR = SHARED_CACHE_DIR;
+                process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
+                process.env.EVO_LITE_SKIP_GIT_GUARD = '1';
+                process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
+                process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+                process.env.EVO_LITE_SKIP_GIT_STATUS = '1';
+
+                const memoryIndex = require(path.join(CLI_DIR, 'memory-index.js'));
+                const realResolveActiveImpl = memoryIndex.resolveActiveImpl;
+                const realSelectEngine = memoryIndex.selectEngine;
+                let singleton = null;
+                memoryIndex.resolveActiveImpl = () => realResolveActiveImpl(() => null);
+                memoryIndex.getMemoryIndex = () => {
+                    if (!singleton) singleton = realSelectEngine('zvec', () => null);
+                    return singleton;
+                };
+                memoryIndex.resetMemoryIndex = () => {
+                    try { if (singleton && typeof singleton.close === 'function') singleton.close(); } catch (_) {}
+                    singleton = null;
+                };
+
+                const service = require(path.join(CLI_DIR, 'memory.service.js'));
+                return captureConsole(async () => {
+                    await service.rebuildLocalIndex();
+                });
+            }
+
+            const rebuildOutput = await captureRebuildWithDegradedEngine();
+            const verifyWarn = degradedOutput.split('\n').find(line => line.includes(warningNeedle));
+            const rebuildWarn = rebuildOutput.split('\n').find(line => line.includes(warningNeedle));
+            assert.ok(rebuildWarn, 'rebuild must warn when zvec choice degrades to sqlite');
+            assert.strictEqual(rebuildWarn, verifyWarn, 'verify and rebuild must emit the same engine degradation warning');
+
+            const matchedOutput = await captureVerifyWithEngine('verify-engine-matched', 'sqlite-fts5-trigram');
+            assert.ok(!matchedOutput.includes(warningNeedle), 'verify must not warn when choice and impl match');
+
+            delete process.env.EVO_LITE_SKIP_GIT_STATUS;
+            process.env.EVO_LITE_MEMORY_ENGINE = 'sqlite-fts5-trigram';
+            resetCliModuleCache();
+        }
+        console.log('✅ T-ENGINE-DEGRADE-WARN verify warning passed');
 
         console.log('T-LIST. Testing list() routes through the seam ...');
         {
@@ -2281,6 +2405,38 @@ async function runChildRuntimeTests() {
             fs.writeFileSync(path.join(c, '.evo-lite', 'active_context.md'), 'CHILD STATE\n');
             return c;
         };
+
+        const listChildFiles = root => {
+            const out = [];
+            const walk = dir => {
+                for (const name of fs.readdirSync(dir)) {
+                    const full = path.join(dir, name);
+                    const rel = path.relative(root, full).replace(/\\/g, '/');
+                    if (fs.statSync(full).isDirectory()) walk(full);
+                    else out.push(rel);
+                }
+            };
+            walk(root);
+            return out.sort();
+        };
+
+        // engine-readiness preflight is report-only: no child state/deps/db writes
+        {
+            const m = mkMother(); const c = mkChild();
+            const beforeFiles = listChildFiles(c);
+            const dryReport = nurtureChild(m, { id: 'engine-kid', path: c }, { dryRun: true, exec: noGit, force: true, familiesOverride: FAM });
+            assert.ok(dryReport.engineReadiness, 'nurture dry-run must report engineReadiness');
+            assert.strictEqual(dryReport.engineReadiness.childChoice, 'zvec', 'default pushed child choice should be zvec');
+            assert.strictEqual(dryReport.engineReadiness.depPresent, false, 'synthetic child has no @zvec/zvec dep');
+            assert.ok(dryReport.engineReadiness.recommendation, 'engineReadiness should include a recommendation');
+            assert.ok(dryReport.engineReadiness.recommendation.includes('@zvec/zvec'), 'recommendation names zvec dep install');
+            assert.ok(dryReport.engineReadiness.recommendation.includes('memory-engine.json'), 'recommendation names sqlite pin');
+            assert.deepStrictEqual(listChildFiles(c), beforeFiles, 'engine-readiness dry-run probe must not write child files');
+            assert.ok(!fs.existsSync(path.join(c, '.evo-lite', 'memory-engine.json')), 'nurture probe must not write child memory-engine.json');
+            assert.ok(!fs.existsSync(path.join(c, '.evo-lite', 'memory.db')), 'nurture probe must not write child memory.db');
+            assert.ok(!fs.existsSync(path.join(c, '.evo-lite', 'raw_memory')), 'nurture probe must not write child raw_memory');
+            assert.ok(!fs.existsSync(path.join(c, '.evo-lite', 'index_memory')), 'nurture probe must not write child index_memory');
+        }
 
         // dry-run writes nothing
         const m1 = mkMother(); const c1 = mkChild(); const e1 = { id: 'kid', path: c1 };
@@ -2721,6 +2877,33 @@ async function runChildRuntimeTests() {
 
             fs.rmSync(tmp, { recursive: true, force: true });
             console.log('✅ T-r013-remote-drift passed');
+        }
+
+        console.log('T-engine-impl. resolveActiveImpl reports choice vs impl vs degraded ...');
+        {
+            const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+            assert.strictEqual(typeof mi.resolveActiveImpl, 'function', 'resolveActiveImpl must be exported');
+            const prevEnv = process.env.EVO_LITE_MEMORY_ENGINE;
+            process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+            try {
+                const degraded = mi.resolveActiveImpl(() => null);
+                assert.strictEqual(degraded.choice, 'zvec', 'choice reflects zvec selection');
+                assert.strictEqual(degraded.impl, 'sqlite', 'impl falls back to sqlite when zvec loader returns null');
+                assert.strictEqual(degraded.degraded, true, 'degraded true when choice zvec but impl sqlite');
+
+                const healthy = mi.resolveActiveImpl(() => (class FakeZvec {}));
+                assert.strictEqual(healthy.impl, 'zvec', 'impl zvec when loader returns a class');
+                assert.strictEqual(healthy.degraded, false, 'not degraded when impl matches choice');
+
+                process.env.EVO_LITE_MEMORY_ENGINE = 'sqlite-fts5-trigram';
+                const sqliteChoice = mi.resolveActiveImpl(() => (class FakeZvec {}));
+                assert.strictEqual(sqliteChoice.impl, 'sqlite', 'sqlite choice -> sqlite impl');
+                assert.strictEqual(sqliteChoice.degraded, false, 'sqlite choice never degraded');
+            } finally {
+                if (prevEnv === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
+                else process.env.EVO_LITE_MEMORY_ENGINE = prevEnv;
+            }
+            console.log('✅ T-engine-impl passed');
         }
 }
 

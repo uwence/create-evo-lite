@@ -193,6 +193,16 @@ function defaultLoadZvecIndex() {
     }
 }
 
+function resolveActiveImpl(loadZvecIndex = defaultLoadZvecIndex) {
+    const choice = resolveEngine();
+    const impl = choice === 'zvec' && loadZvecIndex() ? 'zvec' : 'sqlite';
+    return {
+        choice,
+        impl,
+        degraded: choice === 'zvec' && impl === 'sqlite',
+    };
+}
+
 function selectEngine(engine, loadZvecIndex = defaultLoadZvecIndex) {
     if (engine === 'zvec') {
         const ZvecIdx = loadZvecIndex();
@@ -217,4 +227,4 @@ function resetMemoryIndex() {
     active = null;
 }
 
-module.exports = { SqliteFtsIndex, getMemoryIndex, resetMemoryIndex, resolveEngine, selectEngine, DEFAULT_ENGINE_CHOICE };
+module.exports = { SqliteFtsIndex, getMemoryIndex, resetMemoryIndex, resolveEngine, resolveActiveImpl, selectEngine, DEFAULT_ENGINE_CHOICE };

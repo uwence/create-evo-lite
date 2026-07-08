@@ -72,7 +72,7 @@ engine-readiness preflight in `hive nurture`.
     {
       "id": "ac-no-duplication-on-rebuild",
       "description": "A rebuild whose actual impl is sqlite drops the sqlite store first, so a choice='zvec' + dep-absent rebuild over N archives yields exactly N records, never 2N.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js integration", "scope": "integration" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "scope": "all" } },
       "dependsOn": ["templates/cli/memory.service.js", ".evo-lite/cli/memory.service.js", "templates/cli/test/integration.js"]
     },
     {

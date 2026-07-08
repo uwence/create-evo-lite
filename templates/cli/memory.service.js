@@ -29,7 +29,7 @@ const {
     getTemplateRootDir,
     getWorkspaceRoot,
 } = require('./runtime');
-const { getMemoryIndex, resolveEngine, resetMemoryIndex } = require('./memory-index');
+const { getMemoryIndex, resolveActiveImpl, resolveEngine, resetMemoryIndex } = require('./memory-index');
 
 const ACTIVE_CONTEXT_PATH = getActiveContextPath();
 const DB_PATH = getDbPath();
@@ -1626,6 +1626,10 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
     return result;
 }
 
+function formatEngineDegradationWarning(engineImpl) {
+    return `⚠️ [引擎降级]: 已选引擎 "${engineImpl.choice}" 但 @zvec/zvec 不可用，实际回落 "${engineImpl.impl}"。修复：安装依赖 \`npm i @zvec/zvec\`，或将 .evo-lite/memory-engine.json 固定为 {"engine":"sqlite-fts5-trigram"} 后执行 rebuild。`;
+}
+
 async function rebuildLocalIndex() {
     const rawDir = getRawMemoryDir();
     if (!fs.existsSync(rawDir)) {
@@ -1642,9 +1646,13 @@ async function rebuildLocalIndex() {
     console.log('\n🧠 本地记忆索引重建管线 (Local Rebuild Pipeline) 🧠');
     console.log(`此操作将会从 ${files.length} 个原始记忆档案重建本地 FTS 索引。`);
 
-    const engine = resolveEngine();
+    const activeEngine = resolveActiveImpl();
+    if (activeEngine.degraded) {
+        console.log(formatEngineDegradationWarning(activeEngine));
+    }
+    const activeImpl = activeEngine.impl;
     let backupName = null;
-    if (engine === 'zvec') {
+    if (activeImpl === 'zvec') {
         // Zvec branch: close any open collection, drop the singleton, then wipe the
         // derived collection dir. syncIndexMemory() below repopulates it from the
         // raw_memory/*.md source of truth via the seam. Full-rebuild idempotent.
@@ -1656,6 +1664,12 @@ async function rebuildLocalIndex() {
             console.log('📦 旧 Zvec collection 已清除，将从 raw_memory 全量重建。');
         }
     } else if (fs.existsSync(DB_PATH)) {
+        // Release every cached sqlite handle before unlinking the file. Windows
+        // locks an open db and EBUSYs the unlink otherwise; resetMemoryIndex()
+        // only nulls the singleton, so close it explicitly first (mirrors the
+        // zvec branch above).
+        try { getMemoryIndex().close(); } catch (_) {}
+        resetMemoryIndex();
         closeDb();
         const backupPath = `${DB_PATH}.${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
         fs.copyFileSync(DB_PATH, backupPath);
@@ -1973,6 +1987,15 @@ async function verify(options = {}) {
         report.hasAlerts = true;
         report.localEngine = 'error';
         pushNextStep('检查 `.evo-lite/memory.db` 是否损坏；必要时先备份，再执行 `node .evo-lite/cli/memory.js rebuild`。');
+    }
+
+    // Engine choice/impl divergence: surface a non-fatal WARN when the configured
+    // engine is zvec but @zvec/zvec is absent so the runtime silently fell back to
+    // sqlite. Never hidden (see plan:hive-nurture-engine-migration), never fatal.
+    const engineImpl = resolveActiveImpl();
+    report.engineImpl = engineImpl;
+    if (engineImpl.degraded) {
+        log(formatEngineDegradationWarning(engineImpl));
     }
 
     const safetyState = getSafetyState();

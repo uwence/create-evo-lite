@@ -56,10 +56,10 @@ Add a resolver that reports the engine that will actually be used, distinct from
 **Interfaces:**
 - Produces: `resolveActiveImpl()` → `{ choice: string, impl: 'zvec'|'sqlite', degraded: boolean }`. `impl` is `'zvec'` only when `choice==='zvec'` AND the zvec index loads (`loadZvecIndex()` non-null); otherwise `'sqlite'`. `degraded` is `choice==='zvec' && impl==='sqlite'`. Uses the existing injected `loadZvecIndex` seam so tests simulate dep-absent without touching `node_modules`.
 
-- [ ] **Step 1:** Write failing governance test `T-engine-impl`: inject `loadZvecIndex: () => null`, set choice `zvec` via env, assert `resolveActiveImpl()` returns `{ impl:'sqlite', degraded:true }`; with a truthy fake loader assert `{ impl:'zvec', degraded:false }`.
-- [ ] **Step 2:** Run, confirm it fails (function absent).
-- [ ] **Step 3:** Implement `resolveActiveImpl`; export it.
-- [ ] **Step 4:** Run governance + full suite green.
+- [x] **Step 1:** Write failing governance test `T-engine-impl`: inject `loadZvecIndex: () => null`, set choice `zvec` via env, assert `resolveActiveImpl()` returns `{ impl:'sqlite', degraded:true }`; with a truthy fake loader assert `{ impl:'zvec', degraded:false }`.
+- [x] **Step 2:** Run, confirm it fails (function absent).
+- [x] **Step 3:** Implement `resolveActiveImpl`; export it.
+- [x] **Step 4:** Run governance + full suite green.
 
 ### Task 2: Impl-keyed drop in `rebuildLocalIndex` (the duplication fix)
 
@@ -72,10 +72,10 @@ Make the rebuild drop the sqlite store whenever the **actual impl** is sqlite, c
 **Interfaces:**
 - Changes: the branch at `memory.service.js:1647` keys off `resolveActiveImpl().impl` instead of `resolveEngine() === 'zvec'`. `impl==='zvec'` → wipe zvec collection dir; `impl==='sqlite'` → backup + `unlinkSync(DB_PATH)` before `initDB()`. No signature change.
 
-- [ ] **Step 1:** Write failing integration test: seed a temp workspace with N raw_memory archives + a pre-populated sqlite memory.db (N rows), inject `loadZvecIndex: () => null`, set choice `zvec`, run `rebuildLocalIndex`, assert final prose record count `=== N` (not `2N`) and engine tag `sqlite-fts5-trigram`.
-- [ ] **Step 2:** Run, confirm it fails (count `2N`, reproducing the CodePLC bug).
-- [ ] **Step 3:** Switch the branch to `resolveActiveImpl().impl`.
-- [ ] **Step 4:** Run integration + governance + full suite green.
+- [x] **Step 1:** Write failing integration test: seed a temp workspace with N raw_memory archives + a pre-populated sqlite memory.db (N rows), inject `loadZvecIndex: () => null`, set choice `zvec`, run `rebuildLocalIndex`, assert final prose record count `=== N` (not `2N`) and engine tag `sqlite-fts5-trigram`.
+- [x] **Step 2:** Run, confirm it fails (count `2N`, reproducing the CodePLC bug).
+- [x] **Step 3:** Switch the branch to `resolveActiveImpl().impl`.
+- [x] **Step 4:** Run integration + governance + full suite green.
 
 ### Task 3: Surface engine degradation in `verify` and `rebuild`
 
@@ -88,10 +88,10 @@ Emit an explicit, actionable WARN when the resolved choice is `zvec` but the imp
 **Interfaces:**
 - Produces: when `resolveActiveImpl().degraded`, verify prints a `⚠️ [引擎降级]` line naming the cause (`@zvec/zvec` absent) and the two fixes (install dep, or pin `memory-engine.json` to sqlite). Non-fatal (verify still exits 0 on an otherwise-healthy runtime). `rebuild` prints the same WARN before writing.
 
-- [ ] **Step 1:** Write failing governance test capturing verify stdout with injected dep-absent + choice zvec; assert the degraded WARN string is present, and absent when impl matches choice.
-- [ ] **Step 2:** Run, confirm it fails.
-- [ ] **Step 3:** Add the WARN emit in both verify and rebuild paths.
-- [ ] **Step 4:** Run governance + full suite green.
+- [x] **Step 1:** Write failing governance test capturing verify stdout with injected dep-absent + choice zvec; assert the degraded WARN string is present, and absent when impl matches choice.
+- [x] **Step 2:** Run, confirm it fails.
+- [x] **Step 3:** Add the WARN emit in both verify and rebuild paths.
+- [x] **Step 4:** Run governance + full suite green.
 
 ### Task 4: Nurture engine-readiness preflight (report-only)
 
@@ -104,10 +104,10 @@ Extend `hive nurture`'s dependency report so a child that will resolve to an unr
 **Interfaces:**
 - Produces: after a nurture that ships the memory-engine genes, the receipt/report includes an `engineReadiness` entry: `{ childChoice: 'zvec', depPresent: false, recommendation: 'install @zvec/zvec in child, or pin memory-engine.json to sqlite-fts5-trigram then rebuild' }`. Detection reads the child's resolvable state read-only (probe `node_modules/@zvec/zvec` presence + child `memory-engine.json`); it MUST NOT create or modify any child file. `--json` surfaces the same object.
 
-- [ ] **Step 1:** Write failing governance test with a synthetic child dir (no `@zvec/zvec`, no `memory-engine.json`); assert nurture report yields `engineReadiness.depPresent === false` and a non-empty recommendation; and that no file is written under the child (assert dir listing unchanged except the copied genes).
-- [ ] **Step 2:** Run, confirm it fails.
-- [ ] **Step 3:** Implement the read-only probe + report field.
-- [ ] **Step 4:** Run governance + full suite green.
+- [x] **Step 1:** Write failing governance test with a synthetic child dir (no `@zvec/zvec`, no `memory-engine.json`); assert nurture report yields `engineReadiness.depPresent === false` and a non-empty recommendation; and that no file is written under the child (assert dir listing unchanged except the copied genes).
+- [x] **Step 2:** Run, confirm it fails.
+- [x] **Step 3:** Implement the read-only probe + report field.
+- [x] **Step 4:** Run governance + full suite green.
 
 ### Task 5: Capstone — real-child regression against CodePLC
 
@@ -119,10 +119,10 @@ Prove the three fixes hold on the real child that exposed the bug, with the dep 
 **Interfaces:**
 - Verifies: full pipeline `nurture(report) → rebuild → verify` on the CodePLC-shaped fixture yields exactly 12 records (no duplication), a visible degradation WARN, and a nurture report flagging `depPresent:false`. No `@zvec/zvec` install, no child-state write.
 
-- [ ] **Step 1:** Author the capstone integration block over the 12-archive fixture.
-- [ ] **Step 2:** Run; confirm green end-to-end.
-- [ ] **Step 3:** Run full `node ./.evo-lite/cli/test.js`; confirm the whole suite green.
-- [ ] **Step 4:** Manual real-child check: `mem hive nurture CodePLC --dry-run` shows the engineReadiness flag; a forced sqlite rebuild in CodePLC stays at 12 records.
+- [x] **Step 1:** Author the capstone integration block over the 12-archive fixture.
+- [x] **Step 2:** Run; confirm green end-to-end.
+- [x] **Step 3:** Run full `node ./.evo-lite/cli/test.js`; confirm the whole suite green.
+- [x] **Step 4:** Manual real-child check: `mem hive nurture CodePLC --dry-run` shows the engineReadiness flag; a forced sqlite rebuild in CodePLC stays at 12 records.
 
 ---
 

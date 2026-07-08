@@ -102,6 +102,181 @@ async function runIntegrationTests() {
             console.log('✅ T-EXACT rerankByExact tier ordering passed');
         }
 
+        console.log('T-REBUILD-DEGRADED-SQLITE. Testing zvec choice with sqlite fallback rebuild does not duplicate records ...');
+        {
+            const runtime = createTempRuntimeRoot('rebuild-degraded-sqlite');
+            const fixtureCount = 3;
+            const prevEngine = process.env.EVO_LITE_MEMORY_ENGINE;
+            try {
+                const seeded = await bootstrapRuntime(runtime.runtimeRoot, {
+                    EVO_LITE_MEMORY_ENGINE: 'sqlite-fts5-trigram',
+                    EVO_LITE_SKIP_GIT_STATUS: '1',
+                });
+                for (let i = 0; i < fixtureCount; i++) {
+                    await seeded.service.archive(
+                        `degraded rebuild fixture ${i} must remain exactly once after rebuild`,
+                        'task',
+                        {
+                            id: `degraded-rebuild-${i}`,
+                            timestamp: `2026-07-08T00:00:0${i}Z`,
+                            silent: true,
+                        }
+                    );
+                }
+                assert.strictEqual(seeded.db.getDb().prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count, fixtureCount, 'fixture sqlite seed count');
+                try { require(path.join(CLI_DIR, 'memory-index.js')).getMemoryIndex().close(); } catch (_) {}
+                seeded.db.closeDb();
+                fs.rmSync(path.join(runtime.runtimeRoot, 'index_memory'), { recursive: true, force: true });
+
+                resetCliModuleCache();
+                process.env.EVO_LITE_CACHE_DIR = SHARED_CACHE_DIR;
+                process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
+                process.env.EVO_LITE_SKIP_GIT_GUARD = '1';
+                process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
+                process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+                process.env.EVO_LITE_SKIP_GIT_STATUS = '1';
+
+                const memoryIndexPath = path.join(CLI_DIR, 'memory-index.js');
+                const memoryIndex = require(memoryIndexPath);
+                const realResolveActiveImpl = memoryIndex.resolveActiveImpl;
+                const realSelectEngine = memoryIndex.selectEngine;
+                let singleton = null;
+                memoryIndex.resolveActiveImpl = () => realResolveActiveImpl(() => null);
+                memoryIndex.getMemoryIndex = () => {
+                    if (!singleton) singleton = realSelectEngine('zvec', () => null);
+                    return singleton;
+                };
+                memoryIndex.resetMemoryIndex = () => {
+                    try { if (singleton && typeof singleton.close === 'function') singleton.close(); } catch (_) {}
+                    singleton = null;
+                };
+
+                const service = require(path.join(CLI_DIR, 'memory.service.js'));
+                const rebuildOutput = await captureConsole(async () => {
+                    await service.rebuildLocalIndex();
+                });
+                assert.ok(/引擎降级/.test(rebuildOutput), 'rebuild emits engine-degradation WARN when zvec choice falls back to sqlite');
+                const verifyOutput = await captureConsole(async () => {
+                    await service.verify();
+                });
+                assert.ok(/引擎降级/.test(verifyOutput), 'verify emits engine-degradation WARN under zvec-choice sqlite-fallback');
+                const activeIndex = memoryIndex.getMemoryIndex();
+                const finalCount = activeIndex.stats().count;
+                assert.strictEqual(finalCount, fixtureCount, `degraded sqlite rebuild must leave exactly ${fixtureCount} prose records, got ${finalCount}`);
+                const engineTag = require(path.join(CLI_DIR, 'db.js')).getDb()
+                    .prepare("SELECT value FROM _meta WHERE key = 'memory_engine'")
+                    .get().value;
+                assert.strictEqual(engineTag, 'sqlite-fts5-trigram', 'degraded fallback must keep sqlite engine tag');
+            } finally {
+                if (prevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
+                else process.env.EVO_LITE_MEMORY_ENGINE = prevEngine;
+                delete process.env.EVO_LITE_SKIP_GIT_STATUS;
+                resetCliModuleCache();
+            }
+            console.log('✅ T-REBUILD-DEGRADED-SQLITE no-duplication passed');
+        }
+
+        console.log('T-CODEPLC-CAPSTONE. Testing CodePLC-shaped zvec-depless nurture/rebuild/verify pipeline ...');
+        {
+            const { nurtureChild } = require(path.join(CLI_DIR, 'hive', 'nurture.js'));
+            const { sha256 } = require(path.join(CLI_DIR, 'hive', 'status.js'));
+            const noGit = () => { throw new Error('not a git repo'); };
+            const mother = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-codeplc-mother-'));
+            fs.writeFileSync(path.join(mother, 'package.json'), '{"version":"9.9.9"}');
+            fs.mkdirSync(path.join(mother, 'templates', 'cli'), { recursive: true });
+            fs.mkdirSync(path.join(mother, 'templates', 'runtime'), { recursive: true });
+            fs.writeFileSync(path.join(mother, 'templates', 'cli', 'engine-gene.js'), 'module.exports = "engine gene";\n');
+            fs.writeFileSync(path.join(mother, 'templates', 'runtime', 'package.json'),
+                '{"dependencies":{"commander":"15.0.0","@zvec/zvec":"1.0.0"}}');
+            const child = createTempRuntimeRoot('codeplc-capstone');
+            fs.mkdirSync(path.join(child.runtimeRoot, 'cli'), { recursive: true });
+            fs.writeFileSync(path.join(child.runtimeRoot, 'cli', 'engine-gene.js'), 'module.exports = "old engine gene";\n');
+            fs.writeFileSync(path.join(child.runtimeRoot, 'package.json'), '{"version":"2.1.0","dependencies":{"commander":"15.0.0"}}');
+            const FAM = [
+                { key: 'core-cli', scope: 'sync-always', activeRoot: 'cli', templateRoot: 'cli', relativeDir: [], files: ['engine-gene.js'] },
+            ];
+
+            const fixtureCount = 12;
+            const seeded = await bootstrapRuntime(child.runtimeRoot, {
+                EVO_LITE_MEMORY_ENGINE: 'sqlite-fts5-trigram',
+                EVO_LITE_SKIP_GIT_STATUS: '1',
+            });
+            for (let i = 0; i < fixtureCount; i++) {
+                await seeded.service.archive(
+                    `CodePLC capstone archive ${i} must stay exactly once after degraded rebuild`,
+                    'task',
+                    {
+                        id: `codeplc-capstone-${String(i).padStart(2, '0')}`,
+                        timestamp: `2026-07-08T00:20:${String(i).padStart(2, '0')}Z`,
+                        silent: true,
+                    }
+                );
+            }
+            assert.strictEqual(seeded.db.getDb().prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count, fixtureCount, 'capstone seed count');
+            try { require(path.join(CLI_DIR, 'memory-index.js')).getMemoryIndex().close(); } catch (_) {}
+            seeded.db.closeDb();
+            fs.rmSync(path.join(child.runtimeRoot, 'index_memory'), { recursive: true, force: true });
+
+            const stateFiles = [
+                path.join(child.runtimeRoot, 'memory-engine.json'),
+                path.join(child.runtimeRoot, 'memory.db'),
+                path.join(child.runtimeRoot, 'raw_memory'),
+                path.join(child.runtimeRoot, 'index_memory'),
+            ];
+            const beforeState = stateFiles.map(target => fs.existsSync(target) ? sha256(fs.statSync(target).isDirectory() ? Buffer.from('dir') : fs.readFileSync(target)) : null);
+            const report = nurtureChild(mother, { id: 'CodePLC', path: child.workspaceRoot }, {
+                dryRun: true,
+                exec: noGit,
+                force: true,
+                familiesOverride: FAM,
+            });
+            assert.strictEqual(report.status, 'dry-run', 'capstone nurture should be report-only');
+            assert.strictEqual(report.engineReadiness.depPresent, false, 'capstone reports missing zvec dep');
+            assert.ok(report.engineReadiness.recommendation.includes('@zvec/zvec'), 'capstone recommendation names zvec dep');
+            const afterState = stateFiles.map(target => fs.existsSync(target) ? sha256(fs.statSync(target).isDirectory() ? Buffer.from('dir') : fs.readFileSync(target)) : null);
+            assert.deepStrictEqual(afterState, beforeState, 'nurture report must not write child engine state');
+            assert.ok(!fs.existsSync(path.join(child.runtimeRoot, 'node_modules', '@zvec', 'zvec')), 'capstone child remains zvec-depless');
+
+            resetCliModuleCache();
+            process.env.EVO_LITE_CACHE_DIR = SHARED_CACHE_DIR;
+            process.env.EVO_LITE_ROOT = child.runtimeRoot;
+            process.env.EVO_LITE_SKIP_GIT_GUARD = '1';
+            process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
+            process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+            process.env.EVO_LITE_SKIP_GIT_STATUS = '1';
+
+            const memoryIndex = require(path.join(CLI_DIR, 'memory-index.js'));
+            const realResolveActiveImpl = memoryIndex.resolveActiveImpl;
+            const realSelectEngine = memoryIndex.selectEngine;
+            let singleton = null;
+            memoryIndex.resolveActiveImpl = () => realResolveActiveImpl(() => null);
+            memoryIndex.getMemoryIndex = () => {
+                if (!singleton) singleton = realSelectEngine('zvec', () => null);
+                return singleton;
+            };
+            memoryIndex.resetMemoryIndex = () => {
+                try { if (singleton && typeof singleton.close === 'function') singleton.close(); } catch (_) {}
+                singleton = null;
+            };
+
+            const service = require(path.join(CLI_DIR, 'memory.service.js'));
+            const rebuildOutput = await captureConsole(async () => {
+                await service.rebuildLocalIndex();
+            });
+            assert.ok(rebuildOutput.includes('⚠️ [引擎降级]'), 'capstone rebuild emits degradation warning');
+            const finalCount = memoryIndex.getMemoryIndex().stats().count;
+            assert.strictEqual(finalCount, fixtureCount, `capstone rebuild must leave exactly ${fixtureCount} records, got ${finalCount}`);
+            const verifyOutput = await captureConsole(async () => {
+                await service.verify();
+            });
+            assert.ok(verifyOutput.includes('⚠️ [引擎降级]'), 'capstone verify emits degradation warning');
+
+            delete process.env.EVO_LITE_SKIP_GIT_STATUS;
+            process.env.EVO_LITE_MEMORY_ENGINE = 'sqlite-fts5-trigram';
+            resetCliModuleCache();
+            console.log(`✅ T-CODEPLC-CAPSTONE passed with records=${finalCount}`);
+        }
+
         console.log('1. Testing remember/recall/export...');
         const primary = createTempRuntimeRoot('memory');
         let primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);

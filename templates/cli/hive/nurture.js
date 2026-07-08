@@ -41,13 +41,40 @@ function diffRuntimeDeps(motherRoot, childRoot) {
     return gap;
 }
 
+function readChildEngineChoice(childRoot) {
+    const cfgPath = path.join(childRoot, '.evo-lite', 'memory-engine.json');
+    try {
+        if (fs.existsSync(cfgPath)) {
+            const cfg = readJson(cfgPath);
+            if (cfg && typeof cfg.engine === 'string') return cfg.engine;
+        }
+    } catch (_) {}
+    return 'zvec';
+}
+
+function hasChildZvecDependency(childRoot) {
+    return [
+        path.join(childRoot, '.evo-lite', 'node_modules', '@zvec', 'zvec'),
+        path.join(childRoot, 'node_modules', '@zvec', 'zvec'),
+    ].some(target => fs.existsSync(target));
+}
+
+function assessEngineReadiness(childRoot) {
+    const childChoice = readChildEngineChoice(childRoot);
+    const depPresent = hasChildZvecDependency(childRoot);
+    const recommendation = childChoice === 'zvec' && !depPresent
+        ? 'install @zvec/zvec in child, or pin memory-engine.json to sqlite-fts5-trigram then rebuild'
+        : '';
+    return { childChoice, depPresent, recommendation };
+}
+
 function nurtureChild(motherRoot, entry, opts = {}) {
     const now = opts.now || (() => new Date().toISOString());
     const exec = opts.exec || defaultExec;
     const childRoot = entry.path;
     const report = {
         status: null, copied: [], skipped: [], missingSources: [], dirtyFiles: [],
-        depGap: { missing: [], versionDiffs: [] }, tag: null, receiptPath: null, upToDate: false,
+        depGap: { missing: [], versionDiffs: [] }, engineReadiness: null, tag: null, receiptPath: null, upToDate: false,
     };
 
     if (!fs.existsSync(path.join(childRoot, '.evo-lite'))) {
@@ -88,6 +115,7 @@ function nurtureChild(motherRoot, entry, opts = {}) {
         }
     }
     report.depGap = diffRuntimeDeps(motherRoot, childRoot);
+    report.engineReadiness = assessEngineReadiness(childRoot);
     report.upToDate = report.copied.length === 0 && report.depGap.missing.length === 0;
 
     if (opts.dryRun || opts.check) {
@@ -155,7 +183,7 @@ function nurtureChild(motherRoot, entry, opts = {}) {
             const receipt = {
                 version: 'evo-hive-receipt@1', motherVersion,
                 families: [...new Set(entries.map(e => e.family))],
-                files: entries.map(e => e.label), nurturedAt: now(),
+                files: entries.map(e => e.label), engineReadiness: report.engineReadiness, nurturedAt: now(),
             };
             fs.mkdirSync(path.dirname(report.receiptPath), { recursive: true });
             fs.writeFileSync(report.receiptPath, JSON.stringify(receipt, null, 2) + '\n');
