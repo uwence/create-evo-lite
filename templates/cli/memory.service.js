@@ -1962,14 +1962,21 @@ async function verify(options = {}) {
         pushNextStep('检查最近的闭环是否漏掉了 `context track`，避免只有状态机更新而没有长期归档。');
     }
 
-    const { model, dims } = getActiveEngineInfo();
-    report.configuration = { model, dims };
-    log(`📡 [配置/检索]: ${model}`);
+    // getActiveEngineInfo() reports the durable raw_memory store id (always
+    // sqlite-fts5-trigram); initDB below needs it. But [配置/检索] must name the
+    // ACTIVE retrieval engine — zvec after the default flip — so source it from
+    // the live index. The old code printed getActiveEngineInfo().model here, a
+    // stale models.js constant that showed sqlite even when zvec was live
+    // (degraded fallbacks still read sqlite, which the degradation WARN explains).
+    const { model: rawStoreModel, dims } = getActiveEngineInfo();
+    const retrievalEngine = getMemoryIndex().engine;
+    report.configuration = { model: retrievalEngine, dims };
+    log(`📡 [配置/检索]: ${retrievalEngine}`);
     log(`📡 [配置/版本]: ${dims}`);
     log('\n📡 正在校验本地 FTS 记忆引擎...');
 
     try {
-        initDB(model, dims);
+        initDB(rawStoreModel, dims);
         const db = getDb();
         const hasRawTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory'").get();
         const hasFtsTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'raw_memory_fts'").get();

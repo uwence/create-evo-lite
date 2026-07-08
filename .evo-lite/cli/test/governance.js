@@ -2014,6 +2014,36 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-SPACE-ENGINE verify active-engine display passed');
 
+        console.log('T-CONFIG-RETRIEVAL. Testing verify [配置/检索] line names the ACTIVE retrieval engine (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
+            } else {
+                const prevEngine = process.env.EVO_LITE_MEMORY_ENGINE;
+                process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+                try {
+                    const runtime = createTempRuntimeRoot('verify-config-retrieval');
+                    const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+                    await loaded.service.memorize('config-retrieval display probe: the top line must name the live engine.');
+                    const output = await captureConsole(async () => {
+                        await loaded.service.verify();
+                    });
+                    const cfgLines = output.split('\n').filter(l => l.includes('[配置/检索]'));
+                    assert.ok(cfgLines.length > 0, 'verify should emit a [配置/检索] line');
+                    assert.ok(cfgLines.some(l => l.includes('zvec-jieba-fts')),
+                        '[配置/检索] must name the ACTIVE retrieval engine (zvec-jieba-fts), not the stale models.js constant');
+                    assert.ok(!cfgLines.some(l => l.includes('sqlite-fts5-trigram')),
+                        '[配置/检索] must NOT show the SQLite shadow engine when zvec is the live retrieval engine');
+                } finally {
+                    if (prevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
+                    else process.env.EVO_LITE_MEMORY_ENGINE = prevEngine;
+                }
+            }
+        }
+        console.log('✅ T-CONFIG-RETRIEVAL verify retrieval-engine display passed');
+
         console.log('T-ENGINE. Testing engine selection + fallback ...');
         {
             const { selectEngine, resolveEngine, resolveActiveImpl, SqliteFtsIndex } = require(path.join(CLI_DIR, 'memory-index.js'));
