@@ -3,13 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-
+> headSha: 8cf8cb5d61e1961feac3f6ba5abb84e6b100a852
+> upstreamSha: bdaa841fdb82d482b79f4cc79bfd684b923c20ab
+> ahead: 1
+> behind: 0
+> focusUpdatedAt: 2026-07-08T01:08:34.760Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Default memory engine FLIPPED to zvec (jieba FTS) — spec:memory-engine-default-flip done 6/6, pushed c42d39a. Graded memory-ab rubric (zvec mean prec 72% vs 63%, hit-parity 11/12) → user GO. list() routed through seam; engine-aware rebuild (zvec wipes .evo-lite/zvec + repopulates from raw_memory); config-only lossless rollback (memory-engine.json pin sqlite). Mother migrated (99 archives). Two flip-surfaced bugs fixed: (1) ZvecMemoryIndex FTS not durable across one-shot CLI — now optimizeSync+close on process exit (dirty-gated); (2) _allDocs topk 1000000 exceeded Zvec 1000 cap (silent empty). SQLite pinned for integration + T-MI reference suites. FOLLOW-UPS: verify memory-space display still reads SQLite _meta (not active engine); dogfood-cycle short-phrase ranking regression (jieba-OR vs exact phrase) → phrase-aware/exact-boost router; fix codex win32 OOM for delegation.
+Memory Engine Default-Flip Implementation Plan: all tasks implemented
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -21,6 +25,7 @@ Default memory engine FLIPPED to zvec (jieba FTS) — spec:memory-engine-default
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [8cf8cb5] 2026-07-08 exact-boost-router + active-engine-display: Two zvec-flip follow-ups closed. P1 exact-boost router: multi-token recall now tier-ranks literal-ph
 - [6ab1c55] 2026-06-30 release-cut-2.1.0: PR5 release cut: package.json + package-lock.json 2.0.10->2.1.0 (T18h lockfile sync), CHANGELOG Unre
 - [83992b3] 2026-06-30 SDD + mem close --apply: verification-contract-closure-correctness: PR-CC 6 closure-path bug fixes (T56-T61) shipped via suba
 - [689453e] 2026-06-27 verification-contract-phase2-closure: Closure for plan:verification-contract-phase2 (spec done), TDD-green (T38-T39 + integration, both sc
@@ -30,7 +35,6 @@ Default memory engine FLIPPED to zvec (jieba FTS) — spec:memory-engine-default
 - [7e4d29e] 2026-06-26 release-closure-patch-closure: Closure for plan:release-closure-patch. All 5 tasks verified shipped in code + green tests (exit=0)
 - [27589d7] 2026-06-17 rc-closure-phase3-tests: P2 regression guard requested in RC review:
 - [63a60a6] 2026-06-17 rc-closure-phase3: RC closure phase 3 — last-mile consistency fixes before production dogfood:
-- [8f59a44] 2026-06-16 rc-closure-phase2-dx-closure: Spec marked done (kills R011); plan r008Exempt (kills self-referential R008). Drift floor on dogfood
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
