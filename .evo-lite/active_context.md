@@ -21,6 +21,7 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 <!-- BEGIN_BACKLOG -->
 - [ ] [36e1] dirty-worktree下context track拒绝但错误不可见(context-mode吞stderr叠加显示no output). 修: 拒绝信息打到stdout+actionable提示. CodePLC dogfood 2026-07-08
 - [ ] [20bb] zvec fallback WARN不给开启zvec的具体命令(装@zvec/zvec+撤memory-engine.json pin+rebuild). 修: WARN body加3步. 新genes已大幅缓解. CodePLC dogfood 2026-07-08
+- [ ] [nurture-tag] hive nurture rollback tag evo-nurture-pre-<v> 按产品版本命名; 同版本(2.2.0)多次nurture撞tag'already exists', tag停在首次nurture前的陈旧态→回滚点失真. 修: tag加时间戳/序号或move到本次nurture前. CodePLC dogfood 2026-07-08
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
