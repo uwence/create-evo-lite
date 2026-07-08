@@ -6,7 +6,6 @@ const {
     closeDb,
     DEFAULT_NAMESPACE,
     getDb,
-    getNamespaceCounts,
     getNamespaces,
     initDB,
     insertSessionEvent,
@@ -1998,7 +1997,13 @@ async function verify(options = {}) {
         } else {
             log('✅ Evo-Lite 实体库状态: 已就绪');
             report.entityStore = 'ready';
-            const namespaceCounts = getNamespaceCounts(db);
+            // Report the ACTIVE index's own stats, not SQLite `_meta`. raw_memory
+            // is the durable archive (always SQLite), but the search index may be a
+            // different engine (zvec after the default flip). Sourcing engine/records
+            // from getNamespaceCounts(db) showed `engine=sqlite-fts5-trigram` even
+            // when zvec was live; the active index's stats() reports the truth for
+            // whichever engine is selected.
+            const namespaceCounts = getMemoryIndex().stats().namespaces || {};
             const rawMemoryCount = db.prepare('SELECT COUNT(*) AS count FROM raw_memory').get().count;
             let recordCount = 0;
             const nsLines = [];

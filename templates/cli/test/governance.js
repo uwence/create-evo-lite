@@ -1984,6 +1984,36 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-ZV ZvecMemoryIndex passed');
 
+        console.log('T-SPACE-ENGINE. Testing verify memory-space line reports the ACTIVE index engine (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
+            } else {
+                const prevEngine = process.env.EVO_LITE_MEMORY_ENGINE;
+                process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+                try {
+                    const runtime = createTempRuntimeRoot('verify-space-engine');
+                    const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+                    await loaded.service.memorize('active-engine display probe: the space line must name the live index.');
+                    const output = await captureConsole(async () => {
+                        await loaded.service.verify();
+                    });
+                    const spaceLines = output.split('\n').filter(l => l.includes('ns=') && l.includes('engine='));
+                    assert.ok(spaceLines.length > 0, 'verify should emit a memory-space distribution line');
+                    assert.ok(spaceLines.some(l => l.includes('engine=zvec-jieba-fts')),
+                        'memory-space line must report the ACTIVE engine (zvec-jieba-fts), not the SQLite _meta model');
+                    assert.ok(!spaceLines.some(l => l.includes('engine=sqlite-fts5-trigram')),
+                        'memory-space line must NOT show the SQLite shadow engine when zvec is live');
+                } finally {
+                    if (prevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
+                    else process.env.EVO_LITE_MEMORY_ENGINE = prevEngine;
+                }
+            }
+        }
+        console.log('✅ T-SPACE-ENGINE verify active-engine display passed');
+
         console.log('T-ENGINE. Testing engine selection + fallback ...');
         {
             const { selectEngine, resolveEngine, SqliteFtsIndex } = require(path.join(CLI_DIR, 'memory-index.js'));

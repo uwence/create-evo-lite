@@ -77,6 +77,31 @@ async function runIntegrationTests() {
             console.log('✅ T2 createTempTemplateCli copies subdirs passed');
         }
 
+        console.log('T-EXACT. Testing rerankByExact boosts literal-phrase docs above jieba-OR noise ...');
+        {
+            const utilPath = path.join(CLI_DIR, 'memory-index-util.js');
+            delete require.cache[require.resolve(utilPath)];
+            const { rerankByExact } = require(utilPath);
+            assert.strictEqual(typeof rerankByExact, 'function', 'rerankByExact not exported from memory-index-util.js');
+
+            // Engine (BM25-OR) order: OR-noise doc first, exact-phrase doc last.
+            const rows = [
+                { content: 'dogfood dogfood dogfood then a full cycle later on' }, // all tokens, no phrase -> tier1
+                { content: 'this doc mentions cycle repeatedly, cycle cycle' },    // partial tokens -> tier2
+                { content: 'we ran a dogfood cycle to validate the flip' },        // literal phrase -> tier0
+            ];
+            const ranked = rerankByExact(rows, 'dogfood cycle', r => r.content);
+            assert.ok(ranked[0].content.includes('dogfood cycle'), 'exact phrase doc must rank first');
+            assert.ok(ranked[1].content.includes('dogfood') && ranked[1].content.includes('cycle') && !ranked[1].content.includes('dogfood cycle'), 'all-tokens (AND) doc must rank second');
+            assert.strictEqual(ranked.length, 3, 'rerank must not drop rows');
+
+            // Single-token query: engine order preserved untouched.
+            const single = [{ content: 'b' }, { content: 'a' }];
+            const singleRanked = rerankByExact(single, 'token', r => r.content);
+            assert.strictEqual(singleRanked[0].content, 'b', 'single-token query must not reorder engine results');
+            console.log('✅ T-EXACT rerankByExact tier ordering passed');
+        }
+
         console.log('1. Testing remember/recall/export...');
         const primary = createTempRuntimeRoot('memory');
         let primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);

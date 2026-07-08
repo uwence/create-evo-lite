@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { getNamespaces } = require('./db');
 const { getDbPath } = require('./runtime');
-const { generateSnippet } = require('./memory-index-util');
+const { generateSnippet, rerankByExact } = require('./memory-index-util');
 
 const ENGINE = 'zvec-jieba-fts';
 const COLLECTION_NAME = 'evomemory';
@@ -129,7 +129,12 @@ class ZvecMemoryIndex {
     searchText(query, options = {}) {
         const col = this._col_();
         const topK = options.topK || 5;
-        const base = { fieldName: 'content', topk: topK };
+        // Over-fetch a wider candidate pool so an exact-phrase doc that jieba-OR
+        // BM25 ranked below topK is still available to rerankByExact to promote.
+        // Capped at MAX_ENUM (Zvec's querySync ceiling); at archive scale (~10^2
+        // docs) this is effectively the full set.
+        const poolK = Math.min(Math.max(topK * 10, 50), MAX_ENUM);
+        const base = { fieldName: 'content', topk: poolK };
         const filter = this._scopeFilter(options.scope);
         if (filter) base.filter = filter;
 
@@ -144,6 +149,8 @@ class ZvecMemoryIndex {
             rows = col.querySync({ ...base, fts: { matchString: query } });
             src = 'zvec-match';
         }
+
+        rows = rerankByExact(rows || [], query, d => d.fields.content).slice(0, topK);
 
         return (rows || []).map(d => ({
             id: Number(d.id),
