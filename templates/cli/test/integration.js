@@ -480,6 +480,46 @@ async function runIntegrationTests() {
         assert.ok(!contextAfterTrack.includes(`[${addResult.hash}]`), 'Resolved backlog hash still exists after track --resolve');
         assert.ok(/\n- \[(?:[a-f0-9]{7}|No-Git)\] \d{4}-\d{2}-\d{2} ProtocolRestore: /.test(contextAfterTrack), 'Trajectory did not record the new track entry with a short hash label');
 
+        console.log('2r. Testing context add --label + resolve by human label ...');
+        {
+            // Isolated runtime: this block runs its own track(), which would
+            // otherwise pollute the shared primary trajectory that 2a asserts on.
+            const labelRuntime = createTempRuntimeRoot('backlog-label');
+            const labelLoaded = await bootstrapRuntime(labelRuntime.runtimeRoot);
+            const svc = labelLoaded.service;
+
+            const labelAdd = svc.addTask('Real CODESYS smoke gate follow-up', { label: 'verify1' });
+            assert.strictEqual(labelAdd.hash, 'verify1', 'add --label must use the given label as the backlog id');
+            const ctxLabel = fs.readFileSync(path.join(labelRuntime.runtimeRoot, 'active_context.md'), 'utf8');
+            assert.ok(ctxLabel.includes('[verify1] Real CODESYS smoke gate follow-up'), 'labelled backlog line not persisted');
+
+            // Id extraction anchors past the checkbox: a completed `- [x]` line must
+            // not have its `[x]` mistaken for an id, and the placeholder has no id.
+            assert.strictEqual(svc.extractBacklogId('- [x] [done1] finished item'), 'done1', 'id must be read past a checked checkbox');
+            assert.strictEqual(svc.extractBacklogId('- [ ] 暂无活跃任务。'), null, 'placeholder line has no id');
+
+            // Invalid and duplicate labels are rejected so `--resolve` stays unambiguous.
+            assert.throws(() => svc.addTask('bad', { label: 'has space' }), /无效的 backlog label/, 'label with a space must be rejected');
+            assert.throws(() => svc.addTask('dup', { label: 'verify1' }), /已存在/, 'duplicate label must be rejected');
+
+            // Ambiguous id (e.g. a legacy hand-written collision) is rejected, not first-wins.
+            const dupMd = ctxLabel.replace(
+                '- [ ] [verify1] Real CODESYS smoke gate follow-up',
+                '- [ ] [verify1] Real CODESYS smoke gate follow-up\n- [ ] [verify1] duplicate legacy line'
+            );
+            assert.throws(() => svc.resolveBacklog(dupMd, 'verify1'), /多条 id/, 'ambiguous id must be rejected');
+
+            // A bare checkbox token like "x" must not resolve to anything.
+            assert.throws(() => svc.resolveBacklog(ctxLabel, 'x'), /未找到待 resolve/, 'a bare checkbox token must not resolve');
+
+            // Resolve by the human label end-to-end via track.
+            const resTrack = await svc.track('SmokeGateClosed', 'Closed the CODESYS smoke gate follow-up, resolved by its human label instead of a hash.', { resolve: 'verify1' });
+            assert.strictEqual(resTrack.status.resolve, 'resolved', 'track --resolve <label> did not resolve');
+            const ctxAfter = fs.readFileSync(path.join(labelRuntime.runtimeRoot, 'active_context.md'), 'utf8');
+            assert.ok(!ctxAfter.includes('[verify1]'), 'resolved label still present in backlog after track');
+            console.log('✅ 2r context add --label + resolve-by-label passed');
+        }
+
         console.log('2a. Testing context read / summary / validate ...');
         const contextSnapshot = primaryLoaded.service.readActiveContext();
         assert.strictEqual(contextSnapshot.path, path.join(primary.runtimeRoot, 'active_context.md'), 'context read returned the wrong active_context path');

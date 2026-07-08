@@ -82,6 +82,20 @@ function countMatches(markdown, pattern) {
     return (markdown.match(pattern) || []).length;
 }
 
+// A backlog line carries its id in the bracket right after the checkbox:
+// `- [ ] [id] text`. Ids are [A-Za-z0-9_-]{1,32}; the auto-generated 4-hex hash
+// is a subset of that set, so existing hashes keep resolving and human-written
+// labels like [verify1] resolve too. Anchoring past the checkbox is required so
+// a `- [x]` completed line does not have its `[x]` mistaken for an id. Single
+// source of truth for id semantics, shared by parse/add/resolve.
+const BACKLOG_ID_RE = /^- \[[ xX]\]\s*\[([A-Za-z0-9_-]{1,32})\]/;
+const BACKLOG_LABEL_RE = /^[A-Za-z0-9_-]{1,32}$/;
+
+function extractBacklogId(line) {
+    const match = String(line).trim().match(BACKLOG_ID_RE);
+    return match ? match[1] : null;
+}
+
 function parseBacklogTasks(backlog) {
     return backlog
         .split('\n')
@@ -90,12 +104,13 @@ function parseBacklogTasks(backlog) {
         .map(line => {
             const checkboxMatch = line.match(/^- \[([ xX])\]\s*(.*)$/);
             const body = checkboxMatch ? checkboxMatch[2].trim() : line;
-            const hashMatch = body.match(/^\[([a-f0-9]{4})\]\s*(.*)$/i);
+            const id = extractBacklogId(line);
+            const text = id ? body.replace(/^\[[A-Za-z0-9_-]{1,32}\]\s*/, '').trim() : body;
             return {
                 checked: checkboxMatch ? checkboxMatch[1].toLowerCase() === 'x' : false,
-                hash: hashMatch ? hashMatch[1] : null,
+                hash: id,
                 line,
-                text: hashMatch ? hashMatch[2].trim() : body,
+                text,
             };
         });
 }
@@ -1271,7 +1286,7 @@ async function syncIndexMemory() {
     return { files: fileCount, chunks: chunkCount, invalid, processed, skipped };
 }
 
-function addTask(task) {
+function addTask(task, options = {}) {
     ensureContextFile();
     const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
     const backlogLines = (readSection(markdown, 'BACKLOG') || '')
@@ -1284,7 +1299,23 @@ function addTask(task) {
         throw new Error('BACKLOG 任务数已达硬上限 (5条)。请先完成任务或移入搁置区。');
     }
 
-    const hash = Math.random().toString(16).slice(2, 6);
+    // Optional human label. When absent, keep the historical random 4-hex id.
+    // A given label must be well-formed and not collide with any existing
+    // backlog id (label or hash), so `--resolve <label>` stays unambiguous.
+    let hash;
+    const rawLabel = options.label === undefined || options.label === null ? '' : String(options.label).trim();
+    if (rawLabel !== '') {
+        if (!BACKLOG_LABEL_RE.test(rawLabel)) {
+            throw new Error(`无效的 backlog label "${rawLabel}"：仅允许 [A-Za-z0-9_-]，长度 1-32。`);
+        }
+        const existingIds = backlogLines.map(extractBacklogId).filter(Boolean).map(id => id.toLowerCase());
+        if (existingIds.includes(rawLabel.toLowerCase())) {
+            throw new Error(`backlog 已存在 id [${rawLabel}]，请换一个 label。`);
+        }
+        hash = rawLabel;
+    } else {
+        hash = Math.random().toString(16).slice(2, 6);
+    }
     const newTaskLine = `- [ ] [${hash}] ${task}`;
     const backlog = [...backlogLines.filter(line => !isPlaceholderLine(line)), newTaskLine].join('\n');
     fs.writeFileSync(ACTIVE_CONTEXT_PATH, writeSection(markdown, 'BACKLOG', backlog), 'utf8');
@@ -1488,20 +1519,21 @@ function updateTrajectory(markdown, mechanism, details, trajectoryId = getCommit
 function resolveBacklog(markdown, resolveHash) {
     const backlog = readSection(markdown, 'BACKLOG') || '';
     const lines = backlog.split('\n').filter(Boolean);
-    let removed = null;
-    const remaining = lines.filter(line => {
-        const match = line.match(/\[([a-f0-9]{4})\]/i);
-        if (match && match[1].toLowerCase() === resolveHash.toLowerCase()) {
-            removed = line;
-            return false;
-        }
-        return true;
+    const target = String(resolveHash).toLowerCase();
+    const matches = lines.filter(line => {
+        const id = extractBacklogId(line);
+        return id && id.toLowerCase() === target;
     });
 
-    if (!removed) {
-        throw new Error(`未找到待 resolve 的 backlog hash: ${resolveHash}`);
+    if (matches.length === 0) {
+        throw new Error(`未找到待 resolve 的 backlog id (hash 或 label): ${resolveHash}`);
+    }
+    if (matches.length > 1) {
+        throw new Error(`backlog 中有多条 id 为 [${resolveHash}] 的项，无法确定 resolve 目标：\n${matches.join('\n')}`);
     }
 
+    const removed = matches[0];
+    const remaining = lines.filter(line => line !== removed);
     return {
         markdown: writeSection(markdown, 'BACKLOG', remaining.length > 0 ? remaining.join('\n') : '- [ ] 暂无活跃任务。'),
         removed,
@@ -2456,6 +2488,8 @@ async function buildTakeoverRecall(contextSummary, verifyReport) {
 
 module.exports = {
     addTask,
+    resolveBacklog,
+    extractBacklogId,
     archive,
     buildArchiveFilename,
     buildArchiveId,

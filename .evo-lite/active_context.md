@@ -19,7 +19,9 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] 暂无活跃任务。
+- [ ] [79e9] resolve语义: --resolve只认4-hex hash([a-f0-9]{4}), 拒人类标签如[verify1]→抛错且backlog不自动移除(memory.service.js:1493). 修: resolve接受人类标签. CodePLC dogfood 2026-07-08
+- [ ] [36e1] dirty-worktree下context track拒绝但错误不可见(context-mode吞stderr叠加显示no output). 修: 拒绝信息打到stdout+actionable提示. CodePLC dogfood 2026-07-08
+- [ ] [20bb] zvec fallback WARN不给开启zvec的具体命令(装@zvec/zvec+撤memory-engine.json pin+rebuild). 修: WARN body加3步. 新genes已大幅缓解. CodePLC dogfood 2026-07-08
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)

@@ -404,7 +404,7 @@ async function runContextCommand(op, text, options = {}) {
         if (!taskText) {
             throw new Error('Usage: node .evo-lite/cli/memory.js context add "新任务描述"');
         }
-        console.log(memoryService.addTask(taskText));
+        console.log(memoryService.addTask(taskText, { label: options.label }));
         return;
     }
 
@@ -519,7 +519,7 @@ function buildProgram() {
         .requiredOption('--code-message <message>', 'Commit message for the code snapshot')
         .requiredOption('--mechanism <mechanism>', 'Mechanism label for trajectory tracking')
         .option('--details <text>', 'Detailed archive text override')
-        .option('--resolve <hash>', 'Resolve a backlog hash')
+        .option('--resolve <id>', 'Resolve a backlog item by its id (hash or label)')
         .option('--type <type>', 'Archive type', 'task')
         .option('--stage <mode>', 'How to prepare the code snapshot: staged or all', 'staged')
         .option('--meta-message <message>', 'Commit message for the runtime state snapshot', 'chore(meta): snapshot evo-lite runtime state')
@@ -638,16 +638,18 @@ function buildProgram() {
     )
         .requiredOption('--mechanism <mechanism>', 'Mechanism label for trajectory tracking')
         .option('--details <text>', 'Detailed archive text override')
-        .option('--resolve <hash>', 'Resolve a backlog hash')
+        .option('--resolve <id>', 'Resolve a backlog item by its id (hash or label)')
         .option('--type <type>', 'Archive type', 'task')
         .action(async (details, options) => {
             await runContextCommand('track', details, options);
         });
     withTextSourceOptions(
         contextCommand.command('add [text]').description('Add a new backlog item.')
-    ).action(async (text, options) => {
-        await runContextCommand('add', text, options);
-    });
+    )
+        .option('--label <label>', 'Human backlog id ([A-Za-z0-9_-]{1,32}) to resolve by later, instead of a random hash')
+        .action(async (text, options) => {
+            await runContextCommand('add', text, options);
+        });
     withTextSourceOptions(
         contextCommand.command('focus [text]').description('Set the current focus text.')
     ).action(async (text, options) => {
@@ -680,14 +682,16 @@ function buildProgram() {
     )
         .requiredOption('--mechanism <mechanism>', 'Mechanism label for trajectory tracking')
         .option('--details <text>', 'Detailed archive text override')
-        .option('--resolve <hash>', 'Resolve a backlog hash')
+        .option('--resolve <id>', 'Resolve a backlog item by its id (hash or label)')
         .option('--type <type>', 'Archive type', 'task')
         .action(async (details, options) => {
             await runContextCommand('track', details, options);
         });
-    withTextSourceOptions(program.command('add [text]').description('Alias for context add.')).action(async (text, options) => {
-        await runContextCommand('add', text, options);
-    });
+    withTextSourceOptions(program.command('add [text]').description('Alias for context add.'))
+        .option('--label <label>', 'Human backlog id ([A-Za-z0-9_-]{1,32}) to resolve by later, instead of a random hash')
+        .action(async (text, options) => {
+            await runContextCommand('add', text, options);
+        });
     withTextSourceOptions(program.command('focus [text]').description('Alias for context focus.')).action(async (text, options) => {
         await runContextCommand('focus', text, options);
     });
