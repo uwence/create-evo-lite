@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 8a319d3de1fab20703f2428d8820424d7792d9b1
+> headSha: 005b51143c184b9007ba56a139d4a32679c3b2cd
 > upstreamSha: 553469cdd74bbfebd42b3e385a8e7d8992af7be6
-> ahead: 1
+> ahead: 3
 > behind: 0
-> focusUpdatedAt: 2026-07-08T07:50:48.831Z
+> focusUpdatedAt: 2026-07-08T08:28:47.552Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -19,7 +19,6 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] [79e9] resolve语义: --resolve只认4-hex hash([a-f0-9]{4}), 拒人类标签如[verify1]→抛错且backlog不自动移除(memory.service.js:1493). 修: resolve接受人类标签. CodePLC dogfood 2026-07-08
 - [ ] [36e1] dirty-worktree下context track拒绝但错误不可见(context-mode吞stderr叠加显示no output). 修: 拒绝信息打到stdout+actionable提示. CodePLC dogfood 2026-07-08
 - [ ] [20bb] zvec fallback WARN不给开启zvec的具体命令(装@zvec/zvec+撤memory-engine.json pin+rebuild). 修: WARN body加3步. 新genes已大幅缓解. CodePLC dogfood 2026-07-08
 <!-- END_BACKLOG -->
@@ -27,6 +26,7 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [005b511] 2026-07-08 backlog id = hash|label via extractBacklogId; add --label + resolve-by-label; checkbox-anchored, validated, ambiguity-safe: Closes dogfood backlog 79e9 (resolve semantics). resolveBacklog+parseBacklogTasks+addTask now share 
 - [8a319d3] 2026-07-08 verify config-retrieval line sources active engine from live index; complements P2 memory-space fix: Fixes residual half of the engine-display bug: [配置/检索] top line read a stale models.js const (always
 - [6e83d68] 2026-07-08 impl-keyed rebuild drop + degradation WARN + nurture engine preflight; closes plan hive-nurture-engine-migration: Closes plan:hive-nurture-engine-migration (all 5 tasks). Fixes destructive genes-vs-state engine-mig
 - [8cf8cb5] 2026-07-08 exact-boost-router + active-engine-display: Two zvec-flip follow-ups closed. P1 exact-boost router: multi-token recall now tier-ranks literal-ph
@@ -36,7 +36,6 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 - [b31ae02] 2026-06-27 verification-contract-phase1-closure: Closure for plan:verification-contract-phase1 (spec done), engine TDD-green (T33-T37 + integration,
 - [f10d2fe] 2026-06-26 verification-contract-phase0-closure: Closure for plan:verification-contract-phase0 (spec done). All 5 tasks shipped TDD-green (governance
 - [f505704] 2026-06-26 release-closure-rc2: Implements plan:release-closure-rc2 (spec:release-closure-rc2). Fixes 3 release blockers an external
-- [7e4d29e] 2026-06-26 release-closure-patch-closure: Closure for plan:release-closure-patch. All 5 tasks verified shipped in code + green tests (exit=0)
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
