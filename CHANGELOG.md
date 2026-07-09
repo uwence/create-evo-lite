@@ -1,6 +1,10 @@
-## Unreleased
+## 2.3.0 - 2026-07-09
 
 ### Added
+- Managed zvec opt-in decision guide gene (`.agents/rules/zvec-optin.md`):
+  when a child should enable, verify (no-WARN + stable record count +
+  `mem memory-ab` A/B), or roll back the optional Zvec memory engine.
+  First gene sourced from the live child feedback outbox (CodePLC).
 - Hive child feedback loop (`spec:hive-child-feedback-loop`): child outbox
   `.evo-lite/hive/feedback.md` is collected exactly-once by `hive nurture`
   (read-only surfaced in `hive status`); new managed genes rule
@@ -10,7 +14,22 @@
   genes (detected against `runtime-mirror.lock.json` checksums) are now
   `refused` with a 🧬 mutation report instead of silently overwritten;
   `--force` is the explicit overwrite. Lockless legacy children WARN and
-  proceed.
+  proceed. Line-ending-only drift (git autocrlf worktrees) is exempt.
+
+### Fixed
+- Timestamped nurture rollback tags (`evo-nurture-pre-<v>-<stamp>`): a
+  same-version re-nurture now mints a fresh rollback point instead of
+  colliding with the stale first tag.
+- CLI top-level errors print to stdout (host wrappers that swallow stderr
+  surfaced refusals as "no output"); dirty-worktree track refusal message
+  is now actionable.
+- Engine degradation WARN gives the concrete 3-step zvec enable path
+  (install dep, remove pin, rebuild) alongside the sqlite pin option.
+- Fresh scaffolds no longer double-copy `.agents/rules` (whole-dir copy +
+  manifest copy), which minted `.bak` files and falsely injected the
+  hot-update warning into brand-new projects; rules are now split into
+  sync-always genes vs copy-on-init seeds and flow through the managed
+  manifest only.
 
 ## 2.2.0 - 2026-07-06
 
