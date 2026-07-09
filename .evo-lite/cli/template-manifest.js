@@ -62,6 +62,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'hive/status.js',
             'hive/nurture.js',
             'hive/commands.js',
+            'hive/feedback.js',
         ],
     },
     {

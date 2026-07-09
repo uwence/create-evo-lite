@@ -2347,6 +2347,36 @@ async function runGovernanceTests() {
 // Tests safe to run inside a child hive: they build their own temp mother/child
 // fixtures and never touch the repo's templates/ tree. Tasks 3-5 append here.
 async function runChildRuntimeTests() {
+    console.log('T-hive-feedback. Testing outbox grammar parse/mark ...');
+    {
+        const fb = require(path.join(CLI_DIR, 'hive', 'feedback.js'));
+        const text = '# Outbox\n\n- [ ] [stderr-eaten] context track errors invisible\n- [x] [old1] already collected\n- [ ] no label line\nnot a checkbox\n';
+        const items = fb.parseFeedback(text);
+        assert.strictEqual(items.length, 3, 'three checkbox lines parsed');
+        assert.deepStrictEqual(
+            items.map(i => [i.checked, i.label]),
+            [[false, 'stderr-eaten'], [true, 'old1'], [false, null]],
+            'checked state and labels extracted');
+        assert.strictEqual(items[0].text, 'context track errors invisible');
+
+        const marked = fb.markCollected(text, [items[0].line]);
+        assert.ok(marked.includes('- [x] [stderr-eaten]'), 'collected line checked');
+        assert.ok(marked.includes('- [ ] no label line'), 'unlisted line untouched');
+        assert.ok(marked.includes('# Outbox'), 'non-checkbox content preserved');
+
+        const tmpChild = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-fb-'));
+        const missing = fb.readOutbox(tmpChild);
+        assert.strictEqual(missing.exists, false);
+        assert.deepStrictEqual(missing.pending, [], 'missing outbox → zero pending');
+        fs.mkdirSync(path.dirname(fb.feedbackPath(tmpChild)), { recursive: true });
+        fs.writeFileSync(fb.feedbackPath(tmpChild), text);
+        const box = fb.readOutbox(tmpChild);
+        assert.strictEqual(box.exists, true);
+        assert.strictEqual(box.pending.length, 2, 'only unchecked items pending');
+        assert.strictEqual(box.pending[0].label, 'stderr-eaten');
+    }
+    console.log('✅ T-hive-feedback passed');
+
     console.log('T-hive-registry. Testing child registry round-trip + guards ...');
     {
         const reg = require(path.join(CLI_DIR, 'hive', 'registry.js'));
