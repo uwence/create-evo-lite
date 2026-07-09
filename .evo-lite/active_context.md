@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 20e5fb733db7484ab691927f6112bb440fa650ed
-> upstreamSha: 553469cdd74bbfebd42b3e385a8e7d8992af7be6
-> ahead: 5
+> headSha: a5ffd9fff84dd27976ff146a59df169888cf3e45
+> upstreamSha: 9c99006b8e4d4bd0dac87f7528c61bff5fb66ec0
+> ahead: 6
 > behind: 0
-> focusUpdatedAt: 2026-07-08T08:47:12.163Z
+> focusUpdatedAt: 2026-07-09T14:47:42.436Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -27,6 +27,7 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [a5ffd9f] 2026-07-09 plan:hive-child-feedback-loop: hive-child-feedback-loop shipped: feedback outbox (parse/mark/read module, nurture exactly-once coll
 - [20e5fb7] 2026-07-08 db.js exports DEFAULT_ENGINE(_VERSION); SqliteFtsIndex.engine concrete; tests de-vacuumed (literal + sqlite-mode guard): Latent bug exposed by config-retrieval fix during CodePLC nurture: db.js never exported DEFAULT_ENGI
 - [005b511] 2026-07-08 backlog id = hash|label via extractBacklogId; add --label + resolve-by-label; checkbox-anchored, validated, ambiguity-safe: Closes dogfood backlog 79e9 (resolve semantics). resolveBacklog+parseBacklogTasks+addTask now share
 - [8a319d3] 2026-07-08 verify config-retrieval line sources active engine from live index; complements P2 memory-space fix: Fixes residual half of the engine-display bug: [配置/检索] top line read a stale models.js const (always
@@ -36,7 +37,6 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 - [83992b3] 2026-06-30 SDD + mem close --apply: verification-contract-closure-correctness: PR-CC 6 closure-path bug fixes (T56-T61) shipped via suba
 - [689453e] 2026-06-27 verification-contract-phase2-closure: Closure for plan:verification-contract-phase2 (spec done), TDD-green (T38-T39 + integration, both sc
 - [b31ae02] 2026-06-27 verification-contract-phase1-closure: Closure for plan:verification-contract-phase1 (spec done), engine TDD-green (T33-T37 + integration,
-- [f10d2fe] 2026-06-26 verification-contract-phase0-closure: Closure for plan:verification-contract-phase0 (spec done). All 5 tasks shipped TDD-green (governance
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
