@@ -484,7 +484,7 @@ function ensureCleanWorktree() {
         if (isGitInvocationBlocked(error)) {
             throw new Error('当前环境禁止 Node 直接调用 Git。请优先使用 `./.evo-lite/mem` 或 `.evo-lite\\mem.cmd` 执行命令，或先手工确认 `git status --short` 后再继续 track。');
         }
-        throw new Error('工作区有未提交的代码变更！请先执行 git commit 保存代码，再执行 track 记录轨迹。');
+        throw new Error('工作区有未提交的代码变更！先 `git status --short` 查看改动，`git commit` 保存后再执行 track；仅想跳过守卫时可设 EVO_LITE_SKIP_GIT_GUARD=1。');
     }
 }
 
@@ -1659,7 +1659,11 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
 }
 
 function formatEngineDegradationWarning(engineImpl) {
-    return `⚠️ [引擎降级]: 已选引擎 "${engineImpl.choice}" 但 @zvec/zvec 不可用，实际回落 "${engineImpl.impl}"。修复：安装依赖 \`npm i @zvec/zvec\`，或将 .evo-lite/memory-engine.json 固定为 {"engine":"sqlite-fts5-trigram"} 后执行 rebuild。`;
+    return [
+        `⚠️ [引擎降级]: 已选引擎 "${engineImpl.choice}" 但 @zvec/zvec 不可用，实际回落 "${engineImpl.impl}"。二选一：`,
+        '   启用 zvec（3 步）: ① 在 .evo-lite/ 内执行 `npm i @zvec/zvec` ② 移除 .evo-lite/memory-engine.json 中的 sqlite pin（如存在） ③ 执行 `mem rebuild`',
+        '   或留在 sqlite: 将 .evo-lite/memory-engine.json 固定为 {"engine":"sqlite-fts5-trigram"} 后执行 `mem rebuild`',
+    ].join('\n');
 }
 
 async function rebuildLocalIndex() {

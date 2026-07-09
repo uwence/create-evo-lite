@@ -739,7 +739,9 @@ async function run(argv = process.argv) {
 
 if (require.main === module) {
     run().catch(error => {
-        console.error(`❌ CLI 执行出错: ${error.message}`);
+        // stdout, not stderr: host wrappers (e.g. context-mode) swallow stderr and
+        // surface "no output" — the refusal must reach the user either way.
+        console.log(`❌ CLI 执行出错: ${error.message}`);
         process.exit(1);
     });
 }

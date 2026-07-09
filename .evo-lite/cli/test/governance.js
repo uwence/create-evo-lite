@@ -2178,6 +2178,8 @@ async function runGovernanceTests() {
             assert.ok(degradedOutput.includes(warningNeedle), 'verify must warn when zvec choice degrades to sqlite');
             assert.ok(degradedOutput.includes('@zvec/zvec'), 'degradation warning must name missing @zvec/zvec dependency');
             assert.ok(degradedOutput.includes('memory-engine.json') && degradedOutput.includes('sqlite-fts5-trigram'), 'degradation warning must name sqlite pin fix');
+            assert.ok(degradedOutput.includes('npm i @zvec/zvec') && degradedOutput.includes('rebuild'),
+                'degradation warning must give the concrete zvec enable steps (install + rebuild)');
 
             async function captureRebuildWithDegradedEngine() {
                 const runtime = createTempRuntimeRoot('rebuild-engine-degraded-warn');
@@ -2602,10 +2604,18 @@ async function runChildRuntimeTests() {
         assert.ok(refused.dirtyFiles.length > 0, 'dirty files named');
         const cleanCalls = [];
         const cleanGit = (args, cwd) => { cleanCalls.push(args.join(' ')); return args[0] === 'status' ? '' : ''; };
-        const tagged = nurtureChild(m4, { id: 'k4', path: c4 }, { exec: cleanGit, familiesOverride: FAM });
+        const tagged = nurtureChild(m4, { id: 'k4', path: c4 }, { exec: cleanGit, familiesOverride: FAM, now: () => '2026-07-03T01:00:00.000Z' });
         assert.strictEqual(tagged.status, 'applied');
-        assert.strictEqual(tagged.tag, 'evo-nurture-pre-9.9.9');
-        assert.ok(cleanCalls.some(c => c.startsWith('tag -a evo-nurture-pre-9.9.9')), 'rollback tag created');
+        assert.strictEqual(tagged.tag, 'evo-nurture-pre-9.9.9-20260703T010000', 'rollback tag carries a timestamp');
+        assert.ok(cleanCalls.some(c => c.startsWith('tag -a evo-nurture-pre-9.9.9-20260703T010000')), 'rollback tag created');
+
+        // same-version re-nurture gets a DISTINCT rollback point (no tag collision)
+        const cleanCalls2 = [];
+        const cleanGit2 = (args, cwd) => { cleanCalls2.push(args.join(' ')); return ''; };
+        const tagged2 = nurtureChild(m4, { id: 'k4', path: c4 }, { exec: cleanGit2, familiesOverride: FAM, now: () => '2026-07-03T02:00:00.000Z' });
+        assert.strictEqual(tagged2.status, 'applied');
+        assert.strictEqual(tagged2.tag, 'evo-nurture-pre-9.9.9-20260703T020000', 're-nurture at same mother version mints a fresh tag');
+        assert.notStrictEqual(tagged2.tag, tagged.tag, 'same-version tags must not collide');
     }
     console.log('✅ T-hive-nurture passed');
 

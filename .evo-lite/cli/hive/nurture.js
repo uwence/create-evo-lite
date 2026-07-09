@@ -179,10 +179,13 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     }
     if (gitAvailable) {
         try {
-            report.tag = `evo-nurture-pre-${motherVersion}`;
+            // Timestamped so a same-version re-nurture mints a FRESH rollback point —
+            // a bare evo-nurture-pre-<v> collides and leaves the tag on a stale state.
+            const stamp = String(now()).replace(/[-:]/g, '').replace(/\..*$/, '');
+            report.tag = `evo-nurture-pre-${motherVersion}-${stamp}`;
             exec(['tag', '-a', report.tag, '-m', `pre-nurture rollback point (mother ${motherVersion})`], childRoot);
         } catch {
-            report.tag = null; // tag may already exist from a retried nurture — non-fatal
+            report.tag = null; // tag creation failed (odd repo state) — non-fatal
         }
     }
 
