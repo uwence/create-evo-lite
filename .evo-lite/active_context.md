@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 31a4c2d28a6585c3e9b7a643c839ee5601f3dfea
+> headSha: 64267b4c68909b5151e9f4ee59dfc33962234650
 > upstreamSha: 9c99006b8e4d4bd0dac87f7528c61bff5fb66ec0
-> ahead: 9
+> ahead: 14
 > behind: 0
-> focusUpdatedAt: 2026-07-09T14:58:06.472Z
+> focusUpdatedAt: 2026-07-09T15:11:55.398Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -19,12 +19,13 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] [zvec-optin-docs] 子巢zvec opt-in决策文档缺失: 子巢何时该主动启用zvec、启用后A/B验证步骤(memory-ab)、与memory-engine.json pin的关系. 来源: CodePLC feedback outbox首次实收(2026-07-09 nurture)
+- [ ] 暂无活跃任务。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [64267b4] 2026-07-09 child-feedback-closure: zvec-optin-docs closed: new managed rule gene .agents/rules/zvec-optin.md (agents-rules family) - wh
 - [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 20bb fixed in eb25af2: engine degradation WARN now gives concrete 3-step zvec enable path (npm i @zv
 - [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 36e1 fixed in eb25af2: CLI top-level errors print to stdout so context-mode-wrapped hosts see the re
 - [eb25af2] 2026-07-09 backlog-dogfood-fixes: Three CodePLC dogfood fixes: (1) nurture-tag: rollback tag now evo-nurture-pre-<v>-<stamp> via injec
@@ -34,7 +35,6 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 - [8a319d3] 2026-07-08 verify config-retrieval line sources active engine from live index; complements P2 memory-space fix: Fixes residual half of the engine-display bug: [配置/检索] top line read a stale models.js const (always
 - [6e83d68] 2026-07-08 impl-keyed rebuild drop + degradation WARN + nurture engine preflight; closes plan hive-nurture-engine-migration: Closes plan:hive-nurture-engine-migration (all 5 tasks). Fixes destructive genes-vs-state engine-mig
 - [8cf8cb5] 2026-07-08 exact-boost-router + active-engine-display: Two zvec-flip follow-ups closed. P1 exact-boost router: multi-token recall now tier-ranks literal-ph
-- [6ab1c55] 2026-06-30 release-cut-2.1.0: PR5 release cut: package.json + package-lock.json 2.0.10->2.1.0 (T18h lockfile sync), CHANGELOG Unre
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
