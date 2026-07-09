@@ -74,14 +74,30 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
         files: ['evo.md', 'commit.md', 'mem.md', 'walkthrough.md'],
     },
     {
-        // Only this one rule is nurture-managed — the rest of .agents/rules/ is
-        // copied once at init and stays child-customizable.
+        // sync-always rule genes: nurture-managed, byte-identical across the hive.
         key: 'agents-rules',
         scope: 'sync-always',
         activeRoot: 'workspace',
         templateRoot: 'root',
         relativeDir: ['.agents', 'rules'],
         files: ['hive-feedback.md', 'zvec-optin.md'],
+    },
+    {
+        // copy-on-init rules: seeded once at scaffold, then owned by the project
+        // (child-customizable; never nurtured, never .bak-churned on re-init).
+        key: 'agents-rules-init',
+        scope: 'copy-on-init',
+        activeRoot: 'workspace',
+        templateRoot: 'root',
+        relativeDir: ['.agents', 'rules'],
+        files: [
+            'architecture.md',
+            'evo-lite.md',
+            'execution-model.md',
+            'memory-distillation.md',
+            'project-archive.md',
+            'subagent-checkpoint.md',
+        ],
     },
     {
         key: 'hook-scaffold',

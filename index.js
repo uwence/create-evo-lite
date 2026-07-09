@@ -418,12 +418,9 @@ async function runInit(targetDirArg, options = {}) {
         hasUpgraded = true;
     }
 
-    // 3.2 复制 .agents/rules，并通过 managed manifest 同步其余治理资产
-    const agentRulesTemplateDir = path.join(templatesDir, '.agents', 'rules');
-    if (fs.existsSync(agentRulesTemplateDir)) {
-        copyRecursiveSync(agentRulesTemplateDir, path.join(agentsDir, 'rules'));
-    }
-
+    // 3.2 治理资产（含 .agents/rules）统一走 managed manifest：
+    // sync-always 的 rule gene 每次同步，copy-on-init 的 rule 只在缺失时落地。
+    // 不再整目录复制 rules —— 双通道会在 fresh scaffold 里制造 .bak 并误报热更新。
     copyManagedTemplateAssets(
         buildManagedTemplateEntries({
             workspaceRoot: targetDir,

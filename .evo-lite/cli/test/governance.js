@@ -1876,6 +1876,17 @@ async function runGovernanceTests() {
             }
             assert.ok(manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli').files.includes('hive/feedback.js'),
                 'feedback module is a managed core-cli gene');
+
+            // copy-on-init rules: seeded once, never nurtured, template files must exist
+            const initRulesFam = manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'agents-rules-init');
+            assert.ok(initRulesFam, 'agents-rules-init family exists');
+            assert.strictEqual(initRulesFam.scope, 'copy-on-init', 'init rules are copy-on-init, not nurtured');
+            for (const rule of initRulesFam.files) {
+                assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, 'templates', '.agents', 'rules', rule)),
+                    `init rule template file present: ${rule}`);
+            }
+            const overlap = initRulesFam.files.filter(f => rulesFam.files.includes(f));
+            assert.deepStrictEqual(overlap, [], 'a rule must be either sync-always or copy-on-init, never both');
         }
         console.log('✅ T-hive-manifest object-form entries passed');
 
