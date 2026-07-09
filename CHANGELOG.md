@@ -1,5 +1,17 @@
 ## Unreleased
 
+### Added
+- Hive child feedback loop (`spec:hive-child-feedback-loop`): child outbox
+  `.evo-lite/hive/feedback.md` is collected exactly-once by `hive nurture`
+  (read-only surfaced in `hive status`); new managed genes rule
+  `.agents/rules/hive-feedback.md` documents the protocol for child agents;
+  the outbox is scaffolded at init and on first nurture.
+- Nurture mutation preflight: committed child edits to non-anchored managed
+  genes (detected against `runtime-mirror.lock.json` checksums) are now
+  `refused` with a 🧬 mutation report instead of silently overwritten;
+  `--force` is the explicit overwrite. Lockless legacy children WARN and
+  proceed.
+
 ## 2.2.0 - 2026-07-06
 
 ### Security
