@@ -16,6 +16,13 @@ function readJson(fp) {
     return JSON.parse(fs.readFileSync(fp, 'utf8'));
 }
 
+// Lock hashes are computed over the LF bytes nurture deploys; a child worktree
+// under git autocrlf=true re-materializes them as CRLF. Line-ending drift is
+// not a gene mutation — compare the CRLF-normalized hash too.
+function eolNormalizedSha256(bytes) {
+    return sha256(Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'), 'utf8'));
+}
+
 // Anchor names are [A-Z0-9_]; markers are `<!-- NAME -->` — no regex escaping needed.
 function mergeAnchoredContent(motherText, childText, anchorPairs) {
     let merged = motherText;
@@ -128,7 +135,9 @@ function nurtureChild(motherRoot, entry, opts = {}) {
             // non-anchored (anchored entries legitimately diverge) and lock-known.
             if (childLock && childExists && (!e.mergeAnchors || e.mergeAnchors.length === 0)) {
                 const lockHash = childLock[relActive];
-                if (lockHash && sha256(childBytes) !== lockHash) report.mutations.push(e.label);
+                if (lockHash && sha256(childBytes) !== lockHash && eolNormalizedSha256(childBytes) !== lockHash) {
+                    report.mutations.push(e.label);
+                }
             }
         }
     }

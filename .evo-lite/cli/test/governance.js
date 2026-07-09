@@ -2728,6 +2728,12 @@ async function runChildRuntimeTests() {
             '<!-- BEGIN_LOCAL -->\nchild rewrote everything here\n<!-- END_LOCAL -->\nbody v1\n');
         const anch = nurtureChild(m3, { id: 'k', path: c1 }, { dryRun: true, exec: cleanGit, familiesOverride: FAM });
         assert.deepStrictEqual(anch.mutations, [], 'anchored entries exempt from mutation detection');
+
+        // (f) CRLF-only drift is NOT a mutation (git autocrlf rewrites child worktrees;
+        //     found live on CodePLC 2026-07-09)
+        fs.writeFileSync(path.join(c1, '.evo-lite', 'cli', 'gene.js'), 'module.exports = 3;\r\n');
+        const crlf = nurtureChild(m3, { id: 'k', path: c1 }, { dryRun: true, exec: cleanGit, familiesOverride: FAM });
+        assert.deepStrictEqual(crlf.mutations, [], 'line-ending-only divergence must not read as a gene mutation');
     }
     console.log('✅ T-hive-mutation passed');
 
