@@ -19,7 +19,7 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] 暂无活跃任务。
+- [ ] [zvec-optin-docs] 子巢zvec opt-in决策文档缺失: 子巢何时该主动启用zvec、启用后A/B验证步骤(memory-ab)、与memory-engine.json pin的关系. 来源: CodePLC feedback outbox首次实收(2026-07-09 nurture)
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
