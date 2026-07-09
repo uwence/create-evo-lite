@@ -75,6 +75,7 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     const childRoot = entry.path;
     const report = {
         status: null, copied: [], skipped: [], missingSources: [], dirtyFiles: [], feedback: [],
+        mutations: [], lockMissing: false,
         depGap: { missing: [], versionDiffs: [] }, engineReadiness: null, tag: null, receiptPath: null, upToDate: false,
     };
 
@@ -94,25 +95,41 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     }
 
     // --- Plan the copy set (and dep gap) — pure reads ---
+    // The child's lock records what the last nurture deployed; a child file whose
+    // hash left that baseline is a committed local gene mutation, not mother drift.
+    const childLockPath = path.join(childRoot, '.evo-lite', 'generated', 'runtime-mirror.lock.json');
+    let childLock = null;
+    try {
+        if (fs.existsSync(childLockPath)) childLock = readJson(childLockPath).entries || {};
+    } catch (_) { childLock = null; }
+    report.lockMissing = childLock === null;
+
     const planned = [];
     const checksums = {};
     for (const e of entries) {
         const motherBytes = fs.readFileSync(e.templateFile);
         let targetBytes = motherBytes;
         const childExists = fs.existsSync(e.activeFile);
+        const childBytes = childExists ? fs.readFileSync(e.activeFile) : null;
         if (e.mergeAnchors && e.mergeAnchors.length && childExists) {
             const mergedText = mergeAnchoredContent(motherBytes.toString('utf8'),
-                fs.readFileSync(e.activeFile, 'utf8'), e.mergeAnchors);
+                childBytes.toString('utf8'), e.mergeAnchors);
             targetBytes = Buffer.from(mergedText, 'utf8');
         }
         const targetHash = sha256(targetBytes);
         const relActive = path.relative(childRoot, e.activeFile).replace(/\\/g, '/');
         checksums[relActive] = targetHash;
-        if (childExists && sha256(fs.readFileSync(e.activeFile)) === targetHash) {
+        if (childExists && sha256(childBytes) === targetHash) {
             report.skipped.push(e.label);
         } else {
             planned.push({ entry: e, bytes: targetBytes });
             report.copied.push(e.label);
+            // Mutation check only where an overwrite would erase child bytes:
+            // non-anchored (anchored entries legitimately diverge) and lock-known.
+            if (childLock && childExists && (!e.mergeAnchors || e.mergeAnchors.length === 0)) {
+                const lockHash = childLock[relActive];
+                if (lockHash && sha256(childBytes) !== lockHash) report.mutations.push(e.label);
+            }
         }
     }
     report.depGap = diffRuntimeDeps(motherRoot, childRoot);
@@ -128,7 +145,15 @@ function nurtureChild(motherRoot, entry, opts = {}) {
         return report;
     }
 
-    // --- Preflight 2: dirty check + rollback tag (git; injectable) ---
+    // --- Preflight 2: committed child gene mutations (lock-hash divergence) ---
+    // Refuse before any write or tag: overwriting a committed child edit erases
+    // a mutation candidate the mother never saw. --force is the explicit erase.
+    if (report.mutations.length && !opts.force) {
+        report.status = 'refused';
+        return report;
+    }
+
+    // --- Preflight 3: dirty check + rollback tag (git; injectable) ---
     let gitAvailable = true;
     try {
         const managedRel = entries.map(e => path.relative(childRoot, e.activeFile).replace(/\\/g, '/'));
@@ -166,7 +191,7 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     // of leaving a half-nurtured child. Registry update happens AFTER commit
     // (see below), since it is the mother's file, not a child snapshot target.
     const productVersionPath = path.join(childRoot, '.evo-lite', 'evo-lite-version.json');
-    const lockPath = path.join(childRoot, '.evo-lite', 'generated', 'runtime-mirror.lock.json');
+    const lockPath = childLockPath;
     report.receiptPath = path.join(childRoot, '.evo-lite', 'hive', 'nurture-received.json');
     const outboxPath = feedback.feedbackPath(childRoot);
     const targets = [

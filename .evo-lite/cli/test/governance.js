@@ -2636,6 +2636,70 @@ async function runChildRuntimeTests() {
     }
     console.log('✅ T-hive-outbox passed');
 
+    console.log('T-hive-mutation. Testing lock-checksum mutation detection: refuse, force, anchored exempt, lockless WARN ...');
+    {
+        const { nurtureChild } = require(path.join(CLI_DIR, 'hive', 'nurture.js'));
+        const cleanGit = () => '';
+        const FAM = [
+            { key: 'core-cli', scope: 'sync-always', activeRoot: 'cli', templateRoot: 'cli', relativeDir: [], files: ['gene.js'] },
+            { key: 'agents-workflows', scope: 'sync-always', activeRoot: 'workspace', templateRoot: 'root', relativeDir: ['.agents', 'workflows'],
+              files: [{ path: 'evo.md', mergeAnchors: [['BEGIN_LOCAL', 'END_LOCAL']] }] },
+        ];
+        const mkMother = (geneBody) => {
+            const m = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-mu-mother-'));
+            fs.writeFileSync(path.join(m, 'package.json'), '{"version":"9.9.9"}');
+            fs.mkdirSync(path.join(m, 'templates', 'cli'), { recursive: true });
+            fs.mkdirSync(path.join(m, 'templates', '.agents', 'workflows'), { recursive: true });
+            fs.writeFileSync(path.join(m, 'templates', 'cli', 'gene.js'), geneBody);
+            fs.writeFileSync(path.join(m, 'templates', '.agents', 'workflows', 'evo.md'),
+                '<!-- BEGIN_LOCAL -->\nmother default\n<!-- END_LOCAL -->\nbody v2\n');
+            return m;
+        };
+        const mkChild = () => {
+            const c = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-mu-child-'));
+            fs.mkdirSync(path.join(c, '.evo-lite', 'cli'), { recursive: true });
+            fs.mkdirSync(path.join(c, '.agents', 'workflows'), { recursive: true });
+            fs.writeFileSync(path.join(c, '.evo-lite', 'cli', 'gene.js'), 'module.exports = 1;\n');
+            fs.writeFileSync(path.join(c, '.agents', 'workflows', 'evo.md'),
+                '<!-- BEGIN_LOCAL -->\nchild custom\n<!-- END_LOCAL -->\nbody v1\n');
+            return c;
+        };
+
+        // (a) lockless legacy child: WARN flag, still applies
+        const m1 = mkMother('module.exports = 2;\n'); const c1 = mkChild();
+        const first = nurtureChild(m1, { id: 'k', path: c1 }, { exec: cleanGit, familiesOverride: FAM });
+        assert.strictEqual(first.status, 'applied');
+        assert.strictEqual(first.lockMissing, true, 'no lock yet → lockMissing WARN flag');
+        assert.deepStrictEqual(first.mutations, [], 'no mutation verdict without a lock');
+
+        // (b) committed child edit (clean porcelain) after a locked nurture → refused, child untouched
+        const m2 = mkMother('module.exports = 3;\n');
+        fs.writeFileSync(path.join(c1, '.evo-lite', 'cli', 'gene.js'), 'module.exports = 99; // child patch\n');
+        const refused = nurtureChild(m2, { id: 'k', path: c1 }, { exec: cleanGit, familiesOverride: FAM });
+        assert.strictEqual(refused.status, 'refused');
+        assert.deepStrictEqual(refused.mutations, ['gene.js'], 'mutated gene named');
+        assert.strictEqual(refused.lockMissing, false);
+        assert.ok(fs.readFileSync(path.join(c1, '.evo-lite', 'cli', 'gene.js'), 'utf8').includes('99'), 'child file untouched on refuse');
+
+        // (c) dry-run surfaces the mutation without applying
+        const dry = nurtureChild(m2, { id: 'k', path: c1 }, { dryRun: true, exec: cleanGit, familiesOverride: FAM });
+        assert.strictEqual(dry.status, 'dry-run');
+        assert.deepStrictEqual(dry.mutations, ['gene.js'], 'dry-run surfaces mutations');
+
+        // (d) --force overwrites the mutation
+        const forced = nurtureChild(m2, { id: 'k', path: c1 }, { exec: cleanGit, force: true, familiesOverride: FAM });
+        assert.strictEqual(forced.status, 'applied');
+        assert.strictEqual(fs.readFileSync(path.join(c1, '.evo-lite', 'cli', 'gene.js'), 'utf8'), 'module.exports = 3;\n', 'force overwrites');
+
+        // (e) anchored-merge divergence is NEVER a mutation
+        const m3 = mkMother('module.exports = 3;\n');
+        fs.writeFileSync(path.join(c1, '.agents', 'workflows', 'evo.md'),
+            '<!-- BEGIN_LOCAL -->\nchild rewrote everything here\n<!-- END_LOCAL -->\nbody v1\n');
+        const anch = nurtureChild(m3, { id: 'k', path: c1 }, { dryRun: true, exec: cleanGit, familiesOverride: FAM });
+        assert.deepStrictEqual(anch.mutations, [], 'anchored entries exempt from mutation detection');
+    }
+    console.log('✅ T-hive-mutation passed');
+
     console.log('T-command-policy. checkCommand / loadPolicy / matchesEntry ...');
     {
         const { checkCommand, matchesEntry, loadPolicy, BUILTIN_DEFAULT } =
