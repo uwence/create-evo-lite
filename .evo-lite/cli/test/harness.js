@@ -54,6 +54,14 @@ function createTempRuntimeRoot(name) {
     if (fs.existsSync(managedWorkflowDir)) {
         copyRecursive(managedWorkflowDir, path.join(workspaceRoot, '.agents', 'workflows'));
     }
+    // Only the sync-always rule gene (agents-rules family) — verify's template-sync
+    // check flags the workspace as diverged without it. The rest of .agents/rules
+    // must stay absent: bootstrap derives architecture_status from architecture.md.
+    const managedRuleFile = path.join(TEMPLATE_ROOT_DIR, '.agents', 'rules', 'hive-feedback.md');
+    if (fs.existsSync(managedRuleFile)) {
+        fs.mkdirSync(path.join(workspaceRoot, '.agents', 'rules'), { recursive: true });
+        fs.copyFileSync(managedRuleFile, path.join(workspaceRoot, '.agents', 'rules', 'hive-feedback.md'));
+    }
     const claudeTemplateDir = path.join(TEMPLATE_ROOT_DIR, '.claude');
     if (fs.existsSync(claudeTemplateDir)) {
         copyRecursive(claudeTemplateDir, path.join(workspaceRoot, '.claude'));

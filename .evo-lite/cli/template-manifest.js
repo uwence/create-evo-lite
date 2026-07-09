@@ -74,6 +74,16 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
         files: ['evo.md', 'commit.md', 'mem.md', 'walkthrough.md'],
     },
     {
+        // Only this one rule is nurture-managed — the rest of .agents/rules/ is
+        // copied once at init and stays child-customizable.
+        key: 'agents-rules',
+        scope: 'sync-always',
+        activeRoot: 'workspace',
+        templateRoot: 'root',
+        relativeDir: ['.agents', 'rules'],
+        files: ['hive-feedback.md'],
+    },
+    {
         key: 'hook-scaffold',
         scope: 'sync-always',
         activeRoot: 'workspace',

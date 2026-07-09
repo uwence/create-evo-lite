@@ -439,6 +439,13 @@ async function runInit(targetDirArg, options = {}) {
         copyRecursiveSync(cliTemplatesDir, cliDir);
     }
 
+    // Hive feedback outbox：子巢上报 evo-lite 摩擦的协议文件（内容归子巢，只在缺失时创建）
+    const hiveFeedbackPath = path.join(evoLiteDir, 'hive', 'feedback.md');
+    if (!fs.existsSync(hiveFeedbackPath)) {
+        fs.mkdirSync(path.dirname(hiveFeedbackPath), { recursive: true });
+        fs.writeFileSync(hiveFeedbackPath, require(path.join(cliTemplatesDir, 'hive', 'feedback.js')).FEEDBACK_TEMPLATE);
+    }
+
     // active_context.md 处理：新项目用模板，老项目仅备份并保护内容。
     if (!fs.existsSync(activeContextPath)) {
         fs.writeFileSync(activeContextPath, activeContextTemplate.replace('{{DATE}}', new Date().toISOString().split('T')[0]));

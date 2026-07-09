@@ -1864,6 +1864,16 @@ async function runGovernanceTests() {
             assert.strictEqual(entries[1].label, 'docs/hybrid.md', 'object entry label from path');
             assert.deepStrictEqual(entries[1].mergeAnchors, [['BEGIN_LOCAL', 'END_LOCAL']], 'anchors pass through');
             assert.ok(entries[1].activeFile.includes('docs'), 'object entry resolves subdir path');
+
+            // hive-feedback genes: rule template exists and is a managed sync-always entry
+            const rulesFam = manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'agents-rules');
+            assert.ok(rulesFam, 'agents-rules managed family exists');
+            assert.strictEqual(rulesFam.scope, 'sync-always');
+            assert.deepStrictEqual(rulesFam.files, ['hive-feedback.md']);
+            assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, 'templates', '.agents', 'rules', 'hive-feedback.md')),
+                'rule template file present');
+            assert.ok(manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli').files.includes('hive/feedback.js'),
+                'feedback module is a managed core-cli gene');
         }
         console.log('✅ T-hive-manifest object-form entries passed');
 
