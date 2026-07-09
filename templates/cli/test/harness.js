@@ -54,13 +54,18 @@ function createTempRuntimeRoot(name) {
     if (fs.existsSync(managedWorkflowDir)) {
         copyRecursive(managedWorkflowDir, path.join(workspaceRoot, '.agents', 'workflows'));
     }
-    // Only the sync-always rule gene (agents-rules family) — verify's template-sync
-    // check flags the workspace as diverged without it. The rest of .agents/rules
+    // Only the sync-always rule genes (agents-rules family, derived from the
+    // manifest so new rule genes stay covered) — verify's template-sync check
+    // flags the workspace as diverged without them. The rest of .agents/rules
     // must stay absent: bootstrap derives architecture_status from architecture.md.
-    const managedRuleFile = path.join(TEMPLATE_ROOT_DIR, '.agents', 'rules', 'hive-feedback.md');
-    if (fs.existsSync(managedRuleFile)) {
-        fs.mkdirSync(path.join(workspaceRoot, '.agents', 'rules'), { recursive: true });
-        fs.copyFileSync(managedRuleFile, path.join(workspaceRoot, '.agents', 'rules', 'hive-feedback.md'));
+    const rulesFamily = require('../template-manifest').MANAGED_TEMPLATE_FAMILIES
+        .find(f => f.key === 'agents-rules');
+    for (const rule of (rulesFamily ? rulesFamily.files : [])) {
+        const src = path.join(TEMPLATE_ROOT_DIR, '.agents', 'rules', rule);
+        if (fs.existsSync(src)) {
+            fs.mkdirSync(path.join(workspaceRoot, '.agents', 'rules'), { recursive: true });
+            fs.copyFileSync(src, path.join(workspaceRoot, '.agents', 'rules', rule));
+        }
     }
     const claudeTemplateDir = path.join(TEMPLATE_ROOT_DIR, '.claude');
     if (fs.existsSync(claudeTemplateDir)) {

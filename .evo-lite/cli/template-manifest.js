@@ -81,7 +81,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
         activeRoot: 'workspace',
         templateRoot: 'root',
         relativeDir: ['.agents', 'rules'],
-        files: ['hive-feedback.md'],
+        files: ['hive-feedback.md', 'zvec-optin.md'],
     },
     {
         key: 'hook-scaffold',

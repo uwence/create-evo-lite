@@ -1869,9 +1869,11 @@ async function runGovernanceTests() {
             const rulesFam = manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'agents-rules');
             assert.ok(rulesFam, 'agents-rules managed family exists');
             assert.strictEqual(rulesFam.scope, 'sync-always');
-            assert.deepStrictEqual(rulesFam.files, ['hive-feedback.md']);
-            assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, 'templates', '.agents', 'rules', 'hive-feedback.md')),
-                'rule template file present');
+            assert.deepStrictEqual(rulesFam.files, ['hive-feedback.md', 'zvec-optin.md']);
+            for (const rule of rulesFam.files) {
+                assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, 'templates', '.agents', 'rules', rule)),
+                    `rule template file present: ${rule}`);
+            }
             assert.ok(manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli').files.includes('hive/feedback.js'),
                 'feedback module is a managed core-cli gene');
         }
