@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 64267b4c68909b5151e9f4ee59dfc33962234650
-> upstreamSha: 9c99006b8e4d4bd0dac87f7528c61bff5fb66ec0
-> ahead: 14
+> headSha: 8402c321901e12f482232e02df771216b489384f
+> upstreamSha: b0827d81eb17c38c5fc94afa25c5a01b5eb367f6
+> ahead: 2
 > behind: 0
-> focusUpdatedAt: 2026-07-09T15:11:55.398Z
+> focusUpdatedAt: 2026-07-09T15:29:17.607Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -19,12 +19,13 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] 暂无活跃任务。
+- [ ] [fresh-plan-progress] fresh scaffold baseline commit的governance hook中plan progress因无plan-ir.json而fail, 导致新项目verify显示last_run=failed-last-run. 修: plan progress在无IR时应graceful no-op(提示run plan scan)而非exit 1. 非回归, 2.3.0 consume-test发现
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [8402c32] 2026-07-09 release-cut-2.3.0: 2.3.0 cut: CHANGELOG Unreleased -> 2.3.0 (feedback loop, mutation preflight w/ CRLF exemption, zvec-
 - [64267b4] 2026-07-09 child-feedback-closure: zvec-optin-docs closed: new managed rule gene .agents/rules/zvec-optin.md (agents-rules family) - wh
 - [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 20bb fixed in eb25af2: engine degradation WARN now gives concrete 3-step zvec enable path (npm i @zv
 - [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 36e1 fixed in eb25af2: CLI top-level errors print to stdout so context-mode-wrapped hosts see the re
@@ -34,7 +35,6 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 - [005b511] 2026-07-08 backlog id = hash|label via extractBacklogId; add --label + resolve-by-label; checkbox-anchored, validated, ambiguity-safe: Closes dogfood backlog 79e9 (resolve semantics). resolveBacklog+parseBacklogTasks+addTask now share
 - [8a319d3] 2026-07-08 verify config-retrieval line sources active engine from live index; complements P2 memory-space fix: Fixes residual half of the engine-display bug: [配置/检索] top line read a stale models.js const (always
 - [6e83d68] 2026-07-08 impl-keyed rebuild drop + degradation WARN + nurture engine preflight; closes plan hive-nurture-engine-migration: Closes plan:hive-nurture-engine-migration (all 5 tasks). Fixes destructive genes-vs-state engine-mig
-- [8cf8cb5] 2026-07-08 exact-boost-router + active-engine-display: Two zvec-flip follow-ups closed. P1 exact-boost router: multi-token recall now tier-ranks literal-ph
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
