@@ -2588,6 +2588,54 @@ async function runChildRuntimeTests() {
     }
     console.log('✅ T-hive-nurture passed');
 
+    console.log('T-hive-outbox. Testing feedback collection: report, exactly-once, dry-run purity, scaffold ...');
+    {
+        const { nurtureChild } = require(path.join(CLI_DIR, 'hive', 'nurture.js'));
+        const fb = require(path.join(CLI_DIR, 'hive', 'feedback.js'));
+        const noGit = () => { throw new Error('not a git repo'); };
+        const FAM = [{ key: 'core-cli', scope: 'sync-always', activeRoot: 'cli', templateRoot: 'cli', relativeDir: [], files: ['gene.js'] }];
+        const mkMother = () => {
+            const m = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-ob-mother-'));
+            fs.writeFileSync(path.join(m, 'package.json'), '{"version":"9.9.9"}');
+            fs.mkdirSync(path.join(m, 'templates', 'cli'), { recursive: true });
+            fs.writeFileSync(path.join(m, 'templates', 'cli', 'gene.js'), 'module.exports = 2;\n');
+            return m;
+        };
+        const mkChild = () => {
+            const c = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-ob-child-'));
+            fs.mkdirSync(path.join(c, '.evo-lite', 'cli'), { recursive: true });
+            fs.writeFileSync(path.join(c, '.evo-lite', 'cli', 'gene.js'), 'module.exports = 1;\n');
+            return c;
+        };
+
+        // (a) outbox with 2 pending items: reported + marked checked on apply
+        const m = mkMother(); const c = mkChild();
+        fs.mkdirSync(path.dirname(fb.feedbackPath(c)), { recursive: true });
+        fs.writeFileSync(fb.feedbackPath(c),
+            '# Outbox\n- [ ] [fb1] first friction\n- [ ] [fb2] second friction\n- [x] [done] old\n');
+        const dry = nurtureChild(m, { id: 'k', path: c }, { dryRun: true, exec: noGit, force: true, familiesOverride: FAM });
+        assert.deepStrictEqual(dry.feedback.map(f => f.label), ['fb1', 'fb2'], 'dry-run reports pending feedback');
+        assert.ok(fs.readFileSync(fb.feedbackPath(c), 'utf8').includes('- [ ] [fb1]'), 'dry-run does not mark');
+
+        const applied = nurtureChild(m, { id: 'k', path: c }, { exec: noGit, force: true, familiesOverride: FAM });
+        assert.strictEqual(applied.status, 'applied');
+        assert.deepStrictEqual(applied.feedback.map(f => f.label), ['fb1', 'fb2'], 'apply reports pending feedback');
+        const after = fs.readFileSync(fb.feedbackPath(c), 'utf8');
+        assert.ok(after.includes('- [x] [fb1]') && after.includes('- [x] [fb2]'), 'collected items checked in child');
+
+        // (b) exactly-once: second nurture reports zero
+        const again = nurtureChild(m, { id: 'k', path: c }, { exec: noGit, force: true, familiesOverride: FAM });
+        assert.deepStrictEqual(again.feedback, [], 'second nurture collects nothing');
+
+        // (c) child without outbox: zero feedback + scaffolded on apply
+        const c2 = mkChild();
+        const applied2 = nurtureChild(m, { id: 'k2', path: c2 }, { exec: noGit, force: true, familiesOverride: FAM });
+        assert.deepStrictEqual(applied2.feedback, [], 'missing outbox → no feedback');
+        assert.ok(fs.existsSync(fb.feedbackPath(c2)), 'outbox scaffolded on apply');
+        assert.ok(fs.readFileSync(fb.feedbackPath(c2), 'utf8').includes('Hive Feedback Outbox'), 'scaffold uses template');
+    }
+    console.log('✅ T-hive-outbox passed');
+
     console.log('T-command-policy. checkCommand / loadPolicy / matchesEntry ...');
     {
         const { checkCommand, matchesEntry, loadPolicy, BUILTIN_DEFAULT } =

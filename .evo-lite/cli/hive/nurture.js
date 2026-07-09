@@ -4,6 +4,7 @@ const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { childEntries, sha256 } = require('./status');
+const feedback = require('./feedback');
 const registry = require('./registry');
 const { runTransaction } = require('../transaction');
 
@@ -73,7 +74,7 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     const exec = opts.exec || defaultExec;
     const childRoot = entry.path;
     const report = {
-        status: null, copied: [], skipped: [], missingSources: [], dirtyFiles: [],
+        status: null, copied: [], skipped: [], missingSources: [], dirtyFiles: [], feedback: [],
         depGap: { missing: [], versionDiffs: [] }, engineReadiness: null, tag: null, receiptPath: null, upToDate: false,
     };
 
@@ -117,6 +118,10 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     report.depGap = diffRuntimeDeps(motherRoot, childRoot);
     report.engineReadiness = assessEngineReadiness(childRoot);
     report.upToDate = report.copied.length === 0 && report.depGap.missing.length === 0;
+
+    // --- Feedback outbox: pure read here; marking happens inside the transaction ---
+    const outbox = feedback.readOutbox(childRoot);
+    report.feedback = outbox.pending.map(({ label, text }) => ({ label, text }));
 
     if (opts.dryRun || opts.check) {
         report.status = 'dry-run';
@@ -163,9 +168,10 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     const productVersionPath = path.join(childRoot, '.evo-lite', 'evo-lite-version.json');
     const lockPath = path.join(childRoot, '.evo-lite', 'generated', 'runtime-mirror.lock.json');
     report.receiptPath = path.join(childRoot, '.evo-lite', 'hive', 'nurture-received.json');
+    const outboxPath = feedback.feedbackPath(childRoot);
     const targets = [
         ...planned.map(p => p.entry.activeFile),
-        lockPath, report.receiptPath, productVersionPath,
+        lockPath, report.receiptPath, productVersionPath, outboxPath,
     ];
     const journalPath = path.join(childRoot, '.evo-lite', 'hive', `nurture-journal-${entry.id}.json`);
     const txn = runTransaction({
@@ -187,6 +193,13 @@ function nurtureChild(motherRoot, entry, opts = {}) {
             };
             fs.mkdirSync(path.dirname(report.receiptPath), { recursive: true });
             fs.writeFileSync(report.receiptPath, JSON.stringify(receipt, null, 2) + '\n');
+            // Feedback outbox: scaffold when absent, else check off collected items.
+            // Protocol state (same class as the receipt), never project state.
+            if (!outbox.exists) {
+                fs.writeFileSync(outboxPath, feedback.FEEDBACK_TEMPLATE);
+            } else if (outbox.pending.length) {
+                fs.writeFileSync(outboxPath, feedback.markCollected(outbox.text, outbox.pending.map(p => p.line)));
+            }
             // Product version travels via evo-lite-version.json — the same artifact the
             // runtime reads and hive/status compares. The runtime manifest package.json
             // is version-pinned by design (lockfile stability); nurture must NOT touch it.
