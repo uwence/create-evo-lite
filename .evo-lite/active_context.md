@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: eb25af21fb15c42c4ea18a145a54c59b392dfe16
+> headSha: 31a4c2d28a6585c3e9b7a643c839ee5601f3dfea
 > upstreamSha: 9c99006b8e4d4bd0dac87f7528c61bff5fb66ec0
-> ahead: 8
+> ahead: 9
 > behind: 0
-> focusUpdatedAt: 2026-07-09T14:57:44.715Z
+> focusUpdatedAt: 2026-07-09T14:58:06.472Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -19,13 +19,14 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] [36e1] dirty-worktree下context track拒绝但错误不可见(context-mode吞stderr叠加显示no output). 修: 拒绝信息打到stdout+actionable提示. CodePLC dogfood 2026-07-08
-- [ ] [20bb] zvec fallback WARN不给开启zvec的具体命令(装@zvec/zvec+撤memory-engine.json pin+rebuild). 修: WARN body加3步. 新genes已大幅缓解. CodePLC dogfood 2026-07-08
+- [ ] 暂无活跃任务。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 20bb fixed in eb25af2: engine degradation WARN now gives concrete 3-step zvec enable path (npm i @zv
+- [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 36e1 fixed in eb25af2: CLI top-level errors print to stdout so context-mode-wrapped hosts see the re
 - [eb25af2] 2026-07-09 backlog-dogfood-fixes: Three CodePLC dogfood fixes: (1) nurture-tag: rollback tag now evo-nurture-pre-<v>-<stamp> via injec
 - [a5ffd9f] 2026-07-09 plan:hive-child-feedback-loop: hive-child-feedback-loop shipped: feedback outbox (parse/mark/read module, nurture exactly-once coll
 - [20e5fb7] 2026-07-08 db.js exports DEFAULT_ENGINE(_VERSION); SqliteFtsIndex.engine concrete; tests de-vacuumed (literal + sqlite-mode guard): Latent bug exposed by config-retrieval fix during CodePLC nurture: db.js never exported DEFAULT_ENGI
@@ -34,8 +35,6 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 - [6e83d68] 2026-07-08 impl-keyed rebuild drop + degradation WARN + nurture engine preflight; closes plan hive-nurture-engine-migration: Closes plan:hive-nurture-engine-migration (all 5 tasks). Fixes destructive genes-vs-state engine-mig
 - [8cf8cb5] 2026-07-08 exact-boost-router + active-engine-display: Two zvec-flip follow-ups closed. P1 exact-boost router: multi-token recall now tier-ranks literal-ph
 - [6ab1c55] 2026-06-30 release-cut-2.1.0: PR5 release cut: package.json + package-lock.json 2.0.10->2.1.0 (T18h lockfile sync), CHANGELOG Unre
-- [83992b3] 2026-06-30 SDD + mem close --apply: verification-contract-closure-correctness: PR-CC 6 closure-path bug fixes (T56-T61) shipped via suba
-- [689453e] 2026-06-27 verification-contract-phase2-closure: Closure for plan:verification-contract-phase2 (spec done), TDD-green (T38-T39 + integration, both sc
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
