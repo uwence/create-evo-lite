@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const manifest = require('../template-manifest');
+const { readOutbox } = require('./feedback');
 const { readRegistry } = require('./registry');
 
 function sha256(buffer) {
@@ -47,7 +48,7 @@ function childStatus(motherRoot, entry, options = {}) {
     const motherVersion = readVersion(path.join(motherRoot, 'package.json'));
     const childEvoDir = path.join(entry.path, '.evo-lite');
     if (!fs.existsSync(childEvoDir)) {
-        return { id: entry.id, status: 'unreachable', motherVersion, childVersion: null, versionSource: null, driftedFiles: [] };
+        return { id: entry.id, status: 'unreachable', motherVersion, childVersion: null, versionSource: null, driftedFiles: [], feedback: [] };
     }
     const { version: childVersion, source: versionSource } = readChildVersion(childEvoDir);
     const driftedFiles = [];
@@ -61,7 +62,9 @@ function childStatus(motherRoot, entry, options = {}) {
     let status = 'up-to-date';
     if (driftedFiles.length) status = 'drifted';
     else if (childVersion !== motherVersion) status = 'behind';
-    return { id: entry.id, status, motherVersion, childVersion, versionSource, driftedFiles };
+    // Read-only feedback surface: status reports pending outbox items, never marks.
+    const feedback = readOutbox(entry.path).pending.map(({ label, text }) => ({ label, text }));
+    return { id: entry.id, status, motherVersion, childVersion, versionSource, driftedFiles, feedback };
 }
 
 function hiveStatus(motherRoot, options = {}) {

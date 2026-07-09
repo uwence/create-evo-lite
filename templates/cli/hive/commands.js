@@ -65,6 +65,9 @@ function registerHiveCommands(program) {
                 const detail = r.status === 'behind' ? ` (${r.childVersion} → ${r.motherVersion})`
                     : r.status === 'drifted' ? ` (${r.driftedFiles.join(', ')})` : '';
                 console.log(`${r.id}: ${r.status}${detail}`);
+                if (r.feedback && r.feedback.length) {
+                    for (const f of r.feedback) console.log(`   📬 [${f.label || '-'}] ${f.text}`);
+                }
             }
         });
 
@@ -96,6 +99,12 @@ function registerHiveCommands(program) {
                 if (report.tag) console.log(`rollback tag: ${report.tag}`);
                 if (report.missingSources.length) console.log(`❌ missing mother sources: ${report.missingSources.join(', ')}`);
                 if (report.dirtyFiles.length) console.log(`⚠️ dirty in child: ${report.dirtyFiles.join(', ')} (use --force to override)`);
+                if (report.lockMissing) console.log('⚠️ child has no runtime-mirror.lock.json — mutation detection skipped (legacy child)');
+                if (report.mutations && report.mutations.length) console.log(`🧬 child gene mutations (vs last nurture lock): ${report.mutations.join(', ')} — absorb into mother or re-run with --force to overwrite`);
+                if (report.feedback && report.feedback.length) {
+                    console.log(`📬 collected child feedback (${report.feedback.length}):`);
+                    for (const f of report.feedback) console.log(`   - [${f.label || '-'}] ${f.text}`);
+                }
                 if (report.depGap.missing.length) console.log(`⚠️ child missing deps: ${report.depGap.missing.join(', ')} — run npm install in <child>/.evo-lite`);
                 if (report.depGap.versionDiffs.length) console.log(`ℹ️ version ranges differ: ${report.depGap.versionDiffs.map(d => d.name).join(', ')}`);
             }

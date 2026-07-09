@@ -2449,6 +2449,17 @@ async function runChildRuntimeTests() {
 
         const gone = childStatus(mother, { id: 'd', path: path.join(os.tmpdir(), 'evo-hs-gone-' + Date.now()) }, { familiesOverride: FAM });
         assert.strictEqual(gone.status, 'unreachable');
+        assert.deepStrictEqual(gone.feedback, [], 'unreachable child reports empty feedback');
+
+        // feedback surfaces read-only in status
+        const fb = require(path.join(CLI_DIR, 'hive', 'feedback.js'));
+        const fbChild = mkChild('9.9.9');
+        fs.mkdirSync(path.dirname(fb.feedbackPath(fbChild)), { recursive: true });
+        const outboxText = '- [ ] [st1] status sees me\n- [x] [st0] collected already\n';
+        fs.writeFileSync(fb.feedbackPath(fbChild), outboxText);
+        const st = childStatus(mother, { id: 'e', path: fbChild }, { familiesOverride: FAM });
+        assert.deepStrictEqual(st.feedback, [{ label: 'st1', text: 'status sees me' }], 'status reports pending feedback');
+        assert.strictEqual(fs.readFileSync(fb.feedbackPath(fbChild), 'utf8'), outboxText, 'status never writes the outbox');
     }
     console.log('✅ T-hive-status passed');
 
