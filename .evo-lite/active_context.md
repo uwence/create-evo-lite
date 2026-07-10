@@ -20,6 +20,7 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 
 <!-- BEGIN_BACKLOG -->
 - [ ] [fresh-plan-progress] fresh scaffold baseline commit的governance hook中plan progress因无plan-ir.json而fail, 导致新项目verify显示last_run=failed-last-run. 修: plan progress在无IR时应graceful no-op(提示run plan scan)而非exit 1. 非回归, 2.3.0 consume-test发现
+- [ ] [06fd] [mcp-detect-missing] test/integration.js:551 + test/harness.js:330 require templates/cli/mcp-detect.js which has NEVER existed in git (absent at 63c019c baseline). Pre-existing: 'test.js all' fails in integration section. Fix: create mcp-detect.js OR remove the dangling references. Surfaced during spec-portfolio Task 8 regression.
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
