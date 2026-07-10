@@ -2614,6 +2614,192 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-spec-portfolio-size passed');
 
+        console.log('T-spec-adopt. Testing adoptSpec intake gate (normalize, size gate, relation enforcement) ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof specPortfolio.adoptSpec, 'function', 'adoptSpec must be exported');
+
+            // (a) broken YAML frontmatter, filename-derived id (no H1 title in body).
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-broken-yaml');
+                const projectRoot = runtime.workspaceRoot;
+                const draftPath = path.join(projectRoot, 'docs', 'spec my thing.md');
+                writeText(draftPath, [
+                    '---',
+                    'this is not valid yaml at all',
+                    '   nested: 1',
+                    '   nested2: 2',
+                    '---',
+                    'Some body text without heading.',
+                    '',
+                ].join('\n'));
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, { now: new Date('2026-07-10T00:00:00Z') });
+                assert.strictEqual(result.id, 'spec:my-thing', 'id derived from filename after stripping leading spec + kebab-casing');
+                const expectedTarget = path.join(projectRoot, 'docs', 'specs', 'my-thing.md');
+                assert.strictEqual(result.targetPath, expectedTarget, 'target path under docs/specs/');
+                assert.ok(fs.existsSync(expectedTarget), 'draft moved to target path');
+                assert.ok(!fs.existsSync(draftPath), 'original draft no longer exists at source path');
+
+                const finalContent = fs.readFileSync(expectedTarget, 'utf8');
+                const { frontmatter: finalFm, body: finalBody } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown')).parseFrontmatter(finalContent);
+                assert.strictEqual(finalFm.id, 'spec:my-thing', 'final frontmatter carries derived id');
+                assert.strictEqual(finalFm.status, 'adopted', 'final frontmatter status is adopted');
+                assert.strictEqual(finalFm.created, '2026-07-10', 'final frontmatter created from injected now');
+                assert.ok(finalBody.includes('original broken frontmatter preserved below'), 'broken block demoted into body as HTML comment');
+                assert.ok(finalBody.includes('nested: 1'), 'original broken frontmatter content preserved in comment');
+                assert.ok(finalBody.includes('Some body text without heading.'), 'original body content preserved');
+                assert.deepStrictEqual(result.warnings, [], 'no size warnings for a small draft');
+                assert.deepStrictEqual(result.relations, [], 'no relations when no other in-flight specs exist');
+            }
+
+            // (b) oversized draft -> adoption succeeds with size-exceeded warning.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-oversized');
+                const projectRoot = runtime.workspaceRoot;
+                const oversizedCriteria = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+                    .map(n => `    { "id": "c${n}" }`).join(',\n');
+                const draftPath = path.join(projectRoot, 'inbox', 'big-idea.md');
+                writeText(draftPath, [
+                    '# Big Idea', '',
+                    '## Acceptance Criteria', '',
+                    '```json',
+                    '{', '  "criteria": [', oversizedCriteria, '  ]', '}',
+                    '```', '',
+                ].join('\n'));
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, { now: new Date('2026-07-10T00:00:00Z') });
+                assert.strictEqual(result.id, 'spec:big-idea', 'id derived from H1 title');
+                assert.ok(result.warnings.includes('size-exceeded'), 'oversized draft yields size-exceeded warning');
+                assert.strictEqual(result.size.acCount, 9, 'size metrics reflect the oversized criteria block');
+                assert.ok(fs.existsSync(result.targetPath), 'oversized draft still adopted (WARN does not block)');
+            }
+
+            // (c) in-flight spec exists -> relation declaration required; opts.relations satisfies it.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-relations');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'existing.md'), [
+                    '---', 'id: spec:existing', 'status: adopted', '---', '', '# Existing', '',
+                ].join('\n'));
+
+                const draftPath1 = path.join(projectRoot, 'inbox', 'new-one.md');
+                writeText(draftPath1, ['# New One', '', 'Some body.', ''].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftPath1, {}),
+                    err => err.code === 'EUSAGE' && /spec:existing/.test(err.message),
+                    'missing relation declaration with an in-flight spec present must throw EUSAGE naming it'
+                );
+                // Per the normative flow, move (step 5) happens before relation
+                // enforcement (step 7): the draft is already normalized at the
+                // target path when the EUSAGE throws. Re-adopting from the
+                // target path (now the source) supplies the missing relation.
+                const movedTarget = path.join(projectRoot, 'docs', 'specs', 'new-one.md');
+                assert.ok(fs.existsSync(movedTarget), 'draft already moved to target path when relation enforcement throws');
+                assert.ok(!fs.existsSync(draftPath1), 'original draft path no longer exists after the move');
+
+                const result = specPortfolio.adoptSpec(projectRoot, movedTarget, {
+                    relations: [{ kind: 'spawned-from', target: 'spec:existing' }],
+                });
+                assert.strictEqual(result.id, 'spec:new-one', 'id derived from H1 title');
+                assert.deepStrictEqual(result.relations, [{ kind: 'spawned-from', target: 'spec:existing' }],
+                    'declared relation returned in result');
+                const finalContent = fs.readFileSync(result.targetPath, 'utf8');
+                assert.ok(/relations:.*spawned-from.*spec:existing/.test(finalContent), 'relation written to frontmatter');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:new-one');
+                assert.ok(entry, 'adopted spec appears in registry');
+                assert.deepStrictEqual(entry.relations, [{ kind: 'spawned-from', target: 'spec:existing' }],
+                    'registry reader parses the relation written by adoptSpec');
+
+                // opts.independent === true bypasses the requirement with no relations written.
+                const draftPath2 = path.join(projectRoot, 'inbox', 'standalone.md');
+                writeText(draftPath2, ['# Standalone', '', 'Some body.', ''].join('\n'));
+                const resultIndependent = specPortfolio.adoptSpec(projectRoot, draftPath2, { independent: true });
+                assert.deepStrictEqual(resultIndependent.relations, [], 'independent adoption returns empty relations');
+                const independentContent = fs.readFileSync(resultIndependent.targetPath, 'utf8');
+                assert.ok(!/relations:/.test(independentContent), 'independent adoption omits relations from frontmatter');
+            }
+
+            // (d) unknown relation target / invalid kind -> EUSAGE.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-bad-relations');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'existing.md'), [
+                    '---', 'id: spec:existing', 'status: adopted', '---', '', '# Existing', '',
+                ].join('\n'));
+
+                const draftUnknown = path.join(projectRoot, 'inbox', 'unknown-target.md');
+                writeText(draftUnknown, ['# Unknown Target', '', 'body', ''].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftUnknown, {
+                        relations: [{ kind: 'spawned-from', target: 'spec:does-not-exist' }],
+                    }),
+                    err => err.code === 'EUSAGE' && /spec:does-not-exist/.test(err.message),
+                    'unknown relation target must throw EUSAGE listing known ids'
+                );
+
+                const draftBadKind = path.join(projectRoot, 'inbox', 'bad-kind.md');
+                writeText(draftBadKind, ['# Bad Kind', '', 'body', ''].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftBadKind, {
+                        relations: [{ kind: 'nonsense-kind', target: 'spec:existing' }],
+                    }),
+                    err => err.code === 'EUSAGE',
+                    'invalid relation kind must throw EUSAGE'
+                );
+            }
+
+            // (e) empty file / target collision -> EUSAGE.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-empty-collision');
+                const projectRoot = runtime.workspaceRoot;
+
+                const emptyDraft = path.join(projectRoot, 'inbox', 'empty.md');
+                writeText(emptyDraft, '   \n\n  ');
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, emptyDraft, {}),
+                    err => err.code === 'EUSAGE',
+                    'empty/whitespace-only draft must throw EUSAGE'
+                );
+
+                writeText(path.join(projectRoot, 'docs', 'specs', 'taken.md'), [
+                    '---', 'id: spec:taken', 'status: adopted', '---', '', '# Taken', '',
+                ].join('\n'));
+                const collidingDraft = path.join(projectRoot, 'inbox', 'taken.md');
+                writeText(collidingDraft, ['# Taken', '', 'body', ''].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, collidingDraft, {}),
+                    err => err.code === 'EUSAGE',
+                    'target path collision must throw EUSAGE'
+                );
+            }
+
+            // (f) git repo: tracked draft adopted via git mv (rename, not delete+untracked).
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-git-mv');
+                const projectRoot = runtime.workspaceRoot;
+                runGit(projectRoot, ['init']);
+                runGit(projectRoot, ['config', 'user.name', 'Evo Test']);
+                runGit(projectRoot, ['config', 'user.email', 'evo@example.com']);
+
+                const draftPath = path.join(projectRoot, 'inbox', 'tracked-draft.md');
+                writeText(draftPath, ['# Tracked Draft', '', 'body content', ''].join('\n'));
+                runGit(projectRoot, ['add', '.']);
+                runGit(projectRoot, ['commit', '-m', 'chore: add tracked draft']);
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, {});
+                assert.strictEqual(result.id, 'spec:tracked-draft', 'id derived from H1 title');
+
+                const porcelain = runGit(projectRoot, ['status', '--porcelain']);
+                assert.ok(/^R/m.test(porcelain), 'git status --porcelain shows a rename entry for the git-mv path');
+                assert.ok(!/^\?\? inbox\/tracked-draft\.md/m.test(porcelain), 'old path must not appear as untracked');
+                assert.ok(!/^D  inbox\/tracked-draft\.md/m.test(porcelain), 'old path must not appear as a bare stage delete (would indicate delete+untracked instead of rename)');
+            }
+        }
+        console.log('✅ T-spec-adopt passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

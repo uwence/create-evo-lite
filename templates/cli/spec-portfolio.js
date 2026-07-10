@@ -248,6 +248,216 @@ function buildSpecRegistry(projectRoot, opts = {}) {
     return registry;
 }
 
+// --- adoptSpec: intake gate ---
+
+const RELATION_KINDS = new Set(['independent', 'spawned-from', 'supersedes', 'blocks']);
+
+function usageError(message) {
+    const err = new Error(message);
+    err.code = 'EUSAGE';
+    return err;
+}
+
+function kebabCase(str) {
+    return String(str || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_]+/g, '-')
+        .replace(/[^a-z0-9-]/g, '')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
+function deriveKebabFromFilename(filePath) {
+    const base = path.basename(filePath).replace(/\.md$/i, '');
+    const stripped = base.replace(/^spec[-_ ]*/i, '');
+    return kebabCase(stripped) || kebabCase(base);
+}
+
+function extractH1Title(body) {
+    const m = body.match(/^#\s+(.+)$/m);
+    return m ? m[1].trim() : null;
+}
+
+function deriveKebabId(body, filePath) {
+    const title = extractH1Title(body);
+    if (title) {
+        const kebab = kebabCase(title);
+        if (kebab) return kebab;
+    }
+    return deriveKebabFromFilename(filePath);
+}
+
+// Splits a broken-frontmatter draft into the opening block (from the first
+// `---` line to the matching closing `---` line, or the first 30 lines if no
+// closing fence is found) and the remaining content after that block.
+function splitBrokenFrontmatterBlock(content) {
+    const lines = content.split(/\r?\n/);
+    let closingIdx = -1;
+    for (let i = 1; i < lines.length; i++) {
+        if (lines[i].trim() === '---') { closingIdx = i; break; }
+    }
+    if (closingIdx !== -1) {
+        return {
+            block: lines.slice(0, closingIdx + 1),
+            remainder: lines.slice(closingIdx + 1).join('\n'),
+        };
+    }
+    return {
+        block: lines.slice(0, 30),
+        remainder: lines.slice(30).join('\n'),
+    };
+}
+
+function demoteBrokenFrontmatter(content) {
+    const { block, remainder } = splitBrokenFrontmatterBlock(content);
+    const commentBlock = [
+        '<!-- adopted: original broken frontmatter preserved below -->',
+        '<!--',
+        ...block,
+        '-->',
+    ].join('\n');
+    return `${commentBlock}\n\n${remainder.replace(/^\n+/, '')}`;
+}
+
+function serializeFrontmatter(orderedEntries) {
+    const lines = ['---'];
+    for (const [key, value] of orderedEntries) {
+        lines.push(`${key}: ${value}`);
+    }
+    lines.push('---');
+    return lines.join('\n');
+}
+
+function todayISODate(now) {
+    const d = now instanceof Date ? now : new Date();
+    return d.toISOString().slice(0, 10);
+}
+
+function validateRelations(relations, knownIds) {
+    for (const rel of relations) {
+        if (!rel || !RELATION_KINDS.has(rel.kind)) {
+            throw usageError(`adoptSpec: invalid relation kind: ${rel && rel.kind} — must be one of ${Array.from(RELATION_KINDS).join(', ')}`);
+        }
+        if (!rel.target || !knownIds.includes(rel.target)) {
+            throw usageError(`adoptSpec: unknown relation target: ${rel && rel.target} — known spec ids: ${knownIds.join(', ') || '(none)'}`);
+        }
+    }
+}
+
+// adoptSpec: normalizes a loose draft spec into docs/specs/, runs the size
+// gate (WARN-only, never blocks), and enforces relation declarations when
+// other adopted/active specs already exist (EUSAGE, blocks). Never calls
+// process.exit — invalid usage throws Error with err.code = 'EUSAGE'.
+function adoptSpec(projectRoot, filePath, opts = {}) {
+    const absSrc = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
+    let rawContent;
+    try {
+        rawContent = fs.readFileSync(absSrc, 'utf8');
+    } catch (_) {
+        throw usageError(`adoptSpec: cannot read draft file: ${filePath}`);
+    }
+    if (!rawContent || !rawContent.trim()) {
+        throw usageError(`adoptSpec: empty draft: ${filePath}`);
+    }
+
+    let { frontmatter, body } = parseFrontmatter(rawContent);
+
+    if (rawContent.trim().startsWith('---') && Object.keys(frontmatter).length === 0) {
+        body = demoteBrokenFrontmatter(rawContent);
+        frontmatter = {};
+    }
+
+    let id;
+    if (frontmatter.id) {
+        if (!frontmatter.id.startsWith('spec:')) {
+            throw usageError(`adoptSpec: existing id must start with "spec:": ${frontmatter.id}`);
+        }
+        id = frontmatter.id;
+    } else {
+        id = `spec:${deriveKebabId(body, absSrc)}`;
+    }
+    const kebab = id.slice('spec:'.length);
+
+    let status = frontmatter.status;
+    if (!status || status === 'draft') status = 'adopted';
+
+    const created = frontmatter.created || todayISODate(opts.now);
+
+    const targetPath = path.join(projectRoot, 'docs', 'specs', `${kebab}.md`);
+    if (fs.existsSync(targetPath) && path.resolve(targetPath) !== path.resolve(absSrc)) {
+        throw usageError(`adoptSpec: target exists: ${path.relative(projectRoot, targetPath)}`);
+    }
+
+    const reservedKeys = new Set(['id', 'status', 'owner', 'created', 'relations']);
+    const orderedEntries = [['id', id], ['status', status]];
+    if (frontmatter.owner) orderedEntries.push(['owner', frontmatter.owner]);
+    orderedEntries.push(['created', created]);
+    for (const key of Object.keys(frontmatter)) {
+        if (!reservedKeys.has(key)) orderedEntries.push([key, frontmatter[key]]);
+    }
+
+    const contentWithoutRelations = `${serializeFrontmatter(orderedEntries)}\n${body}`;
+
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    const isSamePath = path.resolve(absSrc) === path.resolve(targetPath);
+    if (!isSamePath) {
+        const relSrc = path.relative(projectRoot, absSrc).replace(/\\/g, '/');
+        const relDst = path.relative(projectRoot, targetPath).replace(/\\/g, '/');
+        let movedViaGit = false;
+        try {
+            execFileSync('git', ['mv', relSrc, relDst], { cwd: projectRoot, stdio: 'pipe' });
+            movedViaGit = true;
+        } catch (_) {
+            movedViaGit = false;
+        }
+        if (!movedViaGit) {
+            fs.renameSync(absSrc, targetPath);
+            try {
+                execFileSync('git', ['add', relDst], { cwd: projectRoot, stdio: 'pipe' });
+            } catch (_) {
+                // best-effort; untracked/no-git is fine here.
+            }
+        }
+    }
+
+    fs.writeFileSync(targetPath, contentWithoutRelations, 'utf8');
+
+    // Relation enforcement: check other specs (excluding the one just adopted).
+    const preRegistry = buildSpecRegistry(projectRoot, { write: false });
+    const others = preRegistry.specs.filter(s => s.id !== id);
+    const inFlight = others.filter(s => s.state === 'adopted' || s.state === 'active');
+    const knownIds = others.map(s => s.id);
+
+    let relations = [];
+    let writeRelationsLine = false;
+
+    if (opts.independent === true) {
+        relations = [];
+    } else if (Array.isArray(opts.relations) && opts.relations.length > 0) {
+        validateRelations(opts.relations, knownIds);
+        relations = opts.relations.map(r => ({ kind: r.kind, target: r.target }));
+        writeRelationsLine = true;
+    } else if (inFlight.length > 0) {
+        throw usageError(`adoptSpec: relation declaration required (opts.relations or opts.independent); in-flight specs: ${inFlight.map(s => s.id).join(', ')}`);
+    }
+
+    const finalOrderedEntries = orderedEntries.slice();
+    if (writeRelationsLine) {
+        finalOrderedEntries.push(['relations', JSON.stringify(relations)]);
+    }
+    const finalContent = `${serializeFrontmatter(finalOrderedEntries)}\n${body}`;
+    fs.writeFileSync(targetPath, finalContent, 'utf8');
+
+    const size = computeSizeMetrics(finalContent, body);
+    const warnings = [];
+    if (isSizeExceeded(size)) warnings.push('size-exceeded');
+
+    buildSpecRegistry(projectRoot, { write: true });
+
+    return { id, targetPath, warnings, relations, size };
+}
+
 function formatWarningLine(spec, warning) {
     if (warning === 'aging-no-plan' || warning === 'aging-inactive') {
         return `⚠️ ${spec.id} 已 ${spec.idleDays} 天无活动 (${spec.state}) — 请表态: mem spec park|reactivate`;
@@ -288,4 +498,5 @@ module.exports = {
     DEFAULT_AGING_DAYS,
     buildSpecRegistry,
     formatPortfolioReport,
+    adoptSpec,
 };
