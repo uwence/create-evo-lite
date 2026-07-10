@@ -3747,6 +3747,45 @@ async function runChildRuntimeTests() {
             }
             console.log('✅ T-engine-impl passed');
         }
+
+        console.log('T-spec-cli. Testing registerSpecPortfolioCommands wiring + EUSAGE exit-code mapping ...');
+        {
+            const { Command } = require('commander');
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof specPortfolio.registerSpecPortfolioCommands, 'function',
+                'registerSpecPortfolioCommands must be exported');
+
+            const p = new Command();
+            specPortfolio.registerSpecPortfolioCommands(p);
+            const specCmd = p.commands.find(c => c.name() === 'spec');
+            assert.ok(specCmd, 'program exposes a spec command group');
+            const subNames = specCmd.commands.map(c => c.name()).sort();
+            assert.deepStrictEqual(subNames, ['adopt', 'park', 'reactivate', 'status'],
+                'spec command group exposes adopt/park/reactivate/status subcommands');
+
+            // EUSAGE -> exit 2 (per plan; NOT the hive exitCode=1 convention).
+            // Drive the real action handler against an unknown spec id via `park`.
+            const runtime = createTempRuntimeRoot('spec-cli-eusage');
+            const origEvoRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
+            const prevExit = process.exitCode;
+            try {
+                const cliProgram = new Command();
+                specPortfolio.registerSpecPortfolioCommands(cliProgram);
+                process.exitCode = undefined;
+                const output = await captureConsole(async () => {
+                    await cliProgram.parseAsync(['node', 'mem', 'spec', 'park', 'spec:does-not-exist']);
+                });
+                assert.strictEqual(process.exitCode, 2, 'park on unknown id maps EUSAGE to exit code 2');
+                assert.ok(/unknown spec id/.test(output), 'error line names the unknown id');
+                assert.ok(output.startsWith('❌'), 'error path prints only the ❌ line, no stdout');
+            } finally {
+                process.exitCode = prevExit;
+                if (origEvoRoot === undefined) delete process.env.EVO_LITE_ROOT;
+                else process.env.EVO_LITE_ROOT = origEvoRoot;
+            }
+            console.log('✅ T-spec-cli passed');
+        }
 }
 
 module.exports = { runGovernanceTests };

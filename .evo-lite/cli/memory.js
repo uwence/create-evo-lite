@@ -697,6 +697,7 @@ function buildProgram() {
     });
 
     require('./planning').registerPlanCommands(program);
+    require('./spec-portfolio').registerSpecPortfolioCommands(program);
     require('./architecture').registerArchitectureCommands(program);
     require('./verification/commands').registerVerificationCommands(program);
     require('./verification/close-commands').registerCloseCommands(program);
