@@ -2824,6 +2824,134 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-spec-adopt passed');
 
+        console.log('T-spec-park-reactivate. Testing parkSpec/reactivateSpec status transitions + cascade ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof specPortfolio.parkSpec, 'function', 'parkSpec must be exported');
+            assert.strictEqual(typeof specPortfolio.reactivateSpec, 'function', 'reactivateSpec must be exported');
+
+            const runtime = createTempRuntimeRoot('spec-park-reactivate');
+            const projectRoot = runtime.workspaceRoot;
+
+            // p-active: adopted status, has a non-done linked plan -> derived state 'active'.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'p-active.md'), [
+                '---', 'id: spec:p-active', 'status: adopted', '---', '', '# P Active', '',
+            ].join('\n'));
+
+            // p-adopted: adopted status, no linked plan -> derived state 'adopted'.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'p-adopted.md'), [
+                '---', 'id: spec:p-adopted', 'status: adopted', '---', '', '# P Adopted', '',
+            ].join('\n'));
+
+            // r-active-parked: starts parked, has a non-done linked plan -> reactivate should surface 'active'.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r-active-parked.md'), [
+                '---', 'id: spec:r-active-parked', 'status: parked', 'parkedUntil: some old reason', '---', '', '# R Active Parked', '',
+            ].join('\n'));
+
+            // r-adopted-parked: starts parked, no linked plan -> reactivate should surface 'adopted'.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r-adopted-parked.md'), [
+                '---', 'id: spec:r-adopted-parked', 'status: parked', '---', '', '# R Adopted Parked', '',
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [],
+                plans: [
+                    { id: 'plan:p1', status: 'active', linkedSpec: 'spec:p-active', sourcePath: 'docs/plans/p1.md' },
+                    { id: 'plan:r1', status: 'active', linkedSpec: 'spec:r-active-parked', sourcePath: 'docs/plans/r1.md' },
+                ],
+                tasks: [],
+                warnings: [],
+            }, null, 2));
+
+            // (a) park an active spec with opts.until -> frontmatter status:
+            // parked + parkedUntil verbatim; registry state 'parked' AND
+            // zombie-plan cascade warning (its linked plan is not done).
+            {
+                const result = specPortfolio.parkSpec(projectRoot, 'spec:p-active', { until: 'after v3 ships' });
+                assert.deepStrictEqual(result, { id: 'spec:p-active', state: 'parked', parkedUntil: 'after v3 ships' },
+                    'parkSpec return contract');
+
+                const filePath = path.join(projectRoot, 'docs', 'specs', 'p-active.md');
+                const { frontmatter } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown')).parseFrontmatter(fs.readFileSync(filePath, 'utf8'));
+                assert.strictEqual(frontmatter.status, 'parked', 'frontmatter status rewritten to parked');
+                assert.strictEqual(frontmatter.parkedUntil, 'after v3 ships', 'parkedUntil written verbatim');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:p-active');
+                assert.strictEqual(entry.state, 'parked', 'registry entry state is parked after park');
+                assert.ok(entry.warnings.includes('zombie-plan'), 'zombie-plan cascade warning surfaces for a parked spec with an active linked plan');
+            }
+
+            // (b) park an adopted spec (no linked plan) with no `until` ->
+            // status: parked, NO parkedUntil key; registry state 'parked',
+            // no zombie-plan warning.
+            {
+                const result = specPortfolio.parkSpec(projectRoot, 'spec:p-adopted', {});
+                assert.deepStrictEqual(result, { id: 'spec:p-adopted', state: 'parked', parkedUntil: null },
+                    'parkSpec with no until returns parkedUntil: null');
+
+                const filePath = path.join(projectRoot, 'docs', 'specs', 'p-adopted.md');
+                const finalContent = fs.readFileSync(filePath, 'utf8');
+                const { frontmatter } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown')).parseFrontmatter(finalContent);
+                assert.strictEqual(frontmatter.status, 'parked', 'frontmatter status rewritten to parked');
+                assert.ok(!('parkedUntil' in frontmatter), 'parkedUntil key omitted when opts.until is not set');
+                assert.ok(!/parkedUntil/.test(finalContent), 'parkedUntil never written to disk when omitted');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:p-adopted');
+                assert.strictEqual(entry.state, 'parked', 'registry entry state is parked');
+                assert.ok(!entry.warnings.includes('zombie-plan'), 'no zombie-plan warning for a parked spec with no linked plan');
+            }
+
+            // (c) reactivate a parked spec that HAS a non-done linked plan ->
+            // returns state 'active'; frontmatter status adopted, parkedUntil
+            // removed; registry entry state 'active'.
+            {
+                const result = specPortfolio.reactivateSpec(projectRoot, 'spec:r-active-parked');
+                assert.deepStrictEqual(result, { id: 'spec:r-active-parked', state: 'active' },
+                    'reactivateSpec returns derived state active when a non-done linked plan exists');
+
+                const filePath = path.join(projectRoot, 'docs', 'specs', 'r-active-parked.md');
+                const finalContent = fs.readFileSync(filePath, 'utf8');
+                const { frontmatter } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown')).parseFrontmatter(finalContent);
+                assert.strictEqual(frontmatter.status, 'adopted', 'frontmatter status rewritten to adopted on reactivate');
+                assert.ok(!('parkedUntil' in frontmatter), 'parkedUntil key removed on reactivate');
+                assert.ok(!/parkedUntil/.test(finalContent), 'parkedUntil never present on disk after reactivate');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:r-active-parked');
+                assert.strictEqual(entry.state, 'active', 'registry entry state is active after reactivate');
+            }
+
+            // (d) reactivate a parked spec with NO linked plan -> returns
+            // state 'adopted'.
+            {
+                const result = specPortfolio.reactivateSpec(projectRoot, 'spec:r-adopted-parked');
+                assert.deepStrictEqual(result, { id: 'spec:r-adopted-parked', state: 'adopted' },
+                    'reactivateSpec returns derived state adopted when no linked plan exists');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:r-adopted-parked');
+                assert.strictEqual(entry.state, 'adopted', 'registry entry state is adopted after reactivate');
+            }
+
+            // (e) parkSpec / reactivateSpec on unknown id -> EUSAGE.
+            {
+                assert.throws(
+                    () => specPortfolio.parkSpec(projectRoot, 'spec:does-not-exist', {}),
+                    err => err.code === 'EUSAGE',
+                    'parkSpec on unknown id must throw EUSAGE'
+                );
+                assert.throws(
+                    () => specPortfolio.reactivateSpec(projectRoot, 'spec:does-not-exist'),
+                    err => err.code === 'EUSAGE',
+                    'reactivateSpec on unknown id must throw EUSAGE'
+                );
+            }
+        }
+        console.log('✅ T-spec-park-reactivate passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

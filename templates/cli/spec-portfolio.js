@@ -460,6 +460,90 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
     return { id, targetPath, warnings, relations, size };
 }
 
+// --- parkSpec / reactivateSpec: status transitions ---
+
+// Reads filePath, parses its frontmatter, and lets mutateFn transform the
+// ordered [key, value] entries (original key order preserved; mutateFn may
+// add/remove/replace entries), then rewrites the file using the SAME
+// serializeFrontmatter helper adoptSpec uses. This is the one shared
+// frontmatter serializer/rewriter for the module — never duplicate this
+// read-mutate-serialize-write cycle elsewhere.
+function rewriteSpecFrontmatter(filePath, mutateFn) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const { frontmatter, body } = parseFrontmatter(content);
+    const orderedEntries = Object.keys(frontmatter).map(key => [key, frontmatter[key]]);
+    const finalEntries = mutateFn(orderedEntries) || orderedEntries;
+    const finalContent = `${serializeFrontmatter(finalEntries)}\n${body}`;
+    fs.writeFileSync(filePath, finalContent, 'utf8');
+}
+
+// Resolves specId -> absolute spec file path via the registry (id->file).
+// Unknown id -> EUSAGE listing known spec ids.
+function findSpecFileById(projectRoot, specId, callerLabel) {
+    const registry = buildSpecRegistry(projectRoot, { write: false });
+    const entry = registry.specs.find(s => s.id === specId);
+    if (!entry) {
+        const known = registry.specs.map(s => s.id);
+        throw usageError(`${callerLabel}: unknown spec id: ${specId} — known spec ids: ${known.join(', ') || '(none)'}`);
+    }
+    return path.resolve(projectRoot, entry.file);
+}
+
+// Sets `key` to `value` in place (preserving position) if present, otherwise
+// appends it at the end. Returns a new array; does not mutate the input.
+function setEntry(entries, key, value) {
+    let found = false;
+    const out = entries.map(([k, v]) => {
+        if (k === key) { found = true; return [k, value]; }
+        return [k, v];
+    });
+    if (!found) out.push([key, value]);
+    return out;
+}
+
+function removeEntry(entries, key) {
+    return entries.filter(([k]) => k !== key);
+}
+
+// parkSpec: rewrites frontmatter to status: parked (+ parkedUntil verbatim
+// when opts.until is set), rebuilds the registry, and returns the parked
+// state. Cascade (zombie-plan warning) is derived by buildSpecRegistry, not
+// computed here. Unknown id -> EUSAGE.
+function parkSpec(projectRoot, specId, opts = {}) {
+    const absPath = findSpecFileById(projectRoot, specId, 'parkSpec');
+    const until = opts.until;
+
+    rewriteSpecFrontmatter(absPath, (entries) => {
+        let out = setEntry(entries, 'status', 'parked');
+        out = removeEntry(out, 'parkedUntil');
+        if (until) out = setEntry(out, 'parkedUntil', until);
+        return out;
+    });
+
+    buildSpecRegistry(projectRoot, { write: true });
+
+    return { id: specId, state: 'parked', parkedUntil: until || null };
+}
+
+// reactivateSpec: rewrites frontmatter status back to 'adopted' (the
+// derivation layer in buildSpecRegistry re-computes 'active' vs 'adopted'
+// from linked-plan presence) and removes parkedUntil, rebuilds the registry,
+// and returns the DERIVED state from the fresh registry entry. Unknown id ->
+// EUSAGE.
+function reactivateSpec(projectRoot, specId) {
+    const absPath = findSpecFileById(projectRoot, specId, 'reactivateSpec');
+
+    rewriteSpecFrontmatter(absPath, (entries) => {
+        let out = setEntry(entries, 'status', 'adopted');
+        out = removeEntry(out, 'parkedUntil');
+        return out;
+    });
+
+    const registry = buildSpecRegistry(projectRoot, { write: true });
+    const entry = registry.specs.find(s => s.id === specId);
+    return { id: specId, state: entry ? entry.state : 'adopted' };
+}
+
 function formatWarningLine(spec, warning) {
     if (warning === 'aging-no-plan' || warning === 'aging-inactive') {
         return `⚠️ ${spec.id} 已 ${spec.idleDays} 天无活动 (${spec.state}) — 请表态: mem spec park|reactivate`;
@@ -501,4 +585,6 @@ module.exports = {
     buildSpecRegistry,
     formatPortfolioReport,
     adoptSpec,
+    parkSpec,
+    reactivateSpec,
 };
