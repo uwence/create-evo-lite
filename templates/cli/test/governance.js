@@ -2360,6 +2360,164 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-AB memory-ab passed');
 
+        console.log('T-spec-portfolio. Testing spec portfolio registry derivation + report ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.deepStrictEqual(specPortfolio.SIZE_THRESHOLDS,
+                { acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 },
+                'SIZE_THRESHOLDS must match the plan-defined constants');
+            assert.strictEqual(specPortfolio.DEFAULT_AGING_DAYS, 14, 'DEFAULT_AGING_DAYS must be 14');
+            assert.strictEqual(typeof specPortfolio.buildSpecRegistry, 'function', 'buildSpecRegistry must be exported');
+            assert.strictEqual(typeof specPortfolio.formatPortfolioReport, 'function', 'formatPortfolioReport must be exported');
+
+            const runtime = createTempRuntimeRoot('spec-portfolio-core');
+            const projectRoot = runtime.workspaceRoot;
+
+            const oversizedCriteria = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+                .map(n => `    { "id": "c${n}" }`).join(',\n');
+            const criteriaBlock = [
+                '## Acceptance Criteria',
+                '',
+                '```json',
+                '{',
+                '  "criteria": [',
+                oversizedCriteria,
+                '  ]',
+                '}',
+                '```',
+                '',
+            ].join('\n');
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'a-done.md'), [
+                '---', 'id: spec:a', 'status: done', '---', '', '# Spec A', '',
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'b-parked.md'), [
+                '---', 'id: spec:b', 'status: parked', 'linkedPlan: plan:b1', '---', '', '# Spec B', '',
+            ].join('\n'));
+
+            const cPath = path.join(projectRoot, 'docs', 'specs', 'c-adopted-aging.md');
+            writeText(cPath, [
+                '---', 'id: spec:c', 'status: draft', '---', '', '# Spec C', '',
+            ].join('\n'));
+            const twentyDaysAgo = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+            fs.utimesSync(cPath, twentyDaysAgo, twentyDaysAgo);
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'd-active.md'), [
+                '---', 'id: spec:d', 'status: draft', 'linkedPlan: plan:d1', '---', '', '# Spec D', '',
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'e-size-exceeded.md'), [
+                '---', 'id: spec:e', 'status: draft', '---', '', '# Spec E', '',
+                criteriaBlock,
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'f-size-waiver.md'), [
+                '---', 'id: spec:f', 'status: draft', 'sizeWaiver: true', '---', '', '# Spec F', '',
+                criteriaBlock,
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [],
+                plans: [
+                    { id: 'plan:b1', status: 'active', linkedSpec: 'spec:b', sourcePath: 'docs/plans/b1.md' },
+                    { id: 'plan:d1', status: 'active', linkedSpec: 'spec:d', sourcePath: 'docs/plans/d1.md' },
+                ],
+                tasks: [],
+                warnings: [],
+            }, null, 2));
+
+            const registry = specPortfolio.buildSpecRegistry(projectRoot);
+            assert.strictEqual(registry.version, 'evo-spec-registry@1', 'registry version stamp');
+            assert.strictEqual(registry.agingDays, 14, 'agingDays defaults to 14 with no config override');
+            assert.strictEqual(registry.specs.length, 6, 'all six fixture specs enumerated');
+
+            const byId = Object.fromEntries(registry.specs.map(s => [s.id, s]));
+
+            assert.strictEqual(byId['spec:a'].state, 'shipped', 'status: done -> shipped');
+            assert.deepStrictEqual(byId['spec:a'].warnings, [], 'shipped specs carry no aging warnings');
+
+            assert.strictEqual(byId['spec:b'].state, 'parked', 'status: parked -> parked');
+            assert.ok(byId['spec:b'].warnings.includes('zombie-plan'), 'parked spec with active linked plan gets zombie-plan warning');
+
+            assert.strictEqual(byId['spec:c'].state, 'adopted', 'no linked plans -> adopted');
+            assert.ok(byId['spec:c'].idleDays >= 15, `spec:c idleDays should reflect ~20 day old mtime, got ${byId['spec:c'].idleDays}`);
+            assert.ok(byId['spec:c'].warnings.includes('aging-no-plan'), 'adopted spec idle past agingDays gets aging-no-plan warning');
+
+            assert.strictEqual(byId['spec:d'].state, 'active', 'has linked plan not done -> active');
+            assert.ok(!byId['spec:d'].warnings.includes('aging-inactive'), 'recently touched active spec has no aging warning');
+
+            assert.strictEqual(byId['spec:e'].size.acCount, 9, 'acCount parsed from last criteria json block');
+            assert.strictEqual(byId['spec:e'].sizeExceeded, true, 'acCount 9 > threshold 8 -> sizeExceeded');
+            assert.ok(byId['spec:e'].warnings.includes('size-exceeded'), 'size-exceeded spec without sizeWaiver gets warning');
+
+            assert.strictEqual(byId['spec:f'].sizeExceeded, true, 'spec:f is also oversized');
+            assert.ok(!byId['spec:f'].warnings.includes('size-exceeded'), 'sizeWaiver in frontmatter suppresses size-exceeded warning');
+            assert.strictEqual(byId['spec:f'].sizeWaiver, 'true', 'sizeWaiver value surfaced on the registry entry');
+
+            const registryPath = path.join(projectRoot, '.evo-lite', 'generated', 'spec-registry.json');
+            assert.ok(fs.existsSync(registryPath), 'buildSpecRegistry writes the registry JSON by default');
+            const onDisk = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+            assert.strictEqual(onDisk.specs.length, 6, 'on-disk registry matches in-memory registry');
+
+            fs.rmSync(registryPath, { force: true });
+            assert.ok(!fs.existsSync(registryPath), 'registry file removed before rebuild check');
+            specPortfolio.buildSpecRegistry(projectRoot);
+            assert.ok(fs.existsSync(registryPath), 'registry file is rebuildable after deletion (missing is not an error)');
+
+            const noWrite = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+            assert.strictEqual(noWrite.specs.length, 6, 'write:false still returns a full registry');
+
+            const report = specPortfolio.formatPortfolioReport(registry);
+            assert.strictEqual(report[0], '📋 [Spec Portfolio]: adopted=3 active=1 parked=1 shipped=1',
+                'first report line summarizes counts per state');
+            const warnLines = report.slice(1);
+            assert.strictEqual(warnLines.length, 3, 'one WARN line per warning across the fixture');
+            assert.ok(warnLines.every(l => l.startsWith('⚠️')), 'every warning line is prefixed with the WARN glyph');
+            assert.ok(warnLines.some(l => l.includes('spec:c') && l.includes('天无活动')), 'aging-no-plan line mentions spec:c and idle days');
+            assert.ok(warnLines.some(l => l.includes('spec:b') && l.includes('zombie')), 'zombie-plan line mentions spec:b');
+            assert.ok(warnLines.some(l => l.includes('spec:e') && l.includes('体量超标')), 'size-exceeded line mentions spec:e');
+
+            assert.deepStrictEqual(specPortfolio.formatPortfolioReport(null), [], 'formatPortfolioReport([null/undefined]) returns []');
+            assert.deepStrictEqual(specPortfolio.formatPortfolioReport(undefined), [], 'formatPortfolioReport(undefined) returns []');
+
+            // Degradation: no docs/specs dir, no plan-ir, no git — must never throw.
+            const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-portfolio-empty-'));
+            let degraded;
+            assert.doesNotThrow(() => {
+                degraded = specPortfolio.buildSpecRegistry(emptyRoot);
+            }, 'buildSpecRegistry must never throw on a project with no docs/specs, no plan-ir, no git');
+            assert.deepStrictEqual(degraded.specs, [], 'degraded registry has empty specs array');
+            fs.rmSync(emptyRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-spec-portfolio core derivation passed');
+
+        console.log('T-spec-portfolio-git. Testing lastTouchedAt resolves from git log when available ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const runtime = createTempRuntimeRoot('spec-portfolio-git');
+            const projectRoot = runtime.workspaceRoot;
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'g-git-tracked.md'), [
+                '---', 'id: spec:g', 'status: draft', '---', '', '# Spec G', '',
+            ].join('\n'));
+
+            runGit(projectRoot, ['init']);
+            runGit(projectRoot, ['config', 'user.name', 'Evo Test']);
+            runGit(projectRoot, ['config', 'user.email', 'evo@example.com']);
+            runGit(projectRoot, ['add', '.']);
+            runGit(projectRoot, ['commit', '-m', 'chore: add spec g']);
+
+            const commitDate = runGit(projectRoot, ['log', '-1', '--format=%cI', '--', 'docs/specs/g-git-tracked.md']);
+
+            const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+            const specG = registry.specs.find(s => s.id === 'spec:g');
+            assert.ok(specG, 'spec:g present in registry');
+            assert.strictEqual(specG.lastTouchedAt, commitDate, 'lastTouchedAt resolves from git log commit date, not file mtime');
+        }
+        console.log('✅ T-spec-portfolio-git passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
