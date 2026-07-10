@@ -1,6 +1,6 @@
 ---
 id: plan:spec-portfolio-governance-mvp
-status: draft
+status: done
 linkedSpec: spec:spec-portfolio-governance
 created: 2026-07-10
 ---
@@ -102,55 +102,64 @@ registry 构建失败(如 git 异常)→ 打一行 degraded 提示,不让 verify
 
 ### Phase 1: 核心模块
 
-- [ ] [task:portfolio-registry-core] 新建 spec-portfolio.js: 常量 + buildSpecRegistry + formatPortfolioReport
+- [x] [task:portfolio-registry-core] 新建 spec-portfolio.js: 常量 + buildSpecRegistry + formatPortfolioReport
   - files: templates/cli/spec-portfolio.js
+  - evidence: git:ce3685a
   - verify: node -e "const p=require('./templates/cli/spec-portfolio'); const r=p.buildSpecRegistry(process.cwd()); console.log(r.version, r.specs.length)"
   - acceptance: 输出 evo-spec-registry@1 与真实 spec 数;registry 文件落盘 .evo-lite/generated/spec-registry.json;删除该文件后重跑可重建;git 不可用时回退 mtime 不抛异常;状态派生符合 Design Notes 规则 1-6
   - test-first: 先在 test/governance.js 新增「spec portfolio registry」测试节(harness.createTempRuntimeRoot + writeText 造 docs/specs 假 spec + 假 plan-ir.json),断言 shipped/parked/adopted/active 四态派生、aging-no-plan 与 zombie-plan warning,跑 `node templates/cli/test.js governance` 确认红→实现→绿
 
-- [ ] [task:portfolio-adopt] adoptSpec: 格式修复 + 归一化搬移 + 体量闸门 + 关系声明
+- [x] [task:portfolio-adopt] adoptSpec: 格式修复 + 归一化搬移 + 体量闸门 + 关系声明
   - files: templates/cli/spec-portfolio.js
+  - evidence: git:71b6b5d
   - verify: node templates/cli/test.js governance
   - acceptance: 对「文件名带空格 + YAML 损坏 + 不在 docs/specs」的 fixture draft 执行 adoptSpec 后,产出 docs/specs/<kebab>.md、frontmatter 含合法 id/status/created、损坏块降级注释保留;超阈值 fixture 返回 size WARN 但不阻断;存在在途 spec 且未给 --relation/--independent 时抛参数错误(CLI 层 exit 2);relations 正确写入 frontmatter
   - test-first: governance.js 增「spec adopt gate」测试节,覆盖上述四断言,红→绿
 
-- [ ] [task:portfolio-park-reactivate] parkSpec / reactivateSpec: frontmatter 状态迁移 + 级联检测
+- [x] [task:portfolio-park-reactivate] parkSpec / reactivateSpec: frontmatter 状态迁移 + 级联检测
   - files: templates/cli/spec-portfolio.js
+  - evidence: git:fce76fb
   - verify: node templates/cli/test.js governance
   - acceptance: park 写入 status: parked + parkedUntil(原样文本);park 后 registry 该 spec 状态 parked 且其活跃 plan 触发 zombie-plan warning(级联报账);reactivate 恢复 adopted/active(按有无 plan 派生);对不存在的 spec id exit 2
   - test-first: governance.js 增「spec park/reactivate」测试节,红→绿
 
 ### Phase 2: 接线
 
-- [ ] [task:portfolio-cli-wire] registerSpecPortfolioCommands 注册进 memory.js
+- [x] [task:portfolio-cli-wire] registerSpecPortfolioCommands 注册进 memory.js
   - files: templates/cli/spec-portfolio.js, templates/cli/memory.js
+  - evidence: git:aa642c7
   - verify: node ./.evo-lite/cli/memory.js spec status --json
   - acceptance: memory.js 在 registerPlanCommands 调用处(~699 行)后追加 require('./spec-portfolio').registerSpecPortfolioCommands(program);`mem spec adopt <file> [--relation k:id]... [--independent]`、`mem spec status [--json]`、`mem spec park <id> --until <text>`、`mem spec reactivate <id>` 全部可用;--json 输出完整 registry;人类输出复用 formatPortfolioReport
 
-- [ ] [task:portfolio-verify-section] verify 挂载 Spec Portfolio 报账段
+- [x] [task:portfolio-verify-section] verify 挂载 Spec Portfolio 报账段
   - files: templates/cli/memory.service.js
+  - evidence: git:d800501
   - verify: node ./.evo-lite/cli/memory.js verify
   - acceptance: verify 输出在 🪝 [治理运行] 行前出现 📋 [Spec Portfolio] 统计行;存在老化/超标 spec 时逐条 ⚠️ 且每次 verify 重新计算(表态前 WARN 常驻);registry 构建异常时打 degraded 一行,verify 不因此失败;lazy require 保证 spec-portfolio.js 缺失(旧 child runtime)时静默跳过
   - test-first: governance.js 增「verify portfolio section」测试节(captureConsole 捕获 verify 输出断言),红→绿
 
-- [ ] [task:portfolio-manifest-sync] 登记 manifest + mirror 同步
+- [x] [task:portfolio-manifest-sync] 登记 manifest + mirror 同步
   - files: templates/cli/template-manifest.js, .evo-lite/cli/spec-portfolio.js
+  - evidence: git:06ee9dd
   - verify: node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/memory.js sync-runtime
   - acceptance: core-cli family files 数组加入 'spec-portfolio.js';第二次 sync-runtime 报零变更;.evo-lite/cli 镜像与 templates/cli byte-identical
 
 ### Phase 3: 基因 + 全量回归 + dogfood
 
-- [ ] [task:portfolio-intake-gene] 新增 spec-intake 规则基因
+- [x] [task:portfolio-intake-gene] 新增 spec-intake 规则基因
   - files: templates/.agents/rules/spec-intake.md, templates/cli/template-manifest.js
+  - evidence: git:79d0937
   - verify: node templates/cli/test.js governance
   - acceptance: 规则内容: agent 讨论产出 spec 时 draft 阶段位置格式自由,结束时必须调用 mem spec adopt 收编,禁止直接手写 docs/specs/ 绕过闸门;文件登记进 agents-rules family;harness 的 rules-family 派生拷贝逻辑自动覆盖新基因(测试通过即证)
 
-- [ ] [task:portfolio-regression] 全量回归 + 退出码检查
+- [x] [task:portfolio-regression] 全量回归 + 退出码检查
   - files: templates/cli/spec-portfolio.js
+  - evidence: git:0691724
   - verify: node ./.evo-lite/cli/test.js all
   - acceptance: all 范围(governance + integration)全绿;registry 文件缺失时 verify 与 mem spec status 均正常(重建);现有 plan close / READY 自动 close 路径无行为变化
 
-- [ ] [task:portfolio-dogfood] 真实收编本仓库两份 draft
+- [x] [task:portfolio-dogfood] 真实收编本仓库两份 draft
   - files: docs/specs/provider-first-code-perception-foundation.md
+  - evidence: git:0691724
   - verify: node ./.evo-lite/cli/memory.js spec status --json
   - acceptance: 对 "docs/spec provider-first-code-perception-foundation.md" 执行 mem spec adopt(声明 --relation spawned-from:spec:evo-lite-providers),YAML 修复 + 去空格搬移成功且立即收到 size WARN(AC=12>8, Phase=5>3)——闸门在真实超大 spec 上首击命中;空文件 "docs/spec evo-code-perception-foundation.md" adopt 被拒(exit 2, 空内容);registry 中该 spec 状态 adopted 并进入老化倒计时

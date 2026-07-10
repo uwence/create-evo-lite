@@ -1,6 +1,6 @@
 ---
 id: spec:spec-portfolio-governance
-status: draft
+status: done
 owner: human
 created: 2026-07-10
 ---
