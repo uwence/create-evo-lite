@@ -397,8 +397,40 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
         if (!reservedKeys.has(key)) orderedEntries.push([key, frontmatter[key]]);
     }
 
-    const contentWithoutRelations = `${serializeFrontmatter(orderedEntries)}\n${body}`;
+    // --- Relation enforcement (in-memory, BEFORE any fs mutation) ---
+    // Registry excludes the spec being adopted: it isn't at the target yet, and
+    // even if the source lives under docs/specs it must not count as in-flight.
+    const preRegistry = buildSpecRegistry(projectRoot, { write: false });
+    const others = preRegistry.specs.filter(s => s.id !== id
+        && path.resolve(projectRoot, s.file) !== path.resolve(absSrc));
+    const inFlight = others.filter(s => s.state === 'adopted' || s.state === 'active');
+    const knownIds = others.map(s => s.id);
 
+    let relations = [];
+    let writeRelationsLine = false;
+
+    if (opts.independent === true) {
+        relations = [];
+    } else if (Array.isArray(opts.relations) && opts.relations.length > 0) {
+        validateRelations(opts.relations, knownIds);
+        relations = opts.relations.map(r => ({ kind: r.kind, target: r.target }));
+        writeRelationsLine = true;
+    } else if (inFlight.length > 0) {
+        throw usageError(`adoptSpec: relation declaration required (opts.relations or opts.independent); in-flight specs: ${inFlight.map(s => s.id).join(', ')}`);
+    }
+
+    // --- All blocking gates passed; build final content and size metrics ---
+    const finalOrderedEntries = orderedEntries.slice();
+    if (writeRelationsLine) {
+        finalOrderedEntries.push(['relations', JSON.stringify(relations)]);
+    }
+    const finalContent = `${serializeFrontmatter(finalOrderedEntries)}\n${body}`;
+
+    const size = computeSizeMetrics(finalContent, body);
+    const warnings = [];
+    if (isSizeExceeded(size)) warnings.push('size-exceeded');
+
+    // --- Filesystem mutation (only reachable once every EUSAGE gate passed) ---
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
     const isSamePath = path.resolve(absSrc) === path.resolve(targetPath);
     if (!isSamePath) {
@@ -421,37 +453,7 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
         }
     }
 
-    fs.writeFileSync(targetPath, contentWithoutRelations, 'utf8');
-
-    // Relation enforcement: check other specs (excluding the one just adopted).
-    const preRegistry = buildSpecRegistry(projectRoot, { write: false });
-    const others = preRegistry.specs.filter(s => s.id !== id);
-    const inFlight = others.filter(s => s.state === 'adopted' || s.state === 'active');
-    const knownIds = others.map(s => s.id);
-
-    let relations = [];
-    let writeRelationsLine = false;
-
-    if (opts.independent === true) {
-        relations = [];
-    } else if (Array.isArray(opts.relations) && opts.relations.length > 0) {
-        validateRelations(opts.relations, knownIds);
-        relations = opts.relations.map(r => ({ kind: r.kind, target: r.target }));
-        writeRelationsLine = true;
-    } else if (inFlight.length > 0) {
-        throw usageError(`adoptSpec: relation declaration required (opts.relations or opts.independent); in-flight specs: ${inFlight.map(s => s.id).join(', ')}`);
-    }
-
-    const finalOrderedEntries = orderedEntries.slice();
-    if (writeRelationsLine) {
-        finalOrderedEntries.push(['relations', JSON.stringify(relations)]);
-    }
-    const finalContent = `${serializeFrontmatter(finalOrderedEntries)}\n${body}`;
     fs.writeFileSync(targetPath, finalContent, 'utf8');
-
-    const size = computeSizeMetrics(finalContent, body);
-    const warnings = [];
-    if (isSizeExceeded(size)) warnings.push('size-exceeded');
 
     buildSpecRegistry(projectRoot, { write: true });
 

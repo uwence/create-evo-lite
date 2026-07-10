@@ -2684,21 +2684,21 @@ async function runGovernanceTests() {
                 ].join('\n'));
 
                 const draftPath1 = path.join(projectRoot, 'inbox', 'new-one.md');
-                writeText(draftPath1, ['# New One', '', 'Some body.', ''].join('\n'));
+                const draftBody1 = ['# New One', '', 'Some body.', ''].join('\n');
+                writeText(draftPath1, draftBody1);
                 assert.throws(
                     () => specPortfolio.adoptSpec(projectRoot, draftPath1, {}),
                     err => err.code === 'EUSAGE' && /spec:existing/.test(err.message),
                     'missing relation declaration with an in-flight spec present must throw EUSAGE naming it'
                 );
-                // Per the normative flow, move (step 5) happens before relation
-                // enforcement (step 7): the draft is already normalized at the
-                // target path when the EUSAGE throws. Re-adopting from the
-                // target path (now the source) supplies the missing relation.
-                const movedTarget = path.join(projectRoot, 'docs', 'specs', 'new-one.md');
-                assert.ok(fs.existsSync(movedTarget), 'draft already moved to target path when relation enforcement throws');
-                assert.ok(!fs.existsSync(draftPath1), 'original draft path no longer exists after the move');
+                // Transactional: validation runs before any fs mutation, so a
+                // failed adopt leaves the source draft untouched at its origin
+                // and never creates the target. Re-adopt with the relation.
+                assert.ok(fs.existsSync(draftPath1), 'source draft untouched at origin after EUSAGE');
+                assert.strictEqual(fs.readFileSync(draftPath1, 'utf8'), draftBody1, 'source draft content unchanged after EUSAGE');
+                assert.ok(!fs.existsSync(path.join(projectRoot, 'docs', 'specs', 'new-one.md')), 'target not created on failed adopt');
 
-                const result = specPortfolio.adoptSpec(projectRoot, movedTarget, {
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath1, {
                     relations: [{ kind: 'spawned-from', target: 'spec:existing' }],
                 });
                 assert.strictEqual(result.id, 'spec:new-one', 'id derived from H1 title');
@@ -2796,6 +2796,30 @@ async function runGovernanceTests() {
                 assert.ok(/^R/m.test(porcelain), 'git status --porcelain shows a rename entry for the git-mv path');
                 assert.ok(!/^\?\? inbox\/tracked-draft\.md/m.test(porcelain), 'old path must not appear as untracked');
                 assert.ok(!/^D  inbox\/tracked-draft\.md/m.test(porcelain), 'old path must not appear as a bare stage delete (would indicate delete+untracked instead of rename)');
+            }
+
+            // (g) transactional guarantee: EUSAGE leaves source untouched, target uncreated.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-transactional');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'inflight.md'), [
+                    '---', 'id: spec:inflight', 'status: adopted', '---', '', '# In Flight', '',
+                ].join('\n'));
+
+                const draftPath = path.join(projectRoot, 'inbox', 'blocked.md');
+                const draftContent = ['# Blocked Draft', '', 'original body content.', ''].join('\n');
+                writeText(draftPath, draftContent);
+
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftPath, {}),
+                    err => err.code === 'EUSAGE',
+                    'missing relation declaration must throw EUSAGE'
+                );
+                assert.ok(fs.existsSync(draftPath), 'source draft still exists at its original path after EUSAGE');
+                assert.strictEqual(fs.readFileSync(draftPath, 'utf8'), draftContent,
+                    'source draft content is byte-for-byte unchanged after EUSAGE');
+                assert.ok(!fs.existsSync(path.join(projectRoot, 'docs', 'specs', 'blocked-draft.md')),
+                    'docs/specs/<kebab>.md was NOT created on the failed adopt');
             }
         }
         console.log('✅ T-spec-adopt passed');
