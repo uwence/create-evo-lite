@@ -66,6 +66,7 @@ function mtimeISO(absPath) {
 // Never throws.
 function resolveLastTouchedAt(projectRoot, relFiles) {
     let max = null;
+    let maxEpoch = -Infinity;
     for (const relFile of relFiles) {
         if (!relFile) continue;
         const posixRel = relFile.replace(/\\/g, '/');
@@ -73,7 +74,13 @@ function resolveLastTouchedAt(projectRoot, relFiles) {
         if (!iso) {
             iso = mtimeISO(path.join(projectRoot, relFile));
         }
-        if (iso && (!max || iso > max)) max = iso;
+        if (!iso) continue;
+        const epoch = Date.parse(iso);
+        if (Number.isNaN(epoch)) continue;
+        if (epoch > maxEpoch) {
+            maxEpoch = epoch;
+            max = iso;
+        }
     }
     return max;
 }
@@ -369,16 +376,21 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
         frontmatter = {};
     }
 
-    let id;
+    let kebab;
     if (frontmatter.id) {
         if (!frontmatter.id.startsWith('spec:')) {
             throw usageError(`adoptSpec: existing id must start with "spec:": ${frontmatter.id}`);
         }
-        id = frontmatter.id;
+        // Same sanitization as the derived-id branch: never trust the author's
+        // explicit id suffix verbatim as a filename (path-traversal / spaces).
+        kebab = kebabCase(frontmatter.id.slice('spec:'.length));
+        if (!kebab) {
+            throw usageError(`adoptSpec: unusable spec id: ${frontmatter.id}`);
+        }
     } else {
-        id = `spec:${deriveKebabId(body, absSrc)}`;
+        kebab = deriveKebabId(body, absSrc);
     }
-    const kebab = id.slice('spec:'.length);
+    const id = `spec:${kebab}`;
 
     let status = frontmatter.status;
     if (!status || status === 'draft') status = 'adopted';
@@ -439,7 +451,7 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
         const relDst = path.relative(projectRoot, targetPath).replace(/\\/g, '/');
         let movedViaGit = false;
         try {
-            execFileSync('git', ['mv', relSrc, relDst], { cwd: projectRoot, stdio: 'pipe' });
+            execFileSync('git', ['mv', '--', relSrc, relDst], { cwd: projectRoot, stdio: 'pipe' });
             movedViaGit = true;
         } catch (_) {
             movedViaGit = false;
@@ -447,7 +459,7 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
         if (!movedViaGit) {
             fs.renameSync(absSrc, targetPath);
             try {
-                execFileSync('git', ['add', relDst], { cwd: projectRoot, stdio: 'pipe' });
+                execFileSync('git', ['add', '--', relDst], { cwd: projectRoot, stdio: 'pipe' });
             } catch (_) {
                 // best-effort; untracked/no-git is fine here.
             }
@@ -687,4 +699,6 @@ module.exports = {
     parkSpec,
     reactivateSpec,
     registerSpecPortfolioCommands,
+    // Exported for unit testing (timezone-safe epoch compare, not lexicographic).
+    resolveLastTouchedAt,
 };

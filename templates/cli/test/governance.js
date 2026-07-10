@@ -2518,6 +2518,74 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-spec-portfolio-git passed');
 
+        console.log('T-spec-portfolio-tz. Testing resolveLastTouchedAt compares by epoch, not lexicographically ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof specPortfolio.resolveLastTouchedAt, 'function', 'resolveLastTouchedAt must be exported for unit testing');
+
+            // Direct unit proof: candidate A is lexicographically GREATER as a
+            // string ("+08:00" > "Z" character-wise past the time-of-day digits)
+            // but chronologically EARLIER as an instant (23:00+08:00 = 15:00Z,
+            // which is before 18:00Z). A naive `iso > max` string-max picks A;
+            // an epoch-max must pick B.
+            const runtime = createTempRuntimeRoot('spec-portfolio-tz');
+            const projectRoot = runtime.workspaceRoot;
+            runGit(projectRoot, ['init']);
+            runGit(projectRoot, ['config', 'user.name', 'Evo Test']);
+            runGit(projectRoot, ['config', 'user.email', 'evo@example.com']);
+
+            const specRel = 'docs/specs/tz-spec.md';
+            const planRel = 'docs/plans/tz-plan.md';
+            writeText(path.join(projectRoot, specRel), '# TZ Spec\n');
+            writeText(path.join(projectRoot, planRel), '# TZ Plan\n');
+
+            // Spec committed first with a LOCAL +08:00 offset stamp that is
+            // lexicographically greater but chronologically earlier.
+            runGit(projectRoot, ['add', specRel], {});
+            runGit(projectRoot, ['commit', '-m', 'chore: add tz spec'], {
+                GIT_AUTHOR_DATE: '2026-07-10T23:00:00+08:00',
+                GIT_COMMITTER_DATE: '2026-07-10T23:00:00+08:00',
+            });
+            // Plan committed with a UTC "Z" stamp that is lexicographically
+            // smaller but chronologically LATER (the true max instant).
+            runGit(projectRoot, ['add', planRel], {});
+            runGit(projectRoot, ['commit', '-m', 'chore: add tz plan'], {
+                GIT_AUTHOR_DATE: '2026-07-10T18:00:00Z',
+                GIT_COMMITTER_DATE: '2026-07-10T18:00:00Z',
+            });
+
+            const specCommitDate = runGit(projectRoot, ['log', '-1', '--format=%cI', '--', specRel]);
+            const planCommitDate = runGit(projectRoot, ['log', '-1', '--format=%cI', '--', planRel]);
+            assert.ok(specCommitDate > planCommitDate,
+                `fixture sanity: spec stamp must be the lexicographically GREATER string (got spec=${specCommitDate} plan=${planCommitDate})`);
+            assert.ok(Date.parse(planCommitDate) > Date.parse(specCommitDate),
+                `fixture sanity: plan stamp must be the chronologically LATER instant (got spec=${specCommitDate} plan=${planCommitDate})`);
+
+            const result = specPortfolio.resolveLastTouchedAt(projectRoot, [specRel, planRel]);
+            assert.strictEqual(result, planCommitDate,
+                'resolveLastTouchedAt must return the plan stamp (true-later instant via epoch compare), not the spec stamp (lexicographically-greater string)');
+
+            // End-to-end proof through the real registry path (spec linked to plan via plan-ir).
+            writeText(path.join(projectRoot, 'docs', 'specs', 'tz-spec.md'), [
+                '---', 'id: spec:tz-spec', 'status: draft', 'linkedPlan: plan:tz1', '---', '', '# TZ Spec', '',
+            ].join('\n'));
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [],
+                plans: [{ id: 'plan:tz1', status: 'active', linkedSpec: 'spec:tz-spec', sourcePath: planRel }],
+                tasks: [], warnings: [],
+            }, null, 2));
+            const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+            const tzSpec = registry.specs.find(s => s.id === 'spec:tz-spec');
+            assert.ok(tzSpec, 'spec:tz-spec present in registry');
+            assert.strictEqual(tzSpec.lastTouchedAt, planCommitDate,
+                'registry-derived lastTouchedAt picks the true-later linked-plan instant, not the lexicographically-greater spec stamp');
+
+            // Guard clause: an unparseable candidate must not win over a valid one.
+            const guarded = specPortfolio.resolveLastTouchedAt(projectRoot, ['docs/specs/tz-spec.md', 'does/not/exist.md']);
+            assert.ok(guarded && !Number.isNaN(Date.parse(guarded)), 'unparseable/missing candidate never wins over a valid parseable one');
+        }
+        console.log('✅ T-spec-portfolio-tz passed');
+
         console.log('T-spec-portfolio-size. Testing phase/dependsOn size metrics, zombie subset, aging override ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
@@ -2899,6 +2967,79 @@ async function runGovernanceTests() {
                     'source draft content is byte-for-byte unchanged after EUSAGE');
                 assert.ok(!fs.existsSync(path.join(projectRoot, 'docs', 'specs', 'blocked-draft.md')),
                     'docs/specs/<kebab>.md was NOT created on the failed adopt');
+            }
+
+            // (h) explicit frontmatter id with a path-traversal suffix must be
+            // kebab-sanitized like the derived-id branch — never used verbatim
+            // as the target filename. Proves the escape is closed, not just warned.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-explicit-id-traversal');
+                const projectRoot = runtime.workspaceRoot;
+                const specsDir = path.join(projectRoot, 'docs', 'specs');
+
+                const draftPath = path.join(projectRoot, 'inbox', 'escape.md');
+                writeText(draftPath, [
+                    '---', 'id: spec:../../escape', 'status: draft', '---', '', '# Escape', '',
+                ].join('\n'));
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, { independent: true });
+                const resolvedTarget = path.resolve(result.targetPath);
+                assert.ok(resolvedTarget.startsWith(path.resolve(specsDir) + path.sep),
+                    `target must resolve UNDER docs/specs/, got ${resolvedTarget}`);
+                assert.ok(!fs.existsSync(path.join(projectRoot, 'pwned.md')),
+                    'no file written outside docs/specs/ (repo-root escape closed)');
+                assert.ok(!fs.existsSync(path.resolve(projectRoot, '..', 'pwned.md')),
+                    'no file written above the project root (parent-dir escape closed)');
+                assert.strictEqual(result.id, 'spec:escape', 'explicit path-traversal id is normalized to spec:escape');
+
+                const finalContent = fs.readFileSync(result.targetPath, 'utf8');
+                const { frontmatter: finalFm } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown')).parseFrontmatter(finalContent);
+                assert.strictEqual(finalFm.id, 'spec:escape', 'stored frontmatter id normalized, not the raw traversal string');
+            }
+
+            // (i) explicit frontmatter id with spaces must be kebab-cased, not
+            // written verbatim (the exact thing the gate exists to prevent).
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-explicit-id-spaces');
+                const projectRoot = runtime.workspaceRoot;
+
+                const draftPath = path.join(projectRoot, 'inbox', 'spaced.md');
+                writeText(draftPath, [
+                    '---', 'id: spec:My Spec Id', 'status: draft', '---', '', '# Spaced', '',
+                ].join('\n'));
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, { independent: true });
+                assert.strictEqual(result.id, 'spec:my-spec-id', 'explicit id with spaces normalized via kebabCase');
+                const expectedTarget = path.join(projectRoot, 'docs', 'specs', 'my-spec-id.md');
+                assert.strictEqual(result.targetPath, expectedTarget, 'target filename is kebab-cased, no spaces');
+                assert.ok(fs.existsSync(expectedTarget), 'kebab-cased target exists');
+            }
+
+            // (j) explicit frontmatter id with an empty/unusable suffix -> EUSAGE.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-explicit-id-empty');
+                const projectRoot = runtime.workspaceRoot;
+
+                const draftPath = path.join(projectRoot, 'inbox', 'empty-id.md');
+                writeText(draftPath, [
+                    '---', 'id: spec:', 'status: draft', '---', '', '# Empty Id', '',
+                ].join('\n'));
+
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftPath, { independent: true }),
+                    err => err.code === 'EUSAGE' && /unusable spec id/.test(err.message),
+                    'id: spec: (empty suffix) must throw EUSAGE, not silently produce a bad target'
+                );
+
+                const draftPath2 = path.join(projectRoot, 'inbox', 'slashes-id.md');
+                writeText(draftPath2, [
+                    '---', 'id: spec:///', 'status: draft', '---', '', '# Slashes Id', '',
+                ].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftPath2, { independent: true }),
+                    err => err.code === 'EUSAGE' && /unusable spec id/.test(err.message),
+                    'id: spec:/// (kebab-cases to empty) must throw EUSAGE'
+                );
             }
         }
         console.log('✅ T-spec-adopt passed');
