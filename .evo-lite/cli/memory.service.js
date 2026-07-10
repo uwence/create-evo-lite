@@ -2168,6 +2168,35 @@ async function verify(options = {}) {
         report.project_control = { error: true };
     }
 
+    // Spec Portfolio (intake gate + derived-state aging). Lazy-required so a
+    // child runtime that predates spec-portfolio.js does not crash verify.
+    try {
+        const specPortfolio = require('./spec-portfolio');
+        const registry = specPortfolio.buildSpecRegistry(getWorkspaceRoot());
+        const lines = specPortfolio.formatPortfolioReport(registry);
+        for (const line of lines) {
+            log(line);
+        }
+        const hasWarn = lines.some(l => l.startsWith('⚠️'));
+        if (hasWarn) {
+            report.hasAlerts = true;
+            pushNextStep('表态老化/超标 spec: mem spec park|reactivate,或拆分/声明 sizeWaiver。');
+        }
+        report.specPortfolio = {
+            adopted: registry.specs.filter(s => s.state === 'adopted').length,
+            active: registry.specs.filter(s => s.state === 'active').length,
+            parked: registry.specs.filter(s => s.state === 'parked').length,
+            shipped: registry.specs.filter(s => s.state === 'shipped').length,
+            warnings: registry.specs.reduce((n, s) => n + (s.warnings ? s.warnings.length : 0), 0),
+        };
+    } catch (err) {
+        if (err && err.code === 'MODULE_NOT_FOUND') {
+            // spec-portfolio not present in this (older child) runtime — skip silently.
+        } else {
+            log(`📋 [Spec Portfolio]: degraded (${err && err.message ? err.message : 'error'})`);
+        }
+    }
+
     const governanceRun = readGovernanceRunState(getWorkspaceRoot());
     report.governance = governanceRun;
     if (governanceRun.status === 'healthy') {

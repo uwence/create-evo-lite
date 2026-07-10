@@ -2614,6 +2614,85 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-spec-portfolio-size passed');
 
+        console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
+        {
+            // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.
+            {
+                const runtime = createTempRuntimeRoot('verify-spec-portfolio-aging');
+                const projectRoot = runtime.workspaceRoot;
+                const specPath = path.join(projectRoot, 'docs', 'specs', 'm-aging.md');
+                writeText(specPath, [
+                    '---', 'id: spec:m', 'status: draft', '---', '', '# Spec M', '',
+                ].join('\n'));
+                const twentyDaysAgo = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+                fs.utimesSync(specPath, twentyDaysAgo, twentyDaysAgo);
+
+                const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                    EVO_LITE_SKIP_GIT_STATUS: '1',
+                });
+                let report;
+                const output = await captureConsole(async () => {
+                    report = await loaded.service.verify();
+                });
+                const portfolioLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]:'));
+                assert.ok(portfolioLine, 'verify output must include a 📋 [Spec Portfolio]: line');
+                assert.ok(output.split('\n').some(l => l.startsWith('⚠️') && l.includes('spec:m')),
+                    'verify output must include a ⚠️ aging warning line for spec:m');
+                assert.strictEqual(report.hasAlerts, true, 'report.hasAlerts must be true when a spec portfolio warning fires');
+                assert.ok(report.specPortfolio, 'report.specPortfolio must be populated');
+                assert.strictEqual(report.specPortfolio.adopted, 1, 'one adopted spec counted');
+                assert.ok(report.specPortfolio.warnings >= 1, 'at least one warning counted');
+            }
+
+            // (b) degraded path: buildSpecRegistry throws -> single degraded 📋 line, verify does not throw.
+            {
+                const specPortfolioMod = require(path.join(CLI_DIR, 'spec-portfolio.js'));
+                const realBuildSpecRegistry = specPortfolioMod.buildSpecRegistry;
+                specPortfolioMod.buildSpecRegistry = () => { throw new Error('boom-spec-portfolio'); };
+                try {
+                    const runtime = createTempRuntimeRoot('verify-spec-portfolio-degraded');
+                    const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                        EVO_LITE_SKIP_GIT_STATUS: '1',
+                    });
+                    let report;
+                    let threw = null;
+                    const output = await captureConsole(async () => {
+                        try {
+                            report = await loaded.service.verify();
+                        } catch (err) {
+                            threw = err;
+                        }
+                    });
+                    assert.strictEqual(threw, null, 'verify() must not throw when spec-portfolio build fails');
+                    const degradedLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]: degraded'));
+                    assert.ok(degradedLine, 'verify output must include a single degraded 📋 line on spec-portfolio failure');
+                    assert.ok(degradedLine.includes('boom-spec-portfolio'), 'degraded line should surface the underlying error message');
+                    assert.ok(report, 'verify() must still return its report on spec-portfolio degradation');
+                } finally {
+                    specPortfolioMod.buildSpecRegistry = realBuildSpecRegistry;
+                }
+            }
+
+            // (c) clean workspace (no docs/specs) -> all-zero 📋 line, no ⚠️, verify exits normally.
+            {
+                const runtime = createTempRuntimeRoot('verify-spec-portfolio-clean');
+                const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                    EVO_LITE_SKIP_GIT_STATUS: '1',
+                });
+                let report;
+                const output = await captureConsole(async () => {
+                    report = await loaded.service.verify();
+                });
+                const portfolioLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]:'));
+                assert.strictEqual(portfolioLine, '📋 [Spec Portfolio]: adopted=0 active=0 parked=0 shipped=0',
+                    'clean workspace 📋 line reports all-zero counts');
+                assert.ok(!output.split('\n').some(l => l.startsWith('⚠️') && l.includes('spec:')),
+                    'clean workspace must not include any spec ⚠️ warning lines');
+                assert.ok(report, 'verify() must return a report on a clean workspace');
+            }
+        }
+        console.log('✅ T-verify-spec-portfolio passed');
+
         console.log('T-spec-adopt. Testing adoptSpec intake gate (normalize, size gate, relation enforcement) ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
