@@ -174,10 +174,12 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         }
         const linkedPlans = Array.from(linkedSet).sort();
 
-        const anyPlanNotDone = linkedPlans.some(planId => {
+        // A referenced plan absent from plan-ir is conservatively treated as not-done.
+        const notDonePlans = linkedPlans.filter(planId => {
             const plan = plansById.get(planId);
             return !plan || plan.status !== 'done';
         });
+        const anyPlanNotDone = notDonePlans.length > 0;
 
         const touchFiles = [relSpecPath];
         for (const planId of linkedPlans) {
@@ -221,6 +223,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             sizeExceeded,
             sizeWaiver,
             relations: parseRelations(frontmatter),
+            notDonePlans,
             warnings,
         });
     }
@@ -253,7 +256,8 @@ function formatWarningLine(spec, warning) {
         return `⚠️ ${spec.id} 体量超标 (AC=${spec.size.acCount}, Phase=${spec.size.phaseCount}) — 建议拆分或在 frontmatter 声明 sizeWaiver`;
     }
     if (warning === 'zombie-plan') {
-        const plans = (spec.linkedPlans || []).join(', ');
+        // Only the not-done plans are "仍活跃" — a done plan must never be named here.
+        const plans = (spec.notDonePlans || spec.linkedPlans || []).join(', ');
         return `⚠️ ${spec.id} 已 parked 但关联 plan 仍活跃 (${plans}) — zombie plan`;
     }
     return `⚠️ ${spec.id} ${warning}`;

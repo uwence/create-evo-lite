@@ -2518,6 +2518,102 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-spec-portfolio-git passed');
 
+        console.log('T-spec-portfolio-size. Testing phase/dependsOn size metrics, zombie subset, aging override ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const runtime = createTempRuntimeRoot('spec-portfolio-size');
+            const projectRoot = runtime.workspaceRoot;
+
+            writeText(path.join(projectRoot, '.evo-lite', 'config.json'), JSON.stringify({
+                specPortfolio: { agingDays: 5 },
+            }, null, 2));
+
+            // (a) phaseCount via `### Phase ` headings: 4 phases > threshold 3.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'h-phase.md'), [
+                '---', 'id: spec:h', 'status: draft', '---', '', '# Spec H', '',
+                '### Phase 1: scaffold', 'work', '',
+                '### Phase 2: core', 'work', '',
+                '### Phase 3: polish', 'work', '',
+                '### Phase 4: extra', 'work', '',
+            ].join('\n'));
+
+            // (b) dependsOnCount with duplicates across criteria: 16 raw entries, 13 unique > 12.
+            const dependsOnCriteria = JSON.stringify({
+                criteria: [
+                    { id: 'c1', dependsOn: ['f1', 'f2', 'f3', 'f4', 'f5', 'f6'] },
+                    { id: 'c2', dependsOn: ['f5', 'f6', 'f7', 'f8', 'f9', 'f10'] },
+                    { id: 'c3', dependsOn: ['f10', 'f11', 'f12', 'f13'] },
+                ],
+            }, null, 2);
+            writeText(path.join(projectRoot, 'docs', 'specs', 'i-dependson.md'), [
+                '---', 'id: spec:i', 'status: draft', '---', '', '# Spec I', '',
+                '## Acceptance Criteria', '', '```json', dependsOnCriteria, '```', '',
+            ].join('\n'));
+
+            // (c) fallback regex path: no `### Phase `, but `## Phase N` style headings.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'j-fallback.md'), [
+                '---', 'id: spec:j', 'status: draft', '---', '', '# Spec J', '',
+                '## Phase 1', 'work', '',
+                '## Phase 2', 'work', '',
+            ].join('\n'));
+
+            // Multi-plan parked spec: one linked plan done, one active -> zombie names ONLY the active one.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'k-parked-multi.md'), [
+                '---', 'id: spec:k', 'status: parked', '---', '', '# Spec K', '',
+                '## Linked Plans', '', '- plan:k1', '- plan:k2', '',
+            ].join('\n'));
+
+            // Aging override: 7 idle days > overridden agingDays 5 (but < default 14).
+            const lPath = path.join(projectRoot, 'docs', 'specs', 'l-aging.md');
+            writeText(lPath, [
+                '---', 'id: spec:l', 'status: draft', '---', '', '# Spec L', '',
+            ].join('\n'));
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            fs.utimesSync(lPath, sevenDaysAgo, sevenDaysAgo);
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [],
+                plans: [
+                    { id: 'plan:k1', status: 'done', linkedSpec: 'spec:k', sourcePath: 'docs/plans/k1.md' },
+                    { id: 'plan:k2', status: 'active', linkedSpec: 'spec:k', sourcePath: 'docs/plans/k2.md' },
+                ],
+                tasks: [],
+                warnings: [],
+            }, null, 2));
+
+            const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+            const byId = Object.fromEntries(registry.specs.map(s => [s.id, s]));
+
+            assert.strictEqual(byId['spec:h'].size.phaseCount, 4, 'phaseCount counts `### Phase ` headings');
+            assert.strictEqual(byId['spec:h'].sizeExceeded, true, 'phaseCount 4 > threshold 3 -> sizeExceeded');
+            assert.ok(byId['spec:h'].warnings.includes('size-exceeded'), 'phase-driven overflow raises size-exceeded warning');
+
+            assert.strictEqual(byId['spec:i'].size.acCount, 3, 'spec:i acCount stays under threshold');
+            assert.strictEqual(byId['spec:i'].size.dependsOnCount, 13, 'dependsOnCount deduplicates across criteria (16 raw -> 13 unique)');
+            assert.strictEqual(byId['spec:i'].sizeExceeded, true, 'dependsOnCount 13 > threshold 12 -> sizeExceeded');
+            assert.ok(byId['spec:i'].warnings.includes('size-exceeded'), 'dependsOn-driven overflow raises size-exceeded warning');
+
+            assert.strictEqual(byId['spec:j'].size.phaseCount, 2, 'fallback `#{2,3} .*Phase` regex counts `## Phase N` headings');
+            assert.strictEqual(byId['spec:j'].sizeExceeded, false, 'fallback phase count under threshold -> not exceeded');
+
+            assert.strictEqual(byId['spec:k'].state, 'parked', 'spec:k stays parked');
+            assert.ok(byId['spec:k'].warnings.includes('zombie-plan'), 'parked spec with one active plan gets zombie-plan warning');
+
+            assert.strictEqual(registry.agingDays, 5, 'config specPortfolio.agingDays overrides default 14');
+            assert.strictEqual(byId['spec:l'].state, 'adopted', 'spec:l has no linked plans');
+            assert.ok(byId['spec:l'].idleDays >= 6 && byId['spec:l'].idleDays <= 8,
+                `spec:l idleDays ~7 expected, got ${byId['spec:l'].idleDays}`);
+            assert.ok(byId['spec:l'].warnings.includes('aging-no-plan'), '7 idle days > overridden agingDays 5 -> aging-no-plan');
+
+            const report = specPortfolio.formatPortfolioReport(registry);
+            const zombieLine = report.find(l => l.includes('spec:k') && l.includes('zombie'));
+            assert.ok(zombieLine, 'report contains a zombie-plan line for spec:k');
+            assert.ok(zombieLine.includes('plan:k2'), 'zombie line names the not-done plan (plan:k2)');
+            assert.ok(!zombieLine.includes('plan:k1'), 'zombie line must NOT name the done plan (plan:k1) as 仍活跃');
+        }
+        console.log('✅ T-spec-portfolio-size passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
