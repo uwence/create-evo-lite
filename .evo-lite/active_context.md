@@ -43,3 +43,4 @@ Memory Engine Default-Flip Implementation Plan: all tasks implemented
 
 - 考虑 `raw_memory/` 原始文件层（YAML Frontmatter + Markdown），提升向量库抗毁性与换模型能力（参考 Gemini 设计文档讨论）。
 - [f9b1] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
+- [llm-wiki] Karpathy LLM-wiki 思路: raw_memory 之上建主题页蒸馏层(主题页知识单元/原地更新/密集互链/低频维护),与 code wiki 互为姐妹投影。等 spec:spec-portfolio-governance 落地后作首批 adopt 候选。详见该 spec Follow-ups。
