@@ -20,6 +20,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'safety.js',
             'inspector.js',
             'recall-rules.js',
+            'spec-portfolio.js',
             'template-manifest.js',
             'test.js',
             'test/harness.js',

@@ -2360,6 +2360,677 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-AB memory-ab passed');
 
+        console.log('T-spec-portfolio. Testing spec portfolio registry derivation + report ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.deepStrictEqual(specPortfolio.SIZE_THRESHOLDS,
+                { acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 },
+                'SIZE_THRESHOLDS must match the plan-defined constants');
+            assert.strictEqual(specPortfolio.DEFAULT_AGING_DAYS, 14, 'DEFAULT_AGING_DAYS must be 14');
+            assert.strictEqual(typeof specPortfolio.buildSpecRegistry, 'function', 'buildSpecRegistry must be exported');
+            assert.strictEqual(typeof specPortfolio.formatPortfolioReport, 'function', 'formatPortfolioReport must be exported');
+
+            const runtime = createTempRuntimeRoot('spec-portfolio-core');
+            const projectRoot = runtime.workspaceRoot;
+
+            const oversizedCriteria = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+                .map(n => `    { "id": "c${n}" }`).join(',\n');
+            const criteriaBlock = [
+                '## Acceptance Criteria',
+                '',
+                '```json',
+                '{',
+                '  "criteria": [',
+                oversizedCriteria,
+                '  ]',
+                '}',
+                '```',
+                '',
+            ].join('\n');
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'a-done.md'), [
+                '---', 'id: spec:a', 'status: done', '---', '', '# Spec A', '',
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'b-parked.md'), [
+                '---', 'id: spec:b', 'status: parked', 'linkedPlan: plan:b1', '---', '', '# Spec B', '',
+            ].join('\n'));
+
+            const cPath = path.join(projectRoot, 'docs', 'specs', 'c-adopted-aging.md');
+            writeText(cPath, [
+                '---', 'id: spec:c', 'status: draft', '---', '', '# Spec C', '',
+            ].join('\n'));
+            const twentyDaysAgo = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+            fs.utimesSync(cPath, twentyDaysAgo, twentyDaysAgo);
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'd-active.md'), [
+                '---', 'id: spec:d', 'status: draft', 'linkedPlan: plan:d1', '---', '', '# Spec D', '',
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'e-size-exceeded.md'), [
+                '---', 'id: spec:e', 'status: draft', '---', '', '# Spec E', '',
+                criteriaBlock,
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'f-size-waiver.md'), [
+                '---', 'id: spec:f', 'status: draft', 'sizeWaiver: true', '---', '', '# Spec F', '',
+                criteriaBlock,
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [],
+                plans: [
+                    { id: 'plan:b1', status: 'active', linkedSpec: 'spec:b', sourcePath: 'docs/plans/b1.md' },
+                    { id: 'plan:d1', status: 'active', linkedSpec: 'spec:d', sourcePath: 'docs/plans/d1.md' },
+                ],
+                tasks: [],
+                warnings: [],
+            }, null, 2));
+
+            const registry = specPortfolio.buildSpecRegistry(projectRoot);
+            assert.strictEqual(registry.version, 'evo-spec-registry@1', 'registry version stamp');
+            assert.strictEqual(registry.agingDays, 14, 'agingDays defaults to 14 with no config override');
+            assert.strictEqual(registry.specs.length, 6, 'all six fixture specs enumerated');
+
+            const byId = Object.fromEntries(registry.specs.map(s => [s.id, s]));
+
+            assert.strictEqual(byId['spec:a'].state, 'shipped', 'status: done -> shipped');
+            assert.deepStrictEqual(byId['spec:a'].warnings, [], 'shipped specs carry no aging warnings');
+
+            assert.strictEqual(byId['spec:b'].state, 'parked', 'status: parked -> parked');
+            assert.ok(byId['spec:b'].warnings.includes('zombie-plan'), 'parked spec with active linked plan gets zombie-plan warning');
+
+            assert.strictEqual(byId['spec:c'].state, 'adopted', 'no linked plans -> adopted');
+            assert.ok(byId['spec:c'].idleDays >= 15, `spec:c idleDays should reflect ~20 day old mtime, got ${byId['spec:c'].idleDays}`);
+            assert.ok(byId['spec:c'].warnings.includes('aging-no-plan'), 'adopted spec idle past agingDays gets aging-no-plan warning');
+
+            assert.strictEqual(byId['spec:d'].state, 'active', 'has linked plan not done -> active');
+            assert.ok(!byId['spec:d'].warnings.includes('aging-inactive'), 'recently touched active spec has no aging warning');
+
+            assert.strictEqual(byId['spec:e'].size.acCount, 9, 'acCount parsed from last criteria json block');
+            assert.strictEqual(byId['spec:e'].sizeExceeded, true, 'acCount 9 > threshold 8 -> sizeExceeded');
+            assert.ok(byId['spec:e'].warnings.includes('size-exceeded'), 'size-exceeded spec without sizeWaiver gets warning');
+
+            assert.strictEqual(byId['spec:f'].sizeExceeded, true, 'spec:f is also oversized');
+            assert.ok(!byId['spec:f'].warnings.includes('size-exceeded'), 'sizeWaiver in frontmatter suppresses size-exceeded warning');
+            assert.strictEqual(byId['spec:f'].sizeWaiver, 'true', 'sizeWaiver value surfaced on the registry entry');
+
+            const registryPath = path.join(projectRoot, '.evo-lite', 'generated', 'spec-registry.json');
+            assert.ok(fs.existsSync(registryPath), 'buildSpecRegistry writes the registry JSON by default');
+            const onDisk = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+            assert.strictEqual(onDisk.specs.length, 6, 'on-disk registry matches in-memory registry');
+
+            fs.rmSync(registryPath, { force: true });
+            assert.ok(!fs.existsSync(registryPath), 'registry file removed before rebuild check');
+            specPortfolio.buildSpecRegistry(projectRoot);
+            assert.ok(fs.existsSync(registryPath), 'registry file is rebuildable after deletion (missing is not an error)');
+
+            const noWrite = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+            assert.strictEqual(noWrite.specs.length, 6, 'write:false still returns a full registry');
+
+            const report = specPortfolio.formatPortfolioReport(registry);
+            assert.strictEqual(report[0], '📋 [Spec Portfolio]: adopted=3 active=1 parked=1 shipped=1',
+                'first report line summarizes counts per state');
+            const warnLines = report.slice(1);
+            assert.strictEqual(warnLines.length, 3, 'one WARN line per warning across the fixture');
+            assert.ok(warnLines.every(l => l.startsWith('⚠️')), 'every warning line is prefixed with the WARN glyph');
+            assert.ok(warnLines.some(l => l.includes('spec:c') && l.includes('天无活动')), 'aging-no-plan line mentions spec:c and idle days');
+            assert.ok(warnLines.some(l => l.includes('spec:b') && l.includes('zombie')), 'zombie-plan line mentions spec:b');
+            assert.ok(warnLines.some(l => l.includes('spec:e') && l.includes('体量超标')), 'size-exceeded line mentions spec:e');
+
+            assert.deepStrictEqual(specPortfolio.formatPortfolioReport(null), [], 'formatPortfolioReport([null/undefined]) returns []');
+            assert.deepStrictEqual(specPortfolio.formatPortfolioReport(undefined), [], 'formatPortfolioReport(undefined) returns []');
+
+            // Degradation: no docs/specs dir, no plan-ir, no git — must never throw.
+            const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-portfolio-empty-'));
+            let degraded;
+            assert.doesNotThrow(() => {
+                degraded = specPortfolio.buildSpecRegistry(emptyRoot);
+            }, 'buildSpecRegistry must never throw on a project with no docs/specs, no plan-ir, no git');
+            assert.deepStrictEqual(degraded.specs, [], 'degraded registry has empty specs array');
+            fs.rmSync(emptyRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-spec-portfolio core derivation passed');
+
+        console.log('T-spec-portfolio-git. Testing lastTouchedAt resolves from git log when available ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const runtime = createTempRuntimeRoot('spec-portfolio-git');
+            const projectRoot = runtime.workspaceRoot;
+
+            writeText(path.join(projectRoot, 'docs', 'specs', 'g-git-tracked.md'), [
+                '---', 'id: spec:g', 'status: draft', '---', '', '# Spec G', '',
+            ].join('\n'));
+
+            runGit(projectRoot, ['init']);
+            runGit(projectRoot, ['config', 'user.name', 'Evo Test']);
+            runGit(projectRoot, ['config', 'user.email', 'evo@example.com']);
+            runGit(projectRoot, ['add', '.']);
+            runGit(projectRoot, ['commit', '-m', 'chore: add spec g']);
+
+            const commitDate = runGit(projectRoot, ['log', '-1', '--format=%cI', '--', 'docs/specs/g-git-tracked.md']);
+
+            const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+            const specG = registry.specs.find(s => s.id === 'spec:g');
+            assert.ok(specG, 'spec:g present in registry');
+            assert.strictEqual(specG.lastTouchedAt, commitDate, 'lastTouchedAt resolves from git log commit date, not file mtime');
+        }
+        console.log('✅ T-spec-portfolio-git passed');
+
+        console.log('T-spec-portfolio-size. Testing phase/dependsOn size metrics, zombie subset, aging override ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const runtime = createTempRuntimeRoot('spec-portfolio-size');
+            const projectRoot = runtime.workspaceRoot;
+
+            writeText(path.join(projectRoot, '.evo-lite', 'config.json'), JSON.stringify({
+                specPortfolio: { agingDays: 5 },
+            }, null, 2));
+
+            // (a) phaseCount via `### Phase ` headings: 4 phases > threshold 3.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'h-phase.md'), [
+                '---', 'id: spec:h', 'status: draft', '---', '', '# Spec H', '',
+                '### Phase 1: scaffold', 'work', '',
+                '### Phase 2: core', 'work', '',
+                '### Phase 3: polish', 'work', '',
+                '### Phase 4: extra', 'work', '',
+            ].join('\n'));
+
+            // (b) dependsOnCount with duplicates across criteria: 16 raw entries, 13 unique > 12.
+            const dependsOnCriteria = JSON.stringify({
+                criteria: [
+                    { id: 'c1', dependsOn: ['f1', 'f2', 'f3', 'f4', 'f5', 'f6'] },
+                    { id: 'c2', dependsOn: ['f5', 'f6', 'f7', 'f8', 'f9', 'f10'] },
+                    { id: 'c3', dependsOn: ['f10', 'f11', 'f12', 'f13'] },
+                ],
+            }, null, 2);
+            writeText(path.join(projectRoot, 'docs', 'specs', 'i-dependson.md'), [
+                '---', 'id: spec:i', 'status: draft', '---', '', '# Spec I', '',
+                '## Acceptance Criteria', '', '```json', dependsOnCriteria, '```', '',
+            ].join('\n'));
+
+            // (c) fallback regex path: no `### Phase `, but `## Phase N` style headings.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'j-fallback.md'), [
+                '---', 'id: spec:j', 'status: draft', '---', '', '# Spec J', '',
+                '## Phase 1', 'work', '',
+                '## Phase 2', 'work', '',
+            ].join('\n'));
+
+            // Multi-plan parked spec: one linked plan done, one active -> zombie names ONLY the active one.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'k-parked-multi.md'), [
+                '---', 'id: spec:k', 'status: parked', '---', '', '# Spec K', '',
+                '## Linked Plans', '', '- plan:k1', '- plan:k2', '',
+            ].join('\n'));
+
+            // Aging override: 7 idle days > overridden agingDays 5 (but < default 14).
+            const lPath = path.join(projectRoot, 'docs', 'specs', 'l-aging.md');
+            writeText(lPath, [
+                '---', 'id: spec:l', 'status: draft', '---', '', '# Spec L', '',
+            ].join('\n'));
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            fs.utimesSync(lPath, sevenDaysAgo, sevenDaysAgo);
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [],
+                plans: [
+                    { id: 'plan:k1', status: 'done', linkedSpec: 'spec:k', sourcePath: 'docs/plans/k1.md' },
+                    { id: 'plan:k2', status: 'active', linkedSpec: 'spec:k', sourcePath: 'docs/plans/k2.md' },
+                ],
+                tasks: [],
+                warnings: [],
+            }, null, 2));
+
+            const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+            const byId = Object.fromEntries(registry.specs.map(s => [s.id, s]));
+
+            assert.strictEqual(byId['spec:h'].size.phaseCount, 4, 'phaseCount counts `### Phase ` headings');
+            assert.strictEqual(byId['spec:h'].sizeExceeded, true, 'phaseCount 4 > threshold 3 -> sizeExceeded');
+            assert.ok(byId['spec:h'].warnings.includes('size-exceeded'), 'phase-driven overflow raises size-exceeded warning');
+
+            assert.strictEqual(byId['spec:i'].size.acCount, 3, 'spec:i acCount stays under threshold');
+            assert.strictEqual(byId['spec:i'].size.dependsOnCount, 13, 'dependsOnCount deduplicates across criteria (16 raw -> 13 unique)');
+            assert.strictEqual(byId['spec:i'].sizeExceeded, true, 'dependsOnCount 13 > threshold 12 -> sizeExceeded');
+            assert.ok(byId['spec:i'].warnings.includes('size-exceeded'), 'dependsOn-driven overflow raises size-exceeded warning');
+
+            assert.strictEqual(byId['spec:j'].size.phaseCount, 2, 'fallback `#{2,3} .*Phase` regex counts `## Phase N` headings');
+            assert.strictEqual(byId['spec:j'].sizeExceeded, false, 'fallback phase count under threshold -> not exceeded');
+
+            assert.strictEqual(byId['spec:k'].state, 'parked', 'spec:k stays parked');
+            assert.ok(byId['spec:k'].warnings.includes('zombie-plan'), 'parked spec with one active plan gets zombie-plan warning');
+
+            assert.strictEqual(registry.agingDays, 5, 'config specPortfolio.agingDays overrides default 14');
+            assert.strictEqual(byId['spec:l'].state, 'adopted', 'spec:l has no linked plans');
+            assert.ok(byId['spec:l'].idleDays >= 6 && byId['spec:l'].idleDays <= 8,
+                `spec:l idleDays ~7 expected, got ${byId['spec:l'].idleDays}`);
+            assert.ok(byId['spec:l'].warnings.includes('aging-no-plan'), '7 idle days > overridden agingDays 5 -> aging-no-plan');
+
+            const report = specPortfolio.formatPortfolioReport(registry);
+            const zombieLine = report.find(l => l.includes('spec:k') && l.includes('zombie'));
+            assert.ok(zombieLine, 'report contains a zombie-plan line for spec:k');
+            assert.ok(zombieLine.includes('plan:k2'), 'zombie line names the not-done plan (plan:k2)');
+            assert.ok(!zombieLine.includes('plan:k1'), 'zombie line must NOT name the done plan (plan:k1) as 仍活跃');
+        }
+        console.log('✅ T-spec-portfolio-size passed');
+
+        console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
+        {
+            // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.
+            {
+                const runtime = createTempRuntimeRoot('verify-spec-portfolio-aging');
+                const projectRoot = runtime.workspaceRoot;
+                const specPath = path.join(projectRoot, 'docs', 'specs', 'm-aging.md');
+                writeText(specPath, [
+                    '---', 'id: spec:m', 'status: draft', '---', '', '# Spec M', '',
+                ].join('\n'));
+                const twentyDaysAgo = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+                fs.utimesSync(specPath, twentyDaysAgo, twentyDaysAgo);
+
+                const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                    EVO_LITE_SKIP_GIT_STATUS: '1',
+                });
+                let report;
+                const output = await captureConsole(async () => {
+                    report = await loaded.service.verify();
+                });
+                const portfolioLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]:'));
+                assert.ok(portfolioLine, 'verify output must include a 📋 [Spec Portfolio]: line');
+                assert.ok(output.split('\n').some(l => l.startsWith('⚠️') && l.includes('spec:m')),
+                    'verify output must include a ⚠️ aging warning line for spec:m');
+                assert.strictEqual(report.hasAlerts, true, 'report.hasAlerts must be true when a spec portfolio warning fires');
+                assert.ok(report.specPortfolio, 'report.specPortfolio must be populated');
+                assert.strictEqual(report.specPortfolio.adopted, 1, 'one adopted spec counted');
+                assert.ok(report.specPortfolio.warnings >= 1, 'at least one warning counted');
+            }
+
+            // (b) degraded path: buildSpecRegistry throws -> single degraded 📋 line, verify does not throw.
+            {
+                const specPortfolioMod = require(path.join(CLI_DIR, 'spec-portfolio.js'));
+                const realBuildSpecRegistry = specPortfolioMod.buildSpecRegistry;
+                specPortfolioMod.buildSpecRegistry = () => { throw new Error('boom-spec-portfolio'); };
+                try {
+                    const runtime = createTempRuntimeRoot('verify-spec-portfolio-degraded');
+                    const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                        EVO_LITE_SKIP_GIT_STATUS: '1',
+                    });
+                    let report;
+                    let threw = null;
+                    const output = await captureConsole(async () => {
+                        try {
+                            report = await loaded.service.verify();
+                        } catch (err) {
+                            threw = err;
+                        }
+                    });
+                    assert.strictEqual(threw, null, 'verify() must not throw when spec-portfolio build fails');
+                    const degradedLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]: degraded'));
+                    assert.ok(degradedLine, 'verify output must include a single degraded 📋 line on spec-portfolio failure');
+                    assert.ok(degradedLine.includes('boom-spec-portfolio'), 'degraded line should surface the underlying error message');
+                    assert.ok(report, 'verify() must still return its report on spec-portfolio degradation');
+                } finally {
+                    specPortfolioMod.buildSpecRegistry = realBuildSpecRegistry;
+                }
+            }
+
+            // (c) clean workspace (no docs/specs) -> all-zero 📋 line, no ⚠️, verify exits normally.
+            {
+                const runtime = createTempRuntimeRoot('verify-spec-portfolio-clean');
+                const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                    EVO_LITE_SKIP_GIT_STATUS: '1',
+                });
+                let report;
+                const output = await captureConsole(async () => {
+                    report = await loaded.service.verify();
+                });
+                const portfolioLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]:'));
+                assert.strictEqual(portfolioLine, '📋 [Spec Portfolio]: adopted=0 active=0 parked=0 shipped=0',
+                    'clean workspace 📋 line reports all-zero counts');
+                assert.ok(!output.split('\n').some(l => l.startsWith('⚠️') && l.includes('spec:')),
+                    'clean workspace must not include any spec ⚠️ warning lines');
+                assert.ok(report, 'verify() must return a report on a clean workspace');
+            }
+        }
+        console.log('✅ T-verify-spec-portfolio passed');
+
+        console.log('T-spec-adopt. Testing adoptSpec intake gate (normalize, size gate, relation enforcement) ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof specPortfolio.adoptSpec, 'function', 'adoptSpec must be exported');
+
+            // (a) broken YAML frontmatter, filename-derived id (no H1 title in body).
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-broken-yaml');
+                const projectRoot = runtime.workspaceRoot;
+                const draftPath = path.join(projectRoot, 'docs', 'spec my thing.md');
+                writeText(draftPath, [
+                    '---',
+                    'this is not valid yaml at all',
+                    '   nested: 1',
+                    '   nested2: 2',
+                    '---',
+                    'Some body text without heading.',
+                    '',
+                ].join('\n'));
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, { now: new Date('2026-07-10T00:00:00Z') });
+                assert.strictEqual(result.id, 'spec:my-thing', 'id derived from filename after stripping leading spec + kebab-casing');
+                const expectedTarget = path.join(projectRoot, 'docs', 'specs', 'my-thing.md');
+                assert.strictEqual(result.targetPath, expectedTarget, 'target path under docs/specs/');
+                assert.ok(fs.existsSync(expectedTarget), 'draft moved to target path');
+                assert.ok(!fs.existsSync(draftPath), 'original draft no longer exists at source path');
+
+                const finalContent = fs.readFileSync(expectedTarget, 'utf8');
+                const { frontmatter: finalFm, body: finalBody } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown')).parseFrontmatter(finalContent);
+                assert.strictEqual(finalFm.id, 'spec:my-thing', 'final frontmatter carries derived id');
+                assert.strictEqual(finalFm.status, 'adopted', 'final frontmatter status is adopted');
+                assert.strictEqual(finalFm.created, '2026-07-10', 'final frontmatter created from injected now');
+                assert.ok(finalBody.includes('original broken frontmatter preserved below'), 'broken block demoted into body as HTML comment');
+                assert.ok(finalBody.includes('nested: 1'), 'original broken frontmatter content preserved in comment');
+                assert.ok(finalBody.includes('Some body text without heading.'), 'original body content preserved');
+                assert.deepStrictEqual(result.warnings, [], 'no size warnings for a small draft');
+                assert.deepStrictEqual(result.relations, [], 'no relations when no other in-flight specs exist');
+            }
+
+            // (b) oversized draft -> adoption succeeds with size-exceeded warning.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-oversized');
+                const projectRoot = runtime.workspaceRoot;
+                const oversizedCriteria = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+                    .map(n => `    { "id": "c${n}" }`).join(',\n');
+                const draftPath = path.join(projectRoot, 'inbox', 'big-idea.md');
+                writeText(draftPath, [
+                    '# Big Idea', '',
+                    '## Acceptance Criteria', '',
+                    '```json',
+                    '{', '  "criteria": [', oversizedCriteria, '  ]', '}',
+                    '```', '',
+                ].join('\n'));
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, { now: new Date('2026-07-10T00:00:00Z') });
+                assert.strictEqual(result.id, 'spec:big-idea', 'id derived from H1 title');
+                assert.ok(result.warnings.includes('size-exceeded'), 'oversized draft yields size-exceeded warning');
+                assert.strictEqual(result.size.acCount, 9, 'size metrics reflect the oversized criteria block');
+                assert.ok(fs.existsSync(result.targetPath), 'oversized draft still adopted (WARN does not block)');
+            }
+
+            // (c) in-flight spec exists -> relation declaration required; opts.relations satisfies it.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-relations');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'existing.md'), [
+                    '---', 'id: spec:existing', 'status: adopted', '---', '', '# Existing', '',
+                ].join('\n'));
+
+                const draftPath1 = path.join(projectRoot, 'inbox', 'new-one.md');
+                const draftBody1 = ['# New One', '', 'Some body.', ''].join('\n');
+                writeText(draftPath1, draftBody1);
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftPath1, {}),
+                    err => err.code === 'EUSAGE' && /spec:existing/.test(err.message),
+                    'missing relation declaration with an in-flight spec present must throw EUSAGE naming it'
+                );
+                // Transactional: validation runs before any fs mutation, so a
+                // failed adopt leaves the source draft untouched at its origin
+                // and never creates the target. Re-adopt with the relation.
+                assert.ok(fs.existsSync(draftPath1), 'source draft untouched at origin after EUSAGE');
+                assert.strictEqual(fs.readFileSync(draftPath1, 'utf8'), draftBody1, 'source draft content unchanged after EUSAGE');
+                assert.ok(!fs.existsSync(path.join(projectRoot, 'docs', 'specs', 'new-one.md')), 'target not created on failed adopt');
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath1, {
+                    relations: [{ kind: 'spawned-from', target: 'spec:existing' }],
+                });
+                assert.strictEqual(result.id, 'spec:new-one', 'id derived from H1 title');
+                assert.deepStrictEqual(result.relations, [{ kind: 'spawned-from', target: 'spec:existing' }],
+                    'declared relation returned in result');
+                const finalContent = fs.readFileSync(result.targetPath, 'utf8');
+                assert.ok(/relations:.*spawned-from.*spec:existing/.test(finalContent), 'relation written to frontmatter');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:new-one');
+                assert.ok(entry, 'adopted spec appears in registry');
+                assert.deepStrictEqual(entry.relations, [{ kind: 'spawned-from', target: 'spec:existing' }],
+                    'registry reader parses the relation written by adoptSpec');
+
+                // opts.independent === true bypasses the requirement with no relations written.
+                const draftPath2 = path.join(projectRoot, 'inbox', 'standalone.md');
+                writeText(draftPath2, ['# Standalone', '', 'Some body.', ''].join('\n'));
+                const resultIndependent = specPortfolio.adoptSpec(projectRoot, draftPath2, { independent: true });
+                assert.deepStrictEqual(resultIndependent.relations, [], 'independent adoption returns empty relations');
+                const independentContent = fs.readFileSync(resultIndependent.targetPath, 'utf8');
+                assert.ok(!/relations:/.test(independentContent), 'independent adoption omits relations from frontmatter');
+            }
+
+            // (d) unknown relation target / invalid kind -> EUSAGE.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-bad-relations');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'existing.md'), [
+                    '---', 'id: spec:existing', 'status: adopted', '---', '', '# Existing', '',
+                ].join('\n'));
+
+                const draftUnknown = path.join(projectRoot, 'inbox', 'unknown-target.md');
+                writeText(draftUnknown, ['# Unknown Target', '', 'body', ''].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftUnknown, {
+                        relations: [{ kind: 'spawned-from', target: 'spec:does-not-exist' }],
+                    }),
+                    err => err.code === 'EUSAGE' && /spec:does-not-exist/.test(err.message),
+                    'unknown relation target must throw EUSAGE listing known ids'
+                );
+
+                const draftBadKind = path.join(projectRoot, 'inbox', 'bad-kind.md');
+                writeText(draftBadKind, ['# Bad Kind', '', 'body', ''].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftBadKind, {
+                        relations: [{ kind: 'nonsense-kind', target: 'spec:existing' }],
+                    }),
+                    err => err.code === 'EUSAGE',
+                    'invalid relation kind must throw EUSAGE'
+                );
+            }
+
+            // (e) empty file / target collision -> EUSAGE.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-empty-collision');
+                const projectRoot = runtime.workspaceRoot;
+
+                const emptyDraft = path.join(projectRoot, 'inbox', 'empty.md');
+                writeText(emptyDraft, '   \n\n  ');
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, emptyDraft, {}),
+                    err => err.code === 'EUSAGE',
+                    'empty/whitespace-only draft must throw EUSAGE'
+                );
+
+                writeText(path.join(projectRoot, 'docs', 'specs', 'taken.md'), [
+                    '---', 'id: spec:taken', 'status: adopted', '---', '', '# Taken', '',
+                ].join('\n'));
+                const collidingDraft = path.join(projectRoot, 'inbox', 'taken.md');
+                writeText(collidingDraft, ['# Taken', '', 'body', ''].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, collidingDraft, {}),
+                    err => err.code === 'EUSAGE',
+                    'target path collision must throw EUSAGE'
+                );
+            }
+
+            // (f) git repo: tracked draft adopted via git mv (rename, not delete+untracked).
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-git-mv');
+                const projectRoot = runtime.workspaceRoot;
+                runGit(projectRoot, ['init']);
+                runGit(projectRoot, ['config', 'user.name', 'Evo Test']);
+                runGit(projectRoot, ['config', 'user.email', 'evo@example.com']);
+
+                const draftPath = path.join(projectRoot, 'inbox', 'tracked-draft.md');
+                writeText(draftPath, ['# Tracked Draft', '', 'body content', ''].join('\n'));
+                runGit(projectRoot, ['add', '.']);
+                runGit(projectRoot, ['commit', '-m', 'chore: add tracked draft']);
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, {});
+                assert.strictEqual(result.id, 'spec:tracked-draft', 'id derived from H1 title');
+
+                const porcelain = runGit(projectRoot, ['status', '--porcelain']);
+                assert.ok(/^R/m.test(porcelain), 'git status --porcelain shows a rename entry for the git-mv path');
+                assert.ok(!/^\?\? inbox\/tracked-draft\.md/m.test(porcelain), 'old path must not appear as untracked');
+                assert.ok(!/^D  inbox\/tracked-draft\.md/m.test(porcelain), 'old path must not appear as a bare stage delete (would indicate delete+untracked instead of rename)');
+            }
+
+            // (g) transactional guarantee: EUSAGE leaves source untouched, target uncreated.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-transactional');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'inflight.md'), [
+                    '---', 'id: spec:inflight', 'status: adopted', '---', '', '# In Flight', '',
+                ].join('\n'));
+
+                const draftPath = path.join(projectRoot, 'inbox', 'blocked.md');
+                const draftContent = ['# Blocked Draft', '', 'original body content.', ''].join('\n');
+                writeText(draftPath, draftContent);
+
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftPath, {}),
+                    err => err.code === 'EUSAGE',
+                    'missing relation declaration must throw EUSAGE'
+                );
+                assert.ok(fs.existsSync(draftPath), 'source draft still exists at its original path after EUSAGE');
+                assert.strictEqual(fs.readFileSync(draftPath, 'utf8'), draftContent,
+                    'source draft content is byte-for-byte unchanged after EUSAGE');
+                assert.ok(!fs.existsSync(path.join(projectRoot, 'docs', 'specs', 'blocked-draft.md')),
+                    'docs/specs/<kebab>.md was NOT created on the failed adopt');
+            }
+        }
+        console.log('✅ T-spec-adopt passed');
+
+        console.log('T-spec-park-reactivate. Testing parkSpec/reactivateSpec status transitions + cascade ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof specPortfolio.parkSpec, 'function', 'parkSpec must be exported');
+            assert.strictEqual(typeof specPortfolio.reactivateSpec, 'function', 'reactivateSpec must be exported');
+
+            const runtime = createTempRuntimeRoot('spec-park-reactivate');
+            const projectRoot = runtime.workspaceRoot;
+
+            // p-active: adopted status, has a non-done linked plan -> derived state 'active'.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'p-active.md'), [
+                '---', 'id: spec:p-active', 'status: adopted', '---', '', '# P Active', '',
+            ].join('\n'));
+
+            // p-adopted: adopted status, no linked plan -> derived state 'adopted'.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'p-adopted.md'), [
+                '---', 'id: spec:p-adopted', 'status: adopted', '---', '', '# P Adopted', '',
+            ].join('\n'));
+
+            // r-active-parked: starts parked, has a non-done linked plan -> reactivate should surface 'active'.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r-active-parked.md'), [
+                '---', 'id: spec:r-active-parked', 'status: parked', 'parkedUntil: some old reason', '---', '', '# R Active Parked', '',
+            ].join('\n'));
+
+            // r-adopted-parked: starts parked, no linked plan -> reactivate should surface 'adopted'.
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r-adopted-parked.md'), [
+                '---', 'id: spec:r-adopted-parked', 'status: parked', '---', '', '# R Adopted Parked', '',
+            ].join('\n'));
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [],
+                plans: [
+                    { id: 'plan:p1', status: 'active', linkedSpec: 'spec:p-active', sourcePath: 'docs/plans/p1.md' },
+                    { id: 'plan:r1', status: 'active', linkedSpec: 'spec:r-active-parked', sourcePath: 'docs/plans/r1.md' },
+                ],
+                tasks: [],
+                warnings: [],
+            }, null, 2));
+
+            // (a) park an active spec with opts.until -> frontmatter status:
+            // parked + parkedUntil verbatim; registry state 'parked' AND
+            // zombie-plan cascade warning (its linked plan is not done).
+            {
+                const result = specPortfolio.parkSpec(projectRoot, 'spec:p-active', { until: 'after v3 ships' });
+                assert.deepStrictEqual(result, { id: 'spec:p-active', state: 'parked', parkedUntil: 'after v3 ships' },
+                    'parkSpec return contract');
+
+                const filePath = path.join(projectRoot, 'docs', 'specs', 'p-active.md');
+                const { frontmatter } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown')).parseFrontmatter(fs.readFileSync(filePath, 'utf8'));
+                assert.strictEqual(frontmatter.status, 'parked', 'frontmatter status rewritten to parked');
+                assert.strictEqual(frontmatter.parkedUntil, 'after v3 ships', 'parkedUntil written verbatim');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:p-active');
+                assert.strictEqual(entry.state, 'parked', 'registry entry state is parked after park');
+                assert.ok(entry.warnings.includes('zombie-plan'), 'zombie-plan cascade warning surfaces for a parked spec with an active linked plan');
+            }
+
+            // (b) park an adopted spec (no linked plan) with no `until` ->
+            // status: parked, NO parkedUntil key; registry state 'parked',
+            // no zombie-plan warning.
+            {
+                const result = specPortfolio.parkSpec(projectRoot, 'spec:p-adopted', {});
+                assert.deepStrictEqual(result, { id: 'spec:p-adopted', state: 'parked', parkedUntil: null },
+                    'parkSpec with no until returns parkedUntil: null');
+
+                const filePath = path.join(projectRoot, 'docs', 'specs', 'p-adopted.md');
+                const finalContent = fs.readFileSync(filePath, 'utf8');
+                const { frontmatter } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown')).parseFrontmatter(finalContent);
+                assert.strictEqual(frontmatter.status, 'parked', 'frontmatter status rewritten to parked');
+                assert.ok(!('parkedUntil' in frontmatter), 'parkedUntil key omitted when opts.until is not set');
+                assert.ok(!/parkedUntil/.test(finalContent), 'parkedUntil never written to disk when omitted');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:p-adopted');
+                assert.strictEqual(entry.state, 'parked', 'registry entry state is parked');
+                assert.ok(!entry.warnings.includes('zombie-plan'), 'no zombie-plan warning for a parked spec with no linked plan');
+            }
+
+            // (c) reactivate a parked spec that HAS a non-done linked plan ->
+            // returns state 'active'; frontmatter status adopted, parkedUntil
+            // removed; registry entry state 'active'.
+            {
+                const result = specPortfolio.reactivateSpec(projectRoot, 'spec:r-active-parked');
+                assert.deepStrictEqual(result, { id: 'spec:r-active-parked', state: 'active' },
+                    'reactivateSpec returns derived state active when a non-done linked plan exists');
+
+                const filePath = path.join(projectRoot, 'docs', 'specs', 'r-active-parked.md');
+                const finalContent = fs.readFileSync(filePath, 'utf8');
+                const { frontmatter } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown')).parseFrontmatter(finalContent);
+                assert.strictEqual(frontmatter.status, 'adopted', 'frontmatter status rewritten to adopted on reactivate');
+                assert.ok(!('parkedUntil' in frontmatter), 'parkedUntil key removed on reactivate');
+                assert.ok(!/parkedUntil/.test(finalContent), 'parkedUntil never present on disk after reactivate');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:r-active-parked');
+                assert.strictEqual(entry.state, 'active', 'registry entry state is active after reactivate');
+            }
+
+            // (d) reactivate a parked spec with NO linked plan -> returns
+            // state 'adopted'.
+            {
+                const result = specPortfolio.reactivateSpec(projectRoot, 'spec:r-adopted-parked');
+                assert.deepStrictEqual(result, { id: 'spec:r-adopted-parked', state: 'adopted' },
+                    'reactivateSpec returns derived state adopted when no linked plan exists');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === 'spec:r-adopted-parked');
+                assert.strictEqual(entry.state, 'adopted', 'registry entry state is adopted after reactivate');
+            }
+
+            // (e) parkSpec / reactivateSpec on unknown id -> EUSAGE.
+            {
+                assert.throws(
+                    () => specPortfolio.parkSpec(projectRoot, 'spec:does-not-exist', {}),
+                    err => err.code === 'EUSAGE',
+                    'parkSpec on unknown id must throw EUSAGE'
+                );
+                assert.throws(
+                    () => specPortfolio.reactivateSpec(projectRoot, 'spec:does-not-exist'),
+                    err => err.code === 'EUSAGE',
+                    'reactivateSpec on unknown id must throw EUSAGE'
+                );
+            }
+        }
+        console.log('✅ T-spec-park-reactivate passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
@@ -3154,6 +3825,45 @@ async function runChildRuntimeTests() {
                 else process.env.EVO_LITE_MEMORY_ENGINE = prevEnv;
             }
             console.log('✅ T-engine-impl passed');
+        }
+
+        console.log('T-spec-cli. Testing registerSpecPortfolioCommands wiring + EUSAGE exit-code mapping ...');
+        {
+            const { Command } = require('commander');
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof specPortfolio.registerSpecPortfolioCommands, 'function',
+                'registerSpecPortfolioCommands must be exported');
+
+            const p = new Command();
+            specPortfolio.registerSpecPortfolioCommands(p);
+            const specCmd = p.commands.find(c => c.name() === 'spec');
+            assert.ok(specCmd, 'program exposes a spec command group');
+            const subNames = specCmd.commands.map(c => c.name()).sort();
+            assert.deepStrictEqual(subNames, ['adopt', 'park', 'reactivate', 'status'],
+                'spec command group exposes adopt/park/reactivate/status subcommands');
+
+            // EUSAGE -> exit 2 (per plan; NOT the hive exitCode=1 convention).
+            // Drive the real action handler against an unknown spec id via `park`.
+            const runtime = createTempRuntimeRoot('spec-cli-eusage');
+            const origEvoRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
+            const prevExit = process.exitCode;
+            try {
+                const cliProgram = new Command();
+                specPortfolio.registerSpecPortfolioCommands(cliProgram);
+                process.exitCode = undefined;
+                const output = await captureConsole(async () => {
+                    await cliProgram.parseAsync(['node', 'mem', 'spec', 'park', 'spec:does-not-exist']);
+                });
+                assert.strictEqual(process.exitCode, 2, 'park on unknown id maps EUSAGE to exit code 2');
+                assert.ok(/unknown spec id/.test(output), 'error line names the unknown id');
+                assert.ok(output.startsWith('❌'), 'error path prints only the ❌ line, no stdout');
+            } finally {
+                process.exitCode = prevExit;
+                if (origEvoRoot === undefined) delete process.env.EVO_LITE_ROOT;
+                else process.env.EVO_LITE_ROOT = origEvoRoot;
+            }
+            console.log('✅ T-spec-cli passed');
         }
 }
 
