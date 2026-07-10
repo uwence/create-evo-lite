@@ -81,7 +81,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
         activeRoot: 'workspace',
         templateRoot: 'root',
         relativeDir: ['.agents', 'rules'],
-        files: ['hive-feedback.md', 'zvec-optin.md'],
+        files: ['hive-feedback.md', 'spec-intake.md', 'zvec-optin.md'],
     },
     {
         // copy-on-init rules: seeded once at scaffold, then owned by the project

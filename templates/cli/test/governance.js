@@ -1869,7 +1869,7 @@ async function runGovernanceTests() {
             const rulesFam = manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'agents-rules');
             assert.ok(rulesFam, 'agents-rules managed family exists');
             assert.strictEqual(rulesFam.scope, 'sync-always');
-            assert.deepStrictEqual(rulesFam.files, ['hive-feedback.md', 'zvec-optin.md']);
+            assert.deepStrictEqual(rulesFam.files, ['hive-feedback.md', 'spec-intake.md', 'zvec-optin.md']);
             for (const rule of rulesFam.files) {
                 assert.ok(fs.existsSync(path.join(WORKSPACE_ROOT, 'templates', '.agents', 'rules', rule)),
                     `rule template file present: ${rule}`);
