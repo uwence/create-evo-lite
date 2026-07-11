@@ -1,8 +1,9 @@
 ---
 id: spec:evo-code-perception-foundation
-status: adopted
+status: parked
 created: 2026-07-07
 title: Evo Code Perception Foundation
+parkedUntil: Superseded in direction by spec:provider-first-code-perception-foundation (provider-first is the Provider-First shrink of this self-built code-graph layer); formalize with mem spec supersede in Phase 2
 ---
 
 ## 2. Problem

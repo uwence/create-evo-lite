@@ -1,6 +1,6 @@
 ---
 id: spec:spec-portfolio-governance
-status: done
+status: draft
 owner: human
 created: 2026-07-10
 ---
@@ -43,7 +43,7 @@ created: 2026-07-10
 
 ### 不变式
 
-1. **级联**: park/supersede 一个 spec → 其关联 plan 一并冻结,plan 不能在死 spec 底下继续跑。
+1. **级联(Phase 1 = 检测,非冻结)**: park/supersede 一个 spec → 其关联的非 done plan 持续产生 `zombie-plan` WARN(不静默继续跑)。**Phase 1 不修改 plan IR 状态**——真正的 plan-state freeze transition 属 Phase 2(避免破坏现有 plan 闭环)。当前实现 = derived zombie WARN,与本条一致。
 2. **双向孤儿检测**:
    - `adopted` 且 N 天(默认 14)无 plan → WARN「无计划老化」
    - plan 活跃但 spec 已 parked/superseded → WARN「僵尸 plan」
@@ -61,7 +61,9 @@ created: 2026-07-10
    - Phase 数 > 3
    - dependsOn 文件数 > 12
    - 字符数 > 40000
-4. 在途关系问询: 存在其他 `adopted`/`active` spec 时,要求声明本 spec 与它们的关系(independent / spawned-from / supersedes / blocks),写入 frontmatter `relations`
+4. 在途关系问询: 存在其他 `adopted`/`active` spec 时,要求声明本 spec 与它们的关系(independent / spawned-from / supersedes / blocks)。`--relation <kind>:<id>` 写入 frontmatter `relations`;`--independent` 写入 frontmatter `relationMode: independent`(持久化"显式独立"表态,使 registry 能区分「无在途 spec 故无需声明」与「有在途 spec 但明确独立」——治理历史不丢失)。
+
+安全边界(adopt 源文件): 源路径必须是**工作区内的普通 `.md` 文件**——realpath containment + 拒绝 symlink + isFile + `.md` 扩展名校验先于任何读/移/写;工作区外文件、符号链接、非 `.md` 一律 EUSAGE 拒绝,绝不把外部文件移入仓库或跟随链接覆盖外部目标。
 
 体量 WARN 不阻断收编,但记入 registry,verify 持续报账直到 spec 被拆或人工豁免(frontmatter `sizeWaiver: <reason>`)。
 
@@ -112,6 +114,8 @@ mem spec supersede <id> --by <new-id>   # Phase 2
 ### Phase 2
 
 - supersede + 关系图报账
+- **真正的 plan-state freeze transition**(park/supersede 一个 spec 时冻结其 plan IR 状态,而非仅 zombie WARN)——需先设计不破坏现有 plan 闭环的冻结语义
+- `mem spec relate <id> --relation ... | --independent`(adopt 后仍能修订关系表态,不必手改 frontmatter)
 - 在途上限(active spec ≤ K,超限须先 park)
 - 关系问询在 MCP 侧的 agent 引导
 
@@ -151,7 +155,7 @@ mem spec supersede <id> --by <new-id>   # Phase 2
     },
     {
       "id": "ac-aging-warn-persistence",
-      "description": "An adopted spec with no plan after the aging threshold, or an inactive unparked spec, produces a verify WARN that persists across runs until an explicit reactivate/park/supersede transition; parking cascades to freeze the linked plan.",
+      "description": "An adopted spec with no plan after the aging threshold, or an inactive unparked spec, produces a verify WARN that persists across runs until an explicit reactivate/park/supersede transition; parking a spec with a non-done linked plan surfaces a persistent zombie-plan WARN (no silent continue). Phase 1 does NOT mutate plan IR state — an actual plan-state freeze transition is deferred to Phase 2.",
       "verifier": {
         "type": "command",
         "params": {
@@ -180,12 +184,12 @@ mem spec supersede <id> --by <new-id>   # Phase 2
     },
     {
       "id": "ac-existing-closure-untouched",
-      "description": "Existing plan closure, READY-verdict spec self-close, and all current governance tests pass unchanged with the portfolio layer present; absence of the registry file is not an error.",
+      "description": "Existing plan closure, READY-verdict spec self-close, and all governance tests pass unchanged with the portfolio layer present; absence of the registry file is not an error. WAIVER: the full `test.js all` (integration scope) cannot be green because test/integration.js:551 + test/harness.js:330 require templates/cli/mcp-detect.js, a module that has NEVER existed in git (absent at 63c019c baseline, verified via git-stash reproduction on pre-feature HEAD) — a pre-existing baseline defect tracked as backlog 06fd, out of this spec's scope. This AC's verifier is therefore scoped to the governance suite (which this feature owns and fully passes); the integration section is unchanged from baseline by this feature.",
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js all",
-          "scope": "all"
+          "cmd": "node ./.evo-lite/cli/test.js governance",
+          "scope": "governance"
         }
       },
       "dependsOn": [
