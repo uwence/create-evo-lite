@@ -3212,6 +3212,122 @@ async function runGovernanceTests() {
                 assert.ok(entry.relationMode === null || entry.relationMode === undefined,
                     'registry relationMode is null/absent when neither was declared');
             }
+
+            // (r) P0 SECURITY (output side): docs/specs is a symlink to an
+            // external dir. A legit in-workspace draft must NOT be moved/written
+            // through the symlink out of the workspace.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-target-specs-symlink');
+                const projectRoot = runtime.workspaceRoot;
+                const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-adopt-target-outside-'));
+                fs.mkdirSync(path.join(projectRoot, 'docs'), { recursive: true });
+                let symlinked = true;
+                try {
+                    fs.symlinkSync(outsideDir, path.join(projectRoot, 'docs', 'specs'), 'dir');
+                } catch (_) { symlinked = false; }
+                if (symlinked) {
+                    const draftPath = path.join(projectRoot, 'inbox', 'legit.md');
+                    writeText(draftPath, ['# Legit', '', 'body', ''].join('\n'));
+                    assert.throws(
+                        () => specPortfolio.adoptSpec(projectRoot, draftPath, { independent: true }),
+                        err => err.code === 'EUSAGE' && /symlink|workspace|escape/i.test(err.message),
+                        'symlinked docs/specs target dir must throw EUSAGE'
+                    );
+                    assert.ok(fs.existsSync(draftPath), 'source draft not moved when target dir is a symlink');
+                    assert.strictEqual(fs.readdirSync(outsideDir).length, 0,
+                        'no file written into the external symlink target dir');
+                } else {
+                    console.log('   (r: symlink unavailable on this FS — skipped)');
+                }
+            }
+
+            // (s) P0 SECURITY: docs itself is a symlink to an external dir.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-target-docs-symlink');
+                const projectRoot = runtime.workspaceRoot;
+                const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-adopt-docs-outside-'));
+                let symlinked = true;
+                try {
+                    fs.symlinkSync(outsideDir, path.join(projectRoot, 'docs'), 'dir');
+                } catch (_) { symlinked = false; }
+                if (symlinked) {
+                    const draftPath = path.join(projectRoot, 'inbox', 'legit2.md');
+                    writeText(draftPath, ['# Legit2', '', 'body', ''].join('\n'));
+                    assert.throws(
+                        () => specPortfolio.adoptSpec(projectRoot, draftPath, { independent: true }),
+                        err => err.code === 'EUSAGE' && /symlink|workspace|escape/i.test(err.message),
+                        'symlinked docs/ parent dir must throw EUSAGE'
+                    );
+                    assert.ok(fs.existsSync(draftPath), 'source draft not moved when docs/ is a symlink');
+                    assert.ok(!fs.existsSync(path.join(outsideDir, 'specs', 'legit2.md')),
+                        'no file written through the docs/ symlink into the external dir');
+                } else {
+                    console.log('   (s: symlink unavailable on this FS — skipped)');
+                }
+            }
+
+            // (t) P1: --independent and --relation are mutually exclusive; passing
+            // both must be an explicit EUSAGE, not a silent precedence pick.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-mutex');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'existing.md'), [
+                    '---', 'id: spec:existing', 'status: adopted', '---', '', '# Existing', '',
+                ].join('\n'));
+                const draftPath = path.join(projectRoot, 'inbox', 'both.md');
+                writeText(draftPath, ['# Both', '', 'body', ''].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftPath, {
+                        independent: true,
+                        relations: [{ kind: 'spawned-from', target: 'spec:existing' }],
+                    }),
+                    err => err.code === 'EUSAGE' && /mutually exclusive|independent/i.test(err.message),
+                    '--independent + --relation together must throw EUSAGE'
+                );
+                assert.ok(fs.existsSync(draftPath), 'source draft not moved on mutex EUSAGE');
+            }
+
+            // (u) P1: a draft carrying a stale relationMode: is canonically rebuilt
+            // from CLI args only — no duplicate/stale relationMode when --relation wins.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-relationmode-reserved');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'existing.md'), [
+                    '---', 'id: spec:existing', 'status: adopted', '---', '', '# Existing', '',
+                ].join('\n'));
+                const draftPath = path.join(projectRoot, 'inbox', 'stale-mode.md');
+                writeText(draftPath, [
+                    '---', 'id: spec:stale-mode', 'status: draft', 'relationMode: independent', '---',
+                    '', '# Stale Mode', '', 'body', '',
+                ].join('\n'));
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, {
+                    relations: [{ kind: 'spawned-from', target: 'spec:existing' }],
+                });
+                const finalContent = fs.readFileSync(result.targetPath, 'utf8');
+                assert.ok(/^relations:/m.test(finalContent), 'relation adoption writes relations:');
+                assert.ok(!/relationMode:/.test(finalContent),
+                    'stale relationMode: is dropped when --relation wins (reserved key, canonical rebuild)');
+                assert.strictEqual((finalContent.match(/relationMode:/g) || []).length, 0,
+                    'no duplicate/stale relationMode key survives');
+            }
+
+            // (v) P0 target-dir gate, symlink-free proof (runs on every FS incl.
+            // Windows without symlink privilege): docs/specs existing as a regular
+            // FILE (not a dir) must be rejected before any move/write.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-target-nondir');
+                const projectRoot = runtime.workspaceRoot;
+                fs.mkdirSync(path.join(projectRoot, 'docs'), { recursive: true });
+                fs.writeFileSync(path.join(projectRoot, 'docs', 'specs'), 'not a dir', 'utf8');
+                const draftPath = path.join(projectRoot, 'inbox', 'blocked.md');
+                writeText(draftPath, ['# Blocked', '', 'body', ''].join('\n'));
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftPath, { independent: true }),
+                    err => err.code === 'EUSAGE' && /non-directory|symlink|workspace/i.test(err.message),
+                    'docs/specs as a regular file must throw EUSAGE (target-dir gate runs)'
+                );
+                assert.ok(fs.existsSync(draftPath), 'source draft not moved when target dir is blocked');
+            }
         }
         console.log('✅ T-spec-adopt passed');
 

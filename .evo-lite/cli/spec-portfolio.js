@@ -395,11 +395,48 @@ function resolveContainedSource(projectRoot, filePath) {
     return srcReal;
 }
 
+// Target-dir containment gate (output side, symmetric to resolveContainedSource):
+// validates that docs/ and docs/specs/ are NOT symlinks and do not resolve
+// outside the workspace, so a later renameSync/writeFileSync cannot follow a
+// symlinked target directory to write outside the repo. Validation only — no
+// mkdir here, so the transactional "no fs mutation before all gates pass"
+// property is preserved (the real mkdir stays in the fs-mutation phase, safe
+// because every existing path component is confirmed a non-symlink dir).
+function assertTargetDirSafe(projectRoot) {
+    const rootReal = fs.realpathSync(projectRoot);
+    let cur = projectRoot;
+    for (const seg of ['docs', 'specs']) {
+        cur = path.join(cur, seg);
+        let st = null;
+        try { st = fs.lstatSync(cur); } catch (_) { st = null; }
+        if (!st) continue; // missing → created later under a validated non-symlink parent
+        if (st.isSymbolicLink()) {
+            throw usageError(`adoptSpec: refuses symlinked target path: ${path.relative(projectRoot, cur).replace(/\\/g, '/')}`);
+        }
+        if (!st.isDirectory()) {
+            throw usageError(`adoptSpec: target path blocked by non-directory: ${path.relative(projectRoot, cur).replace(/\\/g, '/')}`);
+        }
+    }
+    const specsLogical = path.join(projectRoot, 'docs', 'specs');
+    if (fs.existsSync(specsLogical)) {
+        const specsReal = fs.realpathSync(specsLogical);
+        const rel = path.relative(rootReal, specsReal);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) {
+            throw usageError('adoptSpec: target dir escapes the workspace: docs/specs');
+        }
+    }
+}
+
 // adoptSpec: normalizes a loose draft spec into docs/specs/, runs the size
 // gate (WARN-only, never blocks), and enforces relation declarations when
 // other adopted/active specs already exist (EUSAGE, blocks). Never calls
 // process.exit — invalid usage throws Error with err.code = 'EUSAGE'.
 function adoptSpec(projectRoot, filePath, opts = {}) {
+    // Relation declaration is a governance stance — never resolve a conflicting
+    // pair by silent precedence. --independent and --relation are exclusive.
+    if (opts.independent === true && Array.isArray(opts.relations) && opts.relations.length > 0) {
+        throw usageError('adoptSpec: --independent and --relation are mutually exclusive');
+    }
     const absSrc = resolveContainedSource(projectRoot, filePath);
     let rawContent;
     try {
@@ -439,12 +476,18 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
 
     const created = frontmatter.created || todayISODate(opts.now);
 
+    assertTargetDirSafe(projectRoot);
     const targetPath = path.join(projectRoot, 'docs', 'specs', `${kebab}.md`);
-    if (fs.existsSync(targetPath) && path.resolve(targetPath) !== path.resolve(absSrc)) {
+    let targetNode = null;
+    try { targetNode = fs.lstatSync(targetPath); } catch (_) { targetNode = null; }
+    if (targetNode && targetNode.isSymbolicLink()) {
+        throw usageError(`adoptSpec: refuses symlinked target file: docs/specs/${kebab}.md`);
+    }
+    if (targetNode && path.resolve(targetPath) !== path.resolve(absSrc)) {
         throw usageError(`adoptSpec: target exists: ${path.relative(projectRoot, targetPath)}`);
     }
 
-    const reservedKeys = new Set(['id', 'status', 'owner', 'created', 'relations']);
+    const reservedKeys = new Set(['id', 'status', 'owner', 'created', 'relations', 'relationMode']);
     const orderedEntries = [['id', id], ['status', status]];
     if (frontmatter.owner) orderedEntries.push(['owner', frontmatter.owner]);
     orderedEntries.push(['created', created]);
