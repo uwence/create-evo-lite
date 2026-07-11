@@ -3041,6 +3041,177 @@ async function runGovernanceTests() {
                     'id: spec:/// (kebab-cases to empty) must throw EUSAGE'
                 );
             }
+
+            // (k) P0 SECURITY: source-path containment — adopt must refuse a draft
+            // that lives OUTSIDE the workspace (absolute path to a sibling temp dir).
+            // The file must be left untouched at its origin, and no target created.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-outside-abs');
+                const projectRoot = runtime.workspaceRoot;
+                const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-adopt-outside-'));
+                const outsidePath = path.join(outsideDir, 'outside.md');
+                const outsideContent = ['# Outside', '', 'body', ''].join('\n');
+                writeText(outsidePath, outsideContent);
+
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, outsidePath, { independent: true }),
+                    err => err.code === 'EUSAGE' && /workspace/.test(err.message),
+                    'absolute external path must throw EUSAGE naming the workspace containment'
+                );
+                assert.ok(fs.existsSync(outsidePath), 'external source file untouched at origin');
+                assert.strictEqual(fs.readFileSync(outsidePath, 'utf8'), outsideContent,
+                    'external source content byte-for-byte unchanged');
+                assert.ok(!fs.existsSync(path.join(projectRoot, 'docs', 'specs', 'outside.md')),
+                    'no target created inside the workspace from an external source');
+
+                fs.rmSync(outsideDir, { recursive: true, force: true });
+            }
+
+            // (l) P0 SECURITY: relative traversal (`../escape.md`) resolving outside
+            // the workspace must also be refused by the containment gate.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-outside-rel');
+                const projectRoot = runtime.workspaceRoot;
+                const parentDir = path.dirname(projectRoot);
+                const escapePath = path.join(parentDir, `escape-${path.basename(projectRoot)}.md`);
+                const escapeContent = ['# Escape Rel', '', 'body', ''].join('\n');
+                writeText(escapePath, escapeContent);
+
+                const relTraversal = path.relative(projectRoot, escapePath);
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, relTraversal, { independent: true }),
+                    err => err.code === 'EUSAGE' && /workspace/.test(err.message),
+                    'relative traversal resolving outside the workspace must throw EUSAGE'
+                );
+                assert.ok(fs.existsSync(escapePath), 'traversal-target source file untouched at origin');
+                assert.strictEqual(fs.readFileSync(escapePath, 'utf8'), escapeContent,
+                    'traversal-target source content byte-for-byte unchanged');
+
+                fs.rmSync(escapePath, { force: true });
+            }
+
+            // (m) P0 SECURITY: a symlink INSIDE the workspace pointing at an external
+            // file must be refused (symlink source, regardless of where it points).
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-symlink-source');
+                const projectRoot = runtime.workspaceRoot;
+                const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-adopt-symlink-target-'));
+                const outsideTarget = path.join(outsideDir, 'target.md');
+                const outsideContent = ['# Symlink Target', '', 'body', ''].join('\n');
+                writeText(outsideTarget, outsideContent);
+
+                const linkPath = path.join(projectRoot, 'inbox', 'link.md');
+                fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+                let symlinked = true;
+                try {
+                    fs.symlinkSync(outsideTarget, linkPath, 'file');
+                } catch (_) { symlinked = false; }
+
+                if (symlinked) {
+                    assert.throws(
+                        () => specPortfolio.adoptSpec(projectRoot, linkPath, { independent: true }),
+                        err => err.code === 'EUSAGE' && /symlink/.test(err.message),
+                        'symlink source must throw EUSAGE refusing the symlink'
+                    );
+                    assert.ok(fs.existsSync(outsideTarget), 'external symlink target untouched');
+                    assert.strictEqual(fs.readFileSync(outsideTarget, 'utf8'), outsideContent,
+                        'external symlink target content byte-for-byte unchanged');
+                } else {
+                    console.log('   (symlink unavailable on this FS — skipped)');
+                }
+
+                fs.rmSync(outsideDir, { recursive: true, force: true });
+            }
+
+            // (n) P0: non-.md source file (inside the workspace, otherwise legit) -> EUSAGE.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-non-md');
+                const projectRoot = runtime.workspaceRoot;
+                const draftPath = path.join(projectRoot, 'inbox', 'note.txt');
+                writeText(draftPath, ['# Note', '', 'body', ''].join('\n'));
+
+                assert.throws(
+                    () => specPortfolio.adoptSpec(projectRoot, draftPath, { independent: true }),
+                    err => err.code === 'EUSAGE' && /\.md/.test(err.message),
+                    'non-.md source file must throw EUSAGE'
+                );
+                assert.ok(fs.existsSync(draftPath), 'non-.md source untouched at origin');
+            }
+
+            // (o) P1.3: opts.independent === true persists a relationMode marker,
+            // with NO relations: line, and buildSpecRegistry surfaces it.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-relationmode-independent');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'existing.md'), [
+                    '---', 'id: spec:existing', 'status: adopted', '---', '', '# Existing', '',
+                ].join('\n'));
+
+                const draftPath = path.join(projectRoot, 'inbox', 'declared-independent.md');
+                writeText(draftPath, ['# Declared Independent', '', 'body', ''].join('\n'));
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, { independent: true });
+                const finalContent = fs.readFileSync(result.targetPath, 'utf8');
+                assert.ok(/relationMode:\s*independent/.test(finalContent),
+                    'independent adoption writes relationMode: independent to frontmatter');
+                assert.ok(!/^relations:/m.test(finalContent),
+                    'independent adoption still omits a relations: line');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === result.id);
+                assert.ok(entry, 'adopted spec appears in registry');
+                assert.strictEqual(entry.relationMode, 'independent',
+                    'registry surfaces relationMode === "independent" for a declared-independent spec');
+            }
+
+            // (p) P1.3: explicit --relation adoption writes relations:, no relationMode,
+            // and the registry entry's relationMode is null/absent.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-relationmode-relations');
+                const projectRoot = runtime.workspaceRoot;
+                writeText(path.join(projectRoot, 'docs', 'specs', 'existing.md'), [
+                    '---', 'id: spec:existing', 'status: adopted', '---', '', '# Existing', '',
+                ].join('\n'));
+
+                const draftPath = path.join(projectRoot, 'inbox', 'declared-relation.md');
+                writeText(draftPath, ['# Declared Relation', '', 'body', ''].join('\n'));
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, {
+                    relations: [{ kind: 'spawned-from', target: 'spec:existing' }],
+                });
+                const finalContent = fs.readFileSync(result.targetPath, 'utf8');
+                assert.ok(/^relations:/m.test(finalContent), 'explicit relation adoption writes relations:');
+                assert.ok(!/relationMode:/.test(finalContent),
+                    'explicit relation adoption does NOT write a relationMode key');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === result.id);
+                assert.ok(entry, 'adopted spec appears in registry');
+                assert.ok(entry.relationMode === null || entry.relationMode === undefined,
+                    'registry relationMode is null/absent for an explicit-relation spec');
+            }
+
+            // (q) P1.3: neither independent nor relations declared, no in-flight specs
+            // exist -> succeeds, neither relations: nor relationMode: written, and the
+            // registry entry's relationMode is null/absent.
+            {
+                const runtime = createTempRuntimeRoot('spec-adopt-relationmode-neither');
+                const projectRoot = runtime.workspaceRoot;
+
+                const draftPath = path.join(projectRoot, 'inbox', 'declared-neither.md');
+                writeText(draftPath, ['# Declared Neither', '', 'body', ''].join('\n'));
+
+                const result = specPortfolio.adoptSpec(projectRoot, draftPath, {});
+                const finalContent = fs.readFileSync(result.targetPath, 'utf8');
+                assert.ok(!/^relations:/m.test(finalContent), 'no in-flight specs: no relations: line written');
+                assert.ok(!/relationMode:/.test(finalContent), 'no in-flight specs: no relationMode: line written');
+
+                const registry = specPortfolio.buildSpecRegistry(projectRoot, { write: false });
+                const entry = registry.specs.find(s => s.id === result.id);
+                assert.ok(entry, 'adopted spec appears in registry');
+                assert.ok(entry.relationMode === null || entry.relationMode === undefined,
+                    'registry relationMode is null/absent when neither was declared');
+            }
         }
         console.log('✅ T-spec-adopt passed');
 

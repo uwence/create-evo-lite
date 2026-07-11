@@ -231,6 +231,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             sizeExceeded,
             sizeWaiver,
             relations: parseRelations(frontmatter),
+            relationMode: (frontmatter && frontmatter.relationMode) || null,
             notDonePlans,
             warnings,
         });
@@ -353,12 +354,53 @@ function validateRelations(relations, knownIds) {
     }
 }
 
+// Source-path containment gate: the FIRST thing adoptSpec does, before any
+// read. Resolves filePath to a canonical (symlink-free) real path and
+// verifies it is (1) an in-workspace, (2) non-symlink, (3) .md, (4) regular
+// file. All failures are EUSAGE. This closes the P0 escape where an
+// absolute/relative/symlinked source outside the workspace could be
+// read+moved into the repo by adoptSpec's later renameSync.
+function resolveContainedSource(projectRoot, filePath) {
+    const rootReal = fs.realpathSync(projectRoot);
+    const absSrc = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
+
+    let lst;
+    try {
+        lst = fs.lstatSync(absSrc);
+    } catch (_) {
+        throw usageError(`adoptSpec: cannot read draft file: ${filePath}`);
+    }
+    if (lst.isSymbolicLink()) {
+        throw usageError(`adoptSpec: refuses symlink source: ${filePath}`);
+    }
+    if (!lst.isFile()) {
+        throw usageError(`adoptSpec: cannot read draft file: ${filePath}`);
+    }
+
+    const srcReal = fs.realpathSync(absSrc);
+
+    const rel = path.relative(rootReal, srcReal);
+    const contained = rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+    if (!contained) {
+        throw usageError(`adoptSpec: draft must live inside the workspace: ${filePath}`);
+    }
+
+    if (path.extname(srcReal).toLowerCase() !== '.md') {
+        throw usageError(`adoptSpec: draft must be a .md file: ${filePath}`);
+    }
+    if (!fs.statSync(srcReal).isFile()) {
+        throw usageError(`adoptSpec: cannot read draft file: ${filePath}`);
+    }
+
+    return srcReal;
+}
+
 // adoptSpec: normalizes a loose draft spec into docs/specs/, runs the size
 // gate (WARN-only, never blocks), and enforces relation declarations when
 // other adopted/active specs already exist (EUSAGE, blocks). Never calls
 // process.exit — invalid usage throws Error with err.code = 'EUSAGE'.
 function adoptSpec(projectRoot, filePath, opts = {}) {
-    const absSrc = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
+    const absSrc = resolveContainedSource(projectRoot, filePath);
     let rawContent;
     try {
         rawContent = fs.readFileSync(absSrc, 'utf8');
@@ -421,9 +463,11 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
 
     let relations = [];
     let writeRelationsLine = false;
+    let writeRelationMode = false;
 
     if (opts.independent === true) {
         relations = [];
+        writeRelationMode = true;
     } else if (Array.isArray(opts.relations) && opts.relations.length > 0) {
         validateRelations(opts.relations, knownIds);
         relations = opts.relations.map(r => ({ kind: r.kind, target: r.target }));
@@ -436,6 +480,8 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
     const finalOrderedEntries = orderedEntries.slice();
     if (writeRelationsLine) {
         finalOrderedEntries.push(['relations', JSON.stringify(relations)]);
+    } else if (writeRelationMode) {
+        finalOrderedEntries.push(['relationMode', 'independent']);
     }
     const finalContent = `${serializeFrontmatter(finalOrderedEntries)}\n${body}`;
 
