@@ -1,6 +1,6 @@
 ---
 id: plan:spec-portfolio-governance-mvp
-status: draft
+status: done
 linkedSpec: spec:spec-portfolio-governance
 created: 2026-07-10
 ---
