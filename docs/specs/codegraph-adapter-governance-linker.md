@@ -29,7 +29,7 @@ Initial compatibility target:   1.x
 License:                        MIT
 ```
 
-(另一个 `optave/ops-codegraph-tool`,Apache-2.0,命令集为 `build/query/where/context/fn-impact/diff-impact` 等,**不是**本 spec 目标——后续 agent 勿据其"修正"命令。)`provider:codegraph` 的 `check()` 在运行时须以 version + 命令 fingerprint 确认身份,不匹配则 `available=false` 并给出 diagnostic,而非猜测适配。
+(另一个 `optave/ops-codegraph-tool`,Apache-2.0,命令集为 `build/query/where/context/fn-impact/diff-impact` 等,**不是**本 spec 目标——后续 agent 勿据其"修正"命令。)`provider:codegraph` 的 `check()` 在运行时须以 fingerprint 确认身份,**不能只验可执行文件名叫 `codegraph`**。无副作用探针: 执行 `codegraph version` + `codegraph help`,确认 (1) semver ∈ `>=1.0.0 <2.0.0`;(2) help 含预期命令集 `status/files/query/explore/node/callers/callees/impact/affected`;(3) 输出形态属本 upstream。不匹配 → `available=false` + diagnostic,而非猜测适配(真正完成同名工具消歧)。
 
 权威范围: files / symbols / source ranges / imports / callers / callees / structural impact / affected tests / index freshness。集成方式: **CodeGraph CLI**(本 provider 自负 executable/version/index 探测,见 §2.1);MVP 不直接读 `.codegraph` 内部 SQLite。
 
@@ -52,8 +52,11 @@ valid JSON status     → available=true, indexed=true
 | callers | `codegraph callers <symbol> --json` |
 | callees | `codegraph callees <symbol> --json` |
 | impact | `codegraph impact <symbol> --json` |
+| affectedTests | `codegraph affected [files...] --json`(支持文件参数/stdin/深度/测试 glob) |
 | explore source | `codegraph explore <query>` |
 | entity source | `codegraph node <entity>` |
+
+(上游身份与命令映射已对 `colbymchenry/codegraph` README/CLI 文档核验;current 1.4.1,compat target `>=1.0.0 <2.0.0`。`explore`/`node` 是 MCP 工具的 CLI 表面,不承诺 JSON → 作 opaque text。)
 
 ### 2.3 Parsing rule
 
