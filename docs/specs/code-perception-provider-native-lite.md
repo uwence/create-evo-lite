@@ -36,6 +36,19 @@ interface CodePerceptionProvider {
 
 契约必须能适配 CLI 型、MCP 型、JSON 导入型、未来自研 Native Provider。可选方法缺失即表示该能力不支持(由 capabilities 声明)。
 
+### 2.0 State Model(统一,禁用会互相矛盾的 boolean)
+
+所有 provider/reference 状态用可表达"未知"的枚举,不再用 `stale:boolean`/`dirty:boolean`(boolean 无法承载"无法判断")。
+
+```ts
+type FreshnessState = "fresh" | "stale" | "unknown"
+type DirtyState = "clean" | "dirty" | "unknown"
+type CompatibilityState = "supported" | "untested" | "unsupported" | "unknown"
+type IndexState = "ready" | "missing" | "stale" | "not-required" | "unknown"
+```
+
+normalize、router、cache、Wiki 必须共用这一套,不得各自发明解释。
+
 ### 2.1 Capabilities
 
 ```ts
@@ -49,20 +62,34 @@ interface ProviderCapabilities {
 
 ```ts
 interface ProviderAvailability {
-  available: boolean; installed: boolean; indexed: boolean
+  available: boolean
+  ready: boolean                 // 能否响应查询(Native Lite 无需索引也 ready=true)
+  installed?: boolean
+  indexState: IndexState         // Native Lite → "not-required"
   executable?: string; providerVersion?: string; reason?: string; suggestedAction?: string
 }
 ```
 
-`check()` 必须: 接收显式 project root、不依赖 `process.cwd()`、不修改项目、不自动安装、不自动建索引、不访问网络、超时或错误返回 unavailable、不抛出导致全局失败的异常。
+状态对应例:
+
+```text
+Native Lite:              ready=true,  indexState="not-required"
+CodeGraph 已装未初始化:   ready=false, indexState="missing"
+CodeGraph 索引可查但落后: ready=true,  indexState="stale"
+```
+
+Router 排除的是"**不 ready 或不具备请求能力**"的 Provider,**而非笼统排除 unindexed**(见 §5)。
+
+`check()` 必须: 接收显式 project root、不依赖 `process.cwd()`、不修改项目、不自动安装、不自动建索引、不访问网络、超时或错误返回 unavailable、不抛出导致全局失败的异常。**每个 Provider 的 check() 自负其工具探测**(executable/version/index)——loader/router 不为任何具体工具硬编码探测逻辑(见 §5、§6)。
 
 ### 2.3 Provider status
 
 ```ts
 interface ProviderStatus {
   providerId: string; adapterVersion: string; providerVersion?: string
-  available: boolean; indexed: boolean
-  indexedCommit?: string; currentCommit?: string; dirty: boolean; stale: boolean
+  available: boolean; ready: boolean; indexState: IndexState
+  indexedCommit?: string; currentCommit?: string
+  dirty: DirtyState; freshness: FreshnessState; compatibility: CompatibilityState
   fileCount?, symbolCount?, edgeCount?: number
   lastIndexedAt?: string
   capabilities: ProviderCapabilities; diagnostics: ProviderDiagnostic[]
@@ -82,7 +109,7 @@ interface CodeReference {
   filePath?: string; lineRange?: [number, number]; signature?: string
   snapshot: ReferenceSnapshot; provenance: ReferenceProvenance
 }
-interface ReferenceSnapshot { providerSnapshot?, indexedCommit?, currentCommit?, contentHash?: string; dirty: boolean; stale: boolean }
+interface ReferenceSnapshot { providerSnapshot?, indexedCommit?, currentCommit?, contentHash?: string; dirty: DirtyState; freshness: FreshnessState }
 interface ReferenceProvenance {
   providerId: string
   method: "provider-structural"|"provider-enrichment"|"native-file"|"git"|"declared-link"|"heuristic"
@@ -139,6 +166,19 @@ fresh 优先 stale;stale 可查但结果显著标记;dirty working tree ≠ inde
 能回答: 文件是否存在 / 文件属哪个 Architecture module / 哪些 Task 声明关联该文件 / 当前 Commit 改了哪些文件 / 焦点关联哪些声明文件 / 外部 Provider 是否可用。
 不能回答: 函数调用关系 / symbol impact / callers-callees / execution flow(显式 unavailable)。
 
+### 6.1 文件系统安全不变式(read/hash 前强制)
+
+Native Lite 读文件+算 hash,须继承 [[spec:spec-portfolio-governance]] 本轮确立的路径安全边界:
+
+```text
+- 所有文件路径先做 workspace-relative normalization;
+- read/hash 前 lstat + realpath containment,确认落在 workspace 内;
+- 不跟随逃逸工作区的 symlink;symlink 本身只作 metadata 或直接排除;
+- 忽略 binary / ignored / 超大小上限的文件;
+- 源码读取与 hash 均有大小上限;
+- 不持久化源码、凭据或 secrets。
+```
+
 ## 7. Configuration(provider 部分)
 
 ```json
@@ -147,7 +187,11 @@ fresh 优先 stale;stale 可查但结果显著标记;dirty working tree ≠ inde
   "fallback": "provider:native-lite" } }
 ```
 
-无配置时: Native Lite 永远启用;自动检测 CodeGraph executable/index 但不改 config、不自动安装/初始化;检测到可用索引时临时选 CodeGraph;status 说明来源为 auto-detected。Provider `command` 安全约束(execFile/无 shell/数组参数/timeout/限制输出/清 ANSI)在子 spec ② 详述。
+无配置时: Native Lite 永远启用。是否临时选用某外部 Provider,**由该 Provider 自身注册的 `check()` 决定**(loader/router 不为任何具体工具硬编码探测)——例如 CodeGraph 的 executable/version/index 探测在子 spec ② 的 `provider:codegraph` `check()` 内;① 只调用已注册 Provider 的 `check()`,无外部 Provider 注册时只用 Native Lite。status 说明选择来源为 auto-detected。
+
+### 7.1 Provider loader 安全不变式(allowlist-only)
+
+`provider-loader.js` **只加载代码内注册的 allowlisted Provider factory**。配置只能选择 `provider id` 与该 adapter 允许的参数;**禁止**从配置指定任意 module path / `require`/`import` 路径 / 执行任意 JS。未注册的 id → 忽略并 diagnostic,不 require 任意路径。Provider `command` 的进程级安全约束(execFile/无 shell/数组参数/timeout/限制输出/清 ANSI)在子 spec ② 详述。
 
 ## 8. Testing Strategy
 
@@ -196,7 +240,7 @@ files、hashes、Architecture module membership、Planning linkedFiles、Git cha
     },
     {
       "id": "ac-native-lite",
-      "description": "With no external provider installed, Native Lite reports tracked files, hashes, Architecture IR module membership, Planning linkedFiles, Git changed files and explicit unavailable symbol/impact capabilities without breaking existing commands.",
+      "description": "With no external provider installed, Native Lite reports tracked files, hashes, Architecture IR module membership, Planning linkedFiles, Git changed files and explicit unavailable symbol/impact capabilities without breaking existing commands. File access is contained: every path is workspace-relative normalized and lstat+realpath-checked before read/hash, symlinks escaping the workspace are not followed (metadata-only or excluded), binary/ignored/oversize files are skipped, source read and hash are size-capped, and no source/secrets are persisted.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
       "dependsOn": ["templates/cli/code-perception/native-lite.js"]
     },

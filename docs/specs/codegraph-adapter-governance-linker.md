@@ -17,7 +17,21 @@ relations: [{"kind":"spawned-from","target":"spec:provider-first-code-perception
 
 ## 2. CodeGraph Provider (`provider:codegraph`, role: structural-primary)
 
-权威范围: files / symbols / source ranges / imports / callers / callees / structural impact / affected tests / index freshness。集成方式: **CodeGraph CLI**;MVP 不直接读 `.codegraph` 内部 SQLite。
+### 2.0 Upstream identity(必须锁定——"CodeGraph"有同名歧义)
+
+存在至少两个 CLI 完全不同的同名项目;本 spec 的命令映射(§2.2)对应的是:
+
+```text
+Upstream repository:            colbymchenry/codegraph
+Package:                        @colbymchenry/codegraph
+Provider ID:                    provider:codegraph
+Initial compatibility target:   1.x
+License:                        MIT
+```
+
+(另一个 `optave/ops-codegraph-tool`,Apache-2.0,命令集为 `build/query/where/context/fn-impact/diff-impact` 等,**不是**本 spec 目标——后续 agent 勿据其"修正"命令。)`provider:codegraph` 的 `check()` 在运行时须以 version + 命令 fingerprint 确认身份,不匹配则 `available=false` 并给出 diagnostic,而非猜测适配。
+
+权威范围: files / symbols / source ranges / imports / callers / callees / structural impact / affected tests / index freshness。集成方式: **CodeGraph CLI**(本 provider 自负 executable/version/index 探测,见 §2.1);MVP 不直接读 `.codegraph` 内部 SQLite。
 
 ### 2.1 Detection
 
@@ -53,6 +67,17 @@ JSON 命令(status/files/query/callers/callees/impact): 验证 JSON 类型、忽
 ### 2.5 No direct database coupling & security
 
 禁止打开/执行 `.codegraph` 内部 DB/SQL、依赖未公开表结构、修改 `.codegraph`。执行安全: `command` 为单一 executable;`spawn`/`execFile`、禁 `shell:true`、参数数组、project root 独立参数、强制 timeout、限制 stdout/stderr 大小、清 ANSI、不执行 Provider 输出中的命令。
+
+### 2.6 Network boundary(Local-First 默认)
+
+CodeGraph 默认开启匿名 telemetry + 后台版本检查。Evo-Lite 启动其子进程时**默认注入**关闭这些的环境变量:
+
+```text
+DO_NOT_TRACK=1
+CODEGRAPH_NO_UPDATE_CHECK=1
+```
+
+只有用户在 Evo-Lite 配置中显式允许外部网络行为时才放开。理由不是 CodeGraph 会上传源码(其文档称不发送源码/路径/查询),而是 **Evo-Lite 自身的默认网络边界应由 Evo-Lite 控制**。
 
 ## 3. Governance Linker
 
@@ -147,9 +172,9 @@ Task-to-File / Task-to-Symbol / Commit-to-File / Commit diff-range→symbol / Ev
     },
     {
       "id": "ac-live-codegraph-dogfood",
-      "description": "A committed dogfood artifact records a real CodeGraph-backed run on create-evo-lite, including versions, commit, provider status, search, callers/callees, impact, focus context, Task-to-Code links, stale behavior, fallback behavior and known limitations.",
+      "description": "A committed dogfood artifact records a real CodeGraph-backed run on create-evo-lite. Because a governance test can only prove the artifact exists and its fields are present — not that it came from a real run — closure additionally requires a dedicated artifact validator asserting providerVersion, adapterVersion, repository commit, captured command/result fingerprints, and a closure-evidence commit, alongside the recorded status/search/callers-callees/impact/focus/Task-to-Code/stale/fallback/limitations sections.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
-      "dependsOn": ["docs/code-perception-codegraph-dogfood.md"]
+      "dependsOn": ["docs/code-perception-codegraph-dogfood.md", "templates/cli/code-perception/dogfood-validate.js"]
     }
   ]
 }

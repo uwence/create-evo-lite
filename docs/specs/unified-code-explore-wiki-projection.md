@@ -72,11 +72,28 @@ mem code callers <symbol>
 mem code callees <symbol>
 mem code impact <symbol>
 mem code context --focus | --task <task-id> | --spec <spec-id>
-mem wiki build
-mem wiki status [--json]
+mem code wiki build
+mem code wiki status [--json]
 ```
 
-Exit behavior: Provider unavailable → 成功形态 guidance,exit 0;用户参数无效 / path traversal → exit 2;Adapter malfunction / Provider timeout → exit 1;Native Lite fallback 成功 → exit 0 并显示 degraded。
+Wiki 命令置于 `mem code wiki` 命名空间(**不占用通用 `mem wiki`**)——为姐妹投影 LLM Wiki([[spec:llm-wiki-memory-projection]])的独立命名空间(如 `mem memory wiki`)预留,避免 CLI 所有权冲突。
+
+### 3.1 统一退出/错误模型(CLI 与 MCP 同一套,见 §4)
+
+"能力不足"是产品能力问题,**不等同于程序执行失败**:
+
+```text
+外部 Provider timeout/malformed/process failure + Native Lite 能满足该请求
+    → exit 0 / isError false / degraded diagnostics
+外部 Provider failure + 该能力无法 fallback(如 impact 无结构 Provider)
+    → 对"能力不可用"返回成功形态 guidance(exit 0 / isError false)
+仅以下 → exit 1 / isError true:
+    安全违规(path traversal / Provider 输出违反安全限制)、
+    内部 invariant 破坏 / Adapter 异常、
+    JSON schema 完全不可解析、
+    无法形成任何合法响应且无 fallback。
+用户参数无效 → exit 2(CLI)。
+```
 
 ## 4. MCP Contract
 
@@ -109,7 +126,9 @@ Response 形: freshness / provider / matches / relationships / impact / source /
 └── tasks/<task-id>.md        # Task / linkedFiles / resolved provider files / confirmed-derived-proposed symbol links / related commits+tests / evidence / unresolved links
 ```
 
-页面 frontmatter 记 provenance: `generatedBy / generatedAt / provider / providerVersion / indexedCommit / currentCommit / stale / dependencies[]`。**Human Notes 区(`<!-- BEGIN_HUMAN_NOTES --> … <!-- END_HUMAN_NOTES -->`)重建不得删除。** MVP 不要求完整模块依赖力导图。
+页面 frontmatter 记 provenance: `generatedBy / generatedAt / provider / providerVersion / indexedCommit / currentCommit / freshness / dependencies[]`。
+
+**Human Notes 语义(MVP = 纯派生只读)**: `.evo-lite/generated/code-wiki/` 是可删可重建的派生投影,**不得**在其中保存 canonical 人工 truth(否则 `git clean -fdx` / 重建会永久丢失)。MVP: Code Wiki 页面纯派生、只读,**不含 Human Notes**。将来若需人工注记,canonical notes 单独存 `docs/code-wiki-notes/<stable-page-id>.md`,build 时读取并投影进页面——删除整个 generated 目录后人工笔记仍可完整重建;**不得**依赖"重写前从生成文件摘 block 再塞回"。MVP 不要求完整模块依赖力导图。
 
 ## 6. Inspector Integration
 
@@ -157,9 +176,15 @@ Minimal Code Wiki(overview/current-focus/providers/modules/tasks)、Inspector Co
     },
     {
       "id": "ac-minimal-code-wiki",
-      "description": "mem wiki build produces provider status, overview, current-focus, module and task pages from the unified query layer; pages record freshness and dependencies; rebuilding preserves Human Notes.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/memory.js wiki build && node ./.evo-lite/cli/memory.js wiki status --json", "scope": "dogfood" } },
+      "description": "mem code wiki build produces provider status, overview, current-focus, module and task pages from the unified query layer; pages record freshness and dependencies; pages are pure-derived and read-only (no canonical Human Notes stored under the generated dir), so deleting the whole generated code-wiki dir and rebuilding reproduces every page.",
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/memory.js code wiki build && node ./.evo-lite/cli/memory.js code wiki status --json", "scope": "dogfood" } },
       "dependsOn": ["templates/cli/code-perception/wiki.js"]
+    },
+    {
+      "id": "ac-inspector-code-surface",
+      "description": "The Inspector Code page renders selected provider/version, indexed/current commit, index/freshness/dirty state, capabilities, current-focus files and resolved symbols, Task-to-Code links, Code Wiki entry and degraded guidance; GET /api/code/status, /api/code/focus and /api/code/task?id= return the same unified data read-only, never auto-install or index a provider, and surface diagnostics on provider failure.",
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "dependsOn": ["templates/cli/inspector.js"]
     },
     {
       "id": "ac-mirror-parity",

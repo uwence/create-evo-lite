@@ -52,6 +52,8 @@ Local-First         默认不上传代码、不自动安装工具、不自动建
 
 ```text
 CodeGraph          structural-primary   —— 首个正式 Provider(子 spec 2)
+                   身份锁定 colbymchenry/codegraph (MIT, @colbymchenry/codegraph, compat 1.x)
+                   ——"CodeGraph"有同名歧义,勿混入 optave/ops-codegraph-tool
 Understand Anything enrichment           —— follow-up(spec:understand-anything-enrichment-provider)
 GitNexus           structural-advanced   —— follow-up,用户独立安装+许可(spec:gitnexus-advanced-code-provider)
 Evo-Lite           governance            —— task/spec/evidence 权威
