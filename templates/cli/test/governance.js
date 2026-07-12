@@ -3459,6 +3459,175 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-spec-park-reactivate passed');
 
+        console.log('T-cp-contract. Testing code-perception provider contract validation ...');
+        {
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const {
+                FRESHNESS, DIRTY, COMPAT, INDEX,
+                CAPABILITY_KEYS, CAPABILITY_METHOD, STATUS_ONLY_CAPABILITIES,
+                validateProvider, validateAvailability, validateStatus,
+            } = contract;
+
+            assert.deepStrictEqual(CAPABILITY_KEYS, [
+                'files', 'symbols', 'source', 'callers', 'callees', 'trace', 'impact',
+                'affectedTests', 'modules', 'flows', 'summaries', 'layers', 'tours',
+                'semanticSearch', 'incrementalIndex',
+            ], 'CAPABILITY_KEYS must be exactly the 15 capability names in order');
+            assert.deepStrictEqual(STATUS_ONLY_CAPABILITIES, ['incrementalIndex'], 'STATUS_ONLY_CAPABILITIES must be [\'incrementalIndex\']');
+            assert.ok(Object.isFrozen(CAPABILITY_KEYS), 'CAPABILITY_KEYS must be frozen');
+            assert.ok(Object.isFrozen(CAPABILITY_METHOD), 'CAPABILITY_METHOD must be frozen');
+            assert.ok(Object.isFrozen(STATUS_ONLY_CAPABILITIES), 'STATUS_ONLY_CAPABILITIES must be frozen');
+            assert.ok(Object.isFrozen(FRESHNESS), 'FRESHNESS must be frozen');
+            assert.ok(Object.isFrozen(DIRTY), 'DIRTY must be frozen');
+            assert.ok(Object.isFrozen(COMPAT), 'COMPAT must be frozen');
+            assert.ok(Object.isFrozen(INDEX), 'INDEX must be frozen');
+
+            function goodProvider() {
+                const capabilities = {};
+                for (const key of CAPABILITY_KEYS) capabilities[key] = false;
+                return {
+                    id: 'demo-provider',
+                    name: 'Demo Provider',
+                    adapterVersion: '1.0.0',
+                    capabilities,
+                    check: () => ({}),
+                    getStatus: () => ({}),
+                };
+            }
+
+            function goodStatus() {
+                const capabilities = {};
+                for (const key of CAPABILITY_KEYS) capabilities[key] = false;
+                return {
+                    ready: true,
+                    available: true,
+                    indexState: INDEX.READY,
+                    freshness: FRESHNESS.FRESH,
+                    dirty: DIRTY.CLEAN,
+                    compatibility: COMPAT.SUPPORTED,
+                    capabilities,
+                };
+            }
+
+            // 1. fully-valid provider -> valid:true, no diagnostics.
+            {
+                const result = validateProvider(goodProvider());
+                assert.strictEqual(result.valid, true, 'goodProvider() must be valid');
+                assert.deepStrictEqual(result.diagnostics, [], 'goodProvider() must have no diagnostics');
+            }
+
+            // 2. missing id -> diagnostic code includes missing-id.
+            {
+                const p = goodProvider();
+                delete p.id;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'provider missing id must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'missing-id'), 'diagnostics must include missing-id');
+            }
+
+            // 3. capability non-boolean -> capability-not-boolean.
+            {
+                const p = goodProvider();
+                p.capabilities.files = 'yes';
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'non-boolean capability must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-not-boolean:files'), 'diagnostics must include capability-not-boolean:files');
+            }
+
+            // 4. impact:true with no impact method -> invalid, diagnostic mentions impact.
+            {
+                const p = goodProvider();
+                p.capabilities.impact = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'impact capability without impact method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code.includes('impact')), 'diagnostics must mention impact');
+            }
+
+            // 5. source:true with no getEntity -> invalid.
+            {
+                const p = goodProvider();
+                p.capabilities.source = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'source capability without getEntity method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-method-missing:source->:getEntity'), 'diagnostics must include capability-method-missing:source->:getEntity');
+            }
+
+            // 6. symbols:true with no search -> invalid.
+            {
+                const p = goodProvider();
+                p.capabilities.symbols = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'symbols capability without search method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-method-missing:symbols->:search'), 'diagnostics must include capability-method-missing:symbols->:search');
+            }
+
+            // 7. affectedTests:true with no getAffectedTests -> invalid.
+            {
+                const p = goodProvider();
+                p.capabilities.affectedTests = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'affectedTests capability without getAffectedTests method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-method-missing:affectedTests->:getAffectedTests'), 'diagnostics must include capability-method-missing:affectedTests->:getAffectedTests');
+            }
+
+            // 8. trace:true with no explore -> invalid.
+            {
+                const p = goodProvider();
+                p.capabilities.trace = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'trace capability without explore method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-method-missing:trace->:explore'), 'diagnostics must include capability-method-missing:trace->:explore');
+            }
+
+            // 9. incrementalIndex:true with no extra method -> valid:TRUE (status-only).
+            {
+                const p = goodProvider();
+                p.capabilities.incrementalIndex = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, true, 'incrementalIndex capability requires no method (status-only)');
+                assert.deepStrictEqual(result.diagnostics, [], 'incrementalIndex-only provider must have no diagnostics');
+            }
+
+            // 10. validateStatus with freshness:false -> status-invalid:freshness.
+            {
+                const s = goodStatus();
+                s.freshness = false;
+                const result = validateStatus(s);
+                assert.strictEqual(result.valid, false, 'status with freshness:false must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'status-invalid:freshness'), 'diagnostics must include status-invalid:freshness');
+            }
+
+            // 11. validateStatus on fully-valid status -> valid:true.
+            {
+                const result = validateStatus(goodStatus());
+                assert.strictEqual(result.valid, true, 'goodStatus() must be valid');
+                assert.deepStrictEqual(result.diagnostics, [], 'goodStatus() must have no diagnostics');
+            }
+
+            // 12. All three validators on null/undefined -> valid:false, never throw.
+            {
+                for (const validator of [validateProvider, validateAvailability, validateStatus]) {
+                    for (const badInput of [null, undefined]) {
+                        let result;
+                        assert.doesNotThrow(() => { result = validator(badInput); }, `${validator.name} must not throw on ${badInput}`);
+                        assert.strictEqual(result.valid, false, `${validator.name}(${badInput}) must be valid:false`);
+                        assert.ok(Array.isArray(result.diagnostics) && result.diagnostics.length > 0, `${validator.name}(${badInput}) must return non-empty diagnostics`);
+                    }
+                }
+            }
+
+            // Bonus: validateAvailability sanity on a good/bad object.
+            {
+                const good = validateAvailability({ available: true, ready: true, indexState: INDEX.READY, installed: true });
+                assert.strictEqual(good.valid, true, 'valid availability object must pass');
+
+                const bad = validateAvailability({ available: 'yes', ready: true, indexState: 'bogus' });
+                assert.strictEqual(bad.valid, false, 'invalid availability object must fail');
+                assert.ok(bad.diagnostics.length > 0, 'invalid availability object must produce diagnostics');
+            }
+        }
+        console.log('✅ T-cp-contract passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
