@@ -38,13 +38,24 @@ module.exports = {
   COMPAT:    Object.freeze({ SUPPORTED:'supported', UNTESTED:'untested', UNSUPPORTED:'unsupported', UNKNOWN:'unknown' }),
   INDEX:     Object.freeze({ READY:'ready', MISSING:'missing', STALE:'stale', NOT_REQUIRED:'not-required', UNKNOWN:'unknown' }),
   CAPABILITY_KEYS,                 // frozen 15-name array
-  CAPABILITY_METHOD: Object.freeze({ files:'getFiles', callers:'getCallers', callees:'getCallees', impact:'impact', source:'getEntity' }),
+  // capability -> required query method. incrementalIndex is status-only (no method).
+  CAPABILITY_METHOD: Object.freeze({
+    files:'getFiles', modules:'getFiles',
+    symbols:'search', semanticSearch:'search',
+    source:'getEntity',
+    callers:'getCallers', callees:'getCallees',
+    impact:'impact', affectedTests:'getAffectedTests',
+    trace:'explore', flows:'explore', summaries:'explore', layers:'explore', tours:'explore',
+  }),
+  STATUS_ONLY_CAPABILITIES: Object.freeze(['incrementalIndex']),
   validateProvider(provider) => { valid, diagnostics:[{code,message}] },
   validateAvailability(a)   => { valid, diagnostics:[] },   // ready:boolean, indexState∈INDEX, available:boolean
   validateStatus(s)         => { valid, diagnostics:[] },   // freshness∈FRESHNESS, dirty∈DIRTY, compatibility∈COMPAT, indexState∈INDEX, ready:boolean
 };
 ```
-`validateProvider` 检查: id/name/adapterVersion 非空 string、capabilities 含全部 CAPABILITY_KEYS 且值 boolean、check/getStatus 为函数、**capability-method 一致性**(`CAPABILITY_METHOD` 中任一 capability=true → 对应方法必须存在且为函数)、可选方法若存在须为函数。全部返回结构化 diagnostic,**绝不抛异常**。`validateAvailability`/`validateStatus` 拒绝非法枚举值(如 `freshness:false` 或未知字符串)。
+`validateProvider` 检查: id/name/adapterVersion 非空 string、capabilities 含全部 CAPABILITY_KEYS 且值 boolean、check/getStatus 为函数、**capability-method 一致性(全 15 项覆盖)**——`CAPABILITY_METHOD` 中任一 capability=true → 对应方法必须存在且为函数;`STATUS_ONLY_CAPABILITIES`(incrementalIndex)只影响 status,不要求方法。可选方法若存在须为函数。全部返回结构化 diagnostic,**绝不抛异常**。
+
+契约方法集(可选,由 capabilities 决定必需):`check`/`getStatus`(必需)、`search`、`getEntity`、`getFiles`、`getCallers`、`getCallees`、`impact`、`getAffectedTests`、`explore`。`affectedTests` 用**独立** `getAffectedTests`(子 spec ② 接 CodeGraph `affected` 命令),**不塞进 impact()**。`validateAvailability`/`validateStatus` 拒绝非法枚举值(如 `freshness:false` 或未知字符串)。
 
 ### `code-perception/normalize.js`
 ```js
@@ -115,8 +126,8 @@ role 排序(结构能力): structural-primary > 其他 > fallback; 再按 freshn
 - [ ] [task:cp-state-contract] provider-contract.js: 三态枚举 + capability-method 校验 + status/availability 校验
   - files: templates/cli/code-perception/provider-contract.js
   - verify: node templates/cli/test.js governance
-  - acceptance: 导出 FRESHNESS/DIRTY/COMPAT/INDEX 冻结枚举、CAPABILITY_KEYS(15)、CAPABILITY_METHOD、validateProvider/validateAvailability/validateStatus;完整合法 provider `valid:true`;缺 id / capabilities 非全 boolean / `impact:true 但无 impact 方法` / `source:true 但无 getEntity` 各 `valid:false` 且 diagnostic 指明;validateStatus 拒 `freshness:false`、`dirty:'nope'` 等非法枚举;三个 validate 均不抛异常
-  - test-first: governance.js 新增「T-cp-contract」构造 good + 各类 bad provider/status 断言;红→绿
+  - acceptance: 导出 FRESHNESS/DIRTY/COMPAT/INDEX 冻结枚举、CAPABILITY_KEYS(15)、CAPABILITY_METHOD(覆盖除 incrementalIndex 外全部)、STATUS_ONLY_CAPABILITIES、validateProvider/validateAvailability/validateStatus;完整合法 provider `valid:true`;缺 id / capabilities 非全 boolean / `impact:true 无 impact` / `source:true 无 getEntity` / `symbols:true 无 search` / `affectedTests:true 无 getAffectedTests` / `trace:true 无 explore` 各 `valid:false` 且 diagnostic 指明;`incrementalIndex:true 且无额外方法` 仍 `valid:true`(status-only);validateStatus 拒 `freshness:false`、`dirty:'nope'` 等非法枚举;三个 validate 均不抛异常
+  - test-first: governance.js 新增「T-cp-contract」构造 good + 各 capability↔method 缺失 bad 断言;红→绿
 
 - [ ] [task:cp-normalize] normalize.js: reference id(禁 name 合并)+ 三态透传
   - files: templates/cli/code-perception/normalize.js
@@ -127,7 +138,7 @@ role 排序(结构能力): structural-primary > 其他 > fallback; 再按 freshn
 - [ ] [task:cp-fixture-provider] test fixtures: 契约用假 provider(测试资产)
   - files: templates/cli/test/fixtures/code-perception/fixture-provider.js, templates/cli/test/fixtures/code-perception/fixture-status.json, templates/cli/test/fixtures/code-perception/fixture-query.json, templates/cli/test/fixtures/code-perception/fixture-callers.json, templates/cli/test/fixtures/code-perception/fixture-impact.json
   - verify: node templates/cli/test.js governance
-  - acceptance: fixture-provider.create() 通过 validateProvider(capabilities 与其方法一致);getStatus 返三态 status;search/getCallers/impact 从 fixture JSON 读并经 normalize 输出;测试内断言无 execFile/spawn 调用;**该文件在 test/fixtures/ 下,不出现在 template-manifest 生产文件集**
+  - acceptance: fixture-provider.create() 通过 validateProvider(capabilities 与其方法一致);getStatus 返三态 status;search/getCallers/impact 从 fixture JSON 读并经 normalize 输出;测试内断言无 execFile/spawn 调用;该文件在 test/fixtures/ 下(Task 7 会进 manifest 以便 mirror),但**不进 DEFAULT_REGISTRY**——生产 config 无法选中它
   - test-first: governance.js 增「T-cp-fixture」,红→绿
 
 ### Phase 1 — Native Lite → Loader → Router → Sync
@@ -150,10 +161,10 @@ role 排序(结构能力): structural-primary > 其他 > fallback; 再按 freshn
   - acceptance: inspectProviders await check/getStatus 并把抛错 provider 隔离成 diagnostic 候选;selectProvider 纯同步;结构能力下 structural-primary(注入 fixture)优先于 enrichment,再 fresh>unknown>stale;preferredProvider ready+支持 → 优先,不 ready 且 allowFallback=false → candidate:null;仅 native-lite(impact=false)请求 impact → candidate:null/degraded/reason="No ready provider exposes impact analysis"(**ready-centric,非 indexed**);无结构 provider 的 files 请求 → 选 native-lite fallback degraded=true
   - test-first: governance.js 增「T-cp-router」用注入 registry(fixture structural + fixture stale + native-lite),红→绿
 
-- [ ] [task:cp-manifest-sync] 登记 manifest(仅 5 生产模块)+ mirror 同步 + 全量回归
+- [ ] [task:cp-manifest-sync] 登记 manifest(5 生产模块 + 5 测试资产)+ mirror 同步 + 全量回归
   - files: templates/cli/template-manifest.js, .evo-lite/cli/code-perception/
   - verify: node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/memory.js sync-runtime
-  - acceptance: core-cli family 加入 5 个生产文件(provider-contract.js / normalize.js / native-lite.js / provider-loader.js / provider-router.js);**fixture-provider.js 及 fixtures/*.json 不进生产文件集**(它们随 test 树,harness 已覆盖 test/ 拷贝);第二次 sync-runtime copied:0;.evo-lite/cli 镜像与 templates/cli byte-identical(含 code-perception/**);`node ./.evo-lite/cli/test.js governance` 绿;其他治理无回归
+  - acceptance: manifest 加入全部 10 个文件——5 生产模块(provider-contract.js / normalize.js / native-lite.js / provider-loader.js / provider-router.js)**和** 5 测试资产(test/fixtures/code-perception/fixture-provider.js + fixture-status/query/callers/impact.json)。**sync-runtime 只镜像 manifest 逐项列出的文件,不递归拷 test/**,故 fixture 必须进 manifest,否则 `.evo-lite/cli/test/fixtures/` 缺失、runtime governance require fixture 失败。安全边界不靠 manifest 排除,而靠 `DEFAULT_REGISTRY` 仅含 provider:native-lite(测试 provider 不能被生产 config 选中)。第二次 sync-runtime copied:0;.evo-lite/cli 镜像与 templates/cli byte-identical(含 code-perception/** + test/fixtures/code-perception/**);`node ./.evo-lite/cli/test.js governance`(经 .evo-lite runtime)绿;其他治理无回归
 
 ## Follow-ups(移出本 MVP)
 

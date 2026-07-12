@@ -30,11 +30,12 @@ interface CodePerceptionProvider {
   getCallers?(context, query: RelationshipQuery): Promise<ProviderRelationshipResult>
   getCallees?(context, query: RelationshipQuery): Promise<ProviderRelationshipResult>
   impact?(context, query: ImpactQuery): Promise<ProviderImpactResult>
+  getAffectedTests?(context, query): Promise<ProviderRelationshipResult>   // 独立于 impact;② 接 codegraph affected
   explore?(context, query: ExploreQuery): Promise<ProviderExploreResult>
 }
 ```
 
-契约必须能适配 CLI 型、MCP 型、JSON 导入型、未来自研 Native Provider。可选方法缺失即表示该能力不支持(由 capabilities 声明)。
+契约必须能适配 CLI 型、MCP 型、JSON 导入型、未来自研 Native Provider。可选方法缺失即表示该能力不支持——且 **capability↔method 一致性由 `validateProvider` 强制**(全 15 项 capability 各绑定其查询方法,`incrementalIndex` 为 status-only 例外):capability=true 但缺对应方法 → provider 校验失败,router 不会选中一个声称有能力却无执行方法的 provider。绑定表: `files/modules→getFiles`、`symbols/semanticSearch→search`、`source→getEntity`、`callers→getCallers`、`callees→getCallees`、`impact→impact`、`affectedTests→getAffectedTests`、`trace/flows/summaries/layers/tours→explore`。
 
 ### 2.0 State Model(统一,禁用会互相矛盾的 boolean)
 
