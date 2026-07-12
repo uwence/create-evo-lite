@@ -3628,6 +3628,133 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cp-contract passed');
 
+        console.log('T-cp-normalize. Testing code-perception normalized reference + result models ...');
+        {
+            const normalize = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize'));
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const { FRESHNESS, DIRTY } = contract;
+            const {
+                makeReferenceId, normalizeReference, normalizeSearchResult,
+                normalizeRelationship, normalizeImpactResult,
+            } = normalize;
+
+            // 1. makeReferenceId shape: prefix + 12-char lowercase hex tail.
+            {
+                const id = makeReferenceId('provider:a', 'ent-1');
+                assert.ok(id.startsWith('code-ref:provider:a:'), 'id must start with code-ref:provider:a:');
+                const tail = id.slice('code-ref:provider:a:'.length);
+                assert.strictEqual(tail.length, 12, 'tail must be 12 chars');
+                assert.ok(/^[0-9a-f]{12}$/.test(tail), 'tail must be lowercase hex');
+            }
+
+            // 2. anti-name-merge invariant: same providerEntityId, different providerId -> different ids.
+            {
+                assert.notStrictEqual(makeReferenceId('p1', 'x'), makeReferenceId('p2', 'x'), 'different providerId must yield different ids for the same providerEntityId');
+            }
+
+            // 3. deterministic: same args -> identical id.
+            {
+                assert.strictEqual(makeReferenceId('p1', 'x'), makeReferenceId('p1', 'x'), 'makeReferenceId must be deterministic');
+            }
+
+            // 4. normalizeReference happy path.
+            {
+                const ref = normalizeReference('prov', {
+                    providerEntityId: 'E', name: 'foo', kind: 'function',
+                    snapshot: { freshness: 'stale', dirty: 'clean' },
+                });
+                assert.strictEqual(ref.providerEntityId, 'E', 'providerEntityId must be preserved');
+                assert.ok(ref.id.startsWith('code-ref:prov:'), 'id must embed providerId');
+                assert.strictEqual(ref.kind, 'function', 'kind must pass through when legal');
+                assert.strictEqual(ref.snapshot.freshness, 'stale', 'freshness must pass through when legal');
+                assert.strictEqual(ref.snapshot.dirty, 'clean', 'dirty must pass through when legal');
+            }
+
+            // 5. illegal kind/freshness/dirty coerce to safe fallbacks.
+            {
+                const ref = normalizeReference('prov', {
+                    providerEntityId: 'E2', name: 'bar', kind: 'weird',
+                    snapshot: { freshness: false, dirty: 'nope' },
+                });
+                assert.strictEqual(ref.kind, 'unknown', 'illegal kind must coerce to unknown');
+                assert.strictEqual(ref.snapshot.freshness, FRESHNESS.UNKNOWN, 'illegal freshness must coerce to FRESHNESS.UNKNOWN');
+                assert.strictEqual(ref.snapshot.dirty, DIRTY.UNKNOWN, 'illegal dirty must coerce to DIRTY.UNKNOWN');
+            }
+
+            // 6. normalizeRelationship happy path + invalid kind coercion + distinct source/target ids.
+            {
+                const srcRaw = { providerEntityId: 'src-1', name: 'srcFn', kind: 'function' };
+                const tgtRaw = { providerEntityId: 'tgt-1', name: 'tgtFn', kind: 'function' };
+                const rel = normalizeRelationship('p', srcRaw, tgtRaw, 'calls', 0.9);
+                assert.strictEqual(rel.kind, 'calls', 'legal kind must pass through');
+                assert.ok(rel.source.id.startsWith('code-ref:p:'), 'source id must embed providerId');
+                assert.ok(rel.target.id.startsWith('code-ref:p:'), 'target id must embed providerId');
+                assert.notStrictEqual(rel.source.id, rel.target.id, 'source and target ids must differ for distinct raws');
+
+                const badRel = normalizeRelationship('p', srcRaw, tgtRaw, 'frobnicate', 0.5);
+                assert.strictEqual(badRel.kind, 'references', 'invalid relationship kind must coerce to references');
+            }
+
+            // 7. normalizeSearchResult: query, matches, provider identity passthrough.
+            {
+                const providerStatus = { providerId: 'p' };
+                const rawA = { providerEntityId: 'a', name: 'A', kind: 'function' };
+                const rawB = { providerEntityId: 'b', name: 'B', kind: 'function' };
+                const result = normalizeSearchResult(providerStatus, { query: 'q', matches: [rawA, rawB] });
+                assert.strictEqual(result.matches.length, 2, 'matches length must be 2');
+                for (const m of result.matches) {
+                    assert.ok(m.id, 'each match must have an id');
+                    assert.strictEqual(m.providerId, 'p', 'each match providerId must be p');
+                }
+                assert.strictEqual(result.query, 'q', 'query must pass through');
+                assert.strictEqual(result.provider, providerStatus, 'provider must be the passed status object (identity)');
+            }
+
+            // 8. normalizeImpactResult happy path.
+            {
+                const providerStatus = { providerId: 'p' };
+                const rawA = { providerEntityId: 'a', name: 'A', kind: 'function' };
+                const rawB = { providerEntityId: 'b', name: 'B', kind: 'function' };
+                const rawC = { providerEntityId: 'c', name: 'C', kind: 'test' };
+                const result = normalizeImpactResult(providerStatus, {
+                    target: rawA, upstream: [rawB], downstream: [], affectedTests: [rawC], risk: 'high',
+                });
+                assert.ok(result.target.id, 'target id must be present');
+                assert.strictEqual(result.upstream.length, 1, 'upstream length must be 1');
+                assert.strictEqual(result.affectedTests.length, 1, 'affectedTests length must be 1');
+                assert.strictEqual(result.risk, 'high', 'risk must pass through when legal');
+                assert.strictEqual(result.provider.providerId, 'p', 'provider must pass through');
+            }
+
+            // 9. never throws on null/undefined/missing-field input; best-effort shape.
+            {
+                assert.doesNotThrow(() => makeReferenceId(undefined, undefined), 'makeReferenceId must not throw on undefined');
+                assert.doesNotThrow(() => makeReferenceId(null, null), 'makeReferenceId must not throw on null');
+
+                let ref;
+                assert.doesNotThrow(() => { ref = normalizeReference('p', null); }, 'normalizeReference must not throw on null raw');
+                assert.strictEqual(ref.kind, 'unknown', 'normalizeReference(p, null) must yield kind:unknown');
+                assert.strictEqual(ref.snapshot.freshness, FRESHNESS.UNKNOWN, 'normalizeReference(p, null) must yield UNKNOWN freshness');
+                assert.strictEqual(ref.snapshot.dirty, DIRTY.UNKNOWN, 'normalizeReference(p, null) must yield UNKNOWN dirty');
+
+                assert.doesNotThrow(() => normalizeReference(undefined, undefined), 'normalizeReference must not throw on undefined/undefined');
+                assert.doesNotThrow(() => normalizeSearchResult(undefined, undefined), 'normalizeSearchResult must not throw on undefined/undefined');
+                assert.doesNotThrow(() => normalizeSearchResult(undefined, []), 'normalizeSearchResult must not throw on undefined status + array matches');
+                assert.doesNotThrow(() => normalizeRelationship(undefined, undefined, undefined, undefined, undefined), 'normalizeRelationship must not throw on all-undefined');
+                assert.doesNotThrow(() => normalizeImpactResult(undefined, undefined), 'normalizeImpactResult must not throw on undefined/undefined');
+            }
+
+            // Bonus: normalizeSearchResult accepts a bare array with query=''.
+            {
+                const rawA = { providerEntityId: 'a', name: 'A', kind: 'function' };
+                const result = normalizeSearchResult({ providerId: 'p' }, [rawA]);
+                assert.strictEqual(result.query, '', 'bare array input must yield query===\'\'');
+                assert.strictEqual(result.matches.length, 1, 'bare array input must still normalize matches');
+                assert.deepStrictEqual(result.diagnostics, [], 'diagnostics default to [] when absent');
+            }
+        }
+        console.log('✅ T-cp-normalize passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
