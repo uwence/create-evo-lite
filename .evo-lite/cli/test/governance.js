@@ -3459,6 +3459,776 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-spec-park-reactivate passed');
 
+        console.log('T-cp-contract. Testing code-perception provider contract validation ...');
+        {
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const {
+                FRESHNESS, DIRTY, COMPAT, INDEX,
+                CAPABILITY_KEYS, CAPABILITY_METHOD, STATUS_ONLY_CAPABILITIES,
+                validateProvider, validateAvailability, validateStatus,
+            } = contract;
+
+            assert.deepStrictEqual(CAPABILITY_KEYS, [
+                'files', 'symbols', 'source', 'callers', 'callees', 'trace', 'impact',
+                'affectedTests', 'modules', 'flows', 'summaries', 'layers', 'tours',
+                'semanticSearch', 'incrementalIndex',
+            ], 'CAPABILITY_KEYS must be exactly the 15 capability names in order');
+            assert.deepStrictEqual(STATUS_ONLY_CAPABILITIES, ['incrementalIndex'], 'STATUS_ONLY_CAPABILITIES must be [\'incrementalIndex\']');
+            assert.ok(Object.isFrozen(CAPABILITY_KEYS), 'CAPABILITY_KEYS must be frozen');
+            assert.ok(Object.isFrozen(CAPABILITY_METHOD), 'CAPABILITY_METHOD must be frozen');
+            assert.ok(Object.isFrozen(STATUS_ONLY_CAPABILITIES), 'STATUS_ONLY_CAPABILITIES must be frozen');
+            assert.ok(Object.isFrozen(FRESHNESS), 'FRESHNESS must be frozen');
+            assert.ok(Object.isFrozen(DIRTY), 'DIRTY must be frozen');
+            assert.ok(Object.isFrozen(COMPAT), 'COMPAT must be frozen');
+            assert.ok(Object.isFrozen(INDEX), 'INDEX must be frozen');
+
+            function goodProvider() {
+                const capabilities = {};
+                for (const key of CAPABILITY_KEYS) capabilities[key] = false;
+                return {
+                    id: 'demo-provider',
+                    name: 'Demo Provider',
+                    adapterVersion: '1.0.0',
+                    capabilities,
+                    check: () => ({}),
+                    getStatus: () => ({}),
+                };
+            }
+
+            function goodStatus() {
+                const capabilities = {};
+                for (const key of CAPABILITY_KEYS) capabilities[key] = false;
+                return {
+                    ready: true,
+                    available: true,
+                    indexState: INDEX.READY,
+                    freshness: FRESHNESS.FRESH,
+                    dirty: DIRTY.CLEAN,
+                    compatibility: COMPAT.SUPPORTED,
+                    capabilities,
+                };
+            }
+
+            // 1. fully-valid provider -> valid:true, no diagnostics.
+            {
+                const result = validateProvider(goodProvider());
+                assert.strictEqual(result.valid, true, 'goodProvider() must be valid');
+                assert.deepStrictEqual(result.diagnostics, [], 'goodProvider() must have no diagnostics');
+            }
+
+            // 2. missing id -> diagnostic code includes missing-id.
+            {
+                const p = goodProvider();
+                delete p.id;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'provider missing id must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'missing-id'), 'diagnostics must include missing-id');
+            }
+
+            // 3. capability non-boolean -> capability-not-boolean.
+            {
+                const p = goodProvider();
+                p.capabilities.files = 'yes';
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'non-boolean capability must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-not-boolean:files'), 'diagnostics must include capability-not-boolean:files');
+            }
+
+            // 4. impact:true with no impact method -> invalid, diagnostic mentions impact.
+            {
+                const p = goodProvider();
+                p.capabilities.impact = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'impact capability without impact method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code.includes('impact')), 'diagnostics must mention impact');
+            }
+
+            // 5. source:true with no getEntity -> invalid.
+            {
+                const p = goodProvider();
+                p.capabilities.source = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'source capability without getEntity method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-method-missing:source->:getEntity'), 'diagnostics must include capability-method-missing:source->:getEntity');
+            }
+
+            // 6. symbols:true with no search -> invalid.
+            {
+                const p = goodProvider();
+                p.capabilities.symbols = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'symbols capability without search method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-method-missing:symbols->:search'), 'diagnostics must include capability-method-missing:symbols->:search');
+            }
+
+            // 7. affectedTests:true with no getAffectedTests -> invalid.
+            {
+                const p = goodProvider();
+                p.capabilities.affectedTests = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'affectedTests capability without getAffectedTests method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-method-missing:affectedTests->:getAffectedTests'), 'diagnostics must include capability-method-missing:affectedTests->:getAffectedTests');
+            }
+
+            // 8. trace:true with no explore -> invalid.
+            {
+                const p = goodProvider();
+                p.capabilities.trace = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, false, 'trace capability without explore method must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'capability-method-missing:trace->:explore'), 'diagnostics must include capability-method-missing:trace->:explore');
+            }
+
+            // 9. incrementalIndex:true with no extra method -> valid:TRUE (status-only).
+            {
+                const p = goodProvider();
+                p.capabilities.incrementalIndex = true;
+                const result = validateProvider(p);
+                assert.strictEqual(result.valid, true, 'incrementalIndex capability requires no method (status-only)');
+                assert.deepStrictEqual(result.diagnostics, [], 'incrementalIndex-only provider must have no diagnostics');
+            }
+
+            // 10. validateStatus with freshness:false -> status-invalid:freshness.
+            {
+                const s = goodStatus();
+                s.freshness = false;
+                const result = validateStatus(s);
+                assert.strictEqual(result.valid, false, 'status with freshness:false must be invalid');
+                assert.ok(result.diagnostics.some(d => d.code === 'status-invalid:freshness'), 'diagnostics must include status-invalid:freshness');
+            }
+
+            // 11. validateStatus on fully-valid status -> valid:true.
+            {
+                const result = validateStatus(goodStatus());
+                assert.strictEqual(result.valid, true, 'goodStatus() must be valid');
+                assert.deepStrictEqual(result.diagnostics, [], 'goodStatus() must have no diagnostics');
+            }
+
+            // 12. All three validators on null/undefined -> valid:false, never throw.
+            {
+                for (const validator of [validateProvider, validateAvailability, validateStatus]) {
+                    for (const badInput of [null, undefined]) {
+                        let result;
+                        assert.doesNotThrow(() => { result = validator(badInput); }, `${validator.name} must not throw on ${badInput}`);
+                        assert.strictEqual(result.valid, false, `${validator.name}(${badInput}) must be valid:false`);
+                        assert.ok(Array.isArray(result.diagnostics) && result.diagnostics.length > 0, `${validator.name}(${badInput}) must return non-empty diagnostics`);
+                    }
+                }
+            }
+
+            // Bonus: validateAvailability sanity on a good/bad object.
+            {
+                const good = validateAvailability({ available: true, ready: true, indexState: INDEX.READY, installed: true });
+                assert.strictEqual(good.valid, true, 'valid availability object must pass');
+
+                const bad = validateAvailability({ available: 'yes', ready: true, indexState: 'bogus' });
+                assert.strictEqual(bad.valid, false, 'invalid availability object must fail');
+                assert.ok(bad.diagnostics.length > 0, 'invalid availability object must produce diagnostics');
+            }
+        }
+        console.log('✅ T-cp-contract passed');
+
+        console.log('T-cp-normalize. Testing code-perception normalized reference + result models ...');
+        {
+            const normalize = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize'));
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const { FRESHNESS, DIRTY } = contract;
+            const {
+                makeReferenceId, normalizeReference, normalizeSearchResult,
+                normalizeRelationship, normalizeImpactResult,
+            } = normalize;
+
+            // 1. makeReferenceId shape: prefix + 12-char lowercase hex tail.
+            {
+                const id = makeReferenceId('provider:a', 'ent-1');
+                assert.ok(id.startsWith('code-ref:provider:a:'), 'id must start with code-ref:provider:a:');
+                const tail = id.slice('code-ref:provider:a:'.length);
+                assert.strictEqual(tail.length, 12, 'tail must be 12 chars');
+                assert.ok(/^[0-9a-f]{12}$/.test(tail), 'tail must be lowercase hex');
+            }
+
+            // 2. anti-name-merge invariant: same providerEntityId, different providerId -> different ids.
+            {
+                assert.notStrictEqual(makeReferenceId('p1', 'x'), makeReferenceId('p2', 'x'), 'different providerId must yield different ids for the same providerEntityId');
+            }
+
+            // 3. deterministic: same args -> identical id.
+            {
+                assert.strictEqual(makeReferenceId('p1', 'x'), makeReferenceId('p1', 'x'), 'makeReferenceId must be deterministic');
+            }
+
+            // 4. normalizeReference happy path.
+            {
+                const ref = normalizeReference('prov', {
+                    providerEntityId: 'E', name: 'foo', kind: 'function',
+                    snapshot: { freshness: 'stale', dirty: 'clean' },
+                });
+                assert.strictEqual(ref.providerEntityId, 'E', 'providerEntityId must be preserved');
+                assert.ok(ref.id.startsWith('code-ref:prov:'), 'id must embed providerId');
+                assert.strictEqual(ref.kind, 'function', 'kind must pass through when legal');
+                assert.strictEqual(ref.snapshot.freshness, 'stale', 'freshness must pass through when legal');
+                assert.strictEqual(ref.snapshot.dirty, 'clean', 'dirty must pass through when legal');
+            }
+
+            // 5. illegal kind/freshness/dirty coerce to safe fallbacks.
+            {
+                const ref = normalizeReference('prov', {
+                    providerEntityId: 'E2', name: 'bar', kind: 'weird',
+                    snapshot: { freshness: false, dirty: 'nope' },
+                });
+                assert.strictEqual(ref.kind, 'unknown', 'illegal kind must coerce to unknown');
+                assert.strictEqual(ref.snapshot.freshness, FRESHNESS.UNKNOWN, 'illegal freshness must coerce to FRESHNESS.UNKNOWN');
+                assert.strictEqual(ref.snapshot.dirty, DIRTY.UNKNOWN, 'illegal dirty must coerce to DIRTY.UNKNOWN');
+            }
+
+            // 6. normalizeRelationship happy path + invalid kind coercion + distinct source/target ids.
+            {
+                const srcRaw = { providerEntityId: 'src-1', name: 'srcFn', kind: 'function' };
+                const tgtRaw = { providerEntityId: 'tgt-1', name: 'tgtFn', kind: 'function' };
+                const rel = normalizeRelationship('p', srcRaw, tgtRaw, 'calls', 0.9);
+                assert.strictEqual(rel.kind, 'calls', 'legal kind must pass through');
+                assert.ok(rel.source.id.startsWith('code-ref:p:'), 'source id must embed providerId');
+                assert.ok(rel.target.id.startsWith('code-ref:p:'), 'target id must embed providerId');
+                assert.notStrictEqual(rel.source.id, rel.target.id, 'source and target ids must differ for distinct raws');
+
+                const badRel = normalizeRelationship('p', srcRaw, tgtRaw, 'frobnicate', 0.5);
+                assert.strictEqual(badRel.kind, 'references', 'invalid relationship kind must coerce to references');
+            }
+
+            // 7. normalizeSearchResult: query, matches, provider identity passthrough.
+            {
+                const providerStatus = { providerId: 'p' };
+                const rawA = { providerEntityId: 'a', name: 'A', kind: 'function' };
+                const rawB = { providerEntityId: 'b', name: 'B', kind: 'function' };
+                const result = normalizeSearchResult(providerStatus, { query: 'q', matches: [rawA, rawB] });
+                assert.strictEqual(result.matches.length, 2, 'matches length must be 2');
+                for (const m of result.matches) {
+                    assert.ok(m.id, 'each match must have an id');
+                    assert.strictEqual(m.providerId, 'p', 'each match providerId must be p');
+                }
+                assert.strictEqual(result.query, 'q', 'query must pass through');
+                assert.strictEqual(result.provider, providerStatus, 'provider must be the passed status object (identity)');
+            }
+
+            // 8. normalizeImpactResult happy path.
+            {
+                const providerStatus = { providerId: 'p' };
+                const rawA = { providerEntityId: 'a', name: 'A', kind: 'function' };
+                const rawB = { providerEntityId: 'b', name: 'B', kind: 'function' };
+                const rawC = { providerEntityId: 'c', name: 'C', kind: 'test' };
+                const result = normalizeImpactResult(providerStatus, {
+                    target: rawA, upstream: [rawB], downstream: [], affectedTests: [rawC], risk: 'high',
+                });
+                assert.ok(result.target.id, 'target id must be present');
+                assert.strictEqual(result.upstream.length, 1, 'upstream length must be 1');
+                assert.strictEqual(result.affectedTests.length, 1, 'affectedTests length must be 1');
+                assert.strictEqual(result.risk, 'high', 'risk must pass through when legal');
+                assert.strictEqual(result.provider.providerId, 'p', 'provider must pass through');
+            }
+
+            // 9. never throws on null/undefined/missing-field input; best-effort shape.
+            {
+                assert.doesNotThrow(() => makeReferenceId(undefined, undefined), 'makeReferenceId must not throw on undefined');
+                assert.doesNotThrow(() => makeReferenceId(null, null), 'makeReferenceId must not throw on null');
+
+                let ref;
+                assert.doesNotThrow(() => { ref = normalizeReference('p', null); }, 'normalizeReference must not throw on null raw');
+                assert.strictEqual(ref.kind, 'unknown', 'normalizeReference(p, null) must yield kind:unknown');
+                assert.strictEqual(ref.snapshot.freshness, FRESHNESS.UNKNOWN, 'normalizeReference(p, null) must yield UNKNOWN freshness');
+                assert.strictEqual(ref.snapshot.dirty, DIRTY.UNKNOWN, 'normalizeReference(p, null) must yield UNKNOWN dirty');
+
+                assert.doesNotThrow(() => normalizeReference(undefined, undefined), 'normalizeReference must not throw on undefined/undefined');
+                assert.doesNotThrow(() => normalizeSearchResult(undefined, undefined), 'normalizeSearchResult must not throw on undefined/undefined');
+                assert.doesNotThrow(() => normalizeSearchResult(undefined, []), 'normalizeSearchResult must not throw on undefined status + array matches');
+                assert.doesNotThrow(() => normalizeRelationship(undefined, undefined, undefined, undefined, undefined), 'normalizeRelationship must not throw on all-undefined');
+                assert.doesNotThrow(() => normalizeImpactResult(undefined, undefined), 'normalizeImpactResult must not throw on undefined/undefined');
+            }
+
+            // Bonus: normalizeSearchResult accepts a bare array with query=''.
+            {
+                const rawA = { providerEntityId: 'a', name: 'A', kind: 'function' };
+                const result = normalizeSearchResult({ providerId: 'p' }, [rawA]);
+                assert.strictEqual(result.query, '', 'bare array input must yield query===\'\'');
+                assert.strictEqual(result.matches.length, 1, 'bare array input must still normalize matches');
+                assert.deepStrictEqual(result.diagnostics, [], 'diagnostics default to [] when absent');
+            }
+        }
+        console.log('✅ T-cp-normalize passed');
+
+        console.log('T-cp-fixture. Testing code-perception fixture provider (contract-conformant, subprocess-free) ...');
+        {
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const fixture = require(path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception', 'fixture-provider'));
+
+            const p = fixture.create();
+
+            // 1. provider itself is contract-conformant.
+            {
+                const result = contract.validateProvider(p);
+                assert.strictEqual(result.valid, true, 'fixture provider must be valid per validateProvider');
+                assert.deepStrictEqual(result.diagnostics, [], 'fixture provider must have no diagnostics');
+            }
+
+            // 2. getStatus() passes validateStatus and reflects fixture-status.json's tri-state strings.
+            {
+                const status = p.getStatus({});
+                const result = contract.validateStatus(status);
+                assert.strictEqual(result.valid, true, 'fixture getStatus() must be valid per validateStatus');
+                assert.strictEqual(status.freshness, contract.FRESHNESS.FRESH, 'freshness must be fresh');
+                assert.strictEqual(status.dirty, contract.DIRTY.CLEAN, 'dirty must be clean');
+                assert.strictEqual(status.indexState, contract.INDEX.READY, 'indexState must be ready');
+            }
+
+            // 3. check() passes validateAvailability.
+            {
+                const result = contract.validateAvailability(p.check({}));
+                assert.strictEqual(result.valid, true, 'fixture check() must be valid per validateAvailability');
+            }
+
+            // 4. search() returns a normalized UnifiedSearchResult.
+            {
+                const result = p.search({}, 'parseConfig');
+                assert.strictEqual(result.matches.length, 2, 'search must return 2 matches');
+                assert.strictEqual(result.query, 'parseConfig', 'search query must pass through');
+                for (const m of result.matches) {
+                    assert.ok(m.id.startsWith('code-ref:provider:fixture:'), 'each match id must start with code-ref:provider:fixture:');
+                }
+            }
+
+            // 5. getCallers() returns normalized relationships with provider-scoped ids.
+            {
+                const rels = p.getCallers({}, { providerEntityId: 'sym:parseConfig' });
+                assert.strictEqual(rels.length, 1, 'getCallers must return 1 relationship');
+                assert.strictEqual(rels[0].kind, 'calls', 'relationship kind must be calls');
+                assert.notStrictEqual(rels[0].source.id, rels[0].target.id, 'source and target ids must differ');
+                assert.ok(rels[0].source.id.startsWith('code-ref:provider:fixture:'), 'source id must start with code-ref:provider:fixture:');
+                assert.ok(rels[0].target.id.startsWith('code-ref:provider:fixture:'), 'target id must start with code-ref:provider:fixture:');
+            }
+
+            // 6. impact() returns a normalized UnifiedImpactResult.
+            {
+                const result = p.impact({}, { providerEntityId: 'sym:parseConfig' });
+                assert.ok(result.target.id, 'impact target id must be present');
+                assert.strictEqual(result.upstream.length, 1, 'impact upstream length must be 1');
+                assert.strictEqual(result.downstream.length, 1, 'impact downstream length must be 1');
+                assert.strictEqual(result.affectedTests.length, 1, 'impact affectedTests length must be 1');
+                assert.strictEqual(result.risk, 'medium', 'impact risk must be medium');
+            }
+
+            // 7. no subprocess: monkey-patch child_process to throw, prove the fixture never touches it.
+            {
+                const cp = require('child_process');
+                const orig = {
+                    execFile: cp.execFile, spawn: cp.spawn, execFileSync: cp.execFileSync,
+                    spawnSync: cp.spawnSync, exec: cp.exec, execSync: cp.execSync,
+                };
+                for (const k of Object.keys(orig)) {
+                    cp[k] = () => { throw new Error('fixture must not spawn: ' + k); };
+                }
+                try {
+                    assert.doesNotThrow(() => {
+                        p.search({}, 'x');
+                        p.getCallers({}, {});
+                        p.impact({}, {});
+                    }, 'fixture provider methods must not touch child_process');
+                } finally {
+                    Object.assign(cp, orig);
+                }
+            }
+        }
+        console.log('✅ T-cp-fixture passed');
+
+        console.log('T-cp-native-lite. Testing native-lite file-perception provider (git/IR + fs-safety + budgets) ...');
+        {
+            const childProcess = require('child_process');
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const nativeLite = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'native-lite'));
+
+            function git(cwd, args) {
+                childProcess.execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env } });
+            }
+
+            const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-cp-native-'));
+            const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-cp-native-outside-'));
+
+            // A secret file OUTSIDE the workspace an escaping symlink must never expose.
+            const secretPath = path.join(outsideDir, 'SECRET.txt');
+            const secretContent = 'TOP-SECRET-OUTSIDE-WORKSPACE-CONTENT';
+            fs.writeFileSync(secretPath, secretContent, 'utf8');
+
+            // Two normal small text files.
+            writeText(path.join(projectRoot, 'src', 'a.js'), 'export const a = 1;\nexport const b = 2;\nconsole.log(a, b);\n');
+            writeText(path.join(projectRoot, 'src', 'b.js'), 'export const original = true;\n');
+
+            // Oversized file (> MAX_FILE_BYTES = 1 MiB): 1.1 MiB of text.
+            writeText(path.join(projectRoot, 'big.txt'), 'x'.repeat(Math.floor(1.1 * 1024 * 1024)));
+
+            // Binary file: a 0x00 byte within the first 8 KiB.
+            const binBuf = Buffer.from([0x41, 0x42, 0x00, 0x43, 0x44]);
+            fs.writeFileSync(path.join(projectRoot, 'data.bin'), binBuf);
+
+            // Architecture IR + Planning IR referencing src/a.js.
+            writeText(
+                path.join(projectRoot, '.evo-lite', 'generated', 'architecture', 'architecture-ir.json'),
+                JSON.stringify({ version: 'evo-arch-ir@1', files: [{ path: 'src/a.js', module: 'core', role: 'lib', confidence: 1 }] }, null, 2),
+            );
+            writeText(
+                path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                JSON.stringify({ version: 'evo-plan-ir@1', tasks: [{ id: 'task:x', linkedFiles: ['src/a.js'] }] }, null, 2),
+            );
+
+            git(projectRoot, ['init']);
+            git(projectRoot, ['config', 'user.email', 'evo@example.com']);
+            git(projectRoot, ['config', 'user.name', 'Evo Test']);
+            git(projectRoot, ['add', '.']);
+            git(projectRoot, ['commit', '-m', 'chore: baseline']);
+
+            // Modify src/b.js after the commit → git diff --name-only reports it.
+            fs.writeFileSync(path.join(projectRoot, 'src', 'b.js'), 'export const original = false; // modified\n', 'utf8');
+
+            // Escaping symlink → must be excluded, its outside content never read.
+            // On Windows without privilege fs.symlinkSync throws EPERM → guard-skip.
+            let symlinkCreated = false;
+            const symlinkRel = 'escape-link';
+            try {
+                fs.symlinkSync(secretPath, path.join(projectRoot, symlinkRel));
+                symlinkCreated = true;
+            } catch (err) {
+                console.log(`   ⏭️ symlink assertion skipped (symlink creation failed: ${err.code || err.message})`);
+            }
+
+            const ctx = { projectRoot };
+
+            // 1. provider is contract-conformant (capability↔method self-consistent).
+            assert.strictEqual(contract.validateProvider(nativeLite.create()).valid, true, 'native-lite provider must pass validateProvider');
+
+            // 2. getStatus passes validateStatus with the fixed status shape.
+            const status = nativeLite.create().getStatus(ctx);
+            assert.strictEqual(contract.validateStatus(status).valid, true, 'getStatus must pass validateStatus');
+            assert.strictEqual(status.indexState, 'not-required', 'indexState must be not-required');
+            assert.strictEqual(status.ready, true, 'status.ready must be true');
+            assert.strictEqual(status.freshness, 'fresh', 'freshness must be fresh (working tree is truth)');
+
+            // 3. check passes validateAvailability.
+            assert.strictEqual(contract.validateAvailability(nativeLite.create().check(ctx)).valid, true, 'check must pass validateAvailability');
+
+            // 4. Normal committed file: id, provenance, sha256 hash, module + task links.
+            const result = nativeLite.create().getFiles(ctx, {});
+            const byPath = new Map(result.files.map(f => [f.reference.filePath, f]));
+            const aEntry = byPath.get('src/a.js');
+            assert.ok(aEntry, 'src/a.js must appear in files');
+            assert.ok(aEntry.reference.id.startsWith('code-ref:provider:native-lite:'), 'reference.id must be namespaced to native-lite');
+            assert.strictEqual(aEntry.reference.provenance.method, 'native-file', 'provenance.method must be native-file');
+            assert.ok(/^[0-9a-f]{64}$/.test(aEntry.reference.snapshot.contentHash), 'contentHash must be a 64-hex sha256');
+            assert.strictEqual(aEntry.moduleId, 'core', 'moduleId must come from architecture IR');
+            assert.ok(aEntry.declaredByTaskIds.includes('task:x'), 'declaredByTaskIds must include task:x from planning IR');
+
+            // 5. Post-commit-modified file → changed:true and snapshot.dirty:'dirty'.
+            const bEntry = byPath.get('src/b.js');
+            assert.ok(bEntry, 'src/b.js must appear in files');
+            assert.strictEqual(bEntry.changed, true, 'modified file must be changed:true');
+            assert.strictEqual(bEntry.reference.snapshot.dirty, 'dirty', 'modified file snapshot.dirty must be dirty');
+
+            // 6. Oversized file: listed, no contentHash, file-too-large diagnostic.
+            const bigEntry = byPath.get('big.txt');
+            assert.ok(bigEntry, 'oversized file must still be listed');
+            assert.strictEqual(bigEntry.reference.snapshot.contentHash, undefined, 'oversized file must have no contentHash');
+            assert.ok(result.diagnostics.some(d => d.code.startsWith('file-too-large')), 'a file-too-large diagnostic must exist');
+
+            // 7. Binary file: excluded + binary-skipped diagnostic.
+            assert.ok(!byPath.has('data.bin'), 'binary file must be excluded from files');
+            assert.ok(result.diagnostics.some(d => d.code.startsWith('binary-skipped')), 'a binary-skipped diagnostic must exist');
+
+            // 8. getEntity: full content + truncation.
+            const ent = nativeLite.create().getEntity(ctx, { filePath: 'src/a.js' });
+            assert.ok(typeof ent.content === 'string' && ent.content.length > 0, 'getEntity content must be non-null text');
+            assert.strictEqual(ent.truncated, false, 'unbounded getEntity must not be truncated');
+            const entCapped = nativeLite.create().getEntity(ctx, { filePath: 'src/a.js', maxChars: 5 });
+            assert.ok(entCapped.content.length <= 5, 'maxChars must cap content length');
+            assert.strictEqual(entCapped.truncated, true, 'capped getEntity must set truncated:true');
+
+            // 9. Determinism: two calls yield identical order + ids.
+            const result2 = nativeLite.create().getFiles(ctx, {});
+            assert.deepStrictEqual(
+                result.files.map(f => f.reference.filePath),
+                result2.files.map(f => f.reference.filePath),
+                'file order must be deterministic across calls',
+            );
+            assert.deepStrictEqual(
+                result.files.map(f => f.reference.id),
+                result2.files.map(f => f.reference.id),
+                'reference ids must be deterministic across calls',
+            );
+
+            // 10. (guarded) escaping symlink excluded; its outside content never surfaces.
+            if (symlinkCreated) {
+                assert.ok(!byPath.has(symlinkRel), 'escaping symlink must be excluded from files');
+                assert.ok(result.diagnostics.some(d => d.code.startsWith('symlink-escape')), 'a symlink-escape diagnostic must exist');
+                const serialized = JSON.stringify(result);
+                assert.ok(!serialized.includes(secretContent), 'outside symlink target content must never appear in any reference');
+                // getEntity on the escaping symlink must also refuse + never read the secret.
+                const linkEnt = nativeLite.create().getEntity(ctx, { filePath: symlinkRel });
+                assert.strictEqual(linkEnt.content, null, 'getEntity on escaping symlink must return null content');
+                assert.ok(linkEnt.diagnostics.some(d => d.code === 'path-unsafe'), 'getEntity on symlink must emit path-unsafe');
+                assert.ok(!JSON.stringify(linkEnt).includes(secretContent), 'getEntity must never surface outside content');
+            }
+
+            // 11. Symbol-graph capabilities false + no symbol-graph methods present.
+            const p = nativeLite.create();
+            assert.strictEqual(p.capabilities.impact, false, 'impact capability must be false');
+            assert.strictEqual(p.capabilities.symbols, false, 'symbols capability must be false');
+            assert.strictEqual(p.capabilities.callers, false, 'callers capability must be false');
+            assert.strictEqual(typeof p.impact, 'undefined', 'no impact method');
+            assert.strictEqual(typeof p.search, 'undefined', 'no search method');
+            assert.strictEqual(typeof p.getCallers, 'undefined', 'no getCallers method');
+
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+            fs.rmSync(outsideDir, { recursive: true, force: true });
+        }
+        console.log('✅ T-cp-native-lite passed');
+
+        console.log('T-cp-loader. Testing code-perception provider loader (allowlist-only instantiation) ...');
+        {
+            const loader = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader'));
+            const nativeLite = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'native-lite'));
+            const fixture = require(path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception', 'fixture-provider'));
+
+            // 1. Default = native-lite only.
+            {
+                const { registrations, diagnostics } = loader.loadProviders();
+                assert.strictEqual(registrations.length, 1, 'default registrations must contain exactly native-lite');
+                assert.strictEqual(registrations[0].provider.id, 'provider:native-lite', 'default provider id must be native-lite');
+                assert.strictEqual(registrations[0].role, 'fallback', 'native-lite role must be fallback');
+                assert.strictEqual(registrations[0].source, 'builtin', 'native-lite source must be builtin');
+                assert.deepStrictEqual(diagnostics, [], 'default loadProviders() must have no diagnostics');
+            }
+
+            // 2. Unknown id ignored + diagnostic + native-lite still present.
+            {
+                const { registrations, diagnostics } = loader.loadProviders({
+                    codePerception: { providers: [{ id: 'provider:does-not-exist', enabled: true }] },
+                });
+                const unknown = diagnostics.filter(d => d.code === 'unknown-provider' && d.providerId === 'provider:does-not-exist');
+                assert.strictEqual(unknown.length, 1, 'must emit exactly one unknown-provider diagnostic');
+                assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite must still be present');
+                assert.ok(!registrations.some(r => r.provider.id === 'provider:does-not-exist'), 'unknown id must not be registered');
+            }
+
+            // 3. Arbitrary-module-path rejection (security assertion).
+            {
+                const evilPath = path.join(os.tmpdir(), `evil-cp-provider-${Date.now()}-${Math.random().toString(36).slice(2)}.js`);
+                fs.writeFileSync(evilPath, "global.__EVIL_CP_LOADED__ = true;\nmodule.exports = { create: () => ({}) };\n");
+                try {
+                    const { registrations, diagnostics } = loader.loadProviders({
+                        codePerception: { providers: [{ id: 'provider:evil', module: evilPath, path: evilPath }] },
+                    });
+                    assert.strictEqual(global.__EVIL_CP_LOADED__, undefined, 'evil module must never be required');
+                    const unknown = diagnostics.filter(d => d.code === 'unknown-provider' && d.providerId === 'provider:evil');
+                    assert.strictEqual(unknown.length, 1, 'must emit unknown-provider diagnostic for provider:evil');
+                    assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite must still be present');
+                } finally {
+                    fs.rmSync(evilPath, { force: true });
+                    delete global.__EVIL_CP_LOADED__;
+                }
+            }
+
+            // 4. Injected registry with a broken factory is isolated.
+            {
+                const injected = {
+                    'provider:native-lite': { role: 'fallback', create: () => nativeLite.create() },
+                    'provider:fixture': { role: 'structural-primary', create: () => fixture.create() },
+                    'provider:broken': { role: 'enrichment', create: () => { throw new Error('boom'); } },
+                };
+                const { registrations, diagnostics } = loader.loadProviders(
+                    { codePerception: { providers: [{ id: 'provider:fixture', role: 'structural-primary' }, { id: 'provider:broken' }] } },
+                    { registry: injected }
+                );
+                const failed = diagnostics.filter(d => d.code === 'provider-load-failed' && d.providerId === 'provider:broken');
+                assert.strictEqual(failed.length, 1, 'must emit provider-load-failed for provider:broken');
+                const fixtureReg = registrations.find(r => r.provider.id === 'provider:fixture');
+                assert.ok(fixtureReg, 'provider:fixture registration must be present');
+                assert.strictEqual(fixtureReg.role, 'structural-primary', 'fixture role must be structural-primary');
+                assert.strictEqual(fixtureReg.source, 'configured', 'fixture source must be configured');
+                assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite registration must be present');
+                assert.ok(!registrations.some(r => r.provider.id === 'provider:broken'), 'no registration for provider:broken');
+            }
+
+            // 5. Options sanitized.
+            {
+                const injected = {
+                    'provider:native-lite': { role: 'fallback', create: () => nativeLite.create() },
+                    'provider:fixture': { role: 'structural-primary', create: () => fixture.create() },
+                };
+                const { registrations } = loader.loadProviders(
+                    { codePerception: { providers: [{ id: 'provider:fixture', role: 'enrichment', timeoutMs: 15000, module: 'x', enabled: true }] } },
+                    { registry: injected }
+                );
+                const fixtureReg = registrations.find(r => r.provider.id === 'provider:fixture');
+                assert.ok(fixtureReg, 'provider:fixture registration must be present');
+                assert.strictEqual(fixtureReg.options.timeoutMs, 15000, 'options.timeoutMs must be preserved');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(fixtureReg.options, 'id'), false, 'options must not contain id');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(fixtureReg.options, 'role'), false, 'options must not contain role');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(fixtureReg.options, 'module'), false, 'options must not contain module');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(fixtureReg.options, 'enabled'), false, 'options must not contain enabled');
+                assert.strictEqual(fixtureReg.role, 'enrichment', 'role must be enrichment');
+                assert.strictEqual(fixtureReg.source, 'configured', 'source must be configured');
+            }
+        }
+        console.log('✅ T-cp-loader passed');
+
+        console.log('T-cp-router. Testing code-perception provider router (async inspect + pure select) ...');
+        {
+            const router = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-router'));
+            const loader = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader'));
+            const nativeLite = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'native-lite'));
+            const fixture = require(path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception', 'fixture-provider'));
+
+            // A. inspectProviders integration (async).
+            {
+                const injected = {
+                    'provider:native-lite': { role: 'fallback', create: () => nativeLite.create() },
+                    'provider:fixture': { role: 'structural-primary', create: () => fixture.create() },
+                    'provider:broken': {
+                        role: 'enrichment',
+                        create: () => ({
+                            id: 'provider:broken',
+                            name: 'Broken',
+                            adapterVersion: '0.0.1',
+                            capabilities: {},
+                            check() { throw new Error('check exploded'); },
+                            getStatus() { return { providerId: 'provider:broken', ready: false }; },
+                        }),
+                    },
+                };
+                const { registrations } = loader.loadProviders(
+                    { codePerception: { providers: [{ id: 'provider:fixture', role: 'structural-primary' }, { id: 'provider:broken' }] } },
+                    { registry: injected }
+                );
+                assert.strictEqual(registrations.length, 3, 'expected native-lite + fixture + broken registrations');
+
+                const cands = await router.inspectProviders(registrations, { projectRoot: WORKSPACE_ROOT });
+                assert.strictEqual(cands.length, registrations.length, 'every registration must yield a candidate');
+
+                const brokenCand = cands.find(c => c.registration.provider.id === 'provider:broken');
+                assert.ok(brokenCand, 'broken candidate must be present');
+                assert.strictEqual(brokenCand.availability.ready, false, 'broken candidate must be not-ready');
+                assert.ok(
+                    brokenCand.diagnostics.some(d => d.code === 'check-failed' && d.providerId === 'provider:broken'),
+                    'broken candidate must carry a check-failed diagnostic'
+                );
+
+                const fixtureCand = cands.find(c => c.registration.provider.id === 'provider:fixture');
+                const nativeLiteCand = cands.find(c => c.registration.provider.id === 'provider:native-lite');
+                assert.ok(fixtureCand && fixtureCand.status, 'fixture candidate must have a status object');
+                assert.ok(nativeLiteCand && nativeLiteCand.status, 'native-lite candidate must have a status object');
+            }
+
+            // B. selectProvider pure branches (hand-built candidates).
+            const makeCand = (id, role, ready, capabilities, freshness) => ({
+                registration: { provider: { id } },
+                role,
+                availability: { ready },
+                status: { capabilities, freshness },
+            });
+
+            // 1. Structural over enrichment.
+            {
+                const structural = makeCand('provider:s', 'structural-primary', true, { symbols: true }, 'fresh');
+                const enrichment = makeCand('provider:e', 'enrichment', true, { symbols: true }, 'fresh');
+                const result = router.selectProvider({ capability: 'symbols', allowFallback: true }, [enrichment, structural]);
+                assert.strictEqual(result.candidate, structural, 'structural-primary must win over enrichment');
+                assert.strictEqual(result.degraded, false, 'must not be degraded');
+            }
+
+            // 2. Freshness tiebreak among equal-role candidates.
+            {
+                const fresh = makeCand('provider:fresh', 'structural-primary', true, { symbols: true }, 'fresh');
+                const stale = makeCand('provider:stale', 'structural-primary', true, { symbols: true }, 'stale');
+                const result = router.selectProvider({ capability: 'symbols', allowFallback: true }, [stale, fresh]);
+                assert.strictEqual(result.candidate, fresh, 'fresh candidate must win over stale');
+            }
+
+            // 3. preferredProvider ready+supports.
+            {
+                const preferred = makeCand('provider:pref', 'enrichment', true, { symbols: true }, 'fresh');
+                const other = makeCand('provider:other', 'structural-primary', true, { symbols: true }, 'fresh');
+                const result = router.selectProvider(
+                    { capability: 'symbols', preferredProvider: 'provider:pref', allowFallback: true },
+                    [other, preferred]
+                );
+                assert.strictEqual(result.candidate, preferred, 'preferred provider must be returned');
+                assert.strictEqual(result.degraded, false, 'preferred selection must not be degraded');
+            }
+
+            // 4. preferredProvider present but not ready, allowFallback:false.
+            {
+                const preferred = makeCand('provider:pref', 'structural-primary', false, { symbols: true }, 'fresh');
+                const result = router.selectProvider(
+                    { capability: 'symbols', preferredProvider: 'provider:pref', allowFallback: false },
+                    [preferred]
+                );
+                assert.strictEqual(result.candidate, null, 'candidate must be null when preferred is unusable and fallback disabled');
+                assert.strictEqual(result.degraded, false, 'must not be degraded');
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'preferred-unusable' && d.providerId === 'provider:pref'),
+                    'must carry a preferred-unusable diagnostic'
+                );
+            }
+
+            // 5. preferredProvider not ready, allowFallback:true, another usable structural present.
+            {
+                const preferred = makeCand('provider:pref', 'structural-primary', false, { symbols: true }, 'fresh');
+                const structural = makeCand('provider:s', 'structural-primary', true, { symbols: true }, 'fresh');
+                const result = router.selectProvider(
+                    { capability: 'symbols', preferredProvider: 'provider:pref', allowFallback: true },
+                    [preferred, structural]
+                );
+                assert.strictEqual(result.candidate, structural, 'must fall through to the other usable structural candidate');
+                assert.strictEqual(result.degraded, false, 'must not be degraded');
+            }
+
+            // 6. impact with only native-lite (fallback, ready, impact:false) — no silent substitution.
+            {
+                const nativeLiteCand = makeCand(
+                    'provider:native-lite', 'fallback', true,
+                    { impact: false, files: true, source: true, modules: true }, 'fresh'
+                );
+                const result = router.selectProvider({ capability: 'impact', allowFallback: true }, [nativeLiteCand]);
+                assert.strictEqual(result.candidate, null, 'no candidate must be selected for impact');
+                assert.strictEqual(result.degraded, true, 'must be degraded');
+                assert.strictEqual(result.reason, 'No ready provider exposes impact analysis', 'reason must be exact ready-centric wording');
+            }
+
+            // 7. files with only native-lite (fallback, ready, files:true) — degraded fallback selection.
+            {
+                const nativeLiteCand = makeCand(
+                    'provider:native-lite', 'fallback', true,
+                    { files: true, impact: false }, 'fresh'
+                );
+                const result = router.selectProvider({ capability: 'files', allowFallback: true }, [nativeLiteCand]);
+                assert.strictEqual(result.candidate, nativeLiteCand, 'native-lite must be selected as degraded fallback');
+                assert.strictEqual(result.degraded, true, 'must be degraded');
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'degraded-fallback' && d.providerId === 'provider:native-lite'),
+                    'must carry a degraded-fallback diagnostic'
+                );
+            }
+
+            // 8. selectProvider never throws on empty candidates or missing status fields.
+            {
+                const result = router.selectProvider({ capability: 'symbols', allowFallback: true }, []);
+                assert.strictEqual(result.candidate, null, 'empty candidates must yield null candidate');
+                assert.strictEqual(result.reason, 'No ready provider exposes symbols analysis', 'reason must match step-5 wording');
+
+                const bareCand = { registration: { provider: { id: 'provider:bare' } }, role: 'structural-primary', availability: { ready: true } };
+                assert.doesNotThrow(() => {
+                    const bareResult = router.selectProvider({ capability: 'symbols', allowFallback: true }, [bareCand]);
+                    assert.strictEqual(bareResult.candidate, null, 'candidate missing status.capabilities must not be usable');
+                }, 'selectProvider must never throw on missing status fields');
+            }
+        }
+        console.log('✅ T-cp-router passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

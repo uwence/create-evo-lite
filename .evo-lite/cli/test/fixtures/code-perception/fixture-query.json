@@ -1,0 +1,7 @@
+{
+    "query": "parseConfig",
+    "matches": [
+        { "providerEntityId": "sym:parseConfig", "name": "parseConfig", "kind": "function", "filePath": "src/config.js", "lineRange": [10, 42], "snapshot": { "freshness": "fresh", "dirty": "clean" } },
+        { "providerEntityId": "sym:loadConfig", "name": "loadConfig", "kind": "function", "filePath": "src/config.js", "lineRange": [44, 70], "snapshot": { "freshness": "fresh", "dirty": "clean" } }
+    ]
+}
