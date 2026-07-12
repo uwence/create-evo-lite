@@ -4076,6 +4076,159 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cp-loader passed');
 
+        console.log('T-cp-router. Testing code-perception provider router (async inspect + pure select) ...');
+        {
+            const router = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-router'));
+            const loader = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader'));
+            const nativeLite = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'native-lite'));
+            const fixture = require(path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception', 'fixture-provider'));
+
+            // A. inspectProviders integration (async).
+            {
+                const injected = {
+                    'provider:native-lite': { role: 'fallback', create: () => nativeLite.create() },
+                    'provider:fixture': { role: 'structural-primary', create: () => fixture.create() },
+                    'provider:broken': {
+                        role: 'enrichment',
+                        create: () => ({
+                            id: 'provider:broken',
+                            name: 'Broken',
+                            adapterVersion: '0.0.1',
+                            capabilities: {},
+                            check() { throw new Error('check exploded'); },
+                            getStatus() { return { providerId: 'provider:broken', ready: false }; },
+                        }),
+                    },
+                };
+                const { registrations } = loader.loadProviders(
+                    { codePerception: { providers: [{ id: 'provider:fixture', role: 'structural-primary' }, { id: 'provider:broken' }] } },
+                    { registry: injected }
+                );
+                assert.strictEqual(registrations.length, 3, 'expected native-lite + fixture + broken registrations');
+
+                const cands = await router.inspectProviders(registrations, { projectRoot: WORKSPACE_ROOT });
+                assert.strictEqual(cands.length, registrations.length, 'every registration must yield a candidate');
+
+                const brokenCand = cands.find(c => c.registration.provider.id === 'provider:broken');
+                assert.ok(brokenCand, 'broken candidate must be present');
+                assert.strictEqual(brokenCand.availability.ready, false, 'broken candidate must be not-ready');
+                assert.ok(
+                    brokenCand.diagnostics.some(d => d.code === 'check-failed' && d.providerId === 'provider:broken'),
+                    'broken candidate must carry a check-failed diagnostic'
+                );
+
+                const fixtureCand = cands.find(c => c.registration.provider.id === 'provider:fixture');
+                const nativeLiteCand = cands.find(c => c.registration.provider.id === 'provider:native-lite');
+                assert.ok(fixtureCand && fixtureCand.status, 'fixture candidate must have a status object');
+                assert.ok(nativeLiteCand && nativeLiteCand.status, 'native-lite candidate must have a status object');
+            }
+
+            // B. selectProvider pure branches (hand-built candidates).
+            const makeCand = (id, role, ready, capabilities, freshness) => ({
+                registration: { provider: { id } },
+                role,
+                availability: { ready },
+                status: { capabilities, freshness },
+            });
+
+            // 1. Structural over enrichment.
+            {
+                const structural = makeCand('provider:s', 'structural-primary', true, { symbols: true }, 'fresh');
+                const enrichment = makeCand('provider:e', 'enrichment', true, { symbols: true }, 'fresh');
+                const result = router.selectProvider({ capability: 'symbols', allowFallback: true }, [enrichment, structural]);
+                assert.strictEqual(result.candidate, structural, 'structural-primary must win over enrichment');
+                assert.strictEqual(result.degraded, false, 'must not be degraded');
+            }
+
+            // 2. Freshness tiebreak among equal-role candidates.
+            {
+                const fresh = makeCand('provider:fresh', 'structural-primary', true, { symbols: true }, 'fresh');
+                const stale = makeCand('provider:stale', 'structural-primary', true, { symbols: true }, 'stale');
+                const result = router.selectProvider({ capability: 'symbols', allowFallback: true }, [stale, fresh]);
+                assert.strictEqual(result.candidate, fresh, 'fresh candidate must win over stale');
+            }
+
+            // 3. preferredProvider ready+supports.
+            {
+                const preferred = makeCand('provider:pref', 'enrichment', true, { symbols: true }, 'fresh');
+                const other = makeCand('provider:other', 'structural-primary', true, { symbols: true }, 'fresh');
+                const result = router.selectProvider(
+                    { capability: 'symbols', preferredProvider: 'provider:pref', allowFallback: true },
+                    [other, preferred]
+                );
+                assert.strictEqual(result.candidate, preferred, 'preferred provider must be returned');
+                assert.strictEqual(result.degraded, false, 'preferred selection must not be degraded');
+            }
+
+            // 4. preferredProvider present but not ready, allowFallback:false.
+            {
+                const preferred = makeCand('provider:pref', 'structural-primary', false, { symbols: true }, 'fresh');
+                const result = router.selectProvider(
+                    { capability: 'symbols', preferredProvider: 'provider:pref', allowFallback: false },
+                    [preferred]
+                );
+                assert.strictEqual(result.candidate, null, 'candidate must be null when preferred is unusable and fallback disabled');
+                assert.strictEqual(result.degraded, false, 'must not be degraded');
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'preferred-unusable' && d.providerId === 'provider:pref'),
+                    'must carry a preferred-unusable diagnostic'
+                );
+            }
+
+            // 5. preferredProvider not ready, allowFallback:true, another usable structural present.
+            {
+                const preferred = makeCand('provider:pref', 'structural-primary', false, { symbols: true }, 'fresh');
+                const structural = makeCand('provider:s', 'structural-primary', true, { symbols: true }, 'fresh');
+                const result = router.selectProvider(
+                    { capability: 'symbols', preferredProvider: 'provider:pref', allowFallback: true },
+                    [preferred, structural]
+                );
+                assert.strictEqual(result.candidate, structural, 'must fall through to the other usable structural candidate');
+                assert.strictEqual(result.degraded, false, 'must not be degraded');
+            }
+
+            // 6. impact with only native-lite (fallback, ready, impact:false) — no silent substitution.
+            {
+                const nativeLiteCand = makeCand(
+                    'provider:native-lite', 'fallback', true,
+                    { impact: false, files: true, source: true, modules: true }, 'fresh'
+                );
+                const result = router.selectProvider({ capability: 'impact', allowFallback: true }, [nativeLiteCand]);
+                assert.strictEqual(result.candidate, null, 'no candidate must be selected for impact');
+                assert.strictEqual(result.degraded, true, 'must be degraded');
+                assert.strictEqual(result.reason, 'No ready provider exposes impact analysis', 'reason must be exact ready-centric wording');
+            }
+
+            // 7. files with only native-lite (fallback, ready, files:true) — degraded fallback selection.
+            {
+                const nativeLiteCand = makeCand(
+                    'provider:native-lite', 'fallback', true,
+                    { files: true, impact: false }, 'fresh'
+                );
+                const result = router.selectProvider({ capability: 'files', allowFallback: true }, [nativeLiteCand]);
+                assert.strictEqual(result.candidate, nativeLiteCand, 'native-lite must be selected as degraded fallback');
+                assert.strictEqual(result.degraded, true, 'must be degraded');
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'degraded-fallback' && d.providerId === 'provider:native-lite'),
+                    'must carry a degraded-fallback diagnostic'
+                );
+            }
+
+            // 8. selectProvider never throws on empty candidates or missing status fields.
+            {
+                const result = router.selectProvider({ capability: 'symbols', allowFallback: true }, []);
+                assert.strictEqual(result.candidate, null, 'empty candidates must yield null candidate');
+                assert.strictEqual(result.reason, 'No ready provider exposes symbols analysis', 'reason must match step-5 wording');
+
+                const bareCand = { registration: { provider: { id: 'provider:bare' } }, role: 'structural-primary', availability: { ready: true } };
+                assert.doesNotThrow(() => {
+                    const bareResult = router.selectProvider({ capability: 'symbols', allowFallback: true }, [bareCand]);
+                    assert.strictEqual(bareResult.candidate, null, 'candidate missing status.capabilities must not be usable');
+                }, 'selectProvider must never throw on missing status fields');
+            }
+        }
+        console.log('✅ T-cp-router passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
