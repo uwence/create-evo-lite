@@ -1,0 +1,8 @@
+[
+    {
+        "source": { "providerEntityId": "sym:main", "name": "main", "kind": "function" },
+        "target": { "providerEntityId": "sym:parseConfig", "name": "parseConfig", "kind": "function" },
+        "kind": "calls",
+        "confidence": 0.95
+    }
+]

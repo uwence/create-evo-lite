@@ -3755,6 +3755,89 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cp-normalize passed');
 
+        console.log('T-cp-fixture. Testing code-perception fixture provider (contract-conformant, subprocess-free) ...');
+        {
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const fixture = require(path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception', 'fixture-provider'));
+
+            const p = fixture.create();
+
+            // 1. provider itself is contract-conformant.
+            {
+                const result = contract.validateProvider(p);
+                assert.strictEqual(result.valid, true, 'fixture provider must be valid per validateProvider');
+                assert.deepStrictEqual(result.diagnostics, [], 'fixture provider must have no diagnostics');
+            }
+
+            // 2. getStatus() passes validateStatus and reflects fixture-status.json's tri-state strings.
+            {
+                const status = p.getStatus({});
+                const result = contract.validateStatus(status);
+                assert.strictEqual(result.valid, true, 'fixture getStatus() must be valid per validateStatus');
+                assert.strictEqual(status.freshness, contract.FRESHNESS.FRESH, 'freshness must be fresh');
+                assert.strictEqual(status.dirty, contract.DIRTY.CLEAN, 'dirty must be clean');
+                assert.strictEqual(status.indexState, contract.INDEX.READY, 'indexState must be ready');
+            }
+
+            // 3. check() passes validateAvailability.
+            {
+                const result = contract.validateAvailability(p.check({}));
+                assert.strictEqual(result.valid, true, 'fixture check() must be valid per validateAvailability');
+            }
+
+            // 4. search() returns a normalized UnifiedSearchResult.
+            {
+                const result = p.search({}, 'parseConfig');
+                assert.strictEqual(result.matches.length, 2, 'search must return 2 matches');
+                assert.strictEqual(result.query, 'parseConfig', 'search query must pass through');
+                for (const m of result.matches) {
+                    assert.ok(m.id.startsWith('code-ref:provider:fixture:'), 'each match id must start with code-ref:provider:fixture:');
+                }
+            }
+
+            // 5. getCallers() returns normalized relationships with provider-scoped ids.
+            {
+                const rels = p.getCallers({}, { providerEntityId: 'sym:parseConfig' });
+                assert.strictEqual(rels.length, 1, 'getCallers must return 1 relationship');
+                assert.strictEqual(rels[0].kind, 'calls', 'relationship kind must be calls');
+                assert.notStrictEqual(rels[0].source.id, rels[0].target.id, 'source and target ids must differ');
+                assert.ok(rels[0].source.id.startsWith('code-ref:provider:fixture:'), 'source id must start with code-ref:provider:fixture:');
+                assert.ok(rels[0].target.id.startsWith('code-ref:provider:fixture:'), 'target id must start with code-ref:provider:fixture:');
+            }
+
+            // 6. impact() returns a normalized UnifiedImpactResult.
+            {
+                const result = p.impact({}, { providerEntityId: 'sym:parseConfig' });
+                assert.ok(result.target.id, 'impact target id must be present');
+                assert.strictEqual(result.upstream.length, 1, 'impact upstream length must be 1');
+                assert.strictEqual(result.downstream.length, 1, 'impact downstream length must be 1');
+                assert.strictEqual(result.affectedTests.length, 1, 'impact affectedTests length must be 1');
+                assert.strictEqual(result.risk, 'medium', 'impact risk must be medium');
+            }
+
+            // 7. no subprocess: monkey-patch child_process to throw, prove the fixture never touches it.
+            {
+                const cp = require('child_process');
+                const orig = {
+                    execFile: cp.execFile, spawn: cp.spawn, execFileSync: cp.execFileSync,
+                    spawnSync: cp.spawnSync, exec: cp.exec, execSync: cp.execSync,
+                };
+                for (const k of Object.keys(orig)) {
+                    cp[k] = () => { throw new Error('fixture must not spawn: ' + k); };
+                }
+                try {
+                    assert.doesNotThrow(() => {
+                        p.search({}, 'x');
+                        p.getCallers({}, {});
+                        p.impact({}, {});
+                    }, 'fixture provider methods must not touch child_process');
+                } finally {
+                    Object.assign(cp, orig);
+                }
+            }
+        }
+        console.log('✅ T-cp-fixture passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

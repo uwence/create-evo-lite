@@ -1,0 +1,7 @@
+{
+    "target": { "providerEntityId": "sym:parseConfig", "name": "parseConfig", "kind": "function" },
+    "upstream": [ { "providerEntityId": "sym:main", "name": "main", "kind": "function" } ],
+    "downstream": [ { "providerEntityId": "sym:readFile", "name": "readFile", "kind": "function" } ],
+    "affectedTests": [ { "providerEntityId": "test:config", "name": "config.test.js", "kind": "test" } ],
+    "risk": "medium"
+}
