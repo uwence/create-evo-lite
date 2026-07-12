@@ -3838,6 +3838,155 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cp-fixture passed');
 
+        console.log('T-cp-native-lite. Testing native-lite file-perception provider (git/IR + fs-safety + budgets) ...');
+        {
+            const childProcess = require('child_process');
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const nativeLite = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'native-lite'));
+
+            function git(cwd, args) {
+                childProcess.execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env } });
+            }
+
+            const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-cp-native-'));
+            const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-cp-native-outside-'));
+
+            // A secret file OUTSIDE the workspace an escaping symlink must never expose.
+            const secretPath = path.join(outsideDir, 'SECRET.txt');
+            const secretContent = 'TOP-SECRET-OUTSIDE-WORKSPACE-CONTENT';
+            fs.writeFileSync(secretPath, secretContent, 'utf8');
+
+            // Two normal small text files.
+            writeText(path.join(projectRoot, 'src', 'a.js'), 'export const a = 1;\nexport const b = 2;\nconsole.log(a, b);\n');
+            writeText(path.join(projectRoot, 'src', 'b.js'), 'export const original = true;\n');
+
+            // Oversized file (> MAX_FILE_BYTES = 1 MiB): 1.1 MiB of text.
+            writeText(path.join(projectRoot, 'big.txt'), 'x'.repeat(Math.floor(1.1 * 1024 * 1024)));
+
+            // Binary file: a 0x00 byte within the first 8 KiB.
+            const binBuf = Buffer.from([0x41, 0x42, 0x00, 0x43, 0x44]);
+            fs.writeFileSync(path.join(projectRoot, 'data.bin'), binBuf);
+
+            // Architecture IR + Planning IR referencing src/a.js.
+            writeText(
+                path.join(projectRoot, '.evo-lite', 'generated', 'architecture', 'architecture-ir.json'),
+                JSON.stringify({ version: 'evo-arch-ir@1', files: [{ path: 'src/a.js', module: 'core', role: 'lib', confidence: 1 }] }, null, 2),
+            );
+            writeText(
+                path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                JSON.stringify({ version: 'evo-plan-ir@1', tasks: [{ id: 'task:x', linkedFiles: ['src/a.js'] }] }, null, 2),
+            );
+
+            git(projectRoot, ['init']);
+            git(projectRoot, ['config', 'user.email', 'evo@example.com']);
+            git(projectRoot, ['config', 'user.name', 'Evo Test']);
+            git(projectRoot, ['add', '.']);
+            git(projectRoot, ['commit', '-m', 'chore: baseline']);
+
+            // Modify src/b.js after the commit → git diff --name-only reports it.
+            fs.writeFileSync(path.join(projectRoot, 'src', 'b.js'), 'export const original = false; // modified\n', 'utf8');
+
+            // Escaping symlink → must be excluded, its outside content never read.
+            // On Windows without privilege fs.symlinkSync throws EPERM → guard-skip.
+            let symlinkCreated = false;
+            const symlinkRel = 'escape-link';
+            try {
+                fs.symlinkSync(secretPath, path.join(projectRoot, symlinkRel));
+                symlinkCreated = true;
+            } catch (err) {
+                console.log(`   ⏭️ symlink assertion skipped (symlink creation failed: ${err.code || err.message})`);
+            }
+
+            const ctx = { projectRoot };
+
+            // 1. provider is contract-conformant (capability↔method self-consistent).
+            assert.strictEqual(contract.validateProvider(nativeLite.create()).valid, true, 'native-lite provider must pass validateProvider');
+
+            // 2. getStatus passes validateStatus with the fixed status shape.
+            const status = nativeLite.create().getStatus(ctx);
+            assert.strictEqual(contract.validateStatus(status).valid, true, 'getStatus must pass validateStatus');
+            assert.strictEqual(status.indexState, 'not-required', 'indexState must be not-required');
+            assert.strictEqual(status.ready, true, 'status.ready must be true');
+            assert.strictEqual(status.freshness, 'fresh', 'freshness must be fresh (working tree is truth)');
+
+            // 3. check passes validateAvailability.
+            assert.strictEqual(contract.validateAvailability(nativeLite.create().check(ctx)).valid, true, 'check must pass validateAvailability');
+
+            // 4. Normal committed file: id, provenance, sha256 hash, module + task links.
+            const result = nativeLite.create().getFiles(ctx, {});
+            const byPath = new Map(result.files.map(f => [f.reference.filePath, f]));
+            const aEntry = byPath.get('src/a.js');
+            assert.ok(aEntry, 'src/a.js must appear in files');
+            assert.ok(aEntry.reference.id.startsWith('code-ref:provider:native-lite:'), 'reference.id must be namespaced to native-lite');
+            assert.strictEqual(aEntry.reference.provenance.method, 'native-file', 'provenance.method must be native-file');
+            assert.ok(/^[0-9a-f]{64}$/.test(aEntry.reference.snapshot.contentHash), 'contentHash must be a 64-hex sha256');
+            assert.strictEqual(aEntry.moduleId, 'core', 'moduleId must come from architecture IR');
+            assert.ok(aEntry.declaredByTaskIds.includes('task:x'), 'declaredByTaskIds must include task:x from planning IR');
+
+            // 5. Post-commit-modified file → changed:true and snapshot.dirty:'dirty'.
+            const bEntry = byPath.get('src/b.js');
+            assert.ok(bEntry, 'src/b.js must appear in files');
+            assert.strictEqual(bEntry.changed, true, 'modified file must be changed:true');
+            assert.strictEqual(bEntry.reference.snapshot.dirty, 'dirty', 'modified file snapshot.dirty must be dirty');
+
+            // 6. Oversized file: listed, no contentHash, file-too-large diagnostic.
+            const bigEntry = byPath.get('big.txt');
+            assert.ok(bigEntry, 'oversized file must still be listed');
+            assert.strictEqual(bigEntry.reference.snapshot.contentHash, undefined, 'oversized file must have no contentHash');
+            assert.ok(result.diagnostics.some(d => d.code.startsWith('file-too-large')), 'a file-too-large diagnostic must exist');
+
+            // 7. Binary file: excluded + binary-skipped diagnostic.
+            assert.ok(!byPath.has('data.bin'), 'binary file must be excluded from files');
+            assert.ok(result.diagnostics.some(d => d.code.startsWith('binary-skipped')), 'a binary-skipped diagnostic must exist');
+
+            // 8. getEntity: full content + truncation.
+            const ent = nativeLite.create().getEntity(ctx, { filePath: 'src/a.js' });
+            assert.ok(typeof ent.content === 'string' && ent.content.length > 0, 'getEntity content must be non-null text');
+            assert.strictEqual(ent.truncated, false, 'unbounded getEntity must not be truncated');
+            const entCapped = nativeLite.create().getEntity(ctx, { filePath: 'src/a.js', maxChars: 5 });
+            assert.ok(entCapped.content.length <= 5, 'maxChars must cap content length');
+            assert.strictEqual(entCapped.truncated, true, 'capped getEntity must set truncated:true');
+
+            // 9. Determinism: two calls yield identical order + ids.
+            const result2 = nativeLite.create().getFiles(ctx, {});
+            assert.deepStrictEqual(
+                result.files.map(f => f.reference.filePath),
+                result2.files.map(f => f.reference.filePath),
+                'file order must be deterministic across calls',
+            );
+            assert.deepStrictEqual(
+                result.files.map(f => f.reference.id),
+                result2.files.map(f => f.reference.id),
+                'reference ids must be deterministic across calls',
+            );
+
+            // 10. (guarded) escaping symlink excluded; its outside content never surfaces.
+            if (symlinkCreated) {
+                assert.ok(!byPath.has(symlinkRel), 'escaping symlink must be excluded from files');
+                assert.ok(result.diagnostics.some(d => d.code.startsWith('symlink-escape')), 'a symlink-escape diagnostic must exist');
+                const serialized = JSON.stringify(result);
+                assert.ok(!serialized.includes(secretContent), 'outside symlink target content must never appear in any reference');
+                // getEntity on the escaping symlink must also refuse + never read the secret.
+                const linkEnt = nativeLite.create().getEntity(ctx, { filePath: symlinkRel });
+                assert.strictEqual(linkEnt.content, null, 'getEntity on escaping symlink must return null content');
+                assert.ok(linkEnt.diagnostics.some(d => d.code === 'path-unsafe'), 'getEntity on symlink must emit path-unsafe');
+                assert.ok(!JSON.stringify(linkEnt).includes(secretContent), 'getEntity must never surface outside content');
+            }
+
+            // 11. Symbol-graph capabilities false + no symbol-graph methods present.
+            const p = nativeLite.create();
+            assert.strictEqual(p.capabilities.impact, false, 'impact capability must be false');
+            assert.strictEqual(p.capabilities.symbols, false, 'symbols capability must be false');
+            assert.strictEqual(p.capabilities.callers, false, 'callers capability must be false');
+            assert.strictEqual(typeof p.impact, 'undefined', 'no impact method');
+            assert.strictEqual(typeof p.search, 'undefined', 'no search method');
+            assert.strictEqual(typeof p.getCallers, 'undefined', 'no getCallers method');
+
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+            fs.rmSync(outsideDir, { recursive: true, force: true });
+        }
+        console.log('✅ T-cp-native-lite passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
