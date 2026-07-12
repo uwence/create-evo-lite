@@ -3987,6 +3987,95 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cp-native-lite passed');
 
+        console.log('T-cp-loader. Testing code-perception provider loader (allowlist-only instantiation) ...');
+        {
+            const loader = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader'));
+            const nativeLite = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'native-lite'));
+            const fixture = require(path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception', 'fixture-provider'));
+
+            // 1. Default = native-lite only.
+            {
+                const { registrations, diagnostics } = loader.loadProviders();
+                assert.strictEqual(registrations.length, 1, 'default registrations must contain exactly native-lite');
+                assert.strictEqual(registrations[0].provider.id, 'provider:native-lite', 'default provider id must be native-lite');
+                assert.strictEqual(registrations[0].role, 'fallback', 'native-lite role must be fallback');
+                assert.strictEqual(registrations[0].source, 'builtin', 'native-lite source must be builtin');
+                assert.deepStrictEqual(diagnostics, [], 'default loadProviders() must have no diagnostics');
+            }
+
+            // 2. Unknown id ignored + diagnostic + native-lite still present.
+            {
+                const { registrations, diagnostics } = loader.loadProviders({
+                    codePerception: { providers: [{ id: 'provider:does-not-exist', enabled: true }] },
+                });
+                const unknown = diagnostics.filter(d => d.code === 'unknown-provider' && d.providerId === 'provider:does-not-exist');
+                assert.strictEqual(unknown.length, 1, 'must emit exactly one unknown-provider diagnostic');
+                assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite must still be present');
+                assert.ok(!registrations.some(r => r.provider.id === 'provider:does-not-exist'), 'unknown id must not be registered');
+            }
+
+            // 3. Arbitrary-module-path rejection (security assertion).
+            {
+                const evilPath = path.join(os.tmpdir(), `evil-cp-provider-${Date.now()}-${Math.random().toString(36).slice(2)}.js`);
+                fs.writeFileSync(evilPath, "global.__EVIL_CP_LOADED__ = true;\nmodule.exports = { create: () => ({}) };\n");
+                try {
+                    const { registrations, diagnostics } = loader.loadProviders({
+                        codePerception: { providers: [{ id: 'provider:evil', module: evilPath, path: evilPath }] },
+                    });
+                    assert.strictEqual(global.__EVIL_CP_LOADED__, undefined, 'evil module must never be required');
+                    const unknown = diagnostics.filter(d => d.code === 'unknown-provider' && d.providerId === 'provider:evil');
+                    assert.strictEqual(unknown.length, 1, 'must emit unknown-provider diagnostic for provider:evil');
+                    assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite must still be present');
+                } finally {
+                    fs.rmSync(evilPath, { force: true });
+                    delete global.__EVIL_CP_LOADED__;
+                }
+            }
+
+            // 4. Injected registry with a broken factory is isolated.
+            {
+                const injected = {
+                    'provider:native-lite': { role: 'fallback', create: () => nativeLite.create() },
+                    'provider:fixture': { role: 'structural-primary', create: () => fixture.create() },
+                    'provider:broken': { role: 'enrichment', create: () => { throw new Error('boom'); } },
+                };
+                const { registrations, diagnostics } = loader.loadProviders(
+                    { codePerception: { providers: [{ id: 'provider:fixture', role: 'structural-primary' }, { id: 'provider:broken' }] } },
+                    { registry: injected }
+                );
+                const failed = diagnostics.filter(d => d.code === 'provider-load-failed' && d.providerId === 'provider:broken');
+                assert.strictEqual(failed.length, 1, 'must emit provider-load-failed for provider:broken');
+                const fixtureReg = registrations.find(r => r.provider.id === 'provider:fixture');
+                assert.ok(fixtureReg, 'provider:fixture registration must be present');
+                assert.strictEqual(fixtureReg.role, 'structural-primary', 'fixture role must be structural-primary');
+                assert.strictEqual(fixtureReg.source, 'configured', 'fixture source must be configured');
+                assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite registration must be present');
+                assert.ok(!registrations.some(r => r.provider.id === 'provider:broken'), 'no registration for provider:broken');
+            }
+
+            // 5. Options sanitized.
+            {
+                const injected = {
+                    'provider:native-lite': { role: 'fallback', create: () => nativeLite.create() },
+                    'provider:fixture': { role: 'structural-primary', create: () => fixture.create() },
+                };
+                const { registrations } = loader.loadProviders(
+                    { codePerception: { providers: [{ id: 'provider:fixture', role: 'enrichment', timeoutMs: 15000, module: 'x', enabled: true }] } },
+                    { registry: injected }
+                );
+                const fixtureReg = registrations.find(r => r.provider.id === 'provider:fixture');
+                assert.ok(fixtureReg, 'provider:fixture registration must be present');
+                assert.strictEqual(fixtureReg.options.timeoutMs, 15000, 'options.timeoutMs must be preserved');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(fixtureReg.options, 'id'), false, 'options must not contain id');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(fixtureReg.options, 'role'), false, 'options must not contain role');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(fixtureReg.options, 'module'), false, 'options must not contain module');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(fixtureReg.options, 'enabled'), false, 'options must not contain enabled');
+                assert.strictEqual(fixtureReg.role, 'enrichment', 'role must be enrichment');
+                assert.strictEqual(fixtureReg.source, 'configured', 'source must be configured');
+            }
+        }
+        console.log('✅ T-cp-loader passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
