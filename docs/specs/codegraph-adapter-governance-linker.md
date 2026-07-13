@@ -2,6 +2,7 @@
 id: spec:codegraph-adapter-governance-linker
 status: adopted
 created: 2026-07-10
+linkedPlan: plan:codegraph-adapter-governance-linker-mvp
 relations: [{"kind":"spawned-from","target":"spec:provider-first-code-perception-foundation"},{"kind":"blocks","target":"spec:unified-code-explore-wiki-projection"}]
 ---
 
@@ -37,10 +38,11 @@ License:                        MIT
 
 ```text
 1. Configured executable → 2. PATH 中 codegraph → 3. `codegraph version` → 4. `codegraph status <root> --json`
-executable missing    → installed=false
-status fails no index → installed=true, indexed=false
-valid JSON status     → available=true, indexed=true
+executable missing    → installed=false, ready=false, indexState=missing
+status fails no index → installed=true,  ready=false, indexState=missing
+valid JSON status     → available=true,  ready=true,  indexState=ready
 ```
+(统一用 `ready` + `indexState`,不用 `indexed:boolean`——与子 spec ① 的 availability 模型一致。)
 
 ### 2.2 Command mapping
 
@@ -96,7 +98,7 @@ type GovernanceCodeLinkKind =
 
 ### 3.3 Link sources & confidence
 
-- **Exact declared** (Task linkedFiles / acceptance dependsOn): confidence 1.0。
+- **Exact declared**: Task `linkedFiles` → `declares_file`;调用方**显式传入**的 `acceptanceDependencies` → `depends_on_file`;confidence 1.0。当前 Planning IR 每 task 只输出 `linkedFiles`,acceptance `dependsOn` 的自动提取属 Planning IR v2 follow-up——本 MVP Linker 不从 Markdown/文本猜测,只消费 `linkedFiles` 与显式 `acceptanceDependencies` 输入。
 - **Git-derived** (Commit changed file): 1.0 for file;symbol 用 Provider resolution confidence。
 - **Provider-resolved** (linked file → provider file entity → symbols within file): **不得把文件内所有 symbols 都标为 Task implementation**。只有满足其一才建 symbol link: Plan 显式写出 symbol 名 / Evidence 显式写出 symbol 名 / Commit diff 行范围与 Provider symbol range 相交 / Test/evidence 明确引用该 symbol。
 - **Heuristic** (Task title 与 symbol 名模糊匹配): 只作 suggestion,`confidence ≤ 0.5`、`authority=governance`、`status=proposed`;不得默认显示为已确认实现关系。
@@ -127,7 +129,7 @@ Provider missing → "CodeGraph not installed. Native Lite active. Symbol/impact
 ## 7. Testing & Dogfood
 
 - Contract fixtures(committed)覆盖 status/search/callers/callees/impact normalization + unknown/missing fields + malformed JSON + timeout + process exit;Provider failure 不改现有 Architecture IR;Provider query 不写源代码。
-- **Optional live dogfood**(不进普通 CI,但 closure 前必须生成 `docs/code-perception-codegraph-dogfood.md`): 记录 create-evo-lite commit、CodeGraph version、Adapter version、provider status、search / callers-callees / impact / current-focus query、Task-to-Code result、stale-index test、fallback test、observed limitations。
+- **Host-gated live dogfood**(普通 CI **可选**;**Spec closure 强制**): 由 in-plan task `cg-live-dogfood` 在装有真实 CodeGraph 的宿主上产出 `docs/code-perception-codegraph-dogfood.md`,记录 create-evo-lite commit、CodeGraph version、Adapter version、provider status、search / callers-callees / impact / current-focus query、Task-to-Code result、stale-index test、fallback test、observed limitations,并带可重算的 command/result SHA fingerprint。closure 门由 `node ./.evo-lite/cli/test.js governance --require-live-codegraph` 严格模式验证(工件缺失/非法/fingerprint 被篡改 → exit 1)。宿主无 CodeGraph 时该 task 不勾选,Plan 与 Spec 诚实保持 active,不得伪造工件。
 
 ## 8. Directory Layout(本 spec 涉及)
 
@@ -181,8 +183,8 @@ Task-to-File / Task-to-Symbol / Commit-to-File / Commit diff-range→symbol / Ev
     },
     {
       "id": "ac-live-codegraph-dogfood",
-      "description": "A committed dogfood artifact records a real CodeGraph-backed run on create-evo-lite. Because a governance test can only prove the artifact exists and its fields are present — not that it came from a real run — closure additionally requires a dedicated artifact validator asserting providerVersion, adapterVersion, repository commit, captured command/result fingerprints, and a closure-evidence commit, alongside the recorded status/search/callers-callees/impact/focus/Task-to-Code/stale/fallback/limitations sections.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "description": "A committed dogfood artifact records a real CodeGraph-backed run on create-evo-lite. Because the plain governance suite only proves the process exit code — not that a real artifact exists — this criterion's verifier runs strict mode (`--require-live-codegraph`), which recomputes the artifact's command/result SHA fingerprints and asserts providerVersion, adapterVersion, repository commit, closure-evidence commit, and the recorded status/search/callers-callees/impact/focus/Task-to-Code/stale/fallback/limitations sections; a missing/invalid/tampered artifact exits non-zero so this AC cannot PASS without a real run.",
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance --require-live-codegraph", "scope": "governance" } },
       "dependsOn": ["docs/code-perception-codegraph-dogfood.md", "templates/cli/code-perception/dogfood-validate.js"]
     }
   ]
