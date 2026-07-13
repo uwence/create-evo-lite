@@ -3860,6 +3860,11 @@ async function runGovernanceTests() {
             writeText(path.join(projectRoot, 'src', 'a.js'), 'export const a = 1;\nexport const b = 2;\nconsole.log(a, b);\n');
             writeText(path.join(projectRoot, 'src', 'b.js'), 'export const original = true;\n');
 
+            // Unicode-named tracked file: git quotes non-ASCII paths unless enumerated
+            // with -z, which must not cause it to be dropped from getFiles().
+            const unicodeRel = 'src/café.js';
+            writeText(path.join(projectRoot, 'src', 'café.js'), 'export const cafe = true;\n');
+
             // Oversized file (> MAX_FILE_BYTES = 1 MiB): 1.1 MiB of text.
             writeText(path.join(projectRoot, 'big.txt'), 'x'.repeat(Math.floor(1.1 * 1024 * 1024)));
 
@@ -3922,6 +3927,17 @@ async function runGovernanceTests() {
             assert.ok(/^[0-9a-f]{64}$/.test(aEntry.reference.snapshot.contentHash), 'contentHash must be a 64-hex sha256');
             assert.strictEqual(aEntry.moduleId, 'core', 'moduleId must come from architecture IR');
             assert.ok(aEntry.declaredByTaskIds.includes('task:x'), 'declaredByTaskIds must include task:x from planning IR');
+
+            // 4b. Unicode-named tracked file must survive git enumeration (git quotes
+            // non-ASCII paths by default; enumeration must use -z to avoid dropping it).
+            const unicodeEntry = byPath.get(unicodeRel);
+            assert.ok(unicodeEntry, `${unicodeRel} must appear in files (unicode path must not be dropped)`);
+            assert.ok(unicodeEntry.reference.id.startsWith('code-ref:provider:native-lite:'), 'unicode file reference.id must be namespaced to native-lite');
+            assert.ok(/^[0-9a-f]{64}$/.test(unicodeEntry.reference.snapshot.contentHash), 'unicode file contentHash must be a 64-hex sha256');
+            assert.ok(
+                !result.diagnostics.some(d => (d.code === 'path-unresolved' || d.code === 'symlink-escape') && d.message.includes('caf')),
+                'no path-unresolved/symlink-escape diagnostic must exist for the unicode file',
+            );
 
             // 5. Post-commit-modified file → changed:true and snapshot.dirty:'dirty'.
             const bEntry = byPath.get('src/b.js');

@@ -103,6 +103,11 @@ function gitLines(projectRoot, args) {
     return out.split('\n').map(s => s.trim()).filter(Boolean);
 }
 
+function gitLinesNul(projectRoot, args) {
+    const out = execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' });
+    return out.split('\0').filter(Boolean);   // trailing NUL yields a final '' → filtered
+}
+
 function readArchMap(projectRoot, diagnostics) {
     const map = new Map();
     const p = path.join(projectRoot, ...ARCH_IR_REL);
@@ -231,7 +236,7 @@ function getFiles(context, query) {
     // 1. Enumerate (tracked + untracked, honoring .gitignore). Deterministic sort.
     let list;
     try {
-        list = gitLines(projectRoot, ['ls-files', '--cached', '--others', '--exclude-standard']);
+        list = gitLinesNul(projectRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
     } catch (err) {
         diagnostics.push(diag('git-enumeration-failed', errText(err)));
         return { provider, files: [], diagnostics };
@@ -241,7 +246,7 @@ function getFiles(context, query) {
     // 2. Changed set (tracked modifications).
     const changedSet = new Set();
     try {
-        for (const rel of gitLines(projectRoot, ['diff', '--name-only'])) {
+        for (const rel of gitLinesNul(projectRoot, ['diff', '-z', '--name-only'])) {
             changedSet.add(rel);
         }
     } catch (err) {
