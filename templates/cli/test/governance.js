@@ -4332,6 +4332,113 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-fixtures passed');
 
+        console.log('T-cg-exec. Testing CodeGraph secure exec runner (no-shell + timeout + Local-First env) ...');
+        {
+            const exec = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph-exec'));
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const manifest = require(path.join(CG_DIR, 'codegraph-fixture-manifest.json'));
+
+            // 1. Fixture echo: a real execFile round-trip through node, stdout equals
+            //    the committed codegraph-status.json bytes exactly.
+            {
+                const statusRaw = fs.readFileSync(path.join(CG_DIR, 'codegraph-status.json'), 'utf8');
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'status', args: [],
+                });
+                assert.strictEqual(result.ok, true, 'status fixture echo must succeed');
+                assert.strictEqual(result.code, 0, 'status fixture echo must exit 0');
+                assert.strictEqual(result.stdout, statusRaw, 'stdout must equal codegraph-status.json bytes');
+                assert.strictEqual(result.timedOut, false, 'must not be timed out');
+                assert.strictEqual(result.truncated, false, 'must not be truncated');
+                assert.deepStrictEqual(result.diagnostics, [], 'success must have no diagnostics');
+            }
+
+            // 2. Disallowed subcommand: rejected before spawn, fake never runs.
+            {
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'rm', args: ['-rf', '/'],
+                });
+                assert.strictEqual(result.ok, false, 'disallowed subcommand must fail');
+                assert.strictEqual(result.stdout, '', 'disallowed subcommand must never spawn (empty stdout)');
+                assert.ok(result.diagnostics.some((d) => d.code === 'disallowed-subcommand'),
+                    'must carry a disallowed-subcommand diagnostic');
+            }
+
+            // 3. Timeout kill: the child is killed quickly, not awaited the full sleep.
+            {
+                const start = Date.now();
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'status',
+                    args: ['--fake-sleep', '5000'], timeoutMs: 300,
+                });
+                const elapsed = Date.now() - start;
+                assert.strictEqual(result.ok, false, 'timed-out run must not be ok');
+                assert.strictEqual(result.timedOut, true, 'timedOut must be true');
+                assert.ok(result.diagnostics.some((d) => d.code === 'command-timeout'),
+                    'must carry a command-timeout diagnostic');
+                assert.ok(elapsed < 4000, `must complete well before the 5000ms sleep (elapsed=${elapsed}ms)`);
+            }
+
+            // 4. Env override: Local-First wins over a caller's DO_NOT_TRACK='0' when
+            //    allowNetwork is false; both forced vars land as '1'. When allowNetwork
+            //    is true, neither is forced by this module.
+            {
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'status',
+                    args: ['--fake-echo-env'], env: { DO_NOT_TRACK: '0' }, allowNetwork: false,
+                });
+                assert.strictEqual(result.ok, true, 'env-echo run must succeed');
+                const childEnvSeen = JSON.parse(result.stdout);
+                assert.strictEqual(childEnvSeen.DO_NOT_TRACK, '1', 'Local-First must override caller DO_NOT_TRACK=0 back to 1');
+                assert.strictEqual(childEnvSeen.CODEGRAPH_NO_UPDATE_CHECK, '1', 'CODEGRAPH_NO_UPDATE_CHECK must be forced to 1');
+
+                const resultNet = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'status',
+                    args: ['--fake-echo-env'], env: { DO_NOT_TRACK: '0' }, allowNetwork: true,
+                });
+                const childEnvSeenNet = JSON.parse(resultNet.stdout);
+                assert.notStrictEqual(childEnvSeenNet.DO_NOT_TRACK, '1',
+                    'with allowNetwork:true this module must not force DO_NOT_TRACK to 1');
+            }
+
+            // 5. No-shell literal args: a leading-dash operand after '--' and a
+            //    shell-metachar operand are both passed literally, never interpreted.
+            {
+                const queryRaw = fs.readFileSync(path.join(CG_DIR, 'codegraph-query.json'), 'utf8');
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'query',
+                    args: ['--json', '--', '--help'],
+                });
+                assert.strictEqual(result.ok, true, 'query with a literal --help operand must succeed');
+                assert.strictEqual(result.stdout, queryRaw, 'stdout must equal codegraph-query.json (proves --help stayed literal)');
+
+                const result2 = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'query',
+                    args: ['--json', '--', '; echo pwned'],
+                });
+                assert.strictEqual(result2.ok, true, 'query with a shell-metachar operand must succeed');
+                assert.strictEqual(result2.stdout, queryRaw, 'stdout must equal codegraph-query.json (proves no shell interpretation)');
+                assert.ok(!result2.stdout.includes('pwned'), 'stdout must never contain "pwned"');
+            }
+
+            // 6. safeOperand + frozen-constant-tracks-manifest.
+            {
+                assert.deepStrictEqual(exec.safeOperand('--help'), { ok: true, value: '--help' },
+                    'safeOperand must allow a leading-dash operand when positional separator is supported');
+                assert.strictEqual(exec.SUPPORTS_POSITIONAL_SEPARATOR, manifest.supportsPositionalSeparator,
+                    'SUPPORTS_POSITIONAL_SEPARATOR must equal the fixture manifest value');
+            }
+
+            // 7. ALLOWED_SUBCOMMANDS is a frozen array; the lookup Set is not exported.
+            {
+                assert.ok(Array.isArray(exec.ALLOWED_SUBCOMMANDS), 'ALLOWED_SUBCOMMANDS must be an array');
+                assert.strictEqual(Object.isFrozen(exec.ALLOWED_SUBCOMMANDS), true, 'ALLOWED_SUBCOMMANDS must be frozen');
+                assert.strictEqual(exec.ALLOWED_SET, undefined, 'the lookup Set must not be exported');
+            }
+        }
+        console.log('✅ T-cg-exec passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
