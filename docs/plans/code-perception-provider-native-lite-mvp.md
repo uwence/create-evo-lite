@@ -1,6 +1,6 @@
 ---
 id: plan:code-perception-provider-native-lite-mvp
-status: draft
+status: done
 linkedSpec: spec:code-perception-provider-native-lite
 created: 2026-07-11
 ---
@@ -123,19 +123,19 @@ role 排序(结构能力): structural-primary > 其他 > fallback; 再按 freshn
 
 ### Phase 0 — Contract & Fixtures
 
-- [ ] [task:cp-state-contract] provider-contract.js: 三态枚举 + capability-method 校验 + status/availability 校验
+- [x] [task:cp-state-contract] provider-contract.js: 三态枚举 + capability-method 校验 + status/availability 校验
   - files: templates/cli/code-perception/provider-contract.js
   - verify: node templates/cli/test.js governance
   - acceptance: 导出 FRESHNESS/DIRTY/COMPAT/INDEX 冻结枚举、CAPABILITY_KEYS(15)、CAPABILITY_METHOD(覆盖除 incrementalIndex 外全部)、STATUS_ONLY_CAPABILITIES、validateProvider/validateAvailability/validateStatus;完整合法 provider `valid:true`;缺 id / capabilities 非全 boolean / `impact:true 无 impact` / `source:true 无 getEntity` / `symbols:true 无 search` / `affectedTests:true 无 getAffectedTests` / `trace:true 无 explore` 各 `valid:false` 且 diagnostic 指明;`incrementalIndex:true 且无额外方法` 仍 `valid:true`(status-only);validateStatus 拒 `freshness:false`、`dirty:'nope'` 等非法枚举;三个 validate 均不抛异常
   - test-first: governance.js 新增「T-cp-contract」构造 good + 各 capability↔method 缺失 bad 断言;红→绿
 
-- [ ] [task:cp-normalize] normalize.js: reference id(禁 name 合并)+ 三态透传
+- [x] [task:cp-normalize] normalize.js: reference id(禁 name 合并)+ 三态透传
   - files: templates/cli/code-perception/normalize.js
   - verify: node templates/cli/test.js governance
   - acceptance: makeReferenceId 产出 `code-ref:<provider>:<12hex>`;不同 providerId 同 name/entity → id 不等;normalizeReference 保留原 providerEntityId;normalizeSearch/Impact 的 snapshot.freshness/dirty 为三态枚举(经 validateStatus 类似校验);normalizeRelationship kind 限定 7 值
   - test-first: governance.js 增「T-cp-normalize」,红→绿
 
-- [ ] [task:cp-fixture-provider] test fixtures: 契约用假 provider(测试资产)
+- [x] [task:cp-fixture-provider] test fixtures: 契约用假 provider(测试资产)
   - files: templates/cli/test/fixtures/code-perception/fixture-provider.js, templates/cli/test/fixtures/code-perception/fixture-status.json, templates/cli/test/fixtures/code-perception/fixture-query.json, templates/cli/test/fixtures/code-perception/fixture-callers.json, templates/cli/test/fixtures/code-perception/fixture-impact.json
   - verify: node templates/cli/test.js governance
   - acceptance: fixture-provider.create() 通过 validateProvider(capabilities 与其方法一致);getStatus 返三态 status;search/getCallers/impact 从 fixture JSON 读并经 normalize 输出;测试内断言无 execFile/spawn 调用;该文件在 test/fixtures/ 下(Task 7 会进 manifest 以便 mirror),但**不进 DEFAULT_REGISTRY**——生产 config 无法选中它
@@ -143,25 +143,25 @@ role 排序(结构能力): structural-primary > 其他 > fallback; 再按 freshn
 
 ### Phase 1 — Native Lite → Loader → Router → Sync
 
-- [ ] [task:cp-native-lite] native-lite.js: provider:native-lite + 文件系统安全 + 资源预算
+- [x] [task:cp-native-lite] native-lite.js: provider:native-lite + 文件系统安全 + 资源预算
   - files: templates/cli/code-perception/native-lite.js
   - verify: node templates/cli/test.js governance
   - acceptance: capabilities files/source/modules=true 其余 false 且通过 validateProvider;getStatus ready=true/indexState='not-required'/三态字段;getFiles 返 NativeFilesResult——每项含 reference(kind file, provenance.method 'native-file', contentHash sha256)、moduleId(读 arch IR)、declaredByTaskIds(读 plan IR)、changed(git diff);getEntity 返内容片段且受 MAX_FILE_BYTES/maxChars 限;symbol/impact 经 capabilities=false 显式 unavailable;**路径安全**: realpath 越界文件/逃逸 symlink 不读(diagnostic);超 MAX_FILE_BYTES 文件跳过并 diagnostic(非静默);binary(前 8KiB NUL)排除;文件排序确定性
   - test-first: governance.js 增「T-cp-native-lite」用 createTempRuntimeRoot 造 git repo + 假 architecture-ir.json/plan-ir.json + 越界 symlink(guard-skip 无权限 FS)+ 超限文件 + binary 文件,红→绿
 
-- [ ] [task:cp-loader] provider-loader.js: role-aware allowlist(生产仅 native-lite)+ 注入 + 隔离
+- [x] [task:cp-loader] provider-loader.js: role-aware allowlist(生产仅 native-lite)+ 注入 + 隔离
   - files: templates/cli/code-perception/provider-loader.js
   - verify: node templates/cli/test.js governance
   - acceptance: DEFAULT_REGISTRY 只含 provider:native-lite(role fallback);loadProviders 默认只返回 native-lite registration;config 指定未知 id → 忽略 + diagnostic `unknown-provider`;config `{ id:'x', module:'../../evil.js' }` 的 module 字段**不被 require**(断言 evil 未加载);经 `{ registry }` 注入 broken factory → diagnostic `provider-load-failed` 且注入的其他 registration 仍返回;每个 registration 带 role/source
   - test-first: governance.js 增「T-cp-loader」含 arbitrary-module-path 拒绝 + 注入 broken 隔离断言,红→绿
 
-- [ ] [task:cp-router] provider-router.js: async inspection + 纯选择 + no-silent-substitution
+- [x] [task:cp-router] provider-router.js: async inspection + 纯选择 + no-silent-substitution
   - files: templates/cli/code-perception/provider-router.js
   - verify: node templates/cli/test.js governance
   - acceptance: inspectProviders await check/getStatus 并把抛错 provider 隔离成 diagnostic 候选;selectProvider 纯同步;结构能力下 structural-primary(注入 fixture)优先于 enrichment,再 fresh>unknown>stale;preferredProvider ready+支持 → 优先,不 ready 且 allowFallback=false → candidate:null;仅 native-lite(impact=false)请求 impact → candidate:null/degraded/reason="No ready provider exposes impact analysis"(**ready-centric,非 indexed**);无结构 provider 的 files 请求 → 选 native-lite fallback degraded=true
   - test-first: governance.js 增「T-cp-router」用注入 registry(fixture structural + fixture stale + native-lite),红→绿
 
-- [ ] [task:cp-manifest-sync] 登记 manifest(5 生产模块 + 5 测试资产)+ mirror 同步 + 全量回归
+- [x] [task:cp-manifest-sync] 登记 manifest(5 生产模块 + 5 测试资产)+ mirror 同步 + 全量回归
   - files: templates/cli/template-manifest.js, .evo-lite/cli/code-perception/
   - verify: node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/memory.js sync-runtime
   - acceptance: manifest 加入全部 10 个文件——5 生产模块(provider-contract.js / normalize.js / native-lite.js / provider-loader.js / provider-router.js)**和** 5 测试资产(test/fixtures/code-perception/fixture-provider.js + fixture-status/query/callers/impact.json)。**sync-runtime 只镜像 manifest 逐项列出的文件,不递归拷 test/**,故 fixture 必须进 manifest,否则 `.evo-lite/cli/test/fixtures/` 缺失、runtime governance require fixture 失败。安全边界不靠 manifest 排除,而靠 `DEFAULT_REGISTRY` 仅含 provider:native-lite(测试 provider 不能被生产 config 选中)。第二次 sync-runtime copied:0;.evo-lite/cli 镜像与 templates/cli byte-identical(含 code-perception/** + test/fixtures/code-perception/**);`node ./.evo-lite/cli/test.js governance`(经 .evo-lite runtime)绿;其他治理无回归

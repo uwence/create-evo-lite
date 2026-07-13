@@ -1,6 +1,6 @@
 ---
 id: spec:code-perception-provider-native-lite
-status: adopted
+status: done
 created: 2026-07-10
 linkedPlan: plan:code-perception-provider-native-lite-mvp
 relations: [{"kind":"spawned-from","target":"spec:provider-first-code-perception-foundation"}]
