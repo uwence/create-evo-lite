@@ -115,7 +115,7 @@ interface GovernanceCodeLink {
 
 ## 4. Local Cache
 
-可缓存: provider status、normalized search/impact results、opaque source context、governance links。不缓存: Provider 完整 DB/全量 graph、未经限制的大段源码、secrets、凭据。
+可**持久**缓存: provider status、normalized metadata(search/relationship/impact)、governance links。**仅进程内瞬时**使用(不落盘): opaque source context。**不得持久化**: 源码、getEntity content、explore opaqueText、raw stdout/stderr、Provider 完整 DB/全量 graph、secrets、凭据。(1 MiB 大小上限无法判定内容是否含凭据,故 source context 待有明确 redaction/classification 合同后才可持久化——见 Plan Follow-ups。)
 Cache key: providerID + providerVersion + adapterVersion + provider snapshot + project-root fingerprint + normalized query。失效条件: snapshot 变 / HEAD 变 / dirty hash 变 / adapterVersion 变 / config 变 / TTL 到期。**缓存命中不得把 stale 结果改写为 fresh**(结果仍携带原始 freshness)。
 
 ## 5. Post-Commit Integration
@@ -185,7 +185,7 @@ Task-to-File / Task-to-Symbol / Commit-to-File / Commit diff-range→symbol / Ev
       "id": "ac-live-codegraph-dogfood",
       "description": "A committed dogfood artifact records a real CodeGraph-backed run on create-evo-lite. Because the plain governance suite only proves the process exit code — not that a real artifact exists — this criterion's verifier runs strict mode (`--require-live-codegraph`), which recomputes the artifact's command/result SHA fingerprints and asserts providerVersion, adapterVersion, repository commit, closure-evidence commit, and the recorded status/search/callers-callees/impact/focus/Task-to-Code/stale/fallback/limitations sections; a missing/invalid/tampered artifact exits non-zero so this AC cannot PASS without a real run.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance --require-live-codegraph", "scope": "governance" } },
-      "dependsOn": ["docs/code-perception-codegraph-dogfood.md", "templates/cli/code-perception/dogfood-validate.js"]
+      "dependsOn": ["docs/code-perception-codegraph-dogfood.md", "templates/cli/code-perception/dogfood-validate.js", "templates/cli/test.js"]
     }
   ]
 }
