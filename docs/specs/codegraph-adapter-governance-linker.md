@@ -133,14 +133,20 @@ Provider missing → "CodeGraph not installed. Native Lite active. Symbol/impact
 
 ```text
 templates/cli/code-perception/
-├── providers/codegraph.js   # adapter
-├── governance-linker.js     # Task/Commit/Evidence → Code links
-├── cache.js
-└── status.js
-templates/cli/test/fixtures/code-perception/codegraph-*.json
+├── providers/codegraph-exec.js      # 安全命令执行层(no-shell / timeout / output-cap / ANSI / 网络边界注入)
+├── providers/codegraph.js           # adapter
+├── governance-linker.js             # Task/Commit/Evidence → Code links
+├── cache.js                         # 文件型有界 cache(.evo-lite/.cache/code-perception/,跨进程可 markStale)
+├── status.js                        # code-perception 状态汇总 + stale hint
+├── dogfood-validate.js              # dogfood 工件验证器(重算 SHA 比对)
+└── post-commit-code-perception.js   # §5 post-commit 集成(markStale + 刷新 file/commit links + 建议手动 sync)
+templates/cli/test/fixtures/code-perception/
+├── codegraph-*.json / *.txt         # 来自 pinned upstream 1.4.1 的 fixture
+├── codegraph-fixture-manifest.json  # fixture provenance(upstream/version/commit/captureMethod/sha256)
+└── fake-codegraph.js                # 测试用 fake CLI(经 node process.execPath 驱动)
 docs/code-perception-codegraph-dogfood.md
 ```
-Runtime mirror byte-identical。
+Runtime mirror byte-identical。（`cache.js` 为文件型的理由: §5 post-commit 是独立进程,无法访问业务进程内的 in-memory Map,故 cache 必须落盘方能被 post-commit `markStale`/invalidate。）
 
 ## 9. Delivery Phases
 
@@ -159,7 +165,7 @@ Task-to-File / Task-to-Symbol / Commit-to-File / Commit diff-range→symbol / Ev
       "id": "ac-codegraph-adapter",
       "description": "The CodeGraph adapter invokes only allowlisted CLI commands through execFile/spawn without a shell; normalizes status/files/query/callers/callees/impact JSON fixtures; treats explore/node output as opaque context; and does not read or modify .codegraph internals.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
-      "dependsOn": ["templates/cli/code-perception/providers/codegraph.js", "templates/cli/test/fixtures/code-perception/"]
+      "dependsOn": ["templates/cli/code-perception/providers/codegraph-exec.js", "templates/cli/code-perception/providers/codegraph.js", "templates/cli/test/fixtures/code-perception/"]
     },
     {
       "id": "ac-governance-linker",
