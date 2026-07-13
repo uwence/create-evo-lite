@@ -1,21 +1,32 @@
 'use strict';
 
-// CodeGraph adapter — skeleton + detection. create(options) builds a stateful
-// provider instance (config + capabilityHealth Map); check() runs a
-// detection ladder with a fingerprint identity lock (version range + help
-// command set) so a same-named-but-foreign CLI is rejected rather than
-// adapt-guessed; getStatus() translates the real `status --json` shape into
-// a ProviderStatus. Query method bodies are STUBS here (Task cg-queries
-// fills them) but are present so validateProvider passes.
+// CodeGraph adapter — skeleton, detection, and query methods. create(options)
+// builds a stateful provider instance (config + capabilityHealth Map);
+// check() runs a detection ladder with a fingerprint identity lock (version
+// range + help command set) so a same-named-but-foreign CLI is rejected
+// rather than adapt-guessed; getStatus() translates the real `status --json`
+// shape into a ProviderStatus. The 8 query methods (getFiles/search/
+// getCallers/getCallees/impact/getAffectedTests/getEntity/explore) each run
+// one mapped CodeGraph command, apply an explicit per-command translator into
+// ../normalize's unified shapes, and never throw. getEntity/explore are
+// OPAQUE (raw text + only explicitly-marked file:line tokens — no
+// synthesized structural edges). A schema-invalid JSON response disables
+// only that one capability via capabilityHealth; a later valid parse
+// re-enables it.
 //
-// NEVER throws: every failure path returns a structured availability/status
-// object instead. NEVER uses process.cwd() — the caller's context.projectRoot
-// is the only root this module will spawn against. NO .codegraph DB access,
-// NO auto-install, NO auto-index, NO project mutation.
+// NEVER throws: every failure path returns a structured availability/status/
+// query object instead. NEVER uses process.cwd() — the caller's
+// context.projectRoot is the only root this module will spawn against. NO
+// direct index-database-file access (only the CodeGraph CLI is ever
+// spawned), NO auto-install, NO auto-index, NO project mutation.
 
 const crypto = require('crypto');
+const path = require('path');
 const { FRESHNESS, DIRTY, COMPAT, INDEX, CAPABILITY_KEYS } = require('../provider-contract');
-const { runCodegraph } = require('./codegraph-exec');
+const { runCodegraph, safeOperand } = require('./codegraph-exec');
+const {
+    normalizeReference, normalizeSearchResult, normalizeRelationship, normalizeImpactResult,
+} = require('../normalize');
 
 const PROVIDER_ID = 'provider:codegraph';
 const PROVIDER_NAME = 'CodeGraph Provider';
@@ -46,9 +57,72 @@ function diag(code, message) {
     return { code, message: message || code };
 }
 
-function notImplementedDiag(method) {
-    return diag('not-implemented', `${method} is filled by cg-queries`);
+// Upstream node.kind -> CodeReference kind (proven by the pinned 1.4.1
+// fixtures). Anything outside this map (variable/constant/...) degrades to
+// 'unknown' rather than being invented.
+const KIND_MAP = Object.freeze({
+    function: 'function',
+    method: 'method',
+    class: 'class',
+    interface: 'interface',
+    file: 'file',
+    module: 'module',
+});
+
+function mapKind(rawKind) {
+    return Object.prototype.hasOwnProperty.call(KIND_MAP, rawKind) ? KIND_MAP[rawKind] : 'unknown';
 }
+
+// Shared provenance stamp for the provider-structural query results (files,
+// search, callers, callees, impact, affected). getEntity's opaque-enrichment
+// path builds its own provenance since it reads prose, not a structural query.
+const REF_PROVENANCE = Object.freeze({ method: 'provider-structural', authority: 'structural', confidence: 1 });
+
+// Builds a CodeReference snapshot from the current ProviderStatus so every
+// reference this adapter emits carries the provider's freshness/dirty state.
+function refSnapshotFromStatus(status) {
+    return {
+        dirty: status && typeof status.dirty === 'string' ? status.dirty : DIRTY.UNKNOWN,
+        freshness: status && typeof status.freshness === 'string' ? status.freshness : FRESHNESS.UNKNOWN,
+    };
+}
+
+function symbolNameOf(symbolOrRef) {
+    return typeof symbolOrRef === 'string'
+        ? symbolOrRef
+        : (symbolOrRef && (symbolOrRef.name || symbolOrRef.providerEntityId)) || '';
+}
+
+// The `symbol` arg becomes the SOURCE/target reference for callers/callees/
+// impact. Upstream carries no id for the symbol itself in these commands, so
+// providerEntityId falls back to the symbol name.
+function buildSymbolRaw(symbolOrRef, snapshot) {
+    const name = symbolNameOf(symbolOrRef);
+    return { providerEntityId: name, name, kind: 'unknown', snapshot, provenance: { ...REF_PROVENANCE } };
+}
+
+// callers/callees/impact rows carry NO upstream id (proven by the pinned
+// fixtures) — synthesize a stable providerEntityId from filePath+name so
+// distinct rows still get distinct provider-scoped reference ids.
+function buildRowRaw(row, snapshot) {
+    const r = isPlainObject(row) ? row : {};
+    const lineRange = Number.isFinite(r.startLine) ? [r.startLine, r.startLine] : undefined;
+    return {
+        providerEntityId: `${r.filePath}::${r.name}`,
+        name: r.name,
+        kind: mapKind(r.kind),
+        filePath: r.filePath,
+        lineRange,
+        snapshot,
+        provenance: { ...REF_PROVENANCE },
+    };
+}
+
+// Extracts ONLY explicitly-marked file:line tokens from opaque prose. Never
+// synthesizes structural edges from the text — this is the sole extraction
+// rule for getEntity/explore.
+const FILE_LINE_RE = /([^\s:]+):(\d+)/;
+const FILE_LINE_RE_GLOBAL = /([^\s:]+):(\d+)/g;
 
 // Lenient semver extraction: tolerant of surrounding text/whitespace/leading
 // 'v', as long as a #.#.# run is present somewhere in the string.
@@ -367,6 +441,57 @@ function create(options) {
     const capabilityHealth = new Map();
     const capabilities = buildCapabilities(capabilityHealth);
 
+    // Resolves the spawn-time config (executable/prefixArgs/timeoutMs/
+    // allowNetwork + cwd) for a single call. Every query method below routes
+    // through this so config resolution stays in one place. `cwd` is always
+    // context.projectRoot — this module never uses process.cwd().
+    function spawnBaseFor(context) {
+        const projectRoot = context && context.projectRoot;
+        const cfg = resolveConfig(config, explicitKeys, context);
+        return {
+            executable: cfg.executable, prefixArgs: cfg.prefixArgs, cwd: projectRoot,
+            timeoutMs: cfg.timeoutMs, allowNetwork: cfg.allowNetwork,
+        };
+    }
+
+    // Shared translator for getCallers/getCallees: both run against a
+    // `{ symbol, callers|callees: [{name,kind,filePath,startLine}] }` shape
+    // with NO row id, and both return a plain ARRAY of relationships. Never
+    // throws — a schema-invalid response, spawn failure, or unsafe operand
+    // all degrade to an empty array (the schema-invalid case additionally
+    // disables the capability; a later valid parse re-enables it).
+    async function fetchCallersOrCallees(context, symbolOrRef, subcommand, capabilityKey, relKind) {
+        try {
+            const symName = symbolNameOf(symbolOrRef);
+            const operand = safeOperand(symName);
+            if (!operand.ok) {
+                return [];
+            }
+            const base = spawnBaseFor(context);
+            const result = await runCodegraph({ ...base, subcommand, args: ['--json', '--', operand.value] });
+            let parsed = null;
+            if (result.ok) {
+                try { parsed = JSON.parse(result.stdout); } catch (err) { parsed = null; }
+            }
+            const rows = (result.ok && isPlainObject(parsed) && Array.isArray(parsed[subcommand]))
+                ? parsed[subcommand] : null;
+            if (!rows) {
+                capabilityHealth.set(capabilityKey, {
+                    disabled: true, schemaFingerprint: null,
+                    diagnostic: diag('schema-invalid', `${subcommand} response missing a ${subcommand} array`),
+                });
+                return [];
+            }
+            capabilityHealth.set(capabilityKey, { disabled: false });
+            const status = await provider.getStatus(context);
+            const snapshot = refSnapshotFromStatus(status);
+            const symRaw = buildSymbolRaw(symbolOrRef, snapshot);
+            return rows.map((row) => normalizeRelationship(PROVIDER_ID, symRaw, buildRowRaw(row, snapshot), relKind, 1));
+        } catch (err) {
+            return [];
+        }
+    }
+
     const provider = {
         id: PROVIDER_ID,
         name: PROVIDER_NAME,
@@ -383,36 +508,267 @@ function create(options) {
             return runGetStatus(provider, config, explicitKeys, context);
         },
 
-        // --- STUBS: filled by Task cg-queries. Present only so
-        // validateProvider's capability-method-presence check passes. Each
-        // returns a minimal empty normalized shape + a not-implemented
-        // diagnostic, and never throws.
-        async getFiles() {
-            return { files: [], diagnostics: [notImplementedDiag('getFiles')] };
+        // getFiles(context, query) — `files --json -- <root>` returns
+        // [{path,language,nodeCount,size}] with NO module membership
+        // (modules=false, so moduleId is always null here). `query` is
+        // accepted but unused — upstream `files` takes no filter operand.
+        async getFiles(context) {
+            try {
+                const projectRoot = context && context.projectRoot;
+                const base = spawnBaseFor(context);
+                const result = await runCodegraph({ ...base, subcommand: 'files', args: ['--json', '--', String(projectRoot)] });
+                let parsed = null;
+                if (result.ok) {
+                    try { parsed = JSON.parse(result.stdout); } catch (err) { parsed = null; }
+                }
+                if (!result.ok || !Array.isArray(parsed)) {
+                    capabilityHealth.set('files', {
+                        disabled: true, schemaFingerprint: null,
+                        diagnostic: diag('schema-invalid', 'files response was not a JSON array'),
+                    });
+                    const status = await provider.getStatus(context);
+                    return { provider: status, files: [], diagnostics: [diag('schema-invalid', 'files response was not a JSON array')] };
+                }
+                capabilityHealth.set('files', { disabled: false });
+                const status = await provider.getStatus(context);
+                const snapshot = refSnapshotFromStatus(status);
+                const files = parsed.map((f) => {
+                    const filePath = f && f.path;
+                    const raw = {
+                        providerEntityId: filePath, name: path.basename(String(filePath || '')), kind: 'file',
+                        filePath, snapshot, provenance: { ...REF_PROVENANCE },
+                    };
+                    return {
+                        reference: normalizeReference(PROVIDER_ID, raw),
+                        moduleId: null,
+                        declaredByTaskIds: [],
+                        changed: false,
+                    };
+                });
+                return { provider: status, files, diagnostics: [] };
+            } catch (err) {
+                return { provider: null, files: [], diagnostics: [diag('unexpected-error', err && err.message ? err.message : String(err))] };
+            }
         },
+
+        // search(context, query) — `query --json -- <query>` returns
+        // [{node:{id,kind,name,qualifiedName,filePath,startLine,endLine,signature,...},score,highlights}].
+        // The upstream node id is preserved as providerEntityId so distinct
+        // nodes hash to distinct reference ids.
         async search(context, query) {
-            return { query: typeof query === 'string' ? query : '', matches: [], diagnostics: [notImplementedDiag('search')] };
+            const q = typeof query === 'string' ? query : '';
+            try {
+                const operand = safeOperand(q);
+                if (!operand.ok) {
+                    const status = await provider.getStatus(context);
+                    return normalizeSearchResult(status, {
+                        query: q, matches: [], diagnostics: [diag('unsafe-argument', 'unsafe search operand')],
+                    });
+                }
+                const base = spawnBaseFor(context);
+                const result = await runCodegraph({ ...base, subcommand: 'query', args: ['--json', '--', operand.value] });
+                let parsed = null;
+                if (result.ok) {
+                    try { parsed = JSON.parse(result.stdout); } catch (err) { parsed = null; }
+                }
+                if (!result.ok || !Array.isArray(parsed)) {
+                    capabilityHealth.set('symbols', {
+                        disabled: true, schemaFingerprint: null,
+                        diagnostic: diag('schema-invalid', 'query response was not a JSON array'),
+                    });
+                    const status = await provider.getStatus(context);
+                    return normalizeSearchResult(status, {
+                        query: q, matches: [], diagnostics: [diag('schema-invalid', 'query response was not a JSON array')],
+                    });
+                }
+                capabilityHealth.set('symbols', { disabled: false });
+                const status = await provider.getStatus(context);
+                const snapshot = refSnapshotFromStatus(status);
+                const raws = parsed.map((entry) => {
+                    const node = isPlainObject(entry) && isPlainObject(entry.node) ? entry.node : {};
+                    const lineRange = (Number.isFinite(node.startLine) && Number.isFinite(node.endLine))
+                        ? [node.startLine, node.endLine] : undefined;
+                    return {
+                        providerEntityId: node.id, name: node.name, qualifiedName: node.qualifiedName,
+                        kind: mapKind(node.kind), filePath: node.filePath, lineRange,
+                        signature: node.signature, snapshot, provenance: { ...REF_PROVENANCE },
+                    };
+                });
+                return normalizeSearchResult(status, { query: q, matches: raws, diagnostics: [] });
+            } catch (err) {
+                return { query: q, provider: null, matches: [], diagnostics: [diag('unexpected-error', err && err.message ? err.message : String(err))] };
+            }
         },
-        async getEntity() {
-            return { entity: null, diagnostics: [notImplementedDiag('getEntity')] };
+
+        // getCallers/getCallees(context, symbolOrRef) — see fetchCallersOrCallees.
+        async getCallers(context, symbolOrRef) {
+            return fetchCallersOrCallees(context, symbolOrRef, 'callers', 'callers', 'called_by');
         },
-        async getCallers() {
-            return { relationships: [], diagnostics: [notImplementedDiag('getCallers')] };
+        async getCallees(context, symbolOrRef) {
+            return fetchCallersOrCallees(context, symbolOrRef, 'callees', 'callees', 'calls');
         },
-        async getCallees() {
-            return { relationships: [], diagnostics: [notImplementedDiag('getCallees')] };
+
+        // impact(context, symbolOrRef) — `impact --json -- <symbol>` returns
+        // {symbol,depth,nodeCount,edgeCount,affected:[{name,kind,filePath,startLine}]}.
+        // CodeGraph's impact command gives downstream dependents only —
+        // upstream and affectedTests are not part of this command and stay
+        // empty (affectedTests comes from getAffectedTests()).
+        async impact(context, symbolOrRef) {
+            try {
+                const symName = symbolNameOf(symbolOrRef);
+                const operand = safeOperand(symName);
+                if (!operand.ok) {
+                    const status = await provider.getStatus(context);
+                    return normalizeImpactResult(status, {
+                        target: null, upstream: [], downstream: [], affectedTests: [],
+                        diagnostics: [diag('unsafe-argument', 'unsafe impact operand')],
+                    });
+                }
+                const base = spawnBaseFor(context);
+                const result = await runCodegraph({ ...base, subcommand: 'impact', args: ['--json', '--', operand.value] });
+                let parsed = null;
+                if (result.ok) {
+                    try { parsed = JSON.parse(result.stdout); } catch (err) { parsed = null; }
+                }
+                if (!result.ok || !isPlainObject(parsed) || !Array.isArray(parsed.affected)) {
+                    capabilityHealth.set('impact', {
+                        disabled: true, schemaFingerprint: null,
+                        diagnostic: diag('schema-invalid', 'impact response missing an affected array'),
+                    });
+                    const status = await provider.getStatus(context);
+                    return normalizeImpactResult(status, {
+                        target: null, upstream: [], downstream: [], affectedTests: [],
+                        diagnostics: [diag('schema-invalid', 'impact response missing an affected array')],
+                    });
+                }
+                capabilityHealth.set('impact', { disabled: false });
+                const status = await provider.getStatus(context);
+                const snapshot = refSnapshotFromStatus(status);
+                const targetRaw = buildSymbolRaw(symbolOrRef, snapshot);
+                const downstreamRaws = parsed.affected.map((row) => buildRowRaw(row, snapshot));
+                return normalizeImpactResult(status, {
+                    target: targetRaw, upstream: [], downstream: downstreamRaws, affectedTests: [],
+                    depth: parsed.depth, risk: 'unknown', diagnostics: [],
+                });
+            } catch (err) {
+                return {
+                    target: null, provider: null, upstream: [], downstream: [], affectedTests: [],
+                    risk: 'unknown', diagnostics: [diag('unexpected-error', err && err.message ? err.message : String(err))],
+                };
+            }
         },
-        async impact() {
-            return {
-                target: null, upstream: [], downstream: [], affectedTests: [],
-                risk: 'unknown', diagnostics: [notImplementedDiag('impact')],
-            };
+
+        // getAffectedTests(context, {files}) — `affected --json -- <files...>`
+        // returns {changedFiles,affectedTests,totalDependentsTraversed}.
+        // INDEPENDENT of impact(): runs its own `affected` command, never
+        // calls `impact`. Returns a plain ARRAY of test CodeReferences.
+        async getAffectedTests(context, args) {
+            try {
+                const files = (args && Array.isArray(args.files)) ? args.files : [];
+                const operands = [];
+                for (const f of files) {
+                    const operand = safeOperand(f);
+                    if (!operand.ok) {
+                        return [];
+                    }
+                    operands.push(operand.value);
+                }
+                const base = spawnBaseFor(context);
+                const result = await runCodegraph({ ...base, subcommand: 'affected', args: ['--json', '--', ...operands] });
+                let parsed = null;
+                if (result.ok) {
+                    try { parsed = JSON.parse(result.stdout); } catch (err) { parsed = null; }
+                }
+                if (!result.ok || !isPlainObject(parsed) || !Array.isArray(parsed.affectedTests)) {
+                    capabilityHealth.set('affectedTests', {
+                        disabled: true, schemaFingerprint: null,
+                        diagnostic: diag('schema-invalid', 'affected response missing an affectedTests array'),
+                    });
+                    return [];
+                }
+                capabilityHealth.set('affectedTests', { disabled: false });
+                const status = await provider.getStatus(context);
+                const snapshot = refSnapshotFromStatus(status);
+                return parsed.affectedTests.map((p) => normalizeReference(PROVIDER_ID, {
+                    providerEntityId: p, name: path.basename(String(p)), kind: 'test', filePath: p,
+                    snapshot, provenance: { ...REF_PROVENANCE },
+                }));
+            } catch (err) {
+                return [];
+            }
         },
-        async getAffectedTests() {
-            return { affectedTests: [], diagnostics: [notImplementedDiag('getAffectedTests')] };
+
+        // getEntity(context, {entity}) — `node -- <entity>` is OPAQUE text (no
+        // --json). Extracts ONLY the first explicitly-marked file:line token;
+        // never synthesizes structural edges from the prose; never overrides
+        // JSON results (this is the sole caller of the `node` command).
+        async getEntity(context, args) {
+            const entityName = args && typeof args.entity === 'string'
+                ? args.entity : (typeof args === 'string' ? args : '');
+            try {
+                const operand = safeOperand(entityName);
+                if (!operand.ok) {
+                    return { reference: null, content: '', truncated: false, diagnostics: [diag('unsafe-argument', 'unsafe entity operand')] };
+                }
+                const base = spawnBaseFor(context);
+                const result = await runCodegraph({ ...base, subcommand: 'node', args: ['--', operand.value] });
+                if (!result.ok) {
+                    return { reference: null, content: '', truncated: false, diagnostics: [diag('command-failed', 'node command failed')] };
+                }
+                const content = result.stdout;
+                const match = FILE_LINE_RE.exec(content);
+                const status = await provider.getStatus(context);
+                const snapshot = refSnapshotFromStatus(status);
+                const enrichmentProvenance = { method: 'provider-enrichment', authority: 'enrichment', confidence: REF_PROVENANCE.confidence };
+                const raw = match
+                    ? {
+                        providerEntityId: entityName, name: entityName, kind: 'unknown',
+                        filePath: match[1], lineRange: [parseInt(match[2], 10), parseInt(match[2], 10)],
+                        snapshot, provenance: enrichmentProvenance,
+                    }
+                    : {
+                        providerEntityId: entityName, name: entityName, kind: 'unknown',
+                        snapshot, provenance: enrichmentProvenance,
+                    };
+                return {
+                    reference: normalizeReference(PROVIDER_ID, raw),
+                    content,
+                    truncated: result.truncated === true,
+                    diagnostics: [],
+                };
+            } catch (err) {
+                return { reference: null, content: '', truncated: false, diagnostics: [diag('unexpected-error', err && err.message ? err.message : String(err))] };
+            }
         },
-        async explore() {
-            return { results: [], diagnostics: [notImplementedDiag('explore')] };
+
+        // explore(context, {query}) — `explore -- <query>` is OPAQUE text (no
+        // --json). `extracted` collects EVERY explicitly-marked file:line
+        // token; no CodeReference/relationship synthesis beyond that
+        // metadata; never overrides JSON results (this is the sole caller of
+        // the `explore` command).
+        async explore(context, args) {
+            const q = args && typeof args.query === 'string' ? args.query : (typeof args === 'string' ? args : '');
+            try {
+                const operand = safeOperand(q);
+                if (!operand.ok) {
+                    return { opaqueText: '', extracted: [], diagnostics: [diag('unsafe-argument', 'unsafe explore operand')] };
+                }
+                const base = spawnBaseFor(context);
+                const result = await runCodegraph({ ...base, subcommand: 'explore', args: ['--', operand.value] });
+                if (!result.ok) {
+                    return { opaqueText: '', extracted: [], diagnostics: [diag('command-failed', 'explore command failed')] };
+                }
+                const opaqueText = result.stdout;
+                const extracted = [];
+                FILE_LINE_RE_GLOBAL.lastIndex = 0;
+                let match;
+                while ((match = FILE_LINE_RE_GLOBAL.exec(opaqueText)) !== null) {
+                    extracted.push({ filePath: match[1], lineRange: [parseInt(match[2], 10), parseInt(match[2], 10)] });
+                }
+                return { opaqueText, extracted, diagnostics: [] };
+            } catch (err) {
+                return { opaqueText: '', extracted: [], diagnostics: [diag('unexpected-error', err && err.message ? err.message : String(err))] };
+            }
         },
     };
 

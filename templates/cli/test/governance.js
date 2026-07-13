@@ -4558,6 +4558,181 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-detect passed');
 
+        console.log('T-cg-queries. Testing CodeGraph query methods — command mapping + translators + opaque explore/node + per-capability disable ...');
+        {
+            const cg = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph'));
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const ctx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: {} };
+            const provider = cg.create({ executable: process.execPath, prefixArgs: [fakePath] });
+            const modSource = fs.readFileSync(
+                path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph.js'), 'utf8',
+            );
+
+            // 1. getFiles — 4 files (fixture length), provider-scoped ids, kind:file,
+            //    moduleId:null (modules=false), provenance.providerId set.
+            {
+                const result = await provider.getFiles(ctx);
+                assert.strictEqual(result.files.length, 4, 'getFiles must return 4 files (fixture length)');
+                for (const entry of result.files) {
+                    assert.ok(entry.reference.id.startsWith('code-ref:provider:codegraph:'),
+                        'reference.id must be provider-scoped');
+                    assert.strictEqual(entry.reference.kind, 'file', 'kind must be file');
+                    assert.strictEqual(entry.moduleId, null, 'moduleId must be null (modules=false)');
+                    assert.strictEqual(entry.reference.provenance.providerId, 'provider:codegraph',
+                        'provenance.providerId must be provider:codegraph');
+                }
+            }
+
+            // 2. search('normalize') — 2 matches, first is normalizeReference/function,
+            //    lineRange[0]===54, distinct upstream node ids -> distinct reference ids.
+            {
+                const result = await provider.search(ctx, 'normalize');
+                assert.strictEqual(result.matches.length, 2, 'search must return 2 matches (fixture length)');
+                const [first, second] = result.matches;
+                assert.strictEqual(first.name, 'normalizeReference', 'first match name');
+                assert.strictEqual(first.kind, 'function', 'first match kind');
+                assert.strictEqual(first.lineRange[0], 54, 'first match startLine');
+                assert.notStrictEqual(first.id, second.id, 'distinct upstream node ids must yield distinct reference ids');
+            }
+
+            // 3. getCallers/getCallees — 3 relationships each, correct kind, distinct
+            //    synthesized target ids per row.
+            {
+                const callers = await provider.getCallers(ctx, 'normalizeReference');
+                assert.strictEqual(callers.length, 3, 'getCallers must return 3 relationships');
+                const targetIds = new Set();
+                for (const rel of callers) {
+                    assert.strictEqual(rel.kind, 'called_by', 'getCallers relationship kind must be called_by');
+                    assert.notStrictEqual(rel.source.id, rel.target.id, 'source/target ids must differ');
+                    targetIds.add(rel.target.id);
+                }
+                assert.strictEqual(targetIds.size, 3, 'caller rows must synthesize distinct target ids');
+
+                const callees = await provider.getCallees(ctx, 'normalizeReference');
+                assert.strictEqual(callees.length, 3, 'getCallees must return 3 relationships');
+                for (const rel of callees) {
+                    assert.strictEqual(rel.kind, 'calls', 'getCallees relationship kind must be calls');
+                }
+            }
+
+            // 4. impact('normalizeReference') — downstream=affected(4), upstream empty
+            //    (not provided by this command), depth from fixture, target has an id.
+            {
+                const result = await provider.impact(ctx, 'normalizeReference');
+                assert.strictEqual(result.downstream.length, 4, 'impact downstream must have 4 entries');
+                assert.strictEqual(result.upstream.length, 0, 'impact upstream must be empty (not provided by impact command)');
+                assert.strictEqual(result.depth, 2, 'impact depth must equal fixture depth');
+                assert.ok(result.target && result.target.id, 'impact target must have an id');
+            }
+
+            // 5. getAffectedTests — independent of impact: a logging fake CLI proves the
+            //    `impact` subcommand is never invoked while resolving affected tests.
+            {
+                const logFile = path.join(os.tmpdir(), 'cg-affected-log-' + Date.now() + '.txt');
+                const loggingFake = path.join(os.tmpdir(), 'cg-fake-logging-' + Date.now() + '.js');
+                fs.writeFileSync(loggingFake, [
+                    "'use strict';",
+                    "const fs = require('fs');",
+                    "const path = require('path');",
+                    "const sub = process.argv[2];",
+                    "fs.appendFileSync(process.env.CG_CALL_LOG, sub + '\\n');",
+                    "const FIXTURES = { status: 'codegraph-status.json', affected: 'codegraph-affected.json', impact: 'codegraph-impact.json' };",
+                    "const name = FIXTURES[sub];",
+                    "if (!name) { process.exit(2); }",
+                    `process.stdout.write(fs.readFileSync(path.join(${JSON.stringify(CG_DIR)}, name)));`,
+                    'process.exit(0);',
+                    '',
+                ].join('\n'), 'utf8');
+                fs.writeFileSync(logFile, '', 'utf8');
+                const prevLog = process.env.CG_CALL_LOG;
+                process.env.CG_CALL_LOG = logFile;
+                try {
+                    const loggingProvider = cg.create({ executable: process.execPath, prefixArgs: [loggingFake] });
+                    const affected = await loggingProvider.getAffectedTests(ctx, {
+                        files: ['templates/cli/code-perception/normalize.js'],
+                    });
+                    assert.strictEqual(affected.length, 1, 'getAffectedTests must return 1 test reference');
+                    assert.strictEqual(affected[0].kind, 'test', 'affected test kind must be test');
+                    assert.ok(affected[0].filePath.endsWith('governance.js'), 'affected test filePath must end governance.js');
+                    const log = fs.readFileSync(logFile, 'utf8');
+                    assert.ok(!log.includes('impact'), 'getAffectedTests must not invoke the impact command (independent of impact())');
+                } finally {
+                    if (prevLog === undefined) { delete process.env.CG_CALL_LOG; } else { process.env.CG_CALL_LOG = prevLog; }
+                    fs.rmSync(logFile, { force: true });
+                    fs.rmSync(loggingFake, { force: true });
+                }
+            }
+
+            // 6. getEntity/explore — OPAQUE: text + only explicitly-marked file:line
+            //    tokens; no relationship/edge object; no synthesized structural edges.
+            {
+                const entity = await provider.getEntity(ctx, { entity: 'normalizeReference' });
+                assert.ok(entity.content.includes('normalized CodeReference'), 'getEntity content must include the opaque prose');
+                assert.ok(entity.reference.filePath.endsWith('normalize.js'), 'getEntity reference filePath must end normalize.js');
+                assert.strictEqual(entity.reference.lineRange[0], 54, 'getEntity reference lineRange[0] must be 54');
+                assert.strictEqual(entity.relationship, undefined, 'getEntity must not return a relationship');
+                assert.strictEqual(entity.edge, undefined, 'getEntity must not return an edge');
+                assert.strictEqual(entity.relationships, undefined, 'getEntity must not return relationships');
+
+                const explore = await provider.explore(ctx, { query: 'normalizeReference' });
+                assert.strictEqual(typeof explore.opaqueText, 'string', 'explore opaqueText must be a string');
+                assert.ok(explore.opaqueText.length > 0, 'explore opaqueText must be non-empty');
+                assert.ok(Array.isArray(explore.extracted) && explore.extracted.length >= 1,
+                    'explore extracted must have at least one entry');
+                assert.ok(explore.extracted[0].filePath, 'explore extracted entry must have a filePath');
+                assert.ok(Array.isArray(explore.extracted[0].lineRange), 'explore extracted entry must have a lineRange');
+                const exploreJson = JSON.stringify(explore);
+                assert.ok(!/"kind"\s*:\s*"calls"/.test(exploreJson), 'explore must not synthesize a calls edge');
+                assert.ok(!exploreJson.includes('"relationships"'), 'explore must not synthesize relationships');
+            }
+
+            // 7. Per-capability disable + re-enable: an inline fake returns the
+            //    malformed (wrong-shaped) fixture for `query` but a valid `status`;
+            //    search() must degrade to empty matches + schema-invalid diagnostic
+            //    AND disable capabilities.symbols; a later VALID query re-enables it.
+            {
+                const malformedFake = path.join(os.tmpdir(), 'cg-fake-malformed-' + Date.now() + '.js');
+                fs.writeFileSync(malformedFake, [
+                    "'use strict';",
+                    "const fs = require('fs');",
+                    "const path = require('path');",
+                    "const sub = process.argv[2];",
+                    `const CG_DIR = ${JSON.stringify(CG_DIR)};`,
+                    "if (sub === 'query') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-malformed.json'))); process.exit(0); }",
+                    "if (sub === 'status') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-status.json'))); process.exit(0); }",
+                    'process.exit(2);',
+                    '',
+                ].join('\n'), 'utf8');
+
+                const flexProvider = cg.create({ executable: process.execPath });
+                const malformedCtx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: { prefixArgs: [malformedFake] } };
+                const validCtx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: { prefixArgs: [fakePath] } };
+
+                const badResult = await flexProvider.search(malformedCtx, 'normalize');
+                assert.strictEqual(badResult.matches.length, 0, 'malformed query response must yield empty matches');
+                assert.ok(badResult.diagnostics.some((d) => d.code === 'schema-invalid'),
+                    'malformed query response must emit a schema-invalid diagnostic');
+                const badStatus = await flexProvider.getStatus(malformedCtx);
+                assert.strictEqual(badStatus.capabilities.symbols, false,
+                    'capabilities.symbols must be disabled after a malformed query response');
+
+                const goodResult = await flexProvider.search(validCtx, 'normalize');
+                assert.strictEqual(goodResult.matches.length, 2, 'a subsequent valid query must parse normally');
+                const goodStatus = await flexProvider.getStatus(validCtx);
+                assert.strictEqual(goodStatus.capabilities.symbols, true,
+                    'capabilities.symbols must re-enable after a subsequent valid query response');
+
+                fs.rmSync(malformedFake, { force: true });
+            }
+
+            // 8. No `.codegraph` path is ever opened by this module.
+            {
+                assert.ok(!modSource.includes('.codegraph'), 'codegraph.js must never reference a .codegraph path');
+            }
+        }
+        console.log('✅ T-cg-queries passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
