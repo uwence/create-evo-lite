@@ -4439,6 +4439,125 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-exec passed');
 
+        console.log('T-cg-detect. Testing CodeGraph adapter skeleton + fingerprint-locked detection ...');
+        {
+            const cg = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph'));
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const ctx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: {} };
+            const provider = cg.create({ executable: process.execPath, prefixArgs: [fakePath] });
+
+            // 1+2. validateProvider passes; capability map is correct (modules=false).
+            {
+                const result = contract.validateProvider(provider);
+                assert.strictEqual(result.valid, true, `provider must validate: ${JSON.stringify(result.diagnostics)}`);
+                assert.strictEqual(provider.capabilities.modules, false, 'modules capability must be false');
+                assert.strictEqual(provider.capabilities.impact, true, 'impact capability must be true');
+                assert.strictEqual(provider.capabilities.symbols, true, 'symbols capability must be true');
+            }
+
+            // 3. check() against the real fixtures: available/ready/indexState/providerVersion.
+            {
+                const avail = await provider.check(ctx);
+                const v = contract.validateAvailability(avail);
+                assert.strictEqual(v.valid, true, `availability must validate: ${JSON.stringify(v.diagnostics)}`);
+                assert.strictEqual(avail.available, true, 'must be available against valid fixtures');
+                assert.strictEqual(avail.ready, true, 'must be ready against valid fixtures');
+                assert.strictEqual(avail.indexState, 'ready', 'indexState must be ready');
+                assert.strictEqual(avail.providerVersion, '1.4.1', 'providerVersion must be parsed from version fixture');
+            }
+
+            // 4. getStatus() STATUS translator against the real fixture.
+            {
+                const status = await provider.getStatus(ctx);
+                const v = contract.validateStatus(status);
+                assert.strictEqual(v.valid, true, `status must validate: ${JSON.stringify(v.diagnostics)}`);
+                assert.strictEqual(status.providerVersion, '1.4.1', 'providerVersion must equal fixture version');
+                assert.strictEqual(status.compatibility, 'supported', '1.4.1 is in TESTED_PROVIDER_VERSIONS');
+                assert.strictEqual(status.ready, true, 'ready must be true for a complete index');
+                assert.strictEqual(status.indexState, 'ready', 'indexState must be ready');
+                assert.strictEqual(typeof status.observedSchemaFingerprint, 'string', 'observedSchemaFingerprint must be a string');
+                assert.ok(status.observedSchemaFingerprint.length > 0, 'observedSchemaFingerprint must be non-empty');
+            }
+
+            // 5. Missing executable: never throws, reports installed:false / missing.
+            {
+                const missingExe = path.join(os.tmpdir(), 'definitely-not-codegraph-' + Date.now());
+                const badProvider = cg.create({ executable: missingExe });
+                const avail = await badProvider.check(ctx);
+                assert.strictEqual(avail.installed, false, 'installed must be false for a missing executable');
+                assert.strictEqual(avail.available, false, 'available must be false for a missing executable');
+                assert.strictEqual(avail.indexState, 'missing', 'indexState must be missing for a missing executable');
+                assert.ok(/install/i.test(avail.suggestedAction || ''), 'suggestedAction must mention install');
+            }
+
+            // 6. Fingerprint identity lock: real inline fakes with a bad version and
+            //    an incomplete help command set — both must be rejected, NO adapt-guess.
+            {
+                const tmpDir = os.tmpdir();
+
+                const lowVersionFake = path.join(tmpDir, 'cg-fake-lowver-' + Date.now() + '.js');
+                fs.writeFileSync(lowVersionFake, [
+                    "'use strict';",
+                    "const sub = process.argv.slice(2)[0];",
+                    "if (sub === 'version') { process.stdout.write('0.9.0'); }",
+                    "process.exit(0);",
+                    "",
+                ].join('\n'), 'utf8');
+                const lowVerProvider = cg.create({ executable: process.execPath, prefixArgs: [lowVersionFake] });
+                const lowVerAvail = await lowVerProvider.check(ctx);
+                assert.strictEqual(contract.validateAvailability(lowVerAvail).valid, true, 'low-version availability must validate');
+                assert.strictEqual(lowVerAvail.available, false, '0.9.0 is below MIN_PROVIDER_VERSION, must be unavailable');
+                assert.ok(/version|identity/i.test(lowVerAvail.reason || ''), 'reason must mention version/identity mismatch');
+
+                const highVersionFake = path.join(tmpDir, 'cg-fake-highver-' + Date.now() + '.js');
+                fs.writeFileSync(highVersionFake, [
+                    "'use strict';",
+                    "const sub = process.argv.slice(2)[0];",
+                    "if (sub === 'version') { process.stdout.write('2.1.0'); }",
+                    "process.exit(0);",
+                    "",
+                ].join('\n'), 'utf8');
+                const highVerProvider = cg.create({ executable: process.execPath, prefixArgs: [highVersionFake] });
+                const highVerAvail = await highVerProvider.check(ctx);
+                assert.strictEqual(highVerAvail.available, false, '2.1.0 is >= maxExclusive, must be unavailable');
+                assert.ok(/version|identity/i.test(highVerAvail.reason || ''), 'reason must mention version/identity mismatch');
+
+                const badHelpFake = path.join(tmpDir, 'cg-fake-badhelp-' + Date.now() + '.js');
+                fs.writeFileSync(badHelpFake, [
+                    "'use strict';",
+                    "const sub = process.argv.slice(2)[0];",
+                    "if (sub === 'version') { process.stdout.write('1.4.1'); }",
+                    "else if (sub === 'help') { process.stdout.write('status files query explore node callers callees'); }",
+                    "process.exit(0);",
+                    "",
+                ].join('\n'), 'utf8');
+                const badHelpProvider = cg.create({ executable: process.execPath, prefixArgs: [badHelpFake] });
+                const badHelpAvail = await badHelpProvider.check(ctx);
+                assert.strictEqual(badHelpAvail.available, false, 'incomplete help command set must be unavailable (identity mismatch)');
+                assert.ok(/version|identity/i.test(badHelpAvail.reason || ''), 'reason must mention identity/version mismatch');
+            }
+
+            // 7. Never throws on a spawn failure — neither check() nor getStatus().
+            {
+                const missingExe = path.join(os.tmpdir(), 'definitely-not-codegraph-either-' + Date.now());
+                const badProvider = cg.create({ executable: missingExe });
+                let threw = false;
+                try {
+                    await badProvider.check(ctx);
+                    await badProvider.getStatus(ctx);
+                } catch (e) {
+                    threw = true;
+                }
+                assert.strictEqual(threw, false, 'check()/getStatus() must never throw on a spawn failure');
+                const status = await badProvider.getStatus(ctx);
+                assert.strictEqual(contract.validateStatus(status).valid, true, 'safe UNKNOWN status must still validate');
+                assert.strictEqual(status.available, false, 'safe status must report available:false on spawn failure');
+            }
+        }
+        console.log('✅ T-cg-detect passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
