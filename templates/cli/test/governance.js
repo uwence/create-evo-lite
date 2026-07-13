@@ -4596,22 +4596,25 @@ async function runGovernanceTests() {
                 assert.notStrictEqual(first.id, second.id, 'distinct upstream node ids must yield distinct reference ids');
             }
 
-            // 3. getCallers/getCallees — 3 relationships each, correct kind, distinct
-            //    synthesized target ids per row.
+            // 3. getCallers/getCallees — object with a diagnostics channel;
+            //    3 relationships each, correct kind, distinct synthesized
+            //    target ids per row.
             {
-                const callers = await provider.getCallers(ctx, 'normalizeReference');
-                assert.strictEqual(callers.length, 3, 'getCallers must return 3 relationships');
+                const callersResult = await provider.getCallers(ctx, 'normalizeReference');
+                assert.deepStrictEqual(callersResult.diagnostics, [], 'getCallers diagnostics must be empty on success');
+                assert.strictEqual(callersResult.relationships.length, 3, 'getCallers must return 3 relationships');
                 const targetIds = new Set();
-                for (const rel of callers) {
+                for (const rel of callersResult.relationships) {
                     assert.strictEqual(rel.kind, 'called_by', 'getCallers relationship kind must be called_by');
                     assert.notStrictEqual(rel.source.id, rel.target.id, 'source/target ids must differ');
                     targetIds.add(rel.target.id);
                 }
                 assert.strictEqual(targetIds.size, 3, 'caller rows must synthesize distinct target ids');
 
-                const callees = await provider.getCallees(ctx, 'normalizeReference');
-                assert.strictEqual(callees.length, 3, 'getCallees must return 3 relationships');
-                for (const rel of callees) {
+                const calleesResult = await provider.getCallees(ctx, 'normalizeReference');
+                assert.deepStrictEqual(calleesResult.diagnostics, [], 'getCallees diagnostics must be empty on success');
+                assert.strictEqual(calleesResult.relationships.length, 3, 'getCallees must return 3 relationships');
+                for (const rel of calleesResult.relationships) {
                     assert.strictEqual(rel.kind, 'calls', 'getCallees relationship kind must be calls');
                 }
             }
@@ -4649,12 +4652,13 @@ async function runGovernanceTests() {
                 process.env.CG_CALL_LOG = logFile;
                 try {
                     const loggingProvider = cg.create({ executable: process.execPath, prefixArgs: [loggingFake] });
-                    const affected = await loggingProvider.getAffectedTests(ctx, {
+                    const affectedResult = await loggingProvider.getAffectedTests(ctx, {
                         files: ['templates/cli/code-perception/normalize.js'],
                     });
-                    assert.strictEqual(affected.length, 1, 'getAffectedTests must return 1 test reference');
-                    assert.strictEqual(affected[0].kind, 'test', 'affected test kind must be test');
-                    assert.ok(affected[0].filePath.endsWith('governance.js'), 'affected test filePath must end governance.js');
+                    assert.deepStrictEqual(affectedResult.diagnostics, [], 'getAffectedTests diagnostics must be empty on success');
+                    assert.strictEqual(affectedResult.tests.length, 1, 'getAffectedTests must return 1 test reference');
+                    assert.strictEqual(affectedResult.tests[0].kind, 'test', 'affected test kind must be test');
+                    assert.ok(affectedResult.tests[0].filePath.endsWith('governance.js'), 'affected test filePath must end governance.js');
                     const log = fs.readFileSync(logFile, 'utf8');
                     assert.ok(!log.includes('impact'), 'getAffectedTests must not invoke the impact command (independent of impact())');
                 } finally {
@@ -4688,9 +4692,12 @@ async function runGovernanceTests() {
             }
 
             // 7. Per-capability disable + re-enable: an inline fake returns the
-            //    malformed (wrong-shaped) fixture for `query` but a valid `status`;
-            //    search() must degrade to empty matches + schema-invalid diagnostic
-            //    AND disable capabilities.symbols; a later VALID query re-enables it.
+            //    malformed (wrong-shaped) fixture for `query`/`callers` but a valid
+            //    `status`; search()/getCallers() must degrade to empty
+            //    matches/relationships + a schema-invalid diagnostic on the
+            //    returned object's `.diagnostics` channel AND disable
+            //    capabilities.symbols/capabilities.callers; a later VALID
+            //    response re-enables each.
             {
                 const malformedFake = path.join(os.tmpdir(), 'cg-fake-malformed-' + Date.now() + '.js');
                 fs.writeFileSync(malformedFake, [
@@ -4700,6 +4707,7 @@ async function runGovernanceTests() {
                     "const sub = process.argv[2];",
                     `const CG_DIR = ${JSON.stringify(CG_DIR)};`,
                     "if (sub === 'query') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-malformed.json'))); process.exit(0); }",
+                    "if (sub === 'callers') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-malformed.json'))); process.exit(0); }",
                     "if (sub === 'status') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-status.json'))); process.exit(0); }",
                     'process.exit(2);',
                     '',
@@ -4722,6 +4730,23 @@ async function runGovernanceTests() {
                 const goodStatus = await flexProvider.getStatus(validCtx);
                 assert.strictEqual(goodStatus.capabilities.symbols, true,
                     'capabilities.symbols must re-enable after a subsequent valid query response');
+
+                // getCallers previously had NO diagnostics channel at all (bare
+                // array) — this is the channel that was missing.
+                const badCallers = await flexProvider.getCallers(malformedCtx, 'normalizeReference');
+                assert.strictEqual(badCallers.relationships.length, 0, 'malformed callers response must yield empty relationships');
+                assert.ok(badCallers.diagnostics.some((d) => d.code === 'schema-invalid'),
+                    'malformed callers response must emit a schema-invalid diagnostic');
+                const badCallersStatus = await flexProvider.getStatus(malformedCtx);
+                assert.strictEqual(badCallersStatus.capabilities.callers, false,
+                    'capabilities.callers must be disabled after a malformed callers response');
+
+                const goodCallers = await flexProvider.getCallers(validCtx, 'normalizeReference');
+                assert.deepStrictEqual(goodCallers.diagnostics, [], 'a subsequent valid callers response must have no diagnostics');
+                assert.strictEqual(goodCallers.relationships.length, 3, 'a subsequent valid callers response must parse normally');
+                const goodCallersStatus = await flexProvider.getStatus(validCtx);
+                assert.strictEqual(goodCallersStatus.capabilities.callers, true,
+                    'capabilities.callers must re-enable after a subsequent valid callers response');
 
                 fs.rmSync(malformedFake, { force: true });
             }

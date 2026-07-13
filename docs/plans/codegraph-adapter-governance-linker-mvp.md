@@ -66,6 +66,7 @@ module.exports = { create };   // create(options = {}) => Provider (id 'provider
 - `ADAPTER_VERSION='0.1.0'`, `MIN_PROVIDER_VERSION='1.0.0'`, `TESTED_PROVIDER_VERSIONS=['1.4.1']`, `COMPAT={min:'1.0.0',maxExclusive:'2.0.0'}`.
 - `create(options)` → closure-scoped instance holding `options` + `const capabilityHealth = new Map()` (lifecycle per Global Constraints). check/getStatus/queries use `this` options (executable/prefixArgs/timeoutMs/allowNetwork) when calling runCodegraph; `context.providerConfig`, if present, may override per-call but the stored options are the primary source.
 - `check`/`getStatus`/query methods exactly as the prior revision (detection ladder, fingerprint, ready+indexState, per-command translators → ① normalize, opaque explore/node, per-capability disable). getFiles moduleId stays null (modules=false). No `.codegraph` access.
+- Return shapes carry a diagnostics channel on every query method, symmetric across the board: `getFiles(...) → { files, diagnostics }`, `search(...) → { matches, diagnostics }`, `impact(...) → { ..., diagnostics }`, `getCallers/getCallees(...) → { relationships: normalizeRelationship(...)[], diagnostics }`, `getAffectedTests(...) → { tests: CodeReference[], diagnostics }`. None return a bare array — a caller must be able to tell "zero results" from "call failed / capability disabled" via `diagnostics`.
 
 ### `code-perception/cache.js` (file-based, bounded, envelope, contained)
 ```js

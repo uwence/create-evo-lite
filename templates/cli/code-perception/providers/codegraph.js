@@ -456,16 +456,18 @@ function create(options) {
 
     // Shared translator for getCallers/getCallees: both run against a
     // `{ symbol, callers|callees: [{name,kind,filePath,startLine}] }` shape
-    // with NO row id, and both return a plain ARRAY of relationships. Never
+    // with NO row id, and both return `{ relationships, diagnostics }` —
+    // symmetric with getFiles/search/impact's diagnostics channel. Never
     // throws — a schema-invalid response, spawn failure, or unsafe operand
-    // all degrade to an empty array (the schema-invalid case additionally
-    // disables the capability; a later valid parse re-enables it).
+    // all degrade to an empty relationships array with a diagnostic (the
+    // schema-invalid case additionally disables the capability; a later
+    // valid parse re-enables it).
     async function fetchCallersOrCallees(context, symbolOrRef, subcommand, capabilityKey, relKind) {
         try {
             const symName = symbolNameOf(symbolOrRef);
             const operand = safeOperand(symName);
             if (!operand.ok) {
-                return [];
+                return { relationships: [], diagnostics: [diag('unsafe-argument', `unsafe ${subcommand} operand`)] };
             }
             const base = spawnBaseFor(context);
             const result = await runCodegraph({ ...base, subcommand, args: ['--json', '--', operand.value] });
@@ -476,19 +478,21 @@ function create(options) {
             const rows = (result.ok && isPlainObject(parsed) && Array.isArray(parsed[subcommand]))
                 ? parsed[subcommand] : null;
             if (!rows) {
+                const diagnostic = diag('schema-invalid', `${subcommand} response missing a ${subcommand} array`);
                 capabilityHealth.set(capabilityKey, {
                     disabled: true, schemaFingerprint: null,
-                    diagnostic: diag('schema-invalid', `${subcommand} response missing a ${subcommand} array`),
+                    diagnostic,
                 });
-                return [];
+                return { relationships: [], diagnostics: [diagnostic] };
             }
             capabilityHealth.set(capabilityKey, { disabled: false });
             const status = await provider.getStatus(context);
             const snapshot = refSnapshotFromStatus(status);
             const symRaw = buildSymbolRaw(symbolOrRef, snapshot);
-            return rows.map((row) => normalizeRelationship(PROVIDER_ID, symRaw, buildRowRaw(row, snapshot), relKind, 1));
+            const relationships = rows.map((row) => normalizeRelationship(PROVIDER_ID, symRaw, buildRowRaw(row, snapshot), relKind, 1));
+            return { relationships, diagnostics: [] };
         } catch (err) {
-            return [];
+            return { relationships: [], diagnostics: [diag('unexpected-error', err && err.message ? err.message : String(err))] };
         }
     }
 
@@ -661,7 +665,8 @@ function create(options) {
         // getAffectedTests(context, {files}) — `affected --json -- <files...>`
         // returns {changedFiles,affectedTests,totalDependentsTraversed}.
         // INDEPENDENT of impact(): runs its own `affected` command, never
-        // calls `impact`. Returns a plain ARRAY of test CodeReferences.
+        // calls `impact`. Returns `{ tests, diagnostics }` — symmetric with
+        // getFiles/search/impact's diagnostics channel.
         async getAffectedTests(context, args) {
             try {
                 const files = (args && Array.isArray(args.files)) ? args.files : [];
@@ -669,7 +674,7 @@ function create(options) {
                 for (const f of files) {
                     const operand = safeOperand(f);
                     if (!operand.ok) {
-                        return [];
+                        return { tests: [], diagnostics: [diag('unsafe-argument', 'unsafe affected-tests operand')] };
                     }
                     operands.push(operand.value);
                 }
@@ -680,21 +685,23 @@ function create(options) {
                     try { parsed = JSON.parse(result.stdout); } catch (err) { parsed = null; }
                 }
                 if (!result.ok || !isPlainObject(parsed) || !Array.isArray(parsed.affectedTests)) {
+                    const diagnostic = diag('schema-invalid', 'affected response missing an affectedTests array');
                     capabilityHealth.set('affectedTests', {
                         disabled: true, schemaFingerprint: null,
-                        diagnostic: diag('schema-invalid', 'affected response missing an affectedTests array'),
+                        diagnostic,
                     });
-                    return [];
+                    return { tests: [], diagnostics: [diagnostic] };
                 }
                 capabilityHealth.set('affectedTests', { disabled: false });
                 const status = await provider.getStatus(context);
                 const snapshot = refSnapshotFromStatus(status);
-                return parsed.affectedTests.map((p) => normalizeReference(PROVIDER_ID, {
+                const tests = parsed.affectedTests.map((p) => normalizeReference(PROVIDER_ID, {
                     providerEntityId: p, name: path.basename(String(p)), kind: 'test', filePath: p,
                     snapshot, provenance: { ...REF_PROVENANCE },
                 }));
+                return { tests, diagnostics: [] };
             } catch (err) {
-                return [];
+                return { tests: [], diagnostics: [diag('unexpected-error', err && err.message ? err.message : String(err))] };
             }
         },
 
