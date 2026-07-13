@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Code Perception: Provider Contract & Native Lite — MVP Plan (sub-spec ①): provider-contract.js: 三态枚举 + capability-method 校验 + status/availability 校验
+Code Perception: Provider Contract & Native Lite — MVP Plan (sub-spec ①): all tasks implemented
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
