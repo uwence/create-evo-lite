@@ -2,6 +2,7 @@
 id: spec:code-perception-provider-native-lite
 status: adopted
 created: 2026-07-10
+linkedPlan: plan:code-perception-provider-native-lite-mvp
 relations: [{"kind":"spawned-from","target":"spec:provider-first-code-perception-foundation"}]
 ---
 
@@ -226,7 +227,7 @@ normalized types、Provider contract、fixture provider、loader、capability ro
 ### Phase 1 — Native Lite
 files、hashes、Architecture module membership、Planning linkedFiles、Git changed files、status、fallback。
 
-## 11. Acceptance Criteria
+## Acceptance Criteria
 
 ```json
 {
