@@ -1,0 +1,58 @@
+{
+  "upstream": "colbymchenry/codegraph",
+  "package": "@colbymchenry/codegraph",
+  "providerVersion": "1.4.1",
+  "upstreamCommit": "shasum:ef8c1421801c23e7b006a0793ab3ef1294402e5b",
+  "sourceEvidence": {
+    "basePackageTarball": "colbymchenry-codegraph-1.4.1.tgz",
+    "basePackageShasum": "ef8c1421801c23e7b006a0793ab3ef1294402e5b",
+    "basePackageIntegrity": "sha512-xZayboJt6T3QBzBsBsI0eJ3J/tN4vYs6LMuvrxJVdM71yQFjrFKFeV3KsbicAgkj6AHnTXxUNk26g9BYwkNMgg==",
+    "cliSourceBundle": "@colbymchenry/codegraph-win32-x64@1.4.1",
+    "cliSourceBundleShasum": "05d8fa4a5445cdfa75d6350ed1af0a0f9b4db66b",
+    "cliSourceFile": "package/lib/dist/bin/codegraph.js",
+    "note": "The base @colbymchenry/codegraph package ships only npm-shim.js + dist/**/*.d.ts (the CLI JS runs from a per-platform optionalDependency bundle). Every --json shape below was read from the COMPILED CLI source at package/lib/dist/bin/codegraph.js inside the pinned win32-x64 1.4.1 bundle — the exact JSON.stringify(...) call for each command's `if (options.json)` branch. Entity shapes cross-checked against dist/types.d.ts (Node/Edge/GraphStats/SearchResult interfaces). Sample DATA is synthetic-but-realistic; STRUCTURE (field names/types) mirrors upstream verbatim."
+  },
+  "captureMethod": {
+    "status": "pinned-upstream-source",
+    "files": "pinned-upstream-source",
+    "query": "pinned-upstream-source",
+    "callers": "pinned-upstream-source",
+    "callees": "pinned-upstream-source",
+    "impact": "pinned-upstream-source",
+    "affected": "pinned-upstream-source",
+    "version": "pinned-upstream-source",
+    "help": "pinned-upstream-source",
+    "node": "pinned-upstream-source",
+    "explore": "pinned-upstream-source"
+  },
+  "commandShapeSource": {
+    "status": "codegraph.js L844-882 (initialized:true branch): { initialized, version, projectPath, indexPath, lastIndexed(ISO|null), fileCount, nodeCount, edgeCount, dbSizeBytes, backend, journalMode, nodesByKind, languages[], pendingChanges{added,modified,removed}, worktreeMismatch(null|{worktreeRoot,indexRoot}), index{builtWithVersion,builtWithExtractionVersion,currentExtractionVersion,reindexRecommended,state,pendingRefs} }",
+    "files": "codegraph.js L1370-1377: array of { path, language, nodeCount, size } — NO module membership (files keyed by path)",
+    "query": "codegraph.js L1009-1010: JSON.stringify(results) where results is SearchResult[] = [{ node: Node, score, highlights? }]; Node carries the upstream entity id in `id` (dist/types.d.ts)",
+    "callers": "codegraph.js L1718-1719: { symbol, callers: [{ name, kind, filePath, startLine }] } — rows carry NO entity id",
+    "callees": "codegraph.js L1788-1789: { symbol, callees: [{ name, kind, filePath, startLine }] } — rows carry NO entity id",
+    "impact": "codegraph.js L1864-1871: { symbol, depth, nodeCount, edgeCount, affected: [{ name, kind, filePath, startLine }] }",
+    "affected": "codegraph.js L2008-2013: { changedFiles, affectedTests, totalDependentsTraversed }",
+    "version": "codegraph.js L157 & L2243: console.log(packageJson.version) — bare `1.4.1`",
+    "help": "commander auto-generated help from program.name('codegraph') + each .command()/.description() (codegraph.js L186-188, L520-2246)",
+    "node": "codegraph.js L1266 `node [name]` has NO --json option — opaque text (same output as codegraph_node MCP tool)",
+    "explore": "codegraph.js L1053 `explore <query...>` has NO --json option — opaque text (same output as codegraph_explore MCP tool)"
+  },
+  "supportsPositionalSeparator": true,
+  "supportsPositionalSeparatorEvidence": "codegraph.js requires commander (L64: require('commander')) and calls program.parse() (L2246) with NO enablePositionalOptions()/passThroughOptions()/storeOptionsAsProperties() override. Commander always honors `--` as the end-of-options separator (subsequent tokens become positional operands); this default cannot be disabled. Therefore `codegraph query -- <arg-with-leading-dash>` is supported.",
+  "fixtureSha256": {
+    "codegraph-status.json": "sha256:9ec8f5bb1121823c3551c22b44c15ea1e27073c965ebe542a48698b079936b65",
+    "codegraph-files.json": "sha256:8bffa0240d124d8523132500dcaaaaa77d5b79fe7a7ce68ff159722088b051f1",
+    "codegraph-query.json": "sha256:311402f5672a0df1043d332763666a0e4c5abfaefd38e743da64d7f3214d6b67",
+    "codegraph-callers.json": "sha256:705765cc96a908cac58d1e36a3819b7ec33d1fdb0a3ef9ad3ede59b89c853090",
+    "codegraph-callees.json": "sha256:40098f4298da4014aed65d5dea9cb0dfad115045cd377e1cdc42ba6456817609",
+    "codegraph-impact.json": "sha256:d6fcfe5f418400cebde4f858d0a0f31e95698cf382dde2a2fc5e81ab68a7eae9",
+    "codegraph-affected.json": "sha256:da20cdafbe7260ebcc6cb6e3083dc5e632263098bdaa00408a9c7a1583de7190",
+    "codegraph-malformed.json": "sha256:048e218bcf0bb8010776b2cdc882e033d42cbd0b1ce6d53d0bef8e91182fc47c",
+    "codegraph-version.txt": "sha256:7d072b48526b023950e4c48db01e8c273554a6401119f5691e7589ba9bc65d9d",
+    "codegraph-help.txt": "sha256:5e83194a0cb8d396880a26e3f8b3e62b6120729d277cd608541bd7a72bece8db",
+    "codegraph-node.txt": "sha256:0e72e8e52231f2d2a24342bfb8ff4d8168088dbbbb4e139a0ccdec6dfc26a274",
+    "codegraph-explore.txt": "sha256:5c071198e5ad9299e82e901f5cfd4c62057e2dd2991382b73e9af204d5d2e8c1"
+  },
+  "redactions": []
+}

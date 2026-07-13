@@ -1,0 +1,40 @@
+[
+  {
+    "node": {
+      "id": "3f2a9c1b7e0d4a5f8b6c2d1e0a9f8b7c",
+      "kind": "function",
+      "name": "normalizeReference",
+      "qualifiedName": "templates/cli/code-perception/normalize.js::normalizeReference",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "language": "javascript",
+      "startLine": 54,
+      "endLine": 92,
+      "startColumn": 0,
+      "endColumn": 1,
+      "signature": "function normalizeReference(providerId, raw)",
+      "isExported": false,
+      "updatedAt": 1720621925000
+    },
+    "score": 18.42,
+    "highlights": ["normalizeReference"]
+  },
+  {
+    "node": {
+      "id": "b8d4e6f01a2c3d4e5f60718293a4b5c6",
+      "kind": "function",
+      "name": "normalizeSearchResult",
+      "qualifiedName": "templates/cli/code-perception/normalize.js::normalizeSearchResult",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "language": "javascript",
+      "startLine": 94,
+      "endLine": 116,
+      "startColumn": 0,
+      "endColumn": 1,
+      "signature": "function normalizeSearchResult(providerStatus, rawMatches)",
+      "isExported": false,
+      "updatedAt": 1720621925000
+    },
+    "score": 11.07,
+    "highlights": ["normalizeSearchResult"]
+  }
+]

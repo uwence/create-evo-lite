@@ -1,0 +1,23 @@
+{
+  "symbol": "normalizeReference",
+  "callees": [
+    {
+      "name": "isPlainObject",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "startLine": 31
+    },
+    {
+      "name": "coerceEnum",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "startLine": 36
+    },
+    {
+      "name": "makeReferenceId",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "startLine": 47
+    }
+  ]
+}

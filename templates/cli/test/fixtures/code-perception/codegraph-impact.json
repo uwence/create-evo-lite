@@ -1,0 +1,32 @@
+{
+  "symbol": "normalizeReference",
+  "depth": 2,
+  "nodeCount": 4,
+  "edgeCount": 5,
+  "affected": [
+    {
+      "name": "normalizeSearchResult",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "startLine": 94
+    },
+    {
+      "name": "normalizeRelationship",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "startLine": 118
+    },
+    {
+      "name": "normalizeImpactResult",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "startLine": 130
+    },
+    {
+      "name": "getFiles",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/native-lite.js",
+      "startLine": 217
+    }
+  ]
+}

@@ -4245,6 +4245,93 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cp-router passed');
 
+        console.log('T-cg-fixtures. Testing pinned-upstream CodeGraph fixtures + provenance manifest + fake CLI ...');
+        {
+            const crypto = require('crypto');
+            const childProcess = require('child_process');
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const sha256Hex = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+
+            // 1. Manifest parses and carries the provenance contract.
+            const manifestPath = path.join(CG_DIR, 'codegraph-fixture-manifest.json');
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            assert.strictEqual(typeof manifest.upstream, 'string', 'manifest.upstream must be a string');
+            assert.strictEqual(typeof manifest.package, 'string', 'manifest.package must be a string');
+            assert.strictEqual(manifest.providerVersion, '1.4.1', 'manifest.providerVersion must be 1.4.1');
+            assert.ok(manifest.captureMethod && typeof manifest.captureMethod === 'object',
+                'manifest.captureMethod must be an object');
+            assert.strictEqual(typeof manifest.supportsPositionalSeparator, 'boolean',
+                'manifest.supportsPositionalSeparator must be a boolean');
+            assert.ok(manifest.fixtureSha256 && typeof manifest.fixtureSha256 === 'object',
+                'manifest.fixtureSha256 must be an object');
+
+            // 2. Every fixtureSha256 entry matches the actual file bytes (proves the
+            //    manifest describes the real committed fixtures — anti-fabrication).
+            const shaEntries = Object.entries(manifest.fixtureSha256);
+            assert.ok(shaEntries.length >= 10, 'manifest.fixtureSha256 must cover the fixture set');
+            for (const [name, recorded] of shaEntries) {
+                const bytes = fs.readFileSync(path.join(CG_DIR, name));
+                const expected = 'sha256:' + sha256Hex(bytes);
+                assert.strictEqual(recorded, expected, `fixtureSha256[${name}] must equal sha256 of the file bytes`);
+            }
+
+            // 3. Every JSON fixture parses; the malformed one is valid JSON too.
+            const jsonFixtures = [
+                'codegraph-status.json', 'codegraph-files.json', 'codegraph-query.json',
+                'codegraph-callers.json', 'codegraph-callees.json', 'codegraph-impact.json',
+                'codegraph-affected.json', 'codegraph-malformed.json',
+            ];
+            for (const jf of jsonFixtures) {
+                assert.doesNotThrow(() => JSON.parse(fs.readFileSync(path.join(CG_DIR, jf), 'utf8')),
+                    `${jf} must be valid JSON`);
+            }
+
+            // 4. help.txt carries all 9 command names of the read surface.
+            const helpTxt = fs.readFileSync(path.join(CG_DIR, 'codegraph-help.txt'), 'utf8');
+            for (const cmd of ['status', 'files', 'query', 'explore', 'node', 'callers', 'callees', 'impact', 'affected']) {
+                assert.ok(helpTxt.includes(cmd), `help.txt must mention the "${cmd}" command`);
+            }
+
+            // 5. fake-codegraph.js resolves fixtures via __dirname (cwd-independent) and
+            //    exits 2 on an unknown subcommand.
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const statusRaw = fs.readFileSync(path.join(CG_DIR, 'codegraph-status.json'), 'utf8');
+            const out = childProcess.execFileSync(process.execPath, [fakePath, 'status'],
+                { cwd: os.tmpdir(), encoding: 'utf8' });
+            assert.strictEqual(out, statusRaw,
+                'fake-codegraph.js status output must equal codegraph-status.json bytes (proves __dirname resolution)');
+            let threw = false;
+            let code;
+            try {
+                childProcess.execFileSync(process.execPath, [fakePath, 'no-such-subcommand'],
+                    { cwd: os.tmpdir(), encoding: 'utf8', stdio: 'pipe' });
+            } catch (err) {
+                threw = true;
+                code = err.status;
+            }
+            assert.ok(threw, 'fake-codegraph.js must fail on an unknown subcommand');
+            assert.strictEqual(code, 2, 'fake-codegraph.js unknown subcommand must exit 2');
+
+            // 6. Dogfood validator fixtures: well-formed has all 9 sections + a
+            //    fingerprint line; the bad copy is missing at least one section.
+            //    (validateDogfoodArtifact is a LATER task — do NOT call it here.)
+            const REQUIRED_SECTIONS = [
+                'status', 'search', 'callers-callees', 'impact',
+                'current-focus', 'Task-to-Code', 'stale-index', 'fallback', 'limitations',
+            ];
+            const good = fs.readFileSync(path.join(CG_DIR, 'dogfood-sample.md'), 'utf8');
+            const bad = fs.readFileSync(path.join(CG_DIR, 'dogfood-bad.md'), 'utf8');
+            const headingRe = (section) => new RegExp('^#+\\s.*' + section.replace(/[-]/g, '\\-'), 'm');
+            for (const section of REQUIRED_SECTIONS) {
+                assert.ok(headingRe(section).test(good), `dogfood-sample.md must have a "${section}" heading`);
+            }
+            assert.ok(/^fingerprint:\s*sha256:[0-9a-f]{64}$/m.test(good),
+                'dogfood-sample.md must carry a fingerprint: sha256:<hex> line');
+            const missing = REQUIRED_SECTIONS.filter((section) => !headingRe(section).test(bad));
+            assert.ok(missing.length >= 1, 'dogfood-bad.md must be missing at least one required section');
+        }
+        console.log('✅ T-cg-fixtures passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

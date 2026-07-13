@@ -1,0 +1,9 @@
+{
+  "changedFiles": [
+    "templates/cli/code-perception/normalize.js"
+  ],
+  "affectedTests": [
+    "templates/cli/test/governance.js"
+  ],
+  "totalDependentsTraversed": 7
+}

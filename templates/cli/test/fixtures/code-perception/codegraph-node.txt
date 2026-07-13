@@ -1,0 +1,10 @@
+Symbol: normalizeReference (function)
+Defined at templates/cli/code-perception/normalize.js:54
+
+Returns a best-effort normalized CodeReference. It never throws; malformed or
+missing input degrades to a structured shape instead of an exception. The body
+reads the raw entity, coerces the reference kind against the allowed enum, and
+derives a stable reference id from the provider entity id. The search and impact
+normalization paths both reach this builder, so it sits on the hot path of the
+perception surface. No symbol graph is fabricated here — the shape is pure and
+deterministic given its inputs.
