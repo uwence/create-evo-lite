@@ -21,6 +21,19 @@
 //     `focusReferences` ONLY. A raw free-text `activeContextFocus` is never
 //     accepted/parsed here.
 //
+// Layer 3 (name-only heuristic proposals) added by cg-linker-heuristic:
+//   - implements_task (status 'proposed', confidence <= 0.5): the WEAKEST
+//     signal — task.title (lowercased) contains a symbolReference's name
+//     (lowercased, length >= 3). A loose textual signal ONLY; NEVER emitted
+//     as confirmed/derived. When a heuristic proposal collides (same id —
+//     same governanceEntityId+codeReferenceId+kind) with a stronger
+//     confirmed/derived link, the strength-ranked dedupe below keeps the
+//     stronger link and drops the proposal.
+//
+// Dedupe is strength-ranked, not first-wins: for links sharing the same id,
+// the highest-ranked status survives (confirmed > derived > proposed) so a
+// name-only proposal can never shadow a rule-gated or exact link.
+//
 // No dangling links, no guessing: every emitted link's codeReferenceId is a
 // real id — resolved from a fileReferences match, a symbolReference.reference.id,
 // an evidence.codeReferenceId/resolved evidence.filePath, or a
@@ -29,13 +42,28 @@
 //
 // No guessing from Markdown/text: depends_on_file comes ONLY from the
 // explicit `acceptanceDependencies` input; implements_task never parses plan
-// Markdown (only an explicit task.symbols array counts).
+// Markdown (only an explicit task.symbols array, evidence.symbols, a tied
+// commit diff-range, or the Layer-3 title/name heuristic counts).
 //
 // Never throws: missing/undefined inputs degrade to { links: [], diagnostics: [] };
 // a malformed task/dep/commit/symbolReference/evidence/focusReference row
 // contributes a diagnostic (or is silently skipped), never a throw.
+//
+// buildGovernanceLinks stays PURE — no fs. persistGovernanceLinks (below) is
+// a SEPARATE export and the ONLY fs in this module: it serializes an
+// already-computed links array to the §3.4 stored graph, atomically and
+// deterministically. It never computes links itself.
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const VALID_KINDS = new Set([
+    'declares_file', 'depends_on_file', 'implements_task', 'changed_by_commit',
+    'verified_by_test', 'evidenced_by_archive', 'related_to_focus',
+]);
+const VALID_STATUSES = new Set(['confirmed', 'derived', 'proposed']);
+const STATUS_RANK = { confirmed: 3, derived: 2, proposed: 1 };
 
 function isPlainObject(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -257,6 +285,43 @@ function collectImplementsTaskSymbolLinks(planIR, symbolReferences, evidence, co
     }
 }
 
+// implements_task (status 'proposed', confidence 0.5): the WEAKEST layer —
+// a name-only fuzzy match between a task's title and a symbol reference's
+// name. task.title (lowercased) CONTAINS symbolReference.reference.name
+// (lowercased, length >= 3 to avoid trivial matches). A loose textual
+// signal ONLY: NEVER emitted as confirmed/derived, confidence capped at 0.5.
+// A proposal that collides (same id) with a stronger rule's confirmed/derived
+// link is dropped by the strength-ranked dedupe in buildGovernanceLinks —
+// that is intended, not a bug.
+function collectHeuristicLinks(planIR, symbolReferences, links, diagnostics) {
+    const tasks = isPlainObject(planIR) && Array.isArray(planIR.tasks) ? planIR.tasks : [];
+    const rawSymRefs = Array.isArray(symbolReferences) ? symbolReferences : [];
+
+    for (const task of tasks) {
+        if (!isPlainObject(task) || task.id === undefined) continue;
+        if (typeof task.title !== 'string') continue;
+        const titleLower = task.title.toLowerCase();
+        try {
+            for (const symRef of rawSymRefs) {
+                if (!isPlainObject(symRef) || !isPlainObject(symRef.reference) || !symRef.reference.id) continue;
+                const name = symRef.reference.name;
+                if (typeof name !== 'string' || name.length < 3) continue;
+                if (!titleLower.includes(name.toLowerCase())) continue;
+
+                const link = makeLink(task.id, symRef.reference.id, 'implements_task', {
+                    sourcePath: task.sourcePath,
+                    heuristic: 'title-contains-symbol-name',
+                });
+                link.status = 'proposed';
+                link.confidence = Math.min(0.5, clampConfidence(0.5));
+                links.push(link);
+            }
+        } catch (err) {
+            diagnostics.push(diag('governance-linker-error', `implements_task(heuristic): ${err && err.message ? err.message : String(err)}`));
+        }
+    }
+}
+
 // verified_by_test / evidenced_by_archive: from `evidence` rows, only when a
 // real codeReferenceId can be resolved (explicit, or via evidence.filePath
 // against fileReferences). No resolvable reference -> diagnostic, no link.
@@ -322,15 +387,115 @@ function collectFocusLinks(focusReferences, links, diagnostics) {
     }
 }
 
+// Strength-ranked dedupe: for links sharing the same id, keep the HIGHEST
+// STATUS_RANK (confirmed > derived > proposed). Ties (equal rank) keep the
+// higher-confidence link, then the first-seen link. This ensures a
+// 'proposed' heuristic can never shadow a 'confirmed'/'derived' link for the
+// same (governanceEntityId, codeReferenceId, kind). Output is sorted by id
+// for deterministic ordering.
 function dedupeLinks(links) {
-    const seen = new Set();
-    const out = [];
+    const byId = new Map();
     for (const link of links) {
-        if (seen.has(link.id)) continue;
-        seen.add(link.id);
-        out.push(link);
+        if (!isPlainObject(link) || typeof link.id !== 'string') continue;
+        const existing = byId.get(link.id);
+        if (!existing) {
+            byId.set(link.id, link);
+            continue;
+        }
+        const existingRank = STATUS_RANK[existing.status] || 0;
+        const candidateRank = STATUS_RANK[link.status] || 0;
+        if (candidateRank > existingRank) {
+            byId.set(link.id, link);
+        } else if (candidateRank === existingRank && (link.confidence || 0) > (existing.confidence || 0)) {
+            byId.set(link.id, link);
+        }
+        // else: candidate is weaker (or tied with lower/equal confidence) — keep existing
     }
-    return out;
+    return Array.from(byId.values()).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+// Shape check: does `link` look like a valid GovernanceCodeLink?
+function isValidLink(link) {
+    if (!isPlainObject(link)) return false;
+    if (typeof link.id !== 'string' || !link.id.startsWith('gov-link:')) return false;
+    if (typeof link.governanceEntityId !== 'string' || link.governanceEntityId.length === 0) return false;
+    if (typeof link.codeReferenceId !== 'string' || link.codeReferenceId.length === 0) return false;
+    if (!VALID_KINDS.has(link.kind)) return false;
+    if (!VALID_STATUSES.has(link.status)) return false;
+    if (typeof link.confidence !== 'number' || !Number.isFinite(link.confidence) || link.confidence < 0 || link.confidence > 1) return false;
+    if (!isPlainObject(link.evidence)) return false;
+    return true;
+}
+
+// Recursively sort object keys so JSON.stringify produces a canonical,
+// byte-identical representation for structurally-identical data regardless
+// of key insertion order.
+function canonicalize(value) {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (isPlainObject(value)) {
+        const out = {};
+        for (const key of Object.keys(value).sort()) {
+            out[key] = canonicalize(value[key]);
+        }
+        return out;
+    }
+    return value;
+}
+
+// persistGovernanceLinks(root, links) -> { path, written, count, diagnostics }
+//
+// The §3.4 stored graph writer — the ONLY fs in this module. Serializes an
+// already-computed `links` array (from buildGovernanceLinks) to
+// `<root>/.evo-lite/generated/code-perception/governance-links.json`.
+//   - Deterministic: links sorted by id, all object keys canonicalized
+//     (sorted), so two calls with the same links produce BYTE-IDENTICAL
+//     output.
+//   - Atomic: mkdir -p the parent, write a same-dir temp file, fs.renameSync
+//     into place — never a half-written file.
+//   - Never throws: an fs error degrades to { written:false,
+//     diagnostics:[{code:'persist-failed', message}] }.
+//   - Does NOT compute links — it only serializes what it is given.
+function persistGovernanceLinks(root, links) {
+    let targetDir = null;
+    let targetPath = null;
+    const diagnostics = [];
+    let tmpPath = null;
+
+    try {
+        targetDir = path.join(String(root), '.evo-lite', 'generated', 'code-perception');
+        targetPath = path.join(targetDir, 'governance-links.json');
+
+        const safeLinks = Array.isArray(links) ? links : [];
+        const sorted = safeLinks.slice().sort((a, b) => {
+            const idA = isPlainObject(a) && typeof a.id === 'string' ? a.id : '';
+            const idB = isPlainObject(b) && typeof b.id === 'string' ? b.id : '';
+            return idA < idB ? -1 : idA > idB ? 1 : 0;
+        });
+        const payload = canonicalize({
+            version: 'evo-code-graph@1',
+            generatedCount: safeLinks.length,
+            links: sorted,
+        });
+        const json = JSON.stringify(payload, null, 2);
+
+        fs.mkdirSync(targetDir, { recursive: true });
+        const rand = crypto.randomBytes(6).toString('hex');
+        tmpPath = path.join(targetDir, `.governance-links.${process.pid}.${Date.now()}.${rand}.tmp`);
+        fs.writeFileSync(tmpPath, json, 'utf8');
+        fs.renameSync(tmpPath, targetPath);
+
+        return { path: targetPath, written: true, count: safeLinks.length, diagnostics };
+    } catch (err) {
+        if (tmpPath) {
+            try {
+                fs.unlinkSync(tmpPath);
+            } catch (cleanupErr) {
+                // ignore — best-effort cleanup of the temp file
+            }
+        }
+        diagnostics.push(diag('persist-failed', err && err.message ? err.message : String(err)));
+        return { path: targetPath, written: false, count: 0, diagnostics };
+    }
 }
 
 // buildGovernanceLinks(inputs) -> { links: GovernanceCodeLink[], diagnostics: [] }
@@ -358,6 +523,7 @@ function buildGovernanceLinks(inputs) {
         collectDependsOnFileLinks(safeInputs.acceptanceDependencies, resolveRef, links, diagnostics);
         collectChangedByCommitLinks(safeInputs.commits, resolveRef, links, diagnostics);
         collectImplementsTaskSymbolLinks(safeInputs.planIR, safeInputs.symbolReferences, safeInputs.evidence, safeInputs.commits, links, diagnostics);
+        collectHeuristicLinks(safeInputs.planIR, safeInputs.symbolReferences, links, diagnostics);
         collectEvidenceLinks(safeInputs.evidence, resolveRef, links, diagnostics);
         collectFocusLinks(safeInputs.focusReferences, links, diagnostics);
     } catch (err) {
@@ -370,4 +536,6 @@ function buildGovernanceLinks(inputs) {
 module.exports = {
     normalizePath,
     buildGovernanceLinks,
+    isValidLink,
+    persistGovernanceLinks,
 };

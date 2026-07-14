@@ -5281,6 +5281,111 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-linker-symbol passed');
 
+        console.log('T-cg-linker-heuristic. Testing governance linker — name-only heuristic proposals, strength-ranked dedupe, persisted stored graph ...');
+        {
+            const { normalizeReference } = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize'));
+            const linker = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'governance-linker'));
+            const refA = normalizeReference('provider:native-lite', { providerEntityId: 'src/a.js', name: 'a.js', kind: 'file', filePath: 'src/a.js' });
+            const fileReferences = [refA];
+
+            const symParseConfig = {
+                reference: normalizeReference('provider:codegraph', { providerEntityId: 'src/a.js::parseConfig', name: 'parseConfig', kind: 'function', filePath: 'src/a.js', lineRange: [1, 5] }),
+                filePath: 'src/a.js', lineRange: [1, 5], resolutionConfidence: 0.9,
+            };
+
+            // 1. Heuristic proposal <=0.5: title contains symbol name, no strong rule.
+            {
+                const planIR = { tasks: [{ id: 'task:parse', title: 'Implement parseConfig loader' }] };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symParseConfig],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:parse');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one heuristic implements_task link');
+                assert.strictEqual(implementsLinks[0].status, 'proposed', 'heuristic implements_task status is proposed');
+                assert.ok(implementsLinks[0].confidence <= 0.5, 'heuristic implements_task confidence <= 0.5');
+                assert.strictEqual(implementsLinks[0].confidence, 0.5, 'heuristic implements_task confidence is 0.5');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symParseConfig.reference.id, 'heuristic link resolves to the matched symbol');
+            }
+
+            // 2. Strong rule supersedes proposal on dedupe: same task+symbol also
+            //    satisfies a strong rule (task.symbols) -> exactly ONE link for
+            //    that (task, symbol, implements_task) id, and it is 'derived'.
+            {
+                const planIR = { tasks: [{ id: 'task:parse2', title: 'Implement parseConfig loader', symbols: ['parseConfig'] }] };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symParseConfig],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:parse2');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one link survives dedupe for the colliding id');
+                assert.strictEqual(implementsLinks[0].status, 'derived', 'the derived (strong-rule) link survives, the proposal is dropped');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symParseConfig.reference.id, 'surviving link still resolves to the matched symbol');
+            }
+
+            // 3. All links validate: mixed input (exact + symbol + heuristic).
+            {
+                const planIR = {
+                    tasks: [
+                        { id: 'task:mix', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js'], title: 'Implement parseConfig loader' },
+                    ],
+                };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symParseConfig],
+                });
+                assert.ok(result.links.length > 0, 'mixed input produces at least one link');
+                assert.ok(result.links.every(l => linker.isValidLink(l)), 'every returned link passes isValidLink');
+            }
+
+            // 4. persist deterministic + atomic: two runs on the same links
+            //    produce BYTE-IDENTICAL output; the file lands at the §3.4 path;
+            //    stored links are sorted by id.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-linker-persist');
+                const planIR = { tasks: [{ id: 'task:persist', title: 'Implement parseConfig loader' }] };
+                const built = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symParseConfig],
+                });
+                assert.ok(built.links.length > 0, 'setup: buildGovernanceLinks must produce links to persist');
+
+                const first = linker.persistGovernanceLinks(workspaceRoot, built.links);
+                assert.strictEqual(first.written, true, 'persist must succeed on a writable root');
+                const expectedPath = path.join(workspaceRoot, '.evo-lite', 'generated', 'code-perception', 'governance-links.json');
+                assert.strictEqual(first.path, expectedPath, 'persist writes to the §3.4 stored-graph path');
+                assert.ok(fs.existsSync(expectedPath), 'governance-links.json must exist after persist');
+
+                const parsed = JSON.parse(fs.readFileSync(expectedPath, 'utf8'));
+                assert.strictEqual(parsed.version, 'evo-code-graph@1', 'stored graph carries the version tag');
+                assert.strictEqual(parsed.generatedCount, built.links.length, 'generatedCount matches links.length');
+                const ids = parsed.links.map(l => l.id);
+                const sortedIds = ids.slice().sort();
+                assert.deepStrictEqual(ids, sortedIds, 'stored links are sorted by id');
+
+                const firstBytes = fs.readFileSync(expectedPath, 'utf8');
+                const second = linker.persistGovernanceLinks(workspaceRoot, built.links);
+                assert.strictEqual(second.written, true, 'second persist call must also succeed');
+                const secondBytes = fs.readFileSync(expectedPath, 'utf8');
+                assert.strictEqual(secondBytes, firstBytes, 'two persist calls on the same links produce byte-identical output');
+            }
+
+            // 5. persist never throws on a bad root -> {written:false, diagnostics:[persist-failed]}.
+            {
+                const badRoot = `${path.sep}a${path.sep}path${path.sep}that${path.sep}cannot${path.sep}be${path.sep}created${path.sep}\0invalid`;
+                let result;
+                assert.doesNotThrow(() => {
+                    result = linker.persistGovernanceLinks(badRoot, []);
+                }, 'persistGovernanceLinks must never throw on a bad root');
+                assert.strictEqual(result.written, false, 'a bad root must not report written:true');
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'persist-failed'),
+                    'a bad root must surface a persist-failed diagnostic',
+                );
+            }
+        }
+        console.log('✅ T-cg-linker-heuristic passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
