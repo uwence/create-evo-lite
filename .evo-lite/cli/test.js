@@ -12,7 +12,32 @@ async function runTests() {
     // 'all' MUST run both suites so `npm test` / CI exercise the governance guards too;
     // 'governance' runs only the governance suite.
     if (TEST_SCOPE === 'governance' || TEST_SCOPE === 'all') {
-        await runGovernanceTests();
+        // The dogfood strict-gate's own subtest spawns this command to check the gate's exit
+        // behavior. In that nested run (EVO_LITE_DOGFOOD_SPAWN_TEST=1) skip the heavy governance
+        // suite and run ONLY the gate below — otherwise the suite would re-run itself recursively.
+        const gateOnly = process.env.EVO_LITE_DOGFOOD_SPAWN_TEST === '1';
+        if (!gateOnly) {
+            await runGovernanceTests();
+        }
+
+        if (process.argv.includes('--require-live-codegraph')) {
+            const fs = require('fs'); const path = require('path');
+            const root = process.env.EVO_LITE_WORKSPACE_ROOT || require('./runtime').getWorkspaceRoot();
+            const artifactPath = path.join(root, 'docs', 'code-perception-codegraph-dogfood.md');
+            if (!fs.existsSync(artifactPath)) {
+                console.error('live-codegraph-artifact-missing: ' + artifactPath);
+                process.exit(1);
+            }
+            let text = ''; try { text = fs.readFileSync(artifactPath, 'utf8'); } catch (e) { console.error('live-codegraph-artifact-missing: ' + e.message); process.exit(1); }
+            const { validateDogfoodArtifact } = require('./code-perception/dogfood-validate');
+            const result = validateDogfoodArtifact(text, { requireClosureEvidence: true });
+            if (!result.valid) {
+                console.error('live-codegraph-artifact-invalid: ' + result.findings.map(f => f.code + ':' + f.message).join('; '));
+                process.exit(1);
+            }
+            console.log('live-codegraph dogfood artifact valid (' + artifactPath + ')');
+        }
+
         if (TEST_SCOPE === 'governance') return;
     }
 

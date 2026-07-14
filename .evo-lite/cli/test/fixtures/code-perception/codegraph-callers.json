@@ -1,0 +1,23 @@
+{
+  "symbol": "normalizeReference",
+  "callers": [
+    {
+      "name": "normalizeSearchResult",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "startLine": 94
+    },
+    {
+      "name": "normalizeRelationship",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "startLine": 118
+    },
+    {
+      "name": "normalizeImpactResult",
+      "kind": "function",
+      "filePath": "templates/cli/code-perception/normalize.js",
+      "startLine": 130
+    }
+  ]
+}

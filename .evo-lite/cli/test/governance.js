@@ -4092,6 +4092,89 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cp-loader passed');
 
+        console.log('T-cg-loader-register. Testing provider:codegraph registration (config-gated) + options reaching the adapter ...');
+        {
+            const loader = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader'));
+            const fakePath = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception', 'fake-codegraph.js');
+            const ctx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: {} };
+
+            // 1. ① default unchanged: no config still yields exactly native-lite.
+            {
+                const { registrations, diagnostics } = loader.loadProviders();
+                assert.strictEqual(registrations.length, 1, 'default registrations must contain exactly native-lite');
+                assert.strictEqual(registrations[0].provider.id, 'provider:native-lite', 'default provider id must be native-lite');
+                assert.deepStrictEqual(diagnostics, [], 'default loadProviders() must have no diagnostics');
+            }
+
+            // 2. codegraph is registered + selectable in DEFAULT_REGISTRY.
+            {
+                const entry = loader.DEFAULT_REGISTRY['provider:codegraph'];
+                assert.ok(entry, 'DEFAULT_REGISTRY must contain provider:codegraph');
+                assert.strictEqual(entry.role, 'structural-primary', 'provider:codegraph role must be structural-primary');
+            }
+
+            // 3. Config selects codegraph + configured options REACH the adapter
+            //    (proven via check() spawning the fake CLI, not merely stored options).
+            {
+                const { registrations, diagnostics } = loader.loadProviders({
+                    codePerception: {
+                        providers: [{
+                            id: 'provider:codegraph', role: 'structural-primary',
+                            executable: process.execPath, prefixArgs: [fakePath],
+                        }],
+                    },
+                });
+                const cg = registrations.find(r => r.provider.id === 'provider:codegraph');
+                assert.ok(cg, 'provider:codegraph registration must be present');
+                assert.strictEqual(cg.role, 'structural-primary', 'codegraph role must be structural-primary');
+                assert.strictEqual(cg.source, 'configured', 'codegraph source must be configured');
+                assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite must still be present');
+                assert.deepStrictEqual(
+                    diagnostics.filter(d => d.providerId === 'provider:codegraph'), [],
+                    'no diagnostics for provider:codegraph'
+                );
+
+                const avail = await cg.provider.check(ctx);
+                assert.strictEqual(avail.ready, true, 'configured executable/prefixArgs must reach the adapter (check() ready)');
+                assert.strictEqual(avail.available, true, 'configured executable/prefixArgs must reach the adapter (check() available)');
+            }
+
+            // 4. Dangerous fields stripped from the options that reach the adapter.
+            {
+                const { registrations } = loader.loadProviders({
+                    codePerception: {
+                        providers: [{
+                            id: 'provider:codegraph', executable: process.execPath, prefixArgs: [fakePath],
+                            module: '../../evil', create: 'x',
+                        }],
+                    },
+                });
+                const cg = registrations.find(r => r.provider.id === 'provider:codegraph');
+                assert.ok(cg, 'provider:codegraph registration must be present');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(cg.options, 'module'), false, 'options must not contain module');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(cg.options, 'create'), false, 'options must not contain create');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(cg.options, 'id'), false, 'options must not contain id');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(cg.options, 'role'), false, 'options must not contain role');
+            }
+
+            // 5. Broken-factory isolation (unchanged ① contract) via an injected registry.
+            {
+                const injected = {
+                    'provider:native-lite': loader.DEFAULT_REGISTRY['provider:native-lite'],
+                    'provider:codegraph': { role: 'structural-primary', create: () => { throw new Error('boom'); } },
+                };
+                const { registrations, diagnostics } = loader.loadProviders(
+                    { codePerception: { providers: [{ id: 'provider:codegraph' }] } },
+                    { registry: injected }
+                );
+                const failed = diagnostics.filter(d => d.code === 'provider-load-failed' && d.providerId === 'provider:codegraph');
+                assert.strictEqual(failed.length, 1, 'must emit provider-load-failed for provider:codegraph');
+                assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite registration must be present');
+                assert.ok(!registrations.some(r => r.provider.id === 'provider:codegraph'), 'no registration for provider:codegraph');
+            }
+        }
+        console.log('✅ T-cg-loader-register passed');
+
         console.log('T-cp-router. Testing code-perception provider router (async inspect + pure select) ...');
         {
             const router = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-router'));
@@ -4244,6 +4327,1463 @@ async function runGovernanceTests() {
             }
         }
         console.log('✅ T-cp-router passed');
+
+        console.log('T-cg-fixtures. Testing pinned-upstream CodeGraph fixtures + provenance manifest + fake CLI ...');
+        {
+            const crypto = require('crypto');
+            const childProcess = require('child_process');
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const sha256Hex = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+
+            // 1. Manifest parses and carries the provenance contract.
+            const manifestPath = path.join(CG_DIR, 'codegraph-fixture-manifest.json');
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            assert.strictEqual(typeof manifest.upstream, 'string', 'manifest.upstream must be a string');
+            assert.strictEqual(typeof manifest.package, 'string', 'manifest.package must be a string');
+            assert.strictEqual(manifest.providerVersion, '1.4.1', 'manifest.providerVersion must be 1.4.1');
+            assert.ok(manifest.captureMethod && typeof manifest.captureMethod === 'object',
+                'manifest.captureMethod must be an object');
+            assert.strictEqual(typeof manifest.supportsPositionalSeparator, 'boolean',
+                'manifest.supportsPositionalSeparator must be a boolean');
+            assert.ok(manifest.fixtureSha256 && typeof manifest.fixtureSha256 === 'object',
+                'manifest.fixtureSha256 must be an object');
+
+            // 2. Every fixtureSha256 entry matches the actual file bytes (proves the
+            //    manifest describes the real committed fixtures — anti-fabrication).
+            const shaEntries = Object.entries(manifest.fixtureSha256);
+            assert.ok(shaEntries.length >= 10, 'manifest.fixtureSha256 must cover the fixture set');
+            for (const [name, recorded] of shaEntries) {
+                const bytes = fs.readFileSync(path.join(CG_DIR, name));
+                const expected = 'sha256:' + sha256Hex(bytes);
+                assert.strictEqual(recorded, expected, `fixtureSha256[${name}] must equal sha256 of the file bytes`);
+            }
+
+            // 3. Every JSON fixture parses; the malformed one is valid JSON too.
+            const jsonFixtures = [
+                'codegraph-status.json', 'codegraph-files.json', 'codegraph-query.json',
+                'codegraph-callers.json', 'codegraph-callees.json', 'codegraph-impact.json',
+                'codegraph-affected.json', 'codegraph-malformed.json',
+            ];
+            for (const jf of jsonFixtures) {
+                assert.doesNotThrow(() => JSON.parse(fs.readFileSync(path.join(CG_DIR, jf), 'utf8')),
+                    `${jf} must be valid JSON`);
+            }
+
+            // 4. help.txt carries all 9 command names of the read surface.
+            const helpTxt = fs.readFileSync(path.join(CG_DIR, 'codegraph-help.txt'), 'utf8');
+            for (const cmd of ['status', 'files', 'query', 'explore', 'node', 'callers', 'callees', 'impact', 'affected']) {
+                assert.ok(helpTxt.includes(cmd), `help.txt must mention the "${cmd}" command`);
+            }
+
+            // 5. fake-codegraph.js resolves fixtures via __dirname (cwd-independent) and
+            //    exits 2 on an unknown subcommand.
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const statusRaw = fs.readFileSync(path.join(CG_DIR, 'codegraph-status.json'), 'utf8');
+            const out = childProcess.execFileSync(process.execPath, [fakePath, 'status'],
+                { cwd: os.tmpdir(), encoding: 'utf8' });
+            assert.strictEqual(out, statusRaw,
+                'fake-codegraph.js status output must equal codegraph-status.json bytes (proves __dirname resolution)');
+            let threw = false;
+            let code;
+            try {
+                childProcess.execFileSync(process.execPath, [fakePath, 'no-such-subcommand'],
+                    { cwd: os.tmpdir(), encoding: 'utf8', stdio: 'pipe' });
+            } catch (err) {
+                threw = true;
+                code = err.status;
+            }
+            assert.ok(threw, 'fake-codegraph.js must fail on an unknown subcommand');
+            assert.strictEqual(code, 2, 'fake-codegraph.js unknown subcommand must exit 2');
+
+            // 6. Dogfood validator fixtures: well-formed has all 9 sections + a
+            //    fingerprint line; the bad copy is missing at least one section.
+            //    (validateDogfoodArtifact is a LATER task — do NOT call it here.)
+            const REQUIRED_SECTIONS = [
+                'status', 'search', 'callers-callees', 'impact',
+                'current-focus', 'Task-to-Code', 'stale-index', 'fallback', 'limitations',
+            ];
+            const good = fs.readFileSync(path.join(CG_DIR, 'dogfood-sample.md'), 'utf8');
+            const bad = fs.readFileSync(path.join(CG_DIR, 'dogfood-bad.md'), 'utf8');
+            const headingRe = (section) => new RegExp('^#+\\s.*' + section.replace(/[-]/g, '\\-'), 'm');
+            for (const section of REQUIRED_SECTIONS) {
+                assert.ok(headingRe(section).test(good), `dogfood-sample.md must have a "${section}" heading`);
+            }
+            assert.ok(/^fingerprint:\s*sha256:[0-9a-f]{64}$/m.test(good),
+                'dogfood-sample.md must carry a fingerprint: sha256:<hex> line');
+            const missing = REQUIRED_SECTIONS.filter((section) => !headingRe(section).test(bad));
+            assert.ok(missing.length >= 1, 'dogfood-bad.md must be missing at least one required section');
+        }
+        console.log('✅ T-cg-fixtures passed');
+
+        console.log('T-cg-exec. Testing CodeGraph secure exec runner (no-shell + timeout + Local-First env) ...');
+        {
+            const exec = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph-exec'));
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const manifest = require(path.join(CG_DIR, 'codegraph-fixture-manifest.json'));
+
+            // 1. Fixture echo: a real execFile round-trip through node, stdout equals
+            //    the committed codegraph-status.json bytes exactly.
+            {
+                const statusRaw = fs.readFileSync(path.join(CG_DIR, 'codegraph-status.json'), 'utf8');
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'status', args: [],
+                });
+                assert.strictEqual(result.ok, true, 'status fixture echo must succeed');
+                assert.strictEqual(result.code, 0, 'status fixture echo must exit 0');
+                assert.strictEqual(result.stdout, statusRaw, 'stdout must equal codegraph-status.json bytes');
+                assert.strictEqual(result.timedOut, false, 'must not be timed out');
+                assert.strictEqual(result.truncated, false, 'must not be truncated');
+                assert.deepStrictEqual(result.diagnostics, [], 'success must have no diagnostics');
+            }
+
+            // 2. Disallowed subcommand: rejected before spawn, fake never runs.
+            {
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'rm', args: ['-rf', '/'],
+                });
+                assert.strictEqual(result.ok, false, 'disallowed subcommand must fail');
+                assert.strictEqual(result.stdout, '', 'disallowed subcommand must never spawn (empty stdout)');
+                assert.ok(result.diagnostics.some((d) => d.code === 'disallowed-subcommand'),
+                    'must carry a disallowed-subcommand diagnostic');
+            }
+
+            // 3. Timeout kill: the child is killed quickly, not awaited the full sleep.
+            {
+                const start = Date.now();
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'status',
+                    args: ['--fake-sleep', '5000'], timeoutMs: 300,
+                });
+                const elapsed = Date.now() - start;
+                assert.strictEqual(result.ok, false, 'timed-out run must not be ok');
+                assert.strictEqual(result.timedOut, true, 'timedOut must be true');
+                assert.ok(result.diagnostics.some((d) => d.code === 'command-timeout'),
+                    'must carry a command-timeout diagnostic');
+                assert.ok(elapsed < 4000, `must complete well before the 5000ms sleep (elapsed=${elapsed}ms)`);
+            }
+
+            // 4. Env override: Local-First wins over a caller's DO_NOT_TRACK='0' when
+            //    allowNetwork is false; both forced vars land as '1'. When allowNetwork
+            //    is true, neither is forced by this module.
+            {
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'status',
+                    args: ['--fake-echo-env'], env: { DO_NOT_TRACK: '0' }, allowNetwork: false,
+                });
+                assert.strictEqual(result.ok, true, 'env-echo run must succeed');
+                const childEnvSeen = JSON.parse(result.stdout);
+                assert.strictEqual(childEnvSeen.DO_NOT_TRACK, '1', 'Local-First must override caller DO_NOT_TRACK=0 back to 1');
+                assert.strictEqual(childEnvSeen.CODEGRAPH_NO_UPDATE_CHECK, '1', 'CODEGRAPH_NO_UPDATE_CHECK must be forced to 1');
+
+                const resultNet = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'status',
+                    args: ['--fake-echo-env'], env: { DO_NOT_TRACK: '0' }, allowNetwork: true,
+                });
+                const childEnvSeenNet = JSON.parse(resultNet.stdout);
+                assert.notStrictEqual(childEnvSeenNet.DO_NOT_TRACK, '1',
+                    'with allowNetwork:true this module must not force DO_NOT_TRACK to 1');
+            }
+
+            // 5. No-shell literal args: a leading-dash operand after '--' and a
+            //    shell-metachar operand are both passed literally, never interpreted.
+            {
+                const queryRaw = fs.readFileSync(path.join(CG_DIR, 'codegraph-query.json'), 'utf8');
+                const result = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'query',
+                    args: ['--json', '--', '--help'],
+                });
+                assert.strictEqual(result.ok, true, 'query with a literal --help operand must succeed');
+                assert.strictEqual(result.stdout, queryRaw, 'stdout must equal codegraph-query.json (proves --help stayed literal)');
+
+                const result2 = await exec.runCodegraph({
+                    executable: process.execPath, prefixArgs: [fakePath], subcommand: 'query',
+                    args: ['--json', '--', '; echo pwned'],
+                });
+                assert.strictEqual(result2.ok, true, 'query with a shell-metachar operand must succeed');
+                assert.strictEqual(result2.stdout, queryRaw, 'stdout must equal codegraph-query.json (proves no shell interpretation)');
+                assert.ok(!result2.stdout.includes('pwned'), 'stdout must never contain "pwned"');
+            }
+
+            // 6. safeOperand + frozen-constant-tracks-manifest.
+            {
+                assert.deepStrictEqual(exec.safeOperand('--help'), { ok: true, value: '--help' },
+                    'safeOperand must allow a leading-dash operand when positional separator is supported');
+                assert.strictEqual(exec.SUPPORTS_POSITIONAL_SEPARATOR, manifest.supportsPositionalSeparator,
+                    'SUPPORTS_POSITIONAL_SEPARATOR must equal the fixture manifest value');
+            }
+
+            // 7. ALLOWED_SUBCOMMANDS is a frozen array; the lookup Set is not exported.
+            {
+                assert.ok(Array.isArray(exec.ALLOWED_SUBCOMMANDS), 'ALLOWED_SUBCOMMANDS must be an array');
+                assert.strictEqual(Object.isFrozen(exec.ALLOWED_SUBCOMMANDS), true, 'ALLOWED_SUBCOMMANDS must be frozen');
+                assert.strictEqual(exec.ALLOWED_SET, undefined, 'the lookup Set must not be exported');
+            }
+        }
+        console.log('✅ T-cg-exec passed');
+
+        console.log('T-cg-detect. Testing CodeGraph adapter skeleton + fingerprint-locked detection ...');
+        {
+            const cg = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph'));
+            const contract = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-contract'));
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const ctx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: {} };
+            const provider = cg.create({ executable: process.execPath, prefixArgs: [fakePath] });
+
+            // 1+2. validateProvider passes; capability map is correct (modules=false).
+            {
+                const result = contract.validateProvider(provider);
+                assert.strictEqual(result.valid, true, `provider must validate: ${JSON.stringify(result.diagnostics)}`);
+                assert.strictEqual(provider.capabilities.modules, false, 'modules capability must be false');
+                assert.strictEqual(provider.capabilities.impact, true, 'impact capability must be true');
+                assert.strictEqual(provider.capabilities.symbols, true, 'symbols capability must be true');
+            }
+
+            // 3. check() against the real fixtures: available/ready/indexState/providerVersion.
+            {
+                const avail = await provider.check(ctx);
+                const v = contract.validateAvailability(avail);
+                assert.strictEqual(v.valid, true, `availability must validate: ${JSON.stringify(v.diagnostics)}`);
+                assert.strictEqual(avail.available, true, 'must be available against valid fixtures');
+                assert.strictEqual(avail.ready, true, 'must be ready against valid fixtures');
+                assert.strictEqual(avail.indexState, 'ready', 'indexState must be ready');
+                assert.strictEqual(avail.providerVersion, '1.4.1', 'providerVersion must be parsed from version fixture');
+            }
+
+            // 4. getStatus() STATUS translator against the real fixture.
+            {
+                const status = await provider.getStatus(ctx);
+                const v = contract.validateStatus(status);
+                assert.strictEqual(v.valid, true, `status must validate: ${JSON.stringify(v.diagnostics)}`);
+                assert.strictEqual(status.providerVersion, '1.4.1', 'providerVersion must equal fixture version');
+                assert.strictEqual(status.compatibility, 'supported', '1.4.1 is in TESTED_PROVIDER_VERSIONS');
+                assert.strictEqual(status.ready, true, 'ready must be true for a complete index');
+                assert.strictEqual(status.indexState, 'ready', 'indexState must be ready');
+                assert.strictEqual(typeof status.observedSchemaFingerprint, 'string', 'observedSchemaFingerprint must be a string');
+                assert.ok(status.observedSchemaFingerprint.length > 0, 'observedSchemaFingerprint must be non-empty');
+            }
+
+            // 5. Missing executable: never throws, reports installed:false / missing.
+            {
+                const missingExe = path.join(os.tmpdir(), 'definitely-not-codegraph-' + Date.now());
+                const badProvider = cg.create({ executable: missingExe });
+                const avail = await badProvider.check(ctx);
+                assert.strictEqual(avail.installed, false, 'installed must be false for a missing executable');
+                assert.strictEqual(avail.available, false, 'available must be false for a missing executable');
+                assert.strictEqual(avail.indexState, 'missing', 'indexState must be missing for a missing executable');
+                assert.ok(/install/i.test(avail.suggestedAction || ''), 'suggestedAction must mention install');
+            }
+
+            // 6. Fingerprint identity lock: real inline fakes with a bad version and
+            //    an incomplete help command set — both must be rejected, NO adapt-guess.
+            {
+                const tmpDir = os.tmpdir();
+
+                const lowVersionFake = path.join(tmpDir, 'cg-fake-lowver-' + Date.now() + '.js');
+                fs.writeFileSync(lowVersionFake, [
+                    "'use strict';",
+                    "const sub = process.argv.slice(2)[0];",
+                    "if (sub === 'version') { process.stdout.write('0.9.0'); }",
+                    "process.exit(0);",
+                    "",
+                ].join('\n'), 'utf8');
+                const lowVerProvider = cg.create({ executable: process.execPath, prefixArgs: [lowVersionFake] });
+                const lowVerAvail = await lowVerProvider.check(ctx);
+                assert.strictEqual(contract.validateAvailability(lowVerAvail).valid, true, 'low-version availability must validate');
+                assert.strictEqual(lowVerAvail.available, false, '0.9.0 is below MIN_PROVIDER_VERSION, must be unavailable');
+                assert.ok(/version|identity/i.test(lowVerAvail.reason || ''), 'reason must mention version/identity mismatch');
+
+                const highVersionFake = path.join(tmpDir, 'cg-fake-highver-' + Date.now() + '.js');
+                fs.writeFileSync(highVersionFake, [
+                    "'use strict';",
+                    "const sub = process.argv.slice(2)[0];",
+                    "if (sub === 'version') { process.stdout.write('2.1.0'); }",
+                    "process.exit(0);",
+                    "",
+                ].join('\n'), 'utf8');
+                const highVerProvider = cg.create({ executable: process.execPath, prefixArgs: [highVersionFake] });
+                const highVerAvail = await highVerProvider.check(ctx);
+                assert.strictEqual(highVerAvail.available, false, '2.1.0 is >= maxExclusive, must be unavailable');
+                assert.ok(/version|identity/i.test(highVerAvail.reason || ''), 'reason must mention version/identity mismatch');
+
+                const badHelpFake = path.join(tmpDir, 'cg-fake-badhelp-' + Date.now() + '.js');
+                fs.writeFileSync(badHelpFake, [
+                    "'use strict';",
+                    "const sub = process.argv.slice(2)[0];",
+                    "if (sub === 'version') { process.stdout.write('1.4.1'); }",
+                    "else if (sub === 'help') { process.stdout.write('status files query explore node callers callees'); }",
+                    "process.exit(0);",
+                    "",
+                ].join('\n'), 'utf8');
+                const badHelpProvider = cg.create({ executable: process.execPath, prefixArgs: [badHelpFake] });
+                const badHelpAvail = await badHelpProvider.check(ctx);
+                assert.strictEqual(badHelpAvail.available, false, 'incomplete help command set must be unavailable (identity mismatch)');
+                assert.ok(/version|identity/i.test(badHelpAvail.reason || ''), 'reason must mention identity/version mismatch');
+            }
+
+            // 7. Never throws on a spawn failure — neither check() nor getStatus().
+            {
+                const missingExe = path.join(os.tmpdir(), 'definitely-not-codegraph-either-' + Date.now());
+                const badProvider = cg.create({ executable: missingExe });
+                let threw = false;
+                try {
+                    await badProvider.check(ctx);
+                    await badProvider.getStatus(ctx);
+                } catch (e) {
+                    threw = true;
+                }
+                assert.strictEqual(threw, false, 'check()/getStatus() must never throw on a spawn failure');
+                const status = await badProvider.getStatus(ctx);
+                assert.strictEqual(contract.validateStatus(status).valid, true, 'safe UNKNOWN status must still validate');
+                assert.strictEqual(status.available, false, 'safe status must report available:false on spawn failure');
+            }
+        }
+        console.log('✅ T-cg-detect passed');
+
+        console.log('T-cg-queries. Testing CodeGraph query methods — command mapping + translators + opaque explore/node + per-capability disable ...');
+        {
+            const cg = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph'));
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const ctx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: {} };
+            const provider = cg.create({ executable: process.execPath, prefixArgs: [fakePath] });
+            const modSource = fs.readFileSync(
+                path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph.js'), 'utf8',
+            );
+
+            // 1. getFiles — 4 files (fixture length), provider-scoped ids, kind:file,
+            //    moduleId:null (modules=false), provenance.providerId set.
+            {
+                const result = await provider.getFiles(ctx);
+                assert.strictEqual(result.files.length, 4, 'getFiles must return 4 files (fixture length)');
+                for (const entry of result.files) {
+                    assert.ok(entry.reference.id.startsWith('code-ref:provider:codegraph:'),
+                        'reference.id must be provider-scoped');
+                    assert.strictEqual(entry.reference.kind, 'file', 'kind must be file');
+                    assert.strictEqual(entry.moduleId, null, 'moduleId must be null (modules=false)');
+                    assert.strictEqual(entry.reference.provenance.providerId, 'provider:codegraph',
+                        'provenance.providerId must be provider:codegraph');
+                }
+            }
+
+            // 2. search('normalize') — 2 matches, first is normalizeReference/function,
+            //    lineRange[0]===54, distinct upstream node ids -> distinct reference ids.
+            {
+                const result = await provider.search(ctx, 'normalize');
+                assert.strictEqual(result.matches.length, 2, 'search must return 2 matches (fixture length)');
+                const [first, second] = result.matches;
+                assert.strictEqual(first.name, 'normalizeReference', 'first match name');
+                assert.strictEqual(first.kind, 'function', 'first match kind');
+                assert.strictEqual(first.lineRange[0], 54, 'first match startLine');
+                assert.notStrictEqual(first.id, second.id, 'distinct upstream node ids must yield distinct reference ids');
+            }
+
+            // 3. getCallers/getCallees — object with a diagnostics channel;
+            //    3 relationships each, correct kind, distinct synthesized
+            //    target ids per row.
+            {
+                const callersResult = await provider.getCallers(ctx, 'normalizeReference');
+                assert.deepStrictEqual(callersResult.diagnostics, [], 'getCallers diagnostics must be empty on success');
+                assert.strictEqual(callersResult.relationships.length, 3, 'getCallers must return 3 relationships');
+                const targetIds = new Set();
+                for (const rel of callersResult.relationships) {
+                    assert.strictEqual(rel.kind, 'called_by', 'getCallers relationship kind must be called_by');
+                    assert.notStrictEqual(rel.source.id, rel.target.id, 'source/target ids must differ');
+                    targetIds.add(rel.target.id);
+                }
+                assert.strictEqual(targetIds.size, 3, 'caller rows must synthesize distinct target ids');
+
+                const calleesResult = await provider.getCallees(ctx, 'normalizeReference');
+                assert.deepStrictEqual(calleesResult.diagnostics, [], 'getCallees diagnostics must be empty on success');
+                assert.strictEqual(calleesResult.relationships.length, 3, 'getCallees must return 3 relationships');
+                for (const rel of calleesResult.relationships) {
+                    assert.strictEqual(rel.kind, 'calls', 'getCallees relationship kind must be calls');
+                }
+            }
+
+            // 4. impact('normalizeReference') — downstream=affected(4), upstream empty
+            //    (not provided by this command), depth from fixture, target has an id.
+            {
+                const result = await provider.impact(ctx, 'normalizeReference');
+                assert.strictEqual(result.downstream.length, 4, 'impact downstream must have 4 entries');
+                assert.strictEqual(result.upstream.length, 0, 'impact upstream must be empty (not provided by impact command)');
+                assert.strictEqual(result.depth, 2, 'impact depth must equal fixture depth');
+                assert.ok(result.target && result.target.id, 'impact target must have an id');
+            }
+
+            // 5. getAffectedTests — independent of impact: a logging fake CLI proves the
+            //    `impact` subcommand is never invoked while resolving affected tests.
+            {
+                const logFile = path.join(os.tmpdir(), 'cg-affected-log-' + Date.now() + '.txt');
+                const loggingFake = path.join(os.tmpdir(), 'cg-fake-logging-' + Date.now() + '.js');
+                fs.writeFileSync(loggingFake, [
+                    "'use strict';",
+                    "const fs = require('fs');",
+                    "const path = require('path');",
+                    "const sub = process.argv[2];",
+                    "fs.appendFileSync(process.env.CG_CALL_LOG, sub + '\\n');",
+                    "const FIXTURES = { status: 'codegraph-status.json', affected: 'codegraph-affected.json', impact: 'codegraph-impact.json' };",
+                    "const name = FIXTURES[sub];",
+                    "if (!name) { process.exit(2); }",
+                    `process.stdout.write(fs.readFileSync(path.join(${JSON.stringify(CG_DIR)}, name)));`,
+                    'process.exit(0);',
+                    '',
+                ].join('\n'), 'utf8');
+                fs.writeFileSync(logFile, '', 'utf8');
+                const prevLog = process.env.CG_CALL_LOG;
+                process.env.CG_CALL_LOG = logFile;
+                try {
+                    const loggingProvider = cg.create({ executable: process.execPath, prefixArgs: [loggingFake] });
+                    const affectedResult = await loggingProvider.getAffectedTests(ctx, {
+                        files: ['templates/cli/code-perception/normalize.js'],
+                    });
+                    assert.deepStrictEqual(affectedResult.diagnostics, [], 'getAffectedTests diagnostics must be empty on success');
+                    assert.strictEqual(affectedResult.tests.length, 1, 'getAffectedTests must return 1 test reference');
+                    assert.strictEqual(affectedResult.tests[0].kind, 'test', 'affected test kind must be test');
+                    assert.ok(affectedResult.tests[0].filePath.endsWith('governance.js'), 'affected test filePath must end governance.js');
+                    const log = fs.readFileSync(logFile, 'utf8');
+                    assert.ok(!log.includes('impact'), 'getAffectedTests must not invoke the impact command (independent of impact())');
+                } finally {
+                    if (prevLog === undefined) { delete process.env.CG_CALL_LOG; } else { process.env.CG_CALL_LOG = prevLog; }
+                    fs.rmSync(logFile, { force: true });
+                    fs.rmSync(loggingFake, { force: true });
+                }
+            }
+
+            // 6. getEntity/explore — OPAQUE: text + only explicitly-marked file:line
+            //    tokens; no relationship/edge object; no synthesized structural edges.
+            {
+                const entity = await provider.getEntity(ctx, { entity: 'normalizeReference' });
+                assert.ok(entity.content.includes('normalized CodeReference'), 'getEntity content must include the opaque prose');
+                assert.ok(entity.reference.filePath.endsWith('normalize.js'), 'getEntity reference filePath must end normalize.js');
+                assert.strictEqual(entity.reference.lineRange[0], 54, 'getEntity reference lineRange[0] must be 54');
+                assert.strictEqual(entity.relationship, undefined, 'getEntity must not return a relationship');
+                assert.strictEqual(entity.edge, undefined, 'getEntity must not return an edge');
+                assert.strictEqual(entity.relationships, undefined, 'getEntity must not return relationships');
+
+                const explore = await provider.explore(ctx, { query: 'normalizeReference' });
+                assert.strictEqual(typeof explore.opaqueText, 'string', 'explore opaqueText must be a string');
+                assert.ok(explore.opaqueText.length > 0, 'explore opaqueText must be non-empty');
+                assert.ok(Array.isArray(explore.extracted) && explore.extracted.length >= 1,
+                    'explore extracted must have at least one entry');
+                assert.ok(explore.extracted[0].filePath, 'explore extracted entry must have a filePath');
+                assert.ok(Array.isArray(explore.extracted[0].lineRange), 'explore extracted entry must have a lineRange');
+                const exploreJson = JSON.stringify(explore);
+                assert.ok(!/"kind"\s*:\s*"calls"/.test(exploreJson), 'explore must not synthesize a calls edge');
+                assert.ok(!exploreJson.includes('"relationships"'), 'explore must not synthesize relationships');
+            }
+
+            // 7. Per-capability disable + re-enable: an inline fake returns the
+            //    malformed (wrong-shaped) fixture for `query`/`callers` but a valid
+            //    `status`; search()/getCallers() must degrade to empty
+            //    matches/relationships + a schema-invalid diagnostic on the
+            //    returned object's `.diagnostics` channel AND disable
+            //    capabilities.symbols/capabilities.callers; a later VALID
+            //    response re-enables each.
+            {
+                const malformedFake = path.join(os.tmpdir(), 'cg-fake-malformed-' + Date.now() + '.js');
+                fs.writeFileSync(malformedFake, [
+                    "'use strict';",
+                    "const fs = require('fs');",
+                    "const path = require('path');",
+                    "const sub = process.argv[2];",
+                    `const CG_DIR = ${JSON.stringify(CG_DIR)};`,
+                    "if (sub === 'query') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-malformed.json'))); process.exit(0); }",
+                    "if (sub === 'callers') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-malformed.json'))); process.exit(0); }",
+                    "if (sub === 'status') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-status.json'))); process.exit(0); }",
+                    'process.exit(2);',
+                    '',
+                ].join('\n'), 'utf8');
+
+                const flexProvider = cg.create({ executable: process.execPath });
+                const malformedCtx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: { prefixArgs: [malformedFake] } };
+                const validCtx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: { prefixArgs: [fakePath] } };
+
+                const badResult = await flexProvider.search(malformedCtx, 'normalize');
+                assert.strictEqual(badResult.matches.length, 0, 'malformed query response must yield empty matches');
+                assert.ok(badResult.diagnostics.some((d) => d.code === 'schema-invalid'),
+                    'malformed query response must emit a schema-invalid diagnostic');
+                const badStatus = await flexProvider.getStatus(malformedCtx);
+                assert.strictEqual(badStatus.capabilities.symbols, false,
+                    'capabilities.symbols must be disabled after a malformed query response');
+
+                const goodResult = await flexProvider.search(validCtx, 'normalize');
+                assert.strictEqual(goodResult.matches.length, 2, 'a subsequent valid query must parse normally');
+                const goodStatus = await flexProvider.getStatus(validCtx);
+                assert.strictEqual(goodStatus.capabilities.symbols, true,
+                    'capabilities.symbols must re-enable after a subsequent valid query response');
+
+                // getCallers previously had NO diagnostics channel at all (bare
+                // array) — this is the channel that was missing.
+                const badCallers = await flexProvider.getCallers(malformedCtx, 'normalizeReference');
+                assert.strictEqual(badCallers.relationships.length, 0, 'malformed callers response must yield empty relationships');
+                assert.ok(badCallers.diagnostics.some((d) => d.code === 'schema-invalid'),
+                    'malformed callers response must emit a schema-invalid diagnostic');
+                const badCallersStatus = await flexProvider.getStatus(malformedCtx);
+                assert.strictEqual(badCallersStatus.capabilities.callers, false,
+                    'capabilities.callers must be disabled after a malformed callers response');
+
+                const goodCallers = await flexProvider.getCallers(validCtx, 'normalizeReference');
+                assert.deepStrictEqual(goodCallers.diagnostics, [], 'a subsequent valid callers response must have no diagnostics');
+                assert.strictEqual(goodCallers.relationships.length, 3, 'a subsequent valid callers response must parse normally');
+                const goodCallersStatus = await flexProvider.getStatus(validCtx);
+                assert.strictEqual(goodCallersStatus.capabilities.callers, true,
+                    'capabilities.callers must re-enable after a subsequent valid callers response');
+
+                fs.rmSync(malformedFake, { force: true });
+            }
+
+            // 8. No `.codegraph` path is ever opened by this module.
+            {
+                assert.ok(!modSource.includes('.codegraph'), 'codegraph.js must never reference a .codegraph path');
+            }
+        }
+        console.log('✅ T-cg-queries passed');
+
+        console.log('T-cg-cache. Testing file-based bounded cache — envelope + disk-safety + persistence whitelist + markStale ...');
+        {
+            const cachePath = path.join(TEMPLATE_CLI_DIR, 'code-perception', 'cache.js');
+            const { makeCacheKey, createCache, CACHEABLE_KINDS } = require(cachePath);
+
+            // 0. CACHEABLE_KINDS sanity (whitelist contract).
+            assert.deepStrictEqual(
+                CACHEABLE_KINDS,
+                ['provider-status', 'search', 'relationship', 'impact', 'governance-links'],
+                'CACHEABLE_KINDS must be the exact whitelist',
+            );
+
+            // 1. Key sensitivity: distinct parts -> distinct key; same parts ->
+            //    same key (deterministic); result is 64-hex.
+            {
+                const kA = makeCacheKey({ providerId: 'p', query: 'a' });
+                const kB = makeCacheKey({ providerId: 'p', query: 'b' });
+                assert.notStrictEqual(kA, kB, 'different query must yield a different key');
+                const kA2 = makeCacheKey({ providerId: 'p', query: 'a' });
+                assert.strictEqual(kA, kA2, 'same parts must yield the same key (deterministic)');
+                assert.ok(/^[0-9a-f]{64}$/.test(kA), 'makeCacheKey must return a 64-hex sha256');
+            }
+
+            // 2. File persistence across instances: a second createCache() over the
+            //    same root must see what the first instance persisted to disk.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-persist');
+                const now = () => 0;
+                const key = makeCacheKey({ providerId: 'p', query: 'persist' });
+                const cache1 = createCache({ projectRoot: workspaceRoot, now });
+                assert.deepStrictEqual(
+                    cache1.set(key, { x: 1 }, { kind: 'provider-status' }),
+                    { stored: true },
+                    'set must succeed for a whitelisted kind',
+                );
+
+                const cache2 = createCache({ projectRoot: workspaceRoot, now });
+                const got = cache2.get(key);
+                assert.strictEqual(got.hit, true, 'a second cache instance over the same root must see the persisted entry');
+                assert.deepStrictEqual(got.value, { x: 1 }, 'persisted value must deep-equal the original (proves on-disk, not in-process)');
+            }
+
+            // 3. TTL expiry via injected clock.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-ttl');
+                let fakeNow = 0;
+                const now = () => fakeNow;
+                const key = makeCacheKey({ providerId: 'p', query: 'ttl' });
+                const cache = createCache({ projectRoot: workspaceRoot, ttlMs: 1000, now });
+                fakeNow = 0;
+                cache.set(key, { y: 1 }, { kind: 'search' });
+                fakeNow = 500;
+                assert.strictEqual(cache.get(key).hit, true, 'entry within ttlMs must hit');
+                fakeNow = 2000;
+                assert.strictEqual(cache.get(key).hit, false, 'entry beyond ttlMs must MISS');
+            }
+
+            // 4. Too-large + uncacheable-kind rejections.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-limits');
+                const now = () => 0;
+                const cache = createCache({ projectRoot: workspaceRoot, now });
+
+                const bigKey = makeCacheKey({ providerId: 'p', query: 'big' });
+                assert.deepStrictEqual(
+                    cache.set(bigKey, { big: 'x'.repeat(2 * 1024 * 1024) }, { kind: 'search' }),
+                    { stored: false, reason: 'cache-value-too-large' },
+                    'an over-budget value must be rejected before writing',
+                );
+
+                const badKindKey = makeCacheKey({ providerId: 'p', query: 'badkind' });
+                assert.deepStrictEqual(
+                    cache.set(badKindKey, { x: 1 }, { kind: 'getEntity-content' }),
+                    { stored: false, reason: 'uncacheable-kind' },
+                    'a non-whitelisted kind must be rejected',
+                );
+            }
+
+            // 5. markStale mutates the envelope only — the value stays byte-identical.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-stale');
+                const now = () => 0;
+                const cache = createCache({ projectRoot: workspaceRoot, now });
+                const key = makeCacheKey({ providerId: 'p', query: 'stale' });
+                cache.set(key, { provider: { freshness: 'fresh' } }, { kind: 'impact' });
+
+                const marked = cache.markStale({ reason: 'head', currentCommit: 'abc' });
+                assert.strictEqual(marked.marked, 1, 'markStale must mark exactly the one live entry');
+
+                const got = cache.get(key);
+                assert.strictEqual(got.hit, true, 'markStale must not evict the entry');
+                assert.strictEqual(got.stale, true, 'get must surface stale:true as the effective freshness');
+                assert.strictEqual(got.staleReason, 'head', 'get must surface the staleReason');
+                assert.deepStrictEqual(
+                    got.value, { provider: { freshness: 'fresh' } },
+                    'value must stay byte-identical after markStale (only the envelope mutates)',
+                );
+            }
+
+            // 6. invalidateOn clears all entries.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-invalidate');
+                const now = () => 0;
+                const cache = createCache({ projectRoot: workspaceRoot, now });
+                const key1 = makeCacheKey({ providerId: 'p', query: 'i1' });
+                const key2 = makeCacheKey({ providerId: 'p', query: 'i2' });
+                cache.set(key1, { a: 1 }, { kind: 'provider-status' });
+                cache.set(key2, { b: 1 }, { kind: 'provider-status' });
+                assert.strictEqual(cache.size(), 2, 'both entries must be stored before invalidation');
+
+                const result = cache.invalidateOn('config');
+                assert.strictEqual(result.cleared, 2, 'invalidateOn must report the cleared count');
+                assert.strictEqual(cache.size(), 0, 'size must be 0 after invalidateOn');
+                assert.strictEqual(cache.get(key1).hit, false, 'entries must MISS after invalidateOn');
+            }
+
+            // 7. Disk safety.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-disksafety');
+                const now = () => 0;
+                const cache = createCache({ projectRoot: workspaceRoot, now });
+
+                // (a) a non-64-hex key must MISS and never touch the filesystem.
+                {
+                    const cacheDir = path.join(workspaceRoot, '.evo-lite', '.cache', 'code-perception');
+                    const existedBefore = fs.existsSync(cacheDir);
+                    const badKeyResult = cache.get('not-a-valid-key');
+                    assert.strictEqual(badKeyResult.hit, false, 'a non-64-hex key must MISS');
+                    assert.strictEqual(fs.existsSync(cacheDir), existedBefore, 'an invalid key must never touch the filesystem');
+                }
+
+                // (b) GUARDED symlink test: a symlinked cache-root component
+                //     pointing outside projectRoot must degrade to a safe no-op.
+                {
+                    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cache-outside-'));
+                    const cacheParentDir = path.join(workspaceRoot, '.evo-lite', '.cache');
+                    fs.mkdirSync(cacheParentDir, { recursive: true });
+                    const symlinkedRoot = path.join(cacheParentDir, 'code-perception');
+                    let symlinkCreated = false;
+                    try {
+                        fs.symlinkSync(outsideDir, symlinkedRoot, 'dir');
+                        symlinkCreated = true;
+                    } catch (err) {
+                        console.log(`  (guard-skip: symlink creation not permitted on this platform: ${err.message})`);
+                    }
+                    if (symlinkCreated) {
+                        const symlinkedCache = createCache({ projectRoot: workspaceRoot, now });
+                        const key = makeCacheKey({ providerId: 'p', query: 'symlink' });
+                        const result = symlinkedCache.set(key, { z: 1 }, { kind: 'provider-status' });
+                        assert.deepStrictEqual(
+                            result, { stored: false, reason: 'unsafe-cache-root' },
+                            'a set() through a symlinked root must degrade to a safe no-op',
+                        );
+                        assert.deepStrictEqual(fs.readdirSync(outsideDir), [], 'no file may be written outside projectRoot via the symlink');
+                        fs.rmSync(symlinkedRoot, { force: true });
+                    }
+                    fs.rmSync(outsideDir, { recursive: true, force: true });
+                }
+
+                // (c) a corrupted stored file must MISS with a diagnostic, never throw.
+                {
+                    const corruptKey = makeCacheKey({ providerId: 'p', query: 'corrupt' });
+                    const setResult = cache.set(corruptKey, { ok: 1 }, { kind: 'provider-status' });
+                    assert.strictEqual(setResult.stored, true, 'baseline set for the corruption test must succeed');
+                    const corruptFile = path.join(workspaceRoot, '.evo-lite', '.cache', 'code-perception', `${corruptKey}.json`);
+                    fs.writeFileSync(corruptFile, 'not valid json {{{', 'utf8');
+                    const corruptResult = cache.get(corruptKey);
+                    assert.strictEqual(corruptResult.hit, false, 'a corrupt file must MISS');
+                    assert.ok(
+                        corruptResult.diagnostics && corruptResult.diagnostics.some(d => d.code === 'cache-corrupt'),
+                        'a corrupt file must surface a cache-corrupt diagnostic',
+                    );
+                }
+            }
+
+            // 8. maxEntries eviction: beyond the bound, the OLDEST entry (by
+            //    storedAt via the injected clock) is evicted first.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-evict');
+                let fakeNow = 0;
+                const now = () => fakeNow;
+                const cache = createCache({ projectRoot: workspaceRoot, maxEntries: 2, now });
+                const k1 = makeCacheKey({ providerId: 'p', query: 'e1' });
+                const k2 = makeCacheKey({ providerId: 'p', query: 'e2' });
+                const k3 = makeCacheKey({ providerId: 'p', query: 'e3' });
+                fakeNow = 0; cache.set(k1, { n: 1 }, { kind: 'provider-status' });
+                fakeNow = 100; cache.set(k2, { n: 2 }, { kind: 'provider-status' });
+                fakeNow = 200; cache.set(k3, { n: 3 }, { kind: 'provider-status' });
+                assert.strictEqual(cache.size(), 2, 'size must be capped at maxEntries');
+                assert.strictEqual(cache.get(k1).hit, false, 'the oldest entry (by storedAt) must be evicted');
+                assert.strictEqual(cache.get(k2).hit, true, 'newer entries must remain');
+                assert.strictEqual(cache.get(k3).hit, true, 'newer entries must remain');
+            }
+        }
+        console.log('✅ T-cg-cache passed');
+
+        console.log('T-cg-linker-exact. Testing governance linker — reference-resolved exact file links ...');
+        {
+            const { normalizeReference } = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize'));
+            const linker = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'governance-linker'));
+            const refA = normalizeReference('provider:native-lite', { providerEntityId: 'src/a.js', name: 'a.js', kind: 'file', filePath: 'src/a.js' });
+            const refB = normalizeReference('provider:native-lite', { providerEntityId: 'src/b.js', name: 'b.js', kind: 'file', filePath: 'src/b.js' });
+            const fileReferences = [refA, refB];
+
+            // 1. declares_file resolved.
+            {
+                const planIR = { tasks: [{ id: 'task:x', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js'] }] };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                const declares = result.links.filter(l => l.kind === 'declares_file');
+                assert.strictEqual(declares.length, 1, 'exactly one declares_file link');
+                const link = declares[0];
+                assert.strictEqual(link.status, 'confirmed', 'declares_file status confirmed');
+                assert.strictEqual(link.confidence, 1.0, 'declares_file confidence 1.0');
+                assert.strictEqual(link.codeReferenceId, refA.id, 'declares_file resolves to refA.id');
+                assert.strictEqual(link.governanceEntityId, 'task:x', 'declares_file governanceEntityId is task id');
+                assert.strictEqual(link.evidence.sourcePath, 'docs/plans/p.md', 'declares_file evidence.sourcePath from task');
+                assert.ok(link.id.startsWith('gov-link:'), 'link id starts with gov-link:');
+            }
+
+            // 2. depends_on_file from explicit acceptanceDependencies input.
+            {
+                const acceptanceDependencies = [{ governanceEntityId: 'task:x', filePath: 'src/b.js', sourcePath: 'docs/specs/s.md' }];
+                const result = linker.buildGovernanceLinks({ acceptanceDependencies, fileReferences });
+                const deps = result.links.filter(l => l.kind === 'depends_on_file');
+                assert.strictEqual(deps.length, 1, 'exactly one depends_on_file link');
+                assert.strictEqual(deps[0].codeReferenceId, refB.id, 'depends_on_file resolves to refB.id');
+                assert.strictEqual(deps[0].confidence, 1.0, 'depends_on_file confidence 1.0');
+                assert.strictEqual(deps[0].evidence.sourcePath, 'docs/specs/s.md', 'depends_on_file evidence.sourcePath from dep');
+            }
+
+            // 3. changed_by_commit.
+            {
+                const commits = [{ sha: 'abc123', changedFiles: ['src/a.js'] }];
+                const result = linker.buildGovernanceLinks({ commits, fileReferences });
+                const changed = result.links.filter(l => l.kind === 'changed_by_commit');
+                assert.strictEqual(changed.length, 1, 'exactly one changed_by_commit link');
+                assert.strictEqual(changed[0].governanceEntityId, 'commit:abc123', 'changed_by_commit governanceEntityId is commit:<sha>');
+                assert.strictEqual(changed[0].evidence.commitSha, 'abc123', 'changed_by_commit evidence.commitSha');
+                assert.strictEqual(changed[0].codeReferenceId, refA.id, 'changed_by_commit resolves to refA.id');
+            }
+
+            // 4. Unresolved -> diagnostic + NO dangling link.
+            {
+                const planIR = { tasks: [{ id: 'task:missing', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/missing.js'] }] };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'unresolved-code-reference'),
+                    'unresolved linkedFile produces an unresolved-code-reference diagnostic',
+                );
+                assert.ok(
+                    !result.links.some(l => l.governanceEntityId === 'task:missing'),
+                    'no link is emitted for the unresolved file (anti-dangling)',
+                );
+            }
+
+            // 5. No acceptanceDependencies -> no depends_on_file links (never invented from task).
+            {
+                const planIR = { tasks: [{ id: 'task:x', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js'] }] };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                assert.strictEqual(
+                    result.links.filter(l => l.kind === 'depends_on_file').length, 0,
+                    'no depends_on_file links when acceptanceDependencies is absent',
+                );
+            }
+
+            // 6. Empty inputs -> empty result, no throw.
+            {
+                const result = linker.buildGovernanceLinks({});
+                assert.deepStrictEqual(result, { links: [], diagnostics: [] }, 'empty inputs yield empty links/diagnostics');
+            }
+            assert.doesNotThrow(() => linker.buildGovernanceLinks(undefined), 'undefined inputs must never throw');
+
+            // 7. Path normalization: './src/a.js' and 'src\\a.js' both resolve to refA.
+            {
+                const planIR = {
+                    tasks: [
+                        { id: 'task:dotslash', sourcePath: 'docs/plans/p.md', linkedFiles: ['./src/a.js'] },
+                        { id: 'task:backslash', sourcePath: 'docs/plans/p.md', linkedFiles: ['src\\a.js'] },
+                    ],
+                };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                const declares = result.links.filter(l => l.kind === 'declares_file');
+                assert.strictEqual(declares.length, 2, 'both normalized paths resolve to links');
+                assert.ok(declares.every(l => l.codeReferenceId === refA.id), './src/a.js and src\\a.js both normalize to refA');
+            }
+
+            // 8. Dedupe: same (task, file) declared twice -> a single link (one id).
+            {
+                const planIR = {
+                    tasks: [
+                        { id: 'task:dup', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js', 'src/a.js'] },
+                    ],
+                };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                const declares = result.links.filter(l => l.kind === 'declares_file' && l.governanceEntityId === 'task:dup');
+                assert.strictEqual(declares.length, 1, 'duplicate (task, file) declares_file collapses to one link');
+            }
+        }
+        console.log('✅ T-cg-linker-exact passed');
+
+        console.log('T-cg-linker-symbol. Testing governance linker — rule-gated symbol/evidence/focus links ...');
+        {
+            const { normalizeReference } = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize'));
+            const linker = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'governance-linker'));
+            const refA = normalizeReference('provider:native-lite', { providerEntityId: 'src/a.js', name: 'a.js', kind: 'file', filePath: 'src/a.js' });
+            const fileReferences = [refA];
+
+            const symFoo = {
+                reference: normalizeReference('provider:codegraph', { providerEntityId: 'src/a.js::foo', name: 'foo', kind: 'function', filePath: 'src/a.js', lineRange: [10, 20] }),
+                filePath: 'src/a.js', lineRange: [10, 20], resolutionConfidence: 0.9,
+            };
+            const symBar = {
+                reference: normalizeReference('provider:codegraph', { providerEntityId: 'src/a.js::bar', name: 'bar', kind: 'function', filePath: 'src/a.js', lineRange: [30, 40] }),
+                filePath: 'src/a.js', lineRange: [30, 40], resolutionConfidence: 0.9,
+            };
+
+            // 1. diff-range∩symbol → exactly the intersecting symbol, tied via evidence.
+            {
+                const planIR = { tasks: [{ id: 'task:x', sourcePath: 'docs/plans/p.md' }] };
+                const commits = [{ sha: 'c1', changedFiles: ['src/a.js'], diffRanges: { 'src/a.js': [[12, 15]] } }];
+                const evidence = [{ taskId: 'task:x', kind: 'test', commitSha: 'c1' }];
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences, commits, evidence,
+                    symbolReferences: [symFoo, symBar],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:x');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one implements_task link from diff-range intersection');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symFoo.reference.id, 'the intersecting symbol (foo) gets the link');
+                assert.strictEqual(implementsLinks[0].status, 'derived', 'symbol implements_task status is derived');
+                assert.strictEqual(implementsLinks[0].confidence, 0.9, 'symbol implements_task confidence from resolutionConfidence');
+                assert.ok(!implementsLinks.some(l => l.codeReferenceId === symBar.reference.id), 'the non-intersecting symbol (bar) gets no link');
+            }
+
+            // 2. Plan names the symbol via explicit task.symbols.
+            {
+                const planIR = { tasks: [{ id: 'task:y', sourcePath: 'docs/plans/p.md', symbols: ['bar'] }] };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symFoo, symBar],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:y');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one implements_task link for task:y');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symBar.reference.id, 'task.symbols names bar -> bar gets the link');
+            }
+
+            // 3. Evidence names the symbol.
+            {
+                const planIR = { tasks: [{ id: 'task:z', sourcePath: 'docs/plans/p.md' }] };
+                const evidence = [{ taskId: 'task:z', kind: 'test', symbols: ['foo'] }];
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences, evidence,
+                    symbolReferences: [symFoo, symBar],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:z');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one implements_task link for task:z');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symFoo.reference.id, 'evidence.symbols names foo -> foo gets the link');
+            }
+
+            // 4. No matching rule -> NO symbol link (the crucial negative / anti-blanket-linking).
+            {
+                const planIR = { tasks: [{ id: 'task:w', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js'] }] };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symFoo, symBar],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:w');
+                assert.strictEqual(implementsLinks.length, 0, 'a linked file with unmatched symbols produces ZERO implements_task links');
+            }
+
+            // 5. verified_by_test / evidenced_by_archive from evidence.
+            {
+                const evidence = [
+                    { taskId: 'task:x', kind: 'test', filePath: 'src/a.js', sourcePath: 'test/a.spec.js' },
+                    { taskId: 'task:x', kind: 'archive', archivePath: '.evo-lite/raw_memory/mem_1.md', codeReferenceId: refA.id },
+                    { taskId: 'task:none', kind: 'test' },
+                ];
+                const result = linker.buildGovernanceLinks({ fileReferences, evidence });
+                const verified = result.links.filter(l => l.kind === 'verified_by_test');
+                assert.strictEqual(verified.length, 1, 'exactly one verified_by_test link');
+                assert.strictEqual(verified[0].codeReferenceId, refA.id, 'verified_by_test resolves filePath via fileReferences');
+                assert.strictEqual(verified[0].governanceEntityId, 'task:x', 'verified_by_test governanceEntityId is evidence.taskId');
+                assert.strictEqual(verified[0].status, 'confirmed', 'verified_by_test status confirmed');
+                assert.strictEqual(verified[0].confidence, 1.0, 'verified_by_test confidence 1.0');
+
+                const archived = result.links.filter(l => l.kind === 'evidenced_by_archive');
+                assert.strictEqual(archived.length, 1, 'exactly one evidenced_by_archive link');
+                assert.strictEqual(archived[0].codeReferenceId, refA.id, 'evidenced_by_archive uses explicit codeReferenceId');
+                assert.strictEqual(archived[0].evidence.archivePath, '.evo-lite/raw_memory/mem_1.md', 'evidenced_by_archive evidence.archivePath');
+
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'unresolved-code-reference'),
+                    'evidence with neither codeReferenceId nor resolvable filePath produces a diagnostic',
+                );
+                assert.ok(
+                    !result.links.some(l => l.governanceEntityId === 'task:none'),
+                    'unresolvable evidence row produces NO link',
+                );
+            }
+
+            // 6. related_to_focus from PRE-RESOLVED focusReferences ONLY.
+            {
+                const focusReferences = [{ governanceEntityId: 'focus:current', codeReferenceId: refA.id }];
+                const result = linker.buildGovernanceLinks({ fileReferences, focusReferences, activeContextFocus: 'some text' });
+                const focusLinks = result.links.filter(l => l.kind === 'related_to_focus');
+                assert.strictEqual(focusLinks.length, 1, 'exactly one related_to_focus link from focusReferences');
+                assert.strictEqual(focusLinks[0].codeReferenceId, refA.id, 'related_to_focus codeReferenceId from focusReference');
+                assert.strictEqual(focusLinks[0].governanceEntityId, 'focus:current', 'related_to_focus governanceEntityId from focusReference');
+                assert.strictEqual(focusLinks[0].status, 'derived', 'related_to_focus status derived');
+                assert.strictEqual(focusLinks[0].confidence, 1.0, 'related_to_focus confidence 1.0');
+
+                const resultNoFocusRefs = linker.buildGovernanceLinks({ fileReferences, activeContextFocus: 'some text' });
+                assert.strictEqual(
+                    resultNoFocusRefs.links.filter(l => l.kind === 'related_to_focus').length, 0,
+                    'raw activeContextFocus text alone produces NO related_to_focus link',
+                );
+            }
+
+            // 7. Never throws on malformed symbolReference/evidence/focusReference rows; diagnostics instead.
+            {
+                const planIR = { tasks: [{ id: 'task:malformed', sourcePath: 'docs/plans/p.md', symbols: ['foo'] }] };
+                assert.doesNotThrow(() => linker.buildGovernanceLinks({
+                    planIR,
+                    fileReferences,
+                    symbolReferences: [null, 'not-an-object', { reference: {} }, symFoo],
+                    evidence: [null, 42, { taskId: 'task:malformed', kind: 'bogus', filePath: 'src/a.js' }],
+                    focusReferences: [null, { governanceEntityId: 'focus:x' }],
+                }), 'malformed rows in the new inputs must never throw');
+
+                const result = linker.buildGovernanceLinks({
+                    planIR,
+                    fileReferences,
+                    symbolReferences: [null, 'not-an-object', { reference: {} }],
+                    evidence: [null, 42],
+                    focusReferences: [null, { governanceEntityId: 'focus:x' }],
+                });
+                assert.ok(result.diagnostics.length > 0, 'malformed rows produce diagnostics rather than being silently swallowed');
+            }
+        }
+        console.log('✅ T-cg-linker-symbol passed');
+
+        console.log('T-cg-linker-heuristic. Testing governance linker — name-only heuristic proposals, strength-ranked dedupe, persisted stored graph ...');
+        {
+            const { normalizeReference } = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize'));
+            const linker = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'governance-linker'));
+            const refA = normalizeReference('provider:native-lite', { providerEntityId: 'src/a.js', name: 'a.js', kind: 'file', filePath: 'src/a.js' });
+            const fileReferences = [refA];
+
+            const symParseConfig = {
+                reference: normalizeReference('provider:codegraph', { providerEntityId: 'src/a.js::parseConfig', name: 'parseConfig', kind: 'function', filePath: 'src/a.js', lineRange: [1, 5] }),
+                filePath: 'src/a.js', lineRange: [1, 5], resolutionConfidence: 0.9,
+            };
+
+            // 1. Heuristic proposal <=0.5: title contains symbol name, no strong rule.
+            {
+                const planIR = { tasks: [{ id: 'task:parse', title: 'Implement parseConfig loader' }] };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symParseConfig],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:parse');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one heuristic implements_task link');
+                assert.strictEqual(implementsLinks[0].status, 'proposed', 'heuristic implements_task status is proposed');
+                assert.ok(implementsLinks[0].confidence <= 0.5, 'heuristic implements_task confidence <= 0.5');
+                assert.strictEqual(implementsLinks[0].confidence, 0.5, 'heuristic implements_task confidence is 0.5');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symParseConfig.reference.id, 'heuristic link resolves to the matched symbol');
+            }
+
+            // 2. Strong rule supersedes proposal on dedupe: same task+symbol also
+            //    satisfies a strong rule (task.symbols) -> exactly ONE link for
+            //    that (task, symbol, implements_task) id, and it is 'derived'.
+            {
+                const planIR = { tasks: [{ id: 'task:parse2', title: 'Implement parseConfig loader', symbols: ['parseConfig'] }] };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symParseConfig],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:parse2');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one link survives dedupe for the colliding id');
+                assert.strictEqual(implementsLinks[0].status, 'derived', 'the derived (strong-rule) link survives, the proposal is dropped');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symParseConfig.reference.id, 'surviving link still resolves to the matched symbol');
+            }
+
+            // 3. All links validate: mixed input (exact + symbol + heuristic).
+            {
+                const planIR = {
+                    tasks: [
+                        { id: 'task:mix', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js'], title: 'Implement parseConfig loader' },
+                    ],
+                };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symParseConfig],
+                });
+                assert.ok(result.links.length > 0, 'mixed input produces at least one link');
+                assert.ok(result.links.every(l => linker.isValidLink(l)), 'every returned link passes isValidLink');
+            }
+
+            // 4. persist deterministic + atomic: two runs on the same links
+            //    produce BYTE-IDENTICAL output; the file lands at the §3.4 path;
+            //    stored links are sorted by id.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-linker-persist');
+                const planIR = { tasks: [{ id: 'task:persist', title: 'Implement parseConfig loader' }] };
+                const built = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symParseConfig],
+                });
+                assert.ok(built.links.length > 0, 'setup: buildGovernanceLinks must produce links to persist');
+
+                const first = linker.persistGovernanceLinks(workspaceRoot, built.links);
+                assert.strictEqual(first.written, true, 'persist must succeed on a writable root');
+                const expectedPath = path.join(workspaceRoot, '.evo-lite', 'generated', 'code-perception', 'governance-links.json');
+                assert.strictEqual(first.path, expectedPath, 'persist writes to the §3.4 stored-graph path');
+                assert.ok(fs.existsSync(expectedPath), 'governance-links.json must exist after persist');
+
+                const parsed = JSON.parse(fs.readFileSync(expectedPath, 'utf8'));
+                assert.strictEqual(parsed.version, 'evo-code-graph@1', 'stored graph carries the version tag');
+                assert.strictEqual(parsed.generatedCount, built.links.length, 'generatedCount matches links.length');
+                const ids = parsed.links.map(l => l.id);
+                const sortedIds = ids.slice().sort();
+                assert.deepStrictEqual(ids, sortedIds, 'stored links are sorted by id');
+
+                const firstBytes = fs.readFileSync(expectedPath, 'utf8');
+                const second = linker.persistGovernanceLinks(workspaceRoot, built.links);
+                assert.strictEqual(second.written, true, 'second persist call must also succeed');
+                const secondBytes = fs.readFileSync(expectedPath, 'utf8');
+                assert.strictEqual(secondBytes, firstBytes, 'two persist calls on the same links produce byte-identical output');
+            }
+
+            // 5. persist never throws on a bad root -> {written:false, diagnostics:[persist-failed]}.
+            {
+                const badRoot = `${path.sep}a${path.sep}path${path.sep}that${path.sep}cannot${path.sep}be${path.sep}created${path.sep}\0invalid`;
+                let result;
+                assert.doesNotThrow(() => {
+                    result = linker.persistGovernanceLinks(badRoot, []);
+                }, 'persistGovernanceLinks must never throw on a bad root');
+                assert.strictEqual(result.written, false, 'a bad root must not report written:true');
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'persist-failed'),
+                    'a bad root must surface a persist-failed diagnostic',
+                );
+            }
+        }
+        console.log('✅ T-cg-linker-heuristic passed');
+
+        console.log('T-cg-post-commit. Testing post-commit code-perception ACT surface (refresh + markStale + rebuild/persist links + manual-sync advisory) ...');
+        {
+            const childProcess = require('child_process');
+            const { Command } = require('commander');
+            const modulePath = path.join(TEMPLATE_CLI_DIR, 'code-perception', 'post-commit-code-perception.js');
+            const postCommit = require(modulePath);
+            const nativeLiteMod = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'native-lite'));
+            const cacheMod = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'cache'));
+            const hooksMod = require(path.join(TEMPLATE_CLI_DIR, 'hooks'));
+
+            function git(cwd, args) {
+                childProcess.execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env } });
+            }
+
+            const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-cg-postcommit-'));
+            writeText(path.join(projectRoot, 'src', 'a.js'), 'export const a = 1;\n');
+            writeText(path.join(projectRoot, 'src', 'b.js'), 'export const b = 2;\n');
+            git(projectRoot, ['init']);
+            git(projectRoot, ['config', 'user.email', 'evo@example.com']);
+            git(projectRoot, ['config', 'user.name', 'Evo Test']);
+            git(projectRoot, ['add', '.']);
+            git(projectRoot, ['commit', '-m', 'chore: baseline']);
+
+            try {
+                // Setup: a real file-cache, seeded with one fresh entry.
+                const cache = cacheMod.createCache({ projectRoot, now: () => Date.now() });
+                const cacheKey = cacheMod.makeCacheKey({
+                    providerId: 'provider:codegraph', providerVersion: '1', adapterVersion: '1',
+                    rootFingerprint: 'fp', query: 'status',
+                });
+                const seeded = cache.set(cacheKey, { ok: true }, { kind: 'provider-status', currentCommit: 'old-sha' });
+                assert.strictEqual(seeded.stored, true, 'setup: seeded cache entry must be stored');
+                assert.strictEqual(cache.get(cacheKey).stale, false, 'setup: seeded cache entry must start fresh');
+
+                // 1. Refresh + markStale + persist + blob.
+                const { report, diagnostics } = postCommit.runPostCommitCodePerception({
+                    projectRoot, headSha: 'abc1234', changedFiles: ['src/a.js'], cache,
+                });
+                assert.strictEqual(report.event, 'post-commit-code-perception', 'report.event must be post-commit-code-perception');
+                assert.strictEqual(report.commit, 'abc1234', 'report.commit must echo headSha');
+                assert.ok(Array.isArray(diagnostics), 'diagnostics must be an array');
+                assert.strictEqual(cache.get(cacheKey).stale, true, 'seeded cache entry must be marked stale after post-commit');
+
+                const linksPath = path.join(projectRoot, '.evo-lite', 'generated', 'code-perception', 'governance-links.json');
+                assert.ok(fs.existsSync(linksPath), 'governance-links.json must be persisted');
+                const lastRunPath = path.join(projectRoot, '.evo-lite', 'generated', 'code-perception', 'post-commit-last-run.json');
+                assert.ok(fs.existsSync(lastRunPath), 'post-commit-last-run.json must be written');
+                const lastRun = JSON.parse(fs.readFileSync(lastRunPath, 'utf8'));
+                assert.strictEqual(lastRun.ok, true, 'post-commit-last-run.json must have ok:true');
+                assert.deepStrictEqual(lastRun.changedFiles, ['src/a.js'], 'post-commit-last-run.json must echo changedFiles');
+
+                // 2. changed_by_commit link for the resolvable changed file.
+                const filesResult = nativeLiteMod.create().getFiles({ projectRoot }, {});
+                const aRef = filesResult.files.find(f => f.reference.filePath === 'src/a.js').reference;
+                const linksPayload = JSON.parse(fs.readFileSync(linksPath, 'utf8'));
+                const changedLink = linksPayload.links.find(l => (
+                    l.kind === 'changed_by_commit' && l.governanceEntityId === 'commit:abc1234' && l.codeReferenceId === aRef.id
+                ));
+                assert.ok(changedLink, 'a changed_by_commit link for src/a.js at commit:abc1234 must be persisted');
+
+                // 3. NO codegraph spawn: the module never requires codegraph.js /
+                //    providers/codegraph / codegraph-exec — the sync remedy stays a string.
+                const moduleSrc = fs.readFileSync(modulePath, 'utf8');
+                assert.ok(!/require\(\s*['"]\.\/codegraph(-exec)?['"]\s*\)/.test(moduleSrc),
+                    'module must not require ./codegraph or ./codegraph-exec');
+                assert.ok(!/require\(\s*['"]\.\/providers\/codegraph['"]\s*\)/.test(moduleSrc),
+                    'module must not require ./providers/codegraph');
+
+                // 4. syncSuggestion is an advisory STRING, not an action.
+                assert.strictEqual(typeof report.syncSuggestion, 'string', 'syncSuggestion must be a string');
+                assert.ok(report.syncSuggestion.includes('codegraph sync'), 'syncSuggestion must mention codegraph sync when changedFiles is non-empty');
+                const emptyChangedResult = postCommit.runPostCommitCodePerception({
+                    projectRoot, headSha: 'abc1234', changedFiles: [], cache: null,
+                });
+                assert.strictEqual(emptyChangedResult.report.syncSuggestion, '', 'syncSuggestion must be empty when changedFiles is empty');
+
+                // 5. Never throws / guarded — cache:null + changedFiles:undefined.
+                let degraded;
+                assert.doesNotThrow(() => {
+                    degraded = postCommit.runPostCommitCodePerception({ projectRoot, headSha: 'def5678', changedFiles: undefined, cache: null });
+                }, 'runPostCommitCodePerception must never throw with cache:null and changedFiles:undefined');
+                assert.deepStrictEqual(degraded.report.changedFiles, [], 'changedFiles must default to [] when undefined');
+                assert.strictEqual(degraded.report.ok, true, 'degraded report must still have ok:true');
+
+                // A broken cache (markStale throws) is caught -> diagnostic, not a throw.
+                const brokenCache = { markStale() { throw new Error('boom'); } };
+                let brokenResult;
+                assert.doesNotThrow(() => {
+                    brokenResult = postCommit.runPostCommitCodePerception({ projectRoot, headSha: 'aaa1111', changedFiles: ['src/a.js'], cache: brokenCache });
+                }, 'a broken cache.markStale must not throw out of runPostCommitCodePerception');
+                assert.ok(brokenResult.diagnostics.some(d => d.code === 'cache-mark-stale-failed'), 'broken cache.markStale must surface a cache-mark-stale-failed diagnostic');
+                assert.strictEqual(brokenResult.report.cacheMarkedStale, false, 'cacheMarkedStale must be false when markStale threw');
+
+                // Completely empty context must also never throw.
+                assert.doesNotThrow(() => {
+                    postCommit.runPostCommitCodePerception({});
+                }, 'runPostCommitCodePerception must never throw on an empty context');
+
+                // 6. Hook wiring present, gated on CODE_CHANGED, guarded by run_and_record.
+                const hookBody = hooksMod.buildHookBody();
+                assert.ok(hookBody.includes('code-perception post-commit'), 'buildHookBody must include the code-perception post-commit line');
+                const gatedLine = hookBody.split('\n').find(l => l.includes('code-perception post-commit'));
+                assert.ok(gatedLine && gatedLine.includes('CODE_CHANGED'), 'the code-perception post-commit line must be gated on CODE_CHANGED');
+                assert.ok(gatedLine && gatedLine.includes('run_and_record'), 'the code-perception post-commit line must be wrapped by run_and_record');
+
+                // 7. CLI command registered: code-perception group with a post-commit subcommand.
+                const p = new Command();
+                postCommit.registerCodePerceptionCommands(p);
+                const cpCmd = p.commands.find(c => c.name() === 'code-perception');
+                assert.ok(cpCmd, 'program exposes a code-perception command group');
+                const subNames = cpCmd.commands.map(c => c.name());
+                assert.ok(subNames.includes('post-commit'), 'code-perception command group exposes a post-commit subcommand');
+            } finally {
+                fs.rmSync(projectRoot, { recursive: true, force: true });
+            }
+        }
+        console.log('✅ T-cg-post-commit passed');
+
+        console.log('T-cg-failure-isolation. Testing end-to-end CodeGraph failure isolation — missing/timeout/malformed/stale never break the stack ...');
+        {
+            const loader = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader'));
+            const router = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-router'));
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const cgSource = fs.readFileSync(
+                path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph.js'), 'utf8',
+            );
+
+            // codegraph.js must never touch the filesystem directly (only ever spawns
+            // the CLI via codegraph-exec) — a cheap static proof that it CANNOT write
+            // plan-ir.json/architecture-ir.json/memory/verify artifacts, independent of
+            // the dynamic before/after snapshot below (scenario 5).
+            assert.ok(!/require\(['"](?:node:)?fs['"]\)/.test(cgSource), 'codegraph.js must never require fs directly');
+            assert.ok(!/require\(['"](?:node:)?child_process['"]\)/.test(cgSource),
+                'codegraph.js must never require child_process directly (only via codegraph-exec)');
+
+            const tempRuntime = createTempRuntimeRoot('cg-failure-isolation');
+            const projectRoot = tempRuntime.workspaceRoot;
+            const generatedDir = path.join(tempRuntime.runtimeRoot, 'generated');
+            const planIrPath = path.join(generatedDir, 'planning', 'plan-ir.json');
+            const archIrPath = path.join(generatedDir, 'architecture', 'architecture-ir.json');
+            const memoryRawDir = path.join(tempRuntime.runtimeRoot, 'raw_memory');
+            const memoryIndexDir = path.join(tempRuntime.runtimeRoot, 'index_memory');
+            const planSeed = JSON.stringify({ marker: 'cg-failure-isolation-plan', tasks: [] });
+            const archSeed = JSON.stringify({ marker: 'cg-failure-isolation-arch', files: [] });
+
+            function snapshotDir(dir) {
+                const out = [];
+                (function walk(current, relBase) {
+                    if (!fs.existsSync(current)) { return; }
+                    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+                        const abs = path.join(current, entry.name);
+                        const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
+                        if (entry.isDirectory()) {
+                            walk(abs, rel);
+                        } else if (entry.isFile()) {
+                            out.push(`${rel}::${fs.readFileSync(abs, 'utf8')}`);
+                        }
+                    }
+                }(dir, ''));
+                return out.sort();
+            }
+
+            const tempFakes = [];
+            try {
+                // Seed Planning IR / Architecture IR with known content so scenario 5
+                // can prove non-MODIFICATION, not merely non-creation.
+                fs.mkdirSync(path.dirname(planIrPath), { recursive: true });
+                fs.writeFileSync(planIrPath, planSeed, 'utf8');
+                fs.mkdirSync(path.dirname(archIrPath), { recursive: true });
+                fs.writeFileSync(archIrPath, archSeed, 'utf8');
+                const planMtimeBefore = fs.statSync(planIrPath).mtimeMs;
+                const archMtimeBefore = fs.statSync(archIrPath).mtimeMs;
+                const generatedBefore = snapshotDir(generatedDir);
+
+                // ---- Scenario 1: missing CodeGraph executable ----------------------
+                {
+                    const missingExe = path.join(os.tmpdir(), 'definitely-not-codegraph-t12-' + Date.now());
+                    const { registrations } = loader.loadProviders({
+                        codePerception: {
+                            providers: [{ id: 'provider:codegraph', role: 'structural-primary', executable: missingExe }],
+                        },
+                    });
+                    const ctx = { projectRoot, providerConfig: {} };
+                    const candidates = await router.inspectProviders(registrations, ctx);
+
+                    const filesSel = router.selectProvider({ capability: 'files', allowFallback: true }, candidates);
+                    assert.strictEqual(filesSel.candidate.registration.provider.id, 'provider:native-lite',
+                        'missing codegraph: files must fall back to native-lite');
+                    assert.strictEqual(filesSel.degraded, true, 'missing codegraph: files fallback must be degraded');
+
+                    const impactSel = router.selectProvider({ capability: 'impact', allowFallback: true }, candidates);
+                    assert.strictEqual(impactSel.candidate, null,
+                        'missing codegraph: impact must never silently substitute native-lite file data');
+                    assert.strictEqual(impactSel.degraded, true, 'missing codegraph: impact no-candidate result must be degraded');
+                    assert.strictEqual(impactSel.reason, 'No ready provider exposes impact analysis',
+                        'missing codegraph: impact reason must be the exact ready-centric string');
+                }
+
+                // ---- Scenario 2: timeout — non-permanent disable + recovery --------
+                {
+                    // Inline fake that sleeps unconditionally regardless of subcommand
+                    // (the same Atomics.wait blocking primitive fake-codegraph.js's
+                    // --fake-sleep uses). fake-codegraph.js's --fake-sleep flag can't be
+                    // routed through check()'s own version/status probes because those
+                    // probes' args are adapter-controlled, not caller-controlled — a
+                    // dedicated always-slow inline fake exercises the identical
+                    // execFile timeout-kill path proven by T-cg-exec.
+                    const slowFake = path.join(os.tmpdir(), 'cg-fake-slow-t12-' + Date.now() + '.js');
+                    tempFakes.push(slowFake);
+                    fs.writeFileSync(slowFake, [
+                        "'use strict';",
+                        'const shared = new Int32Array(new SharedArrayBuffer(4));',
+                        'Atomics.wait(shared, 0, 0, 4000);',
+                        'process.exit(0);',
+                        '',
+                    ].join('\n'), 'utf8');
+
+                    const { registrations } = loader.loadProviders({
+                        codePerception: {
+                            providers: [{ id: 'provider:codegraph', role: 'structural-primary', executable: process.execPath }],
+                        },
+                    });
+
+                    const timeoutCtx = { projectRoot, providerConfig: { prefixArgs: [slowFake], timeoutMs: 200 } };
+                    const startedAt = Date.now();
+                    let candidates = await router.inspectProviders(registrations, timeoutCtx);
+                    const elapsedMs = Date.now() - startedAt;
+                    assert.ok(elapsedMs < 3000,
+                        `inspect must complete fast — the sleeping child must be killed, not awaited (elapsed ${elapsedMs}ms)`);
+
+                    let cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.availability.ready, false, 'timed-out codegraph must not be ready');
+
+                    const filesSel = router.selectProvider({ capability: 'files', allowFallback: true }, candidates);
+                    assert.strictEqual(filesSel.candidate.registration.provider.id, 'provider:native-lite',
+                        'timeout: files must still fall back to native-lite');
+                    assert.strictEqual(filesSel.degraded, true, 'timeout: files fallback must be degraded');
+
+                    // Non-permanent: the SAME registration recovers on a subsequent
+                    // healthy inspect — nothing about the timeout latched a disable.
+                    const healthyCtx = { projectRoot, providerConfig: { prefixArgs: [fakePath] } };
+                    candidates = await router.inspectProviders(registrations, healthyCtx);
+                    cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.availability.ready, true,
+                        'codegraph must recover on a subsequent healthy inspect — a timeout must NOT permanently disable the provider');
+                }
+
+                // ---- Scenario 3 (+6): malformed response disables ONE capability ---
+                {
+                    const malformedQueryFake = path.join(os.tmpdir(), 'cg-fake-malformed-query-t12-' + Date.now() + '.js');
+                    tempFakes.push(malformedQueryFake);
+                    fs.writeFileSync(malformedQueryFake, [
+                        "'use strict';",
+                        "const fs = require('fs');",
+                        "const path = require('path');",
+                        'const sub = process.argv[2];',
+                        `const CG_DIR = ${JSON.stringify(CG_DIR)};`,
+                        "const FIXTURES = { version: 'codegraph-version.txt', help: 'codegraph-help.txt', status: 'codegraph-status.json' };",
+                        'if (FIXTURES[sub]) { process.stdout.write(fs.readFileSync(path.join(CG_DIR, FIXTURES[sub]))); process.exit(0); }',
+                        "if (sub === 'query') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-malformed.json'))); process.exit(0); }",
+                        'process.exit(2);',
+                        '',
+                    ].join('\n'), 'utf8');
+
+                    const { registrations } = loader.loadProviders({
+                        codePerception: {
+                            providers: [{ id: 'provider:codegraph', role: 'structural-primary', executable: process.execPath }],
+                        },
+                    });
+                    const flexProvider = registrations.find(r => r.provider.id === 'provider:codegraph').provider;
+                    const malformedCtx = { projectRoot, providerConfig: { prefixArgs: [malformedQueryFake] } };
+                    const healthyCtx = { projectRoot, providerConfig: { prefixArgs: [fakePath] } };
+
+                    // Before the bad call: fully ready, symbols enabled.
+                    let candidates = await router.inspectProviders(registrations, malformedCtx);
+                    let cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.availability.ready, true, 'malformed-query fake must otherwise report ready (identity/status intact)');
+                    assert.strictEqual(cgCand.status.capabilities.symbols, true, 'symbols must be enabled before the malformed call');
+
+                    const badSearch = await flexProvider.search(malformedCtx, 'normalize');
+                    assert.strictEqual(badSearch.matches.length, 0, 'malformed query response must yield empty normalized matches');
+                    assert.ok(badSearch.diagnostics.some(d => d.code === 'schema-invalid'),
+                        'malformed query response must emit a schema-invalid diagnostic');
+
+                    // Scenario 6: diagnostics never embed the raw fixture body / stay bounded.
+                    const malformedFixtureBody = fs.readFileSync(path.join(CG_DIR, 'codegraph-malformed.json'), 'utf8');
+                    for (const d of badSearch.diagnostics) {
+                        assert.ok(d.message.length < 200, `diagnostic message must be bounded, not a raw stdout dump (got ${d.message.length} chars)`);
+                        assert.ok(!d.message.includes(malformedFixtureBody), 'diagnostic message must never embed the full fixture body');
+                    }
+
+                    // After the bad call: ONLY symbols is disabled — impact (an
+                    // unrelated, untouched capability) stays live, both at the
+                    // provider AND through a re-inspect via the router.
+                    candidates = await router.inspectProviders(registrations, malformedCtx);
+                    cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.status.capabilities.symbols, false, 'single-capability disable: symbols must be false');
+                    assert.strictEqual(cgCand.status.capabilities.impact, true,
+                        'single-capability disable: unrelated capabilities (impact) must remain enabled');
+
+                    const symbolsSel = router.selectProvider({ capability: 'symbols', allowFallback: true }, candidates);
+                    assert.strictEqual(symbolsSel.candidate, null,
+                        'symbols disabled + no fallback support: candidate must be null (no silent substitution)');
+                    assert.strictEqual(symbolsSel.reason, 'No ready provider exposes symbols analysis', 'symbols no-candidate reason must be exact');
+
+                    const impactSel = router.selectProvider({ capability: 'impact', allowFallback: true }, candidates);
+                    assert.strictEqual(impactSel.candidate.registration.provider.id, 'provider:codegraph',
+                        'impact must still route to codegraph — the malformed query response must not disable unrelated capabilities');
+
+                    // A later VALID query response re-enables symbols.
+                    const goodSearch = await flexProvider.search(healthyCtx, 'normalize');
+                    assert.strictEqual(goodSearch.matches.length, 2, 'a subsequent valid query response must parse normally');
+
+                    candidates = await router.inspectProviders(registrations, healthyCtx);
+                    cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.status.capabilities.symbols, true, 'symbols must re-enable after a subsequent valid query response');
+                    const symbolsSel2 = router.selectProvider({ capability: 'symbols', allowFallback: true }, candidates);
+                    assert.strictEqual(symbolsSel2.candidate.registration.provider.id, 'provider:codegraph',
+                        'symbols must route to codegraph again once re-enabled');
+                }
+
+                // ---- Scenario 4: stale index stays visibly stale -------------------
+                {
+                    const staleFake = path.join(os.tmpdir(), 'cg-fake-stale-t12-' + Date.now() + '.js');
+                    tempFakes.push(staleFake);
+                    fs.writeFileSync(staleFake, [
+                        "'use strict';",
+                        "const fs = require('fs');",
+                        "const path = require('path');",
+                        'const sub = process.argv[2];',
+                        `const CG_DIR = ${JSON.stringify(CG_DIR)};`,
+                        "const FIXTURES = { version: 'codegraph-version.txt', help: 'codegraph-help.txt', files: 'codegraph-files.json' };",
+                        "if (sub === 'status') {",
+                        "    const raw = JSON.parse(fs.readFileSync(path.join(CG_DIR, 'codegraph-status.json'), 'utf8'));",
+                        '    raw.index.reindexRecommended = true;',
+                        '    process.stdout.write(JSON.stringify(raw));',
+                        '    process.exit(0);',
+                        '}',
+                        'if (FIXTURES[sub]) { process.stdout.write(fs.readFileSync(path.join(CG_DIR, FIXTURES[sub]))); process.exit(0); }',
+                        'process.exit(2);',
+                        '',
+                    ].join('\n'), 'utf8');
+
+                    const { registrations } = loader.loadProviders({
+                        codePerception: {
+                            providers: [{
+                                id: 'provider:codegraph', role: 'structural-primary',
+                                executable: process.execPath, prefixArgs: [staleFake],
+                            }],
+                        },
+                    });
+                    const ctx = { projectRoot, providerConfig: {} };
+                    const staleProvider = registrations.find(r => r.provider.id === 'provider:codegraph').provider;
+
+                    const status = await staleProvider.getStatus(ctx);
+                    assert.strictEqual(status.freshness, 'stale', 'stale index must surface freshness:stale');
+                    assert.strictEqual(status.indexState, 'stale', 'stale index must surface indexState:stale');
+                    assert.strictEqual(status.ready, true, 'reindexRecommended alone must not knock the provider out of ready (still usable, just stale)');
+
+                    const filesResult = await staleProvider.getFiles(ctx);
+                    assert.ok(filesResult.files.length > 0, 'stale getFiles must still return results, not silently empty');
+                    for (const f of filesResult.files) {
+                        assert.strictEqual(f.reference.snapshot.freshness, 'stale',
+                            'stale getFiles references must carry snapshot.freshness:stale — never presented as fresh');
+                    }
+
+                    const candidates = await router.inspectProviders(registrations, ctx);
+                    const cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.status.freshness, 'stale', 'router candidate status must carry freshness:stale');
+
+                    const filesSel = router.selectProvider({ capability: 'files', allowFallback: true }, candidates);
+                    assert.strictEqual(filesSel.candidate.registration.provider.id, 'provider:codegraph',
+                        'stale-but-ready codegraph (structural-primary) must still be selected over the fallback');
+                    assert.strictEqual(filesSel.candidate.status.freshness, 'stale',
+                        'the selected candidate must visibly report freshness:stale, never silently presented as fresh');
+                }
+
+                // ---- Scenario 5: Planning IR / Architecture IR / memory / verify ---
+                // state stays completely untouched by every failure run above ---------
+                assert.strictEqual(fs.readFileSync(planIrPath, 'utf8'), planSeed,
+                    'plan-ir.json content must be byte-identical after every failure run');
+                assert.strictEqual(fs.statSync(planIrPath).mtimeMs, planMtimeBefore, 'plan-ir.json mtime must be untouched');
+                assert.strictEqual(fs.readFileSync(archIrPath, 'utf8'), archSeed,
+                    'architecture-ir.json content must be byte-identical after every failure run');
+                assert.strictEqual(fs.statSync(archIrPath).mtimeMs, archMtimeBefore, 'architecture-ir.json mtime must be untouched');
+                assert.strictEqual(fs.existsSync(memoryRawDir), false, 'CodeGraph failure runs must never create raw_memory/');
+                assert.strictEqual(fs.existsSync(memoryIndexDir), false, 'CodeGraph failure runs must never create index_memory/');
+                assert.deepStrictEqual(snapshotDir(generatedDir), generatedBefore,
+                    'no file under .evo-lite/generated/ may be created or modified by the CodeGraph failure runs');
+            } finally {
+                for (const f of tempFakes) {
+                    fs.rmSync(f, { force: true });
+                }
+                fs.rmSync(tempRuntime.workspaceRoot, { recursive: true, force: true });
+            }
+        }
+        console.log('✅ T-cg-failure-isolation passed');
 
         await runChildRuntimeTests();
 
@@ -5079,6 +6619,281 @@ async function runChildRuntimeTests() {
             }
             console.log('✅ T-spec-cli passed');
         }
+
+        console.log('T-cg-status. Testing code-perception status surface (provider table + manual-sync stale hints + link summary) ...');
+        {
+            const statusModPath = path.join(TEMPLATE_CLI_DIR, 'code-perception', 'status');
+            const statusMod = require(statusModPath);
+            assert.strictEqual(typeof statusMod.buildCodePerceptionStatus, 'function',
+                'buildCodePerceptionStatus must be exported');
+
+            // 1. Degraded + stale hint: codegraph (stale, not degraded) + native-lite (fallback, degraded, never stale).
+            {
+                const codegraphCand = {
+                    registration: { provider: { id: 'provider:codegraph' }, role: 'structural-primary' },
+                    role: 'structural-primary',
+                    availability: { available: true, ready: true, indexState: 'stale' },
+                    status: {
+                        providerId: 'provider:codegraph', indexState: 'stale',
+                        indexedCommit: 'aaa', currentCommit: 'bbb', compatibility: 'supported',
+                    },
+                    diagnostics: [],
+                };
+                const nativeLiteCand = {
+                    registration: { provider: { id: 'provider:native-lite' }, role: 'fallback' },
+                    role: 'fallback',
+                    availability: { available: true, ready: true, indexState: 'not-required' },
+                    status: { providerId: 'provider:native-lite', indexState: 'not-required' },
+                    diagnostics: [],
+                };
+                const report = statusMod.buildCodePerceptionStatus({}, { candidates: [codegraphCand, nativeLiteCand] });
+
+                assert.strictEqual(report.providers.length, 2, 'must produce one row per candidate');
+                const cgRow = report.providers.find(p => p.id === 'provider:codegraph');
+                const nlRow = report.providers.find(p => p.id === 'provider:native-lite');
+                assert.ok(cgRow, 'codegraph row must be present');
+                assert.ok(nlRow, 'native-lite row must be present');
+                assert.strictEqual(cgRow.indexState, 'stale', 'codegraph row must reflect stale indexState');
+                assert.strictEqual(cgRow.degraded, false, 'codegraph row must not be degraded (ready + structural-primary)');
+                assert.strictEqual(nlRow.degraded, true, 'native-lite row must be degraded (role fallback)');
+
+                assert.strictEqual(report.staleHints.length, 1, 'exactly one stale hint (codegraph only)');
+                const hint = report.staleHints[0];
+                assert.strictEqual(hint.providerId, 'provider:codegraph', 'stale hint must name codegraph');
+                assert.strictEqual(hint.indexedCommit, 'aaa', 'stale hint must carry indexedCommit');
+                assert.strictEqual(hint.currentCommit, 'bbb', 'stale hint must carry currentCommit');
+                assert.ok(hint.message.includes('codegraph sync'), 'stale hint message must advise manual codegraph sync');
+                assert.ok(!report.staleHints.some(h => h.providerId === 'provider:native-lite'),
+                    'native-lite (not-required) must never yield a stale hint');
+            }
+
+            // 2. No spawn: monkey-patch child_process to throw, prove the module never touches it; grep-assert source too.
+            {
+                const cp = require('child_process');
+                const orig = {
+                    execFile: cp.execFile, spawn: cp.spawn, execFileSync: cp.execFileSync,
+                    spawnSync: cp.spawnSync, exec: cp.exec, execSync: cp.execSync,
+                };
+                for (const k of Object.keys(orig)) {
+                    cp[k] = () => { throw new Error('status module must not spawn: ' + k); };
+                }
+                try {
+                    assert.doesNotThrow(() => {
+                        statusMod.buildCodePerceptionStatus({}, {
+                            candidates: [{
+                                registration: { provider: { id: 'provider:x' } }, role: 'structural-primary',
+                                availability: { available: true, ready: true, indexState: 'ready' },
+                                status: { providerId: 'provider:x', indexState: 'ready', compatibility: 'supported' },
+                                diagnostics: [],
+                            }],
+                            links: [{ status: 'confirmed' }],
+                        });
+                    }, 'buildCodePerceptionStatus must not touch child_process');
+                } finally {
+                    Object.assign(cp, orig);
+                }
+
+                const source = fs.readFileSync(require.resolve(statusModPath), 'utf8');
+                assert.ok(!/child_process/.test(source), 'status.js source must never reference child_process');
+                assert.ok(!/\bspawn\b/.test(source), 'status.js source must never reference spawn');
+                assert.ok(!/\bexecFile\b/.test(source), 'status.js source must never reference execFile');
+            }
+
+            // 3. Links summary: from array (counted by .status) and pre-summarized passthrough.
+            {
+                const fromArray = statusMod.buildCodePerceptionStatus({}, {
+                    links: [{ status: 'confirmed' }, { status: 'confirmed' }, { status: 'derived' }, { status: 'proposed' }],
+                });
+                assert.deepStrictEqual(fromArray.links, { confirmed: 2, derived: 1, proposed: 1 },
+                    'links array must be counted by status');
+
+                const presummarized = statusMod.buildCodePerceptionStatus({}, {
+                    links: { confirmed: 5, derived: 0, proposed: 2 },
+                });
+                assert.deepStrictEqual(presummarized.links, { confirmed: 5, derived: 0, proposed: 2 },
+                    'pre-summarized links object must pass through unchanged');
+            }
+
+            // 4. Not-ready candidate must be degraded.
+            {
+                const notReadyCand = {
+                    registration: { provider: { id: 'provider:notready' }, role: 'enrichment' },
+                    role: 'enrichment',
+                    availability: { available: true, ready: false, indexState: 'missing' },
+                    status: null,
+                    diagnostics: [],
+                };
+                const report = statusMod.buildCodePerceptionStatus({}, { candidates: [notReadyCand] });
+                assert.strictEqual(report.providers.length, 1, 'must produce a row for the not-ready candidate');
+                assert.strictEqual(report.providers[0].degraded, true, 'not-ready candidate must be degraded');
+                assert.strictEqual(report.providers[0].ready, false, 'not-ready candidate row must report ready:false');
+            }
+
+            // 5. Empty/undefined inputs -> empty report, no throw.
+            {
+                const report = statusMod.buildCodePerceptionStatus({}, {});
+                assert.deepStrictEqual(report, {
+                    providers: [], staleHints: [], links: { confirmed: 0, derived: 0, proposed: 0 }, diagnostics: [],
+                }, 'empty inputs must yield an empty report');
+
+                assert.doesNotThrow(() => statusMod.buildCodePerceptionStatus(),
+                    'buildCodePerceptionStatus must not throw when called with no arguments');
+            }
+
+            // 6. Malformed candidates (null / {}) must never throw and must degrade to a diagnostic/unknown row.
+            {
+                let report;
+                assert.doesNotThrow(() => {
+                    report = statusMod.buildCodePerceptionStatus({}, { candidates: [null, {}, undefined] });
+                }, 'malformed candidates must never throw');
+                assert.ok(Array.isArray(report.providers), 'providers must still be an array');
+                assert.ok(Array.isArray(report.diagnostics), 'diagnostics must still be an array');
+                assert.ok(report.diagnostics.some(d => d.code === 'malformed-candidate'),
+                    'malformed candidates must contribute a malformed-candidate diagnostic');
+            }
+        }
+        console.log('✅ T-cg-status passed');
+
+        console.log('T-cg-dogfood-validate. Testing dogfood artifact validator (recomputed fingerprints + sections) + --require-live-codegraph strict gate ...');
+        {
+            const dogfoodValidatePath = path.join(TEMPLATE_CLI_DIR, 'code-perception', 'dogfood-validate');
+            const { validateDogfoodArtifact } = require(dogfoodValidatePath);
+            assert.strictEqual(typeof validateDogfoodArtifact, 'function',
+                'validateDogfoodArtifact must be exported');
+
+            const fixturesDir = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const good = fs.readFileSync(path.join(fixturesDir, 'dogfood-sample.md'), 'utf8');
+            const bad = fs.readFileSync(path.join(fixturesDir, 'dogfood-bad.md'), 'utf8');
+
+            // 1. Good artifact valid: genuine fingerprints recompute-match + all metadata + all sections.
+            {
+                const result = validateDogfoodArtifact(good, { requireClosureEvidence: true });
+                assert.strictEqual(result.valid, true,
+                    'genuine dogfood-sample.md must validate: ' + JSON.stringify(result.findings));
+                assert.deepStrictEqual(result.findings, [], 'valid artifact must have zero findings');
+            }
+
+            // 2. Bad artifact invalid — missing section (dogfood-bad.md drops exactly stale-index).
+            {
+                const result = validateDogfoodArtifact(bad);
+                assert.strictEqual(result.valid, false, 'dogfood-bad.md (missing stale-index) must be invalid');
+                assert.ok(result.findings.some(f => f.code === 'missing-section' && /stale-index/.test(f.message)),
+                    'must report missing-section for stale-index: ' + JSON.stringify(result.findings));
+            }
+
+            // 3. Fingerprint tamper caught: flip a character inside a fenced block's inner content
+            //    (in the test string only, never the committed fixture file).
+            {
+                const tampered = good.replace(
+                    'codegraph query "normalizeReference" --json',
+                    'codegraph query "normalizeReferenceX" --json');
+                assert.notStrictEqual(tampered, good, 'tamper must actually change the fixture text');
+                const result = validateDogfoodArtifact(tampered);
+                assert.strictEqual(result.valid, false, 'tampered fenced-block content must be caught by the recompute');
+                assert.ok(result.findings.some(f => f.code === 'fingerprint-mismatch'),
+                    'tamper must produce a fingerprint-mismatch finding: ' + JSON.stringify(result.findings));
+            }
+
+            // 4. Missing closureEvidenceCommit: required by default, optional when requireClosureEvidence:false.
+            {
+                const withoutClosure = good.replace(/^closureEvidenceCommit:.*$\n/m, '');
+                assert.notStrictEqual(withoutClosure, good, 'closureEvidenceCommit line must actually be removed');
+
+                const required = validateDogfoodArtifact(withoutClosure, { requireClosureEvidence: true });
+                assert.strictEqual(required.valid, false, 'missing closureEvidenceCommit must be invalid when required');
+                assert.ok(required.findings.some(f => f.code === 'missing-closure-evidence'),
+                    'must report missing-closure-evidence when required: ' + JSON.stringify(required.findings));
+
+                const notRequired = validateDogfoodArtifact(withoutClosure, { requireClosureEvidence: false });
+                assert.ok(!notRequired.findings.some(f => f.code === 'missing-closure-evidence'),
+                    'missing-closure-evidence finding must be absent when not required: ' + JSON.stringify(notRequired.findings));
+            }
+
+            // 5. Never throws: non-string input degrades to {valid:false, findings:[not-text]}.
+            {
+                assert.doesNotThrow(() => validateDogfoodArtifact(null), 'null input must not throw');
+                assert.doesNotThrow(() => validateDogfoodArtifact(42), 'numeric input must not throw');
+
+                const r1 = validateDogfoodArtifact(null);
+                assert.strictEqual(r1.valid, false, 'null input must be invalid');
+                assert.strictEqual(r1.findings.length, 1, 'null input must yield exactly one finding');
+                assert.strictEqual(r1.findings[0].code, 'not-text', 'null input finding must be not-text');
+
+                const r2 = validateDogfoodArtifact(42);
+                assert.strictEqual(r2.valid, false, 'numeric input must be invalid');
+                assert.strictEqual(r2.findings[0].code, 'not-text', 'numeric input finding must be not-text');
+            }
+
+            // 6 & 7. --require-live-codegraph strict gate: spawn the ABSOLUTE test.js path with an
+            // explicit EVO_LITE_WORKSPACE_ROOT (a relative path in a temp cwd would exit 1 for
+            // "script missing" and false-pass the missing-artifact assertion).
+            const childProcess = require('child_process');
+            const testJsPath = path.join(TEMPLATE_CLI_DIR, 'test.js');
+            assert.ok(fs.existsSync(testJsPath), 'sanity: absolute test.js path must exist: ' + testJsPath);
+
+            // Recursion guard: these subtests spawn `test.js governance --require-live-codegraph`,
+            // which itself re-runs this very section. The spawn sets EVO_LITE_DOGFOOD_SPAWN_TEST=1 so
+            // the CHILD skips these spawn subtests (it still runs the real strict gate in test.js) —
+            // without this, every governance run would fork infinitely.
+            if (process.env.EVO_LITE_DOGFOOD_SPAWN_TEST === '1') {
+                console.log('  (nested strict-gate run: skipping spawn subtests to avoid recursion)');
+            } else {
+            // 6. Missing artifact: temp workspace root with NO docs/code-perception-codegraph-dogfood.md.
+            {
+                const missingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-dogfood-strict-missing-'));
+                try {
+                    let threw = null;
+                    try {
+                        childProcess.execFileSync(process.execPath, [testJsPath, 'governance', '--require-live-codegraph'], {
+                            env: { ...process.env, EVO_LITE_DOGFOOD_SPAWN_TEST: '1', EVO_LITE_WORKSPACE_ROOT: missingRoot },
+                            encoding: 'utf8',
+                        });
+                    } catch (e) {
+                        threw = e;
+                    }
+                    assert.ok(threw, 'strict gate must exit non-zero when the live dogfood artifact is missing');
+                    assert.notStrictEqual(threw.status, 0, 'exit code must be non-zero on missing artifact');
+                    const combined = (threw.stdout || '') + (threw.stderr || '');
+                    assert.ok(combined.includes('live-codegraph-artifact-missing'),
+                        'combined stdout+stderr must include the live-codegraph-artifact-missing token: ' + combined.slice(-500));
+                } finally {
+                    fs.rmSync(missingRoot, { recursive: true, force: true });
+                }
+            }
+
+            // 7. Valid artifact: temp workspace root WITH docs/code-perception-codegraph-dogfood.md
+            //    (a copy of the committed genuine dogfood-sample.md) — strict run must exit 0.
+            {
+                const validRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-dogfood-strict-valid-'));
+                try {
+                    const docsDir = path.join(validRoot, 'docs');
+                    fs.mkdirSync(docsDir, { recursive: true });
+                    fs.copyFileSync(
+                        path.join(fixturesDir, 'dogfood-sample.md'),
+                        path.join(docsDir, 'code-perception-codegraph-dogfood.md'));
+
+                    let threw = null;
+                    let out = '';
+                    try {
+                        out = childProcess.execFileSync(process.execPath, [testJsPath, 'governance', '--require-live-codegraph'], {
+                            env: { ...process.env, EVO_LITE_DOGFOOD_SPAWN_TEST: '1', EVO_LITE_WORKSPACE_ROOT: validRoot },
+                            encoding: 'utf8',
+                        });
+                    } catch (e) {
+                        threw = e;
+                    }
+                    assert.strictEqual(threw, null,
+                        'strict gate must exit 0 on a valid artifact: ' +
+                        (threw ? ((threw.stdout || '') + (threw.stderr || '')).slice(-500) : ''));
+                    assert.ok(out.includes('live-codegraph dogfood artifact valid'),
+                        'stdout must confirm the live-codegraph dogfood artifact is valid');
+                } finally {
+                    fs.rmSync(validRoot, { recursive: true, force: true });
+                }
+            }
+            }
+        }
+        console.log('✅ T-cg-dogfood-validate passed');
 }
 
 module.exports = { runGovernanceTests };

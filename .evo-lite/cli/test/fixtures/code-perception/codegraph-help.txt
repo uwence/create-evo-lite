@@ -1,0 +1,30 @@
+Usage: codegraph [options] [command]
+
+Code intelligence and knowledge graph for any codebase
+
+Options:
+  -V, --version              output the version number
+  -h, --help                 display help for command
+
+Commands:
+  init [path]                Initialize CodeGraph in a project directory and build the initial index
+  uninit [path]              Remove CodeGraph from a project (deletes .codegraph/ directory)
+  index [path]               Rebuild the full index from scratch (same result as a fresh init)
+  sync [path]                Sync changes since last index
+  status [path]              Show index status and statistics
+  query <search>             Search for symbols in the codebase
+  explore <query...>         Explore an area: relevant symbols' source + call paths in one shot (same output as the codegraph_explore MCP tool)
+  node [name]                One symbol's source + caller/callee trail, or read a file with line numbers + dependents (same output as the codegraph_node MCP tool)
+  files [options]            Show project file structure from the index
+  callers <symbol>           Find all functions/methods that call a specific symbol
+  callees <symbol>           Find all functions/methods that a specific symbol calls
+  impact <symbol>            Analyze what code is affected by changing a symbol
+  affected [files...]        Find test files affected by changed source files
+  daemon                     Manage running CodeGraph background daemons — pick one and press enter to stop it
+  unlock [path]              Remove a stale lock file that is blocking indexing
+  install                    Install codegraph MCP server into one or more agents
+  uninstall                  Remove CodeGraph from your agents
+  telemetry [action]         Show or change anonymous usage telemetry
+  upgrade [version]          Update CodeGraph to the latest release
+  version                    Print the installed version
+  help [command]             display help for command

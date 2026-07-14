@@ -1,0 +1,26 @@
+[
+  {
+    "path": "templates/cli/code-perception/normalize.js",
+    "language": "javascript",
+    "nodeCount": 11,
+    "size": 6001
+  },
+  {
+    "path": "templates/cli/code-perception/native-lite.js",
+    "language": "javascript",
+    "nodeCount": 18,
+    "size": 16721
+  },
+  {
+    "path": "templates/cli/code-perception/provider-contract.js",
+    "language": "javascript",
+    "nodeCount": 9,
+    "size": 6402
+  },
+  {
+    "path": "templates/cli/code-perception/provider-router.js",
+    "language": "javascript",
+    "nodeCount": 7,
+    "size": 6528
+  }
+]

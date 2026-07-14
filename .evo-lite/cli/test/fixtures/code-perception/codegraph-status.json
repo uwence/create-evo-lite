@@ -1,0 +1,37 @@
+{
+  "initialized": true,
+  "version": "1.4.1",
+  "projectPath": "/home/dev/create-evo-lite",
+  "indexPath": "/home/dev/create-evo-lite/.codegraph",
+  "lastIndexed": "2026-07-10T14:32:05.000Z",
+  "fileCount": 214,
+  "nodeCount": 2045,
+  "edgeCount": 4105,
+  "dbSizeBytes": 3211264,
+  "backend": "node:sqlite",
+  "journalMode": "wal",
+  "nodesByKind": {
+    "file": 214,
+    "function": 812,
+    "method": 640,
+    "class": 96,
+    "interface": 44,
+    "constant": 29,
+    "variable": 210
+  },
+  "languages": ["javascript", "typescript"],
+  "pendingChanges": {
+    "added": 0,
+    "modified": 0,
+    "removed": 0
+  },
+  "worktreeMismatch": null,
+  "index": {
+    "builtWithVersion": "1.4.1",
+    "builtWithExtractionVersion": 24,
+    "currentExtractionVersion": 24,
+    "reindexRecommended": false,
+    "state": "complete",
+    "pendingRefs": 0
+  }
+}

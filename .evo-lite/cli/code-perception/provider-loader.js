@@ -17,6 +17,7 @@
 
 const DEFAULT_REGISTRY = Object.freeze({
     'provider:native-lite': { role: 'fallback', create: () => require('./native-lite').create() },
+    'provider:codegraph': { role: 'structural-primary', create: options => require('./providers/codegraph').create(options) },
 });
 
 // Keys that must never survive into a registration's `options`: any of these
@@ -78,7 +79,7 @@ function loadProviders(config, opts) {
     for (const selection of selections) {
         const regEntry = reg[selection.id];
         try {
-            const provider = regEntry.create();
+            const provider = regEntry.create(selection.options);
             registrations.push({
                 provider,
                 role: selection.role,

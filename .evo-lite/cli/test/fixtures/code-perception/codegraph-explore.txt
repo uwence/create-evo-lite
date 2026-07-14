@@ -1,0 +1,9 @@
+Exploring: reference normalization
+
+The normalization layer converts a provider's raw entity data into Evo-Lite's
+unified reference shape. The entry point lives at templates/cli/code-perception/normalize.js:54,
+which fans out to the enum-coercion and id-derivation helpers. Search results
+and impact results reuse the same reference builder, so a single change here
+ripples across the whole perception surface. The native fallback fabricates no
+symbol graph; this path stays pure and deterministic. Callers that need callee
+detail should follow the trail from the entry point rather than re-deriving it.
