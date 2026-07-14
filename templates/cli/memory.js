@@ -705,6 +705,7 @@ function buildProgram() {
     require('./dashboard-data').registerDashboardCommands(program);
     require('./hooks').registerHookCommands(program);
     require('./sync-runtime').registerSyncRuntimeCommands(program);
+    require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program);
 
     program.command('inspect')
         .description('Run the inspector HTTP server.')

@@ -5386,6 +5386,124 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-linker-heuristic passed');
 
+        console.log('T-cg-post-commit. Testing post-commit code-perception ACT surface (refresh + markStale + rebuild/persist links + manual-sync advisory) ...');
+        {
+            const childProcess = require('child_process');
+            const { Command } = require('commander');
+            const modulePath = path.join(TEMPLATE_CLI_DIR, 'code-perception', 'post-commit-code-perception.js');
+            const postCommit = require(modulePath);
+            const nativeLiteMod = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'native-lite'));
+            const cacheMod = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'cache'));
+            const hooksMod = require(path.join(TEMPLATE_CLI_DIR, 'hooks'));
+
+            function git(cwd, args) {
+                childProcess.execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env } });
+            }
+
+            const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-cg-postcommit-'));
+            writeText(path.join(projectRoot, 'src', 'a.js'), 'export const a = 1;\n');
+            writeText(path.join(projectRoot, 'src', 'b.js'), 'export const b = 2;\n');
+            git(projectRoot, ['init']);
+            git(projectRoot, ['config', 'user.email', 'evo@example.com']);
+            git(projectRoot, ['config', 'user.name', 'Evo Test']);
+            git(projectRoot, ['add', '.']);
+            git(projectRoot, ['commit', '-m', 'chore: baseline']);
+
+            try {
+                // Setup: a real file-cache, seeded with one fresh entry.
+                const cache = cacheMod.createCache({ projectRoot, now: () => Date.now() });
+                const cacheKey = cacheMod.makeCacheKey({
+                    providerId: 'provider:codegraph', providerVersion: '1', adapterVersion: '1',
+                    rootFingerprint: 'fp', query: 'status',
+                });
+                const seeded = cache.set(cacheKey, { ok: true }, { kind: 'provider-status', currentCommit: 'old-sha' });
+                assert.strictEqual(seeded.stored, true, 'setup: seeded cache entry must be stored');
+                assert.strictEqual(cache.get(cacheKey).stale, false, 'setup: seeded cache entry must start fresh');
+
+                // 1. Refresh + markStale + persist + blob.
+                const { report, diagnostics } = postCommit.runPostCommitCodePerception({
+                    projectRoot, headSha: 'abc1234', changedFiles: ['src/a.js'], cache,
+                });
+                assert.strictEqual(report.event, 'post-commit-code-perception', 'report.event must be post-commit-code-perception');
+                assert.strictEqual(report.commit, 'abc1234', 'report.commit must echo headSha');
+                assert.ok(Array.isArray(diagnostics), 'diagnostics must be an array');
+                assert.strictEqual(cache.get(cacheKey).stale, true, 'seeded cache entry must be marked stale after post-commit');
+
+                const linksPath = path.join(projectRoot, '.evo-lite', 'generated', 'code-perception', 'governance-links.json');
+                assert.ok(fs.existsSync(linksPath), 'governance-links.json must be persisted');
+                const lastRunPath = path.join(projectRoot, '.evo-lite', 'generated', 'code-perception', 'post-commit-last-run.json');
+                assert.ok(fs.existsSync(lastRunPath), 'post-commit-last-run.json must be written');
+                const lastRun = JSON.parse(fs.readFileSync(lastRunPath, 'utf8'));
+                assert.strictEqual(lastRun.ok, true, 'post-commit-last-run.json must have ok:true');
+                assert.deepStrictEqual(lastRun.changedFiles, ['src/a.js'], 'post-commit-last-run.json must echo changedFiles');
+
+                // 2. changed_by_commit link for the resolvable changed file.
+                const filesResult = nativeLiteMod.create().getFiles({ projectRoot }, {});
+                const aRef = filesResult.files.find(f => f.reference.filePath === 'src/a.js').reference;
+                const linksPayload = JSON.parse(fs.readFileSync(linksPath, 'utf8'));
+                const changedLink = linksPayload.links.find(l => (
+                    l.kind === 'changed_by_commit' && l.governanceEntityId === 'commit:abc1234' && l.codeReferenceId === aRef.id
+                ));
+                assert.ok(changedLink, 'a changed_by_commit link for src/a.js at commit:abc1234 must be persisted');
+
+                // 3. NO codegraph spawn: the module never requires codegraph.js /
+                //    providers/codegraph / codegraph-exec — the sync remedy stays a string.
+                const moduleSrc = fs.readFileSync(modulePath, 'utf8');
+                assert.ok(!/require\(\s*['"]\.\/codegraph(-exec)?['"]\s*\)/.test(moduleSrc),
+                    'module must not require ./codegraph or ./codegraph-exec');
+                assert.ok(!/require\(\s*['"]\.\/providers\/codegraph['"]\s*\)/.test(moduleSrc),
+                    'module must not require ./providers/codegraph');
+
+                // 4. syncSuggestion is an advisory STRING, not an action.
+                assert.strictEqual(typeof report.syncSuggestion, 'string', 'syncSuggestion must be a string');
+                assert.ok(report.syncSuggestion.includes('codegraph sync'), 'syncSuggestion must mention codegraph sync when changedFiles is non-empty');
+                const emptyChangedResult = postCommit.runPostCommitCodePerception({
+                    projectRoot, headSha: 'abc1234', changedFiles: [], cache: null,
+                });
+                assert.strictEqual(emptyChangedResult.report.syncSuggestion, '', 'syncSuggestion must be empty when changedFiles is empty');
+
+                // 5. Never throws / guarded — cache:null + changedFiles:undefined.
+                let degraded;
+                assert.doesNotThrow(() => {
+                    degraded = postCommit.runPostCommitCodePerception({ projectRoot, headSha: 'def5678', changedFiles: undefined, cache: null });
+                }, 'runPostCommitCodePerception must never throw with cache:null and changedFiles:undefined');
+                assert.deepStrictEqual(degraded.report.changedFiles, [], 'changedFiles must default to [] when undefined');
+                assert.strictEqual(degraded.report.ok, true, 'degraded report must still have ok:true');
+
+                // A broken cache (markStale throws) is caught -> diagnostic, not a throw.
+                const brokenCache = { markStale() { throw new Error('boom'); } };
+                let brokenResult;
+                assert.doesNotThrow(() => {
+                    brokenResult = postCommit.runPostCommitCodePerception({ projectRoot, headSha: 'aaa1111', changedFiles: ['src/a.js'], cache: brokenCache });
+                }, 'a broken cache.markStale must not throw out of runPostCommitCodePerception');
+                assert.ok(brokenResult.diagnostics.some(d => d.code === 'cache-mark-stale-failed'), 'broken cache.markStale must surface a cache-mark-stale-failed diagnostic');
+                assert.strictEqual(brokenResult.report.cacheMarkedStale, false, 'cacheMarkedStale must be false when markStale threw');
+
+                // Completely empty context must also never throw.
+                assert.doesNotThrow(() => {
+                    postCommit.runPostCommitCodePerception({});
+                }, 'runPostCommitCodePerception must never throw on an empty context');
+
+                // 6. Hook wiring present, gated on CODE_CHANGED, guarded by run_and_record.
+                const hookBody = hooksMod.buildHookBody();
+                assert.ok(hookBody.includes('code-perception post-commit'), 'buildHookBody must include the code-perception post-commit line');
+                const gatedLine = hookBody.split('\n').find(l => l.includes('code-perception post-commit'));
+                assert.ok(gatedLine && gatedLine.includes('CODE_CHANGED'), 'the code-perception post-commit line must be gated on CODE_CHANGED');
+                assert.ok(gatedLine && gatedLine.includes('run_and_record'), 'the code-perception post-commit line must be wrapped by run_and_record');
+
+                // 7. CLI command registered: code-perception group with a post-commit subcommand.
+                const p = new Command();
+                postCommit.registerCodePerceptionCommands(p);
+                const cpCmd = p.commands.find(c => c.name() === 'code-perception');
+                assert.ok(cpCmd, 'program exposes a code-perception command group');
+                const subNames = cpCmd.commands.map(c => c.name());
+                assert.ok(subNames.includes('post-commit'), 'code-perception command group exposes a post-commit subcommand');
+            } finally {
+                fs.rmSync(projectRoot, { recursive: true, force: true });
+            }
+        }
+        console.log('✅ T-cg-post-commit passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
