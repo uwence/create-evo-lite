@@ -5141,6 +5141,146 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-linker-exact passed');
 
+        console.log('T-cg-linker-symbol. Testing governance linker — rule-gated symbol/evidence/focus links ...');
+        {
+            const { normalizeReference } = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize'));
+            const linker = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'governance-linker'));
+            const refA = normalizeReference('provider:native-lite', { providerEntityId: 'src/a.js', name: 'a.js', kind: 'file', filePath: 'src/a.js' });
+            const fileReferences = [refA];
+
+            const symFoo = {
+                reference: normalizeReference('provider:codegraph', { providerEntityId: 'src/a.js::foo', name: 'foo', kind: 'function', filePath: 'src/a.js', lineRange: [10, 20] }),
+                filePath: 'src/a.js', lineRange: [10, 20], resolutionConfidence: 0.9,
+            };
+            const symBar = {
+                reference: normalizeReference('provider:codegraph', { providerEntityId: 'src/a.js::bar', name: 'bar', kind: 'function', filePath: 'src/a.js', lineRange: [30, 40] }),
+                filePath: 'src/a.js', lineRange: [30, 40], resolutionConfidence: 0.9,
+            };
+
+            // 1. diff-range∩symbol → exactly the intersecting symbol, tied via evidence.
+            {
+                const planIR = { tasks: [{ id: 'task:x', sourcePath: 'docs/plans/p.md' }] };
+                const commits = [{ sha: 'c1', changedFiles: ['src/a.js'], diffRanges: { 'src/a.js': [[12, 15]] } }];
+                const evidence = [{ taskId: 'task:x', kind: 'test', commitSha: 'c1' }];
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences, commits, evidence,
+                    symbolReferences: [symFoo, symBar],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:x');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one implements_task link from diff-range intersection');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symFoo.reference.id, 'the intersecting symbol (foo) gets the link');
+                assert.strictEqual(implementsLinks[0].status, 'derived', 'symbol implements_task status is derived');
+                assert.strictEqual(implementsLinks[0].confidence, 0.9, 'symbol implements_task confidence from resolutionConfidence');
+                assert.ok(!implementsLinks.some(l => l.codeReferenceId === symBar.reference.id), 'the non-intersecting symbol (bar) gets no link');
+            }
+
+            // 2. Plan names the symbol via explicit task.symbols.
+            {
+                const planIR = { tasks: [{ id: 'task:y', sourcePath: 'docs/plans/p.md', symbols: ['bar'] }] };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symFoo, symBar],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:y');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one implements_task link for task:y');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symBar.reference.id, 'task.symbols names bar -> bar gets the link');
+            }
+
+            // 3. Evidence names the symbol.
+            {
+                const planIR = { tasks: [{ id: 'task:z', sourcePath: 'docs/plans/p.md' }] };
+                const evidence = [{ taskId: 'task:z', kind: 'test', symbols: ['foo'] }];
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences, evidence,
+                    symbolReferences: [symFoo, symBar],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:z');
+                assert.strictEqual(implementsLinks.length, 1, 'exactly one implements_task link for task:z');
+                assert.strictEqual(implementsLinks[0].codeReferenceId, symFoo.reference.id, 'evidence.symbols names foo -> foo gets the link');
+            }
+
+            // 4. No matching rule -> NO symbol link (the crucial negative / anti-blanket-linking).
+            {
+                const planIR = { tasks: [{ id: 'task:w', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js'] }] };
+                const result = linker.buildGovernanceLinks({
+                    planIR, fileReferences,
+                    symbolReferences: [symFoo, symBar],
+                });
+                const implementsLinks = result.links.filter(l => l.kind === 'implements_task' && l.governanceEntityId === 'task:w');
+                assert.strictEqual(implementsLinks.length, 0, 'a linked file with unmatched symbols produces ZERO implements_task links');
+            }
+
+            // 5. verified_by_test / evidenced_by_archive from evidence.
+            {
+                const evidence = [
+                    { taskId: 'task:x', kind: 'test', filePath: 'src/a.js', sourcePath: 'test/a.spec.js' },
+                    { taskId: 'task:x', kind: 'archive', archivePath: '.evo-lite/raw_memory/mem_1.md', codeReferenceId: refA.id },
+                    { taskId: 'task:none', kind: 'test' },
+                ];
+                const result = linker.buildGovernanceLinks({ fileReferences, evidence });
+                const verified = result.links.filter(l => l.kind === 'verified_by_test');
+                assert.strictEqual(verified.length, 1, 'exactly one verified_by_test link');
+                assert.strictEqual(verified[0].codeReferenceId, refA.id, 'verified_by_test resolves filePath via fileReferences');
+                assert.strictEqual(verified[0].governanceEntityId, 'task:x', 'verified_by_test governanceEntityId is evidence.taskId');
+                assert.strictEqual(verified[0].status, 'confirmed', 'verified_by_test status confirmed');
+                assert.strictEqual(verified[0].confidence, 1.0, 'verified_by_test confidence 1.0');
+
+                const archived = result.links.filter(l => l.kind === 'evidenced_by_archive');
+                assert.strictEqual(archived.length, 1, 'exactly one evidenced_by_archive link');
+                assert.strictEqual(archived[0].codeReferenceId, refA.id, 'evidenced_by_archive uses explicit codeReferenceId');
+                assert.strictEqual(archived[0].evidence.archivePath, '.evo-lite/raw_memory/mem_1.md', 'evidenced_by_archive evidence.archivePath');
+
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'unresolved-code-reference'),
+                    'evidence with neither codeReferenceId nor resolvable filePath produces a diagnostic',
+                );
+                assert.ok(
+                    !result.links.some(l => l.governanceEntityId === 'task:none'),
+                    'unresolvable evidence row produces NO link',
+                );
+            }
+
+            // 6. related_to_focus from PRE-RESOLVED focusReferences ONLY.
+            {
+                const focusReferences = [{ governanceEntityId: 'focus:current', codeReferenceId: refA.id }];
+                const result = linker.buildGovernanceLinks({ fileReferences, focusReferences, activeContextFocus: 'some text' });
+                const focusLinks = result.links.filter(l => l.kind === 'related_to_focus');
+                assert.strictEqual(focusLinks.length, 1, 'exactly one related_to_focus link from focusReferences');
+                assert.strictEqual(focusLinks[0].codeReferenceId, refA.id, 'related_to_focus codeReferenceId from focusReference');
+                assert.strictEqual(focusLinks[0].governanceEntityId, 'focus:current', 'related_to_focus governanceEntityId from focusReference');
+                assert.strictEqual(focusLinks[0].status, 'derived', 'related_to_focus status derived');
+                assert.strictEqual(focusLinks[0].confidence, 1.0, 'related_to_focus confidence 1.0');
+
+                const resultNoFocusRefs = linker.buildGovernanceLinks({ fileReferences, activeContextFocus: 'some text' });
+                assert.strictEqual(
+                    resultNoFocusRefs.links.filter(l => l.kind === 'related_to_focus').length, 0,
+                    'raw activeContextFocus text alone produces NO related_to_focus link',
+                );
+            }
+
+            // 7. Never throws on malformed symbolReference/evidence/focusReference rows; diagnostics instead.
+            {
+                const planIR = { tasks: [{ id: 'task:malformed', sourcePath: 'docs/plans/p.md', symbols: ['foo'] }] };
+                assert.doesNotThrow(() => linker.buildGovernanceLinks({
+                    planIR,
+                    fileReferences,
+                    symbolReferences: [null, 'not-an-object', { reference: {} }, symFoo],
+                    evidence: [null, 42, { taskId: 'task:malformed', kind: 'bogus', filePath: 'src/a.js' }],
+                    focusReferences: [null, { governanceEntityId: 'focus:x' }],
+                }), 'malformed rows in the new inputs must never throw');
+
+                const result = linker.buildGovernanceLinks({
+                    planIR,
+                    fileReferences,
+                    symbolReferences: [null, 'not-an-object', { reference: {} }],
+                    evidence: [null, 42],
+                    focusReferences: [null, { governanceEntityId: 'focus:x' }],
+                });
+                assert.ok(result.diagnostics.length > 0, 'malformed rows produce diagnostics rather than being silently swallowed');
+            }
+        }
+        console.log('✅ T-cg-linker-symbol passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

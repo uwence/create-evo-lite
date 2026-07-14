@@ -2,29 +2,55 @@
 
 // Governance Linker — reference-resolved links between governance entities
 // (planning tasks, acceptance dependencies, commits) and code references.
-// This first layer (buildGovernanceLinks) emits ONLY exact links at
-// confidence 1.0: declares_file, depends_on_file, changed_by_commit.
 //
-// Reference resolution, no dangling links: every emitted link's
-// codeReferenceId is resolved by an EXACT normalized filePath match against
-// the caller-provided `fileReferences` (CodeReference[]). A path with no
-// matching reference produces an 'unresolved-code-reference' diagnostic and
-// NEVER a link — dangling links (a codeReferenceId that resolves to nothing)
-// must not exist.
+// Layer 1 (exact, confidence 1.0): declares_file, depends_on_file,
+// changed_by_commit — reference resolution is an EXACT normalized filePath
+// match against the caller-provided `fileReferences` (CodeReference[]).
+//
+// Layer 2 (rule-gated symbol/evidence/focus links) added by cg-linker-symbol:
+//   - implements_task (status 'derived'): emitted for a (task, symbolReference)
+//     pair ONLY when a STRONG rule holds (plan names the symbol via explicit
+//     task.symbols, evidence names the symbol, or a commit diff-range
+//     intersects the symbol's lineRange AND that commit is tied to the task
+//     via an evidence row). A symbol matching NO rule gets NO link — this
+//     layer never blanket-links every symbol in a linked file to a task.
+//   - verified_by_test / evidenced_by_archive (status 'confirmed', 1.0): from
+//     `evidence` rows, but ONLY when the row carries (or resolves to) a real
+//     codeReferenceId.
+//   - related_to_focus (status 'derived', 1.0): from PRE-RESOLVED
+//     `focusReferences` ONLY. A raw free-text `activeContextFocus` is never
+//     accepted/parsed here.
+//
+// No dangling links, no guessing: every emitted link's codeReferenceId is a
+// real id — resolved from a fileReferences match, a symbolReference.reference.id,
+// an evidence.codeReferenceId/resolved evidence.filePath, or a
+// focusReference.codeReferenceId. A reference that can't resolve produces an
+// 'unresolved-code-reference' diagnostic and NEVER a link.
 //
 // No guessing from Markdown/text: depends_on_file comes ONLY from the
-// explicit `acceptanceDependencies` input. The Planning IR does not carry
-// acceptance dependsOn data (only task.linkedFiles), so this layer never
-// parses spec/plan prose to invent dependency links.
+// explicit `acceptanceDependencies` input; implements_task never parses plan
+// Markdown (only an explicit task.symbols array counts).
 //
 // Never throws: missing/undefined inputs degrade to { links: [], diagnostics: [] };
-// a malformed task/dep/commit contributes a diagnostic (or is silently
-// skipped), never a throw.
+// a malformed task/dep/commit/symbolReference/evidence/focusReference row
+// contributes a diagnostic (or is silently skipped), never a throw.
 
 const crypto = require('node:crypto');
 
 function isPlainObject(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function clampConfidence(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+    if (value < 0) return 0;
+    if (value > 1) return 1;
+    return value;
+}
+
+// Two inclusive ranges [a,b] and [c,d] intersect iff a <= d && c <= b.
+function rangesIntersect(a, b, c, d) {
+    return a <= d && c <= b;
 }
 
 function diag(code, message, providerId) {
@@ -146,6 +172,156 @@ function collectChangedByCommitLinks(commits, resolveRef, links, diagnostics) {
     }
 }
 
+// implements_task (status 'derived'): rule-gated symbol-level links. Emitted
+// for a (task, symbolReference) pair ONLY when a STRONG rule holds:
+//   1. Plan names the symbol: task.symbols (explicit array) includes the
+//      symbol's name.
+//   2. Evidence names the symbol: an evidence row with taskId===task.id has
+//      a symbols array including the symbol's name.
+//   3. Commit diff-range intersects the symbol's lineRange, AND that commit
+//      is tied to the task via an evidence row (evidence.taskId===task.id
+//      && evidence.commitSha===commit.sha). A bare commit/symbol
+//      intersection with no task tie emits nothing here (file-granularity
+//      changed_by_commit already covers the untied case).
+// A symbolReference matching none of the rules for a task gets NO link —
+// this never blanket-links every symbol in a linked file to a task.
+function collectImplementsTaskSymbolLinks(planIR, symbolReferences, evidence, commits, links, diagnostics) {
+    const tasks = isPlainObject(planIR) && Array.isArray(planIR.tasks) ? planIR.tasks : [];
+    const rawSymRefs = Array.isArray(symbolReferences) ? symbolReferences : [];
+    const evidenceList = Array.isArray(evidence) ? evidence : [];
+    const commitList = Array.isArray(commits) ? commits : [];
+
+    // Validate symbol references once; malformed rows -> diagnostic, skipped.
+    const validSymRefs = [];
+    for (const symRef of rawSymRefs) {
+        if (!isPlainObject(symRef) || !isPlainObject(symRef.reference) || !symRef.reference.id) {
+            diagnostics.push(diag('malformed-symbol-reference', 'symbolReference is missing a resolvable reference.id'));
+            continue;
+        }
+        validSymRefs.push(symRef);
+    }
+
+    const commitsBySha = new Map();
+    for (const commit of commitList) {
+        if (isPlainObject(commit) && commit.sha !== undefined) commitsBySha.set(commit.sha, commit);
+    }
+
+    for (const task of tasks) {
+        if (!isPlainObject(task) || task.id === undefined) continue;
+        try {
+            const taskSymbols = Array.isArray(task.symbols) ? task.symbols : [];
+            const taskEvidence = evidenceList.filter(e => isPlainObject(e) && e.taskId === task.id);
+            const evidenceSymbolNames = new Set();
+            const tiedCommitShas = new Set();
+            for (const e of taskEvidence) {
+                if (Array.isArray(e.symbols)) {
+                    for (const name of e.symbols) evidenceSymbolNames.add(name);
+                }
+                if (e.commitSha !== undefined) tiedCommitShas.add(e.commitSha);
+            }
+
+            for (const symRef of validSymRefs) {
+                const name = symRef.reference.name;
+                let matched = taskSymbols.includes(name) || evidenceSymbolNames.has(name);
+
+                if (!matched && Array.isArray(symRef.lineRange) && symRef.lineRange.length === 2) {
+                    const symPath = normalizePath(symRef.filePath);
+                    const [symStart, symEnd] = symRef.lineRange;
+                    for (const sha of tiedCommitShas) {
+                        const commit = commitsBySha.get(sha);
+                        if (!commit) continue;
+                        const changedFiles = Array.isArray(commit.changedFiles) ? commit.changedFiles : [];
+                        if (!changedFiles.some(f => normalizePath(f) === symPath)) continue;
+                        const ranges = isPlainObject(commit.diffRanges) ? commit.diffRanges[symPath] : null;
+                        if (!Array.isArray(ranges)) continue;
+                        const intersects = ranges.some(r => (
+                            Array.isArray(r) && r.length === 2 && rangesIntersect(r[0], r[1], symStart, symEnd)
+                        ));
+                        if (intersects) { matched = true; break; }
+                    }
+                }
+
+                if (matched) {
+                    const link = makeLink(task.id, symRef.reference.id, 'implements_task', {
+                        sourcePath: task.sourcePath,
+                        lineRange: symRef.lineRange,
+                    });
+                    link.status = 'derived';
+                    link.confidence = clampConfidence(symRef.resolutionConfidence);
+                    links.push(link);
+                }
+            }
+        } catch (err) {
+            diagnostics.push(diag('governance-linker-error', `implements_task(symbol): ${err && err.message ? err.message : String(err)}`));
+        }
+    }
+}
+
+// verified_by_test / evidenced_by_archive: from `evidence` rows, only when a
+// real codeReferenceId can be resolved (explicit, or via evidence.filePath
+// against fileReferences). No resolvable reference -> diagnostic, no link.
+function collectEvidenceLinks(evidenceRows, resolveRef, links, diagnostics) {
+    const rows = Array.isArray(evidenceRows) ? evidenceRows : [];
+    for (const row of rows) {
+        if (!isPlainObject(row)) {
+            diagnostics.push(diag('malformed-evidence', 'evidence row is not an object'));
+            continue;
+        }
+        try {
+            let codeReferenceId = row.codeReferenceId;
+            if (codeReferenceId === undefined || codeReferenceId === null) {
+                codeReferenceId = resolveRef(row.filePath);
+            }
+            if (!codeReferenceId) {
+                diagnostics.push(diag(
+                    'unresolved-code-reference',
+                    `evidence: no resolvable code reference (taskId ${row.taskId})`,
+                ));
+                continue;
+            }
+            const kind = row.kind === 'archive' ? 'evidenced_by_archive'
+                : row.kind === 'test' ? 'verified_by_test'
+                    : null;
+            if (!kind) {
+                diagnostics.push(diag('malformed-evidence', `evidence: unrecognized kind ${row.kind} (taskId ${row.taskId})`));
+                continue;
+            }
+            links.push(makeLink(row.taskId, codeReferenceId, kind, {
+                sourcePath: row.sourcePath,
+                archivePath: row.archivePath,
+            }));
+        } catch (err) {
+            diagnostics.push(diag('governance-linker-error', `evidence: ${err && err.message ? err.message : String(err)}`));
+        }
+    }
+}
+
+// related_to_focus: from PRE-RESOLVED `focusReferences` ONLY. Free-text
+// activeContextFocus is never parsed/accepted here.
+function collectFocusLinks(focusReferences, links, diagnostics) {
+    const rows = Array.isArray(focusReferences) ? focusReferences : [];
+    for (const row of rows) {
+        if (!isPlainObject(row)) {
+            diagnostics.push(diag('malformed-focus-reference', 'focusReference is not an object'));
+            continue;
+        }
+        if (row.codeReferenceId === undefined || row.codeReferenceId === null) {
+            diagnostics.push(diag(
+                'unresolved-code-reference',
+                `related_to_focus: focusReference missing codeReferenceId (governanceEntity ${row.governanceEntityId})`,
+            ));
+            continue;
+        }
+        try {
+            const link = makeLink(row.governanceEntityId, row.codeReferenceId, 'related_to_focus', {});
+            link.status = 'derived';
+            links.push(link);
+        } catch (err) {
+            diagnostics.push(diag('governance-linker-error', `related_to_focus: ${err && err.message ? err.message : String(err)}`));
+        }
+    }
+}
+
 function dedupeLinks(links) {
     const seen = new Set();
     const out = [];
@@ -159,9 +335,12 @@ function dedupeLinks(links) {
 
 // buildGovernanceLinks(inputs) -> { links: GovernanceCodeLink[], diagnostics: [] }
 //
-// This layer only handles the EXACT kinds (declares_file, depends_on_file,
-// changed_by_commit). Extra input keys (symbolReferences/evidence/
-// focusReferences) added by later linker layers are ignored, not errors.
+// Handles the EXACT kinds (declares_file, depends_on_file, changed_by_commit)
+// plus the rule-gated kinds (implements_task, verified_by_test,
+// evidenced_by_archive, related_to_focus). All new inputs
+// (symbolReferences/evidence/focusReferences; commits[].diffRanges) default
+// to [] / absent and degrade gracefully — a raw `activeContextFocus` string
+// is accepted as an input key but intentionally never read.
 function buildGovernanceLinks(inputs) {
     const links = [];
     const diagnostics = [];
@@ -178,6 +357,9 @@ function buildGovernanceLinks(inputs) {
         collectDeclaresFileLinks(safeInputs.planIR, resolveRef, links, diagnostics);
         collectDependsOnFileLinks(safeInputs.acceptanceDependencies, resolveRef, links, diagnostics);
         collectChangedByCommitLinks(safeInputs.commits, resolveRef, links, diagnostics);
+        collectImplementsTaskSymbolLinks(safeInputs.planIR, safeInputs.symbolReferences, safeInputs.evidence, safeInputs.commits, links, diagnostics);
+        collectEvidenceLinks(safeInputs.evidence, resolveRef, links, diagnostics);
+        collectFocusLinks(safeInputs.focusReferences, links, diagnostics);
     } catch (err) {
         diagnostics.push(diag('governance-linker-error', err && err.message ? err.message : String(err)));
     }
