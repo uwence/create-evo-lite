@@ -4092,6 +4092,89 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cp-loader passed');
 
+        console.log('T-cg-loader-register. Testing provider:codegraph registration (config-gated) + options reaching the adapter ...');
+        {
+            const loader = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader'));
+            const fakePath = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception', 'fake-codegraph.js');
+            const ctx = { projectRoot: TEMPLATE_CLI_DIR, providerConfig: {} };
+
+            // 1. ① default unchanged: no config still yields exactly native-lite.
+            {
+                const { registrations, diagnostics } = loader.loadProviders();
+                assert.strictEqual(registrations.length, 1, 'default registrations must contain exactly native-lite');
+                assert.strictEqual(registrations[0].provider.id, 'provider:native-lite', 'default provider id must be native-lite');
+                assert.deepStrictEqual(diagnostics, [], 'default loadProviders() must have no diagnostics');
+            }
+
+            // 2. codegraph is registered + selectable in DEFAULT_REGISTRY.
+            {
+                const entry = loader.DEFAULT_REGISTRY['provider:codegraph'];
+                assert.ok(entry, 'DEFAULT_REGISTRY must contain provider:codegraph');
+                assert.strictEqual(entry.role, 'structural-primary', 'provider:codegraph role must be structural-primary');
+            }
+
+            // 3. Config selects codegraph + configured options REACH the adapter
+            //    (proven via check() spawning the fake CLI, not merely stored options).
+            {
+                const { registrations, diagnostics } = loader.loadProviders({
+                    codePerception: {
+                        providers: [{
+                            id: 'provider:codegraph', role: 'structural-primary',
+                            executable: process.execPath, prefixArgs: [fakePath],
+                        }],
+                    },
+                });
+                const cg = registrations.find(r => r.provider.id === 'provider:codegraph');
+                assert.ok(cg, 'provider:codegraph registration must be present');
+                assert.strictEqual(cg.role, 'structural-primary', 'codegraph role must be structural-primary');
+                assert.strictEqual(cg.source, 'configured', 'codegraph source must be configured');
+                assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite must still be present');
+                assert.deepStrictEqual(
+                    diagnostics.filter(d => d.providerId === 'provider:codegraph'), [],
+                    'no diagnostics for provider:codegraph'
+                );
+
+                const avail = await cg.provider.check(ctx);
+                assert.strictEqual(avail.ready, true, 'configured executable/prefixArgs must reach the adapter (check() ready)');
+                assert.strictEqual(avail.available, true, 'configured executable/prefixArgs must reach the adapter (check() available)');
+            }
+
+            // 4. Dangerous fields stripped from the options that reach the adapter.
+            {
+                const { registrations } = loader.loadProviders({
+                    codePerception: {
+                        providers: [{
+                            id: 'provider:codegraph', executable: process.execPath, prefixArgs: [fakePath],
+                            module: '../../evil', create: 'x',
+                        }],
+                    },
+                });
+                const cg = registrations.find(r => r.provider.id === 'provider:codegraph');
+                assert.ok(cg, 'provider:codegraph registration must be present');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(cg.options, 'module'), false, 'options must not contain module');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(cg.options, 'create'), false, 'options must not contain create');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(cg.options, 'id'), false, 'options must not contain id');
+                assert.strictEqual(Object.prototype.hasOwnProperty.call(cg.options, 'role'), false, 'options must not contain role');
+            }
+
+            // 5. Broken-factory isolation (unchanged ① contract) via an injected registry.
+            {
+                const injected = {
+                    'provider:native-lite': loader.DEFAULT_REGISTRY['provider:native-lite'],
+                    'provider:codegraph': { role: 'structural-primary', create: () => { throw new Error('boom'); } },
+                };
+                const { registrations, diagnostics } = loader.loadProviders(
+                    { codePerception: { providers: [{ id: 'provider:codegraph' }] } },
+                    { registry: injected }
+                );
+                const failed = diagnostics.filter(d => d.code === 'provider-load-failed' && d.providerId === 'provider:codegraph');
+                assert.strictEqual(failed.length, 1, 'must emit provider-load-failed for provider:codegraph');
+                assert.ok(registrations.some(r => r.provider.id === 'provider:native-lite'), 'native-lite registration must be present');
+                assert.ok(!registrations.some(r => r.provider.id === 'provider:codegraph'), 'no registration for provider:codegraph');
+            }
+        }
+        console.log('✅ T-cg-loader-register passed');
+
         console.log('T-cp-router. Testing code-perception provider router (async inspect + pure select) ...');
         {
             const router = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-router'));
