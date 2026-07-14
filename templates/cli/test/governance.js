@@ -5504,6 +5504,287 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-post-commit passed');
 
+        console.log('T-cg-failure-isolation. Testing end-to-end CodeGraph failure isolation — missing/timeout/malformed/stale never break the stack ...');
+        {
+            const loader = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader'));
+            const router = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-router'));
+            const CG_DIR = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const fakePath = path.join(CG_DIR, 'fake-codegraph.js');
+            const cgSource = fs.readFileSync(
+                path.join(TEMPLATE_CLI_DIR, 'code-perception', 'providers', 'codegraph.js'), 'utf8',
+            );
+
+            // codegraph.js must never touch the filesystem directly (only ever spawns
+            // the CLI via codegraph-exec) — a cheap static proof that it CANNOT write
+            // plan-ir.json/architecture-ir.json/memory/verify artifacts, independent of
+            // the dynamic before/after snapshot below (scenario 5).
+            assert.ok(!/require\(['"](?:node:)?fs['"]\)/.test(cgSource), 'codegraph.js must never require fs directly');
+            assert.ok(!/require\(['"](?:node:)?child_process['"]\)/.test(cgSource),
+                'codegraph.js must never require child_process directly (only via codegraph-exec)');
+
+            const tempRuntime = createTempRuntimeRoot('cg-failure-isolation');
+            const projectRoot = tempRuntime.workspaceRoot;
+            const generatedDir = path.join(tempRuntime.runtimeRoot, 'generated');
+            const planIrPath = path.join(generatedDir, 'planning', 'plan-ir.json');
+            const archIrPath = path.join(generatedDir, 'architecture', 'architecture-ir.json');
+            const memoryRawDir = path.join(tempRuntime.runtimeRoot, 'raw_memory');
+            const memoryIndexDir = path.join(tempRuntime.runtimeRoot, 'index_memory');
+            const planSeed = JSON.stringify({ marker: 'cg-failure-isolation-plan', tasks: [] });
+            const archSeed = JSON.stringify({ marker: 'cg-failure-isolation-arch', files: [] });
+
+            function snapshotDir(dir) {
+                const out = [];
+                (function walk(current, relBase) {
+                    if (!fs.existsSync(current)) { return; }
+                    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+                        const abs = path.join(current, entry.name);
+                        const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
+                        if (entry.isDirectory()) {
+                            walk(abs, rel);
+                        } else if (entry.isFile()) {
+                            out.push(`${rel}::${fs.readFileSync(abs, 'utf8')}`);
+                        }
+                    }
+                }(dir, ''));
+                return out.sort();
+            }
+
+            const tempFakes = [];
+            try {
+                // Seed Planning IR / Architecture IR with known content so scenario 5
+                // can prove non-MODIFICATION, not merely non-creation.
+                fs.mkdirSync(path.dirname(planIrPath), { recursive: true });
+                fs.writeFileSync(planIrPath, planSeed, 'utf8');
+                fs.mkdirSync(path.dirname(archIrPath), { recursive: true });
+                fs.writeFileSync(archIrPath, archSeed, 'utf8');
+                const planMtimeBefore = fs.statSync(planIrPath).mtimeMs;
+                const archMtimeBefore = fs.statSync(archIrPath).mtimeMs;
+                const generatedBefore = snapshotDir(generatedDir);
+
+                // ---- Scenario 1: missing CodeGraph executable ----------------------
+                {
+                    const missingExe = path.join(os.tmpdir(), 'definitely-not-codegraph-t12-' + Date.now());
+                    const { registrations } = loader.loadProviders({
+                        codePerception: {
+                            providers: [{ id: 'provider:codegraph', role: 'structural-primary', executable: missingExe }],
+                        },
+                    });
+                    const ctx = { projectRoot, providerConfig: {} };
+                    const candidates = await router.inspectProviders(registrations, ctx);
+
+                    const filesSel = router.selectProvider({ capability: 'files', allowFallback: true }, candidates);
+                    assert.strictEqual(filesSel.candidate.registration.provider.id, 'provider:native-lite',
+                        'missing codegraph: files must fall back to native-lite');
+                    assert.strictEqual(filesSel.degraded, true, 'missing codegraph: files fallback must be degraded');
+
+                    const impactSel = router.selectProvider({ capability: 'impact', allowFallback: true }, candidates);
+                    assert.strictEqual(impactSel.candidate, null,
+                        'missing codegraph: impact must never silently substitute native-lite file data');
+                    assert.strictEqual(impactSel.degraded, true, 'missing codegraph: impact no-candidate result must be degraded');
+                    assert.strictEqual(impactSel.reason, 'No ready provider exposes impact analysis',
+                        'missing codegraph: impact reason must be the exact ready-centric string');
+                }
+
+                // ---- Scenario 2: timeout — non-permanent disable + recovery --------
+                {
+                    // Inline fake that sleeps unconditionally regardless of subcommand
+                    // (the same Atomics.wait blocking primitive fake-codegraph.js's
+                    // --fake-sleep uses). fake-codegraph.js's --fake-sleep flag can't be
+                    // routed through check()'s own version/status probes because those
+                    // probes' args are adapter-controlled, not caller-controlled — a
+                    // dedicated always-slow inline fake exercises the identical
+                    // execFile timeout-kill path proven by T-cg-exec.
+                    const slowFake = path.join(os.tmpdir(), 'cg-fake-slow-t12-' + Date.now() + '.js');
+                    tempFakes.push(slowFake);
+                    fs.writeFileSync(slowFake, [
+                        "'use strict';",
+                        'const shared = new Int32Array(new SharedArrayBuffer(4));',
+                        'Atomics.wait(shared, 0, 0, 4000);',
+                        'process.exit(0);',
+                        '',
+                    ].join('\n'), 'utf8');
+
+                    const { registrations } = loader.loadProviders({
+                        codePerception: {
+                            providers: [{ id: 'provider:codegraph', role: 'structural-primary', executable: process.execPath }],
+                        },
+                    });
+
+                    const timeoutCtx = { projectRoot, providerConfig: { prefixArgs: [slowFake], timeoutMs: 200 } };
+                    const startedAt = Date.now();
+                    let candidates = await router.inspectProviders(registrations, timeoutCtx);
+                    const elapsedMs = Date.now() - startedAt;
+                    assert.ok(elapsedMs < 3000,
+                        `inspect must complete fast — the sleeping child must be killed, not awaited (elapsed ${elapsedMs}ms)`);
+
+                    let cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.availability.ready, false, 'timed-out codegraph must not be ready');
+
+                    const filesSel = router.selectProvider({ capability: 'files', allowFallback: true }, candidates);
+                    assert.strictEqual(filesSel.candidate.registration.provider.id, 'provider:native-lite',
+                        'timeout: files must still fall back to native-lite');
+                    assert.strictEqual(filesSel.degraded, true, 'timeout: files fallback must be degraded');
+
+                    // Non-permanent: the SAME registration recovers on a subsequent
+                    // healthy inspect — nothing about the timeout latched a disable.
+                    const healthyCtx = { projectRoot, providerConfig: { prefixArgs: [fakePath] } };
+                    candidates = await router.inspectProviders(registrations, healthyCtx);
+                    cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.availability.ready, true,
+                        'codegraph must recover on a subsequent healthy inspect — a timeout must NOT permanently disable the provider');
+                }
+
+                // ---- Scenario 3 (+6): malformed response disables ONE capability ---
+                {
+                    const malformedQueryFake = path.join(os.tmpdir(), 'cg-fake-malformed-query-t12-' + Date.now() + '.js');
+                    tempFakes.push(malformedQueryFake);
+                    fs.writeFileSync(malformedQueryFake, [
+                        "'use strict';",
+                        "const fs = require('fs');",
+                        "const path = require('path');",
+                        'const sub = process.argv[2];',
+                        `const CG_DIR = ${JSON.stringify(CG_DIR)};`,
+                        "const FIXTURES = { version: 'codegraph-version.txt', help: 'codegraph-help.txt', status: 'codegraph-status.json' };",
+                        'if (FIXTURES[sub]) { process.stdout.write(fs.readFileSync(path.join(CG_DIR, FIXTURES[sub]))); process.exit(0); }',
+                        "if (sub === 'query') { process.stdout.write(fs.readFileSync(path.join(CG_DIR, 'codegraph-malformed.json'))); process.exit(0); }",
+                        'process.exit(2);',
+                        '',
+                    ].join('\n'), 'utf8');
+
+                    const { registrations } = loader.loadProviders({
+                        codePerception: {
+                            providers: [{ id: 'provider:codegraph', role: 'structural-primary', executable: process.execPath }],
+                        },
+                    });
+                    const flexProvider = registrations.find(r => r.provider.id === 'provider:codegraph').provider;
+                    const malformedCtx = { projectRoot, providerConfig: { prefixArgs: [malformedQueryFake] } };
+                    const healthyCtx = { projectRoot, providerConfig: { prefixArgs: [fakePath] } };
+
+                    // Before the bad call: fully ready, symbols enabled.
+                    let candidates = await router.inspectProviders(registrations, malformedCtx);
+                    let cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.availability.ready, true, 'malformed-query fake must otherwise report ready (identity/status intact)');
+                    assert.strictEqual(cgCand.status.capabilities.symbols, true, 'symbols must be enabled before the malformed call');
+
+                    const badSearch = await flexProvider.search(malformedCtx, 'normalize');
+                    assert.strictEqual(badSearch.matches.length, 0, 'malformed query response must yield empty normalized matches');
+                    assert.ok(badSearch.diagnostics.some(d => d.code === 'schema-invalid'),
+                        'malformed query response must emit a schema-invalid diagnostic');
+
+                    // Scenario 6: diagnostics never embed the raw fixture body / stay bounded.
+                    const malformedFixtureBody = fs.readFileSync(path.join(CG_DIR, 'codegraph-malformed.json'), 'utf8');
+                    for (const d of badSearch.diagnostics) {
+                        assert.ok(d.message.length < 200, `diagnostic message must be bounded, not a raw stdout dump (got ${d.message.length} chars)`);
+                        assert.ok(!d.message.includes(malformedFixtureBody), 'diagnostic message must never embed the full fixture body');
+                    }
+
+                    // After the bad call: ONLY symbols is disabled — impact (an
+                    // unrelated, untouched capability) stays live, both at the
+                    // provider AND through a re-inspect via the router.
+                    candidates = await router.inspectProviders(registrations, malformedCtx);
+                    cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.status.capabilities.symbols, false, 'single-capability disable: symbols must be false');
+                    assert.strictEqual(cgCand.status.capabilities.impact, true,
+                        'single-capability disable: unrelated capabilities (impact) must remain enabled');
+
+                    const symbolsSel = router.selectProvider({ capability: 'symbols', allowFallback: true }, candidates);
+                    assert.strictEqual(symbolsSel.candidate, null,
+                        'symbols disabled + no fallback support: candidate must be null (no silent substitution)');
+                    assert.strictEqual(symbolsSel.reason, 'No ready provider exposes symbols analysis', 'symbols no-candidate reason must be exact');
+
+                    const impactSel = router.selectProvider({ capability: 'impact', allowFallback: true }, candidates);
+                    assert.strictEqual(impactSel.candidate.registration.provider.id, 'provider:codegraph',
+                        'impact must still route to codegraph — the malformed query response must not disable unrelated capabilities');
+
+                    // A later VALID query response re-enables symbols.
+                    const goodSearch = await flexProvider.search(healthyCtx, 'normalize');
+                    assert.strictEqual(goodSearch.matches.length, 2, 'a subsequent valid query response must parse normally');
+
+                    candidates = await router.inspectProviders(registrations, healthyCtx);
+                    cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.status.capabilities.symbols, true, 'symbols must re-enable after a subsequent valid query response');
+                    const symbolsSel2 = router.selectProvider({ capability: 'symbols', allowFallback: true }, candidates);
+                    assert.strictEqual(symbolsSel2.candidate.registration.provider.id, 'provider:codegraph',
+                        'symbols must route to codegraph again once re-enabled');
+                }
+
+                // ---- Scenario 4: stale index stays visibly stale -------------------
+                {
+                    const staleFake = path.join(os.tmpdir(), 'cg-fake-stale-t12-' + Date.now() + '.js');
+                    tempFakes.push(staleFake);
+                    fs.writeFileSync(staleFake, [
+                        "'use strict';",
+                        "const fs = require('fs');",
+                        "const path = require('path');",
+                        'const sub = process.argv[2];',
+                        `const CG_DIR = ${JSON.stringify(CG_DIR)};`,
+                        "const FIXTURES = { version: 'codegraph-version.txt', help: 'codegraph-help.txt', files: 'codegraph-files.json' };",
+                        "if (sub === 'status') {",
+                        "    const raw = JSON.parse(fs.readFileSync(path.join(CG_DIR, 'codegraph-status.json'), 'utf8'));",
+                        '    raw.index.reindexRecommended = true;',
+                        '    process.stdout.write(JSON.stringify(raw));',
+                        '    process.exit(0);',
+                        '}',
+                        'if (FIXTURES[sub]) { process.stdout.write(fs.readFileSync(path.join(CG_DIR, FIXTURES[sub]))); process.exit(0); }',
+                        'process.exit(2);',
+                        '',
+                    ].join('\n'), 'utf8');
+
+                    const { registrations } = loader.loadProviders({
+                        codePerception: {
+                            providers: [{
+                                id: 'provider:codegraph', role: 'structural-primary',
+                                executable: process.execPath, prefixArgs: [staleFake],
+                            }],
+                        },
+                    });
+                    const ctx = { projectRoot, providerConfig: {} };
+                    const staleProvider = registrations.find(r => r.provider.id === 'provider:codegraph').provider;
+
+                    const status = await staleProvider.getStatus(ctx);
+                    assert.strictEqual(status.freshness, 'stale', 'stale index must surface freshness:stale');
+                    assert.strictEqual(status.indexState, 'stale', 'stale index must surface indexState:stale');
+                    assert.strictEqual(status.ready, true, 'reindexRecommended alone must not knock the provider out of ready (still usable, just stale)');
+
+                    const filesResult = await staleProvider.getFiles(ctx);
+                    assert.ok(filesResult.files.length > 0, 'stale getFiles must still return results, not silently empty');
+                    for (const f of filesResult.files) {
+                        assert.strictEqual(f.reference.snapshot.freshness, 'stale',
+                            'stale getFiles references must carry snapshot.freshness:stale — never presented as fresh');
+                    }
+
+                    const candidates = await router.inspectProviders(registrations, ctx);
+                    const cgCand = candidates.find(c => c.registration.provider.id === 'provider:codegraph');
+                    assert.strictEqual(cgCand.status.freshness, 'stale', 'router candidate status must carry freshness:stale');
+
+                    const filesSel = router.selectProvider({ capability: 'files', allowFallback: true }, candidates);
+                    assert.strictEqual(filesSel.candidate.registration.provider.id, 'provider:codegraph',
+                        'stale-but-ready codegraph (structural-primary) must still be selected over the fallback');
+                    assert.strictEqual(filesSel.candidate.status.freshness, 'stale',
+                        'the selected candidate must visibly report freshness:stale, never silently presented as fresh');
+                }
+
+                // ---- Scenario 5: Planning IR / Architecture IR / memory / verify ---
+                // state stays completely untouched by every failure run above ---------
+                assert.strictEqual(fs.readFileSync(planIrPath, 'utf8'), planSeed,
+                    'plan-ir.json content must be byte-identical after every failure run');
+                assert.strictEqual(fs.statSync(planIrPath).mtimeMs, planMtimeBefore, 'plan-ir.json mtime must be untouched');
+                assert.strictEqual(fs.readFileSync(archIrPath, 'utf8'), archSeed,
+                    'architecture-ir.json content must be byte-identical after every failure run');
+                assert.strictEqual(fs.statSync(archIrPath).mtimeMs, archMtimeBefore, 'architecture-ir.json mtime must be untouched');
+                assert.strictEqual(fs.existsSync(memoryRawDir), false, 'CodeGraph failure runs must never create raw_memory/');
+                assert.strictEqual(fs.existsSync(memoryIndexDir), false, 'CodeGraph failure runs must never create index_memory/');
+                assert.deepStrictEqual(snapshotDir(generatedDir), generatedBefore,
+                    'no file under .evo-lite/generated/ may be created or modified by the CodeGraph failure runs');
+            } finally {
+                for (const f of tempFakes) {
+                    fs.rmSync(f, { force: true });
+                }
+                fs.rmSync(tempRuntime.workspaceRoot, { recursive: true, force: true });
+            }
+        }
+        console.log('✅ T-cg-failure-isolation passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
