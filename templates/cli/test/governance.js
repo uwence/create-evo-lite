@@ -6753,6 +6753,147 @@ async function runChildRuntimeTests() {
             }
         }
         console.log('✅ T-cg-status passed');
+
+        console.log('T-cg-dogfood-validate. Testing dogfood artifact validator (recomputed fingerprints + sections) + --require-live-codegraph strict gate ...');
+        {
+            const dogfoodValidatePath = path.join(TEMPLATE_CLI_DIR, 'code-perception', 'dogfood-validate');
+            const { validateDogfoodArtifact } = require(dogfoodValidatePath);
+            assert.strictEqual(typeof validateDogfoodArtifact, 'function',
+                'validateDogfoodArtifact must be exported');
+
+            const fixturesDir = path.join(TEMPLATE_CLI_DIR, 'test', 'fixtures', 'code-perception');
+            const good = fs.readFileSync(path.join(fixturesDir, 'dogfood-sample.md'), 'utf8');
+            const bad = fs.readFileSync(path.join(fixturesDir, 'dogfood-bad.md'), 'utf8');
+
+            // 1. Good artifact valid: genuine fingerprints recompute-match + all metadata + all sections.
+            {
+                const result = validateDogfoodArtifact(good, { requireClosureEvidence: true });
+                assert.strictEqual(result.valid, true,
+                    'genuine dogfood-sample.md must validate: ' + JSON.stringify(result.findings));
+                assert.deepStrictEqual(result.findings, [], 'valid artifact must have zero findings');
+            }
+
+            // 2. Bad artifact invalid — missing section (dogfood-bad.md drops exactly stale-index).
+            {
+                const result = validateDogfoodArtifact(bad);
+                assert.strictEqual(result.valid, false, 'dogfood-bad.md (missing stale-index) must be invalid');
+                assert.ok(result.findings.some(f => f.code === 'missing-section' && /stale-index/.test(f.message)),
+                    'must report missing-section for stale-index: ' + JSON.stringify(result.findings));
+            }
+
+            // 3. Fingerprint tamper caught: flip a character inside a fenced block's inner content
+            //    (in the test string only, never the committed fixture file).
+            {
+                const tampered = good.replace(
+                    'codegraph query "normalizeReference" --json',
+                    'codegraph query "normalizeReferenceX" --json');
+                assert.notStrictEqual(tampered, good, 'tamper must actually change the fixture text');
+                const result = validateDogfoodArtifact(tampered);
+                assert.strictEqual(result.valid, false, 'tampered fenced-block content must be caught by the recompute');
+                assert.ok(result.findings.some(f => f.code === 'fingerprint-mismatch'),
+                    'tamper must produce a fingerprint-mismatch finding: ' + JSON.stringify(result.findings));
+            }
+
+            // 4. Missing closureEvidenceCommit: required by default, optional when requireClosureEvidence:false.
+            {
+                const withoutClosure = good.replace(/^closureEvidenceCommit:.*$\n/m, '');
+                assert.notStrictEqual(withoutClosure, good, 'closureEvidenceCommit line must actually be removed');
+
+                const required = validateDogfoodArtifact(withoutClosure, { requireClosureEvidence: true });
+                assert.strictEqual(required.valid, false, 'missing closureEvidenceCommit must be invalid when required');
+                assert.ok(required.findings.some(f => f.code === 'missing-closure-evidence'),
+                    'must report missing-closure-evidence when required: ' + JSON.stringify(required.findings));
+
+                const notRequired = validateDogfoodArtifact(withoutClosure, { requireClosureEvidence: false });
+                assert.ok(!notRequired.findings.some(f => f.code === 'missing-closure-evidence'),
+                    'missing-closure-evidence finding must be absent when not required: ' + JSON.stringify(notRequired.findings));
+            }
+
+            // 5. Never throws: non-string input degrades to {valid:false, findings:[not-text]}.
+            {
+                assert.doesNotThrow(() => validateDogfoodArtifact(null), 'null input must not throw');
+                assert.doesNotThrow(() => validateDogfoodArtifact(42), 'numeric input must not throw');
+
+                const r1 = validateDogfoodArtifact(null);
+                assert.strictEqual(r1.valid, false, 'null input must be invalid');
+                assert.strictEqual(r1.findings.length, 1, 'null input must yield exactly one finding');
+                assert.strictEqual(r1.findings[0].code, 'not-text', 'null input finding must be not-text');
+
+                const r2 = validateDogfoodArtifact(42);
+                assert.strictEqual(r2.valid, false, 'numeric input must be invalid');
+                assert.strictEqual(r2.findings[0].code, 'not-text', 'numeric input finding must be not-text');
+            }
+
+            // 6 & 7. --require-live-codegraph strict gate: spawn the ABSOLUTE test.js path with an
+            // explicit EVO_LITE_WORKSPACE_ROOT (a relative path in a temp cwd would exit 1 for
+            // "script missing" and false-pass the missing-artifact assertion).
+            const childProcess = require('child_process');
+            const testJsPath = path.join(TEMPLATE_CLI_DIR, 'test.js');
+            assert.ok(fs.existsSync(testJsPath), 'sanity: absolute test.js path must exist: ' + testJsPath);
+
+            // Recursion guard: these subtests spawn `test.js governance --require-live-codegraph`,
+            // which itself re-runs this very section. The spawn sets EVO_LITE_DOGFOOD_SPAWN_TEST=1 so
+            // the CHILD skips these spawn subtests (it still runs the real strict gate in test.js) —
+            // without this, every governance run would fork infinitely.
+            if (process.env.EVO_LITE_DOGFOOD_SPAWN_TEST === '1') {
+                console.log('  (nested strict-gate run: skipping spawn subtests to avoid recursion)');
+            } else {
+            // 6. Missing artifact: temp workspace root with NO docs/code-perception-codegraph-dogfood.md.
+            {
+                const missingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-dogfood-strict-missing-'));
+                try {
+                    let threw = null;
+                    try {
+                        childProcess.execFileSync(process.execPath, [testJsPath, 'governance', '--require-live-codegraph'], {
+                            env: { ...process.env, EVO_LITE_DOGFOOD_SPAWN_TEST: '1', EVO_LITE_WORKSPACE_ROOT: missingRoot },
+                            encoding: 'utf8',
+                        });
+                    } catch (e) {
+                        threw = e;
+                    }
+                    assert.ok(threw, 'strict gate must exit non-zero when the live dogfood artifact is missing');
+                    assert.notStrictEqual(threw.status, 0, 'exit code must be non-zero on missing artifact');
+                    const combined = (threw.stdout || '') + (threw.stderr || '');
+                    assert.ok(combined.includes('live-codegraph-artifact-missing'),
+                        'combined stdout+stderr must include the live-codegraph-artifact-missing token: ' + combined.slice(-500));
+                } finally {
+                    fs.rmSync(missingRoot, { recursive: true, force: true });
+                }
+            }
+
+            // 7. Valid artifact: temp workspace root WITH docs/code-perception-codegraph-dogfood.md
+            //    (a copy of the committed genuine dogfood-sample.md) — strict run must exit 0.
+            {
+                const validRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-dogfood-strict-valid-'));
+                try {
+                    const docsDir = path.join(validRoot, 'docs');
+                    fs.mkdirSync(docsDir, { recursive: true });
+                    fs.copyFileSync(
+                        path.join(fixturesDir, 'dogfood-sample.md'),
+                        path.join(docsDir, 'code-perception-codegraph-dogfood.md'));
+
+                    let threw = null;
+                    let out = '';
+                    try {
+                        out = childProcess.execFileSync(process.execPath, [testJsPath, 'governance', '--require-live-codegraph'], {
+                            env: { ...process.env, EVO_LITE_DOGFOOD_SPAWN_TEST: '1', EVO_LITE_WORKSPACE_ROOT: validRoot },
+                            encoding: 'utf8',
+                        });
+                    } catch (e) {
+                        threw = e;
+                    }
+                    assert.strictEqual(threw, null,
+                        'strict gate must exit 0 on a valid artifact: ' +
+                        (threw ? ((threw.stdout || '') + (threw.stderr || '')).slice(-500) : ''));
+                    assert.ok(out.includes('live-codegraph dogfood artifact valid'),
+                        'stdout must confirm the live-codegraph dogfood artifact is valid');
+                } finally {
+                    fs.rmSync(validRoot, { recursive: true, force: true });
+                }
+            }
+            }
+        }
+        console.log('✅ T-cg-dogfood-validate passed');
 }
 
 module.exports = { runGovernanceTests };
