@@ -4841,6 +4841,202 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-queries passed');
 
+        console.log('T-cg-cache. Testing file-based bounded cache — envelope + disk-safety + persistence whitelist + markStale ...');
+        {
+            const cachePath = path.join(TEMPLATE_CLI_DIR, 'code-perception', 'cache.js');
+            const { makeCacheKey, createCache, CACHEABLE_KINDS } = require(cachePath);
+
+            // 0. CACHEABLE_KINDS sanity (whitelist contract).
+            assert.deepStrictEqual(
+                CACHEABLE_KINDS,
+                ['provider-status', 'search', 'relationship', 'impact', 'governance-links'],
+                'CACHEABLE_KINDS must be the exact whitelist',
+            );
+
+            // 1. Key sensitivity: distinct parts -> distinct key; same parts ->
+            //    same key (deterministic); result is 64-hex.
+            {
+                const kA = makeCacheKey({ providerId: 'p', query: 'a' });
+                const kB = makeCacheKey({ providerId: 'p', query: 'b' });
+                assert.notStrictEqual(kA, kB, 'different query must yield a different key');
+                const kA2 = makeCacheKey({ providerId: 'p', query: 'a' });
+                assert.strictEqual(kA, kA2, 'same parts must yield the same key (deterministic)');
+                assert.ok(/^[0-9a-f]{64}$/.test(kA), 'makeCacheKey must return a 64-hex sha256');
+            }
+
+            // 2. File persistence across instances: a second createCache() over the
+            //    same root must see what the first instance persisted to disk.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-persist');
+                const now = () => 0;
+                const key = makeCacheKey({ providerId: 'p', query: 'persist' });
+                const cache1 = createCache({ projectRoot: workspaceRoot, now });
+                assert.deepStrictEqual(
+                    cache1.set(key, { x: 1 }, { kind: 'provider-status' }),
+                    { stored: true },
+                    'set must succeed for a whitelisted kind',
+                );
+
+                const cache2 = createCache({ projectRoot: workspaceRoot, now });
+                const got = cache2.get(key);
+                assert.strictEqual(got.hit, true, 'a second cache instance over the same root must see the persisted entry');
+                assert.deepStrictEqual(got.value, { x: 1 }, 'persisted value must deep-equal the original (proves on-disk, not in-process)');
+            }
+
+            // 3. TTL expiry via injected clock.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-ttl');
+                let fakeNow = 0;
+                const now = () => fakeNow;
+                const key = makeCacheKey({ providerId: 'p', query: 'ttl' });
+                const cache = createCache({ projectRoot: workspaceRoot, ttlMs: 1000, now });
+                fakeNow = 0;
+                cache.set(key, { y: 1 }, { kind: 'search' });
+                fakeNow = 500;
+                assert.strictEqual(cache.get(key).hit, true, 'entry within ttlMs must hit');
+                fakeNow = 2000;
+                assert.strictEqual(cache.get(key).hit, false, 'entry beyond ttlMs must MISS');
+            }
+
+            // 4. Too-large + uncacheable-kind rejections.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-limits');
+                const now = () => 0;
+                const cache = createCache({ projectRoot: workspaceRoot, now });
+
+                const bigKey = makeCacheKey({ providerId: 'p', query: 'big' });
+                assert.deepStrictEqual(
+                    cache.set(bigKey, { big: 'x'.repeat(2 * 1024 * 1024) }, { kind: 'search' }),
+                    { stored: false, reason: 'cache-value-too-large' },
+                    'an over-budget value must be rejected before writing',
+                );
+
+                const badKindKey = makeCacheKey({ providerId: 'p', query: 'badkind' });
+                assert.deepStrictEqual(
+                    cache.set(badKindKey, { x: 1 }, { kind: 'getEntity-content' }),
+                    { stored: false, reason: 'uncacheable-kind' },
+                    'a non-whitelisted kind must be rejected',
+                );
+            }
+
+            // 5. markStale mutates the envelope only — the value stays byte-identical.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-stale');
+                const now = () => 0;
+                const cache = createCache({ projectRoot: workspaceRoot, now });
+                const key = makeCacheKey({ providerId: 'p', query: 'stale' });
+                cache.set(key, { provider: { freshness: 'fresh' } }, { kind: 'impact' });
+
+                const marked = cache.markStale({ reason: 'head', currentCommit: 'abc' });
+                assert.strictEqual(marked.marked, 1, 'markStale must mark exactly the one live entry');
+
+                const got = cache.get(key);
+                assert.strictEqual(got.hit, true, 'markStale must not evict the entry');
+                assert.strictEqual(got.stale, true, 'get must surface stale:true as the effective freshness');
+                assert.strictEqual(got.staleReason, 'head', 'get must surface the staleReason');
+                assert.deepStrictEqual(
+                    got.value, { provider: { freshness: 'fresh' } },
+                    'value must stay byte-identical after markStale (only the envelope mutates)',
+                );
+            }
+
+            // 6. invalidateOn clears all entries.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-invalidate');
+                const now = () => 0;
+                const cache = createCache({ projectRoot: workspaceRoot, now });
+                const key1 = makeCacheKey({ providerId: 'p', query: 'i1' });
+                const key2 = makeCacheKey({ providerId: 'p', query: 'i2' });
+                cache.set(key1, { a: 1 }, { kind: 'provider-status' });
+                cache.set(key2, { b: 1 }, { kind: 'provider-status' });
+                assert.strictEqual(cache.size(), 2, 'both entries must be stored before invalidation');
+
+                const result = cache.invalidateOn('config');
+                assert.strictEqual(result.cleared, 2, 'invalidateOn must report the cleared count');
+                assert.strictEqual(cache.size(), 0, 'size must be 0 after invalidateOn');
+                assert.strictEqual(cache.get(key1).hit, false, 'entries must MISS after invalidateOn');
+            }
+
+            // 7. Disk safety.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-disksafety');
+                const now = () => 0;
+                const cache = createCache({ projectRoot: workspaceRoot, now });
+
+                // (a) a non-64-hex key must MISS and never touch the filesystem.
+                {
+                    const cacheDir = path.join(workspaceRoot, '.evo-lite', '.cache', 'code-perception');
+                    const existedBefore = fs.existsSync(cacheDir);
+                    const badKeyResult = cache.get('not-a-valid-key');
+                    assert.strictEqual(badKeyResult.hit, false, 'a non-64-hex key must MISS');
+                    assert.strictEqual(fs.existsSync(cacheDir), existedBefore, 'an invalid key must never touch the filesystem');
+                }
+
+                // (b) GUARDED symlink test: a symlinked cache-root component
+                //     pointing outside projectRoot must degrade to a safe no-op.
+                {
+                    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cache-outside-'));
+                    const cacheParentDir = path.join(workspaceRoot, '.evo-lite', '.cache');
+                    fs.mkdirSync(cacheParentDir, { recursive: true });
+                    const symlinkedRoot = path.join(cacheParentDir, 'code-perception');
+                    let symlinkCreated = false;
+                    try {
+                        fs.symlinkSync(outsideDir, symlinkedRoot, 'dir');
+                        symlinkCreated = true;
+                    } catch (err) {
+                        console.log(`  (guard-skip: symlink creation not permitted on this platform: ${err.message})`);
+                    }
+                    if (symlinkCreated) {
+                        const symlinkedCache = createCache({ projectRoot: workspaceRoot, now });
+                        const key = makeCacheKey({ providerId: 'p', query: 'symlink' });
+                        const result = symlinkedCache.set(key, { z: 1 }, { kind: 'provider-status' });
+                        assert.deepStrictEqual(
+                            result, { stored: false, reason: 'unsafe-cache-root' },
+                            'a set() through a symlinked root must degrade to a safe no-op',
+                        );
+                        assert.deepStrictEqual(fs.readdirSync(outsideDir), [], 'no file may be written outside projectRoot via the symlink');
+                        fs.rmSync(symlinkedRoot, { force: true });
+                    }
+                    fs.rmSync(outsideDir, { recursive: true, force: true });
+                }
+
+                // (c) a corrupted stored file must MISS with a diagnostic, never throw.
+                {
+                    const corruptKey = makeCacheKey({ providerId: 'p', query: 'corrupt' });
+                    const setResult = cache.set(corruptKey, { ok: 1 }, { kind: 'provider-status' });
+                    assert.strictEqual(setResult.stored, true, 'baseline set for the corruption test must succeed');
+                    const corruptFile = path.join(workspaceRoot, '.evo-lite', '.cache', 'code-perception', `${corruptKey}.json`);
+                    fs.writeFileSync(corruptFile, 'not valid json {{{', 'utf8');
+                    const corruptResult = cache.get(corruptKey);
+                    assert.strictEqual(corruptResult.hit, false, 'a corrupt file must MISS');
+                    assert.ok(
+                        corruptResult.diagnostics && corruptResult.diagnostics.some(d => d.code === 'cache-corrupt'),
+                        'a corrupt file must surface a cache-corrupt diagnostic',
+                    );
+                }
+            }
+
+            // 8. maxEntries eviction: beyond the bound, the OLDEST entry (by
+            //    storedAt via the injected clock) is evicted first.
+            {
+                const { workspaceRoot } = createTempRuntimeRoot('cg-cache-evict');
+                let fakeNow = 0;
+                const now = () => fakeNow;
+                const cache = createCache({ projectRoot: workspaceRoot, maxEntries: 2, now });
+                const k1 = makeCacheKey({ providerId: 'p', query: 'e1' });
+                const k2 = makeCacheKey({ providerId: 'p', query: 'e2' });
+                const k3 = makeCacheKey({ providerId: 'p', query: 'e3' });
+                fakeNow = 0; cache.set(k1, { n: 1 }, { kind: 'provider-status' });
+                fakeNow = 100; cache.set(k2, { n: 2 }, { kind: 'provider-status' });
+                fakeNow = 200; cache.set(k3, { n: 3 }, { kind: 'provider-status' });
+                assert.strictEqual(cache.size(), 2, 'size must be capped at maxEntries');
+                assert.strictEqual(cache.get(k1).hit, false, 'the oldest entry (by storedAt) must be evicted');
+                assert.strictEqual(cache.get(k2).hit, true, 'newer entries must remain');
+                assert.strictEqual(cache.get(k3).hit, true, 'newer entries must remain');
+            }
+        }
+        console.log('✅ T-cg-cache passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
