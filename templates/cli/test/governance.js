@@ -5037,6 +5037,110 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-cache passed');
 
+        console.log('T-cg-linker-exact. Testing governance linker — reference-resolved exact file links ...');
+        {
+            const { normalizeReference } = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize'));
+            const linker = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'governance-linker'));
+            const refA = normalizeReference('provider:native-lite', { providerEntityId: 'src/a.js', name: 'a.js', kind: 'file', filePath: 'src/a.js' });
+            const refB = normalizeReference('provider:native-lite', { providerEntityId: 'src/b.js', name: 'b.js', kind: 'file', filePath: 'src/b.js' });
+            const fileReferences = [refA, refB];
+
+            // 1. declares_file resolved.
+            {
+                const planIR = { tasks: [{ id: 'task:x', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js'] }] };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                const declares = result.links.filter(l => l.kind === 'declares_file');
+                assert.strictEqual(declares.length, 1, 'exactly one declares_file link');
+                const link = declares[0];
+                assert.strictEqual(link.status, 'confirmed', 'declares_file status confirmed');
+                assert.strictEqual(link.confidence, 1.0, 'declares_file confidence 1.0');
+                assert.strictEqual(link.codeReferenceId, refA.id, 'declares_file resolves to refA.id');
+                assert.strictEqual(link.governanceEntityId, 'task:x', 'declares_file governanceEntityId is task id');
+                assert.strictEqual(link.evidence.sourcePath, 'docs/plans/p.md', 'declares_file evidence.sourcePath from task');
+                assert.ok(link.id.startsWith('gov-link:'), 'link id starts with gov-link:');
+            }
+
+            // 2. depends_on_file from explicit acceptanceDependencies input.
+            {
+                const acceptanceDependencies = [{ governanceEntityId: 'task:x', filePath: 'src/b.js', sourcePath: 'docs/specs/s.md' }];
+                const result = linker.buildGovernanceLinks({ acceptanceDependencies, fileReferences });
+                const deps = result.links.filter(l => l.kind === 'depends_on_file');
+                assert.strictEqual(deps.length, 1, 'exactly one depends_on_file link');
+                assert.strictEqual(deps[0].codeReferenceId, refB.id, 'depends_on_file resolves to refB.id');
+                assert.strictEqual(deps[0].confidence, 1.0, 'depends_on_file confidence 1.0');
+                assert.strictEqual(deps[0].evidence.sourcePath, 'docs/specs/s.md', 'depends_on_file evidence.sourcePath from dep');
+            }
+
+            // 3. changed_by_commit.
+            {
+                const commits = [{ sha: 'abc123', changedFiles: ['src/a.js'] }];
+                const result = linker.buildGovernanceLinks({ commits, fileReferences });
+                const changed = result.links.filter(l => l.kind === 'changed_by_commit');
+                assert.strictEqual(changed.length, 1, 'exactly one changed_by_commit link');
+                assert.strictEqual(changed[0].governanceEntityId, 'commit:abc123', 'changed_by_commit governanceEntityId is commit:<sha>');
+                assert.strictEqual(changed[0].evidence.commitSha, 'abc123', 'changed_by_commit evidence.commitSha');
+                assert.strictEqual(changed[0].codeReferenceId, refA.id, 'changed_by_commit resolves to refA.id');
+            }
+
+            // 4. Unresolved -> diagnostic + NO dangling link.
+            {
+                const planIR = { tasks: [{ id: 'task:missing', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/missing.js'] }] };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                assert.ok(
+                    result.diagnostics.some(d => d.code === 'unresolved-code-reference'),
+                    'unresolved linkedFile produces an unresolved-code-reference diagnostic',
+                );
+                assert.ok(
+                    !result.links.some(l => l.governanceEntityId === 'task:missing'),
+                    'no link is emitted for the unresolved file (anti-dangling)',
+                );
+            }
+
+            // 5. No acceptanceDependencies -> no depends_on_file links (never invented from task).
+            {
+                const planIR = { tasks: [{ id: 'task:x', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js'] }] };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                assert.strictEqual(
+                    result.links.filter(l => l.kind === 'depends_on_file').length, 0,
+                    'no depends_on_file links when acceptanceDependencies is absent',
+                );
+            }
+
+            // 6. Empty inputs -> empty result, no throw.
+            {
+                const result = linker.buildGovernanceLinks({});
+                assert.deepStrictEqual(result, { links: [], diagnostics: [] }, 'empty inputs yield empty links/diagnostics');
+            }
+            assert.doesNotThrow(() => linker.buildGovernanceLinks(undefined), 'undefined inputs must never throw');
+
+            // 7. Path normalization: './src/a.js' and 'src\\a.js' both resolve to refA.
+            {
+                const planIR = {
+                    tasks: [
+                        { id: 'task:dotslash', sourcePath: 'docs/plans/p.md', linkedFiles: ['./src/a.js'] },
+                        { id: 'task:backslash', sourcePath: 'docs/plans/p.md', linkedFiles: ['src\\a.js'] },
+                    ],
+                };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                const declares = result.links.filter(l => l.kind === 'declares_file');
+                assert.strictEqual(declares.length, 2, 'both normalized paths resolve to links');
+                assert.ok(declares.every(l => l.codeReferenceId === refA.id), './src/a.js and src\\a.js both normalize to refA');
+            }
+
+            // 8. Dedupe: same (task, file) declared twice -> a single link (one id).
+            {
+                const planIR = {
+                    tasks: [
+                        { id: 'task:dup', sourcePath: 'docs/plans/p.md', linkedFiles: ['src/a.js', 'src/a.js'] },
+                    ],
+                };
+                const result = linker.buildGovernanceLinks({ planIR, fileReferences });
+                const declares = result.links.filter(l => l.kind === 'declares_file' && l.governanceEntityId === 'task:dup');
+                assert.strictEqual(declares.length, 1, 'duplicate (task, file) declares_file collapses to one link');
+            }
+        }
+        console.log('✅ T-cg-linker-exact passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
