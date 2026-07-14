@@ -5871,6 +5871,140 @@ async function runChildRuntimeTests() {
             }
             console.log('✅ T-spec-cli passed');
         }
+
+        console.log('T-cg-status. Testing code-perception status surface (provider table + manual-sync stale hints + link summary) ...');
+        {
+            const statusModPath = path.join(TEMPLATE_CLI_DIR, 'code-perception', 'status');
+            const statusMod = require(statusModPath);
+            assert.strictEqual(typeof statusMod.buildCodePerceptionStatus, 'function',
+                'buildCodePerceptionStatus must be exported');
+
+            // 1. Degraded + stale hint: codegraph (stale, not degraded) + native-lite (fallback, degraded, never stale).
+            {
+                const codegraphCand = {
+                    registration: { provider: { id: 'provider:codegraph' }, role: 'structural-primary' },
+                    role: 'structural-primary',
+                    availability: { available: true, ready: true, indexState: 'stale' },
+                    status: {
+                        providerId: 'provider:codegraph', indexState: 'stale',
+                        indexedCommit: 'aaa', currentCommit: 'bbb', compatibility: 'supported',
+                    },
+                    diagnostics: [],
+                };
+                const nativeLiteCand = {
+                    registration: { provider: { id: 'provider:native-lite' }, role: 'fallback' },
+                    role: 'fallback',
+                    availability: { available: true, ready: true, indexState: 'not-required' },
+                    status: { providerId: 'provider:native-lite', indexState: 'not-required' },
+                    diagnostics: [],
+                };
+                const report = statusMod.buildCodePerceptionStatus({}, { candidates: [codegraphCand, nativeLiteCand] });
+
+                assert.strictEqual(report.providers.length, 2, 'must produce one row per candidate');
+                const cgRow = report.providers.find(p => p.id === 'provider:codegraph');
+                const nlRow = report.providers.find(p => p.id === 'provider:native-lite');
+                assert.ok(cgRow, 'codegraph row must be present');
+                assert.ok(nlRow, 'native-lite row must be present');
+                assert.strictEqual(cgRow.indexState, 'stale', 'codegraph row must reflect stale indexState');
+                assert.strictEqual(cgRow.degraded, false, 'codegraph row must not be degraded (ready + structural-primary)');
+                assert.strictEqual(nlRow.degraded, true, 'native-lite row must be degraded (role fallback)');
+
+                assert.strictEqual(report.staleHints.length, 1, 'exactly one stale hint (codegraph only)');
+                const hint = report.staleHints[0];
+                assert.strictEqual(hint.providerId, 'provider:codegraph', 'stale hint must name codegraph');
+                assert.strictEqual(hint.indexedCommit, 'aaa', 'stale hint must carry indexedCommit');
+                assert.strictEqual(hint.currentCommit, 'bbb', 'stale hint must carry currentCommit');
+                assert.ok(hint.message.includes('codegraph sync'), 'stale hint message must advise manual codegraph sync');
+                assert.ok(!report.staleHints.some(h => h.providerId === 'provider:native-lite'),
+                    'native-lite (not-required) must never yield a stale hint');
+            }
+
+            // 2. No spawn: monkey-patch child_process to throw, prove the module never touches it; grep-assert source too.
+            {
+                const cp = require('child_process');
+                const orig = {
+                    execFile: cp.execFile, spawn: cp.spawn, execFileSync: cp.execFileSync,
+                    spawnSync: cp.spawnSync, exec: cp.exec, execSync: cp.execSync,
+                };
+                for (const k of Object.keys(orig)) {
+                    cp[k] = () => { throw new Error('status module must not spawn: ' + k); };
+                }
+                try {
+                    assert.doesNotThrow(() => {
+                        statusMod.buildCodePerceptionStatus({}, {
+                            candidates: [{
+                                registration: { provider: { id: 'provider:x' } }, role: 'structural-primary',
+                                availability: { available: true, ready: true, indexState: 'ready' },
+                                status: { providerId: 'provider:x', indexState: 'ready', compatibility: 'supported' },
+                                diagnostics: [],
+                            }],
+                            links: [{ status: 'confirmed' }],
+                        });
+                    }, 'buildCodePerceptionStatus must not touch child_process');
+                } finally {
+                    Object.assign(cp, orig);
+                }
+
+                const source = fs.readFileSync(require.resolve(statusModPath), 'utf8');
+                assert.ok(!/child_process/.test(source), 'status.js source must never reference child_process');
+                assert.ok(!/\bspawn\b/.test(source), 'status.js source must never reference spawn');
+                assert.ok(!/\bexecFile\b/.test(source), 'status.js source must never reference execFile');
+            }
+
+            // 3. Links summary: from array (counted by .status) and pre-summarized passthrough.
+            {
+                const fromArray = statusMod.buildCodePerceptionStatus({}, {
+                    links: [{ status: 'confirmed' }, { status: 'confirmed' }, { status: 'derived' }, { status: 'proposed' }],
+                });
+                assert.deepStrictEqual(fromArray.links, { confirmed: 2, derived: 1, proposed: 1 },
+                    'links array must be counted by status');
+
+                const presummarized = statusMod.buildCodePerceptionStatus({}, {
+                    links: { confirmed: 5, derived: 0, proposed: 2 },
+                });
+                assert.deepStrictEqual(presummarized.links, { confirmed: 5, derived: 0, proposed: 2 },
+                    'pre-summarized links object must pass through unchanged');
+            }
+
+            // 4. Not-ready candidate must be degraded.
+            {
+                const notReadyCand = {
+                    registration: { provider: { id: 'provider:notready' }, role: 'enrichment' },
+                    role: 'enrichment',
+                    availability: { available: true, ready: false, indexState: 'missing' },
+                    status: null,
+                    diagnostics: [],
+                };
+                const report = statusMod.buildCodePerceptionStatus({}, { candidates: [notReadyCand] });
+                assert.strictEqual(report.providers.length, 1, 'must produce a row for the not-ready candidate');
+                assert.strictEqual(report.providers[0].degraded, true, 'not-ready candidate must be degraded');
+                assert.strictEqual(report.providers[0].ready, false, 'not-ready candidate row must report ready:false');
+            }
+
+            // 5. Empty/undefined inputs -> empty report, no throw.
+            {
+                const report = statusMod.buildCodePerceptionStatus({}, {});
+                assert.deepStrictEqual(report, {
+                    providers: [], staleHints: [], links: { confirmed: 0, derived: 0, proposed: 0 }, diagnostics: [],
+                }, 'empty inputs must yield an empty report');
+
+                assert.doesNotThrow(() => statusMod.buildCodePerceptionStatus(),
+                    'buildCodePerceptionStatus must not throw when called with no arguments');
+            }
+
+            // 6. Malformed candidates (null / {}) must never throw and must degrade to a diagnostic/unknown row.
+            {
+                let report;
+                assert.doesNotThrow(() => {
+                    report = statusMod.buildCodePerceptionStatus({}, { candidates: [null, {}, undefined] });
+                }, 'malformed candidates must never throw');
+                assert.ok(Array.isArray(report.providers), 'providers must still be an array');
+                assert.ok(Array.isArray(report.diagnostics), 'diagnostics must still be an array');
+                assert.ok(report.diagnostics.some(d => d.code === 'malformed-candidate'),
+                    'malformed candidates must contribute a malformed-candidate diagnostic');
+            }
+        }
+        console.log('✅ T-cg-status passed');
 }
 
 module.exports = { runGovernanceTests };
