@@ -317,6 +317,84 @@ async function runGovernanceTests() {
             console.log('✅ T17 sync-runtime + lock drift detection passed');
         }
 
+        console.log('T-sr-entry. Testing standalone sync-runtime-entry is bootstrap-safe (closure whitelist) and syncs ...');
+        {
+            const { execFileSync } = require('child_process');
+            const entryPath = path.join(TEMPLATE_CLI_DIR, 'sync-runtime-entry.js');
+
+            // (a) The entry file exists.
+            assert.ok(fs.existsSync(entryPath), 'sync-runtime-entry.js must exist');
+
+            // (b) Bootstrap-safety as a WHITELIST across the whole dependency closure.
+            // Each file may relative-require ONLY its allowed set; any other relative
+            // require fails. Node builtins (no leading dot) are always allowed.
+            function relRequires(src) {
+                const out = [];
+                const re = /require\(\s*['"](\.[^'"]*)['"]\s*\)/g;
+                let m;
+                while ((m = re.exec(src)) !== null) out.push(m[1]);
+                return out;
+            }
+            const CLOSURE_ALLOW = {
+                'sync-runtime-entry.js': ['./sync-runtime', './runtime'],
+                'sync-runtime.js': ['./template-manifest', './runtime'],
+                'runtime.js': [],
+                'template-manifest.js': [],
+            };
+            for (const [rel, allow] of Object.entries(CLOSURE_ALLOW)) {
+                const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, rel), 'utf8');
+                for (const r of relRequires(src)) {
+                    assert.ok(allow.includes(r), `${rel}: unexpected relative require '${r}' (bootstrap-safe closure whitelist)`);
+                }
+            }
+
+            // (c) The entry is declared in the manifest core-cli family (so all syncs include it).
+            const manifestSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'), 'utf8');
+            assert.ok(/'sync-runtime-entry\.js'/.test(manifestSrc), 'sync-runtime-entry.js must be declared in template-manifest.js');
+
+            // (d) Functional: entry syncs a sparse tmp workspace using the real manifest.
+            const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-sr-entry-'));
+            const savedCli = process.env.EVO_LITE_TEMPLATE_CLI_DIR;
+            const savedRoot = process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
+            try {
+                fs.mkdirSync(path.join(tmpRoot, 'templates', 'cli'), { recursive: true });
+                writeText(path.join(tmpRoot, 'templates', 'cli', 'memory.js'), '// entry-sync-canonical\n');
+                const env = {
+                    ...process.env,
+                    EVO_LITE_TEMPLATE_CLI_DIR: path.join(tmpRoot, 'templates', 'cli'),
+                    EVO_LITE_TEMPLATE_ROOT_DIR: path.join(tmpRoot, 'templates'),
+                    EVO_LITE_WORKSPACE_ROOT: tmpRoot,
+                };
+                const out = execFileSync(process.execPath, [entryPath, '--json'], { env, encoding: 'utf8' });
+                const result = JSON.parse(out);
+                assert.strictEqual(result.status, 'ok', 'entry sync should report ok');
+                assert.ok(result.copied.includes('memory.js'), 'entry should copy memory.js into the mirror');
+                assert.ok(fs.existsSync(path.join(tmpRoot, '.evo-lite', 'cli', 'memory.js')), 'mirror memory.js must exist after entry run');
+
+                // (e) Idempotent: a second run copies nothing.
+                const out2 = execFileSync(process.execPath, [entryPath, '--json'], { env, encoding: 'utf8' });
+                assert.strictEqual(JSON.parse(out2).copied.length, 0, 'second entry run should copy nothing');
+
+                // (f) --check exit semantics match the existing command:
+                //     in-sync → 0 ; no-lock → 1 ; drift → 1. Use spawnSync so a non-zero
+                //     exit does not throw; read .status.
+                const { spawnSync } = require('child_process');
+                const check = () => spawnSync(process.execPath, [entryPath, '--check', '--json'], { env, encoding: 'utf8' }).status;
+                assert.strictEqual(check(), 0, '--check on an in-sync mirror should exit 0');
+                fs.rmSync(path.join(tmpRoot, '.evo-lite', 'generated', 'runtime-mirror.lock.json'));
+                assert.strictEqual(check(), 1, '--check with no lock should exit 1');
+                // Re-create lock, then drift the mirror by hand:
+                execFileSync(process.execPath, [entryPath, '--json'], { env, encoding: 'utf8' });
+                writeText(path.join(tmpRoot, '.evo-lite', 'cli', 'memory.js'), '// drifted-by-hand\n');
+                assert.strictEqual(check(), 1, '--check with drift should exit 1');
+            } finally {
+                if (savedCli === undefined) delete process.env.EVO_LITE_TEMPLATE_CLI_DIR; else process.env.EVO_LITE_TEMPLATE_CLI_DIR = savedCli;
+                if (savedRoot === undefined) delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR; else process.env.EVO_LITE_TEMPLATE_ROOT_DIR = savedRoot;
+                fs.rmSync(tmpRoot, { recursive: true, force: true });
+            }
+            console.log('✅ T-sr-entry standalone bootstrap entry passed');
+        }
+
         console.log('T18. Testing mcp-server freshRequire mtime-invalidates source modules ...');
         {
             const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-mcp-fresh-'));
