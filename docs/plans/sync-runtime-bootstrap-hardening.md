@@ -79,7 +79,11 @@ console.log('T-sr-entry. Testing standalone sync-runtime-entry is bootstrap-safe
     }
     const CLOSURE_ALLOW = {
         'sync-runtime-entry.js': ['./sync-runtime', './runtime'],
-        'sync-runtime.js': ['./template-manifest'],
+        // sync-runtime.js lazily requires ./runtime inside registerSyncRuntimeCommands
+        // (getWorkspaceRoot) in addition to ./template-manifest in readEntries(). Both
+        // are verified zero-relative-require leaves, so both are allowed; any OTHER
+        // relative require here still fails the whitelist.
+        'sync-runtime.js': ['./template-manifest', './runtime'],
         'runtime.js': [],
         'template-manifest.js': [],
     };
