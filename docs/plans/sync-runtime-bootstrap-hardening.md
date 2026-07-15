@@ -8,46 +8,58 @@ status: draft
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make "add a new managed module + sync the runtime mirror" a reliable atomic workflow that can never self-brick, by adding a bootstrap-safe standalone `sync-runtime` entrypoint and a defense-in-depth guard around `memory.js` feature-command registration.
+**Goal:** Make "add a new managed module + sync the runtime mirror" a reliable atomic workflow that can never self-brick, by adding a bootstrap-safe standalone `sync-runtime` entrypoint (the canonical recovery path for a hard brick) and a defense-in-depth guard around `memory.js` feature-command registration (recovery for the feature-registrar brick class).
 
-**Architecture:** Two complementary fixes. (1) A new `templates/cli/sync-runtime-entry.js` that requires ONLY the already-stable, dependency-light `./sync-runtime` and `./runtime` modules — never the full CLI, DB, command registry, or any feature/gene module — so it can always run even when the mirror is mid-update. (2) A `safeRegister` guard in `memory.js` that wraps each `require('./feature').registerXCommands(program)` in try/catch, emitting a clear stderr warning and continuing, so a half-mirrored feature module can no longer brick the entire CLI (including `mem sync-runtime` itself). A spawn-based end-to-end regression test reproduces the real self-brick scenario and proves both paths heal it.
+**Architecture:** Two complementary fixes for two distinct brick classes. (1) A new `templates/cli/sync-runtime-entry.js` that requires ONLY the dependency-light `./sync-runtime` and `./runtime` modules — verified bootstrap-safe across the whole dependency closure — so it can always run even when `memory.js` cannot load at all (e.g. a top-level `require` chain like `memory.service → memory-index → memory-index-util` hits a not-yet-mirrored file). (2) A `safeRegister` thunk guard in `memory.js` that wraps each feature registrar's `require`+register in try/catch, so a half-mirrored FEATURE module no longer bricks the whole CLI — it warns and continues. A spawn-based regression test reproduces BOTH brick classes and proves each fix heals its class.
 
 **Tech Stack:** Node.js (CommonJS), commander.js, node:assert governance/integration test harness, existing `template-manifest.js` + `sync-runtime.js` runtime-mirror machinery.
 
 ## Background / Root Cause (verified against current code)
 
-- `sync-runtime.js` is already clean: it requires only `fs`, `path`, `crypto`, and `./template-manifest`; `syncRuntime(projectRoot, options)` takes the root directly and never routes back through the CLI. `registerSyncRuntimeCommands` additionally requires `./runtime` (`getWorkspaceRoot`), which requires only `fs`+`path`.
-- The self-brick is NOT in `sync-runtime.js`. It is that `node .evo-lite/cli/memory.js sync-runtime` loads `memory.js`, whose program-build function eagerly runs the block at `memory.js:699-708` — `require('./planning')…require('./code-perception/post-commit-code-perception')`. If any of those modules (or a transitive dep) is not yet mirrored, the `require` throws `Cannot find module` BEFORE commander dispatches to the `sync-runtime` action, so the very command that would heal the mirror cannot run. This recurred in sub-spec ② (`cg-manifest-sync`) and is documented in memory `project-sync-runtime-selfbrick`.
-- Fix scope: the feature-register block (lines 699-708) and a new standalone entry. The top-level module requires in `memory.js` (`fs`, `memory.service`, `db`, `commander`) stay UNGUARDED — they are core and always mirrored first; they are not the self-brick vector.
+There are TWO distinct self-brick classes, and the two fixes address them separately:
+
+- **Feature-registrar brick.** `memory.js`'s program-build eagerly runs the block at `memory.js:699-708` — `require('./planning')…require('./code-perception/post-commit-code-perception')` — which registers command groups. If a FEATURE module (or a transitive dep) is not yet mirrored, that `require` throws `Cannot find module` before commander dispatches, so even `mem sync-runtime` (which would heal the mirror) cannot run. The `safeRegister` guard fixes THIS class: a throwing feature registrar warns and is skipped, and the remaining groups (crucially `sync-runtime`) still register.
+
+- **Hard brick (top-level core require).** `memory.js` loads `require('./memory.service')` and `require('./db')` at module top level, BEFORE any command registration. `memory.service` in turn top-level-requires `./memory-index`, which top-level-requires `./memory-index-util`. If any of THESE managed files is missing from the mirror, `memory.js` cannot load at all — `safeRegister` never even runs. `safeRegister` does NOT and cannot protect this class. The standalone `sync-runtime-entry.js` is the canonical recovery for it: it never touches `memory.service`/`db`, so it still runs and re-copies the missing file. History (`project-sync-runtime-selfbrick`, sub-spec ② `cg-manifest-sync`) confirms this class is real, not hypothetical.
+
+Accurate boundary statement (must appear in the guard's code comment and here): *the top-level core requires in `memory.js` (`memory.service` → `memory-index` → `memory-index-util`; `db`) are NOT guarded and can still abort `memory.js` startup; the standalone entry is the canonical recovery path for that hard-brick class. `safeRegister` only isolates the lazy feature registrars.*
+
+Verified dependency facts:
+- `sync-runtime.js` requires only `fs`/`path`/`crypto` at top level and dynamically requires `./template-manifest` inside `readEntries()`. `syncRuntime(projectRoot, options)` takes the root directly; `registerSyncRuntimeCommands` also requires `./runtime` (`getWorkspaceRoot`).
+- `runtime.js` requires only `fs`/`path`; `getWorkspaceRoot()` is pure path derivation.
+- `template-manifest.js` requires only `path`. `memory-index-util.js` requires nothing.
+- Closure of the standalone entry: `sync-runtime-entry.js → {sync-runtime, runtime}`, `sync-runtime.js → {template-manifest}`, `runtime.js → {}`, `template-manifest.js → {}`. No business module in the closure.
 
 ## Global Constraints
 
-- **Entry bootstrap-safety is the core invariant.** `sync-runtime-entry.js` may require ONLY `./sync-runtime` and `./runtime` (plus Node builtins). It MUST NOT require `./memory.service`, `./db`, `commander`, the command registry, or any feature/gene module (`./code-perception/*`, `./hive/*`, `./verification/*`, `./planning`, `./spec-portfolio`, `./architecture`, `./dashboard-data`, `./hooks`, `./inspector`, MCP, wiki). A static-source assertion enforces this.
-- **The guard must warn, never silence.** Each guarded registration failure MUST emit a `console.error` warning naming the failed module and its error message. Silent skips are forbidden — a genuinely broken module must be visible.
+- **Entry bootstrap-safety is the core invariant, enforced as a WHITELIST across the closure.** Each closure file may relative-`require` ONLY its allowed set: `sync-runtime-entry.js` → `./sync-runtime`, `./runtime`; `sync-runtime.js` → `./template-manifest`; `runtime.js` → (none); `template-manifest.js` → (none). Node builtins are allowed. Any OTHER relative `require` in any closure file fails the test — a blacklist is insufficient because a future heavy require not on the list would slip through.
+- **The guard must warn, never silence.** Each guarded registration failure MUST emit a `console.error` warning naming the feature and carrying the error code (`MODULE_NOT_FOUND`) + message. A failed feature MUST NOT be presented as registered.
 - **`sync-runtime` must survive any other feature's failure.** After the guard, a throw in any single `registerXCommands` must not prevent `sync-runtime` (or any other independent group) from registering.
-- **Preserve existing sync-runtime behavior byte-for-byte.** `syncRuntime` output shape (`copied`/`skipped`/`missingTemplates`/`lockPath`/`status`), the lock file format, and idempotent convergence (`copied: 0` on a clean re-run) are unchanged. The entry is a thin caller, not a reimplementation.
-- **The entry is a managed template file.** It MUST be registered in `template-manifest.js` `core-cli` family and mirrored into `.evo-lite/cli/`. On a fresh scaffold (`index.js copyManagedTemplateAssets`) it is copied in the same pass as everything else, so it is never itself a "waiting to be mirrored" module.
-- **Do not edit `.evo-lite/cli/**` by hand.** Let `sync-runtime` generate the mirror. Both `node templates/cli/test.js governance` and `node ./.evo-lite/cli/test.js governance` (and the integration suite) must be green at the end.
-- **Windows-first.** Repo root is `d:\Data\ProjectAgent\create-evo-lite`; paths use `path.join`; child spawns use `process.execPath`.
+- **All 10 feature registrars go through `safeRegister`.** No bare `require('./x').registerXCommands(program)` may remain.
+- **Preserve existing `sync-runtime` behavior exactly.** `syncRuntime` output shape (`copied`/`skipped`/`missingTemplates`/`lockPath`/`status`), lock format, idempotent convergence (`copied: 0`), AND the `--check` exit semantics (only `status === 'ok'` exits 0; `no-lock` and `drift` exit 1) are unchanged. The entry is a thin caller, not a reimplementation.
+- **The entry is a managed template file, declared in Task 1.** It is registered in `template-manifest.js` `core-cli` when created (Task 1), so every subsequent `syncRuntime` (including Task 3's tmp mirror) includes it. On a fresh scaffold (`index.js copyManagedTemplateAssets`) it is copied in the same pass as everything else.
+- **Do not edit `.evo-lite/cli/**` by hand.** Both `node templates/cli/test.js` and `node ./.evo-lite/cli/test.js` (governance + integration) must be green at the end.
+- **Windows-first.** Repo root `d:\Data\ProjectAgent\create-evo-lite`; use `path.join`; child spawns use `process.execPath`; byte-identical checks use Node `Buffer.equals`, not shell `diff`.
 
 ---
 
-### Task 1: sync-runtime-entry.js standalone bootstrap entry
+### Task 1: sync-runtime-entry.js standalone bootstrap entry (+ manifest declaration)
 
 **Files:**
 - Create: `templates/cli/sync-runtime-entry.js`
+- Modify: `templates/cli/template-manifest.js` (`core-cli` family `files` array — declare the entry here so all later syncs include it)
 - Test: `templates/cli/test/governance.js` (append a new `T-sr-entry` section inside `runGovernanceTests`)
 
 **Interfaces:**
 - Consumes: `syncRuntime(projectRoot, options)` and `verifyRuntimeLock(projectRoot)` from `./sync-runtime`; `getWorkspaceRoot()` from `./runtime`.
-- Produces: an executable module. Run as `node templates/cli/sync-runtime-entry.js [--check] [--json]`. Exit code 0 on success/in-sync; exit code 1 on `--check` drift. Prints the same human summary as the `sync-runtime` command (copied / unchanged / lock).
+- Produces: an executable module. `node templates/cli/sync-runtime-entry.js [--check] [--json]`. Exit 0 on successful sync or `--check` in-sync; exit 1 on `--check` drift OR `--check` no-lock (matching the existing command). Prints the same human summary as the `sync-runtime` command.
 
 - [ ] **Step 1: Write the failing test**
 
-Append inside `runGovernanceTests` in `templates/cli/test/governance.js` (near the T17 block; reuse the `path`, `fs`, `os`, `assert` already in scope, and `TEMPLATE_CLI_DIR`):
+Append inside `runGovernanceTests` in `templates/cli/test/governance.js` (reuse the in-scope `path`, `fs`, `os`, `assert`, `writeText`, `TEMPLATE_CLI_DIR`):
 
 ```javascript
-console.log('T-sr-entry. Testing standalone sync-runtime-entry is bootstrap-safe and syncs ...');
+console.log('T-sr-entry. Testing standalone sync-runtime-entry is bootstrap-safe (closure whitelist) and syncs ...');
 {
     const { execFileSync } = require('child_process');
     const entryPath = path.join(TEMPLATE_CLI_DIR, 'sync-runtime-entry.js');
@@ -55,32 +67,37 @@ console.log('T-sr-entry. Testing standalone sync-runtime-entry is bootstrap-safe
     // (a) The entry file exists.
     assert.ok(fs.existsSync(entryPath), 'sync-runtime-entry.js must exist');
 
-    // (b) Bootstrap-safety across the WHOLE dependency closure, not just the entry's
-    // two requires. The entry pulls in ./sync-runtime and ./runtime; ./sync-runtime
-    // dynamically requires ./template-manifest inside readEntries(). Any of these
-    // gaining a business-module dependency would silently re-introduce the brick, so
-    // scan the entire closure.
-    const FORBIDDEN = [
-        './memory.service', './db', 'commander', './planning', './spec-portfolio',
-        './architecture', './verification', './hive', './dashboard-data', './hooks',
-        './inspector', './code-perception', './mcp',
-    ];
-    const CLOSURE = ['sync-runtime-entry.js', 'sync-runtime.js', 'runtime.js', 'template-manifest.js'];
-    for (const rel of CLOSURE) {
+    // (b) Bootstrap-safety as a WHITELIST across the whole dependency closure.
+    // Each file may relative-require ONLY its allowed set; any other relative
+    // require fails. Node builtins (no leading dot) are always allowed.
+    function relRequires(src) {
+        const out = [];
+        const re = /require\(\s*['"](\.[^'"]*)['"]\s*\)/g;
+        let m;
+        while ((m = re.exec(src)) !== null) out.push(m[1]);
+        return out;
+    }
+    const CLOSURE_ALLOW = {
+        'sync-runtime-entry.js': ['./sync-runtime', './runtime'],
+        'sync-runtime.js': ['./template-manifest'],
+        'runtime.js': [],
+        'template-manifest.js': [],
+    };
+    for (const [rel, allow] of Object.entries(CLOSURE_ALLOW)) {
         const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, rel), 'utf8');
-        for (const mod of FORBIDDEN) {
-            assert.ok(
-                !new RegExp(`require\\(\\s*['"]${mod.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`).test(src),
-                `${rel} must NOT require ${mod} (bootstrap-safety closure)`
-            );
+        for (const r of relRequires(src)) {
+            assert.ok(allow.includes(r), `${rel}: unexpected relative require '${r}' (bootstrap-safe closure whitelist)`);
         }
     }
-    // The entry MAY require only ./sync-runtime and ./runtime.
-    const entrySrc = fs.readFileSync(entryPath, 'utf8');
-    assert.ok(/require\(\s*['"]\.\/sync-runtime['"]\s*\)/.test(entrySrc), 'entry should require ./sync-runtime');
 
-    // (c) Functional: entry syncs a sparse tmp workspace using the real manifest.
+    // (c) The entry is declared in the manifest core-cli family (so all syncs include it).
+    const manifestSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'), 'utf8');
+    assert.ok(/'sync-runtime-entry\.js'/.test(manifestSrc), 'sync-runtime-entry.js must be declared in template-manifest.js');
+
+    // (d) Functional: entry syncs a sparse tmp workspace using the real manifest.
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-sr-entry-'));
+    const savedCli = process.env.EVO_LITE_TEMPLATE_CLI_DIR;
+    const savedRoot = process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
     try {
         fs.mkdirSync(path.join(tmpRoot, 'templates', 'cli'), { recursive: true });
         writeText(path.join(tmpRoot, 'templates', 'cli', 'memory.js'), '// entry-sync-canonical\n');
@@ -96,10 +113,25 @@ console.log('T-sr-entry. Testing standalone sync-runtime-entry is bootstrap-safe
         assert.ok(result.copied.includes('memory.js'), 'entry should copy memory.js into the mirror');
         assert.ok(fs.existsSync(path.join(tmpRoot, '.evo-lite', 'cli', 'memory.js')), 'mirror memory.js must exist after entry run');
 
-        // (d) Idempotent: a second run copies nothing.
+        // (e) Idempotent: a second run copies nothing.
         const out2 = execFileSync(process.execPath, [entryPath, '--json'], { env, encoding: 'utf8' });
         assert.strictEqual(JSON.parse(out2).copied.length, 0, 'second entry run should copy nothing');
+
+        // (f) --check exit semantics match the existing command:
+        //     in-sync → 0 ; no-lock → 1 ; drift → 1. Use spawnSync so a non-zero
+        //     exit does not throw; read .status.
+        const { spawnSync } = require('child_process');
+        const check = () => spawnSync(process.execPath, [entryPath, '--check', '--json'], { env, encoding: 'utf8' }).status;
+        assert.strictEqual(check(), 0, '--check on an in-sync mirror should exit 0');
+        fs.rmSync(path.join(tmpRoot, '.evo-lite', 'generated', 'runtime-mirror.lock.json'));
+        assert.strictEqual(check(), 1, '--check with no lock should exit 1');
+        // Re-create lock, then drift the mirror by hand:
+        execFileSync(process.execPath, [entryPath, '--json'], { env, encoding: 'utf8' });
+        writeText(path.join(tmpRoot, '.evo-lite', 'cli', 'memory.js'), '// drifted-by-hand\n');
+        assert.strictEqual(check(), 1, '--check with drift should exit 1');
     } finally {
+        if (savedCli === undefined) delete process.env.EVO_LITE_TEMPLATE_CLI_DIR; else process.env.EVO_LITE_TEMPLATE_CLI_DIR = savedCli;
+        if (savedRoot === undefined) delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR; else process.env.EVO_LITE_TEMPLATE_ROOT_DIR = savedRoot;
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
     console.log('✅ T-sr-entry standalone bootstrap entry passed');
@@ -120,12 +152,13 @@ Create `templates/cli/sync-runtime-entry.js`:
 
 // Bootstrap-safe standalone entrypoint for the runtime-mirror sync.
 //
-// This is the CANONICAL path for adding a new managed module and healing the
-// mirror. It deliberately requires ONLY ./sync-runtime and ./runtime — both
-// depend on nothing beyond Node builtins + ./template-manifest — so it can run
-// even when memory.js's full command registry cannot load because a feature
-// module has not been mirrored yet (the self-brick scenario). NEVER add a
-// require here for memory.service, db, commander, or any feature/gene module.
+// CANONICAL RECOVERY PATH for a hard brick: when memory.js cannot load at all
+// (e.g. a top-level require chain memory.service → memory-index → memory-index-util
+// hits a not-yet-mirrored file), this entry still runs because it requires ONLY
+// ./sync-runtime and ./runtime — both depend on nothing beyond Node builtins +
+// ./template-manifest. NEVER add a require here (or in that closure) for
+// memory.service, db, commander, or any feature/gene module. A closure whitelist
+// test (T-sr-entry) enforces this.
 
 const { syncRuntime, verifyRuntimeLock } = require('./sync-runtime');
 const { getWorkspaceRoot } = require('./runtime');
@@ -149,7 +182,9 @@ function main(argv) {
             for (const m of result.mismatches) console.log(`  drift: ${m.path}`);
             for (const m of result.missing) console.log(`  missing: ${m}`);
         }
-        return result.status === 'ok' || result.status === 'no-lock' ? 0 : 1;
+        // Match the existing `mem sync-runtime --check`: ONLY status 'ok' exits 0.
+        // 'no-lock' still prints its remedy but exits 1 (drift/missing likewise).
+        return result.status === 'ok' ? 0 : 1;
     }
 
     const result = syncRuntime(projectRoot);
@@ -174,57 +209,79 @@ function main(argv) {
 process.exitCode = main(process.argv);
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 4: Declare the entry in the manifest**
+
+In `templates/cli/template-manifest.js`, in the `core-cli` family `files` array, add (next to `'sync-runtime.js'`):
+
+```
+'sync-runtime-entry.js',
+```
+
+Do NOT reorder or remove any existing entry. (The real repo mirror is reconciled in Task 4; no other test asserts the real mirror mid-plan.)
+
+- [ ] **Step 5: Run the test to verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T-sr-entry standalone bootstrap entry passed`, suite exits 0.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add templates/cli/sync-runtime-entry.js templates/cli/test/governance.js
-git commit -m "feat(sync-runtime): bootstrap-safe standalone sync-runtime-entry (task:sr-entry)"
+git add templates/cli/sync-runtime-entry.js templates/cli/template-manifest.js templates/cli/test/governance.js
+git commit -m "feat(sync-runtime): bootstrap-safe standalone sync-runtime-entry + manifest declaration (task:sr-entry)"
 ```
 
 ---
 
-### Task 2: memory.js defense-in-depth registration guard
+### Task 2: memory.js defense-in-depth registration guard (all 10 registrars)
 
 **Files:**
 - Modify: `templates/cli/memory.js:699-708` (the feature-register block)
 - Test: `templates/cli/test/governance.js` (append a new `T-sr-guard` section)
 
 **Interfaces:**
-- Produces: a module-local `function safeRegister(featureName, register)` where `register` is a THUNK that performs BOTH the `require` and the `.registerXCommands(program)` call. The require MUST live inside the thunk (inside the try) — a top-level `require('./feature')` followed by wrapping only `register()` leaves the guard ineffective (the missing-module throw happens at the top-level require, before the guard). On any throw it writes a stderr warning naming the feature and the error code/message, and returns without throwing.
+- Produces: a module-local `function safeRegister(featureName, register)` where `register` is a THUNK performing BOTH the `require` and the `.registerXCommands(program)` call. The require MUST live inside the thunk (inside the try) — a hoisted top-level `require` would throw before the guard. On any throw it writes a stderr warning naming the feature + error code/message and returns without throwing.
 
 - [ ] **Step 1: Write the failing test**
 
 Append inside `runGovernanceTests` in `templates/cli/test/governance.js`:
 
 ```javascript
-console.log('T-sr-guard. Testing memory.js feature-register guard isolates a broken module ...');
+console.log('T-sr-guard. Testing memory.js routes ALL 10 feature registrars through the guard ...');
 {
     const { execFileSync } = require('child_process');
     const memSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'utf8');
 
-    // (a) The guard is a named helper applied as thunks (require lives INSIDE the thunk).
-    assert.ok(/function safeRegister\s*\(/.test(memSrc), 'memory.js must define safeRegister');
+    // (a) The guard helper exists.
+    assert.ok(/function safeRegister\s*\(\s*featureName\s*,\s*register\s*\)/.test(memSrc), 'memory.js must define safeRegister(featureName, register)');
+
+    // (b) Every one of the 10 feature registrars is wired as an EXACT safeRegister
+    // thunk whose require lives inside the thunk.
+    const EXPECTED = [
+        ['planning', './planning', 'registerPlanCommands'],
+        ['spec-portfolio', './spec-portfolio', 'registerSpecPortfolioCommands'],
+        ['architecture', './architecture', 'registerArchitectureCommands'],
+        ['verification', './verification/commands', 'registerVerificationCommands'],
+        ['close', './verification/close-commands', 'registerCloseCommands'],
+        ['hive', './hive/commands', 'registerHiveCommands'],
+        ['dashboard', './dashboard-data', 'registerDashboardCommands'],
+        ['hooks', './hooks', 'registerHookCommands'],
+        ['sync-runtime', './sync-runtime', 'registerSyncRuntimeCommands'],
+        ['code-perception', './code-perception/post-commit-code-perception', 'registerCodePerceptionCommands'],
+    ];
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    for (const [feat, mod, fn] of EXPECTED) {
+        const re = new RegExp(`safeRegister\\('${esc(feat)}',\\s*\\(\\)\\s*=>\\s*require\\('${esc(mod)}'\\)\\.${esc(fn)}\\(program\\)\\)`);
+        assert.ok(re.test(memSrc), `feature '${feat}' must be registered via an exact safeRegister thunk`);
+    }
+
+    // (c) No bare require().registerXCommands(program) survives anywhere.
     assert.ok(
-        /safeRegister\('sync-runtime',\s*\(\)\s*=>\s*require\('\.\/sync-runtime'\)\.registerSyncRuntimeCommands\(program\)\)/.test(memSrc),
-        'sync-runtime must be registered via a safeRegister thunk that requires inside'
-    );
-    assert.ok(
-        /safeRegister\('code-perception',\s*\(\)\s*=>\s*require\('\.\/code-perception\/post-commit-code-perception'\)\.registerCodePerceptionCommands\(program\)\)/.test(memSrc),
-        'code-perception must be registered via a safeRegister thunk that requires inside'
-    );
-    // (b) No feature module is hoisted to a bare top-level require + wrapped register
-    // (which would defeat the guard). The old bare form must be gone.
-    assert.ok(
-        !/^\s*require\('\.\/code-perception\/post-commit-code-perception'\)\.registerCodePerceptionCommands\(program\);/m.test(memSrc),
-        'code-perception must NOT be a bare top-level require + register (guard would be ineffective)'
+        !/^\s*require\('\.\/[^']*'\)\.register\w*Commands\(program\);/m.test(memSrc),
+        'no bare require().registerXCommands(program) may remain (all must go through safeRegister)'
     );
 
-    // (c) Healthy CLI still lists sync-runtime in --help.
+    // (d) Healthy CLI still lists sync-runtime in --help.
     const help = execFileSync(process.execPath, [path.join(TEMPLATE_CLI_DIR, 'memory.js'), '--help'], {
         env: { ...process.env }, encoding: 'utf8',
     });
@@ -233,31 +290,31 @@ console.log('T-sr-guard. Testing memory.js feature-register guard isolates a bro
 }
 ```
 
-(The end-to-end proof that the guard survives a genuinely missing module — and that the failed feature is NOT falsely presented as registered — lives in Task 3's spawn-based self-brick test, which can delete a mirrored module. This section locks the source shape + healthy-path survival.)
-
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node templates/cli/test.js governance`
-Expected: FAIL at `T-sr-guard` with "memory.js must define safeRegister" (helper not added yet).
+Expected: FAIL at `T-sr-guard` with "memory.js must define safeRegister(featureName, register)".
 
 - [ ] **Step 3: Add the guard**
 
-In `templates/cli/memory.js`, define `safeRegister` immediately before the register block (keep it inside the same function scope that has `program`), and route every feature registration through it as a THUNK so the `require` itself is guarded. Replace lines 699-708:
+In `templates/cli/memory.js`, define `safeRegister` immediately before the register block (same function scope that has `program`), and route every feature registration through it as a THUNK. Replace lines 699-708:
 
 ```javascript
     function safeRegister(featureName, register) {
         try {
             register();
         } catch (err) {
-            // Defense-in-depth: a not-yet-mirrored (or genuinely broken) feature
-            // module must NOT brick the whole CLI — especially sync-runtime, which
-            // heals the mirror. The require() lives INSIDE the thunk, so a missing
-            // module throws here and is caught (not at a top-level require). Warn
-            // loudly (never silent) and continue so the remaining groups register.
-            // NOTE: this guards only the LAZY feature registrars. The top-level
-            // module requires (memory.service, db, commander) are NOT guarded and a
-            // missing core module still aborts startup by design — they are always
-            // mirrored first and are not the self-brick vector.
+            // Defense-in-depth for the FEATURE-REGISTRAR brick class: a not-yet-mirrored
+            // (or genuinely broken) feature module must NOT brick the whole CLI —
+            // especially sync-runtime, which heals the mirror. The require() lives INSIDE
+            // the thunk, so a missing module throws here and is caught. Warn loudly
+            // (never silent) and continue so the remaining groups register.
+            //
+            // BOUNDARY: this guards only the lazy feature registrars. The top-level core
+            // requires in this file (memory.service → memory-index → memory-index-util; db)
+            // run before this block and are NOT guarded — a missing core module still
+            // aborts startup by design. sync-runtime-entry.js is the canonical recovery
+            // path for that hard-brick class.
             const code = err && err.code ? err.code + ': ' : '';
             console.error(
                 `[evo-lite] warning: command group ${featureName} failed to register ` +
@@ -278,7 +335,7 @@ In `templates/cli/memory.js`, define `safeRegister` immediately before the regis
     safeRegister('code-perception', () => require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program));
 ```
 
-(Keep the exact same module paths and function names as the current lines 699-708 — verify each against the file before editing. Each thunk must contain BOTH the `require(...)` and the `.registerXCommands(program)` call; do NOT hoist any `require` above `safeRegister`. The `inspect` / `mcp` commands defined after line 708 stay as they are.)
+(Verify each module path + function name against the current lines 699-708 before editing. Each thunk contains BOTH the `require(...)` and the `.registerXCommands(program)` call; do NOT hoist any `require`. The `inspect`/`mcp` commands after line 708 stay unchanged.)
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -289,185 +346,178 @@ Expected: PASS — `✅ T-sr-guard registration guard passed`.
 
 ```bash
 git add templates/cli/memory.js templates/cli/test/governance.js
-git commit -m "feat(cli): guard feature-command registration so a half-mirror can't brick the CLI (task:sr-guard)"
+git commit -m "feat(cli): route all 10 feature registrars through safeRegister guard (task:sr-guard)"
 ```
 
 ---
 
-### Task 3: End-to-end self-brick reproduction regression test
+### Task 3: End-to-end self-brick regression — BOTH brick classes
 
 **Files:**
 - Test: `templates/cli/test/integration.js` (append a new self-brick section inside `runIntegrationTests`)
 
 **Interfaces:**
-- Consumes (in-test): `syncRuntime` from `templates/cli/sync-runtime`, the real repo templates as the sync source, `child_process.execFileSync`/`spawnSync`.
-- Produces: a regression test that faithfully reproduces the self-brick (a mirrored `memory.js` whose feature module is missing) and proves BOTH heal paths: (a) the guarded `memory.js sync-runtime` survives and re-copies; (b) `sync-runtime-entry.js` heals independently regardless of the guard.
+- Consumes (in-test): `syncRuntime` from `templates/cli/sync-runtime`; the real repo templates via `WORKSPACE_ROOT`/`TEMPLATE_CLI_DIR`/`TEMPLATE_ROOT_DIR` (already imported from `./harness`); `child_process.spawnSync`.
+- Produces: a regression test with two independent scenarios — Scenario A (hard brick, only the standalone entry recovers) and Scenario B (feature-registrar brick, the guard degrades gracefully).
 
 - [ ] **Step 1: Write the failing test**
 
-Append inside `runIntegrationTests` in `templates/cli/test/integration.js` (uses `fs`, `os`, `path`, `assert` already in scope; `REPO_ROOT` = the repo root — if not already defined in the file, derive it as `path.resolve(__dirname, '..', '..', '..')` from `templates/cli/test/`):
+Append inside `runIntegrationTests` in `templates/cli/test/integration.js` (uses in-scope `fs`, `os`, `path`, `assert`, and the imported `WORKSPACE_ROOT`, `TEMPLATE_CLI_DIR`, `TEMPLATE_ROOT_DIR`):
 
 ```javascript
-console.log('SB. Testing self-brick reproduction: missing mirror module heals via guard + standalone entry ...');
+console.log('SB. Testing self-brick regression: hard-brick (entry recovers) + feature-brick (guard degrades) ...');
 {
-    const { syncRuntime } = require(path.join(REPO_ROOT, 'templates', 'cli', 'sync-runtime'));
+    const { syncRuntime } = require(path.join(TEMPLATE_CLI_DIR, 'sync-runtime'));
     const { spawnSync } = require('child_process');
     const mirrorRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-selfbrick-'));
-    // Both the IN-PROCESS syncRuntime (below) and the spawned children resolve the
-    // template source from these env vars, so set them on process.env (restored in
-    // finally) AND pass them to child spawns via childEnv.
-    process.env.EVO_LITE_TEMPLATE_CLI_DIR = path.join(REPO_ROOT, 'templates', 'cli');
-    process.env.EVO_LITE_TEMPLATE_ROOT_DIR = path.join(REPO_ROOT, 'templates');
-    const childEnv = {
-        ...process.env,
-        EVO_LITE_WORKSPACE_ROOT: mirrorRoot,
-    };
+    // Save/restore any caller-set template overrides (do not clobber them).
+    const savedCli = process.env.EVO_LITE_TEMPLATE_CLI_DIR;
+    const savedRoot = process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
+    process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
+    process.env.EVO_LITE_TEMPLATE_ROOT_DIR = TEMPLATE_ROOT_DIR;
+    const childEnv = { ...process.env, EVO_LITE_WORKSPACE_ROOT: mirrorRoot };
+    const cliDir = path.join(mirrorRoot, '.evo-lite', 'cli');
+    const help = () => spawnSync(process.execPath, [path.join(cliDir, 'memory.js'), '--help'], { env: childEnv, encoding: 'utf8' });
+    const runEntry = () => spawnSync(process.execPath, [path.join(cliDir, 'sync-runtime-entry.js'), '--json'], { env: childEnv, encoding: 'utf8' });
     try {
         // Build a full faithful mirror of the real templates into the tmp workspace.
         const first = syncRuntime(mirrorRoot, {});
         assert.strictEqual(first.status, 'ok', 'initial mirror build should succeed');
-        const cliDir = path.join(mirrorRoot, '.evo-lite', 'cli');
-        const bricked = path.join(cliDir, 'code-perception', 'post-commit-code-perception.js');
         const entry = path.join(cliDir, 'sync-runtime-entry.js');
-        assert.ok(fs.existsSync(bricked), 'mirror must contain the code-perception module to delete');
-        assert.ok(fs.existsSync(entry), 'mirror must contain sync-runtime-entry.js');
+        const hardDep = path.join(cliDir, 'memory-index-util.js');
+        const feature = path.join(cliDir, 'code-perception', 'post-commit-code-perception.js');
+        assert.ok(fs.existsSync(entry), 'mirror must contain sync-runtime-entry.js (declared in Task 1 manifest)');
+        assert.ok(fs.existsSync(hardDep), 'mirror must contain memory-index-util.js');
+        assert.ok(fs.existsSync(feature), 'mirror must contain the code-perception module');
 
-        // Reproduce the self-brick: delete a module that memory.js eagerly registers.
-        fs.rmSync(bricked);
+        // ---- Scenario A: HARD BRICK — a top-level require dep is missing. ----
+        // memory.js cannot load at all; safeRegister never runs; only the standalone
+        // entry recovers.
+        fs.rmSync(hardDep);
+        const hardHelp = help();
+        assert.notStrictEqual(hardHelp.status, 0, 'hard-bricked memory.js --help must exit non-zero');
+        assert.ok(/MODULE_NOT_FOUND/.test(hardHelp.stderr || ''), 'hard-brick stderr must show MODULE_NOT_FOUND');
+        assert.ok(/memory-index-util/.test(hardHelp.stderr || ''), 'hard-brick stderr must name memory-index-util');
+        const hardEntry = runEntry();
+        assert.strictEqual(hardEntry.status, 0, 'standalone entry must run despite the hard brick');
+        assert.ok(fs.existsSync(hardDep), 'standalone entry must re-copy memory-index-util.js');
+        assert.strictEqual(help().status, 0, 'memory.js --help must recover after the entry heals the hard brick');
 
-        // (a1) HONEST FAILURE: in the bricked state, --help must still list sync-runtime
-        // (guard kept the CLI alive) but must NOT list the failed `code-perception`
-        // command (a failed feature is never falsely presented as registered), and the
-        // guard must warn — naming the feature — with a MODULE_NOT_FOUND-class error.
-        const helpBricked = spawnSync(process.execPath, [path.join(cliDir, 'memory.js'), '--help'], {
-            env: childEnv, encoding: 'utf8',
-        });
-        assert.strictEqual(helpBricked.status, 0, 'guarded memory.js --help must exit 0 while a feature module is missing');
-        assert.ok(/sync-runtime/.test(helpBricked.stdout || ''), 'bricked --help must still list sync-runtime');
-        assert.ok(!/(^|\s)code-perception(\s|$)/m.test(helpBricked.stdout || ''), 'bricked --help must NOT list the failed code-perception command');
-        assert.ok(/warning: command group code-perception failed to register/.test(helpBricked.stderr || ''), 'guard must warn naming the failed feature');
-        assert.ok(/MODULE_NOT_FOUND/.test(helpBricked.stderr || ''), 'guard warning must carry the MODULE_NOT_FOUND cause');
+        // ---- Scenario B: FEATURE BRICK — a feature registrar module is missing. ----
+        // memory.js survives via the guard; the failed feature is NOT presented as
+        // registered; mem sync-runtime heals; the command reappears.
+        fs.rmSync(feature);
+        const featHelp = help();
+        assert.strictEqual(featHelp.status, 0, 'guarded memory.js --help must exit 0 with a feature module missing');
+        assert.ok(/sync-runtime/.test(featHelp.stdout || ''), 'feature-brick --help must still list sync-runtime');
+        assert.ok(!/(^|\s)code-perception(\s|$)/m.test(featHelp.stdout || ''), 'feature-brick --help must NOT list the failed code-perception command');
+        assert.ok(/warning: command group code-perception failed to register/.test(featHelp.stderr || ''), 'guard must warn naming the failed feature');
+        assert.ok(/MODULE_NOT_FOUND/.test(featHelp.stderr || ''), 'guard warning must carry the MODULE_NOT_FOUND cause');
+        // Heal via the guarded memory.js sync-runtime itself (proves it stayed usable).
+        const viaMemory = spawnSync(process.execPath, [path.join(cliDir, 'memory.js'), 'sync-runtime'], { env: childEnv, encoding: 'utf8' });
+        assert.strictEqual(viaMemory.status, 0, 'guarded memory.js sync-runtime must exit 0 and heal');
+        assert.ok(fs.existsSync(feature), 'sync-runtime must re-copy the deleted feature module');
+        const healedHelp = help();
+        assert.strictEqual(healedHelp.status, 0, 'memory.js --help must exit 0 after healing');
+        assert.ok(/(^|\s)code-perception(\s|$)/m.test(healedHelp.stdout || ''), 'code-perception command must reappear after healing');
 
-        // (a2) GUARDED memory.js heals: sync-runtime still runs (exit 0) and re-copies the module.
-        const viaMemory = spawnSync(process.execPath, [path.join(cliDir, 'memory.js'), 'sync-runtime'], {
-            env: childEnv, encoding: 'utf8',
-        });
-        assert.strictEqual(viaMemory.status, 0, 'guarded memory.js sync-runtime must exit 0 despite the missing module');
-        assert.ok(fs.existsSync(bricked), 'sync-runtime must re-copy the deleted module');
-
-        // (b) Standalone entry heals independently: delete again, run the entry directly.
-        fs.rmSync(bricked);
-        const viaEntry = spawnSync(process.execPath, [entry, '--json'], { env: childEnv, encoding: 'utf8' });
-        assert.strictEqual(viaEntry.status, 0, 'standalone entry must exit 0');
-        assert.ok(fs.existsSync(bricked), 'standalone entry must re-copy the deleted module');
-
-        // (c) Convergence: a clean re-run via the entry copies nothing.
-        const converged = spawnSync(process.execPath, [entry, '--json'], { env: childEnv, encoding: 'utf8' });
+        // Convergence: a clean re-run via the entry copies nothing.
+        const converged = runEntry();
         assert.strictEqual(JSON.parse(converged.stdout).copied.length, 0, 'converged entry run copies nothing');
     } finally {
-        delete process.env.EVO_LITE_TEMPLATE_CLI_DIR;
-        delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
+        if (savedCli === undefined) delete process.env.EVO_LITE_TEMPLATE_CLI_DIR; else process.env.EVO_LITE_TEMPLATE_CLI_DIR = savedCli;
+        if (savedRoot === undefined) delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR; else process.env.EVO_LITE_TEMPLATE_ROOT_DIR = savedRoot;
         fs.rmSync(mirrorRoot, { recursive: true, force: true });
     }
-    console.log('✅ SB self-brick reproduction + dual heal passed');
+    console.log('✅ SB self-brick regression (hard-brick + feature-brick) passed');
 }
 ```
 
-- [ ] **Step 2: Confirm the test is meaningful (genuine red without the fixes)**
+- [ ] **Step 2: Confirm each scenario is a genuine red without its fix**
 
-This is a regression test that locks behavior delivered in Tasks 1-2, so it passes once those tasks are in the template tree. To prove it is not a vacuous test, demonstrate a genuine red once: temporarily replace the `safeRegister` thunk for `code-perception` in `templates/cli/memory.js` with a bare `require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program);` (the pre-fix form), sync the mirror, run `node templates/cli/test.js`, and confirm the `SB` section FAILS at assertion (a1) — "guarded memory.js --help must exit 0 …" — because the child now aborts at the bare require with a `MODULE_NOT_FOUND` error (visible in the child's stderr). This confirms the red is specifically the deleted managed module's bootstrap crash, not a spurious assertion. Then restore the thunk.
+This regression locks behavior from Tasks 1-2, so it passes once those are in the template tree. Prove it is not vacuous with two one-off demonstrations, restoring after each:
+- **Scenario A red:** temporarily rename/remove `sync-runtime-entry.js` recovery by pointing `runEntry` at a non-existent path — the `hardEntry.status === 0` assertion fails, confirming only the entry can recover a hard brick. Restore.
+- **Scenario B red:** temporarily replace the `code-perception` `safeRegister` thunk in `templates/cli/memory.js` with the bare `require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program);` form and re-run — `featHelp.status === 0` fails because the child now aborts at the bare require with `MODULE_NOT_FOUND`. Restore the thunk.
 
 Run: `node templates/cli/test.js`
-Expected (guard temporarily removed for one feature): FAIL at `SB` (a1), child stderr shows `MODULE_NOT_FOUND` for the deleted module. After restoring the thunk: proceed to Step 4.
+Expected: each temporary removal produces a FAIL at the named `SB` assertion; with both fixes in place, `SB` passes.
 
 - [ ] **Step 3: (No new production code)**
 
-This task adds only the regression test; the production behavior it locks was delivered in Tasks 1-2. If Step 2's red does not appear (test passes even with the guard removed), the test is not exercising the guard — fix the test before proceeding.
+This task adds only the regression test; if Step 2 shows a scenario passes even with its fix removed, the test is not exercising that fix — fix the test before proceeding.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 4: Run the full suite to verify it passes**
 
 Run: `node templates/cli/test.js`
-Expected: PASS — `✅ SB self-brick reproduction + dual heal passed`; full suite exits 0.
+Expected: PASS — `✅ SB self-brick regression (hard-brick + feature-brick) passed`; full suite exits 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add templates/cli/test/integration.js
-git commit -m "test(sync-runtime): end-to-end self-brick reproduction — guard + standalone entry both heal (task:sr-selfbrick-test)"
+git commit -m "test(sync-runtime): self-brick regression covering hard-brick + feature-brick classes (task:sr-selfbrick-test)"
 ```
 
 ---
 
-### Task 4: Register entry in manifest + sync mirror + full regression
+### Task 4: Final mirror convergence + full regression
 
 **Files:**
-- Modify: `templates/cli/template-manifest.js` (`core-cli` family `files` array)
-- Result (generated by sync, committed): `.evo-lite/cli/sync-runtime-entry.js` + refreshed mirrors of the already-managed modified files (`memory.js`, `test/governance.js`, `test/integration.js`)
+- Result (generated by sync, committed): `.evo-lite/cli/sync-runtime-entry.js` + refreshed mirrors of the already-managed modified files (`memory.js`, `template-manifest.js`, `test/governance.js`, `test/integration.js`)
 
-**Interfaces:**
-- Consumes: everything from Tasks 1-3.
-- Produces: a complete, byte-identical runtime mirror; both suites green through the mirror.
+(The manifest entry was declared in Task 1; this task only reconciles the real repo mirror and runs the full regression through it.)
 
-- [ ] **Step 1: Add the manifest entry**
+- [ ] **Step 1: Seed the mirror from the TEMPLATE entry, then converge from the mirror entry**
 
-In `templates/cli/template-manifest.js`, in the `core-cli` family `files` array, add (grouped with the other top-level `cli/` modules, e.g. next to `'sync-runtime.js'`):
-
-```
-'sync-runtime-entry.js',
-```
-
-Do NOT reorder or remove any existing entry.
-
-- [ ] **Step 2: Sync the runtime mirror to convergence**
-
-Because `sync-runtime` runs the mirror's own copy, run it repeatedly until TWO CONSECUTIVE runs report `copied: 0` (≤4 runs is the known bootstrap, not a failure). Prefer the NEW standalone entry — it is exactly the bootstrap-safe path this plan adds:
+The real repo mirror does not yet contain `sync-runtime-entry.js` (only the manifest declares it). Seed the first sync from the TEMPLATE copy of the entry (it exists in `templates/cli/`), which copies the entry into the mirror; then run the MIRROR entry to convergence. Run until TWO CONSECUTIVE runs report `copied: 0` (≤4 runs total):
 
 ```bash
-node ./.evo-lite/cli/sync-runtime-entry.js
+node templates/cli/sync-runtime-entry.js
 node ./.evo-lite/cli/sync-runtime-entry.js
 node ./.evo-lite/cli/sync-runtime-entry.js
 ```
 
 If it does not converge within ~4 runs, STOP and report.
 
-- [ ] **Step 3: Verify byte-identical mirror**
+- [ ] **Step 2: Verify byte-identical mirror (Node, not shell)**
 
-Run (bash, from repo root):
+Run:
 
 ```bash
-for f in sync-runtime-entry.js memory.js template-manifest.js test/governance.js test/integration.js; do
-  diff -q "templates/cli/$f" ".evo-lite/cli/$f" || echo "DRIFT $f"
-done
+node -e "const fs=require('fs'),p=require('path'); const files=['sync-runtime-entry.js','memory.js','template-manifest.js','test/governance.js','test/integration.js']; let drift=0; for(const f of files){const a=fs.readFileSync(p.join('templates/cli',f)); const b=fs.readFileSync(p.join('.evo-lite/cli',f)); if(!a.equals(b)){console.log('DRIFT',f);drift++;}} console.log(drift?('DRIFT '+drift):'byte-identical OK'); process.exit(drift?1:0);"
 ```
 
-All must be identical (no `DRIFT` output).
+Expected: `byte-identical OK`, exit 0.
 
-- [ ] **Step 4: Full regression through both trees**
+- [ ] **Step 3: Full regression through both trees**
 
 ```bash
 node templates/cli/test.js
 node ./.evo-lite/cli/test.js
 ```
 
-Expected: both exit 0, with `T-sr-entry`, `T-sr-guard` (governance) and `SB` (integration) sections all present and green in BOTH the template and mirror runs. This proves the mirrored `memory.js` guard + mirrored entry work through the mirror.
+Expected: both exit 0, with `T-sr-entry`, `T-sr-guard` (governance) and `SB` (integration) present and green in BOTH the template and mirror runs — proving the mirrored `memory.js` guard + mirrored entry work through the mirror.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
-Stage the manifest edit AND the generated/updated mirror files only:
+Stage only the generated/updated mirror files:
 
 ```bash
-git add templates/cli/template-manifest.js .evo-lite/cli/sync-runtime-entry.js .evo-lite/cli/memory.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js .evo-lite/cli/test/integration.js
-git commit -m "chore(sync-runtime): register bootstrap-safe entry in manifest + sync runtime mirror (task:sr-manifest-sync)"
+git add .evo-lite/cli/sync-runtime-entry.js .evo-lite/cli/memory.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js .evo-lite/cli/test/integration.js
+git commit -m "chore(sync-runtime): reconcile runtime mirror for bootstrap-safe entry + guard (task:sr-manifest-sync)"
 ```
 
-Verify `git status --short` shows only manifest + mirror paths (the post-commit hook may re-touch `active_context.md`; do not stage generated `.evo-lite/generated/*`).
+Verify `git status --short` shows only mirror paths (the post-commit hook may re-touch `active_context.md`; do not stage generated `.evo-lite/generated/*`).
 
 ---
 
 ## Self-Review
 
-- **Coverage:** entry (Task 1) + guard (Task 2) + faithful self-brick repro (Task 3) + manifest/mirror/regression (Task 4). Both the user-stated 8-step repro and the two heal paths are covered by Task 3.
-- **Bootstrap-safety** is asserted statically (Task 1 Step 1 FORBIDDEN list) and behaviorally (Task 3).
-- **Guard warns, never silent** — asserted in Task 3 (`/warning: command group/` on stderr).
-- **No placeholders** — every step carries the actual entry code, guard code, test code, and exact commands.
-- **Type/name consistency** — `safeRegister(program, modulePath, fnName)`, `syncRuntime(projectRoot, options)`, `verifyRuntimeLock(projectRoot)`, `getWorkspaceRoot()` are used consistently across tasks and match the current source.
+- **Coverage:** entry + manifest declaration (Task 1) → guard for all 10 registrars (Task 2) → both-brick-class regression (Task 3) → mirror reconcile + full regression (Task 4). BLOCKER 1 (ordering) resolved by declaring the manifest entry in Task 1 and seeding Task 4 from the template entry. BLOCKER 2 (hard-brick class) resolved by Scenario A. BLOCKER 3 (`--check` no-lock) resolved: entry returns 0 only for `status === 'ok'`; no-lock/drift exit 1, asserted in T-sr-entry (f).
+- **Bootstrap-safety** is a closure WHITELIST (Task 1 (b)), not a blacklist — a new heavy require anywhere in the closure fails the test.
+- **Guard covers all 10 registrars** via the exact-thunk `EXPECTED` map + a global no-bare-registration assertion (Task 2 (b)/(c)).
+- **Honest failure** — Scenario B asserts the bricked `--help` lists sync-runtime but NOT the failed `code-perception` command, warns by name with `MODULE_NOT_FOUND`, and that the command reappears after healing.
+- **Windows-first** — byte-identical via Node `Buffer.equals`; child spawns via `process.execPath`.
+- **Env hygiene** — T-sr-entry and SB save and restore `EVO_LITE_TEMPLATE_*` rather than unconditionally deleting.
+- **Signature consistency** — `safeRegister(featureName, register)` (thunk form) is used consistently in the guard code, the guard test, and this review. `syncRuntime(projectRoot, options)`, `verifyRuntimeLock(projectRoot)`, `getWorkspaceRoot()` match current source.
+- **Accurate boundary** — Background + the guard comment both state that top-level core requires are unguarded and the standalone entry is the hard-brick recovery path; no over-claim.
