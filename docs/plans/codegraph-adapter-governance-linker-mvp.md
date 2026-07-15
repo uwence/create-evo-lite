@@ -142,44 +142,44 @@ module.exports = { validateDogfoodArtifact(text, { requireClosureEvidence = true
 
 ### Phase 2 — CodeGraph Adapter
 
-- [ ] [task:cg-fixtures] pinned-upstream fixtures + provenance manifest (incl. `--` support + separator conclusion) + fake-cli
+- [x] [task:cg-fixtures] pinned-upstream fixtures + provenance manifest (incl. `--` support + separator conclusion) + fake-cli
   - files: templates/cli/test/fixtures/code-perception/codegraph-fixture-manifest.json, codegraph-version.txt, codegraph-help.txt, codegraph-status.json, codegraph-files.json, codegraph-query.json, codegraph-callers.json, codegraph-callees.json, codegraph-impact.json, codegraph-affected.json, codegraph-malformed.json, codegraph-node.txt, codegraph-explore.txt, fake-codegraph.js, dogfood-sample.md, dogfood-bad.md
   - verify: node templates/cli/test.js governance
   - acceptance: fixtures DERIVED from pinned `@colbymchenry/codegraph@1.4.1` (fetch npm tarball / GitHub 1.4.1 tag; read real `--json` shapes) — NOT invented; manifest records upstream/package/providerVersion/upstreamCommit/per-command captureMethod/fixtureSha256/redactions AND `supportsPositionalSeparator` (whether upstream 1.4.1 honors `--`); version.txt=`1.4.1`, help.txt lists all 9 commands; malformed.json = valid JSON wrong-typed field; node/explore opaque with one marked `file:line`; fake-codegraph runs via `node fake-codegraph.js <subcommand>`, `--fake-sleep`/`--fake-echo-env` on allowed subcommand, `__dirname` paths; dogfood-sample.md well-formed (sections + recomputable fingerprints + repoCommit/version), dogfood-bad.md missing ≥1 section
   - test-first: governance.js「T-cg-fixtures」asserts manifest fields + each fixtureSha256 == recomputed sha, JSON fixtures parse, help has 9 commands, `supportsPositionalSeparator` is a boolean; 红→绿
   - BLOCKED-not-faked: if the environment blocks fetching upstream, record captureMethod + blocking reason in the manifest and STOP — do NOT invent shapes.
 
-- [ ] [task:cg-exec] codegraph-exec.js: secure no-shell runner + `--` defense (frozen const) + env-order + caps
+- [x] [task:cg-exec] codegraph-exec.js: secure no-shell runner + `--` defense (frozen const) + env-order + caps
   - files: templates/cli/code-perception/providers/codegraph-exec.js
   - verify: node templates/cli/test.js governance
   - acceptance: exports `runCodegraph`/`ALLOWED_SUBCOMMANDS`(frozen array)/`SUPPORTS_POSITIONAL_SEPARATOR`(frozen const == manifest's `supportsPositionalSeparator`)/`stripAnsi`/`childEnv`/`safeOperand`; argv `[...prefixArgs,subcommand,...args]`; `execFile` shell:false, timeout kill, maxBuffer; disallowed subcommand → reject without spawn; timeout→command-timeout; oversize→output-truncated (no blob); ANSI stripped; `childEnv(base,caller,false)` forces DO_NOT_TRACK=1+CODEGRAPH_NO_UPDATE_CHECK=1 AFTER caller (caller `DO_NOT_TRACK=0` is overridden back to 1), allowNetwork:true omits them; `safeOperand` uses the frozen const (not the manifest) — leading-dash rejected when unsupported; never throws
   - test-first: governance.js「T-cg-exec」drives fake-cli via `process.execPath`+prefixArgs; asserts fixture echo, disallowed-subcommand no-spawn, timeout kill (`--fake-sleep`), env override (`status --fake-echo-env`, caller can't override), option-injection (`--help` operand → after `--` or rejected, fake never prints help), and `SUPPORTS_POSITIONAL_SEPARATOR===manifest.supportsPositionalSeparator`; 红→绿
 
-- [ ] [task:cg-detect] codegraph.js create(options)/check()/getStatus: detection + fingerprint lock + version compat + capabilityHealth
+- [x] [task:cg-detect] codegraph.js create(options)/check()/getStatus: detection + fingerprint lock + version compat + capabilityHealth
   - files: templates/cli/code-perception/providers/codegraph.js
   - verify: node templates/cli/test.js governance
   - acceptance: `create(options)` stores `{executable,prefixArgs,timeoutMs,allowNetwork}` + `capabilityHealth` Map; returns a provider passing `validateProvider` (15-key caps: files/symbols/source/callers/callees/impact/affectedTests=true, modules=FALSE, rest false; methods present); `check` fingerprints (semver∉[1.0.0,2.0.0) OR help missing command set → available:false identity/version mismatch, no adapt-guess; missing exe → installed:false/MISSING/install hint; installed+no-index → ready:false/MISSING/`codegraph init`; valid → ready/READY/providerVersion); `getStatus` passes `validateStatus`, compatibility UNTESTED/SUPPORTED/UNSUPPORTED, records observedSchemaFingerprint, reflects capabilityHealth; uses the STORED options (a configured executable/prefixArgs actually drives runCodegraph); Local-First env by default; both never throw
   - test-first: governance.js「T-cg-detect」`create({executable:process.execPath, prefixArgs:[fakePath]})`; asserts the stored config drives detection, valid→ready, wrong-help→identity mismatch, `0.9.0`/`2.1.0`→UNSUPPORTED/reject, missing-exe→installed:false; 红→绿
 
-- [ ] [task:cg-queries] codegraph.js query methods: mapping + per-command translators → ① normalize + opaque + per-capability disable
+- [x] [task:cg-queries] codegraph.js query methods: mapping + per-command translators → ① normalize + opaque + per-capability disable
   - files: templates/cli/code-perception/providers/codegraph.js (extend)
   - verify: node templates/cli/test.js governance
   - acceptance: getFiles/search/getCallers/getCallees/impact/getAffectedTests run exact mapped commands (operands after `--` per the frozen const), apply EXPLICIT per-command translators (documented field-by-field), return ①-normalized shapes `code-ref:provider:codegraph:…`; parsing rule honored; getFiles moduleId null (modules=false); getEntity/explore OPAQUE (assert NO synthesized `kind:'calls'` from prose); affectedTests independent of impact; malformed for one capability → empty shape + schema diagnostic + capabilityHealth disables THAT capability (getStatus false), others live, re-enabled on later good parse; no `.codegraph` opened (grep-assert)
   - test-first: governance.js「T-cg-queries」drives fake-cli; unified shapes + provider-scoped ids, opaque explore/node, single-capability disable→re-enable, zero `.codegraph` refs; 红→绿
 
-- [ ] [task:cg-loader-register] register provider:codegraph + pass registration.options into create() (compatible loader enhancement)
+- [x] [task:cg-loader-register] register provider:codegraph + pass registration.options into create() (compatible loader enhancement)
   - files: templates/cli/code-perception/provider-loader.js
   - verify: node templates/cli/test.js governance
   - acceptance: DEFAULT_REGISTRY gains `'provider:codegraph': { role:'structural-primary', create: options => require('./providers/codegraph').create(options) }`; instantiation site changed to `regEntry.create(selection.options)` (native-lite/fixture unaffected by the extra arg); `loadProviders()` (no config) STILL returns exactly native-lite (① `T-cp-loader` #1 green); config-selected codegraph returns a registration (role structural-primary, source configured) whose provider ACTUALLY received the configured executable/prefixArgs/timeoutMs/allowNetwork (assert the values reached the adapter, e.g. via a probe on check()), not merely stored in registration.options; sanitizeOptions still strips dangerous fields; broken codegraph create isolates per ① contract
   - test-first: governance.js「T-cg-loader-register」asserts default native-lite-only, config-selected codegraph present with options reaching the adapter (configured fake executable drives its check), dangerous fields stripped; re-run `T-cp-loader` (no ① regression); 红→绿
 
-- [ ] [task:cg-cache] cache.js: file-based bounded cache + envelope + disk safety + whitelist + markStale
+- [x] [task:cg-cache] cache.js: file-based bounded cache + envelope + disk safety + whitelist + markStale
   - files: templates/cli/code-perception/cache.js
   - verify: node templates/cli/test.js governance
   - acceptance: `makeCacheKey` sha256 over canonical parts; `createCache({projectRoot, root=default, ttlMs, maxEntries=256, maxValueBytes=1MiB, now})` — missing projectRoot AND root → structured error (no process.cwd); entries persisted as `<64hex>.json` envelopes `{version,storedAt,stale,staleReason,currentCommit,value}`; get MISS on absent/TTL-expired, hit returns value byte-identical + effective freshness=envelope.stale; set → `{stored:false,reason:'cache-value-too-large'}` over 1MiB (size checked BEFORE read on get) and `{stored:false,reason:'uncacheable-kind'}` for non-whitelisted kinds (only status/normalized-metadata/links); markStale mutates envelope not value; disk safety: 64-hex-only filenames, symlink-component reject, project-root containment, atomic temp+rename, corrupt JSON→diagnostic+MISS (no throw), eviction only valid hash files; injected clock
   - test-first: governance.js「T-cg-cache」via createTempRuntimeRoot: key sensitivity, cross-instance file persistence (same root), TTL expiry (injected clock), too-large + uncacheable-kind rejection, markStale→get stale (value identical), invalidateOn clears, a symlinked root component rejected, corrupt file→MISS; 红→绿
 
-- [ ] [task:cg-status] status.js: code-perception status surface + stale hints (read-only)
+- [x] [task:cg-status] status.js: code-perception status surface + stale hints (read-only)
   - files: templates/cli/code-perception/status.js
   - verify: node templates/cli/test.js governance
   - acceptance: `buildCodePerceptionStatus(context,{registrations,candidates,links})` aggregates candidates into providers[], emits staleHints[] (indexedCommit≠currentCommit → MANUAL sync message, never spawn) + links summary {confirmed,derived,proposed}; no subprocess; never throws
@@ -187,43 +187,43 @@ module.exports = { validateDogfoodArtifact(text, { requireClosureEvidence = true
 
 ### Phase 3 — Governance Linker
 
-- [ ] [task:cg-linker-exact] governance-linker.js: reference-resolved declared + explicit-dep + git-derived file links (1.0)
+- [x] [task:cg-linker-exact] governance-linker.js: reference-resolved declared + explicit-dep + git-derived file links (1.0)
   - files: templates/cli/code-perception/governance-linker.js
   - verify: node templates/cli/test.js governance
   - acceptance: `buildGovernanceLinks(inputs)` emits `declares_file` (planIR task.linkedFiles), `depends_on_file` (explicit `acceptanceDependencies`), `changed_by_commit` (commit.changedFiles) at confirmed/1.0; every link's `codeReferenceId` resolved by EXACT normalized filePath match against `fileReferences`; a relation with no matching reference → `unresolved-code-reference` diagnostic + NO dangling link; stable `id=gov-link:<16hex>`; dedupe by id; empty inputs → `{links:[],diagnostics:[]}`; reads NO acceptance/dependsOn from Markdown or IR; never throws
   - test-first: governance.js「T-cg-linker-exact」planIR+acceptanceDependencies+commit+fileReferences → three kinds at 1.0 with resolved ids; a linkedFile with NO matching fileReference → unresolved diagnostic + no link; a task with no acceptanceDependencies → no depends_on_file; 红→绿
 
-- [ ] [task:cg-linker-symbol] governance-linker.js: symbol links via diff-range∩symbolReferences + evidence/focus links
+- [x] [task:cg-linker-symbol] governance-linker.js: symbol links via diff-range∩symbolReferences + evidence/focus links
   - files: templates/cli/code-perception/governance-linker.js (extend)
   - verify: node templates/cli/test.js governance
   - acceptance: `implements_task` symbol links (derived) ONLY when a rule holds against `symbolReferences` (Plan names symbol / Evidence names symbol / commit diffRange intersects a symbolReference lineRange / test-evidence references it); confidence = symbolReference resolutionConfidence; a file with symbols but no matching rule → NO symbol link (assert negative); `verified_by_test`/`evidenced_by_archive` from evidence WITH a codeReferenceId or exactly-resolvable filePath/symbol (else no link + diagnostic); `related_to_focus` ONLY from pre-resolved `focusReferences` (free-text focus never yields confirmed/derived)
   - test-first: governance.js「T-cg-linker-symbol」commit diffRange intersecting exactly one of two symbolReferences → only that symbol linked; evidence without codeReferenceId/resolvable → no link + diagnostic; focusReferences → related_to_focus, raw focus text → none; 红→绿
 
-- [ ] [task:cg-linker-heuristic] governance-linker.js: heuristic proposals (≤0.5) + stored graph persistence + dedupe
+- [x] [task:cg-linker-heuristic] governance-linker.js: heuristic proposals (≤0.5) + stored graph persistence + dedupe
   - files: templates/cli/code-perception/governance-linker.js (extend)
   - verify: node templates/cli/test.js governance
   - acceptance: name-only fuzzy Task-title↔symbol → `proposed`/`confidence<=0.5`, never confirmed/derived; every GovernanceCodeLink validates (id/governanceEntityId/codeReferenceId/kind∈7/status∈{confirmed,derived,proposed}/confidence/evidence); dedupe keeps strongest per id (confirmed>derived>proposed); `persistGovernanceLinks(root, links)` writes `.evo-lite/generated/code-perception/governance-links.json` with deterministic ordering + atomic temp+rename (the §3.4 stored graph); diagnostics for dropped/ambiguous heuristics
   - test-first: governance.js「T-cg-linker-heuristic」fuzzy→proposed≤0.5, exact supersedes proposed on dedupe, all links shape-valid, persistGovernanceLinks writes deterministic sorted JSON (two runs byte-identical); 红→绿
 
-- [ ] [task:cg-post-commit] post-commit-code-perception.js: §5 integration (refresh facts + markStale + rebuild+persist links + suggest manual sync) — AFTER linker exists
+- [x] [task:cg-post-commit] post-commit-code-perception.js: §5 integration (refresh facts + markStale + rebuild+persist links + suggest manual sync) — AFTER linker exists
   - files: templates/cli/code-perception/post-commit-code-perception.js, templates/cli/hooks.js (guarded wire)
   - verify: node templates/cli/test.js governance
   - acceptance: `runPostCommitCodePerception({projectRoot,headSha,changedFiles,cache})` refreshes Native Lite facts, `cache.markStale({reason:'head',currentCommit:headSha})`, rebuilds commit/file links (buildGovernanceLinks with fileReferences from native-lite), `persistGovernanceLinks` (refresh `.evo-lite/generated/code-perception/governance-links.json`), writes `.evo-lite/generated/code-perception/post-commit-last-run.json` (deterministic + atomic), surfaces MANUAL sync when stale; **NEVER spawns `codegraph sync`/`init`** (grep-assert); wired into hooks.js post-commit GUARDED (Provider failure never fails the commit); existing hook tests green
   - test-first: governance.js「T-cg-post-commit」createTempRuntimeRoot + file cache with a codegraph entry → run fn → cache entry stale, governance-links.json + post-commit-last-run.json written deterministically, manual-sync suggestion present, NO codegraph subprocess, injected Provider failure doesn't throw out of the hook; 红→绿
 
-- [ ] [task:cg-failure-isolation] failure isolation across adapter+cache+linker (missing/not-indexed/timeout/schema-drift/stale)
+- [x] [task:cg-failure-isolation] failure isolation across adapter+cache+linker (missing/not-indexed/timeout/schema-drift/stale)
   - files: templates/cli/code-perception/providers/codegraph.js (harden), templates/cli/code-perception/cache.js (harden)
   - verify: node templates/cli/test.js governance
   - acceptance: codegraph missing/timeout/malformed → ①'s loader+router still return Native Lite for `files` (degraded) + `candidate:null`+ready-centric reason for `impact`; Planning IR/Architecture IR/memory/verify untouched (assert none written); timeout → child killed + diagnostic + request degraded + provider NOT permanently disabled (subsequent healthy call succeeds); schema drift → single capability disabled then re-enabled; stale index → results returned but `freshness:'stale'` + indexedCommit/currentCommit (never fresh); diagnostics truncated
   - test-first: governance.js「T-cg-failure-isolation」fake-cli timeout/malformed/stale through ① loader+router with codegraph config-selected; fallback, exact no-substitution reason, non-permanent disable, stale visibility, no governance-artifact writes; 红→绿
 
-- [ ] [task:cg-dogfood-validate] dogfood-validate.js + `--require-live-codegraph` strict flag (fingerprint recompute)
+- [x] [task:cg-dogfood-validate] dogfood-validate.js + `--require-live-codegraph` strict flag (fingerprint recompute)
   - files: templates/cli/code-perception/dogfood-validate.js, templates/cli/test.js (add --require-live-codegraph mode)
   - verify: node templates/cli/test.js governance
   - acceptance: `validateDogfoodArtifact(text,{requireClosureEvidence})` valid:true for dogfood-sample.md (metadata + RECOMPUTED matching fingerprints + all sections), valid:false w/ specific findings for dogfood-bad.md (missing section), a fingerprint-tampered copy (recompute mismatch), and a missing closureEvidenceCommit; strict mode `node ./.evo-lite/cli/test.js governance --require-live-codegraph` resolves the artifact at `<workspaceRoot>/docs/code-perception-codegraph-dogfood.md` where workspaceRoot comes from `EVO_LITE_WORKSPACE_ROOT` (or the runtime's resolved root), emits a distinct `live-codegraph-artifact-missing` finding/stderr token when absent and a validator-finding token when invalid/tampered, exit 1 in both cases, exit 0 only on a valid real artifact; normal `governance` (no flag) does NOT require the artifact; command keeps `node ./.evo-lite/cli/test.js` prefix
   - test-first: governance.js「T-cg-dogfood-validate」runs validator on the two samples + tampered + no-closure-evidence; the strict-mode subtest invokes `execFileSync(process.execPath, [<ABSOLUTE templates/cli/test.js>, 'governance', '--require-live-codegraph'], { env:{...process.env, EVO_LITE_WORKSPACE_ROOT: tempWorkspaceRoot} })` (absolute script path + explicit workspace root — NOT a relative path in a temp cwd, which would exit 1 for "script missing" and false-pass the test) against a temp workspace WITHOUT the artifact, and asserts the failure carries the `live-codegraph-artifact-missing` token (not merely a non-zero exit); 红→绿
 
-- [ ] [task:cg-manifest-sync] register all new files in manifest + mirror sync + full regression
+- [x] [task:cg-manifest-sync] register all new files in manifest + mirror sync + full regression
   - files: templates/cli/template-manifest.js, .evo-lite/cli/code-perception/
   - verify: node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/memory.js sync-runtime
   - acceptance: manifest core-cli gains all new PRODUCTION modules (providers/codegraph-exec.js, providers/codegraph.js, cache.js, status.js, governance-linker.js, post-commit-code-perception.js, dogfood-validate.js) AND all new TEST assets (codegraph-fixture-manifest.json + 12 codegraph-* fixtures + fake-codegraph.js + dogfood-sample.md + dogfood-bad.md); sync-runtime converges to two consecutive `copied:0` (may take 3 runs); every new file byte-identical template↔mirror; `node ./.evo-lite/cli/test.js governance` (runtime) green with all T-cg-* + T-cp-*; `node templates/cli/test.js governance` (template) green; no other regression
