@@ -55,20 +55,28 @@ console.log('T-sr-entry. Testing standalone sync-runtime-entry is bootstrap-safe
     // (a) The entry file exists.
     assert.ok(fs.existsSync(entryPath), 'sync-runtime-entry.js must exist');
 
-    // (b) Bootstrap-safety: the entry source must not require any heavy/feature module.
-    const entrySrc = fs.readFileSync(entryPath, 'utf8');
+    // (b) Bootstrap-safety across the WHOLE dependency closure, not just the entry's
+    // two requires. The entry pulls in ./sync-runtime and ./runtime; ./sync-runtime
+    // dynamically requires ./template-manifest inside readEntries(). Any of these
+    // gaining a business-module dependency would silently re-introduce the brick, so
+    // scan the entire closure.
     const FORBIDDEN = [
         './memory.service', './db', 'commander', './planning', './spec-portfolio',
         './architecture', './verification', './hive', './dashboard-data', './hooks',
         './inspector', './code-perception', './mcp',
     ];
-    for (const mod of FORBIDDEN) {
-        assert.ok(
-            !new RegExp(`require\\(\\s*['"]${mod.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`).test(entrySrc),
-            `sync-runtime-entry.js must NOT require ${mod} (bootstrap-safety)`
-        );
+    const CLOSURE = ['sync-runtime-entry.js', 'sync-runtime.js', 'runtime.js', 'template-manifest.js'];
+    for (const rel of CLOSURE) {
+        const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, rel), 'utf8');
+        for (const mod of FORBIDDEN) {
+            assert.ok(
+                !new RegExp(`require\\(\\s*['"]${mod.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`).test(src),
+                `${rel} must NOT require ${mod} (bootstrap-safety closure)`
+            );
+        }
     }
-    // It MAY require only ./sync-runtime and ./runtime.
+    // The entry MAY require only ./sync-runtime and ./runtime.
+    const entrySrc = fs.readFileSync(entryPath, 'utf8');
     assert.ok(/require\(\s*['"]\.\/sync-runtime['"]\s*\)/.test(entrySrc), 'entry should require ./sync-runtime');
 
     // (c) Functional: entry syncs a sparse tmp workspace using the real manifest.
@@ -187,7 +195,7 @@ git commit -m "feat(sync-runtime): bootstrap-safe standalone sync-runtime-entry 
 - Test: `templates/cli/test/governance.js` (append a new `T-sr-guard` section)
 
 **Interfaces:**
-- Produces: a module-local `function safeRegister(program, modulePath, fnName)` used to replace each direct `require('./X').registerYCommands(program)` call. On success it registers normally; on any throw it writes a stderr warning and returns without throwing.
+- Produces: a module-local `function safeRegister(featureName, register)` where `register` is a THUNK that performs BOTH the `require` and the `.registerXCommands(program)` call. The require MUST live inside the thunk (inside the try) — a top-level `require('./feature')` followed by wrapping only `register()` leaves the guard ineffective (the missing-module throw happens at the top-level require, before the guard). On any throw it writes a stderr warning naming the feature and the error code/message, and returns without throwing.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -196,31 +204,27 @@ Append inside `runGovernanceTests` in `templates/cli/test/governance.js`:
 ```javascript
 console.log('T-sr-guard. Testing memory.js feature-register guard isolates a broken module ...');
 {
-    // The guard must be a named helper `safeRegister` in memory.js source, applied
-    // to the feature-register block, so one throwing module cannot brick the CLI.
+    const { execFileSync } = require('child_process');
     const memSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'utf8');
+
+    // (a) The guard is a named helper applied as thunks (require lives INSIDE the thunk).
     assert.ok(/function safeRegister\s*\(/.test(memSrc), 'memory.js must define safeRegister');
-    // Every feature register must go through safeRegister (no bare require().registerXCommands(program)).
     assert.ok(
-        !/require\('\.\/code-perception\/post-commit-code-perception'\)\.registerCodePerceptionCommands\(program\)/.test(memSrc),
-        'code-perception registration must be routed through safeRegister, not a bare require'
+        /safeRegister\('sync-runtime',\s*\(\)\s*=>\s*require\('\.\/sync-runtime'\)\.registerSyncRuntimeCommands\(program\)\)/.test(memSrc),
+        'sync-runtime must be registered via a safeRegister thunk that requires inside'
     );
     assert.ok(
-        /safeRegister\(program,\s*'\.\/sync-runtime',\s*'registerSyncRuntimeCommands'\)/.test(memSrc),
-        'sync-runtime must be registered via safeRegister'
+        /safeRegister\('code-perception',\s*\(\)\s*=>\s*require\('\.\/code-perception\/post-commit-code-perception'\)\.registerCodePerceptionCommands\(program\)\)/.test(memSrc),
+        'code-perception must be registered via a safeRegister thunk that requires inside'
+    );
+    // (b) No feature module is hoisted to a bare top-level require + wrapped register
+    // (which would defeat the guard). The old bare form must be gone.
+    assert.ok(
+        !/^\s*require\('\.\/code-perception\/post-commit-code-perception'\)\.registerCodePerceptionCommands\(program\);/m.test(memSrc),
+        'code-perception must NOT be a bare top-level require + register (guard would be ineffective)'
     );
 
-    // Behavioral: safeRegister swallows a throwing register, warns to stderr, and
-    // lets later registers still run. Exercise the exact helper via a tiny harness.
-    const { execFileSync } = require('child_process');
-    const harness = [
-        "const mem = require(" + JSON.stringify(path.join(TEMPLATE_CLI_DIR, 'memory.js').replace(/\\/g, '\\\\')) + ");",
-        // safeRegister is module-local; re-declare an equivalent by loading memory.js is not
-        // enough, so assert via the public behavior below instead.
-        "console.log('harness-ok');",
-    ].join('\n');
-    // Public behavior: spawning memory.js with a deliberately missing feature module
-    // must still expose `sync-runtime` in --help (guard kept the CLI alive).
+    // (c) Healthy CLI still lists sync-runtime in --help.
     const help = execFileSync(process.execPath, [path.join(TEMPLATE_CLI_DIR, 'memory.js'), '--help'], {
         env: { ...process.env }, encoding: 'utf8',
     });
@@ -229,6 +233,8 @@ console.log('T-sr-guard. Testing memory.js feature-register guard isolates a bro
 }
 ```
 
+(The end-to-end proof that the guard survives a genuinely missing module — and that the failed feature is NOT falsely presented as registered — lives in Task 3's spawn-based self-brick test, which can delete a mirrored module. This section locks the source shape + healthy-path survival.)
+
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node templates/cli/test.js governance`
@@ -236,37 +242,43 @@ Expected: FAIL at `T-sr-guard` with "memory.js must define safeRegister" (helper
 
 - [ ] **Step 3: Add the guard**
 
-In `templates/cli/memory.js`, define `safeRegister` immediately before the register block (keep it inside the same function scope that has `program`), and route every feature registration through it. Replace lines 699-708:
+In `templates/cli/memory.js`, define `safeRegister` immediately before the register block (keep it inside the same function scope that has `program`), and route every feature registration through it as a THUNK so the `require` itself is guarded. Replace lines 699-708:
 
 ```javascript
-    function safeRegister(program, modulePath, fnName) {
+    function safeRegister(featureName, register) {
         try {
-            require(modulePath)[fnName](program);
+            register();
         } catch (err) {
             // Defense-in-depth: a not-yet-mirrored (or genuinely broken) feature
             // module must NOT brick the whole CLI — especially sync-runtime, which
-            // heals the mirror. Warn loudly (never silent) and continue so the
-            // remaining command groups still register.
+            // heals the mirror. The require() lives INSIDE the thunk, so a missing
+            // module throws here and is caught (not at a top-level require). Warn
+            // loudly (never silent) and continue so the remaining groups register.
+            // NOTE: this guards only the LAZY feature registrars. The top-level
+            // module requires (memory.service, db, commander) are NOT guarded and a
+            // missing core module still aborts startup by design — they are always
+            // mirrored first and are not the self-brick vector.
+            const code = err && err.code ? err.code + ': ' : '';
             console.error(
-                `[evo-lite] warning: command group ${modulePath} failed to register ` +
-                `(${err && err.message}); continuing so core commands (e.g. sync-runtime) stay available.`
+                `[evo-lite] warning: command group ${featureName} failed to register ` +
+                `(${code}${err && err.message}); continuing so core commands (e.g. sync-runtime) stay available.`
             );
         }
     }
 
-    safeRegister(program, './planning', 'registerPlanCommands');
-    safeRegister(program, './spec-portfolio', 'registerSpecPortfolioCommands');
-    safeRegister(program, './architecture', 'registerArchitectureCommands');
-    safeRegister(program, './verification/commands', 'registerVerificationCommands');
-    safeRegister(program, './verification/close-commands', 'registerCloseCommands');
-    safeRegister(program, './hive/commands', 'registerHiveCommands');
-    safeRegister(program, './dashboard-data', 'registerDashboardCommands');
-    safeRegister(program, './hooks', 'registerHookCommands');
-    safeRegister(program, './sync-runtime', 'registerSyncRuntimeCommands');
-    safeRegister(program, './code-perception/post-commit-code-perception', 'registerCodePerceptionCommands');
+    safeRegister('planning', () => require('./planning').registerPlanCommands(program));
+    safeRegister('spec-portfolio', () => require('./spec-portfolio').registerSpecPortfolioCommands(program));
+    safeRegister('architecture', () => require('./architecture').registerArchitectureCommands(program));
+    safeRegister('verification', () => require('./verification/commands').registerVerificationCommands(program));
+    safeRegister('close', () => require('./verification/close-commands').registerCloseCommands(program));
+    safeRegister('hive', () => require('./hive/commands').registerHiveCommands(program));
+    safeRegister('dashboard', () => require('./dashboard-data').registerDashboardCommands(program));
+    safeRegister('hooks', () => require('./hooks').registerHookCommands(program));
+    safeRegister('sync-runtime', () => require('./sync-runtime').registerSyncRuntimeCommands(program));
+    safeRegister('code-perception', () => require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program));
 ```
 
-(Keep the exact same module paths and function names as the current lines 699-708 — verify each against the file before editing. The `inspect` / `mcp` commands defined after line 708 stay as they are.)
+(Keep the exact same module paths and function names as the current lines 699-708 — verify each against the file before editing. Each thunk must contain BOTH the `require(...)` and the `.registerXCommands(program)` call; do NOT hoist any `require` above `safeRegister`. The `inspect` / `mcp` commands defined after line 708 stay as they are.)
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -323,12 +335,24 @@ console.log('SB. Testing self-brick reproduction: missing mirror module heals vi
         // Reproduce the self-brick: delete a module that memory.js eagerly registers.
         fs.rmSync(bricked);
 
-        // (a) GUARDED memory.js survives: sync-runtime still runs (exit 0) and re-copies the module.
+        // (a1) HONEST FAILURE: in the bricked state, --help must still list sync-runtime
+        // (guard kept the CLI alive) but must NOT list the failed `code-perception`
+        // command (a failed feature is never falsely presented as registered), and the
+        // guard must warn — naming the feature — with a MODULE_NOT_FOUND-class error.
+        const helpBricked = spawnSync(process.execPath, [path.join(cliDir, 'memory.js'), '--help'], {
+            env: childEnv, encoding: 'utf8',
+        });
+        assert.strictEqual(helpBricked.status, 0, 'guarded memory.js --help must exit 0 while a feature module is missing');
+        assert.ok(/sync-runtime/.test(helpBricked.stdout || ''), 'bricked --help must still list sync-runtime');
+        assert.ok(!/(^|\s)code-perception(\s|$)/m.test(helpBricked.stdout || ''), 'bricked --help must NOT list the failed code-perception command');
+        assert.ok(/warning: command group code-perception failed to register/.test(helpBricked.stderr || ''), 'guard must warn naming the failed feature');
+        assert.ok(/MODULE_NOT_FOUND/.test(helpBricked.stderr || ''), 'guard warning must carry the MODULE_NOT_FOUND cause');
+
+        // (a2) GUARDED memory.js heals: sync-runtime still runs (exit 0) and re-copies the module.
         const viaMemory = spawnSync(process.execPath, [path.join(cliDir, 'memory.js'), 'sync-runtime'], {
             env: childEnv, encoding: 'utf8',
         });
         assert.strictEqual(viaMemory.status, 0, 'guarded memory.js sync-runtime must exit 0 despite the missing module');
-        assert.ok(/warning: command group/.test(viaMemory.stderr || ''), 'guard must warn about the missing module on stderr');
         assert.ok(fs.existsSync(bricked), 'sync-runtime must re-copy the deleted module');
 
         // (b) Standalone entry heals independently: delete again, run the entry directly.
@@ -351,10 +375,10 @@ console.log('SB. Testing self-brick reproduction: missing mirror module heals vi
 
 - [ ] **Step 2: Confirm the test is meaningful (genuine red without the fixes)**
 
-This is a regression test that locks behavior delivered in Tasks 1-2, so it passes once those tasks are in the template tree. To prove it is not a vacuous test, demonstrate a genuine red once: temporarily comment out the `safeRegister` guard body in `templates/cli/memory.js` (make the register calls bare `require(...).registerXCommands(program)` again), run `node templates/cli/test.js`, and confirm the `SB` section FAILS at assertion (a) — "guarded memory.js sync-runtime must exit 0 …" (the bricked mirror crashes the child). Then restore the guard.
+This is a regression test that locks behavior delivered in Tasks 1-2, so it passes once those tasks are in the template tree. To prove it is not a vacuous test, demonstrate a genuine red once: temporarily replace the `safeRegister` thunk for `code-perception` in `templates/cli/memory.js` with a bare `require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program);` (the pre-fix form), sync the mirror, run `node templates/cli/test.js`, and confirm the `SB` section FAILS at assertion (a1) — "guarded memory.js --help must exit 0 …" — because the child now aborts at the bare require with a `MODULE_NOT_FOUND` error (visible in the child's stderr). This confirms the red is specifically the deleted managed module's bootstrap crash, not a spurious assertion. Then restore the thunk.
 
 Run: `node templates/cli/test.js`
-Expected (guard temporarily removed): FAIL at `SB` (a). After restoring the guard: proceed to Step 4.
+Expected (guard temporarily removed for one feature): FAIL at `SB` (a1), child stderr shows `MODULE_NOT_FOUND` for the deleted module. After restoring the thunk: proceed to Step 4.
 
 - [ ] **Step 3: (No new production code)**
 
