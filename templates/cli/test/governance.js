@@ -5863,6 +5863,48 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-cg-failure-isolation passed');
 
+        console.log('T-sr-guard. Testing memory.js routes ALL 10 feature registrars through the guard ...');
+        {
+            const { execFileSync } = require('child_process');
+            const memSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'utf8');
+
+            // (a) The guard helper exists.
+            assert.ok(/function safeRegister\s*\(\s*featureName\s*,\s*register\s*\)/.test(memSrc), 'memory.js must define safeRegister(featureName, register)');
+
+            // (b) Every one of the 10 feature registrars is wired as an EXACT safeRegister
+            // thunk whose require lives inside the thunk.
+            const EXPECTED = [
+                ['planning', './planning', 'registerPlanCommands'],
+                ['spec-portfolio', './spec-portfolio', 'registerSpecPortfolioCommands'],
+                ['architecture', './architecture', 'registerArchitectureCommands'],
+                ['verification', './verification/commands', 'registerVerificationCommands'],
+                ['close', './verification/close-commands', 'registerCloseCommands'],
+                ['hive', './hive/commands', 'registerHiveCommands'],
+                ['dashboard', './dashboard-data', 'registerDashboardCommands'],
+                ['hooks', './hooks', 'registerHookCommands'],
+                ['sync-runtime', './sync-runtime', 'registerSyncRuntimeCommands'],
+                ['code-perception', './code-perception/post-commit-code-perception', 'registerCodePerceptionCommands'],
+            ];
+            const esc = s => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+            for (const [feat, mod, fn] of EXPECTED) {
+                const re = new RegExp(`safeRegister\\('${esc(feat)}',\\s*\\(\\)\\s*=>\\s*require\\('${esc(mod)}'\\)\\.${esc(fn)}\\(program\\)\\)`);
+                assert.ok(re.test(memSrc), `feature '${feat}' must be registered via an exact safeRegister thunk`);
+            }
+
+            // (c) No bare require().registerXCommands(program) survives anywhere.
+            assert.ok(
+                !/^\s*require\('\.\/[^']*'\)\.register\w*Commands\(program\);/m.test(memSrc),
+                'no bare require().registerXCommands(program) may remain (all must go through safeRegister)'
+            );
+
+            // (d) Healthy CLI still lists sync-runtime in --help.
+            const help = execFileSync(process.execPath, [path.join(TEMPLATE_CLI_DIR, 'memory.js'), '--help'], {
+                env: { ...process.env }, encoding: 'utf8',
+            });
+            assert.ok(/sync-runtime/.test(help), 'memory.js --help must list sync-runtime');
+            console.log('✅ T-sr-guard registration guard passed');
+        }
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

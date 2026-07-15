@@ -696,16 +696,39 @@ function buildProgram() {
         await runContextCommand('focus', text, options);
     });
 
-    require('./planning').registerPlanCommands(program);
-    require('./spec-portfolio').registerSpecPortfolioCommands(program);
-    require('./architecture').registerArchitectureCommands(program);
-    require('./verification/commands').registerVerificationCommands(program);
-    require('./verification/close-commands').registerCloseCommands(program);
-    require('./hive/commands').registerHiveCommands(program);
-    require('./dashboard-data').registerDashboardCommands(program);
-    require('./hooks').registerHookCommands(program);
-    require('./sync-runtime').registerSyncRuntimeCommands(program);
-    require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program);
+    function safeRegister(featureName, register) {
+        try {
+            register();
+        } catch (err) {
+            // Defense-in-depth for the FEATURE-REGISTRAR brick class: a not-yet-mirrored
+            // (or genuinely broken) feature module must NOT brick the whole CLI —
+            // especially sync-runtime, which heals the mirror. The require() lives INSIDE
+            // the thunk, so a missing module throws here and is caught. Warn loudly
+            // (never silent) and continue so the remaining groups register.
+            //
+            // BOUNDARY: this guards only the lazy feature registrars. The top-level core
+            // requires in this file (memory.service → memory-index → memory-index-util; db)
+            // run before this block and are NOT guarded — a missing core module still
+            // aborts startup by design. sync-runtime-entry.js is the canonical recovery
+            // path for that hard-brick class.
+            const code = err && err.code ? err.code + ': ' : '';
+            console.error(
+                `[evo-lite] warning: command group ${featureName} failed to register ` +
+                `(${code}${err && err.message}); continuing so core commands (e.g. sync-runtime) stay available.`
+            );
+        }
+    }
+
+    safeRegister('planning', () => require('./planning').registerPlanCommands(program));
+    safeRegister('spec-portfolio', () => require('./spec-portfolio').registerSpecPortfolioCommands(program));
+    safeRegister('architecture', () => require('./architecture').registerArchitectureCommands(program));
+    safeRegister('verification', () => require('./verification/commands').registerVerificationCommands(program));
+    safeRegister('close', () => require('./verification/close-commands').registerCloseCommands(program));
+    safeRegister('hive', () => require('./hive/commands').registerHiveCommands(program));
+    safeRegister('dashboard', () => require('./dashboard-data').registerDashboardCommands(program));
+    safeRegister('hooks', () => require('./hooks').registerHookCommands(program));
+    safeRegister('sync-runtime', () => require('./sync-runtime').registerSyncRuntimeCommands(program));
+    safeRegister('code-perception', () => require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program));
 
     program.command('inspect')
         .description('Run the inspector HTTP server.')
