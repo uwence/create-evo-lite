@@ -11,7 +11,7 @@ relations: [{"kind":"spawned-from","target":"spec:provider-first-code-perception
 
 ## 1. Scope
 
-- 提供: `mem code` 命令组、Unified Explore service、MCP `evo_code_explore`、Minimal Code Wiki(overview/current-focus/providers/modules/tasks 投影 + Human Notes 保护)、Inspector Code 页与只读 API、mirror parity。
+- 提供: `mem code` 命令组、Unified Explore service、MCP `evo_code_explore`、Minimal Code Wiki(overview/current-focus/providers/modules/tasks 投影;Human Notes 保护 = **通过禁止 generated 目录承载 canonical 人工 truth 来实现**,非 block-preservation,MVP 纯派生不含 notes——见 §5)、Inspector Code 页与只读 API、mirror parity。
 - 不提供: 契约/router/native-lite(①)、adapter/linker/cache(②)、Code Wiki 高级可视化/力导图(follow-up `spec:code-wiki-interactive-visualization`)。
 - **人类 Wiki 与 Agent 查询共用一个 service**(不做两套逻辑)。
 
@@ -52,14 +52,22 @@ interface ExploreQuery {
 5. Retrieve callers/callees when supported
 6. Retrieve Impact when requested
 7. Retrieve source context when requested
-8. Add Task/Spec/Commit/Evidence links (via ② linker)
-9. Rank recommended reading
+8. Add Task/Spec/Commit/Evidence links (via ② linker; references bridged by §2.4 M1, derived confidence normalized per §2.4 M2)
+9. Rank recommended reading (never drops a rule-gated derived link on absent confidence)
 10. Return freshness + diagnostics
 ```
 
 ### 2.3 Recommended reading(必须解释原因)
 
 排序: explicit linked file → current focus relation → exact symbol match → entrypoint → call-path centrality → changed file → test file → documentation。
+
+### 2.4 Adapter↔Linker seam contract(M1/M2 — binding)
+
+这两条接缝来自 ② 的收尾评审,必须在 ③ 落地时钉死,否则 Explore→governance→ranking→Wiki 链路会静默丢链接。
+
+**M1 — reference-shape bridge(单一转换 + 归属).** 结构 Provider 的 `search()` 返回扁平 `CodeReference[]`(①-normalized),而 ② governance linker 的 symbol 链接消费 `symbolReferences[]` wrapper 形状。Unified Explore service 拥有**唯一**转换 `toSymbolReferences(matches: CodeReference[], focusId?): SymbolReference[]`,实现在 `code-perception/normalize.js`(与 ① 共享);任何其它模块都**不得**为 linker 另行 reshape 引用。§2.2 step 8 只经此函数喂给 linker。该函数纯且全(不丢任何 match;不可解析的引用变成 linker diagnostic,而非静默丢失)。
+
+**M2 — derived-confidence 归一(缺省非零).** ② 的 rule-gated derived symbol link 可能带 `confidence === undefined`(`clampConfidence(undefined) = 0`)。service 必须在 ranking(step 9)与任何 consumer 过滤**之前**,把缺失/为 0 的 *derived* 链接 confidence 归一到明确非零下限 `DERIVED_LINK_CONFIDENCE_FLOOR`(> 0)。recommended-reading 排序与 Wiki/Inspector 投影**不得**仅因 confidence 缺失而丢弃一条 rule-gated derived 链接。confirmed 链接保持 1.0;proposed 启发式链接保持其 ≤0.5 值;只有"已 derived 但未打分"这一类被抬到下限。
 
 ## 3. CLI Contract (`mem code`)
 
@@ -147,7 +155,7 @@ templates/cli/
 └── inspector.js             # + Code 页 + /api/code/*
 .evo-lite/generated/code-wiki/**
 ```
-Runtime mirror `.evo-lite/cli/**` 必须 byte-identical;第二次 `sync-runtime` 零变更。
+Runtime mirror `.evo-lite/cli/**` 必须 byte-identical;第二次同步零变更。**同步入口用 canonical bootstrap-safe 独立入口 `node ./.evo-lite/cli/sync-runtime-entry.js`,而非完整 `memory.js sync-runtime`**——③ 新增多个受管文件(`code-perception.js`、`code-perception/wiki.js`、`mcp-server.js`/`inspector.js` 改动),正是 [[project-sync-runtime-selfbrick]] 的触发场景;独立入口不经完整 CLI 命令注册,天然免疫 self-brick。首轮可用 template 入口 `node templates/cli/sync-runtime-entry.js` 播种,再由 mirror 入口收敛到零变更。
 
 ## 8. Delivery Phases
 
@@ -155,7 +163,7 @@ Runtime mirror `.evo-lite/cli/**` 必须 byte-identical;第二次 `sync-runtime`
 `mem code`(providers/status/search/explore/callers/callees/impact/context)、Unified Explore service、`evo_code_explore` MCP,共用同一 service;Native Lite degradation 成功形态。
 
 ### Phase 4b — Human projection
-Minimal Code Wiki(overview/current-focus/providers/modules/tasks)、Inspector Code 页 + `/api/code/*`、Human Notes 保护、mirror parity。
+Minimal Code Wiki(overview/current-focus/providers/modules/tasks)、Inspector Code 页 + `/api/code/*`、Human Notes 保护(通过禁止 generated 目录承载 canonical 人工 truth 实现,非 block-preservation;见 §5)、mirror parity。
 
 ## 9. Acceptance Criteria
 
@@ -188,9 +196,9 @@ Minimal Code Wiki(overview/current-focus/providers/modules/tasks)、Inspector Co
     },
     {
       "id": "ac-mirror-parity",
-      "description": "All new templates/cli code-perception + surface files and their .evo-lite/cli mirrors are byte-identical; a second sync-runtime run reports zero changes.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/memory.js sync-runtime && node ./.evo-lite/cli/memory.js sync-runtime", "scope": "governance" } },
-      "dependsOn": ["templates/cli/code-perception.js", "templates/cli/code-perception/wiki.js"]
+      "description": "All new templates/cli code-perception + surface files and their .evo-lite/cli mirrors are byte-identical; a second run of the canonical bootstrap-safe sync-runtime-entry reports zero changes. Mirror sync uses the standalone sync-runtime-entry (not memory.js sync-runtime), which is immune to the self-brick that adding new managed files would otherwise trigger.",
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/sync-runtime-entry.js && node ./.evo-lite/cli/sync-runtime-entry.js", "scope": "governance" } },
+      "dependsOn": ["templates/cli/code-perception.js", "templates/cli/code-perception/wiki.js", "templates/cli/sync-runtime-entry.js"]
     }
   ]
 }
