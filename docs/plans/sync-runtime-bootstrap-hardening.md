@@ -1,7 +1,7 @@
 ---
 id: plan:sync-runtime-bootstrap-hardening
 title: Sync-Runtime Bootstrap Hardening — permanent self-brick fix
-status: draft
+status: done
 ---
 
 # Sync-Runtime Bootstrap Hardening Implementation Plan
@@ -54,7 +54,7 @@ Verified dependency facts:
 - Consumes: `syncRuntime(projectRoot, options)` and `verifyRuntimeLock(projectRoot)` from `./sync-runtime`; `getWorkspaceRoot()` from `./runtime`.
 - Produces: an executable module. `node templates/cli/sync-runtime-entry.js [--check] [--json]`. Exit 0 on successful sync or `--check` in-sync; exit 1 on `--check` drift OR `--check` no-lock (matching the existing command). Prints the same human summary as the `sync-runtime` command.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append inside `runGovernanceTests` in `templates/cli/test/governance.js` (reuse the in-scope `path`, `fs`, `os`, `assert`, `writeText`, `TEMPLATE_CLI_DIR`):
 
@@ -142,12 +142,12 @@ console.log('T-sr-entry. Testing standalone sync-runtime-entry is bootstrap-safe
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at `T-sr-entry` with "sync-runtime-entry.js must exist" (file not created yet).
 
-- [ ] **Step 3: Write the entry**
+- [x] **Step 3: Write the entry**
 
 Create `templates/cli/sync-runtime-entry.js`:
 
@@ -213,7 +213,7 @@ function main(argv) {
 process.exitCode = main(process.argv);
 ```
 
-- [ ] **Step 4: Declare the entry in the manifest**
+- [x] **Step 4: Declare the entry in the manifest**
 
 In `templates/cli/template-manifest.js`, in the `core-cli` family `files` array, add (next to `'sync-runtime.js'`):
 
@@ -223,12 +223,12 @@ In `templates/cli/template-manifest.js`, in the `core-cli` family `files` array,
 
 Do NOT reorder or remove any existing entry. (The real repo mirror is reconciled in Task 4; no other test asserts the real mirror mid-plan.)
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T-sr-entry standalone bootstrap entry passed`, suite exits 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/sync-runtime-entry.js templates/cli/template-manifest.js templates/cli/test/governance.js
@@ -246,7 +246,7 @@ git commit -m "feat(sync-runtime): bootstrap-safe standalone sync-runtime-entry 
 **Interfaces:**
 - Produces: a module-local `function safeRegister(featureName, register)` where `register` is a THUNK performing BOTH the `require` and the `.registerXCommands(program)` call. The require MUST live inside the thunk (inside the try) — a hoisted top-level `require` would throw before the guard. On any throw it writes a stderr warning naming the feature + error code/message and returns without throwing.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append inside `runGovernanceTests` in `templates/cli/test/governance.js`:
 
@@ -294,12 +294,12 @@ console.log('T-sr-guard. Testing memory.js routes ALL 10 feature registrars thro
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL at `T-sr-guard` with "memory.js must define safeRegister(featureName, register)".
 
-- [ ] **Step 3: Add the guard**
+- [x] **Step 3: Add the guard**
 
 In `templates/cli/memory.js`, define `safeRegister` immediately before the register block (same function scope that has `program`), and route every feature registration through it as a THUNK. Replace lines 699-708:
 
@@ -341,12 +341,12 @@ In `templates/cli/memory.js`, define `safeRegister` immediately before the regis
 
 (Verify each module path + function name against the current lines 699-708 before editing. Each thunk contains BOTH the `require(...)` and the `.registerXCommands(program)` call; do NOT hoist any `require`. The `inspect`/`mcp` commands after line 708 stay unchanged.)
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T-sr-guard registration guard passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/memory.js templates/cli/test/governance.js
@@ -364,7 +364,7 @@ git commit -m "feat(cli): route all 10 feature registrars through safeRegister g
 - Consumes (in-test): `syncRuntime` from `templates/cli/sync-runtime`; the real repo templates via `WORKSPACE_ROOT`/`TEMPLATE_CLI_DIR`/`TEMPLATE_ROOT_DIR` (already imported from `./harness`); `child_process.spawnSync`.
 - Produces: a regression test with two independent scenarios — Scenario A (hard brick, only the standalone entry recovers) and Scenario B (feature-registrar brick, the guard degrades gracefully).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append inside `runIntegrationTests` in `templates/cli/test/integration.js` (uses in-scope `fs`, `os`, `path`, `assert`, and the imported `WORKSPACE_ROOT`, `TEMPLATE_CLI_DIR`, `TEMPLATE_ROOT_DIR`):
 
@@ -437,7 +437,7 @@ console.log('SB. Testing self-brick regression: hard-brick (entry recovers) + fe
 }
 ```
 
-- [ ] **Step 2: Confirm each scenario is a genuine red without its fix**
+- [x] **Step 2: Confirm each scenario is a genuine red without its fix**
 
 This regression locks behavior from Tasks 1-2, so it passes once those are in the template tree. Prove it is not vacuous with two one-off demonstrations, restoring after each:
 - **Scenario A red:** temporarily rename/remove `sync-runtime-entry.js` recovery by pointing `runEntry` at a non-existent path — the `hardEntry.status === 0` assertion fails, confirming only the entry can recover a hard brick. Restore.
@@ -446,16 +446,16 @@ This regression locks behavior from Tasks 1-2, so it passes once those are in th
 Run: `node templates/cli/test.js`
 Expected: each temporary removal produces a FAIL at the named `SB` assertion; with both fixes in place, `SB` passes.
 
-- [ ] **Step 3: (No new production code)**
+- [x] **Step 3: (No new production code)**
 
 This task adds only the regression test; if Step 2 shows a scenario passes even with its fix removed, the test is not exercising that fix — fix the test before proceeding.
 
-- [ ] **Step 4: Run the full suite to verify it passes**
+- [x] **Step 4: Run the full suite to verify it passes**
 
 Run: `node templates/cli/test.js`
 Expected: PASS — `✅ SB self-brick regression (hard-brick + feature-brick) passed`; full suite exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/test/integration.js
@@ -475,7 +475,7 @@ git commit -m "test(sync-runtime): self-brick regression covering hard-brick + f
 
 (All are generated by `sync-runtime` from the Task 1-3 template edits — do NOT hand-edit them. The manifest entry was declared in Task 1; this task only reconciles the real repo mirror and runs the full regression through it.)
 
-- [ ] **Step 1: Seed the mirror from the TEMPLATE entry, then converge from the mirror entry**
+- [x] **Step 1: Seed the mirror from the TEMPLATE entry, then converge from the mirror entry**
 
 The real repo mirror does not yet contain `sync-runtime-entry.js` (only the manifest declares it). Seed the first sync from the TEMPLATE copy of the entry (it exists in `templates/cli/`), which copies the entry into the mirror; then run the MIRROR entry to convergence. Run until TWO CONSECUTIVE runs report `copied: 0` (≤4 runs total):
 
@@ -487,7 +487,7 @@ node ./.evo-lite/cli/sync-runtime-entry.js
 
 If it does not converge within ~4 runs, STOP and report.
 
-- [ ] **Step 2: Verify byte-identical mirror (Node, not shell)**
+- [x] **Step 2: Verify byte-identical mirror (Node, not shell)**
 
 Run:
 
@@ -497,7 +497,7 @@ node -e "const fs=require('fs'),p=require('path'); const files=['sync-runtime-en
 
 Expected: `byte-identical OK`, exit 0.
 
-- [ ] **Step 3: Full regression through both trees**
+- [x] **Step 3: Full regression through both trees**
 
 ```bash
 node templates/cli/test.js
@@ -506,7 +506,7 @@ node ./.evo-lite/cli/test.js
 
 Expected: both exit 0, with `T-sr-entry`, `T-sr-guard` (governance) and `SB` (integration) present and green in BOTH the template and mirror runs — proving the mirrored `memory.js` guard + mirrored entry work through the mirror.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Stage only the generated/updated mirror files:
 
