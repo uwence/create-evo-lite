@@ -1944,6 +1944,83 @@ async function runIntegrationTests() {
             console.log('✅ T12c Add: Files verb recognized');
         }
 
+        console.log('SB. Testing self-brick regression: hard-brick (entry recovers) + feature-brick (guard degrades) ...');
+        {
+            const { syncRuntime } = require(path.join(TEMPLATE_CLI_DIR, 'sync-runtime'));
+            const { spawnSync } = require('child_process');
+            const mirrorRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-selfbrick-'));
+            // Save/restore any caller-set template overrides (do not clobber them).
+            const savedCli = process.env.EVO_LITE_TEMPLATE_CLI_DIR;
+            const savedRoot = process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
+            process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
+            process.env.EVO_LITE_TEMPLATE_ROOT_DIR = TEMPLATE_ROOT_DIR;
+            // Pin the child's workspace to the tmp mirror deterministically. The standalone
+            // entry honors EVO_LITE_WORKSPACE_ROOT, but the `mem sync-runtime` command resolves
+            // via getWorkspaceRoot() → EVO_LITE_ROOT. Earlier integration tests leak
+            // EVO_LITE_ROOT into process.env (e.g. lines ~133/242), so without pinning it here
+            // the guarded memory.js child would sync the leaked workspace instead of the mirror.
+            // Setting EVO_LITE_ROOT = <mirror>/.evo-lite makes BOTH child paths target the mirror.
+            const childEnv = {
+                ...process.env,
+                EVO_LITE_WORKSPACE_ROOT: mirrorRoot,
+                EVO_LITE_ROOT: path.join(mirrorRoot, '.evo-lite'),
+            };
+            const cliDir = path.join(mirrorRoot, '.evo-lite', 'cli');
+            const help = () => spawnSync(process.execPath, [path.join(cliDir, 'memory.js'), '--help'], { env: childEnv, encoding: 'utf8' });
+            const runEntry = () => spawnSync(process.execPath, [path.join(cliDir, 'sync-runtime-entry.js'), '--json'], { env: childEnv, encoding: 'utf8' });
+            try {
+                // Build a full faithful mirror of the real templates into the tmp workspace.
+                const first = syncRuntime(mirrorRoot, {});
+                assert.strictEqual(first.status, 'ok', 'initial mirror build should succeed');
+                const entry = path.join(cliDir, 'sync-runtime-entry.js');
+                const hardDep = path.join(cliDir, 'memory-index-util.js');
+                const feature = path.join(cliDir, 'code-perception', 'post-commit-code-perception.js');
+                assert.ok(fs.existsSync(entry), 'mirror must contain sync-runtime-entry.js (declared in Task 1 manifest)');
+                assert.ok(fs.existsSync(hardDep), 'mirror must contain memory-index-util.js');
+                assert.ok(fs.existsSync(feature), 'mirror must contain the code-perception module');
+
+                // ---- Scenario A: HARD BRICK — a top-level require dep is missing. ----
+                // memory.js cannot load at all; safeRegister never runs; only the standalone
+                // entry recovers.
+                fs.rmSync(hardDep);
+                const hardHelp = help();
+                assert.notStrictEqual(hardHelp.status, 0, 'hard-bricked memory.js --help must exit non-zero');
+                assert.ok(/MODULE_NOT_FOUND/.test(hardHelp.stderr || ''), 'hard-brick stderr must show MODULE_NOT_FOUND');
+                assert.ok(/memory-index-util/.test(hardHelp.stderr || ''), 'hard-brick stderr must name memory-index-util');
+                const hardEntry = runEntry();
+                assert.strictEqual(hardEntry.status, 0, 'standalone entry must run despite the hard brick');
+                assert.ok(fs.existsSync(hardDep), 'standalone entry must re-copy memory-index-util.js');
+                assert.strictEqual(help().status, 0, 'memory.js --help must recover after the entry heals the hard brick');
+
+                // ---- Scenario B: FEATURE BRICK — a feature registrar module is missing. ----
+                // memory.js survives via the guard; the failed feature is NOT presented as
+                // registered; mem sync-runtime heals; the command reappears.
+                fs.rmSync(feature);
+                const featHelp = help();
+                assert.strictEqual(featHelp.status, 0, 'guarded memory.js --help must exit 0 with a feature module missing');
+                assert.ok(/sync-runtime/.test(featHelp.stdout || ''), 'feature-brick --help must still list sync-runtime');
+                assert.ok(!/(^|\s)code-perception(\s|$)/m.test(featHelp.stdout || ''), 'feature-brick --help must NOT list the failed code-perception command');
+                assert.ok(/warning: command group code-perception failed to register/.test(featHelp.stderr || ''), 'guard must warn naming the failed feature');
+                assert.ok(/MODULE_NOT_FOUND/.test(featHelp.stderr || ''), 'guard warning must carry the MODULE_NOT_FOUND cause');
+                // Heal via the guarded memory.js sync-runtime itself (proves it stayed usable).
+                const viaMemory = spawnSync(process.execPath, [path.join(cliDir, 'memory.js'), 'sync-runtime'], { env: childEnv, encoding: 'utf8' });
+                assert.strictEqual(viaMemory.status, 0, 'guarded memory.js sync-runtime must exit 0 and heal');
+                assert.ok(fs.existsSync(feature), 'sync-runtime must re-copy the deleted feature module');
+                const healedHelp = help();
+                assert.strictEqual(healedHelp.status, 0, 'memory.js --help must exit 0 after healing');
+                assert.ok(/(^|\s)code-perception(\s|$)/m.test(healedHelp.stdout || ''), 'code-perception command must reappear after healing');
+
+                // Convergence: a clean re-run via the entry copies nothing.
+                const converged = runEntry();
+                assert.strictEqual(JSON.parse(converged.stdout).copied.length, 0, 'converged entry run copies nothing');
+            } finally {
+                if (savedCli === undefined) delete process.env.EVO_LITE_TEMPLATE_CLI_DIR; else process.env.EVO_LITE_TEMPLATE_CLI_DIR = savedCli;
+                if (savedRoot === undefined) delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR; else process.env.EVO_LITE_TEMPLATE_ROOT_DIR = savedRoot;
+                fs.rmSync(mirrorRoot, { recursive: true, force: true });
+            }
+            console.log('✅ SB self-brick regression (hard-brick + feature-brick) passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);
