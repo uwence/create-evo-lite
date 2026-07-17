@@ -1,7 +1,7 @@
 ---
 id: plan:unified-code-explore-agent-surface-mvp
 title: Unified Code Explore — Agent Surface (Phase 4a)
-status: draft
+status: active
 linkedSpec: spec:unified-code-explore-wiki-projection
 ---
 
@@ -272,7 +272,7 @@ EOF
   - `rankRecommendedReading(inputs) -> ReadingItem[]` where `ReadingItem = {path, kind, reason, priority, confidence}` sorted by §2.3 order.
   - `UnifiedExploreResult = {query, ok, freshness, providers, matches, relationships, impact?, source, files, modules, focus, governance, recommendedReading, diagnostics}` (spec §2). `focus = {entityId, taskId, resolved}` — the CANONICAL resolved focus; the Wiki/Inspector must render this rather than re-deriving focus (e.g. "all unfinished tasks" is not the focus). `ok:false` is returned for the §3.1 FATAL set only (`adapter-exception`, `security-violation`, `unparseable-response`, `internal-error`) — capability gaps stay `ok:true`. `freshness = {stale, dirty, indexedCommit?, currentCommit?}`. `governance = {specs, plans, tasks, commits, evidence, links, linkSummary}`. `files = string[]` (sorted repo-relative paths from native-lite file facts). `modules = [{id, files:string[], taskIds:string[], changed}]` (declared moduleId, else top-level path segment). Both are produced here but consumed only by the parked Phase 4b Wiki (module pages + unresolved-link detection); they stay in the shape so activating 4b needs no T2 signature change.
 
-- [ ] **Step 1: Write the failing test** — append inside `runGovernanceTests()` after the T-ce-seam block. THREE scenarios (a single test cannot exercise all provider realities). **Scenario A** = the native-lite degradation dogfood (the common host state — no structural provider; also pins the real post-commit blob shape + the real backlog `hash` shape); **Scenario B** = an injected structural fixture provider (proves the full symbol/relationship/impact/source path + the M1/M2 seams end-to-end); **Scenario C** = a ready provider that throws, proving the SERVICE itself produces the `ok:false` fatal that T4/T6's surface mappings depend on. All `git init` the temp workspace because native-lite `getFiles` runs `git ls-files --cached --others --exclude-standard` and returns `files:[]` + a `git-enumeration-failed` diagnostic when the root is not a repo — so without a real repo the file facts (and every `declares_file` link) would be empty and the asserts could never pass.
+- [ ] **Step 1: Write the failing test** — append inside `runGovernanceTests()` after the T-ce-seam block. THREE scenarios (a single test cannot exercise all provider realities). **Scenario A** = the native-lite degradation dogfood (the common host state — no structural provider; also pins the real post-commit blob shape + the real backlog `hash` shape); **Scenario B** = an injected structural fixture provider (proves the full symbol/relationship/impact/source path + the M1/M2 seams end-to-end); **Scenario C** = a ready provider that throws, proving the SERVICE itself produces the `ok:false` fatal that T4's and T5's surface mappings depend on. All `git init` the temp workspace because native-lite `getFiles` runs `git ls-files --cached --others --exclude-standard` and returns `files:[]` + a `git-enumeration-failed` diagnostic when the root is not a repo — so without a real repo the file facts (and every `declares_file` link) would be empty and the asserts could never pass.
 
 ```javascript
         const { execFileSync } = require('node:child_process');
@@ -424,7 +424,7 @@ EOF
         console.log('T-ce-explore-C. Unified explore — adapter exception is FATAL (ok:false) ...');
         {
             // The service itself must generate ok:false for an adapter/invariant break.
-            // T4/T6 only prove the SURFACE mapping given an ok:false; without this the
+            // T4/T5 only prove the SURFACE mapping given an ok:false; without this the
             // production service would never produce one and those mappings are dead code.
             const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
             const runtime = createTempRuntimeRoot('ce-explore-c');
