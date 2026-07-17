@@ -146,10 +146,62 @@ function normalizeImpactResult(providerStatus, raw) {
     return result;
 }
 
+// ── M1/M2 adapter↔linker seam (spec §2.4) ─────────────────────────────────────
+// The SINGLE conversion from flat CodeReference[] (① search output) to the
+// wrapper shape ② governance-linker consumes as `symbolReferences`. Owning it
+// here (shared with ①) guarantees no other module reshapes references for the
+// linker. Pure, total: never throws, never drops a match. An unresolvable
+// match keeps its slot with a floored confidence so a downstream derived link
+// can never be silently born at 0 (M2).
+
+const DERIVED_LINK_CONFIDENCE_FLOOR = 0.15;
+
+function toSymbolReferences(matches, opts) {
+    const focusId = typeof opts === 'string' ? opts : (isPlainObject(opts) ? opts.focusId : undefined);
+    void focusId; // reserved for future focus-scoped resolution; linker binds by name today.
+    const list = Array.isArray(matches) ? matches : [];
+    const out = [];
+    for (const raw of list) {
+        // Accept an already-normalized CodeReference or a best-effort normalize.
+        const reference = isPlainObject(raw) && typeof raw.id === 'string' && raw.id
+            ? raw
+            : normalizeReference(isPlainObject(raw) ? raw.providerId : undefined, raw);
+        const provConf = clampConfidence(reference.provenance && reference.provenance.confidence);
+        const resolutionConfidence = provConf > 0 ? provConf : DERIVED_LINK_CONFIDENCE_FLOOR;
+        const symRef = { reference, resolutionConfidence };
+        if (reference.filePath !== undefined) symRef.filePath = reference.filePath;
+        if (reference.lineRange !== undefined) symRef.lineRange = reference.lineRange;
+        out.push(symRef);
+    }
+    return out;
+}
+
+// M2 defensive floor pass: run AFTER buildGovernanceLinks, BEFORE ranking /
+// projection / any consumer filter. A rule-gated derived link whose confidence
+// is missing/0/non-finite is raised to the floor so recommended-reading and
+// Wiki/Inspector never drop it merely for a missing score. Confirmed stays 1.0;
+// proposed keeps its <=0.5 value. Pure — returns a new array.
+function normalizeDerivedLinkConfidence(links) {
+    const list = Array.isArray(links) ? links : [];
+    return list.map(link => {
+        if (!isPlainObject(link)) return link;
+        if (link.status === 'derived') {
+            const c = link.confidence;
+            if (typeof c !== 'number' || !Number.isFinite(c) || c <= 0) {
+                return Object.assign({}, link, { confidence: DERIVED_LINK_CONFIDENCE_FLOOR });
+            }
+        }
+        return link;
+    });
+}
+
 module.exports = {
     makeReferenceId,
     normalizeReference,
     normalizeSearchResult,
     normalizeRelationship,
     normalizeImpactResult,
+    toSymbolReferences,
+    normalizeDerivedLinkConfidence,
+    DERIVED_LINK_CONFIDENCE_FLOOR,
 };

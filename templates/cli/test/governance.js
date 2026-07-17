@@ -7069,6 +7069,53 @@ async function runChildRuntimeTests() {
             void execFileSync;
         }
         console.log('✅ T-plan-progress-no-ir passed');
+
+        console.log('T-ce-seam. Testing M1 toSymbolReferences + M2 derived-confidence floor ...');
+        {
+            const norm = require(require('path').join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize.js'));
+            const { toSymbolReferences, normalizeDerivedLinkConfidence, DERIVED_LINK_CONFIDENCE_FLOOR } = norm;
+
+            // Floor is a real positive number.
+            assert.ok(typeof DERIVED_LINK_CONFIDENCE_FLOOR === 'number' && DERIVED_LINK_CONFIDENCE_FLOOR > 0,
+                'DERIVED_LINK_CONFIDENCE_FLOOR must be a positive number');
+
+            // (a) flat CR[] -> wrapper shape, carrying filePath/lineRange, nonzero confidence.
+            const cr = {
+                id: 'code-ref:provider:codegraph:abc123abc123', providerId: 'provider:codegraph',
+                providerEntityId: 'sym-1', kind: 'function', name: 'selectEngine',
+                filePath: 'src/engine.js', lineRange: [10, 42],
+                provenance: { providerId: 'provider:codegraph', method: 'provider-structural', authority: 'structural', confidence: 0.9 },
+            };
+            const [wrapped] = toSymbolReferences([cr]);
+            assert.strictEqual(wrapped.reference, cr, 'wrapper must carry the original reference');
+            assert.strictEqual(wrapped.filePath, 'src/engine.js', 'wrapper must lift filePath');
+            assert.deepStrictEqual(wrapped.lineRange, [10, 42], 'wrapper must lift lineRange');
+            assert.ok(wrapped.resolutionConfidence > 0, 'resolved match must have nonzero resolutionConfidence');
+
+            // (b) unresolved / zero-confidence match -> floored (never 0), still not dropped.
+            const weak = { id: 'code-ref:x:0', providerId: 'x', providerEntityId: '', kind: 'unknown', name: '',
+                provenance: { providerId: 'x', method: 'heuristic', authority: 'enrichment', confidence: 0 } };
+            const out = toSymbolReferences([cr, weak]);
+            assert.strictEqual(out.length, 2, 'toSymbolReferences must never drop a match');
+            assert.ok(out[1].resolutionConfidence >= DERIVED_LINK_CONFIDENCE_FLOOR,
+                'unresolved match resolutionConfidence must be floored, never 0');
+
+            // (c) derived link floor pass: derived@0 and derived@undefined -> floor; confirmed/proposed untouched.
+            const links = [
+                { id: 'a', status: 'derived', confidence: 0 },
+                { id: 'b', status: 'derived', confidence: undefined },
+                { id: 'c', status: 'confirmed', confidence: 1 },
+                { id: 'd', status: 'proposed', confidence: 0.4 },
+            ];
+            const floored = normalizeDerivedLinkConfidence(links);
+            assert.strictEqual(floored[0].confidence, DERIVED_LINK_CONFIDENCE_FLOOR, 'derived@0 must be floored');
+            assert.strictEqual(floored[1].confidence, DERIVED_LINK_CONFIDENCE_FLOOR, 'derived@undefined must be floored');
+            assert.strictEqual(floored[2].confidence, 1, 'confirmed must stay 1.0');
+            assert.strictEqual(floored[3].confidence, 0.4, 'proposed must keep its value');
+            assert.strictEqual(links[0].confidence, 0, 'normalizeDerivedLinkConfidence must be pure (no mutation)');
+            for (const l of floored) assert.ok(!(l.status === 'derived' && !(l.confidence > 0)), 'no derived link may end at 0');
+        }
+        console.log('✅ T-ce-seam M1/M2 seam passed');
 }
 
 module.exports = { runGovernanceTests };
