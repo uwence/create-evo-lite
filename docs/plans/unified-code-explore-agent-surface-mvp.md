@@ -1,19 +1,27 @@
 ---
-id: plan:unified-code-explore-wiki-projection-mvp
-title: Unified Code Explore & Code Wiki Projection (MVP)
+id: plan:unified-code-explore-agent-surface-mvp
+title: Unified Code Explore — Agent Surface (Phase 4a)
 status: draft
 linkedSpec: spec:unified-code-explore-wiki-projection
 ---
 
-# Unified Code Explore & Code Wiki Projection Implementation Plan
+# Unified Code Explore — Agent Surface (Phase 4a) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver one shared Unified Explore service that backs `mem code` CLI, the `evo_code_explore` MCP tool, a pure-derived Code Wiki projection, and an Inspector Code page — with the M1/M2 adapter↔linker seams nailed down so governance links never silently drop.
+**Goal:** Deliver the ONE shared Unified Explore service and the two surfaces an agent actually consumes — `mem code` CLI and the `evo_code_explore` MCP tool — with the M1/M2 adapter↔linker seams nailed down and proven against REAL producers, not hand-written fixtures.
 
-**Architecture:** A single stateless service (`code-perception.js#exploreCode`) orchestrates sub-spec ①'s router/loader + ②'s adapter/linker/status exactly per spec §2.2, converts references through the one M1 seam (`normalize.js#toSymbolReferences`), floors derived-link confidence through the one M2 seam (`normalize.js#normalizeDerivedLinkConfidence`), and returns a `UnifiedExploreResult`. Four thin surfaces (CLI group, MCP tool, Wiki builder, Inspector routes) all call that one service — no duplicate logic. All new files are registered as managed core-cli templates and mirrored byte-identical via the bootstrap-safe `sync-runtime-entry`.
+**Architecture:** A single stateless service (`code-perception.js#exploreCode`) orchestrates sub-spec ①'s router/loader + ②'s adapter/linker/status per spec §2.2, converts references through the one M1 seam (`normalize.js#toSymbolReferences`), floors derived-link confidence through the one M2 seam (`normalize.js#normalizeDerivedLinkConfidence`), and returns a `UnifiedExploreResult`. Two thin surfaces (CLI group, MCP tool) call that one service — no duplicate logic. New files are registered as managed core-cli templates and mirrored byte-identical via the bootstrap-safe `sync-runtime-entry`.
 
-**Tech Stack:** Node.js (CommonJS, `'use strict'`, no build step), commander (existing CLI framework), `@modelcontextprotocol/sdk` (existing MCP server), zero-dep `http.createServer` (existing Inspector), Node `assert` test harness (`templates/cli/test/*.js`). Windows-first. `node:crypto`/`node:fs`/`node:path` builtins only for new code; no new dependencies.
+**Tech Stack:** Node.js (CommonJS, `'use strict'`, no build step), commander (existing CLI framework), `@modelcontextprotocol/sdk` (existing MCP server), Node `assert` test harness (`templates/cli/test/*.js`). Windows-first. `node:crypto`/`node:fs`/`node:path` builtins only for new code; no new dependencies.
+
+## Scope: why this plan is Phase 4a only
+
+Spec `spec:unified-code-explore-wiki-projection` covers four surfaces. This plan implements the **agent-facing** half (service + CLI + MCP) — the part that makes the ①② investment visible and, more importantly, the part that finally **integration-tests ①②** by composing them behind one consumer.
+
+The **human projection** half (Code Wiki, Inspector Code page) is split into `plan:code-wiki-inspector-projection`, which is **parked**: it is the highest-cost, lowest-demo-value third of the spec, and nothing yet demonstrates that users want a persistent browsable surface when `mem code explore` + MCP already answer the question. That plan documents its own activation criteria.
+
+**Completing this plan does NOT close the parent spec.** On completion: `plan:unified-code-explore-agent-surface-mvp = done`, `spec:unified-code-explore-wiki-projection` stays **adopted/active** (the Wiki/Inspector acceptance criteria remain open), `plan:code-wiki-inspector-projection` stays **parked**. Do not mark the spec done to "finish" it — that would trade an honest open AC for an unvalidated implementation.
 
 ## Global Constraints
 
@@ -28,6 +36,7 @@ linkedSpec: spec:unified-code-explore-wiki-projection
 - **Windows-first** (repo root `d:\Data\ProjectAgent\create-evo-lite`; `path.join`; child spawns `process.execPath`). Never edit `.evo-lite/cli/**` by hand.
 - **Provider security invariants from ①②:** never auto-install / `codegraph init`, never read `.codegraph` internals, path-containment before read, no-shell `execFile`. The service is read-only and must not spawn writes.
 
+
 ## Grounded reality (verified against the code — read before implementing)
 
 These facts were verified in the current tree and shape the faithful bridges below. See the **Spec-vs-reality conflicts** note at the end for the four that diverge from a literal spec read.
@@ -36,7 +45,10 @@ These facts were verified in the current tree and shape the faithful bridges bel
 - **`selectProvider`** (`provider-router.js`) is pure/sync; provider instance is `selection.candidate.registration.provider`; degraded fallback sets `selection.degraded=true`; no-capability sets `candidate:null` + `reason`.
 - **`scanPlanning`** (`planning/scan.js`) populates `task.linkedFiles` (from frontmatter) but **never** `task.symbols`. So derived `implements_task` links fire in dogfood only via `evidence.symbols` or commit `diffRanges` intersection, not via `task.symbols`.
 - **`buildGovernanceLinks`** (`governance-linker.js`) `implements_task` derived confidence is `clampConfidence(symRef.resolutionConfidence)` → **0 when `resolutionConfidence` is undefined** (the M2 trigger). `declares_file`/`depends_on_file`/`changed_by_commit` are conf 1.0; heuristic `implements_task` proposed is ≤0.5; `verified_by_test`/`evidenced_by_archive`/`related_to_focus` are 1.0.
-- **`readActiveContext`** is exported by `memory.service.js` (canonical, full parse). `sections.focus` is FREE TEXT — no structured spec/task field. Its `tasks[]` come from `parseBacklogTasks`, whose row shape is **`{checked, hash, line, text}`** — the canonical id is `hash`; there is **NO `id` field**. Any code reading `task.id` on an active-context task is dead against a real `active_context.md`.
+- **`readActiveContext`** is exported by `memory.service.js` (canonical, full parse). `sections.focus` is FREE TEXT — no structured spec/task field. Its `tasks[]` come from `parseBacklogTasks`, whose row shape is **`{checked, hash, line, text}`** — there is **NO `id` field**.
+- **The active-context backlog is NOT a task registry.** `hash` is a free-form human slug — real rows from this repo parse to `hash: 'fresh-plan-progress'` and `hash: '06fd'`. These never equal a Planning-IR task id (`task:ce-seam`), so matching backlog rows against `planIR.tasks` cannot fire on real data. Verified by running the real parser over the real file.
+- **Real FOCUS text has no task id.** `advanceFocusFromCommit` writes `"<plan title>: <task title>"` — e.g. `Unified Code Explore & Code Wiki Projection Implementation Plan: M1/M2 reference seam in normalize.js`. Therefore **exact task-title match is the only automatic focus bridge that fires in production**; an id match only works when a human or `--task` supplies one.
+- **`templates/cli/memory.js` cannot be spawned bare.** It requires `memory.service → db.js → better-sqlite3`, which is NOT in the package's dependencies — it lives in the workspace runtime's `.evo-lite/node_modules`. Any test spawning the template CLI must set `NODE_PATH` to that directory (idiom: `harness.js:18`, `integration.js:650/678/705`). `templates/cli/test.js` itself runs fine because it never top-level-requires `db.js`.
 - **`post-commit-last-run.json`** (written by `post-commit-code-perception.js`) has shape **`{commit: '<headSha>', changedFiles: [...], ...}`** — the key is `commit`, NOT `commits`/`headSha`.
 - **`changed_by_commit`** links are keyed by **`governanceEntityId = 'commit:<sha>'`** (governance-linker.js), NOT by task id. Task→commit association must go through `evidence.taskId + evidence.commitSha`; module→commit through `commit.changedFiles ∩ module.files`. Filtering `changed_by_commit` by a task id always returns empty.
 - **CLI registration:** `memory.js` registers feature groups through `safeRegister('<name>', () => require('./mod').registerXCommands(program))` (thunked require so a missing module warns, never bricks the CLI). Existing `code-perception` group registers `mem code-perception post-commit`.
@@ -48,23 +60,34 @@ These facts were verified in the current tree and shape the faithful bridges bel
 
 ---
 
+
 ## File Structure
 
 | File | Responsibility | Task |
 |------|----------------|------|
 | `templates/cli/code-perception/normalize.js` (modify) | + M1 `toSymbolReferences`, M2 `DERIVED_LINK_CONFIDENCE_FLOOR` + `normalizeDerivedLinkConfidence` | T1 |
 | `templates/cli/code-perception.js` (create) | Unified Explore service: `exploreCode`, `rankRecommendedReading`; §3.1 fatal gate | T2 |
-| `templates/cli/code-perception/status.js` (modify) | provider rows carry `capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit` (consumed by T5 provenance + T6 page) | T2 |
-| `templates/cli/code-perception/cli.js` (create) | `mem code` command group `registerCodeCommands` + unified exit model | T3 |
-| `templates/cli/memory.js` (modify) | `safeRegister('code', …)` thunk | T3 |
-| `templates/cli/mcp-server.js` (modify) | `evo_code_explore` TOOLS entry + dispatch case + handler | T4 |
-| `templates/cli/mcp-validate.js` (modify) | add `evo_code_explore` to validator TOOLS + `summarise` | T4 |
-| `templates/cli/code-perception/wiki.js` (create) | `buildCodeWiki`, `getWikiStatus` — pure-derived overview/current-focus/providers/modules/tasks pages + manifest | T5 |
-| `templates/cli/inspector.js` (modify) | exported `code*Response` mappers + `/api/code/status|focus|task` routes + Code page tab | T6 |
-| `templates/cli/template-manifest.js` (modify) | register 3 new managed files | T7 |
-| `templates/cli/test/governance.js` (modify) | `T-ce-seam`, `T-ce-explore`, `T-ce-cli`, `T-ce-mcp`, `T-ce-wiki`, `T-ce-inspector`, `T-ce-manifest-sync` | T1–T7 |
+| `templates/cli/test/governance.js` (modify) | `T-ce-seam`, `T-ce-explore-A/B/C`, `T-ce-compose-A/B`, `T-ce-cli`, `T-ce-mcp`, `T-ce-manifest-sync-4a` | T1–T6 |
+| `templates/cli/code-perception/cli.js` (create) | `mem code` command group `registerCodeCommands` + unified exit model | T4 |
+| `templates/cli/memory.js` (modify) | `safeRegister('code', …)` thunk | T4 |
+| `templates/cli/mcp-server.js` (modify) | `evo_code_explore` TOOLS entry + dispatch case + exported handler | T5 |
+| `templates/cli/mcp-validate.js` (modify) | add `evo_code_explore` to validator TOOLS + `summarise` | T5 |
+| `templates/cli/template-manifest.js` (modify) | register the 2 new managed files | T6 |
 
-**Phase 4a = T1–T4** (Agent + CLI surface). **Phase 4b = T5–T7** (Human projection + parity).
+**Explicitly NOT in this plan** (they belong to `plan:code-wiki-inspector-projection`): `code-perception/wiki.js`, `inspector.js`, and the `code-perception/status.js` row enrichment (`capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit`) — that enrichment exists ONLY to feed the Wiki provenance and the Inspector Code page, so it ships with them. Nothing in 4a reads those fields.
+
+## Task order
+
+```
+T1 ce-seam           M1/M2 reference seam (normalize.js)
+T2 ce-explore-service Unified Explore service
+T3 ce-compose        REAL producer→consumer composition tests   ← integration gate
+T4 ce-mem-code-cli   `mem code` command group
+T5 ce-mcp            `evo_code_explore` MCP tool
+T6 ce-manifest-sync  manifest registration + 4a mirror closure
+```
+
+T3 sits immediately after the service, not at the end, so a producer/consumer shape mismatch fails **before** two surfaces get built on top of a wrong service. This ordering is a direct response to the defects found during plan review: three real shape mismatches (`post-commit-last-run.json`, active-context rows, `changed_by_commit` keying) survived in shipped, governance-green ①② code precisely because every test wrote its own idealized producer output by hand.
 
 ---
 
@@ -228,8 +251,9 @@ EOF
 
 **Files:**
 - Create: `templates/cli/code-perception.js`
-- Modify: `templates/cli/code-perception/status.js` (provider rows carry `capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit`)
 - Test: `templates/cli/test/governance.js` (append block `T-ce-explore`)
+
+*(The `code-perception/status.js` row enrichment — `capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit` — is NOT part of 4a. Nothing here reads those fields; they exist only for the Wiki provenance and the Inspector Code page, so they ship with `plan:code-wiki-inspector-projection`. `result.providers` in 4a is whatever `buildCodePerceptionStatus` returns today.)*
 
 **Interfaces:**
 - Consumes:
@@ -514,11 +538,11 @@ function safeReadActiveContext(options, diagnostics) {
 // has NO "first unfinished task" fallback (that fabricates unproven focus):
 //   1. explicit options.focusId that names a real Planning-IR task or spec;
 //   2. else a UNIQUE task whose EXACT id (preferred) or exact title appears in
-//      the focus text — multiple candidates => `focus-ambiguous`, never a silent
-//      "pick the first";
-//   3. else, iff the active context lists EXACTLY ONE open task whose canonical
-//      id matches a Planning-IR task, that unique task;
-//   4. else NO focus — push a `focus-unresolved` diagnostic and return [].
+//      the FOCUS text — multiple candidates => `focus-ambiguous`, never a silent
+//      "pick the first". Title is the bridge that actually fires on real data:
+//      advanceFocusFromCommit writes the focus as "<plan title>: <task title>",
+//      which contains NO task id. (Verified against a real active_context.md.)
+//   3. else NO focus — push a `focus-unresolved` diagnostic and return [].
 // Returns focusEntityId so callers (Wiki/Inspector) render the REAL focus rather
 // than re-deriving it (e.g. "every unfinished task", which is not the focus).
 function resolveFocusReferences(planIR, fileReferences, activeContext, options, diagnostics) {
@@ -557,22 +581,19 @@ function resolveFocusReferences(planIR, fileReferences, activeContext, options, 
             return { focusReferences, focusTask: null, focusEntityId: null };
         }
     }
-    // 3. UNIQUE open active-context task that maps to a Planning-IR task.
-    //    memory.service#parseBacklogTasks yields `{checked, hash, line, text}` —
-    //    the canonical id lives in `hash`, NOT `id`. Reading `t.id` would make
-    //    this branch permanently unreachable against a real active_context.md.
-    if (!focusEntityId && activeContext && Array.isArray(activeContext.tasks)) {
-        const activeOpen = activeContext.tasks.filter(t => t && !t.checked && (t.id || t.hash));
-        if (activeOpen.length === 1) {
-            const activeId = activeOpen[0].id || activeOpen[0].hash;
-            const match = tasks.find(t => t && t.id === activeId);
-            if (match) { focusTask = match; focusEntityId = match.id; }
-        }
-    }
-    // 4. nothing resolved → diagnostic, no fabricated focus.
+    // NOTE — there is deliberately NO "unique active-context backlog task" branch.
+    // The active-context backlog is a free-form human scratchpad: parseBacklogTasks
+    // yields `{checked, hash, line, text}` where `hash` is an ad-hoc slug authored by
+    // a person (real examples: `fresh-plan-progress`, `06fd`). Those are NOT
+    // Planning-IR task ids (`task:ce-seam`), so matching backlog rows against
+    // planIR.tasks is a category error that can never hit on real data — it only
+    // "works" against a hand-written fixture that pretends backlog hashes look like
+    // task ids. Focus comes from the FOCUS section (step 2), not the backlog.
+
+    // 3. nothing resolved → diagnostic, no fabricated focus.
     if (!focusEntityId) {
         if (diagnostics) diagnostics.push(diag('focus-unresolved',
-            'no explicit focusId, no unique exact task/title in focus text, and no unique open active task; emitting no focus links'));
+            'no explicit focusId and no unique exact task id/title in the focus text; emitting no focus links'));
         return { focusReferences, focusTask: null, focusEntityId: null };
     }
     // Bind ONLY a task's declared files (a spec-level focus contributes no file refs here).
@@ -900,34 +921,6 @@ function rankRecommendedReading(inputs) {
 module.exports = { exploreCode, rankRecommendedReading };
 ```
 
-- [ ] **Step 3b: Enrich the status rows** in `templates/cli/code-perception/status.js#buildProviderRow`. `result.providers` comes straight from `buildCodePerceptionStatus`, and it is the SINGLE provider table all four surfaces render. Today the row drops `capabilities`/versions/commits even though `candidate.status` (a `ProviderStatus`) carries them — so the Wiki provenance (T5) and the spec §6 Inspector page (T6) could not render them honestly. Enrich it HERE (in the service task) so both downstream consumers are correct by construction. Find:
-
-```javascript
-    const row = { id, role, available, ready, indexState, compatibility, degraded };
-    const reason = availability && availability.reason;
-    if (reason) {
-        row.reason = reason;
-    }
-```
-
-Replace with (purely additive — the existing status tests assert individual fields, not whole-row shape, so they keep passing):
-
-```javascript
-    const row = { id, role, available, ready, indexState, compatibility, degraded };
-    // Spec §6: the Code page + Wiki provenance render capabilities, versions and
-    // indexed/current commit. Carry them from the ProviderStatus (best-effort, never throw).
-    if (status && typeof status.capabilities === 'object' && status.capabilities !== null) row.capabilities = status.capabilities;
-    row.providerVersion = (status && status.providerVersion) ?? null;
-    row.adapterVersion = (status && status.adapterVersion)
-        ?? (registration && registration.provider && registration.provider.adapterVersion) ?? null;
-    row.indexedCommit = (status && status.indexedCommit) ?? null;
-    row.currentCommit = (status && status.currentCommit) ?? null;
-    const reason = availability && availability.reason;
-    if (reason) {
-        row.reason = reason;
-    }
-```
-
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-explore"`
@@ -936,7 +929,7 @@ Expected: PASS — all three: `✅ T-ce-explore-A native-lite degradation passed
 - [ ] **Step 5: Commit**
 
 ```bash
-git add templates/cli/code-perception.js templates/cli/code-perception/status.js templates/cli/test/governance.js
+git add templates/cli/code-perception.js templates/cli/test/governance.js
 git commit -m "$(cat <<'EOF'
 feat(code-perception): unified explore service orchestrating router/linker (task:ce-explore-service)
 
@@ -947,7 +940,137 @@ EOF
 
 ---
 
-### Task 3: `mem code` command group + unified exit model
+### Task 3: REAL producer→consumer composition tests
+
+**Files:**
+- Test: `templates/cli/test/governance.js` (append block `T-ce-compose`)
+- Modify (only if a composition test proves a real mismatch): `templates/cli/code-perception.js`
+
+**Why this task exists (read this first):** Every shape defect found during plan review survived in shipped, governance-green ①② code for the same reason: **each test wrote, by hand, the producer output it wished for, then asserted its consumer could read that wish.** Both sides passed. Reality did not compose. Three separate instances were confirmed against source:
+
+| Consumer assumed | Producer actually emits |
+|---|---|
+| `post-commit-last-run.json` has `commits` / `headSha` | `{ commit: '<sha>', changedFiles: [...] }` (`post-commit-code-perception.js`) |
+| active-context task rows have `.id` | `{checked, hash, line, text}` (`memory.service#parseBacklogTasks`) |
+| `changed_by_commit` is keyed by task id | keyed by `governanceEntityId = 'commit:<sha>'` (`governance-linker.js`) |
+
+A fourth was found while writing this task and is the reason the focus design below changed — see **Focus reality** in T2's Interfaces.
+
+**Rule for this task: NO hand-authored producer artifacts.** Every input must be produced by the real production function that writes it in a real run. If a composition test cannot be written without hand-forging an artifact, that is itself the finding — report it, do not forge.
+
+**Interfaces:**
+- Consumes: `./code-perception/post-commit-code-perception.js#runPostCommitCodePerception({projectRoot, headSha, changedFiles, cache?}) -> {report, diagnostics}` (the REAL blob producer — never throws); `./memory.service.js#readActiveContext()` (the REAL active-context parser, bound to a module-load `ACTIVE_CONTEXT_PATH`); `./code-perception.js#exploreCode` (T2).
+- Produces: no production API. Two regression tests that fail if a producer's real output stops feeding the consumer.
+
+- [ ] **Step 1: Write the failing tests** — append after the T-ce-explore-C block:
+
+```javascript
+        console.log('T-ce-compose-A. REAL post-commit producer -> exploreCode consumer (commit graph) ...');
+        {
+            const { execFileSync } = require('node:child_process');
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const pc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'post-commit-code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-compose-a');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+            const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: runtime.workspaceRoot, encoding: 'utf8' }).trim();
+
+            // PRODUCER: the real post-commit path writes the blob. Nothing is hand-forged.
+            pc.runPostCommitCodePerception({ projectRoot: runtime.workspaceRoot, headSha, changedFiles: ['src/engine.js'] });
+            const blobPath = path.join(runtime.runtimeRoot, 'generated', 'code-perception', 'post-commit-last-run.json');
+            assert.ok(fs.existsSync(blobPath), 'A: the real producer wrote post-commit-last-run.json');
+
+            // CONSUMER: the service must read what the producer actually wrote.
+            const result = await svc.exploreCode('', {
+                projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: false,
+                activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+            assert.strictEqual(result.ok, true, 'A: ok:true');
+            assert.ok(result.governance.commits.length >= 1,
+                'A: governance.commits is non-empty — the service reads the producer\'s REAL key (this fails if it reads `commits`/`headSha`)');
+            assert.strictEqual(result.governance.commits[0].sha, headSha, 'A: the commit sha round-trips producer -> consumer');
+            const changed = result.governance.links.filter(l => l.kind === 'changed_by_commit');
+            assert.ok(changed.length >= 1, 'A: changed_by_commit links exist end-to-end');
+            assert.ok(changed.every(l => l.governanceEntityId === `commit:${headSha}`),
+                'A: changed_by_commit keyed by commit:<sha> (consumers must not filter these by task id)');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-compose-A real commit graph composes');
+
+        console.log('T-ce-compose-B. REAL active_context.md -> memory.service parser -> exploreCode focus ...');
+        {
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-compose-b');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            const TASK_TITLE = 'M1/M2 reference seam in normalize.js';
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: TASK_TITLE, status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+
+            // PRODUCER: write the FOCUS section in the exact shape advanceFocusFromCommit
+            // emits — "<plan title>: <task title>" — into the real active_context.md, then
+            // let the REAL parser read it. The parser, not a hand-built object, feeds the service.
+            const acPath = path.join(runtime.runtimeRoot, 'active_context.md');
+            const ac = fs.readFileSync(acPath, 'utf8').replace(
+                /<!-- BEGIN_FOCUS -->[\s\S]*?<!-- END_FOCUS -->/,
+                `<!-- BEGIN_FOCUS -->\nDemo Plan: ${TASK_TITLE}\n<!-- END_FOCUS -->`);
+            fs.writeFileSync(acPath, ac, 'utf8');
+
+            const prevRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
+            resetCliModuleCache();   // memory.service pins ACTIVE_CONTEXT_PATH at module load
+            try {
+                const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'));
+                const realAc = memoryService.readActiveContext();   // REAL parser output
+                assert.ok(realAc.sections.focus.includes(TASK_TITLE), 'B: precondition — the real parser sees the focus text');
+
+                const result = await svc.exploreCode('', {
+                    projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: false,
+                    activeContext: realAc,   // <- the parser's output, NOT a hand-written shape
+                });
+                assert.strictEqual(result.ok, true, 'B: ok:true');
+                assert.strictEqual(result.focus.resolved, true,
+                    'B: focus resolves from a REAL active_context.md (fails if resolution depends on ids/hashes that real focus text never contains)');
+                assert.strictEqual(result.focus.entityId, 'task:x', 'B: focus binds the canonical Planning-IR task id');
+                const focusLinks = result.governance.links.filter(l => l.kind === 'related_to_focus');
+                assert.ok(focusLinks.length >= 1, 'B: related_to_focus is non-empty end-to-end');
+            } finally {
+                if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
+                resetCliModuleCache();
+                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+            }
+        }
+        console.log('✅ T-ce-compose-B real focus composes');
+```
+
+- [ ] **Step 2: Run to verify they fail (or reveal a real mismatch)**
+
+Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-compose|AssertionError" | head`
+Expected: FAIL before T2's service exists. Once T2 exists, these MUST pass without touching them — if either fails, the SERVICE is wrong (or a producer's shape was misread again). **Fix the service, never the test's expectation of the producer.**
+
+- [ ] **Step 3: No implementation of its own**
+
+This task adds no production code. If a composition test fails, apply the minimal fix to `code-perception.js` so the consumer reads what the producer really emits, and record the corrected shape in the plan's **Grounded reality** section so the next consumer inherits the fact.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add templates/cli/test/governance.js templates/cli/code-perception.js
+git commit -m "$(cat <<'EOF'
+test(code-perception): real producer->consumer composition tests (task:ce-compose)
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 4: `mem code` command group + unified exit model
 
 **Files:**
 - Create: `templates/cli/code-perception/cli.js`
@@ -958,7 +1081,8 @@ EOF
 
 **Interfaces:**
 - Consumes: `../code-perception.js#exploreCode` (T2); `../code-perception/status`, `../provider-loader`, `../provider-router` (for `mem code providers`/`status`); commander `program`.
-- Produces: `registerCodeCommands(program)` registering `mem code <providers|status|search|explore|callers|callees|impact|context|wiki>`. Exit codes: success/degraded → 0; internal invariant/security → 1 (`result.ok===false`); invalid args → 2 via a SCOPED `exitOverride` on the `code` group + every subcommand (commander's default is 1, so the override is required — it must NOT be placed on the root program or it would change every other `mem` command's exit codes). `wiki` subcommands delegate to T5's module.
+- Produces: `registerCodeCommands(program)` registering `mem code <providers|status|search|explore|callers|callees|impact|context>`. Exit codes: success/degraded → 0; internal invariant/security → 1 (`result.ok===false`); invalid args → 2 via a SCOPED `exitOverride` on the `code` group + every subcommand (commander's default is 1, so the override is required — it must NOT be placed on the root program or it would change every other `mem` command's exit codes).
+- **No `mem code wiki` subgroup in 4a.** It would `require('./wiki')`, which Phase 4b creates; registering it now would either brick the group or ship a command that always throws. Phase 4b adds the subgroup together with the module.
 
 - [ ] **Step 1: Write the failing test** — append after the T-ce-explore-B block. Run the **template** `memory.js` directly (NOT the mirror): `code-perception/cli.js` is not manifest-managed until Task 7, so a `sync-runtime-entry` mirror would omit it and `mem code` would be unknown. Running the template source exercises the real production registrar in place; mirror parity is proven separately in T7. `git init` so native-lite `getFiles` enumerates (degradation stays success-shaped either way, but this keeps the run realistic).
 
@@ -976,7 +1100,18 @@ EOF
             execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: runtime.workspaceRoot });
 
             const memCli = path.join(TEMPLATE_CLI_DIR, 'memory.js'); // template source, not the mirror
-            const childEnv = { ...process.env, EVO_LITE_ROOT: runtime.runtimeRoot };
+            // memory.js -> memory.service -> db.js -> require('better-sqlite3'), which is
+            // NOT a package dependency: it lives in the WORKSPACE RUNTIME's node_modules
+            // (.evo-lite/node_modules). Module resolution is file-relative, so a spawn of
+            // templates/cli/memory.js resolves up to the repo root and fails with
+            // MODULE_NOT_FOUND unless NODE_PATH points at that runtime. Established idiom:
+            // harness.js:18 and integration.js:650/678/705 do exactly this.
+            const childEnv = {
+                ...process.env,
+                EVO_LITE_ROOT: runtime.runtimeRoot,
+                NODE_PATH: [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH]
+                    .filter(Boolean).join(path.delimiter),
+            };
             const res = cp.spawnSync(process.execPath, [memCli, 'code', 'explore', 'engine selection', '--json'], {
                 cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8',
             });
@@ -1140,28 +1275,12 @@ function registerCodeCommands(program) {
             exitFor(result);
         });
 
-    // `mem code wiki` namespace — implemented in Task 5 (code-perception/wiki.js).
-    const wiki = code.command('wiki').description('Minimal Code Wiki (pure-derived projection).');
-    wiki.command('build')
-        .description('Build the Code Wiki under .evo-lite/generated/code-wiki/.')
-        .action(async () => {
-            const { buildCodeWiki } = require('./wiki');
-            const out = await buildCodeWiki({ projectRoot: require('../runtime').getWorkspaceRoot() });
-            console.log(`code wiki built: ${out.pages.length} page(s) at ${out.dir}`);
-        });
-    wiki.command('status')
-        .description('Show Code Wiki manifest status.')
-        .option('--json', 'Print JSON output')
-        .action(async options => {
-            const { getWikiStatus } = require('./wiki');
-            const st = getWikiStatus({ projectRoot: require('../runtime').getWorkspaceRoot() });
-            if (options.json) process.stdout.write(JSON.stringify(st, null, 2) + '\n');
-            else console.log(`code wiki: ${st.exists ? st.pageCount + ' page(s), built ' + st.generatedAt : 'not built'}`);
-        });
     code.action(() => code.outputHelp());
 
-    // Scope the exit-2 override to this group + its subcommands (incl. the nested
-    // `wiki` group) — never the root program. Applied AFTER all subcommands exist.
+    // Scope the exit-2 override to this group + its subcommands — never the root
+    // program (that would change every other `mem` command's exit codes). Applied
+    // AFTER all subcommands exist. The nested-group walk is kept so a future
+    // subgroup (e.g. `mem code wiki` in Phase 4b) is covered without a code change.
     const scoped = [code, ...code.commands];
     for (const c of code.commands) scoped.push(...(Array.isArray(c.commands) ? c.commands : []));
     for (const c of scoped) c.exitOverride(invalidArgsExit);
@@ -1206,7 +1325,7 @@ EOF
 
 ---
 
-### Task 4: `evo_code_explore` MCP tool
+### Task 5: `evo_code_explore` MCP tool
 
 **Files:**
 - Modify: `templates/cli/mcp-server.js` (append TOOLS entry + dispatch case + handler)
@@ -1344,636 +1463,77 @@ EOF
 
 ---
 
-### Task 5: Minimal Code Wiki (pure-derived projection)
+### Task 6: Manifest registration + 4a mirror closure
 
 **Files:**
-- Create: `templates/cli/code-perception/wiki.js`
-- Test: `templates/cli/test/governance.js` (append block `T-ce-wiki`)
+- Modify: `templates/cli/template-manifest.js` (register the 2 NEW managed files)
+- Test: `templates/cli/test/governance.js` (append block `T-ce-manifest-sync-4a`)
+- Mirror (generated, do NOT hand-edit): every managed file this plan changed. **Do not hand-maintain that list** — see below.
 
 **Interfaces:**
-- Consumes: `../code-perception.js#exploreCode` (the ONE service); `../runtime.js#getWorkspaceRoot`.
-- Produces:
-  - `async buildCodeWiki(opts) -> {dir, pages: string[], manifest}`. `opts = {projectRoot, now?}` (`now` is an injectable clock for the determinism test). Writes `.evo-lite/generated/code-wiki/{manifest.json, overview.md, current-focus.md, providers.md, modules/<id>.md (one per derived module), tasks/<id>.md}`. Module pages (spec §5): description / files / representative symbols / callers-callees summary / related tasks+commits / freshness. Task pages (spec §5): linkedFiles / resolved provider files / confirmed-derived-proposed links / related commits+tests / evidence / unresolved links. Pure-derived: reads only the service output (incl. `result.modules`/`result.files`) + Planning IR; writes ONLY under the generated dir; a fresh `rmSync(wikiDir)` precedes every build so a removed task/module never lingers; deleting the whole dir and rebuilding reproduces EVERY page byte-for-byte (deterministic ordering; the only clock value is the provenance `generatedAt`).
-  - `getWikiStatus(opts) -> {exists, pageCount, generatedAt, provider, dependencies}`.
-  - Every page starts with provenance frontmatter: `generatedBy / generatedAt / provider / providerVersion / indexedCommit / currentCommit / freshness / dependencies[]`.
+- Consumes: `sync-runtime-entry.js` (bootstrap-safe standalone entry); `template-manifest.js#{MANAGED_TEMPLATE_FAMILIES, buildManagedTemplateEntries}`.
+- Produces: `code-perception.js` + `code-perception/cli.js` registered as managed core-cli entries; a second `sync-runtime-entry` run reports zero changes; **every** managed core-cli file is byte-identical to its template.
+
+**Why no `AFFECTED = [...]` list:** two consecutive plan reviews miscounted it (9 vs the real 11 — `template-manifest.js` and `test/governance.js` are themselves managed and were both missed). A hand-maintained constant is exactly the thing that drifts. The mirror invariant is not "the files I remembered are identical" but **"every managed file is identical"** — so assert that directly, derived from the manifest itself. It is strictly stronger, cannot omit anything, and needs no maintenance when the task set changes.
 
 - [ ] **Step 1: Write the failing test** — append after the T-ce-mcp block:
 
 ```javascript
-        console.log('T-ce-wiki. Testing code wiki determinism (delete WHOLE dir + rebuild reproduces EVERY page) ...');
-        {
-            const { execFileSync } = require('node:child_process');
-            const wiki = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'wiki.js'));
-            const runtime = createTempRuntimeRoot('ce-wiki');
-            const planDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
-            fs.mkdirSync(planDir, { recursive: true });
-            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = 1;\n');
-            const FIXTURE_SHA = 'b'.repeat(40);
-            fs.writeFileSync(path.join(planDir, 'plan-ir.json'), JSON.stringify({
-                version: 'evo-plan-ir@1', specs: [], plans: [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }],
-                tasks: [
-                    // evidence ties task:x to the fixture commit -> Related commits must render the SHA.
-                    { id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md',
-                      linkedFiles: ['src/engine.js', 'src/missing.js'],
-                      evidence: [{ kind: 'test', symbols: ['selectEngine'], commitSha: FIXTURE_SHA }] },
-                    // An UNRELATED unfinished task: it must NOT be presented as the focus.
-                    { id: 'task:unrelated', title: 'Unrelated', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: [], evidence: [] },
-                ],
-                warnings: [],
-            }, null, 2), 'utf8');
-            // Persisted post-commit blob in its REAL shape ({commit, changedFiles}).
-            const cpDir = path.join(runtime.runtimeRoot, 'generated', 'code-perception');
-            fs.mkdirSync(cpDir, { recursive: true });
-            fs.writeFileSync(path.join(cpDir, 'post-commit-last-run.json'), JSON.stringify({
-                commit: FIXTURE_SHA, changedFiles: ['src/engine.js'],
-            }, null, 2), 'utf8');
-            // git init so native-lite enumerates src/engine.js -> a module page exists.
-            execFileSync('git', ['init', '-q'], { cwd: runtime.workspaceRoot });
-            execFileSync('git', ['config', 'user.email', 'test@evo.local'], { cwd: runtime.workspaceRoot });
-            execFileSync('git', ['config', 'user.name', 'evo-test'], { cwd: runtime.workspaceRoot });
-            execFileSync('git', ['add', '-A'], { cwd: runtime.workspaceRoot });
-            execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: runtime.workspaceRoot });
-
-            const fixedClock = () => '2026-07-16T00:00:00.000Z';
-            // Real backlog row shape ({checked, hash, ...}) -> focus resolves to task:x only.
-            const wikiActiveContext = { sections: { focus: 'Focus: task:x' }, summary: { focus: 'Focus: task:x' },
-                tasks: [{ hash: 'task:x', checked: false, line: '- [ ] [task:x] Engine', text: 'Engine' }], trajectory: [] };
-            const wikiDir = path.join(runtime.runtimeRoot, 'generated', 'code-wiki');
-            // Recursively snapshot EVERY page (path -> bytes), deterministically ordered.
-            function snapshot(dir) {
-                const out = {};
-                const walk = (d, rel) => {
-                    for (const name of fs.readdirSync(d).sort()) {
-                        const abs = path.join(d, name); const r = rel ? rel + '/' + name : name;
-                        if (fs.statSync(abs).isDirectory()) walk(abs, r);
-                        else out[r] = fs.readFileSync(abs);
-                    }
-                };
-                walk(dir, '');
-                return out;
-            }
-
-            await wiki.buildCodeWiki({ projectRoot: runtime.workspaceRoot, now: fixedClock, activeContext: wikiActiveContext });
-            const snap1 = snapshot(wikiDir);
-            // Required page set (spec §5): manifest + overview + current-focus + providers + a module + the task page.
-            assert.ok(snap1['manifest.json'] && snap1['overview.md'] && snap1['current-focus.md'] && snap1['providers.md'], 'core pages written');
-            assert.ok(Object.keys(snap1).some(p => /^modules\/.+\.md$/.test(p)), 'at least one modules/<id>.md page written');
-            assert.ok(snap1['tasks/task-x.md'], 'per-task page written');
-            const overview1 = snap1['overview.md'].toString('utf8');
-            assert.ok(/generatedBy:/.test(overview1) && /provider:/.test(overview1), 'pages carry provenance frontmatter');
-            assert.ok(/## Modules/.test(overview1), 'overview lists modules');
-            const taskPage = snap1['tasks/task-x.md'].toString('utf8');
-            for (const section of ['## Resolved provider files', '## Related commits', '## Related tests', '## Evidence', '## Unresolved links']) {
-                assert.ok(taskPage.includes(section), `task page has ${section}`);
-            }
-            assert.ok(/src\/missing\.js/.test(taskPage), 'unresolved (declared-but-absent) linked file is surfaced');
-            // The real commit graph must actually reach the pages (task via
-            // evidence.commitSha; module via commit.changedFiles ∩ module.files).
-            assert.ok(taskPage.includes(FIXTURE_SHA), 'task page Related commits carries the fixture SHA');
-            const modulePath = Object.keys(snap1).find(p => /^modules\/.+\.md$/.test(p));
-            assert.ok(snap1[modulePath].toString('utf8').includes(FIXTURE_SHA), 'module page Related commits carries the fixture SHA');
-            // current-focus.md shows ONLY the resolved focus — not every unfinished task.
-            const focusPage = snap1['current-focus.md'].toString('utf8');
-            assert.ok(focusPage.includes('task:x'), 'current-focus names the resolved focus task');
-            assert.ok(!focusPage.includes('task:unrelated'), 'current-focus must NOT list an unrelated unfinished task');
-            // Provenance reports the PROVIDER version, not the adapter version.
-            assert.ok(/providerVersion:/.test(overview1) && /adapterVersion:/.test(overview1),
-                'provenance carries providerVersion AND adapterVersion as distinct fields');
-
-            // Delete the WHOLE generated dir and rebuild — EVERY page must reproduce byte-identically.
-            fs.rmSync(wikiDir, { recursive: true, force: true });
-            assert.ok(!fs.existsSync(wikiDir), 'wiki dir deleted');
-            await wiki.buildCodeWiki({ projectRoot: runtime.workspaceRoot, now: fixedClock, activeContext: wikiActiveContext });
-            const snap2 = snapshot(wikiDir);
-            assert.deepStrictEqual(Object.keys(snap2).sort(), Object.keys(snap1).sort(), 'same page set after rebuild');
-            for (const p of Object.keys(snap1)) {
-                assert.ok(snap1[p].equals(snap2[p]), `delete-dir + rebuild reproduces ${p} byte-identically`);
-            }
-
-            const status = wiki.getWikiStatus({ projectRoot: runtime.workspaceRoot });
-            assert.strictEqual(status.exists, true, 'status reports built');
-            assert.ok(status.pageCount >= 5, 'status counts pages (overview/current-focus/providers/module/task)');
-            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
-        }
-        console.log('✅ T-ce-wiki code wiki determinism passed');
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-wiki|Cannot find module" | head`
-Expected: FAIL — `Cannot find module '.../code-perception/wiki.js'`.
-
-- [ ] **Step 3: Create `templates/cli/code-perception/wiki.js`**
-
-```javascript
-'use strict';
-
-// Minimal Code Wiki (spec §5) — a PURE-DERIVED, read-only projection of the ONE
-// Unified Explore service. Writes ONLY under .evo-lite/generated/code-wiki/.
-// No canonical human truth lives here: deleting the whole dir and rebuilding
-// reproduces every page byte-for-byte (deterministic ordering; the only clock
-// value is the provenance `generatedAt`, injectable via opts.now for tests).
-
-const fs = require('node:fs');
-const path = require('node:path');
-
-function slug(id) {
-    return String(id).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-}
-
-function frontmatter(fields) {
-    const lines = ['---'];
-    for (const [k, v] of Object.entries(fields)) {
-        if (Array.isArray(v)) lines.push(`${k}:` + (v.length ? '\n' + v.map(x => `  - ${x}`).join('\n') : ' []'));
-        else lines.push(`${k}: ${v === undefined || v === null ? '' : v}`);
-    }
-    lines.push('---', '');
-    return lines.join('\n');
-}
-
-function writeFileAtomic(filePath, content) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, content, 'utf8');
-}
-
-function provenanceFor(result, generatedAt) {
-    const p = result.providers[0] || {};
-    return {
-        generatedBy: 'evo-lite code-perception/wiki',
-        generatedAt,
-        provider: p.id || 'none',
-        // providerVersion is the PROVIDER's version (T2 Step 3b puts it on the row);
-        // adapterVersion is Evo-Lite's adapter and is a distinct field — reporting
-        // the adapter's version as the provider's would be a provenance lie.
-        providerVersion: p.providerVersion || 'unknown',
-        adapterVersion: p.adapterVersion || 'unknown',
-        indexedCommit: result.freshness.indexedCommit || 'unknown',
-        currentCommit: result.freshness.currentCommit || 'unknown',
-        freshness: `stale=${result.freshness.stale} dirty=${result.freshness.dirty}`,
-        dependencies: ['.evo-lite/generated/planning/plan-ir.json', '.evo-lite/active_context.md'],
-    };
-}
-
-async function buildCodeWiki(opts) {
-    const options = opts || {};
-    const projectRoot = options.projectRoot || require('../runtime').getWorkspaceRoot();
-    const generatedAt = typeof options.now === 'function' ? options.now() : new Date().toISOString();
-    const service = require('../code-perception');
-    // activeContext is forwarded so a caller/test can bind a real focus; without it
-    // a non-host projectRoot resolves to no focus (never the host's — see the service).
-    const result = await service.exploreCode('', {
-        includeSource: false, includeImpact: false, projectRoot,
-        activeContext: options.activeContext, config: options.config, registry: options.registry,
-    });
-
-    const wikiDir = path.join(projectRoot, '.evo-lite', 'generated', 'code-wiki');
-    // Fresh rebuild: clear any prior pages so a removed task/module never lingers.
-    fs.rmSync(wikiDir, { recursive: true, force: true });
-
-    const fm = provenanceFor(result, generatedAt);
-    const pages = [];
-    // Normalize the manifest's page paths to forward slashes so the bytes are
-    // identical regardless of host separator (Windows-first, but deterministic anywhere).
-    const write = (rel, body) => { const r = rel.split(path.sep).join('/'); writeFileAtomic(path.join(wikiDir, r), frontmatter(fm) + body); pages.push(r); };
-
-    const links = Array.isArray(result.governance.links) ? result.governance.links : [];
-    const modules = Array.isArray(result.modules) ? result.modules : [];
-    const knownFiles = new Set(Array.isArray(result.files) ? result.files : []);
-    const linksByKindFor = (entityId, kind) => links.filter(l => l.governanceEntityId === entityId && l.kind === kind);
-    const degradedCaps = result.providers.filter(p => p.degraded).map(p => `- ${p.id}${p.reason ? ` — ${p.reason}` : ''}`).join('\n') || '- (none degraded)';
-
-    // overview.md
-    const providersList = result.providers.map(p => `- ${p.id} (role ${p.role}, ready ${p.ready}${p.degraded ? ', degraded' : ''})`).join('\n') || '- none';
-    const modulesList = modules.map(m => `- \`${m.id}\` — ${m.files.length} file(s)${m.changed ? ' (changed)' : ''}`).join('\n') || '- (none)';
-    const changedModules = modules.filter(m => m.changed).map(m => `- \`${m.id}\``);
-    const readingList = result.recommendedReading.slice(0, 10).map(r => `- [${r.priority}] \`${r.path}\` — ${r.reason}`).join('\n') || '- (none)';
-    write('overview.md', [
-        '# Code Overview', '',
-        `Focus / provider status / freshness / modules for **${path.basename(projectRoot)}**.`, '',
-        '## Providers', providersList, '',
-        '## Freshness', `- stale: ${result.freshness.stale}`, `- dirty: ${result.freshness.dirty}`, '',
-        '## Modules', modulesList, '',
-        '## Recently changed', (changedModules.length ? changedModules.join('\n') : '- (none)'), '',
-        '## Degraded capabilities', degradedCaps, '',
-        '## Governance links', `- ${JSON.stringify(result.governance.linkSummary)}`, '',
-        '## Recommended reading', readingList, '',
-    ].join('\n'));
-
-    // current-focus.md — ONLY the canonical resolved focus (result.focus), never
-    // "every unfinished task": that would present unrelated backlog as the focus.
-    // When the service could not resolve a focus, say so and show its diagnostic.
-    const focus = result.focus || { entityId: null, resolved: false };
-    const focusEntity = focus.entityId
-        ? (result.governance.tasks || []).find(t => t.id === focus.entityId) || null
-        : null;
-    const focusDiag = result.diagnostics.find(d => ['focus-unresolved', 'focus-ambiguous', 'focus-id-unknown'].includes(d.code || ''));
-    write('current-focus.md', [
-        '# Current Focus', '',
-        focus.resolved
-            ? `- ${focus.entityId}${focusEntity ? ` — ${focusEntity.title || ''} (${focusEntity.status})` : ''}`
-            : `- (no resolved focus)${focusDiag ? ` — ${focusDiag.message || focusDiag.code}` : ''}`, '',
-        '## Focus-linked files',
-        (links.filter(l => l.kind === 'related_to_focus').map(l => `- ${l.codeReferenceId}`).join('\n')) || '- (none)', '',
-    ].join('\n'));
-
-    // providers.md
-    write('providers.md', [
-        '# Providers', '',
-        result.providers.map(p => `## ${p.id}\n- role: ${p.role}\n- ready: ${p.ready}\n- indexState: ${p.indexState}\n- compatibility: ${p.compatibility}\n- degraded: ${p.degraded}${p.reason ? `\n- reason: ${p.reason}` : ''}`).join('\n\n') || '(none)', '',
-    ].join('\n'));
-
-    // modules/<module-id>.md — spec §5: description / files / representative symbols /
-    // callers-callees summary / related tasks+commits / freshness. Deterministic by id.
-    const tasksByFile = new Map();
-    for (const t of (result.governance.tasks || [])) {
-        for (const f of (Array.isArray(t.linkedFiles) ? t.linkedFiles : [])) {
-            if (!tasksByFile.has(f)) tasksByFile.set(f, []);
-            tasksByFile.get(f).push(t.id);
-        }
-    }
-    for (const m of modules) {
-        const moduleFiles = new Set(m.files);
-        const repSymbols = result.matches.filter(s => s.filePath && moduleFiles.has(s.filePath)).slice(0, 10);
-        const rels = result.relationships.filter(r => (r.source && moduleFiles.has(r.source.filePath)) || (r.target && moduleFiles.has(r.target.filePath)));
-        const relatedTasks = [...new Set([...m.taskIds, ...m.files.flatMap(f => tasksByFile.get(f) || [])])].sort();
-        // Module -> commits via commit.changedFiles ∩ module.files. (NOT via
-        // linksByKindFor(taskId,'changed_by_commit'): those links are keyed by
-        // governanceEntityId 'commit:<sha>', so a task-id lookup is always empty.)
-        const relatedCommits = (result.governance.commits || [])
-            .filter(c => (Array.isArray(c.changedFiles) ? c.changedFiles : []).some(f => moduleFiles.has(f)))
-            .map(c => c.sha).sort();
-        write(path.join('modules', `${slug(m.id)}.md`), [
-            `# Module: ${m.id}`, '',
-            `Derived module grouping ${m.files.length} file(s)${m.changed ? ' (has working-tree changes)' : ''}.`, '',
-            '## Files', (m.files.length ? m.files.map(f => `- \`${f}\``).join('\n') : '- (none)'), '',
-            '## Representative symbols', (repSymbols.length ? repSymbols.map(s => `- ${s.name} \`${s.filePath || ''}\``).join('\n') : '- (none — no structural provider)'), '',
-            '## Callers / callees summary', `- ${rels.length} relationship edge(s) touch this module`, '',
-            '## Related tasks', (relatedTasks.length ? relatedTasks.map(id => `- ${id}`).join('\n') : '- (none)'), '',
-            '## Related commits', (relatedCommits.length ? relatedCommits.map(c => `- ${c}`).join('\n') : '- (none)'), '',
-            '## Freshness', `- stale: ${result.freshness.stale}`, `- dirty: ${result.freshness.dirty}`, '',
-        ].join('\n'));
-    }
-
-    // tasks/<id>.md — spec §5: linkedFiles / resolved provider files / confirmed-
-    // derived-proposed links / related commits+tests / evidence / unresolved links.
-    const sortedTasks = [...(result.governance.tasks || [])].sort((a, b) => String(a.id).localeCompare(String(b.id)));
-    for (const t of sortedTasks) {
-        const taskLinks = links.filter(l => l.governanceEntityId === t.id);
-        const byStatus = s => taskLinks.filter(l => l.status === s).map(l => `  - ${l.kind} → ${l.codeReferenceId} (conf ${l.confidence})`).join('\n') || '  - (none)';
-        const linkedFiles = Array.isArray(t.linkedFiles) ? t.linkedFiles : [];
-        const resolvedFiles = linkedFiles.filter(f => knownFiles.has(f));
-        const unresolvedFiles = linkedFiles.filter(f => !knownFiles.has(f)); // declared but no provider file fact
-        // Task -> commits via evidence.taskId + evidence.commitSha, resolved against
-        // governance.commits. (NOT via linksByKindFor(t.id,'changed_by_commit'):
-        // changed_by_commit is keyed by 'commit:<sha>', never a task id.)
-        const taskCommitShas = new Set((result.governance.evidence || [])
-            .filter(e => e.taskId === t.id && e.commitSha).map(e => e.commitSha));
-        const commits = (result.governance.commits || [])
-            .filter(c => taskCommitShas.has(c.sha))
-            .map(c => `- ${c.sha}`);
-        const tests = linksByKindFor(t.id, 'verified_by_test').map(l => `- ${l.codeReferenceId}`);
-        const archives = linksByKindFor(t.id, 'evidenced_by_archive').map(l => `- ${l.codeReferenceId}`);
-        const evidenceEntries = (result.governance.evidence || []).filter(e => e.taskId === t.id)
-            .map(e => `- ${e.kind || 'evidence'}${Array.isArray(e.symbols) ? ` symbols=[${e.symbols.join(', ')}]` : ''}${e.commitSha ? ` commit=${e.commitSha}` : ''}`);
-        write(path.join('tasks', `${slug(t.id)}.md`), [
-            `# ${t.id}`, '', `**Title:** ${t.title || ''}`, `**Status:** ${t.status}`, '',
-            '## Linked files', (linkedFiles.length ? linkedFiles.map(f => `- \`${f}\``).join('\n') : '- (none)'), '',
-            '## Resolved provider files', (resolvedFiles.length ? resolvedFiles.map(f => `- \`${f}\``).join('\n') : '- (none)'), '',
-            '## Confirmed links', byStatus('confirmed'), '',
-            '## Derived links', byStatus('derived'), '',
-            '## Proposed links', byStatus('proposed'), '',
-            '## Related commits', (commits.length ? commits.join('\n') : '- (none)'), '',
-            '## Related tests', (tests.length ? tests.join('\n') : '- (none)'), '',
-            '## Evidence', (evidenceEntries.length || archives.length ? [...evidenceEntries, ...archives].join('\n') : '- (none)'), '',
-            '## Unresolved links', (unresolvedFiles.length ? unresolvedFiles.map(f => `- \`${f}\` (declared, no provider file fact)`).join('\n') : '- (none)'), '',
-        ].join('\n'));
-    }
-
-    // manifest.json — deterministic (sorted pages).
-    const manifest = {
-        version: 'evo-code-wiki@1', generatedAt, provider: fm.provider, providerVersion: fm.providerVersion,
-        indexedCommit: fm.indexedCommit, currentCommit: fm.currentCommit,
-        freshness: result.freshness, dependencies: fm.dependencies, pages: [...pages].sort(),
-    };
-    writeFileAtomic(path.join(wikiDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-
-    return { dir: wikiDir, pages: [...pages].sort(), manifest };
-}
-
-function getWikiStatus(opts) {
-    const options = opts || {};
-    const projectRoot = options.projectRoot || require('../runtime').getWorkspaceRoot();
-    const manifestPath = path.join(projectRoot, '.evo-lite', 'generated', 'code-wiki', 'manifest.json');
-    if (!fs.existsSync(manifestPath)) return { exists: false, pageCount: 0 };
-    try {
-        const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-        return { exists: true, pageCount: (m.pages || []).length, generatedAt: m.generatedAt, provider: m.provider, dependencies: m.dependencies || [] };
-    } catch (_) {
-        return { exists: false, pageCount: 0 };
-    }
-}
-
-module.exports = { buildCodeWiki, getWikiStatus };
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-wiki"`
-Expected: PASS — `✅ T-ce-wiki code wiki determinism passed`.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add templates/cli/code-perception/wiki.js templates/cli/test/governance.js
-git commit -m "$(cat <<'EOF'
-feat(code-perception): minimal pure-derived Code Wiki projection (task:ce-wiki)
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
-EOF
-)"
-```
-
----
-
-### Task 6: Inspector Code page + read-only `/api/code/*`
-
-**Files:**
-- Modify: `templates/cli/inspector.js` (export pure response mappers + add API branches in `handleApi` + a Code tab in `renderHtml`)
-- Test: `templates/cli/test/governance.js` (append block `T-ce-inspector`)
-
-**Interfaces:**
-- Consumes: `code-perception.js#exploreCode` (its `providers` rows already carry `capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit` — enriched in T2 Step 3b); `code-perception/wiki.js#getWikiStatus`; existing `getWorkspaceRoot`.
-- Produces:
-  - Pure, exported response mappers (so the ok/`ok:false` mapping is unit-testable without HTTP): `codeStatusResponse(result, wikiStatus) -> {status, body}`, `codeFocusResponse(result) -> {status, body}`, `codeTaskResponse(result, id) -> {status, body}`. A `result.ok === false` (true fatal) maps to HTTP **503** (never 200 — same unified error model as the CLI/MCP paths); a missing `?id=` maps to **400**.
-  - Read-only endpoints on the existing zero-dep server, dispatched by prefix on the full `req.url` (query string included):
-    - `GET /api/code/status` → `{providers (with capabilities/versions/commits), freshness, links, wiki, diagnostics}`.
-    - `GET /api/code/focus` → `{focusLinks, focusFiles, resolvedSymbols, tasks, diagnostics}`.
-    - `GET /api/code/task?id=<task-id>` → `{taskId, links, task, diagnostics}`.
-  - All never auto-install/index a provider (read-only service only), and surface diagnostics on provider failure. Missing `?id=` on `/task` → `400`; `result.ok===false` → `503`; NOT a 500 for either (500 remains only for a thrown/unexpected error).
-  - Inspector HTML gains a **Code** tab rendering: selected provider + version, indexed/current commit, stale/dirty, capabilities, current-focus files + resolved symbols, Task-to-Code links, Code Wiki entry, degraded guidance.
-
-- [ ] **Step 1: Write the failing test** — append after the T-ce-wiki block:
-
-```javascript
-        console.log('T-ce-inspector. Testing Inspector Code page + /api/code/* read-only endpoints + fatal mapping ...');
-        {
-            const inspector = require(path.join(TEMPLATE_CLI_DIR, 'inspector.js'));
-            const http = require('http');
-            const { execFileSync } = require('node:child_process');
-            const runtime = createTempRuntimeRoot('ce-inspector');
-            const planDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
-            fs.mkdirSync(planDir, { recursive: true });
-            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = 1;\n');
-            fs.writeFileSync(path.join(planDir, 'plan-ir.json'), JSON.stringify({
-                version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [{ id: 'task:x', title: 'X', status: 'todo', linkedFiles: ['src/engine.js'], evidence: [] }], warnings: [],
-            }, null, 2), 'utf8');
-            execFileSync('git', ['init', '-q'], { cwd: runtime.workspaceRoot });
-            execFileSync('git', ['config', 'user.email', 'test@evo.local'], { cwd: runtime.workspaceRoot });
-            execFileSync('git', ['config', 'user.name', 'evo-test'], { cwd: runtime.workspaceRoot });
-            execFileSync('git', ['add', '-A'], { cwd: runtime.workspaceRoot });
-            execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: runtime.workspaceRoot });
-
-            // Pure mapper: a true fatal (ok:false) MUST map to a non-200 (503), never 200.
-            const fatal = inspector.codeStatusResponse({ ok: false, diagnostics: [{ code: 'internal-error', message: 'boom' }] }, { exists: false });
-            assert.notStrictEqual(fatal.status, 200, 'ok:false maps to a non-200 status');
-            assert.strictEqual(fatal.status, 503, 'ok:false maps specifically to 503');
-
-            const prevRoot = process.env.EVO_LITE_ROOT;
-            process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
-            const { server, port } = await inspector.startServer({ port: 0 });
-            const get = (p) => new Promise((resolve, reject) => {
-                http.get({ host: '127.0.0.1', port, path: p }, res => {
-                    let b = ''; res.on('data', c => b += c); res.on('end', () => resolve({ status: res.statusCode, body: b }));
-                }).on('error', reject);
-            });
-            try {
-                const st = await get('/api/code/status');
-                assert.strictEqual(st.status, 200, '/api/code/status returns 200');
-                const stj = JSON.parse(st.body);
-                assert.ok(Array.isArray(stj.providers) && stj.freshness, 'status carries providers + freshness');
-                const nl = stj.providers.find(p => /native-lite/.test(p.id || ''));
-                assert.ok(nl && typeof nl.capabilities === 'object', 'provider row carries capabilities (spec §6)');
-                assert.ok(nl && 'providerVersion' in nl && 'adapterVersion' in nl, 'provider row carries providerVersion + adapterVersion');
-
-                const focus = await get('/api/code/focus');
-                assert.strictEqual(focus.status, 200, '/api/code/focus returns 200');
-                const fj = JSON.parse(focus.body);
-                assert.ok(Array.isArray(fj.focusFiles) && Array.isArray(fj.resolvedSymbols), 'focus carries focusFiles + resolvedSymbols (spec §6)');
-
-                const task = await get('/api/code/task?id=task:x');
-                assert.strictEqual(task.status, 200, '/api/code/task?id= returns 200');
-                assert.strictEqual(JSON.parse(task.body).taskId, 'task:x', 'task endpoint echoes id');
-                const bad = await get('/api/code/task');
-                assert.strictEqual(bad.status, 400, 'missing ?id= is a 400 invalid-arg, not a 500');
-
-                // The served HTML page must expose a Code tab wired to the code renderer.
-                const page = await get('/');
-                assert.strictEqual(page.status, 200, 'index page served');
-                assert.ok(/showTab\('code'\)/.test(page.body), 'page has a Code tab button');
-                assert.ok(/\/api\/code\/status/.test(page.body), 'page client fetches /api/code/status');
-            } finally {
-                server.close();
-                if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
-                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
-            }
-        }
-        console.log('✅ T-ce-inspector code endpoints passed');
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-inspector|404|unknown api|codeStatusResponse" | head`
-Expected: FAIL — `inspector.codeStatusResponse` is not yet exported (and `/api/code/status` hits the fallthrough 404).
-
-- [ ] **Step 3a: Add exported response mappers + API branches** to `templates/cli/inspector.js`.
-
-First, define pure mappers near the other helpers (module scope) and export them, so the unified error mapping (`ok:false` → 503, missing id → 400) is unit-testable without HTTP:
-
-```javascript
-// Read-only Code-perception response mappers. A result.ok === false is a true
-// fatal (spec §3.1 unified error model) → 503, never a 200 success envelope.
-function codeStatusResponse(result, wikiStatus) {
-    if (result && result.ok === false) return { status: 503, body: { error: 'code perception failed', diagnostics: result.diagnostics || [] } };
-    return { status: 200, body: {
-        providers: result.providers, freshness: result.freshness,
-        links: result.governance.linkSummary, wiki: wikiStatus || { exists: false }, diagnostics: result.diagnostics,
-    } };
-}
-function codeFocusResponse(result) {
-    if (result && result.ok === false) return { status: 503, body: { error: 'code perception failed', diagnostics: result.diagnostics || [] } };
-    const focusLinks = result.governance.links.filter(l => l.kind === 'related_to_focus');
-    return { status: 200, body: {
-        focusLinks,
-        focusFiles: result.recommendedReading.filter(r => r.kind === 'focus' || r.kind === 'linked-file').map(r => r.path),
-        resolvedSymbols: result.matches.map(m => ({ name: m.name, filePath: m.filePath || null })),
-        tasks: result.governance.tasks, diagnostics: result.diagnostics,
-    } };
-}
-function codeTaskResponse(result, id) {
-    if (!id) return { status: 400, body: { error: 'missing required query parameter: id' } };
-    if (result && result.ok === false) return { status: 503, body: { error: 'code perception failed', diagnostics: result.diagnostics || [] } };
-    return { status: 200, body: {
-        taskId: id,
-        links: result.governance.links.filter(l => l.governanceEntityId === id),
-        task: (result.governance.tasks || []).find(t => t.id === id) || null,
-        diagnostics: result.diagnostics,
-    } };
-}
-```
-
-Add `codeStatusResponse`, `codeFocusResponse`, `codeTaskResponse` to `module.exports`.
-
-Then add the API branches in `handleApi`, inside the `try {` block, before the `} catch (error) {` line (after the existing `/api/drift` branch):
-
-```javascript
-        if (url.startsWith('/api/code/')) {
-            const service = require('./code-perception');
-            const { getWikiStatus } = require('./code-perception/wiki');
-            const root = getWorkspaceRoot();
-            const parsed = require('url').parse(url, true);
-            const route = parsed.pathname;
-            if (route === '/api/code/status') {
-                return service.exploreCode('', { projectRoot: root, includeSource: false, includeImpact: false })
-                    .then(r => { const m = codeStatusResponse(r, getWikiStatus({ projectRoot: root })); send(m.status, m.body); })
-                    .catch(e => send(500, { error: e.message }));
-            }
-            if (route === '/api/code/focus') {
-                return service.exploreCode('', { projectRoot: root, includeSource: false, includeImpact: false })
-                    .then(r => { const m = codeFocusResponse(r); send(m.status, m.body); })
-                    .catch(e => send(500, { error: e.message }));
-            }
-            if (route === '/api/code/task') {
-                const id = parsed.query && parsed.query.id;
-                if (!id) { const m = codeTaskResponse(null, null); return send(m.status, m.body); }
-                return service.exploreCode(id, { projectRoot: root, focusId: id, includeSource: false, includeImpact: false })
-                    .then(r => { const m = codeTaskResponse(r, id); send(m.status, m.body); })
-                    .catch(e => send(500, { error: e.message }));
-            }
-            return send(404, { error: 'unknown code api', path: route });
-        }
-```
-
-*(These branches `return` a Promise from `handleApi`; the existing synchronous branches ignore the return value, so mixing is safe — the response is sent inside `.then`. A THROWN/unexpected error still maps to 500; only the modeled fatal `ok:false` maps to 503.)*
-
-- [ ] **Step 3b: Add a Code tab** to `renderHtml()`. Find the tab-button strip and the `load('timeline');` bootstrap (near line 305). Add a `code` tab button alongside the others (search the existing markup for the `<button` tab pattern used for `timeline`/`planning` and add one more that calls `showTab('code')`), and register a loader entry so `showTab('code')` fetches `/api/code/status`:
-
-```html
-        <button onclick="showTab('code')">Code</button>
-```
-
-and in the client-side `load()`/`showTab()` dispatch, add a `code` case that fetches `/api/code/status` and renders the spec §6 fields (selected provider + version, indexed/current commit, stale/dirty, capabilities, links, wiki entry, degraded guidance). Reuse the existing `escapeHtml` + fetch idiom. Renderer body to insert into the inline `<script>` map that `load(name)` reads:
-
-```javascript
-      code: { url: '/api/code/status', render: d => {
-        var p = (d.providers||[])[0] || {};
-        var caps = Object.keys((p.capabilities)||{}).filter(function(k){return p.capabilities[k];}).join(', ');
-        var degraded = (d.providers||[]).filter(function(x){return x.degraded;}).map(function(x){return x.id+(x.reason?(' — '+x.reason):'');});
-        return '<h3>Code Perception</h3>'
-          + '<p>Provider: ' + escapeHtml((p.id||'none')) + ' v' + escapeHtml(String(p.providerVersion||p.adapterVersion||'?')) + '</p>'
-          + '<p>Commit: indexed ' + escapeHtml(String(p.indexedCommit||'?')) + ' / current ' + escapeHtml(String(p.currentCommit||'?')) + '</p>'
-          + '<p>Freshness: stale=' + d.freshness.stale + ' dirty=' + d.freshness.dirty + '</p>'
-          + '<p>Capabilities: ' + escapeHtml(caps || '(none)') + '</p>'
-          + '<p>Links: ' + escapeHtml(JSON.stringify(d.links)) + '</p>'
-          + '<p>Wiki: ' + (d.wiki && d.wiki.exists ? (d.wiki.pageCount + ' pages') : 'not built') + '</p>'
-          + '<p>Degraded: ' + escapeHtml(degraded.length ? degraded.join('; ') : '(none)') + '</p>'; } },
-```
-
-*(Match the exact object/registry shape the existing inline script uses for `timeline`/`planning`. The endpoint contract + the Code-tab wiring are BOTH pinned by the test: it asserts the served page contains `showTab('code')` and fetches `/api/code/status`.)*
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-inspector"`
-Expected: PASS — `✅ T-ce-inspector code endpoints passed`.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add templates/cli/inspector.js templates/cli/test/governance.js
-git commit -m "$(cat <<'EOF'
-feat(inspector): read-only Code page + /api/code/* over unified service (task:ce-inspector)
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
-EOF
-)"
-```
-
----
-
-### Task 7: Manifest registration + mirror parity convergence
-
-**Files:**
-- Modify: `templates/cli/template-manifest.js` (register 3 NEW managed files)
-- Mirror (generated, do NOT hand-edit) — the convergence updates **every** managed mirror file this plan touched: **11 files**, not only the 3 new ones. Affected managed set (all core-cli):
-  - New (3): `.evo-lite/cli/code-perception.js`, `.evo-lite/cli/code-perception/cli.js`, `.evo-lite/cli/code-perception/wiki.js`
-  - Modified by earlier tasks (6): `.evo-lite/cli/code-perception/normalize.js` (T1), `.evo-lite/cli/code-perception/status.js` (T2), `.evo-lite/cli/memory.js` (T3), `.evo-lite/cli/mcp-server.js` + `.evo-lite/cli/mcp-validate.js` (T4), `.evo-lite/cli/inspector.js` (T6)
-  - Modified by THIS task (2): `.evo-lite/cli/template-manifest.js`, `.evo-lite/cli/test/governance.js` — both are managed core-cli entries; every task appends to `test/governance.js`, and this task edits the manifest itself. Omitting them leaves uncommitted mirror drift.
-- Test: `templates/cli/test/governance.js` (append block `T-ce-manifest-sync`)
-
-**Interfaces:**
-- Consumes: `sync-runtime-entry.js` (bootstrap-safe standalone entry); `template-manifest.js#{MANAGED_TEMPLATE_FAMILIES, buildManagedTemplateEntries}`.
-- Produces: the 3 new files registered as managed core-cli entries; a second `sync-runtime-entry` run reports zero changes; **every** affected mirror file (all **11** above) is byte-identical to its template (Node `Buffer.equals`). The generated lock `.evo-lite/generated/runtime-mirror.lock.json` is NOT a committed artifact (it lives under the git-ignored `generated/` tree).
-
-- [ ] **Step 1: Write the failing test** — append after the T-ce-inspector block:
-
-```javascript
-        console.log('T-ce-manifest-sync. Testing new files are managed + mirror byte-identical (in a TEMP workspace) ...');
+        console.log('T-ce-manifest-sync-4a. New files managed + EVERY managed mirror byte-identical ...');
         {
             const cp = require('child_process');
             const manifest = require(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'));
             const core = manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli');
-            const NEW_FILES = ['code-perception.js', 'code-perception/cli.js', 'code-perception/wiki.js'];
-            // Every managed file THIS PLAN touched must converge + stay byte-identical — not
-            // only the 3 new ones. (Byte-checking just the new files would let a stale
-            // modified mirror — e.g. inspector.js or memory.js — pass silently.)
-            // 11 files: the 3 new + 8 modified. `template-manifest.js` and
-            // `test/governance.js` ARE managed core-cli entries and THIS task edits
-            // both — omitting them would leave real, uncommitted mirror drift.
-            const AFFECTED = [...NEW_FILES,
-                'code-perception/normalize.js', 'code-perception/status.js', 'memory.js',
-                'mcp-server.js', 'mcp-validate.js', 'inspector.js',
-                'template-manifest.js', 'test/governance.js'];
-            assert.strictEqual(AFFECTED.length, 11, 'closure covers all 11 managed files this plan touches');
-            for (const f of AFFECTED) {
+
+            // The 2 files 4a introduces must be registered (wiki.js belongs to 4b).
+            for (const f of ['code-perception.js', 'code-perception/cli.js']) {
                 assert.ok(core.files.includes(f), `${f} must be a managed core-cli template`);
             }
+            assert.ok(!core.files.includes('code-perception/wiki.js'),
+                'code-wiki is Phase 4b — 4a must not register it');
 
-            // Converge into a TEMP workspace — NEVER mutate the real repo's .evo-lite/cli
-            // during a test. Seed from the template entry (its __dirname is the template
-            // cli dir), writing the mirror under the temp workspace via EVO_LITE_WORKSPACE_ROOT.
-            const runtime = createTempRuntimeRoot('ce-manifest');
+            // Converge into a TEMP workspace — never mutate the real repo's mirror in a test.
+            const runtime = createTempRuntimeRoot('ce-manifest-4a');
             const entry = path.join(TEMPLATE_CLI_DIR, 'sync-runtime-entry.js');
             const run = () => JSON.parse(cp.execFileSync(process.execPath, [entry, '--json'], {
-                cwd: runtime.workspaceRoot, env: { ...process.env, EVO_LITE_WORKSPACE_ROOT: runtime.workspaceRoot }, encoding: 'utf8',
+                cwd: runtime.workspaceRoot,
+                env: { ...process.env, EVO_LITE_WORKSPACE_ROOT: runtime.workspaceRoot },
+                encoding: 'utf8',
             }));
-            run();                         // first seed
-            const second = run();          // must converge
+            run();                      // seed from the template entry
+            const second = run();       // must converge
             assert.strictEqual(second.copied.length, 0, 'second sync-runtime-entry run must report zero copies (converged)');
 
+            // EVERY managed core-cli file — derived from the manifest, not a hand list.
             const mirrorCliDir = path.join(runtime.workspaceRoot, '.evo-lite', 'cli');
-            for (const f of AFFECTED) {
-                const tpl = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, ...f.split('/')));
-                const mir = fs.readFileSync(path.join(mirrorCliDir, ...f.split('/')));
-                assert.ok(tpl.equals(mir), `${f} mirror must be byte-identical to template`);
+            let checked = 0;
+            for (const rel of core.files) {
+                const tpl = path.join(TEMPLATE_CLI_DIR, ...rel.split('/'));
+                const mir = path.join(mirrorCliDir, ...rel.split('/'));
+                if (!fs.existsSync(tpl)) continue;   // manifest may list optional/other-family assets
+                assert.ok(fs.existsSync(mir), `${rel} must exist in the runtime mirror`);
+                assert.ok(fs.readFileSync(tpl).equals(fs.readFileSync(mir)), `${rel} mirror must be byte-identical to template`);
+                checked += 1;
             }
+            assert.ok(checked >= 50, `sanity: the managed set must be non-trivial (checked ${checked})`);
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
-        console.log('✅ T-ce-manifest-sync mirror parity passed');
+        console.log('✅ T-ce-manifest-sync-4a mirror parity passed');
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-manifest-sync|must be a managed" | head`
-Expected: FAIL — `code-perception.js must be a managed core-cli template` (not yet in the manifest list).
+Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-manifest-sync-4a|must be a managed" | head`
+Expected: FAIL — `code-perception.js must be a managed core-cli template`.
 
-- [ ] **Step 3a: Register the files** in `templates/cli/template-manifest.js`. In the `core-cli` family `files` array, add the three entries next to the existing `code-perception/*` group (e.g. right after `'code-perception/provider-router.js',`):
+- [ ] **Step 3a: Register the files** in `templates/cli/template-manifest.js`. In the `core-cli` family `files` array, add the two entries next to the existing `code-perception/*` group (e.g. right after `'code-perception/provider-router.js',`):
 
 ```javascript
             'code-perception.js',
             'code-perception/cli.js',
-            'code-perception/wiki.js',
 ```
 
-- [ ] **Step 3b: Converge the mirror** from the template entry (first-run seed), then let the standalone entry converge to zero:
+- [ ] **Step 3b: Converge the real mirror** — seed from the template entry, then let the standalone entry converge to zero:
 
 ```bash
 node templates/cli/sync-runtime-entry.js
@@ -1981,81 +1541,89 @@ node ./.evo-lite/cli/sync-runtime-entry.js
 node ./.evo-lite/cli/sync-runtime-entry.js
 ```
 
-Expected on the final run: `copied: 0` and `unchanged: <N>` (converged; zero changes).
+Expected on the final run: `copied: 0` (converged).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run both suites DIRECTLY and confirm exit 0**
 
-Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-manifest-sync"`
-Expected: PASS — `✅ T-ce-manifest-sync mirror parity passed`.
-
-Then run BOTH full suites DIRECTLY (no `| tail`, which would mask a non-zero exit) and confirm each exits 0 — the template suite AND the mirrored runtime suite (the latter proves the mirror is coherent and executable):
+No `| tail` — a pipe masks the exit code:
 
 ```bash
-node templates/cli/test.js all;              echo "template suite exit: $?"
-node ./.evo-lite/cli/test.js all;            echo "runtime suite exit:  $?"
+node templates/cli/test.js all;   echo "template suite exit: $?"
+node ./.evo-lite/cli/test.js all; echo "runtime suite exit:  $?"
 ```
 
-Expected: both print `exit: 0`, and both include the passing `T-ce-*` blocks. A non-zero exit on either is a blocker — read the full output (not a tail) to find the failing block.
+Expected: both print `exit: 0` and include the passing `T-ce-*` blocks. The runtime run proves the mirror is coherent and executable.
 
-- [ ] **Step 5: Commit** — stage the templates this task edited plus EVERY affected mirror file the convergence rewrote (all **11**). Do NOT stage the generated lock: `.evo-lite/generated/runtime-mirror.lock.json` lives under the git-ignored `generated/` tree and is not a committed artifact.
+- [ ] **Step 5: Commit** — stage the templates this task edited plus **whatever mirror files the convergence actually rewrote**. Derive that list from git, do not type it from memory:
 
 ```bash
-git add templates/cli/template-manifest.js templates/cli/test/governance.js \
-  .evo-lite/cli/code-perception.js .evo-lite/cli/code-perception/cli.js .evo-lite/cli/code-perception/wiki.js \
-  .evo-lite/cli/code-perception/normalize.js .evo-lite/cli/code-perception/status.js \
-  .evo-lite/cli/memory.js .evo-lite/cli/mcp-server.js .evo-lite/cli/mcp-validate.js .evo-lite/cli/inspector.js \
-  .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
-git status --short   # verify: no .evo-lite/generated/**, no stray files, no leftover .evo-lite/cli drift
+git status --short .evo-lite/cli   # <- this is the authoritative list
+git add templates/cli/template-manifest.js templates/cli/test/governance.js
+git add .evo-lite/cli              # every mirror file the sync touched
+git status --short                 # verify: no .evo-lite/generated/** staged
 git commit -m "$(cat <<'EOF'
-feat(manifest): register unified code-explore files + converge runtime mirror (task:ce-manifest-sync)
+feat(manifest): register unified explore agent-surface files + converge runtime mirror (task:ce-manifest-sync)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 EOF
 )"
 ```
 
+The generated lock `.evo-lite/generated/runtime-mirror.lock.json` is git-ignored and is NOT a committed artifact — `git add .evo-lite/cli` cannot reach it, and `git status --short` confirms.
+
 ---
 
 ## Self-Review
 
-### Spec coverage per Acceptance Criterion
+### Spec coverage — what 4a closes, and what it deliberately leaves open
 
-| AC | Description (abbrev) | Satisfied by |
-|----|----------------------|--------------|
-| `ac-unified-explore` | one shared service returns freshness/providers/normalized refs/relationships/optional impact+source/governance/diagnostics/explained recommended reading; native-lite degradation success-shaped | **T2** — the `T-ce-explore` block is split into **A** (native-lite degradation: `ok:true`, `matches:[]`, `capability-unavailable` diagnostic, non-dangling `declares_file`, floored derived links, recommended reading contains the fixture) and **B** (injected structural provider: matches/relationships/impact/source + `implements_task` derived via M1/M2 with confidence > 0). Same-service reuse pinned by T3/T4/T5 all calling `exploreCode`. + **T1** (M1/M2 seam) + **T3** (`mem code explore --json` verifier). |
-| `ac-mcp-code-explore` | MCP `evo_code_explore` on the same service; missing/unindexed/stale/ambiguous/unsupported return successful guidance not isError | **T4** (tool + handler) + T4 adds it to `mcp-validate.js` (the AC's verifier `node ./.evo-lite/cli/mcp-validate.js`). |
-| `ac-minimal-code-wiki` | `wiki build` produces provider/overview/current-focus/module/task pages with freshness+dependencies; pure-derived read-only; delete-dir + rebuild reproduces | **T5** (`buildCodeWiki`/`getWikiStatus` + determinism test) + T3 (`mem code wiki build|status`). |
-| `ac-inspector-code-surface` | Inspector Code page + `/api/code/status|focus|task?id=` read-only, never auto-install, diagnostics on failure | **T6** (routes + page + test). Verifier `node ./.evo-lite/cli/test.js governance` covers `T-ce-inspector`. |
-| `ac-mirror-parity` | new files + mirrors byte-identical; second `sync-runtime-entry` zero changes; uses standalone entry not `memory.js sync-runtime` | **T7** (manifest + convergence + Buffer.equals over all **11** affected managed files, converged in a temp workspace; generated lock not committed). |
+| AC (spec §9) | 4a status | Satisfied by |
+|----|----|----|
+| `ac-unified-explore` | **closed by 4a** | T2 (service) + T1 (M1/M2 seam) + T3 (real composition) + T4 (`mem code explore --json` verifier). Scenarios: **A** native-lite degradation (`ok:true`, `matches:[]`, `capability-unavailable`, non-dangling `declares_file`, floored derived links), **B** injected structural provider (matches/relationships/impact/source + `implements_task` derived via M1/M2 with confidence > 0), **C** ready-provider throw → `ok:false` + `adapter-exception`. |
+| `ac-mcp-code-explore` | **closed by 4a** | T5 (tool + exported handler; `ok:false` → throw → `isError:true`; capability gaps stay success-shaped) + `mcp-validate.js` registration (the AC's verifier). |
+| `ac-mirror-parity` | **partially closed** | T6 covers every managed file 4a touches, derived from the manifest. 4b re-runs closure for the files it adds. |
+| `ac-minimal-code-wiki` | **OPEN — parked** | `plan:code-wiki-inspector-projection` |
+| `ac-inspector-code-surface` | **OPEN — parked** | `plan:code-wiki-inspector-projection` |
+
+**The parent spec must NOT be marked done when this plan completes.** Two of its five ACs stay genuinely open. Honest state: `plan:unified-code-explore-agent-surface-mvp = done`, `spec:unified-code-explore-wiki-projection = adopted/active`, `plan:code-wiki-inspector-projection = parked`.
 
 ### Spec section coverage
 
-- §2 UnifiedExploreResult shape (incl. `files`/`modules`) → T2 result assembly. §2.1 ExploreQuery → T2 `ExploreOpts`. §2.2 processing steps 1–10 → T2 orchestration (commented per step; focus resolved by exact order, governance built from files+symbols+focus+commits+acceptance+evidence + persisted-graph merge). §2.3 recommended-reading order → T2 `rankRecommendedReading` (8 tiers, each with `reason`). §2.4 M1/M2 → T1 + wired in T2. §3 CLI contract → T3. §3.1 unified exit/error model → T3 `exitFor` (ok:false→1) + scoped `exitOverride` (invalid args→2), T4 MCP (`ok:false`→throw→isError:true), T6 Inspector (`ok:false`→503). §4 MCP → T4. §5 Code Wiki (overview/current-focus/providers/modules/tasks + provenance) → T5. §6 Inspector (provider/version/commit/capabilities/focus files/symbols/links/degraded) → T6. §7 directory layout + mirror parity → T5/T6 files + T7 (all 9 affected mirror files byte-checked). §8 phases → T1–T4 (4a) / T5–T7 (4b). §9 ACs → table above.
+§2 `UnifiedExploreResult` (incl. `files`/`modules`/`focus`) → T2. §2.1 ExploreQuery → T2 `ExploreOpts`. §2.2 steps 1–10 → T2 orchestration (focus resolved by exact order; governance built from files+symbols+focus+commits+acceptance+evidence + persisted-graph merge). §2.3 recommended-reading order → T2 `rankRecommendedReading` (8 tiers, each with a `reason`). §2.4 M1/M2 → T1, wired in T2. §3 CLI contract → T4. §3.1 unified exit/error model → T2 fatal gate (`FATAL_CODES`) + T4 `exitFor` (ok:false→1) and scoped `exitOverride` (invalid args→2) + T5 MCP (`ok:false`→throw→isError). §4 MCP → T5. §7 mirror parity → T6. §8 phases → this plan IS Phase 4a. §5 Code Wiki / §6 Inspector → **not in this plan** (4b).
 
-### Placeholder scan
-
-No `TODO` / "add error handling" / "similar to Task N" / bare prose-for-code. Every code step carries complete, runnable code. The only intentionally light spot is T6 Step 3b's Inspector HTML tab wiring, which is presentation-only; its behavioral contract (`/api/code/*` responses) is fully specified and pinned by `T-ce-inspector`, and the exact inline-script object shape is instructed to match the file's existing `timeline`/`planning` idiom (which the implementer reads in-place). This is a deliberate "follow the established pattern" instruction, not a missing-code placeholder.
+`files`/`modules` remain in the T2 result shape even though only 4b renders them: they are cheap, derived from file facts the service already fetches, and dropping them would force a T2 signature change when 4b activates. `focus` is consumed by 4a itself (T3-B asserts it).
 
 ### Type / signature consistency
 
 - `toSymbolReferences(matches, opts?)` — defined T1, consumed T2 (`{focusId}`). ✔
 - `normalizeDerivedLinkConfidence(links)` / `DERIVED_LINK_CONFIDENCE_FLOOR` — defined T1, consumed T1 test + T2. ✔
-- `exploreCode(query, opts) -> UnifiedExploreResult{query,ok,freshness,providers,matches,relationships,impact?,source,files,modules,focus,governance,recommendedReading,diagnostics}` — defined T2, consumed identically in T3 (CLI), T4 (MCP), T5 (Wiki), T6 (Inspector). `files`/`modules` feed T5 module pages + unresolved-link detection; `focus` is the canonical resolved focus T5/T6 render. `ok:false` comes from the T2 fatal gate (`FATAL_CODES`), which is what makes T4's isError / T6's 503 / T3's exit 1 reachable. ✔
-- Verified real shapes the plan binds to (each previously mis-read): `post-commit-last-run.json` = `{commit, changedFiles}` (NOT `commits`/`headSha`); active-context backlog rows = `{checked, hash, line, text}` (NOT `id`); `changed_by_commit` entityId = `commit:<sha>` (NOT a task id) → task commits via `evidence.commitSha`, module commits via `changedFiles ∩ module.files`. ✔
-- `buildGovernanceLinks` input keys used (`planIR.tasks`, `fileReferences`, `symbolReferences`, `focusReferences`, `commits`, `acceptanceDependencies`, `evidence`) all match the API map; the linker derives `implements_task` via `evidence.symbols`/commit diff-ranges (NOT `task.symbols`, which the scanner never populates). `selectProvider` request `{capability, preferredProvider?}` + `selection.candidate.registration.provider` match the router. `buildCodePerceptionStatus(context,{candidates,links})` matches status.js (rows enriched in T6). `readActiveContext()` matches memory.service.js; the service overrides it via `opts.activeContext` DI (host-bound `ACTIVE_CONTEXT_PATH`). ✔
-- `buildCodeWiki(opts{projectRoot,now?}) -> {dir,pages,manifest}` / `getWikiStatus(opts) -> {exists,pageCount,...}` — defined T5, consumed T3 + T6. ✔
-- `codeStatusResponse/codeFocusResponse/codeTaskResponse(result,...) -> {status,body}` — defined + exported T6, consumed by the T6 HTTP branches + unit-tested for `ok:false`→503. ✔
-- `handleCodeExplore(args, deps?)` — defined + exported T4, `ok:false`→throw→isError:true. ✔
-- `registerCodeCommands(program)` — defined T3, thunked in memory.js T3; scoped `exitOverride` maps invalid args→2. ✔
+- `exploreCode(query, opts) -> UnifiedExploreResult{query,ok,freshness,providers,matches,relationships,impact?,source,files,modules,focus,governance,recommendedReading,diagnostics}` — defined T2, consumed identically in T3 (composition), T4 (CLI), T5 (MCP). ✔
+- `handleCodeExplore(args, deps?)` — defined + exported T5; `deps` exists solely so the test can inject an `ok:false` service deterministically. ✔
+- `registerCodeCommands(program)` — defined T4, thunked in `memory.js` via `safeRegister`; scoped `exitOverride` maps invalid args → 2 (commander's default is 1). ✔
+- `buildGovernanceLinks` inputs used (`planIR.tasks`, `fileReferences`, `symbolReferences`, `focusReferences`, `commits`, `acceptanceDependencies`, `evidence`) match the API map; `implements_task` derives via `evidence.symbols` / commit diff-ranges (NOT `task.symbols`, which the scanner never populates). ✔
+
+### Verified producer shapes this plan binds to
+
+Each was mis-assumed at least once during review; all are now recorded in **Grounded reality** and pinned by T3:
+
+- `post-commit-last-run.json` = `{commit, changedFiles}` — NOT `commits`/`headSha`.
+- active-context backlog rows = `{checked, hash, line, text}` — and `hash` is a free-form human slug (`fresh-plan-progress`, `06fd`), **not** a Planning-IR task id. The backlog is a scratchpad, not a task registry.
+- Real FOCUS text = `"<plan title>: <task title>"` (written by `advanceFocusFromCommit`) — contains **no** task id. Exact-title match is the only working automatic bridge.
+- `changed_by_commit` entityId = `commit:<sha>` — never a task id.
+- `templates/cli/memory.js` cannot be spawned without `NODE_PATH` pointing at the workspace runtime's `node_modules` (`better-sqlite3` lives there, not in the package deps) — existing idiom: `harness.js:18`, `integration.js:650/678/705`.
+
+### Placeholder scan
+
+No `TODO` / "add error handling" / "similar to Task N" / prose-instead-of-code. Every code step carries complete, runnable code.
 
 ---
 
 ## Execution Handoff
 
-**Plan complete and saved to `docs/plans/unified-code-explore-wiki-projection-mvp.md`. Two execution options:**
+**Two execution options:**
 
-**1. Subagent-Driven (recommended)** — dispatch a fresh subagent per task (T1→T7), review between tasks, fast iteration. REQUIRED SUB-SKILL: superpowers:subagent-driven-development.
+**1. Subagent-Driven (recommended)** — dispatch a fresh subagent per task (T1→T6), review between tasks. REQUIRED SUB-SKILL: superpowers:subagent-driven-development.
 
 **2. Inline Execution** — execute tasks in this session with checkpoints. REQUIRED SUB-SKILL: superpowers:executing-plans.
 
-**Which approach?**
+On completion: **freeze feature work** and start the external Validation Sprint (publish, 5-minute install path, 3-minute `mem code explore` + MCP demo, 3–5 external users). Do NOT start `plan:code-wiki-inspector-projection` until that sprint produces evidence for it.

@@ -157,7 +157,21 @@ templates/cli/
 ```
 Runtime mirror `.evo-lite/cli/**` 必须 byte-identical;第二次同步零变更。**同步入口用 canonical bootstrap-safe 独立入口 `node ./.evo-lite/cli/sync-runtime-entry.js`,而非完整 `memory.js sync-runtime`**——③ 新增多个受管文件(`code-perception.js`、`code-perception/wiki.js`、`mcp-server.js`/`inspector.js` 改动),正是 [[project-sync-runtime-selfbrick]] 的触发场景;独立入口不经完整 CLI 命令注册,天然免疫 self-brick。首轮可用 template 入口 `node templates/cli/sync-runtime-entry.js` 播种,再由 mirror 入口收敛到零变更。
 
+## Linked Plans
+
+- plan:unified-code-explore-agent-surface-mvp
+- plan:code-wiki-inspector-projection
+
 ## 8. Delivery Phases
+
+两个 Phase 已拆为**两份独立 plan**,以便 4a 可单独交付并接受外部验证,而不必为"关闭本 spec"被迫实现尚无需求证据的人类投影面:
+
+| Phase | Plan | 状态 |
+|---|---|---|
+| 4a | `plan:unified-code-explore-agent-surface-mvp` | **active** |
+| 4b | `plan:code-wiki-inspector-projection` | **parked**(激活条件见该 plan) |
+
+**4a 完成时本 spec 不得标记 done** —— `ac-minimal-code-wiki` 与 `ac-inspector-code-surface` 仍真实开放,spec 保持 `adopted`/active。只有 4b 完成后本 spec 方可 done。
 
 ### Phase 4a — Agent + CLI surface
 `mem code`(providers/status/search/explore/callers/callees/impact/context)、Unified Explore service、`evo_code_explore` MCP,共用同一 service;Native Lite degradation 成功形态。
