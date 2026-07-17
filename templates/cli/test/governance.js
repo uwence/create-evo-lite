@@ -7116,6 +7116,193 @@ async function runChildRuntimeTests() {
             for (const l of floored) assert.ok(!(l.status === 'derived' && !(l.confidence > 0)), 'no derived link may end at 0');
         }
         console.log('✅ T-ce-seam M1/M2 seam passed');
+
+        const { execFileSync } = require('node:child_process');
+        function gitInit(root) {
+            // Minimal repo so native-lite `git ls-files` enumerates the tree.
+            execFileSync('git', ['init', '-q'], { cwd: root });
+            execFileSync('git', ['config', 'user.email', 'test@evo.local'], { cwd: root });
+            execFileSync('git', ['config', 'user.name', 'evo-test'], { cwd: root });
+            execFileSync('git', ['add', '-A'], { cwd: root });
+            execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: root });
+        }
+        function seedPlanIR(runtimeRoot, tasks, plans) {
+            const planDir = path.join(runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(planDir, { recursive: true });
+            fs.writeFileSync(path.join(planDir, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: plans || [], tasks: tasks || [], warnings: [],
+            }, null, 2), 'utf8');
+        }
+
+        console.log('T-ce-explore-A. Unified explore — native-lite degradation is success-shaped ...');
+        {
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-explore-a');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+            // Persisted post-commit blob in its REAL shape ({commit, changedFiles}) —
+            // this is the ONLY commit source explore has (it never shells `git log`).
+            const cpDir = path.join(runtime.runtimeRoot, 'generated', 'code-perception');
+            fs.mkdirSync(cpDir, { recursive: true });
+            const FIXTURE_SHA = 'a'.repeat(40);
+            fs.writeFileSync(path.join(cpDir, 'post-commit-last-run.json'), JSON.stringify({
+                commit: FIXTURE_SHA, changedFiles: ['src/engine.js'],
+            }, null, 2), 'utf8');
+
+            // No codegraph configured -> native-lite fallback. `symbols` absent -> matches [].
+            // activeContext is injected so the host repo's focus never leaks into the fixture.
+            // FOCUS text uses the REAL production shape "<plan title>: <task title>" written by
+            // advanceFocusFromCommit — it contains NO task id, so the exact-title bridge is what
+            // must resolve it. The backlog rows carry a realistic free-form human slug: they are
+            // deliberately IRRELEVANT to focus resolution and must not influence the result
+            // (the backlog is a scratchpad, not a task registry — see Grounded reality).
+            const result = await svc.exploreCode('engine selection', {
+                projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: true,
+                activeContext: {
+                    sections: { focus: 'Demo Plan: Engine' },
+                    summary: { focus: 'Demo Plan: Engine' },
+                    tasks: [{ hash: 'fresh-plan-progress', checked: false, line: '- [ ] [fresh-plan-progress] Example backlog item', text: 'Example backlog item' }],
+                    trajectory: [],
+                },
+            });
+
+            assert.strictEqual(result.ok, true, 'A: capability gap must be success-shaped (ok:true)');
+            assert.strictEqual(result.matches.length, 0, 'A: no structural provider -> zero symbol matches');
+            // The persisted commit must actually reach governance (blob key is `commit`).
+            assert.strictEqual(result.governance.commits.length, 1, 'A: persisted post-commit blob yields exactly one commit');
+            assert.strictEqual(result.governance.commits[0].sha, FIXTURE_SHA, 'A: governance.commits carries the fixture SHA');
+            const changedLinks = result.governance.links.filter(l => l.kind === 'changed_by_commit');
+            assert.ok(changedLinks.length >= 1, 'A: changed_by_commit links built from the persisted commit + file facts');
+            assert.ok(changedLinks.every(l => l.governanceEntityId === `commit:${FIXTURE_SHA}`),
+                'A: changed_by_commit is keyed by commit:<sha> (NOT a task id)');
+            assert.strictEqual(result.focus.entityId, 'task:x',
+                'A: focus resolves through the exact task title in REAL FOCUS text; the backlog hash is irrelevant to resolution');
+            assert.ok(result.diagnostics.some(d => (d.code || '') === 'capability-unavailable'),
+                'A: a capability-unavailable diagnostic explains the missing symbols capability');
+            const nl = result.providers.find(p => /native-lite/.test(p.id || ''));
+            assert.ok(nl && nl.ready === true, 'A: native-lite provider present and ready');
+            // declares_file (conf 1.0) from task.linkedFiles ∩ native-lite file facts; and NO dangling link.
+            const declares = result.governance.links.filter(l => l.kind === 'declares_file');
+            assert.ok(declares.length >= 1, 'A: declares_file link derived from linkedFiles + native-lite file facts');
+            // No dangling: every link points at a real code-ref id (file facts / matches).
+            for (const l of result.governance.links) {
+                assert.ok(/^code-ref:/.test(l.codeReferenceId), 'A: every link points at a real code-ref id (no dangling)');
+            }
+            // No derived link may carry 0 (M2 wired through the service).
+            for (const l of result.governance.links) {
+                assert.ok(!(l.status === 'derived' && !(l.confidence > 0)), 'A: service must floor derived links (M2)');
+            }
+            assert.ok(result.recommendedReading.length >= 1, 'A: recommendedReading non-empty');
+            assert.ok(result.recommendedReading.some(r => /engine\.js$/.test(r.path)), 'A: recommendedReading contains the fixture file');
+            for (const r of result.recommendedReading) assert.ok(typeof r.reason === 'string' && r.reason.length > 0, 'A: every reading item explains why');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-explore-A native-lite degradation passed');
+
+        console.log('T-ce-explore-B. Unified explore — injected structural provider drives the full path ...');
+        {
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-explore-b');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            // evidence.symbols names the symbol -> implements_task derived fires (linker rule);
+            // M2 then floors its confidence > 0.
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'],
+                   evidence: [{ kind: 'test', symbols: ['selectEngine'] }] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+
+            // A structural provider shaped to the SERVICE call sites (NOT the shared
+            // fixture-provider.js, whose getCallers returns a bare array by ①'s contract).
+            const PID = 'provider:fixture-structural';
+            const structuralStatus = {
+                providerId: PID, adapterVersion: '0.0.1', providerVersion: '9.9.9', available: true, ready: true,
+                indexState: 'ready', freshness: 'fresh', dirty: 'clean', compatibility: 'supported',
+                capabilities: { files: false, symbols: true, source: true, callers: true, callees: true, impact: true, affectedTests: false, modules: false },
+                diagnostics: [],
+            };
+            const structuralProvider = {
+                id: PID, name: 'Fixture Structural', adapterVersion: '0.0.1', capabilities: structuralStatus.capabilities,
+                async check() { return { available: true, ready: true, installed: true, indexState: 'ready' }; },
+                async getStatus() { return structuralStatus; },
+                // RAW matches -> the service normalizes via normalizeSearchResult(status, raw).
+                async search() { return { query: 'engine', matches: [{ providerEntityId: 'sym:selectEngine', name: 'selectEngine', kind: 'function', filePath: 'src/engine.js', lineRange: [1, 1] }], diagnostics: [] }; },
+                async getCallers() { return { relationships: [{ providerId: PID, source: { name: 'main', filePath: 'src/main.js' }, target: { name: 'selectEngine', filePath: 'src/engine.js' }, kind: 'called_by', confidence: 0.9 }], diagnostics: [] }; },
+                async getCallees() { return { relationships: [], diagnostics: [] }; },
+                // RAW impact -> the service normalizes via normalizeImpactResult(status, raw).
+                async impact() { return { target: { name: 'selectEngine', filePath: 'src/engine.js' }, downstream: [{ name: 'main', filePath: 'src/main.js' }], risk: 'medium', diagnostics: [] }; },
+                async getEntity() { return { reference: { name: 'selectEngine', filePath: 'src/engine.js' }, content: 'function selectEngine(){ return 1; }', truncated: false, diagnostics: [] }; },
+            };
+            const registry = Object.assign({}, require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader')).DEFAULT_REGISTRY,
+                { [PID]: { role: 'structural-primary', create: () => structuralProvider } });
+            const config = { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } };
+
+            const result = await svc.exploreCode('engine', {
+                projectRoot: runtime.workspaceRoot, config, registry, includeSource: true, includeImpact: true,
+                // Real FOCUS shape ("<plan title>: <task title>"); no backlog rows needed —
+                // focus never comes from the backlog. T3-B covers the real parser end-to-end.
+                activeContext: { sections: { focus: 'Demo Plan: Engine' }, summary: { focus: 'Demo Plan: Engine' }, tasks: [], trajectory: [] },
+            });
+
+            assert.strictEqual(result.ok, true, 'B: ok:true');
+            assert.ok(result.matches.length >= 1, 'B: structural provider yields symbol matches');
+            assert.ok(result.matches.every(m => /^code-ref:/.test(m.id)), 'B: matches are normalized CodeReferences');
+            assert.ok(result.relationships.length >= 1, 'B: callers relationships present');
+            assert.ok(result.relationships.every(r => r.source && r.target && typeof r.kind === 'string'), 'B: relationships normalized');
+            assert.ok(result.impact && Array.isArray(result.impact.downstream) && result.impact.downstream.length >= 1, 'B: impact shape with downstream');
+            assert.ok(['low', 'medium', 'high', 'unknown'].includes(result.impact.risk), 'B: impact carries a risk level');
+            assert.ok(result.source.length >= 1 && typeof result.source[0].excerpt === 'string', 'B: source excerpt present');
+            // implements_task derived (via evidence.symbols) MUST exist and carry confidence > 0 (M1 produced the symbolRef; M2 floored it).
+            const derived = result.governance.links.filter(l => l.kind === 'implements_task' && l.status === 'derived');
+            assert.ok(derived.length >= 1, 'B: implements_task derived link exists (M1 bridge fed the linker)');
+            assert.ok(derived.every(l => l.confidence > 0), 'B: derived link confidence floored > 0 (M2)');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-explore-B injected structural provider passed');
+
+        console.log('T-ce-explore-C. Unified explore — adapter exception is FATAL (ok:false) ...');
+        {
+            // The service itself must generate ok:false for an adapter/invariant break.
+            // T4/T5 only prove the SURFACE mapping given an ok:false; without this the
+            // production service would never produce one and those mappings are dead code.
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-explore-c');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = 1;\n');
+            seedPlanIR(runtime.runtimeRoot, [], []);
+            gitInit(runtime.workspaceRoot);
+
+            const PID = 'provider:exploding';
+            const status = {
+                providerId: PID, adapterVersion: '0.0.1', providerVersion: '9.9.9', available: true, ready: true,
+                indexState: 'ready', freshness: 'fresh', dirty: 'clean', compatibility: 'supported',
+                // symbols ONLY -> a throw here has no same-capability fallback.
+                capabilities: { files: false, symbols: true, source: false, callers: false, callees: false, impact: false },
+                diagnostics: [],
+            };
+            const exploding = {
+                id: PID, name: 'Exploding', adapterVersion: '0.0.1', capabilities: status.capabilities,
+                async check() { return { available: true, ready: true, installed: true, indexState: 'ready' }; },
+                async getStatus() { return status; },
+                async search() { throw new Error('adapter blew up'); },
+            };
+            const registry = Object.assign({}, require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader')).DEFAULT_REGISTRY,
+                { [PID]: { role: 'structural-primary', create: () => exploding } });
+
+            const result = await svc.exploreCode('engine', {
+                projectRoot: runtime.workspaceRoot,
+                config: { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } },
+                registry, activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+
+            assert.strictEqual(result.ok, false, 'C: a ready provider throwing is FATAL -> ok:false (not success-shaped)');
+            assert.ok(result.diagnostics.some(d => (d.code || '') === 'adapter-exception'),
+                'C: diagnostics carry adapter-exception');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-explore-C adapter-exception fatal passed');
 }
 
 module.exports = { runGovernanceTests };
