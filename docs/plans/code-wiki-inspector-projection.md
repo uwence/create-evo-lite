@@ -722,18 +722,20 @@ EOF
             const second = run();
             assert.strictEqual(second.copied.length, 0, 'second sync-runtime-entry run must report zero copies (converged)');
 
-            // EVERY managed core-cli file — derived from the manifest, never a hand list.
+            // EVERY managed core-cli entry — derived from the manifest, never a hand list.
+            // No skipping and no `>= N` gate: a missing template is itself a defect, and an
+            // approximate count would let a skipped entry pass (see 4a's T6 for the same rule).
             const mirrorCliDir = path.join(runtime.workspaceRoot, '.evo-lite', 'cli');
             let checked = 0;
             for (const rel of core.files) {
                 const tpl = path.join(TEMPLATE_CLI_DIR, ...rel.split('/'));
                 const mir = path.join(mirrorCliDir, ...rel.split('/'));
-                if (!fs.existsSync(tpl)) continue;
+                assert.ok(fs.existsSync(tpl), `${rel} is declared as managed but the template file is missing`);
                 assert.ok(fs.existsSync(mir), `${rel} must exist in the runtime mirror`);
                 assert.ok(fs.readFileSync(tpl).equals(fs.readFileSync(mir)), `${rel} mirror must be byte-identical to template`);
                 checked += 1;
             }
-            assert.ok(checked >= 50, `sanity: the managed set must be non-trivial (checked ${checked})`);
+            assert.strictEqual(checked, core.files.length, 'every core-cli manifest entry must be checked');
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-manifest-sync-4b mirror parity passed');

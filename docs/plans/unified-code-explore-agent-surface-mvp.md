@@ -270,7 +270,7 @@ EOF
   - `async exploreCode(query: string, opts?: ExploreOpts) -> UnifiedExploreResult`. `ExploreOpts = {focusId?, preferredProvider?, includeSource?, includeImpact?, includeGovernance?, maxResults?, maxSourceChars?, projectRoot?, config?, registry?, activeContext?, commits?, acceptanceDependencies?}`. `projectRoot`/`config`/`registry`/`activeContext`/`commits`/`acceptanceDependencies` are DI seams for tests and callers — `activeContext` overrides the host-bound `memory.service.readActiveContext()` (which is pinned to a module-load `ACTIVE_CONTEXT_PATH`, so a foreign `projectRoot` with no injected `activeContext` gets an EMPTY context + diagnostic, never the host's focus). `commits`/`acceptanceDependencies` feed the ② linker's Layer-1/Layer-2 inputs; when omitted, `commits` is read from the persisted post-commit run (explore never shells `git log`). Never throws; internal exceptions become diagnostics + `result.ok=false` only for true invariant breaks.
   - Reads (best-effort, may be absent): `<root>/.evo-lite/generated/code-perception/governance-links.json` (persisted graph — merged, deduped by link id, so `changed_by_commit` links survive into explore) and `.../post-commit-last-run.json`, whose REAL shape is `{ commit: '<headSha>', changedFiles: [...] }` (verified in `post-commit-code-perception.js` — it writes `commit`, there is NO `commits` or `headSha` key; reading those would silently yield zero commits).
   - `rankRecommendedReading(inputs) -> ReadingItem[]` where `ReadingItem = {path, kind, reason, priority, confidence}` sorted by §2.3 order.
-  - `UnifiedExploreResult = {query, ok, freshness, providers, matches, relationships, impact?, source, files, modules, focus, governance, recommendedReading, diagnostics}` (spec §2). `focus = {entityId, taskId, resolved}` — the CANONICAL resolved focus; the Wiki/Inspector must render this rather than re-deriving focus (e.g. "all unfinished tasks" is not the focus). `ok:false` is returned for the §3.1 FATAL set only (`adapter-exception`, `security-violation`, `unparseable-response`, `internal-error`) — capability gaps stay `ok:true`. `freshness = {stale, dirty, indexedCommit?, currentCommit?}`. `governance = {specs, plans, tasks, commits, evidence, links, linkSummary}`. `files = string[]` (sorted repo-relative paths from native-lite file facts). `modules = [{id, files:string[], taskIds:string[], changed}]` (declared moduleId, else top-level path segment). Both feed the Code Wiki's module pages + unresolved-link detection (T5).
+  - `UnifiedExploreResult = {query, ok, freshness, providers, matches, relationships, impact?, source, files, modules, focus, governance, recommendedReading, diagnostics}` (spec §2). `focus = {entityId, taskId, resolved}` — the CANONICAL resolved focus; the Wiki/Inspector must render this rather than re-deriving focus (e.g. "all unfinished tasks" is not the focus). `ok:false` is returned for the §3.1 FATAL set only (`adapter-exception`, `security-violation`, `unparseable-response`, `internal-error`) — capability gaps stay `ok:true`. `freshness = {stale, dirty, indexedCommit?, currentCommit?}`. `governance = {specs, plans, tasks, commits, evidence, links, linkSummary}`. `files = string[]` (sorted repo-relative paths from native-lite file facts). `modules = [{id, files:string[], taskIds:string[], changed}]` (declared moduleId, else top-level path segment). Both are produced here but consumed only by the parked Phase 4b Wiki (module pages + unresolved-link detection); they stay in the shape so activating 4b needs no T2 signature change.
 
 - [ ] **Step 1: Write the failing test** — append inside `runGovernanceTests()` after the T-ce-seam block. THREE scenarios (a single test cannot exercise all provider realities). **Scenario A** = the native-lite degradation dogfood (the common host state — no structural provider; also pins the real post-commit blob shape + the real backlog `hash` shape); **Scenario B** = an injected structural fixture provider (proves the full symbol/relationship/impact/source path + the M1/M2 seams end-to-end); **Scenario C** = a ready provider that throws, proving the SERVICE itself produces the `ok:false` fatal that T4/T6's surface mappings depend on. All `git init` the temp workspace because native-lite `getFiles` runs `git ls-files --cached --others --exclude-standard` and returns `files:[]` + a `git-enumeration-failed` diagnostic when the root is not a repo — so without a real repo the file facts (and every `declares_file` link) would be empty and the asserts could never pass.
 
@@ -311,12 +311,20 @@ EOF
             }, null, 2), 'utf8');
 
             // No codegraph configured -> native-lite fallback. `symbols` absent -> matches [].
-            // Inject activeContext in its REAL parseBacklogTasks shape ({checked, hash, line, text})
-            // so the host repo's focus never leaks in AND the unique-active-task path is exercised.
+            // activeContext is injected so the host repo's focus never leaks into the fixture.
+            // FOCUS text uses the REAL production shape "<plan title>: <task title>" written by
+            // advanceFocusFromCommit — it contains NO task id, so the exact-title bridge is what
+            // must resolve it. The backlog rows carry a realistic free-form human slug: they are
+            // deliberately IRRELEVANT to focus resolution and must not influence the result
+            // (the backlog is a scratchpad, not a task registry — see Grounded reality).
             const result = await svc.exploreCode('engine selection', {
                 projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: true,
-                activeContext: { sections: { focus: 'Focus: task:x' }, summary: { focus: 'Focus: task:x' },
-                    tasks: [{ hash: 'task:x', checked: false, line: '- [ ] [task:x] Engine', text: 'Engine' }], trajectory: [] },
+                activeContext: {
+                    sections: { focus: 'Demo Plan: Engine' },
+                    summary: { focus: 'Demo Plan: Engine' },
+                    tasks: [{ hash: 'fresh-plan-progress', checked: false, line: '- [ ] [fresh-plan-progress] Example backlog item', text: 'Example backlog item' }],
+                    trajectory: [],
+                },
             });
 
             assert.strictEqual(result.ok, true, 'A: capability gap must be success-shaped (ok:true)');
@@ -328,7 +336,8 @@ EOF
             assert.ok(changedLinks.length >= 1, 'A: changed_by_commit links built from the persisted commit + file facts');
             assert.ok(changedLinks.every(l => l.governanceEntityId === `commit:${FIXTURE_SHA}`),
                 'A: changed_by_commit is keyed by commit:<sha> (NOT a task id)');
-            assert.strictEqual(result.focus.entityId, 'task:x', 'A: focus resolves to the canonical task via the real backlog hash shape');
+            assert.strictEqual(result.focus.entityId, 'task:x',
+                'A: focus resolves through the exact task title in REAL FOCUS text; the backlog hash is irrelevant to resolution');
             assert.ok(result.diagnostics.some(d => (d.code || '') === 'capability-unavailable'),
                 'A: a capability-unavailable diagnostic explains the missing symbols capability');
             const nl = result.providers.find(p => /native-lite/.test(p.id || ''));
@@ -391,8 +400,9 @@ EOF
 
             const result = await svc.exploreCode('engine', {
                 projectRoot: runtime.workspaceRoot, config, registry, includeSource: true, includeImpact: true,
-                activeContext: { sections: { focus: 'Focus: task:x' }, summary: { focus: 'Focus: task:x' },
-                    tasks: [{ hash: 'task:x', checked: false, line: '- [ ] [task:x] Engine', text: 'Engine' }], trajectory: [] },
+                // Real FOCUS shape ("<plan title>: <task title>"); no backlog rows needed —
+                // focus never comes from the backlog. T3-B covers the real parser end-to-end.
+                activeContext: { sections: { focus: 'Demo Plan: Engine' }, summary: { focus: 'Demo Plan: Engine' }, tasks: [], trajectory: [] },
             });
 
             assert.strictEqual(result.ok, true, 'B: ok:true');
@@ -453,7 +463,7 @@ EOF
         console.log('✅ T-ce-explore-C adapter-exception fatal passed');
 ```
 
-> **Cross-surface reuse (spec Global Constraint "NO duplicate logic"):** Scenario B proves the service produces the full structural shape. The "MCP/CLI/Wiki consume the SAME service" half of ac-unified-explore is asserted in T-ce-cli (T3), T-ce-mcp (T4), and T-ce-wiki (T5), each of which `require`s `code-perception.js#exploreCode` and asserts against its result — none re-implements provider orchestration.
+> **Cross-surface reuse (spec Global Constraint "NO duplicate logic"):** Scenario B proves the shared service produces the full structural result. **T4** proves the CLI consumes that service; **T5** proves MCP consumes the same service. Each `require`s `code-perception.js#exploreCode` and asserts against its result — neither re-implements provider orchestration. Wiki/Inspector consumption is intentionally deferred to the parked Phase 4b plan and is NOT an acceptance requirement here.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1084,7 +1094,7 @@ EOF
 - Produces: `registerCodeCommands(program)` registering `mem code <providers|status|search|explore|callers|callees|impact|context>`. Exit codes: success/degraded → 0; internal invariant/security → 1 (`result.ok===false`); invalid args → 2 via a SCOPED `exitOverride` on the `code` group + every subcommand (commander's default is 1, so the override is required — it must NOT be placed on the root program or it would change every other `mem` command's exit codes).
 - **No `mem code wiki` subgroup in 4a.** It would `require('./wiki')`, which Phase 4b creates; registering it now would either brick the group or ship a command that always throws. Phase 4b adds the subgroup together with the module.
 
-- [ ] **Step 1: Write the failing test** — append after the T-ce-explore-B block. Run the **template** `memory.js` directly (NOT the mirror): `code-perception/cli.js` is not manifest-managed until Task 7, so a `sync-runtime-entry` mirror would omit it and `mem code` would be unknown. Running the template source exercises the real production registrar in place; mirror parity is proven separately in T7. `git init` so native-lite `getFiles` enumerates (degradation stays success-shaped either way, but this keeps the run realistic).
+- [ ] **Step 1: Write the failing test** — append after the T-ce-compose-B block. Run the **template** `memory.js` directly (NOT the mirror): `code-perception/cli.js` is not manifest-managed until **Task 6**, so a `sync-runtime-entry` mirror would omit it and `mem code` would be unknown. Running the template source exercises the real production registrar in place; mirror parity is proven separately in **T6**. `git init` so native-lite `getFiles` enumerates (degradation stays success-shaped either way, but this keeps the run realistic).
 
 ```javascript
         console.log('T-ce-cli. Testing `mem code explore --json` success-shaped exit + exit-2 on bad args ...');
@@ -1309,7 +1319,7 @@ Add directly below it:
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-cli"`
 Expected: PASS — `✅ T-ce-cli mem code CLI passed`.
 
-*(Note: the wiki subcommand handlers require `./wiki` which lands in Task 5; because the require is inside the action thunk, registration in Task 3 does not fail — only invoking `mem code wiki *` before Task 5 would error, which no Task-3 test does.)*
+*(Phase 4a intentionally registers no `mem code wiki` subgroup. `code-perception/wiki.js` and its CLI handlers belong exclusively to the parked Phase 4b plan, which adds the subgroup together with the module.)*
 
 - [ ] **Step 5: Commit**
 
@@ -1474,7 +1484,9 @@ EOF
 - Consumes: `sync-runtime-entry.js` (bootstrap-safe standalone entry); `template-manifest.js#{MANAGED_TEMPLATE_FAMILIES, buildManagedTemplateEntries}`.
 - Produces: `code-perception.js` + `code-perception/cli.js` registered as managed core-cli entries; a second `sync-runtime-entry` run reports zero changes; **every** managed core-cli file is byte-identical to its template.
 
-**Why no `AFFECTED = [...]` list:** two consecutive plan reviews miscounted it (9 vs the real 11 — `template-manifest.js` and `test/governance.js` are themselves managed and were both missed). A hand-maintained constant is exactly the thing that drifts. The mirror invariant is not "the files I remembered are identical" but **"every managed file is identical"** — so assert that directly, derived from the manifest itself. It is strictly stronger, cannot omit anything, and needs no maintenance when the task set changes.
+**Why no `AFFECTED = [...]` list:** two consecutive plan reviews miscounted it (9 vs the real 11 — `template-manifest.js` and `test/governance.js` are themselves managed and were both missed). A hand-maintained constant is exactly the thing that drifts. The mirror invariant is not "the files I remembered are identical" but **"every managed entry is identical"** — so assert that directly, derived from the manifest itself.
+
+**Why the check must not skip or approximate:** the manifest is the exact expectation, so the test asserts `checked === core.files.length` (90 entries today) and asserts each template EXISTS rather than `continue`-ing past it. A `if (!exists) continue` + `checked >= 50` shape would re-open the exact hole a derived check exists to close: a managed entry pointing at a missing template would be silently skipped, `sync-runtime` would silently not copy it, and the suite would still be green. Verified against the current tree: all 90 core-cli entries resolve to real templates, so the strict form has no legitimate skip to accommodate.
 
 - [ ] **Step 1: Write the failing test** — append after the T-ce-mcp block:
 
@@ -1504,18 +1516,23 @@ EOF
             const second = run();       // must converge
             assert.strictEqual(second.copied.length, 0, 'second sync-runtime-entry run must report zero copies (converged)');
 
-            // EVERY managed core-cli file — derived from the manifest, not a hand list.
+            // EVERY managed core-cli entry — derived from the manifest, not a hand list.
+            // No skipping: a manifest entry whose template is missing is itself a defect
+            // (sync-runtime would silently not copy it), so assert existence rather than
+            // `continue`. And assert the exact count from the manifest — a `>= N` gate
+            // would let a skipped entry pass unnoticed, which is the very hole a derived
+            // check exists to close.
             const mirrorCliDir = path.join(runtime.workspaceRoot, '.evo-lite', 'cli');
             let checked = 0;
             for (const rel of core.files) {
                 const tpl = path.join(TEMPLATE_CLI_DIR, ...rel.split('/'));
                 const mir = path.join(mirrorCliDir, ...rel.split('/'));
-                if (!fs.existsSync(tpl)) continue;   // manifest may list optional/other-family assets
+                assert.ok(fs.existsSync(tpl), `${rel} is declared as managed but the template file is missing`);
                 assert.ok(fs.existsSync(mir), `${rel} must exist in the runtime mirror`);
                 assert.ok(fs.readFileSync(tpl).equals(fs.readFileSync(mir)), `${rel} mirror must be byte-identical to template`);
                 checked += 1;
             }
-            assert.ok(checked >= 50, `sanity: the managed set must be non-trivial (checked ${checked})`);
+            assert.strictEqual(checked, core.files.length, 'every core-cli manifest entry must be checked');
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-manifest-sync-4a mirror parity passed');
