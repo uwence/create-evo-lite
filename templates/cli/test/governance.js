@@ -7014,6 +7014,61 @@ async function runChildRuntimeTests() {
             }
         }
         console.log('✅ T-cg-dogfood-validate passed');
+
+        console.log('T-plan-progress-no-ir. Testing `plan progress` treats a missing Planning IR as not-applicable ...');
+        {
+            // A fresh scaffold has no docs/plans/, so no plan-ir.json is ever written.
+            // The post-commit hook runs `plan progress` UNCONDITIONALLY (hooks.js), so an
+            // exit 1 here makes the hook record ok:false -> verify reports
+            // last_run=failed-last-run on a brand-new project. "No IR yet" is a
+            // not-applicable state, not a failure. Sibling `plan gaps` already models this.
+            const { execFileSync, spawnSync } = require('child_process');
+            const memCli = path.join(TEMPLATE_CLI_DIR, 'memory.js');
+            // memory.js -> memory.service -> db.js -> better-sqlite3, which lives in the
+            // workspace runtime's node_modules (NOT the package's). Same idiom as
+            // harness.js:18 / integration.js child spawns.
+            const nodePath = [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH]
+                .filter(Boolean).join(path.delimiter);
+
+            const noIrRoot = createTempRuntimeRoot('plan-progress-no-ir');
+            try {
+                const irPath = path.join(noIrRoot.runtimeRoot, 'generated', 'planning', 'plan-ir.json');
+                assert.ok(!fs.existsSync(irPath), 'precondition: fresh runtime has no plan-ir.json');
+
+                const res = spawnSync(process.execPath, [memCli, 'plan', 'progress'], {
+                    env: { ...process.env, EVO_LITE_ROOT: noIrRoot.runtimeRoot, NODE_PATH: nodePath },
+                    encoding: 'utf8',
+                });
+                assert.strictEqual(res.status, 0,
+                    'missing plan-ir.json must exit 0 (not-applicable), else the hook records ok:false -> failed-last-run. stderr: ' + (res.stderr || ''));
+                assert.ok(/plan scan/.test(`${res.stdout}${res.stderr}`),
+                    'the no-op must still tell the user how to produce an IR (run: mem plan scan)');
+                // Never fabricate success evidence for plans that do not exist.
+                assert.ok(!fs.existsSync(path.join(noIrRoot.runtimeRoot, 'generated', 'planning', 'progress-report.json')),
+                    'no plan-ir.json must NOT fabricate a progress-report.json');
+            } finally {
+                fs.rmSync(noIrRoot.workspaceRoot, { recursive: true, force: true });
+            }
+
+            // Guard against over-fixing: an IR that EXISTS but cannot be evaluated is a
+            // genuine failure and must still exit non-zero.
+            const badIrRoot = createTempRuntimeRoot('plan-progress-bad-ir');
+            try {
+                const badDir = path.join(badIrRoot.runtimeRoot, 'generated', 'planning');
+                fs.mkdirSync(badDir, { recursive: true });
+                fs.writeFileSync(path.join(badDir, 'plan-ir.json'), '{ this is not valid json', 'utf8');
+                const bad = spawnSync(process.execPath, [memCli, 'plan', 'progress'], {
+                    env: { ...process.env, EVO_LITE_ROOT: badIrRoot.runtimeRoot, NODE_PATH: nodePath },
+                    encoding: 'utf8',
+                });
+                assert.notStrictEqual(bad.status, 0,
+                    'a corrupt plan-ir.json is a REAL failure and must still exit non-zero');
+            } finally {
+                fs.rmSync(badIrRoot.workspaceRoot, { recursive: true, force: true });
+            }
+            void execFileSync;
+        }
+        console.log('✅ T-plan-progress-no-ir passed');
 }
 
 module.exports = { runGovernanceTests };

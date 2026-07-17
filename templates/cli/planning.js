@@ -104,8 +104,13 @@ function registerPlanCommands(program) {
         .action(async () => {
             const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
             if (!fs.existsSync(irPath)) {
-                console.error('No plan-ir.json found. Run: mem plan scan first.');
-                process.exit(1);
+                // Not-applicable, not a failure: a project with no docs/plans/ has no IR.
+                // The post-commit hook runs `plan progress` unconditionally, so exiting 1
+                // here recorded ok:false and surfaced as verify last_run=failed-last-run on
+                // every fresh scaffold. Degrade to a no-op (and write NO report — never
+                // fabricate evidence for plans that do not exist). Mirrors `plan gaps`.
+                console.log('No plan-ir.json found — no plans to evaluate yet. Run: mem plan scan first.');
+                return;
             }
             const { evaluateProgress, writeProgressReport } = require('./planning/progress');
             console.log('Evaluating task evidence...\n');
