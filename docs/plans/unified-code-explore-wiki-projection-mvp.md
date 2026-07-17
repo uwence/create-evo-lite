@@ -36,7 +36,9 @@ These facts were verified in the current tree and shape the faithful bridges bel
 - **`selectProvider`** (`provider-router.js`) is pure/sync; provider instance is `selection.candidate.registration.provider`; degraded fallback sets `selection.degraded=true`; no-capability sets `candidate:null` + `reason`.
 - **`scanPlanning`** (`planning/scan.js`) populates `task.linkedFiles` (from frontmatter) but **never** `task.symbols`. So derived `implements_task` links fire in dogfood only via `evidence.symbols` or commit `diffRanges` intersection, not via `task.symbols`.
 - **`buildGovernanceLinks`** (`governance-linker.js`) `implements_task` derived confidence is `clampConfidence(symRef.resolutionConfidence)` → **0 when `resolutionConfidence` is undefined** (the M2 trigger). `declares_file`/`depends_on_file`/`changed_by_commit` are conf 1.0; heuristic `implements_task` proposed is ≤0.5; `verified_by_test`/`evidenced_by_archive`/`related_to_focus` are 1.0.
-- **`readActiveContext`** is exported by `memory.service.js` (canonical, full parse). `sections.focus` is FREE TEXT — no structured spec/task field.
+- **`readActiveContext`** is exported by `memory.service.js` (canonical, full parse). `sections.focus` is FREE TEXT — no structured spec/task field. Its `tasks[]` come from `parseBacklogTasks`, whose row shape is **`{checked, hash, line, text}`** — the canonical id is `hash`; there is **NO `id` field**. Any code reading `task.id` on an active-context task is dead against a real `active_context.md`.
+- **`post-commit-last-run.json`** (written by `post-commit-code-perception.js`) has shape **`{commit: '<headSha>', changedFiles: [...], ...}`** — the key is `commit`, NOT `commits`/`headSha`.
+- **`changed_by_commit`** links are keyed by **`governanceEntityId = 'commit:<sha>'`** (governance-linker.js), NOT by task id. Task→commit association must go through `evidence.taskId + evidence.commitSha`; module→commit through `commit.changedFiles ∩ module.files`. Filtering `changed_by_commit` by a task id always returns empty.
 - **CLI registration:** `memory.js` registers feature groups through `safeRegister('<name>', () => require('./mod').registerXCommands(program))` (thunked require so a missing module warns, never bricks the CLI). Existing `code-perception` group registers `mem code-perception post-commit`.
 - **MCP server** (`mcp-server.js`): `TOOLS[]` array + `dispatch()` `switch(name)` + `freshRequire(relPath)` hot-reload; CallTool handler wraps result in `{content:[{type:'text',text:JSON.stringify(result)}]}` and only sets `isError:true` when the handler throws.
 - **MCP validator** (`mcp-validate.js`): spawns `mem mcp`, calls each tool in its own `TOOLS[]` list, writes `.evo-lite/generated/mcp-validation.json`, `process.exit(ok===total?0:1)`. AC `ac-mcp-code-explore` runs this file, so the new tool must be added to its list AND its `summarise()`.
@@ -51,13 +53,13 @@ These facts were verified in the current tree and shape the faithful bridges bel
 | File | Responsibility | Task |
 |------|----------------|------|
 | `templates/cli/code-perception/normalize.js` (modify) | + M1 `toSymbolReferences`, M2 `DERIVED_LINK_CONFIDENCE_FLOOR` + `normalizeDerivedLinkConfidence` | T1 |
-| `templates/cli/code-perception.js` (create) | Unified Explore service: `exploreCode`, `rankRecommendedReading`, `buildExploreStatus` | T2 |
+| `templates/cli/code-perception.js` (create) | Unified Explore service: `exploreCode`, `rankRecommendedReading`; §3.1 fatal gate | T2 |
+| `templates/cli/code-perception/status.js` (modify) | provider rows carry `capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit` (consumed by T5 provenance + T6 page) | T2 |
 | `templates/cli/code-perception/cli.js` (create) | `mem code` command group `registerCodeCommands` + unified exit model | T3 |
 | `templates/cli/memory.js` (modify) | `safeRegister('code', …)` thunk | T3 |
 | `templates/cli/mcp-server.js` (modify) | `evo_code_explore` TOOLS entry + dispatch case + handler | T4 |
 | `templates/cli/mcp-validate.js` (modify) | add `evo_code_explore` to validator TOOLS + `summarise` | T4 |
 | `templates/cli/code-perception/wiki.js` (create) | `buildCodeWiki`, `getWikiStatus` — pure-derived overview/current-focus/providers/modules/tasks pages + manifest | T5 |
-| `templates/cli/code-perception/status.js` (modify) | provider rows carry `capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit` | T6 |
 | `templates/cli/inspector.js` (modify) | exported `code*Response` mappers + `/api/code/status|focus|task` routes + Code page tab | T6 |
 | `templates/cli/template-manifest.js` (modify) | register 3 new managed files | T7 |
 | `templates/cli/test/governance.js` (modify) | `T-ce-seam`, `T-ce-explore`, `T-ce-cli`, `T-ce-mcp`, `T-ce-wiki`, `T-ce-inspector`, `T-ce-manifest-sync` | T1–T7 |
@@ -226,6 +228,7 @@ EOF
 
 **Files:**
 - Create: `templates/cli/code-perception.js`
+- Modify: `templates/cli/code-perception/status.js` (provider rows carry `capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit`)
 - Test: `templates/cli/test/governance.js` (append block `T-ce-explore`)
 
 **Interfaces:**
@@ -241,11 +244,11 @@ EOF
   - Planning IR read inline from `<root>/.evo-lite/generated/planning/plan-ir.json`.
 - Produces (relied on by T3, T4, T5, T6):
   - `async exploreCode(query: string, opts?: ExploreOpts) -> UnifiedExploreResult`. `ExploreOpts = {focusId?, preferredProvider?, includeSource?, includeImpact?, includeGovernance?, maxResults?, maxSourceChars?, projectRoot?, config?, registry?, activeContext?, commits?, acceptanceDependencies?}`. `projectRoot`/`config`/`registry`/`activeContext`/`commits`/`acceptanceDependencies` are DI seams for tests and callers — `activeContext` overrides the host-bound `memory.service.readActiveContext()` (which is pinned to a module-load `ACTIVE_CONTEXT_PATH`, so a foreign `projectRoot` with no injected `activeContext` gets an EMPTY context + diagnostic, never the host's focus). `commits`/`acceptanceDependencies` feed the ② linker's Layer-1/Layer-2 inputs; when omitted, `commits` is read from the persisted post-commit run (explore never shells `git log`). Never throws; internal exceptions become diagnostics + `result.ok=false` only for true invariant breaks.
-  - Reads (best-effort, may be absent): `<root>/.evo-lite/generated/code-perception/governance-links.json` (persisted graph — merged, deduped by link id, so `changed_by_commit` links survive into explore) and `.../post-commit-last-run.json` (commit set + head sha).
+  - Reads (best-effort, may be absent): `<root>/.evo-lite/generated/code-perception/governance-links.json` (persisted graph — merged, deduped by link id, so `changed_by_commit` links survive into explore) and `.../post-commit-last-run.json`, whose REAL shape is `{ commit: '<headSha>', changedFiles: [...] }` (verified in `post-commit-code-perception.js` — it writes `commit`, there is NO `commits` or `headSha` key; reading those would silently yield zero commits).
   - `rankRecommendedReading(inputs) -> ReadingItem[]` where `ReadingItem = {path, kind, reason, priority, confidence}` sorted by §2.3 order.
-  - `UnifiedExploreResult = {query, ok, freshness, providers, matches, relationships, impact?, source, files, modules, governance, recommendedReading, diagnostics}` (spec §2). `freshness = {stale, dirty, indexedCommit?, currentCommit?}`. `governance = {specs, plans, tasks, commits, evidence, links, linkSummary}`. `files = string[]` (sorted repo-relative paths from native-lite file facts). `modules = [{id, files:string[], taskIds:string[], changed}]` (declared moduleId, else top-level path segment). Both feed the Code Wiki's module pages + unresolved-link detection (T5).
+  - `UnifiedExploreResult = {query, ok, freshness, providers, matches, relationships, impact?, source, files, modules, focus, governance, recommendedReading, diagnostics}` (spec §2). `focus = {entityId, taskId, resolved}` — the CANONICAL resolved focus; the Wiki/Inspector must render this rather than re-deriving focus (e.g. "all unfinished tasks" is not the focus). `ok:false` is returned for the §3.1 FATAL set only (`adapter-exception`, `security-violation`, `unparseable-response`, `internal-error`) — capability gaps stay `ok:true`. `freshness = {stale, dirty, indexedCommit?, currentCommit?}`. `governance = {specs, plans, tasks, commits, evidence, links, linkSummary}`. `files = string[]` (sorted repo-relative paths from native-lite file facts). `modules = [{id, files:string[], taskIds:string[], changed}]` (declared moduleId, else top-level path segment). Both feed the Code Wiki's module pages + unresolved-link detection (T5).
 
-- [ ] **Step 1: Write the failing test** — append inside `runGovernanceTests()` after the T-ce-seam block. TWO scenarios (spec §2 has two provider realities; a single test cannot exercise both). **Scenario A** = the native-lite degradation dogfood (the common host state — no structural provider); **Scenario B** = an injected structural fixture provider (proves the full symbol/relationship/impact/source path + the M1/M2 seams end-to-end). Both `git init` the temp workspace because native-lite `getFiles` runs `git ls-files --cached --others --exclude-standard` and returns `files:[]` + a `git-enumeration-failed` diagnostic when the root is not a repo — so without a real repo the file facts (and every `declares_file` link) would be empty and the asserts could never pass.
+- [ ] **Step 1: Write the failing test** — append inside `runGovernanceTests()` after the T-ce-seam block. THREE scenarios (a single test cannot exercise all provider realities). **Scenario A** = the native-lite degradation dogfood (the common host state — no structural provider; also pins the real post-commit blob shape + the real backlog `hash` shape); **Scenario B** = an injected structural fixture provider (proves the full symbol/relationship/impact/source path + the M1/M2 seams end-to-end); **Scenario C** = a ready provider that throws, proving the SERVICE itself produces the `ok:false` fatal that T4/T6's surface mappings depend on. All `git init` the temp workspace because native-lite `getFiles` runs `git ls-files --cached --others --exclude-standard` and returns `files:[]` + a `git-enumeration-failed` diagnostic when the root is not a repo — so without a real repo the file facts (and every `declares_file` link) would be empty and the asserts could never pass.
 
 ```javascript
         const { execFileSync } = require('node:child_process');
@@ -274,16 +277,34 @@ EOF
                 [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'], evidence: [] }],
                 [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
             gitInit(runtime.workspaceRoot);
+            // Persisted post-commit blob in its REAL shape ({commit, changedFiles}) —
+            // this is the ONLY commit source explore has (it never shells `git log`).
+            const cpDir = path.join(runtime.runtimeRoot, 'generated', 'code-perception');
+            fs.mkdirSync(cpDir, { recursive: true });
+            const FIXTURE_SHA = 'a'.repeat(40);
+            fs.writeFileSync(path.join(cpDir, 'post-commit-last-run.json'), JSON.stringify({
+                commit: FIXTURE_SHA, changedFiles: ['src/engine.js'],
+            }, null, 2), 'utf8');
 
             // No codegraph configured -> native-lite fallback. `symbols` absent -> matches [].
-            // Inject activeContext so the host repo's focus never leaks into the fixture.
+            // Inject activeContext in its REAL parseBacklogTasks shape ({checked, hash, line, text})
+            // so the host repo's focus never leaks in AND the unique-active-task path is exercised.
             const result = await svc.exploreCode('engine selection', {
                 projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: true,
-                activeContext: { sections: { focus: 'Focus: task:x' }, summary: { focus: 'Focus: task:x' }, tasks: [{ id: 'task:x', checked: false }], trajectory: [] },
+                activeContext: { sections: { focus: 'Focus: task:x' }, summary: { focus: 'Focus: task:x' },
+                    tasks: [{ hash: 'task:x', checked: false, line: '- [ ] [task:x] Engine', text: 'Engine' }], trajectory: [] },
             });
 
             assert.strictEqual(result.ok, true, 'A: capability gap must be success-shaped (ok:true)');
             assert.strictEqual(result.matches.length, 0, 'A: no structural provider -> zero symbol matches');
+            // The persisted commit must actually reach governance (blob key is `commit`).
+            assert.strictEqual(result.governance.commits.length, 1, 'A: persisted post-commit blob yields exactly one commit');
+            assert.strictEqual(result.governance.commits[0].sha, FIXTURE_SHA, 'A: governance.commits carries the fixture SHA');
+            const changedLinks = result.governance.links.filter(l => l.kind === 'changed_by_commit');
+            assert.ok(changedLinks.length >= 1, 'A: changed_by_commit links built from the persisted commit + file facts');
+            assert.ok(changedLinks.every(l => l.governanceEntityId === `commit:${FIXTURE_SHA}`),
+                'A: changed_by_commit is keyed by commit:<sha> (NOT a task id)');
+            assert.strictEqual(result.focus.entityId, 'task:x', 'A: focus resolves to the canonical task via the real backlog hash shape');
             assert.ok(result.diagnostics.some(d => (d.code || '') === 'capability-unavailable'),
                 'A: a capability-unavailable diagnostic explains the missing symbols capability');
             const nl = result.providers.find(p => /native-lite/.test(p.id || ''));
@@ -346,7 +367,8 @@ EOF
 
             const result = await svc.exploreCode('engine', {
                 projectRoot: runtime.workspaceRoot, config, registry, includeSource: true, includeImpact: true,
-                activeContext: { sections: { focus: 'Focus: task:x' }, summary: { focus: 'Focus: task:x' }, tasks: [{ id: 'task:x', checked: false }], trajectory: [] },
+                activeContext: { sections: { focus: 'Focus: task:x' }, summary: { focus: 'Focus: task:x' },
+                    tasks: [{ hash: 'task:x', checked: false, line: '- [ ] [task:x] Engine', text: 'Engine' }], trajectory: [] },
             });
 
             assert.strictEqual(result.ok, true, 'B: ok:true');
@@ -364,6 +386,47 @@ EOF
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-explore-B injected structural provider passed');
+
+        console.log('T-ce-explore-C. Unified explore — adapter exception is FATAL (ok:false) ...');
+        {
+            // The service itself must generate ok:false for an adapter/invariant break.
+            // T4/T6 only prove the SURFACE mapping given an ok:false; without this the
+            // production service would never produce one and those mappings are dead code.
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-explore-c');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = 1;\n');
+            seedPlanIR(runtime.runtimeRoot, [], []);
+            gitInit(runtime.workspaceRoot);
+
+            const PID = 'provider:exploding';
+            const status = {
+                providerId: PID, adapterVersion: '0.0.1', providerVersion: '9.9.9', available: true, ready: true,
+                indexState: 'ready', freshness: 'fresh', dirty: 'clean', compatibility: 'supported',
+                // symbols ONLY -> a throw here has no same-capability fallback.
+                capabilities: { files: false, symbols: true, source: false, callers: false, callees: false, impact: false },
+                diagnostics: [],
+            };
+            const exploding = {
+                id: PID, name: 'Exploding', adapterVersion: '0.0.1', capabilities: status.capabilities,
+                async check() { return { available: true, ready: true, installed: true, indexState: 'ready' }; },
+                async getStatus() { return status; },
+                async search() { throw new Error('adapter blew up'); },
+            };
+            const registry = Object.assign({}, require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader')).DEFAULT_REGISTRY,
+                { [PID]: { role: 'structural-primary', create: () => exploding } });
+
+            const result = await svc.exploreCode('engine', {
+                projectRoot: runtime.workspaceRoot,
+                config: { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } },
+                registry, activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+
+            assert.strictEqual(result.ok, false, 'C: a ready provider throwing is FATAL -> ok:false (not success-shaped)');
+            assert.ok(result.diagnostics.some(d => (d.code || '') === 'adapter-exception'),
+                'C: diagnostics carry adapter-exception');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-explore-C adapter-exception fatal passed');
 ```
 
 > **Cross-surface reuse (spec Global Constraint "NO duplicate logic"):** Scenario B proves the service produces the full structural shape. The "MCP/CLI/Wiki consume the SAME service" half of ac-unified-explore is asserted in T-ce-cli (T3), T-ce-mcp (T4), and T-ce-wiki (T5), each of which `require`s `code-perception.js#exploreCode` and asserts against its result — none re-implements provider orchestration.
@@ -450,10 +513,14 @@ function safeReadActiveContext(options, diagnostics) {
 // free text — the service must resolve it first). Resolution order is EXACT and
 // has NO "first unfinished task" fallback (that fabricates unproven focus):
 //   1. explicit options.focusId that names a real Planning-IR task or spec;
-//   2. else a task whose EXACT id, or exact title, appears in the focus text;
-//   3. else, iff the active context lists EXACTLY ONE active task and that id
-//      matches a Planning-IR task, that unique task;
+//   2. else a UNIQUE task whose EXACT id (preferred) or exact title appears in
+//      the focus text — multiple candidates => `focus-ambiguous`, never a silent
+//      "pick the first";
+//   3. else, iff the active context lists EXACTLY ONE open task whose canonical
+//      id matches a Planning-IR task, that unique task;
 //   4. else NO focus — push a `focus-unresolved` diagnostic and return [].
+// Returns focusEntityId so callers (Wiki/Inspector) render the REAL focus rather
+// than re-deriving it (e.g. "every unfinished task", which is not the focus).
 function resolveFocusReferences(planIR, fileReferences, activeContext, options, diagnostics) {
     const focusReferences = [];
     const byPath = new Map();
@@ -476,26 +543,37 @@ function resolveFocusReferences(planIR, fileReferences, activeContext, options, 
         else if (diagnostics) diagnostics.push(diag('focus-id-unknown',
             `focusId "${options.focusId}" matches no Planning-IR task or spec`));
     }
-    // 2. exact id or exact title named in the focus text.
+    // 2. exact id (preferred) else exact title named in the focus text. Collect
+    //    ALL candidates and require exactly one — a `find()` would silently bind
+    //    the first of several equally-plausible tasks (fabricated focus).
     if (!focusEntityId && focusText) {
-        focusTask = tasks.find(t => t && t.id && focusText.includes(t.id))
-            || tasks.find(t => t && t.title && t.title.length > 0 && focusText.includes(t.title))
-            || null;
-        if (focusTask) focusEntityId = focusTask.id;
+        const idMatches = tasks.filter(t => t && t.id && focusText.includes(t.id));
+        const titleMatches = tasks.filter(t => t && t.title && t.title.length > 0 && focusText.includes(t.title));
+        const cands = idMatches.length ? idMatches : titleMatches;
+        if (cands.length === 1) { focusTask = cands[0]; focusEntityId = focusTask.id; }
+        else if (cands.length > 1) {
+            if (diagnostics) diagnostics.push(diag('focus-ambiguous',
+                `focus text matches ${cands.length} tasks (${cands.map(t => t.id).join(', ')}); emitting no focus links`));
+            return { focusReferences, focusTask: null, focusEntityId: null };
+        }
     }
-    // 3. UNIQUE active-context task (exactly one) that maps to a Planning-IR task.
+    // 3. UNIQUE open active-context task that maps to a Planning-IR task.
+    //    memory.service#parseBacklogTasks yields `{checked, hash, line, text}` —
+    //    the canonical id lives in `hash`, NOT `id`. Reading `t.id` would make
+    //    this branch permanently unreachable against a real active_context.md.
     if (!focusEntityId && activeContext && Array.isArray(activeContext.tasks)) {
-        const activeOpen = activeContext.tasks.filter(t => t && !t.checked && t.id);
+        const activeOpen = activeContext.tasks.filter(t => t && !t.checked && (t.id || t.hash));
         if (activeOpen.length === 1) {
-            const match = tasks.find(t => t && t.id === activeOpen[0].id);
+            const activeId = activeOpen[0].id || activeOpen[0].hash;
+            const match = tasks.find(t => t && t.id === activeId);
             if (match) { focusTask = match; focusEntityId = match.id; }
         }
     }
     // 4. nothing resolved → diagnostic, no fabricated focus.
     if (!focusEntityId) {
         if (diagnostics) diagnostics.push(diag('focus-unresolved',
-            'no explicit focusId, no exact task/title in focus text, and no unique active task; emitting no focus links'));
-        return { focusReferences, focusTask: null };
+            'no explicit focusId, no unique exact task/title in focus text, and no unique open active task; emitting no focus links'));
+        return { focusReferences, focusTask: null, focusEntityId: null };
     }
     // Bind ONLY a task's declared files (a spec-level focus contributes no file refs here).
     if (focusTask && Array.isArray(focusTask.linkedFiles)) {
@@ -504,13 +582,30 @@ function resolveFocusReferences(planIR, fileReferences, activeContext, options, 
             if (ref) focusReferences.push({ governanceEntityId: focusEntityId, codeReferenceId: ref.id });
         }
     }
-    return { focusReferences, focusTask };
+    return { focusReferences, focusTask, focusEntityId };
 }
 
-async function callProvider(candidates, request, invoke, diagnostics) {
+// The FATAL set (spec §3.1). Everything else — missing/unindexed/stale/ambiguous/
+// unsupported — is success-shaped degradation. A fatal makes exploreCode return
+// ok:false, which each surface maps to its own failure channel (CLI exit 1, MCP
+// isError:true, Inspector 503).
+const FATAL_CODES = Object.freeze(['adapter-exception', 'security-violation', 'unparseable-response', 'internal-error']);
+
+function fatalResult(query, diagnostics) {
+    return {
+        query, ok: false, freshness: { stale: false, dirty: false },
+        providers: [], matches: [], relationships: [], source: [], files: [], modules: [],
+        focus: { entityId: null, taskId: null, resolved: false },
+        governance: { specs: [], plans: [], tasks: [], commits: [], evidence: [], links: [], linkSummary: { confirmed: 0, derived: 0, proposed: 0 } },
+        recommendedReading: [], diagnostics,
+    };
+}
+
+async function callProvider(candidates, request, invoke, diagnostics, fatals) {
     const selection = router.selectProvider(request, candidates);
     if (Array.isArray(selection.diagnostics)) diagnostics.push(...selection.diagnostics);
     if (!selection.candidate) {
+        // Capability gap — success-shaped, NOT fatal.
         if (selection.reason) diagnostics.push(diag('capability-unavailable', selection.reason));
         return { selection, value: null };
     }
@@ -519,12 +614,23 @@ async function callProvider(candidates, request, invoke, diagnostics) {
         const value = await invoke(provider, selection.candidate.status);
         return { selection, value };
     } catch (err) {
-        // Adapter exception is the ONE non-capability failure — surface it but
-        // do not crash the service; caller decides ok-ness.
-        diagnostics.push(diag('adapter-exception', err && err.message ? err.message : String(err),
-            provider && provider.id));
+        // A READY provider that throws is an adapter/invariant break, not a
+        // capability gap: there is no legal response and (in this MVP) no
+        // same-capability retry. Spec §3.1 classes this FATAL -> ok:false.
+        // Recording it in `fatals` is what makes that real; a diagnostic alone
+        // would leave the result ok:true and silently swallow the failure.
+        const d = diag('adapter-exception', err && err.message ? err.message : String(err),
+            provider && provider.id);
+        diagnostics.push(d);
+        if (fatals) fatals.push(d);
         return { selection, value: null, adapterError: true };
     }
+}
+
+// Security/path-containment violations surface as provider diagnostics rather than
+// throws; treat those codes as fatal too when a provider reports one.
+function collectFatalDiagnostics(diagnostics) {
+    return diagnostics.filter(d => d && FATAL_CODES.includes(d.code));
 }
 
 async function exploreCode(query, opts) {
@@ -538,6 +644,7 @@ async function exploreCode(query, opts) {
     const maxSourceChars = Number.isFinite(options.maxSourceChars) ? options.maxSourceChars : 4000;
 
     const diagnostics = [];
+    const fatals = [];   // spec §3.1 fatal accumulator -> drives ok:false
     const context = { projectRoot };
 
     try {
@@ -558,7 +665,7 @@ async function exploreCode(query, opts) {
         let fileReferences = [];
         let fileFacts = [];
         const files = await callProvider(candidates, { capability: 'files' },
-            (p) => p.getFiles(context, {}), diagnostics);
+            (p) => p.getFiles(context, {}), diagnostics, fatals);
         if (files.value && Array.isArray(files.value.files)) {
             fileFacts = files.value.files;
             fileReferences = fileFacts.map(f => f.reference).filter(Boolean);
@@ -589,7 +696,7 @@ async function exploreCode(query, opts) {
         // §2.2 step 3-4 — structural search (symbols). Absent under native-lite → matches [].
         let matches = [];
         const searchSel = await callProvider(candidates, { capability: 'symbols', preferredProvider: options.preferredProvider },
-            (p, st) => p.search(context, q).then(raw => normalizeSearchResult(st, raw)), diagnostics);
+            (p, st) => p.search(context, q).then(raw => normalizeSearchResult(st, raw)), diagnostics, fatals);
         if (searchSel.value && Array.isArray(searchSel.value.matches)) {
             matches = searchSel.value.matches.slice(0, maxResults);
             if (Array.isArray(searchSel.value.diagnostics)) diagnostics.push(...searchSel.value.diagnostics);
@@ -602,7 +709,7 @@ async function exploreCode(query, opts) {
         if (topSymbol) {
             for (const [cap, method] of [['callers', 'getCallers'], ['callees', 'getCallees']]) {
                 const rel = await callProvider(candidates, { capability: cap },
-                    (p) => p[method](context, topSymbol), diagnostics);
+                    (p) => p[method](context, topSymbol), diagnostics, fatals);
                 if (rel.value && Array.isArray(rel.value.relationships)) {
                     for (const r of rel.value.relationships) {
                         relationships.push(normalizeRelationship(r.providerId, r.source, r.target, r.kind, r.confidence));
@@ -616,7 +723,7 @@ async function exploreCode(query, opts) {
         let impact;
         if (includeImpact && topSymbol) {
             const imp = await callProvider(candidates, { capability: 'impact' },
-                (p, st) => p.impact(context, topSymbol).then(raw => normalizeImpactResult(st, raw)), diagnostics);
+                (p, st) => p.impact(context, topSymbol).then(raw => normalizeImpactResult(st, raw)), diagnostics, fatals);
             if (imp.value) impact = imp.value;
         }
 
@@ -625,7 +732,7 @@ async function exploreCode(query, opts) {
         if (includeSource && matches.length) {
             for (const m of matches.slice(0, 3)) {
                 const ent = await callProvider(candidates, { capability: 'source' },
-                    (p) => p.getEntity(context, { entity: m.providerEntityId || m.name }), diagnostics);
+                    (p) => p.getEntity(context, { entity: m.providerEntityId || m.name }), diagnostics, fatals);
                 if (ent.value && typeof ent.value.content === 'string') {
                     source.push({ reference: ent.value.reference || m, excerpt: ent.value.content.slice(0, maxSourceChars),
                         truncated: Boolean(ent.value.truncated) });
@@ -635,13 +742,16 @@ async function exploreCode(query, opts) {
 
         // §2.2 step 2 + 8 — resolve focus, then build governance links via the
         // ONE M1 seam; then apply the M2 floor before ranking/projection.
-        const { focusReferences, focusTask } = resolveFocusReferences(planIR, fileReferences, activeContext, options, diagnostics);
+        const { focusReferences, focusTask, focusEntityId } = resolveFocusReferences(planIR, fileReferences, activeContext, options, diagnostics);
         const symbolReferences = toSymbolReferences(matches, { focusId: options.focusId });
-        // Commits: explore NEVER shells out to `git log`. It reuses the commit
-        // set the post-commit hook persisted (Layer-1 changed_by_commit source),
-        // plus any DI commits a caller injects.
-        const persistedCommits = (lastRun && Array.isArray(lastRun.commits)) ? lastRun.commits
-            : (lastRun && lastRun.headSha ? [{ sha: lastRun.headSha, changedFiles: Array.isArray(lastRun.changedFiles) ? lastRun.changedFiles : [] }] : []);
+        // Commits: explore NEVER shells out to `git log`. It reuses the commit set
+        // the post-commit hook persisted (Layer-1 changed_by_commit source), plus
+        // any DI commits a caller injects. The blob's REAL shape is
+        // `{ commit: <headSha>, changedFiles: [...] }` (post-commit-code-perception.js
+        // writes `commit`, NOT `commits`/`headSha`) — read exactly that.
+        const persistedCommits = (lastRun && typeof lastRun.commit === 'string')
+            ? [{ sha: lastRun.commit, changedFiles: Array.isArray(lastRun.changedFiles) ? lastRun.changedFiles : [] }]
+            : [];
         const commits = Array.isArray(options.commits) ? options.commits : persistedCommits;
         const acceptanceDependencies = Array.isArray(options.acceptanceDependencies) ? options.acceptanceDependencies : [];
         const evidence = [];
@@ -695,20 +805,24 @@ async function exploreCode(query, opts) {
             commits, evidence, links, linkSummary,
         };
 
+        // §3.1 fatal gate — a READY provider that threw (adapter-exception), a
+        // security violation, or an unparseable response is NOT success-shaped.
+        // Without this gate the service would return ok:true and the surfaces'
+        // fatal mappings (CLI 1 / MCP isError / Inspector 503) would be dead code.
+        const allFatals = fatals.concat(collectFatalDiagnostics(diagnostics).filter(d => !fatals.includes(d)));
+        if (allFatals.length) return fatalResult(q, diagnostics);
+
         return {
             query: q, ok: true, freshness,
             providers: statusReport.providers, matches, relationships,
-            impact, source, files: filePaths, modules, governance, recommendedReading, diagnostics,
+            impact, source, files: filePaths, modules,
+            focus: { entityId: focusEntityId || null, taskId: focusTask ? focusTask.id : null, resolved: Boolean(focusEntityId) },
+            governance, recommendedReading, diagnostics,
         };
     } catch (err) {
-        // A genuine internal invariant break — the only ok:false path.
+        // A genuine internal invariant break — also fatal.
         diagnostics.push(diag('internal-error', err && err.message ? err.message : String(err)));
-        return {
-            query: q, ok: false, freshness: { stale: false, dirty: false },
-            providers: [], matches: [], relationships: [], source: [], files: [], modules: [],
-            governance: { specs: [], plans: [], tasks: [], commits: [], evidence: [], links: [], linkSummary: { confirmed: 0, derived: 0, proposed: 0 } },
-            recommendedReading: [], diagnostics,
-        };
+        return fatalResult(q, diagnostics);
     }
 }
 
@@ -786,15 +900,43 @@ function rankRecommendedReading(inputs) {
 module.exports = { exploreCode, rankRecommendedReading };
 ```
 
+- [ ] **Step 3b: Enrich the status rows** in `templates/cli/code-perception/status.js#buildProviderRow`. `result.providers` comes straight from `buildCodePerceptionStatus`, and it is the SINGLE provider table all four surfaces render. Today the row drops `capabilities`/versions/commits even though `candidate.status` (a `ProviderStatus`) carries them — so the Wiki provenance (T5) and the spec §6 Inspector page (T6) could not render them honestly. Enrich it HERE (in the service task) so both downstream consumers are correct by construction. Find:
+
+```javascript
+    const row = { id, role, available, ready, indexState, compatibility, degraded };
+    const reason = availability && availability.reason;
+    if (reason) {
+        row.reason = reason;
+    }
+```
+
+Replace with (purely additive — the existing status tests assert individual fields, not whole-row shape, so they keep passing):
+
+```javascript
+    const row = { id, role, available, ready, indexState, compatibility, degraded };
+    // Spec §6: the Code page + Wiki provenance render capabilities, versions and
+    // indexed/current commit. Carry them from the ProviderStatus (best-effort, never throw).
+    if (status && typeof status.capabilities === 'object' && status.capabilities !== null) row.capabilities = status.capabilities;
+    row.providerVersion = (status && status.providerVersion) ?? null;
+    row.adapterVersion = (status && status.adapterVersion)
+        ?? (registration && registration.provider && registration.provider.adapterVersion) ?? null;
+    row.indexedCommit = (status && status.indexedCommit) ?? null;
+    row.currentCommit = (status && status.currentCommit) ?? null;
+    const reason = availability && availability.reason;
+    if (reason) {
+        row.reason = reason;
+    }
+```
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-explore"`
-Expected: PASS — both `✅ T-ce-explore-A native-lite degradation passed` and `✅ T-ce-explore-B injected structural provider passed`.
+Expected: PASS — all three: `✅ T-ce-explore-A native-lite degradation passed`, `✅ T-ce-explore-B injected structural provider passed`, `✅ T-ce-explore-C adapter-exception fatal passed`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add templates/cli/code-perception.js templates/cli/test/governance.js
+git add templates/cli/code-perception.js templates/cli/code-perception/status.js templates/cli/test/governance.js
 git commit -m "$(cat <<'EOF'
 feat(code-perception): unified explore service orchestrating router/linker (task:ce-explore-service)
 
@@ -1226,10 +1368,24 @@ EOF
             const planDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
             fs.mkdirSync(planDir, { recursive: true });
             writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = 1;\n');
+            const FIXTURE_SHA = 'b'.repeat(40);
             fs.writeFileSync(path.join(planDir, 'plan-ir.json'), JSON.stringify({
                 version: 'evo-plan-ir@1', specs: [], plans: [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }],
-                tasks: [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js', 'src/missing.js'], evidence: [{ kind: 'test', symbols: ['selectEngine'] }] }],
+                tasks: [
+                    // evidence ties task:x to the fixture commit -> Related commits must render the SHA.
+                    { id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md',
+                      linkedFiles: ['src/engine.js', 'src/missing.js'],
+                      evidence: [{ kind: 'test', symbols: ['selectEngine'], commitSha: FIXTURE_SHA }] },
+                    // An UNRELATED unfinished task: it must NOT be presented as the focus.
+                    { id: 'task:unrelated', title: 'Unrelated', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: [], evidence: [] },
+                ],
                 warnings: [],
+            }, null, 2), 'utf8');
+            // Persisted post-commit blob in its REAL shape ({commit, changedFiles}).
+            const cpDir = path.join(runtime.runtimeRoot, 'generated', 'code-perception');
+            fs.mkdirSync(cpDir, { recursive: true });
+            fs.writeFileSync(path.join(cpDir, 'post-commit-last-run.json'), JSON.stringify({
+                commit: FIXTURE_SHA, changedFiles: ['src/engine.js'],
             }, null, 2), 'utf8');
             // git init so native-lite enumerates src/engine.js -> a module page exists.
             execFileSync('git', ['init', '-q'], { cwd: runtime.workspaceRoot });
@@ -1239,6 +1395,9 @@ EOF
             execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: runtime.workspaceRoot });
 
             const fixedClock = () => '2026-07-16T00:00:00.000Z';
+            // Real backlog row shape ({checked, hash, ...}) -> focus resolves to task:x only.
+            const wikiActiveContext = { sections: { focus: 'Focus: task:x' }, summary: { focus: 'Focus: task:x' },
+                tasks: [{ hash: 'task:x', checked: false, line: '- [ ] [task:x] Engine', text: 'Engine' }], trajectory: [] };
             const wikiDir = path.join(runtime.runtimeRoot, 'generated', 'code-wiki');
             // Recursively snapshot EVERY page (path -> bytes), deterministically ordered.
             function snapshot(dir) {
@@ -1254,7 +1413,7 @@ EOF
                 return out;
             }
 
-            await wiki.buildCodeWiki({ projectRoot: runtime.workspaceRoot, now: fixedClock });
+            await wiki.buildCodeWiki({ projectRoot: runtime.workspaceRoot, now: fixedClock, activeContext: wikiActiveContext });
             const snap1 = snapshot(wikiDir);
             // Required page set (spec §5): manifest + overview + current-focus + providers + a module + the task page.
             assert.ok(snap1['manifest.json'] && snap1['overview.md'] && snap1['current-focus.md'] && snap1['providers.md'], 'core pages written');
@@ -1268,11 +1427,23 @@ EOF
                 assert.ok(taskPage.includes(section), `task page has ${section}`);
             }
             assert.ok(/src\/missing\.js/.test(taskPage), 'unresolved (declared-but-absent) linked file is surfaced');
+            // The real commit graph must actually reach the pages (task via
+            // evidence.commitSha; module via commit.changedFiles ∩ module.files).
+            assert.ok(taskPage.includes(FIXTURE_SHA), 'task page Related commits carries the fixture SHA');
+            const modulePath = Object.keys(snap1).find(p => /^modules\/.+\.md$/.test(p));
+            assert.ok(snap1[modulePath].toString('utf8').includes(FIXTURE_SHA), 'module page Related commits carries the fixture SHA');
+            // current-focus.md shows ONLY the resolved focus — not every unfinished task.
+            const focusPage = snap1['current-focus.md'].toString('utf8');
+            assert.ok(focusPage.includes('task:x'), 'current-focus names the resolved focus task');
+            assert.ok(!focusPage.includes('task:unrelated'), 'current-focus must NOT list an unrelated unfinished task');
+            // Provenance reports the PROVIDER version, not the adapter version.
+            assert.ok(/providerVersion:/.test(overview1) && /adapterVersion:/.test(overview1),
+                'provenance carries providerVersion AND adapterVersion as distinct fields');
 
             // Delete the WHOLE generated dir and rebuild — EVERY page must reproduce byte-identically.
             fs.rmSync(wikiDir, { recursive: true, force: true });
             assert.ok(!fs.existsSync(wikiDir), 'wiki dir deleted');
-            await wiki.buildCodeWiki({ projectRoot: runtime.workspaceRoot, now: fixedClock });
+            await wiki.buildCodeWiki({ projectRoot: runtime.workspaceRoot, now: fixedClock, activeContext: wikiActiveContext });
             const snap2 = snapshot(wikiDir);
             assert.deepStrictEqual(Object.keys(snap2).sort(), Object.keys(snap1).sort(), 'same page set after rebuild');
             for (const p of Object.keys(snap1)) {
@@ -1331,7 +1502,11 @@ function provenanceFor(result, generatedAt) {
         generatedBy: 'evo-lite code-perception/wiki',
         generatedAt,
         provider: p.id || 'none',
-        providerVersion: p.adapterVersion || 'unknown',
+        // providerVersion is the PROVIDER's version (T2 Step 3b puts it on the row);
+        // adapterVersion is Evo-Lite's adapter and is a distinct field — reporting
+        // the adapter's version as the provider's would be a provenance lie.
+        providerVersion: p.providerVersion || 'unknown',
+        adapterVersion: p.adapterVersion || 'unknown',
         indexedCommit: result.freshness.indexedCommit || 'unknown',
         currentCommit: result.freshness.currentCommit || 'unknown',
         freshness: `stale=${result.freshness.stale} dirty=${result.freshness.dirty}`,
@@ -1344,7 +1519,12 @@ async function buildCodeWiki(opts) {
     const projectRoot = options.projectRoot || require('../runtime').getWorkspaceRoot();
     const generatedAt = typeof options.now === 'function' ? options.now() : new Date().toISOString();
     const service = require('../code-perception');
-    const result = await service.exploreCode('', { includeSource: false, includeImpact: false, projectRoot });
+    // activeContext is forwarded so a caller/test can bind a real focus; without it
+    // a non-host projectRoot resolves to no focus (never the host's — see the service).
+    const result = await service.exploreCode('', {
+        includeSource: false, includeImpact: false, projectRoot,
+        activeContext: options.activeContext, config: options.config, registry: options.registry,
+    });
 
     const wikiDir = path.join(projectRoot, '.evo-lite', 'generated', 'code-wiki');
     // Fresh rebuild: clear any prior pages so a removed task/module never lingers.
@@ -1379,11 +1559,19 @@ async function buildCodeWiki(opts) {
         '## Recommended reading', readingList, '',
     ].join('\n'));
 
-    // current-focus.md
-    const focusTasks = (result.governance.tasks || []).filter(t => t.status !== 'implemented');
+    // current-focus.md — ONLY the canonical resolved focus (result.focus), never
+    // "every unfinished task": that would present unrelated backlog as the focus.
+    // When the service could not resolve a focus, say so and show its diagnostic.
+    const focus = result.focus || { entityId: null, resolved: false };
+    const focusEntity = focus.entityId
+        ? (result.governance.tasks || []).find(t => t.id === focus.entityId) || null
+        : null;
+    const focusDiag = result.diagnostics.find(d => ['focus-unresolved', 'focus-ambiguous', 'focus-id-unknown'].includes(d.code || ''));
     write('current-focus.md', [
         '# Current Focus', '',
-        focusTasks.length ? focusTasks.map(t => `- ${t.id} — ${t.title || ''} (${t.status})`).join('\n') : '- (no active task)', '',
+        focus.resolved
+            ? `- ${focus.entityId}${focusEntity ? ` — ${focusEntity.title || ''} (${focusEntity.status})` : ''}`
+            : `- (no resolved focus)${focusDiag ? ` — ${focusDiag.message || focusDiag.code}` : ''}`, '',
         '## Focus-linked files',
         (links.filter(l => l.kind === 'related_to_focus').map(l => `- ${l.codeReferenceId}`).join('\n')) || '- (none)', '',
     ].join('\n'));
@@ -1408,7 +1596,12 @@ async function buildCodeWiki(opts) {
         const repSymbols = result.matches.filter(s => s.filePath && moduleFiles.has(s.filePath)).slice(0, 10);
         const rels = result.relationships.filter(r => (r.source && moduleFiles.has(r.source.filePath)) || (r.target && moduleFiles.has(r.target.filePath)));
         const relatedTasks = [...new Set([...m.taskIds, ...m.files.flatMap(f => tasksByFile.get(f) || [])])].sort();
-        const relatedCommits = [...new Set(relatedTasks.flatMap(tid => linksByKindFor(tid, 'changed_by_commit').map(l => l.codeReferenceId)))].sort();
+        // Module -> commits via commit.changedFiles ∩ module.files. (NOT via
+        // linksByKindFor(taskId,'changed_by_commit'): those links are keyed by
+        // governanceEntityId 'commit:<sha>', so a task-id lookup is always empty.)
+        const relatedCommits = (result.governance.commits || [])
+            .filter(c => (Array.isArray(c.changedFiles) ? c.changedFiles : []).some(f => moduleFiles.has(f)))
+            .map(c => c.sha).sort();
         write(path.join('modules', `${slug(m.id)}.md`), [
             `# Module: ${m.id}`, '',
             `Derived module grouping ${m.files.length} file(s)${m.changed ? ' (has working-tree changes)' : ''}.`, '',
@@ -1430,7 +1623,14 @@ async function buildCodeWiki(opts) {
         const linkedFiles = Array.isArray(t.linkedFiles) ? t.linkedFiles : [];
         const resolvedFiles = linkedFiles.filter(f => knownFiles.has(f));
         const unresolvedFiles = linkedFiles.filter(f => !knownFiles.has(f)); // declared but no provider file fact
-        const commits = linksByKindFor(t.id, 'changed_by_commit').map(l => `- ${l.codeReferenceId} (conf ${l.confidence})`);
+        // Task -> commits via evidence.taskId + evidence.commitSha, resolved against
+        // governance.commits. (NOT via linksByKindFor(t.id,'changed_by_commit'):
+        // changed_by_commit is keyed by 'commit:<sha>', never a task id.)
+        const taskCommitShas = new Set((result.governance.evidence || [])
+            .filter(e => e.taskId === t.id && e.commitSha).map(e => e.commitSha));
+        const commits = (result.governance.commits || [])
+            .filter(c => taskCommitShas.has(c.sha))
+            .map(c => `- ${c.sha}`);
         const tests = linksByKindFor(t.id, 'verified_by_test').map(l => `- ${l.codeReferenceId}`);
         const archives = linksByKindFor(t.id, 'evidenced_by_archive').map(l => `- ${l.codeReferenceId}`);
         const evidenceEntries = (result.governance.evidence || []).filter(e => e.taskId === t.id)
@@ -1498,14 +1698,12 @@ EOF
 ### Task 6: Inspector Code page + read-only `/api/code/*`
 
 **Files:**
-- Modify: `templates/cli/code-perception/status.js` (carry `capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit` on each provider row — spec §6 requires the page to render them)
 - Modify: `templates/cli/inspector.js` (export pure response mappers + add API branches in `handleApi` + a Code tab in `renderHtml`)
 - Test: `templates/cli/test/governance.js` (append block `T-ce-inspector`)
 
 **Interfaces:**
-- Consumes: `code-perception.js#exploreCode`; `code-perception/wiki.js#getWikiStatus`; existing `getWorkspaceRoot`.
+- Consumes: `code-perception.js#exploreCode` (its `providers` rows already carry `capabilities`/`providerVersion`/`adapterVersion`/`indexedCommit`/`currentCommit` — enriched in T2 Step 3b); `code-perception/wiki.js#getWikiStatus`; existing `getWorkspaceRoot`.
 - Produces:
-  - Enriched status rows: `buildProviderRow` now also carries `capabilities` (object), `providerVersion`, `adapterVersion`, `indexedCommit`, `currentCommit` (additive — existing field-level status tests unaffected). This flows through `result.providers` to the CLI, Wiki, and Inspector.
   - Pure, exported response mappers (so the ok/`ok:false` mapping is unit-testable without HTTP): `codeStatusResponse(result, wikiStatus) -> {status, body}`, `codeFocusResponse(result) -> {status, body}`, `codeTaskResponse(result, id) -> {status, body}`. A `result.ok === false` (true fatal) maps to HTTP **503** (never 200 — same unified error model as the CLI/MCP paths); a missing `?id=` maps to **400**.
   - Read-only endpoints on the existing zero-dep server, dispatched by prefix on the full `req.url` (query string included):
     - `GET /api/code/status` → `{providers (with capabilities/versions/commits), freshness, links, wiki, diagnostics}`.
@@ -1587,35 +1785,7 @@ EOF
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-inspector|404|unknown api|codeStatusResponse" | head`
 Expected: FAIL — `inspector.codeStatusResponse` is not yet exported (and `/api/code/status` hits the fallthrough 404).
 
-- [ ] **Step 3a: Enrich the status rows** in `templates/cli/code-perception/status.js#buildProviderRow`. The spec §6 Code page must render provider capabilities, versions, and indexed/current commit; today the row omits them though `candidate.status` (a `ProviderStatus`) carries them. Find the row construction:
-
-```javascript
-    const row = { id, role, available, ready, indexState, compatibility, degraded };
-    const reason = availability && availability.reason;
-    if (reason) {
-        row.reason = reason;
-    }
-```
-
-Replace with (additive — existing field-level status tests keep passing):
-
-```javascript
-    const row = { id, role, available, ready, indexState, compatibility, degraded };
-    // Spec §6: the Inspector Code page renders capabilities + versions + commits.
-    // Carry them through from the ProviderStatus when present (best-effort, never throw).
-    if (status && typeof status.capabilities === 'object' && status.capabilities !== null) row.capabilities = status.capabilities;
-    row.providerVersion = (status && status.providerVersion) ?? null;
-    row.adapterVersion = (status && status.adapterVersion)
-        ?? (registration && registration.provider && registration.provider.adapterVersion) ?? null;
-    row.indexedCommit = (status && status.indexedCommit) ?? null;
-    row.currentCommit = (status && status.currentCommit) ?? null;
-    const reason = availability && availability.reason;
-    if (reason) {
-        row.reason = reason;
-    }
-```
-
-- [ ] **Step 3b: Add exported response mappers + API branches** to `templates/cli/inspector.js`.
+- [ ] **Step 3a: Add exported response mappers + API branches** to `templates/cli/inspector.js`.
 
 First, define pure mappers near the other helpers (module scope) and export them, so the unified error mapping (`ok:false` → 503, missing id → 400) is unit-testable without HTTP:
 
@@ -1685,7 +1855,7 @@ Then add the API branches in `handleApi`, inside the `try {` block, before the `
 
 *(These branches `return` a Promise from `handleApi`; the existing synchronous branches ignore the return value, so mixing is safe — the response is sent inside `.then`. A THROWN/unexpected error still maps to 500; only the modeled fatal `ok:false` maps to 503.)*
 
-- [ ] **Step 3c: Add a Code tab** to `renderHtml()`. Find the tab-button strip and the `load('timeline');` bootstrap (near line 305). Add a `code` tab button alongside the others (search the existing markup for the `<button` tab pattern used for `timeline`/`planning` and add one more that calls `showTab('code')`), and register a loader entry so `showTab('code')` fetches `/api/code/status`:
+- [ ] **Step 3b: Add a Code tab** to `renderHtml()`. Find the tab-button strip and the `load('timeline');` bootstrap (near line 305). Add a `code` tab button alongside the others (search the existing markup for the `<button` tab pattern used for `timeline`/`planning` and add one more that calls `showTab('code')`), and register a loader entry so `showTab('code')` fetches `/api/code/status`:
 
 ```html
         <button onclick="showTab('code')">Code</button>
@@ -1718,7 +1888,7 @@ Expected: PASS — `✅ T-ce-inspector code endpoints passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add templates/cli/code-perception/status.js templates/cli/inspector.js templates/cli/test/governance.js
+git add templates/cli/inspector.js templates/cli/test/governance.js
 git commit -m "$(cat <<'EOF'
 feat(inspector): read-only Code page + /api/code/* over unified service (task:ce-inspector)
 
@@ -1733,14 +1903,15 @@ EOF
 
 **Files:**
 - Modify: `templates/cli/template-manifest.js` (register 3 NEW managed files)
-- Mirror (generated, do NOT hand-edit) — the convergence updates **every** managed mirror file this plan touched, not only the 3 new ones. Affected managed set (all core-cli):
-  - New: `.evo-lite/cli/code-perception.js`, `.evo-lite/cli/code-perception/cli.js`, `.evo-lite/cli/code-perception/wiki.js`
-  - Modified by earlier tasks: `.evo-lite/cli/code-perception/normalize.js` (T1), `.evo-lite/cli/memory.js` (T3), `.evo-lite/cli/mcp-server.js` + `.evo-lite/cli/mcp-validate.js` (T4), `.evo-lite/cli/code-perception/status.js` + `.evo-lite/cli/inspector.js` (T6)
+- Mirror (generated, do NOT hand-edit) — the convergence updates **every** managed mirror file this plan touched: **11 files**, not only the 3 new ones. Affected managed set (all core-cli):
+  - New (3): `.evo-lite/cli/code-perception.js`, `.evo-lite/cli/code-perception/cli.js`, `.evo-lite/cli/code-perception/wiki.js`
+  - Modified by earlier tasks (6): `.evo-lite/cli/code-perception/normalize.js` (T1), `.evo-lite/cli/code-perception/status.js` (T2), `.evo-lite/cli/memory.js` (T3), `.evo-lite/cli/mcp-server.js` + `.evo-lite/cli/mcp-validate.js` (T4), `.evo-lite/cli/inspector.js` (T6)
+  - Modified by THIS task (2): `.evo-lite/cli/template-manifest.js`, `.evo-lite/cli/test/governance.js` — both are managed core-cli entries; every task appends to `test/governance.js`, and this task edits the manifest itself. Omitting them leaves uncommitted mirror drift.
 - Test: `templates/cli/test/governance.js` (append block `T-ce-manifest-sync`)
 
 **Interfaces:**
 - Consumes: `sync-runtime-entry.js` (bootstrap-safe standalone entry); `template-manifest.js#{MANAGED_TEMPLATE_FAMILIES, buildManagedTemplateEntries}`.
-- Produces: the 3 new files registered as managed core-cli entries; a second `sync-runtime-entry` run reports zero changes; **every** affected mirror file (the 9 above) is byte-identical to its template (Node `Buffer.equals`). The generated lock `.evo-lite/generated/runtime-mirror.lock.json` is NOT a committed artifact (it lives under the git-ignored `generated/` tree).
+- Produces: the 3 new files registered as managed core-cli entries; a second `sync-runtime-entry` run reports zero changes; **every** affected mirror file (all **11** above) is byte-identical to its template (Node `Buffer.equals`). The generated lock `.evo-lite/generated/runtime-mirror.lock.json` is NOT a committed artifact (it lives under the git-ignored `generated/` tree).
 
 - [ ] **Step 1: Write the failing test** — append after the T-ce-inspector block:
 
@@ -1751,15 +1922,20 @@ EOF
             const manifest = require(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'));
             const core = manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli');
             const NEW_FILES = ['code-perception.js', 'code-perception/cli.js', 'code-perception/wiki.js'];
-            for (const f of NEW_FILES) {
-                assert.ok(core.files.includes(f), `${f} must be a managed core-cli template`);
-            }
             // Every managed file THIS PLAN touched must converge + stay byte-identical — not
             // only the 3 new ones. (Byte-checking just the new files would let a stale
             // modified mirror — e.g. inspector.js or memory.js — pass silently.)
+            // 11 files: the 3 new + 8 modified. `template-manifest.js` and
+            // `test/governance.js` ARE managed core-cli entries and THIS task edits
+            // both — omitting them would leave real, uncommitted mirror drift.
             const AFFECTED = [...NEW_FILES,
-                'code-perception/normalize.js', 'memory.js', 'mcp-server.js', 'mcp-validate.js',
-                'code-perception/status.js', 'inspector.js'];
+                'code-perception/normalize.js', 'code-perception/status.js', 'memory.js',
+                'mcp-server.js', 'mcp-validate.js', 'inspector.js',
+                'template-manifest.js', 'test/governance.js'];
+            assert.strictEqual(AFFECTED.length, 11, 'closure covers all 11 managed files this plan touches');
+            for (const f of AFFECTED) {
+                assert.ok(core.files.includes(f), `${f} must be a managed core-cli template`);
+            }
 
             // Converge into a TEMP workspace — NEVER mutate the real repo's .evo-lite/cli
             // during a test. Seed from the template entry (its __dirname is the template
@@ -1821,14 +1997,15 @@ node ./.evo-lite/cli/test.js all;            echo "runtime suite exit:  $?"
 
 Expected: both print `exit: 0`, and both include the passing `T-ce-*` blocks. A non-zero exit on either is a blocker — read the full output (not a tail) to find the failing block.
 
-- [ ] **Step 5: Commit** — stage the manifest, the governance test, and EVERY affected mirror file the convergence rewrote (the 9 below). Do NOT stage the generated lock: `.evo-lite/generated/runtime-mirror.lock.json` lives under the git-ignored `generated/` tree and is not a committed artifact.
+- [ ] **Step 5: Commit** — stage the templates this task edited plus EVERY affected mirror file the convergence rewrote (all **11**). Do NOT stage the generated lock: `.evo-lite/generated/runtime-mirror.lock.json` lives under the git-ignored `generated/` tree and is not a committed artifact.
 
 ```bash
 git add templates/cli/template-manifest.js templates/cli/test/governance.js \
   .evo-lite/cli/code-perception.js .evo-lite/cli/code-perception/cli.js .evo-lite/cli/code-perception/wiki.js \
   .evo-lite/cli/code-perception/normalize.js .evo-lite/cli/code-perception/status.js \
-  .evo-lite/cli/memory.js .evo-lite/cli/mcp-server.js .evo-lite/cli/mcp-validate.js .evo-lite/cli/inspector.js
-git status --short   # verify: no .evo-lite/generated/**, no stray files
+  .evo-lite/cli/memory.js .evo-lite/cli/mcp-server.js .evo-lite/cli/mcp-validate.js .evo-lite/cli/inspector.js \
+  .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
+git status --short   # verify: no .evo-lite/generated/**, no stray files, no leftover .evo-lite/cli drift
 git commit -m "$(cat <<'EOF'
 feat(manifest): register unified code-explore files + converge runtime mirror (task:ce-manifest-sync)
 
@@ -1849,7 +2026,7 @@ EOF
 | `ac-mcp-code-explore` | MCP `evo_code_explore` on the same service; missing/unindexed/stale/ambiguous/unsupported return successful guidance not isError | **T4** (tool + handler) + T4 adds it to `mcp-validate.js` (the AC's verifier `node ./.evo-lite/cli/mcp-validate.js`). |
 | `ac-minimal-code-wiki` | `wiki build` produces provider/overview/current-focus/module/task pages with freshness+dependencies; pure-derived read-only; delete-dir + rebuild reproduces | **T5** (`buildCodeWiki`/`getWikiStatus` + determinism test) + T3 (`mem code wiki build|status`). |
 | `ac-inspector-code-surface` | Inspector Code page + `/api/code/status|focus|task?id=` read-only, never auto-install, diagnostics on failure | **T6** (routes + page + test). Verifier `node ./.evo-lite/cli/test.js governance` covers `T-ce-inspector`. |
-| `ac-mirror-parity` | new files + mirrors byte-identical; second `sync-runtime-entry` zero changes; uses standalone entry not `memory.js sync-runtime` | **T7** (manifest + convergence + Buffer.equals test). |
+| `ac-mirror-parity` | new files + mirrors byte-identical; second `sync-runtime-entry` zero changes; uses standalone entry not `memory.js sync-runtime` | **T7** (manifest + convergence + Buffer.equals over all **11** affected managed files, converged in a temp workspace; generated lock not committed). |
 
 ### Spec section coverage
 
@@ -1863,7 +2040,8 @@ No `TODO` / "add error handling" / "similar to Task N" / bare prose-for-code. Ev
 
 - `toSymbolReferences(matches, opts?)` — defined T1, consumed T2 (`{focusId}`). ✔
 - `normalizeDerivedLinkConfidence(links)` / `DERIVED_LINK_CONFIDENCE_FLOOR` — defined T1, consumed T1 test + T2. ✔
-- `exploreCode(query, opts) -> UnifiedExploreResult{query,ok,freshness,providers,matches,relationships,impact?,source,files,modules,governance,recommendedReading,diagnostics}` — defined T2, consumed identically in T3 (CLI), T4 (MCP), T5 (Wiki), T6 (Inspector). `files`/`modules` added for T5 module pages + unresolved-link detection. ✔
+- `exploreCode(query, opts) -> UnifiedExploreResult{query,ok,freshness,providers,matches,relationships,impact?,source,files,modules,focus,governance,recommendedReading,diagnostics}` — defined T2, consumed identically in T3 (CLI), T4 (MCP), T5 (Wiki), T6 (Inspector). `files`/`modules` feed T5 module pages + unresolved-link detection; `focus` is the canonical resolved focus T5/T6 render. `ok:false` comes from the T2 fatal gate (`FATAL_CODES`), which is what makes T4's isError / T6's 503 / T3's exit 1 reachable. ✔
+- Verified real shapes the plan binds to (each previously mis-read): `post-commit-last-run.json` = `{commit, changedFiles}` (NOT `commits`/`headSha`); active-context backlog rows = `{checked, hash, line, text}` (NOT `id`); `changed_by_commit` entityId = `commit:<sha>` (NOT a task id) → task commits via `evidence.commitSha`, module commits via `changedFiles ∩ module.files`. ✔
 - `buildGovernanceLinks` input keys used (`planIR.tasks`, `fileReferences`, `symbolReferences`, `focusReferences`, `commits`, `acceptanceDependencies`, `evidence`) all match the API map; the linker derives `implements_task` via `evidence.symbols`/commit diff-ranges (NOT `task.symbols`, which the scanner never populates). `selectProvider` request `{capability, preferredProvider?}` + `selection.candidate.registration.provider` match the router. `buildCodePerceptionStatus(context,{candidates,links})` matches status.js (rows enriched in T6). `readActiveContext()` matches memory.service.js; the service overrides it via `opts.activeContext` DI (host-bound `ACTIVE_CONTEXT_PATH`). ✔
 - `buildCodeWiki(opts{projectRoot,now?}) -> {dir,pages,manifest}` / `getWikiStatus(opts) -> {exists,pageCount,...}` — defined T5, consumed T3 + T6. ✔
 - `codeStatusResponse/codeFocusResponse/codeTaskResponse(result,...) -> {status,body}` — defined + exported T6, consumed by the T6 HTTP branches + unit-tested for `ok:false`→503. ✔
