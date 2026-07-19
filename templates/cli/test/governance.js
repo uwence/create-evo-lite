@@ -7283,6 +7283,59 @@ async function runChildRuntimeTests() {
         }
         console.log('✅ T-ce-explore-B injected structural provider passed');
 
+        console.log('T-ce-explore-B2. COMPATIBILITY CONTRACT — structured evidence.symbols reaches the linker ...');
+        {
+            // This proves the SUPPORTED contract ONLY: a structured evidence row carrying a
+            // linker signal (symbols) must survive the service's evidence split and reach the
+            // linker, even though it has NO codeReferenceId/filePath. It does NOT claim the
+            // built-in Planning producer emits this shape — it does not (see Grounded reality).
+            // Its purpose is to guard against the service silently severing the dormant M1/M2 seam.
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-explore-b2');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            // Structured evidence with symbols and NO code anchor — a DI-shaped row, explicitly
+            // NOT what scanPlanning produces. task.symbols left empty on purpose.
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'],
+                   evidence: [{ kind: 'test', symbols: ['selectEngine'] }] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+
+            const PID = 'provider:fixture-structural-b2';
+            const status = {
+                providerId: PID, adapterVersion: '0.0.1', providerVersion: '9.9.9', available: true, ready: true,
+                indexState: 'ready', freshness: 'fresh', dirty: 'clean', compatibility: 'supported',
+                capabilities: { files: false, symbols: true, source: false, callers: false, callees: false, impact: false },
+                diagnostics: [],
+            };
+            const provider = {
+                id: PID, name: 'Fixture B2', adapterVersion: '0.0.1', capabilities: status.capabilities,
+                async check() { return { available: true, ready: true, installed: true, indexState: 'ready' }; },
+                async getStatus() { return status; },
+                async search() { return { query: 'engine', matches: [{ providerEntityId: 'sym:selectEngine', name: 'selectEngine', kind: 'function', filePath: 'src/engine.js', lineRange: [1, 1] }], diagnostics: [] }; },
+            };
+            const registry = Object.assign({}, require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader')).DEFAULT_REGISTRY,
+                { [PID]: { role: 'structural-primary', create: () => provider } });
+
+            const result = await svc.exploreCode('engine', {
+                projectRoot: runtime.workspaceRoot, includeSource: false, includeImpact: false,
+                config: { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } },
+                registry, activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+
+            assert.strictEqual(result.ok, true, 'B2: ok:true');
+            // The structured symbols row reached the linker: implements_task derived exists.
+            const derived = result.governance.links.filter(l => l.kind === 'implements_task' && l.status === 'derived');
+            assert.ok(derived.length >= 1,
+                'B2: a structured evidence.symbols row (no code anchor) MUST reach the linker and yield an implements_task derived link — the service must not sever the seam');
+            assert.ok(derived.every(l => l.confidence > 0), 'B2: M2 floored the derived confidence > 0');
+            // The structured row is retained AND flagged linkable in governance.evidence.
+            assert.ok(result.governance.evidence.some(e => Array.isArray(e.symbols) && e.symbols.includes('selectEngine') && e.linkable === true),
+                'B2: the structured evidence row is retained and flagged linkable:true');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-explore-B2 structured-evidence compatibility contract passed');
+
         console.log('T-ce-explore-C. Unified explore — adapter exception is FATAL (ok:false) ...');
         {
             // The service itself must generate ok:false for an adapter/invariant break.

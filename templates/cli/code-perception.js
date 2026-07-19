@@ -320,9 +320,20 @@ async function exploreCode(query, opts) {
         //   - allEvidence  -> surfaced verbatim in governance.evidence so the CLI/MCP show
         //     that evidence EXISTS. Opaque strings are projected as {taskId, raw, linkable:false}.
         //     We NEVER synthesize symbols/commitSha/codeReferenceId/filePath we did not see.
-        //   - linkableEvidence -> only rows the linker can actually consume: a plain object
-        //     carrying codeReferenceId OR a resolvable filePath (+ recognized kind). Today the
-        //     built-in producer yields zero of these; a DI caller or a future Evidence IR may.
+        //   - linkableEvidence -> any structured row carrying a signal the linker ALREADY
+        //     consumes. This must NOT be narrowed to code anchors: the linker derives
+        //     implements_task from evidence.symbols / evidence.commitSha WITHOUT a
+        //     codeReferenceId/filePath (verified against governance-linker.js), and derives
+        //     verified_by_test / evidenced_by_archive from codeReferenceId / resolvable filePath.
+        //     Filtering on code anchors alone would sever the dormant M1/M2 seam at the service
+        //     layer. Today the built-in producer yields none of these; a DI caller / Evidence IR may.
+        //     We NEVER synthesize a signal that was not present.
+        const hasLinkerSignal = (e) => e && typeof e === 'object' && (
+            typeof e.codeReferenceId === 'string'
+            || typeof e.filePath === 'string'
+            || (Array.isArray(e.symbols) && e.symbols.length > 0)
+            || typeof e.commitSha === 'string'
+        );
         const allEvidence = [];
         const linkableEvidence = [];
         let opaqueEvidenceCount = 0;
@@ -330,10 +341,9 @@ async function exploreCode(query, opts) {
             for (const e of (Array.isArray(t.evidence) ? t.evidence : [])) {
                 if (e && typeof e === 'object') {
                     const row = Object.assign({ taskId: t.id }, e);
+                    row.linkable = hasLinkerSignal(row);
                     allEvidence.push(row);
-                    // Linkable ONLY if it already carries a code anchor the linker resolves.
-                    if (row.codeReferenceId || row.filePath) linkableEvidence.push(row);
-                    else opaqueEvidenceCount += 1;
+                    if (row.linkable) linkableEvidence.push(row);
                 } else if (typeof e === 'string' && e.length) {
                     allEvidence.push({ taskId: t.id, raw: e, linkable: false });
                     opaqueEvidenceCount += 1;
