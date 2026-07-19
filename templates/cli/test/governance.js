@@ -7273,8 +7273,12 @@ async function runChildRuntimeTests() {
                 'B: opaque evidence is retained verbatim in governance.evidence, flagged non-linkable');
             assert.ok(result.diagnostics.some(d => (d.code || '') === 'unstructured-evidence'),
                 'B: an aggregated unstructured-evidence diagnostic explains the limitation');
-            assert.ok(!result.diagnostics.some(d => (d.code || '') === 'unresolved-code-reference'),
-                'B: opaque evidence is NOT handed to the linker, so no per-row unresolved-code-reference noise');
+            // Precise invariant: opaque evidence must not add an EVIDENCE-path
+            // unresolved-code-reference. (declares_file may legitimately emit that code for a
+            // linkedFile not in the tree, so a blanket "zero unresolved-code-reference" would be
+            // false on real data — assert the `evidence:`-prefixed message specifically.)
+            assert.ok(!result.diagnostics.some(d => (d.code || '') === 'unresolved-code-reference' && /^evidence:/.test(d.message || '')),
+                'B: opaque evidence is NOT handed to the linker, so it produces no evidence-path unresolved-code-reference');
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-explore-B injected structural provider passed');
