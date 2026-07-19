@@ -212,13 +212,19 @@ Task-to-File / Task-to-Symbol / Commit-to-File / Commit diff-range→symbol / Ev
 **Goal:** an explicit, producer-owned **structured Evidence IR** that can associate a task and its evidence source with a concrete code entity — file, symbol, test, or commit — WITHOUT inferring links from free text. Minimum shape per row:
 
 ```text
-taskId
-kind                         // 'test' | 'archive' | ...
-codeReferenceId | filePath   // at least one code anchor (required for a link)
-symbols?                     // enables implements_task:derived
-commitSha?                   // enables commit diff-range ties
+taskId                       // the owning task; a row must never claim a different one
+
+at least one LINKER SIGNAL:
+  symbols?                   // enables implements_task:derived (no code anchor required)
+  commitSha?                 // enables implements_task:derived via commit diff-range tie
+  codeReferenceId?           // enables verified_by_test / evidenced_by_archive (with kind)
+  filePath?                  // resolvable code path — same, when no codeReferenceId
+
+kind                         // 'test' | 'archive' | ... — required for verified_by_test / evidenced_by_archive
 archivePath?                 // provenance
 sourcePath? / traceability
 ```
+
+Note: `symbols` / `commitSha` alone ARE valid linker signals (they drive `implements_task:derived`); a code anchor is required only for `verified_by_test` / `evidenced_by_archive`. This matches the service's `hasLinkerSignal` split and the B2 compatibility contract — the Evidence IR must not re-narrow "linkable" back to code anchors.
 
 **Activation:** prioritize only AFTER the Validation Sprint, and only if real users require confirmed Task→Symbol / Evidence→Code relationships beyond declared files and commit links. Until then this is **parked** — the honest default remains file/commit/focus governance. This is the sole sanctioned way to make the dormant M1/M2 seams live; the built-in string-evidence path must never be back-filled with synthesized code anchors.

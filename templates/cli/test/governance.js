@@ -7333,6 +7333,30 @@ async function runChildRuntimeTests() {
             assert.ok(result.governance.evidence.some(e => Array.isArray(e.symbols) && e.symbols.includes('selectEngine') && e.linkable === true),
                 'B2: the structured evidence row is retained and flagged linkable:true');
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+
+            // B2-mismatch: a row whose OWN taskId points at a different task must be
+            // fail-closed — retained for observation but NEVER linked (no cross-task fabrication).
+            const runtime2 = createTempRuntimeRoot('ce-explore-b2m');
+            writeText(path.join(runtime2.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            seedPlanIR(runtime2.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'],
+                   evidence: [{ taskId: 'task:y', kind: 'test', symbols: ['selectEngine'] }] },
+                 { id: 'task:y', title: 'Other', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: [], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime2.workspaceRoot);
+            const result2 = await svc.exploreCode('engine', {
+                projectRoot: runtime2.workspaceRoot, includeSource: false, includeImpact: false,
+                config: { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } },
+                registry, activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+            assert.strictEqual(result2.diagnostics.filter(d => (d.code || '') === 'evidence-task-mismatch').length, 1,
+                'B2-mismatch: exactly one evidence-task-mismatch diagnostic');
+            assert.ok(result2.governance.evidence.some(e => Array.isArray(e.symbols) && e.symbols.includes('selectEngine') && e.taskId === 'task:x' && e.linkable === false),
+                'B2-mismatch: conflicting row is retained under its OWNER task:x and flagged non-linkable');
+            const impl = result2.governance.links.filter(l => l.kind === 'implements_task' && l.status === 'derived');
+            assert.ok(!impl.some(l => l.governanceEntityId === 'task:y'), 'B2-mismatch: no fabricated task:y implements link');
+            assert.ok(!impl.some(l => l.governanceEntityId === 'task:x'), 'B2-mismatch: and no task:x link either (the mismatched row is not linked at all)');
+            fs.rmSync(runtime2.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-explore-B2 structured-evidence compatibility contract passed');
 

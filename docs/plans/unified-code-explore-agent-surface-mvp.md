@@ -67,7 +67,7 @@ These facts were verified in the current tree and shape the faithful bridges bel
 |------|----------------|------|
 | `templates/cli/code-perception/normalize.js` (modify) | + M1 `toSymbolReferences`, M2 `DERIVED_LINK_CONFIDENCE_FLOOR` + `normalizeDerivedLinkConfidence` | T1 |
 | `templates/cli/code-perception.js` (create) | Unified Explore service: `exploreCode`, `rankRecommendedReading`; §3.1 fatal gate | T2 |
-| `templates/cli/test/governance.js` (modify) | `T-ce-seam`, `T-ce-explore-A/B/C`, `T-ce-compose-A/B`, `T-ce-cli`, `T-ce-mcp`, `T-ce-manifest-sync-4a` | T1–T6 |
+| `templates/cli/test/governance.js` (modify) | `T-ce-seam`, `T-ce-explore-A/B/B2/C`, `T-ce-compose-A/B/C`, `T-ce-cli`, `T-ce-mcp`, `T-ce-manifest-sync-4a` | T1–T6 |
 | `templates/cli/code-perception/cli.js` (create) | `mem code` command group `registerCodeCommands` + unified exit model | T4 |
 | `templates/cli/memory.js` (modify) | `safeRegister('code', …)` thunk | T4 |
 | `templates/cli/mcp-server.js` (modify) | `evo_code_explore` TOOLS entry + dispatch case + exported handler | T5 |
@@ -491,6 +491,30 @@ EOF
             assert.ok(result.governance.evidence.some(e => Array.isArray(e.symbols) && e.symbols.includes('selectEngine') && e.linkable === true),
                 'B2: the structured evidence row is retained and flagged linkable:true');
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+
+            // B2-mismatch: a row whose OWN taskId points at a different task must be
+            // fail-closed — retained for observation but NEVER linked (no cross-task fabrication).
+            const runtime2 = createTempRuntimeRoot('ce-explore-b2m');
+            writeText(path.join(runtime2.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            seedPlanIR(runtime2.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'],
+                   evidence: [{ taskId: 'task:y', kind: 'test', symbols: ['selectEngine'] }] },
+                 { id: 'task:y', title: 'Other', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: [], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime2.workspaceRoot);
+            const result2 = await svc.exploreCode('engine', {
+                projectRoot: runtime2.workspaceRoot, includeSource: false, includeImpact: false,
+                config: { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } },
+                registry, activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+            assert.strictEqual(result2.diagnostics.filter(d => (d.code || '') === 'evidence-task-mismatch').length, 1,
+                'B2-mismatch: exactly one evidence-task-mismatch diagnostic');
+            assert.ok(result2.governance.evidence.some(e => Array.isArray(e.symbols) && e.symbols.includes('selectEngine') && e.taskId === 'task:x' && e.linkable === false),
+                'B2-mismatch: conflicting row is retained under its OWNER task:x and flagged non-linkable');
+            const impl = result2.governance.links.filter(l => l.kind === 'implements_task' && l.status === 'derived');
+            assert.ok(!impl.some(l => l.governanceEntityId === 'task:y'), 'B2-mismatch: no fabricated task:y implements link');
+            assert.ok(!impl.some(l => l.governanceEntityId === 'task:x'), 'B2-mismatch: and no task:x link either (the mismatched row is not linked at all)');
+            fs.rmSync(runtime2.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-explore-B2 structured-evidence compatibility contract passed');
 
@@ -888,10 +912,21 @@ async function exploreCode(query, opts) {
         for (const t of (planIR.tasks || [])) {
             for (const e of (Array.isArray(t.evidence) ? t.evidence : [])) {
                 if (e && typeof e === 'object') {
-                    const row = Object.assign({ taskId: t.id }, e);
-                    // Structured rows are retained verbatim; `linkable` records whether the
-                    // linker can act on them. We NEVER synthesize a signal that was not present.
-                    row.linkable = hasLinkerSignal(row);
+                    // Ownership is FAIL-CLOSED. `t.id` always wins (correct owner), but a row that
+                    // DECLARED a different taskId is inconsistent producer data: retain it for
+                    // observation, but never let it reach the linker (a mismatched taskId would
+                    // silently create a cross-task governance link — fabricated semantics).
+                    const suppliedTaskId = (typeof e.taskId === 'string' && e.taskId) ? e.taskId : null;
+                    const row = Object.assign({}, e, { taskId: t.id });
+                    if (suppliedTaskId && suppliedTaskId !== t.id) {
+                        row.linkable = false;
+                        diagnostics.push(diag('evidence-task-mismatch',
+                            `evidence declares ${suppliedTaskId} but is owned by ${t.id}; retained but not linked`));
+                    } else {
+                        // `linkable` records whether the linker can act on the row. We NEVER
+                        // synthesize a signal that was not present.
+                        row.linkable = hasLinkerSignal(row);
+                    }
                     allEvidence.push(row);
                     if (row.linkable) linkableEvidence.push(row);
                 } else if (typeof e === 'string' && e.length) {
@@ -905,7 +940,7 @@ async function exploreCode(query, opts) {
         // limitation instead of silently dropping the evidence.
         if (opaqueEvidenceCount > 0) {
             diagnostics.push(diag('unstructured-evidence',
-                `${opaqueEvidenceCount} evidence entr${opaqueEvidenceCount === 1 ? 'y is an opaque string' : 'ies are opaque strings'} and cannot produce symbol/evidence-to-code governance links (no codeReferenceId or resolvable filePath). They are retained as raw evidence.`));
+                `${opaqueEvidenceCount} evidence entr${opaqueEvidenceCount === 1 ? 'y is an opaque string' : 'ies are opaque strings'} and cannot produce symbol/evidence-to-code governance links (no structured linker signal). They are retained as raw evidence.`));
         }
         let links = [];
         if (includeGovernance) {

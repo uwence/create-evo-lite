@@ -340,8 +340,19 @@ async function exploreCode(query, opts) {
         for (const t of (planIR.tasks || [])) {
             for (const e of (Array.isArray(t.evidence) ? t.evidence : [])) {
                 if (e && typeof e === 'object') {
-                    const row = Object.assign({ taskId: t.id }, e);
-                    row.linkable = hasLinkerSignal(row);
+                    // Ownership is FAIL-CLOSED. `t.id` always wins (correct owner), but if the
+                    // row DECLARED a different taskId, that is inconsistent producer data: retain
+                    // it for observation, but never let it reach the linker (a mismatched taskId
+                    // would silently create a cross-task governance link — fabricated semantics).
+                    const suppliedTaskId = (typeof e.taskId === 'string' && e.taskId) ? e.taskId : null;
+                    const row = Object.assign({}, e, { taskId: t.id });
+                    if (suppliedTaskId && suppliedTaskId !== t.id) {
+                        row.linkable = false;
+                        diagnostics.push(diag('evidence-task-mismatch',
+                            `evidence declares ${suppliedTaskId} but is owned by ${t.id}; retained but not linked`));
+                    } else {
+                        row.linkable = hasLinkerSignal(row);
+                    }
                     allEvidence.push(row);
                     if (row.linkable) linkableEvidence.push(row);
                 } else if (typeof e === 'string' && e.length) {
@@ -354,7 +365,7 @@ async function exploreCode(query, opts) {
         // limitation instead of silently dropping the evidence.
         if (opaqueEvidenceCount > 0) {
             diagnostics.push(diag('unstructured-evidence',
-                `${opaqueEvidenceCount} evidence entr${opaqueEvidenceCount === 1 ? 'y is an opaque string' : 'ies are opaque strings'} and cannot produce symbol/evidence-to-code governance links (no codeReferenceId or resolvable filePath). They are retained as raw evidence.`));
+                `${opaqueEvidenceCount} evidence entr${opaqueEvidenceCount === 1 ? 'y is an opaque string' : 'ies are opaque strings'} and cannot produce symbol/evidence-to-code governance links (no structured linker signal). They are retained as raw evidence.`));
         }
         let links = [];
         if (includeGovernance) {
