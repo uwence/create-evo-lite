@@ -113,6 +113,20 @@ interface GovernanceCodeLink {
 }
 ```
 
+### 3.5 Known default-pipeline limitation (symbol/evidence links are not reachable end-to-end today)
+
+Linker 的 rule-gated 规则(range-intersection symbol links、`verified_by_test`、`evidenced_by_archive`)要求**结构化输入**:`task.symbols[]`、或带 `symbols`/`commitSha`/`codeReferenceId`/可解析 `filePath` 的 evidence 行。这些规则由 linker 的单元 fixtures 证明。
+
+**但内建 Planning producer 目前不产出这种输入。** `planning/scan.js` 从不填充 `task.symbols`(实测 0/205 task),`task.evidence` 是 opaque 字符串(`- evidence:` 行 + `backfillArchiveEvidence` 的 `archive:<file>.md`,实测 131/131 为字符串,0 对象)。因此在**默认 end-to-end pipeline** 上:
+
+| 能力 | 默认路径 |
+|---|---|
+| `declares_file` / `changed_by_commit` / `related_to_focus` | 可用(confidence 1.0) |
+| `implements_task:proposed`(标题启发式) | 有结构 Provider 且标题命中符号名时可用(≤0.5) |
+| `implements_task:derived` / `verified_by_test` / `evidenced_by_archive` | **不可达** —— 无 producer 提供结构化 evidence |
+
+这是一个**尚未接通的 producer-integration gap**,不是已确认的产品能力。fixture 证明的规则**不得被表述为默认产品能力**。接通它属于独立的 follow-up(Evidence IR / Code Reference Bridge,见 §11),由外部验证决定优先级;本 spec 无需现在重写规则本身,但 §10 的 AC 措辞应理解为"linker 规则正确且单测通过",而非"默认 pipeline 端到端产出这些链接"。
+
 ## 4. Local Cache
 
 可**持久**缓存: provider status、normalized metadata(search/relationship/impact)、governance links。**仅进程内瞬时**使用(不落盘): opaque source context。**不得持久化**: 源码、getEntity content、explore opaqueText、raw stdout/stderr、Provider 完整 DB/全量 graph、secrets、凭据。(1 MiB 大小上限无法判定内容是否含凭据,故 source context 待有明确 redaction/classification 合同后才可持久化——见 Plan Follow-ups。)
@@ -190,3 +204,21 @@ Task-to-File / Task-to-Symbol / Commit-to-File / Commit diff-range→symbol / Ev
   ]
 }
 ```
+
+## 11. Follow-up (parked): Evidence IR / Code Reference Bridge
+
+**Not `"parse evidence strings"`.** Turning `archive:mem_….md` into `{kind:'archive', archivePath}` does NOT revive `evidenced_by_archive`: the linker requires `codeReferenceId` OR a resolvable code `filePath`, and an archive path is the *source* of evidence, not the code entity it attests. Inferring "this archive proves all of the task's linkedFiles" would fabricate semantics.
+
+**Goal:** an explicit, producer-owned **structured Evidence IR** that can associate a task and its evidence source with a concrete code entity — file, symbol, test, or commit — WITHOUT inferring links from free text. Minimum shape per row:
+
+```text
+taskId
+kind                         // 'test' | 'archive' | ...
+codeReferenceId | filePath   // at least one code anchor (required for a link)
+symbols?                     // enables implements_task:derived
+commitSha?                   // enables commit diff-range ties
+archivePath?                 // provenance
+sourcePath? / traceability
+```
+
+**Activation:** prioritize only AFTER the Validation Sprint, and only if real users require confirmed Task→Symbol / Evidence→Code relationships beyond declared files and commit links. Until then this is **parked** — the honest default remains file/commit/focus governance. This is the sole sanctioned way to make the dormant M1/M2 seams live; the built-in string-evidence path must never be back-filled with synthesized code anchors.

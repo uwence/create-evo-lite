@@ -9,7 +9,7 @@ linkedSpec: spec:unified-code-explore-wiki-projection
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver the ONE shared Unified Explore service and the two surfaces an agent actually consumes — `mem code` CLI and the `evo_code_explore` MCP tool — with the M1/M2 adapter↔linker seams nailed down and proven against REAL producers, not hand-written fixtures.
+**Goal:** Deliver the ONE shared Unified Explore service and the two surfaces an agent actually consumes — `mem code` CLI and the `evo_code_explore` MCP tool — driving structural exploration plus file/commit/focus governance links, and gated by composition tests that run the REAL producers (not hand-written fixtures) so the service reads what those producers actually emit. The M1/M2 adapter↔linker seams are implemented and unit-proven but DORMANT on the built-in pipeline (the default producer emits no `task.symbols` and only opaque string evidence — see Grounded reality); they are the forward-compatibility path for a future explicit producer, not a shipped default capability.
 
 **Architecture:** A single stateless service (`code-perception.js#exploreCode`) orchestrates sub-spec ①'s router/loader + ②'s adapter/linker/status per spec §2.2, converts references through the one M1 seam (`normalize.js#toSymbolReferences`), floors derived-link confidence through the one M2 seam (`normalize.js#normalizeDerivedLinkConfidence`), and returns a `UnifiedExploreResult`. Two thin surfaces (CLI group, MCP tool) call that one service — no duplicate logic. New files are registered as managed core-cli templates and mirrored byte-identical via the bootstrap-safe `sync-runtime-entry`.
 
@@ -43,7 +43,7 @@ These facts were verified in the current tree and shape the faithful bridges bel
 
 - **`native-lite` capabilities** (`code-perception/native-lite.js#buildCapabilities`) are `files:true, source:true, modules:true` — everything symbol-graph shaped (`symbols`, `semanticSearch`, `callers`, `callees`, `impact`, `affectedTests`, ...) is `false`. Native Lite exposes methods `check, getStatus, getFiles, getEntity` ONLY (no `search`/`getCallers`/`getCallees`/`impact`). So when CodeGraph is absent (the common dogfood state) `selectProvider({capability:'symbols'})` returns `candidate:null, reason:"No ready provider exposes symbols analysis"`, and `matches` is `[]`. This is success-shaped degradation, not an error.
 - **`selectProvider`** (`provider-router.js`) is pure/sync; provider instance is `selection.candidate.registration.provider`; degraded fallback sets `selection.degraded=true`; no-capability sets `candidate:null` + `reason`.
-- **`scanPlanning`** (`planning/scan.js`) populates `task.linkedFiles` (from frontmatter) but **never** `task.symbols`. So derived `implements_task` links fire in dogfood only via `evidence.symbols` or commit `diffRanges` intersection, not via `task.symbols`.
+- **Built-in Planning IR emits NO structured evidence — the default pipeline produces no live symbol/evidence governance links.** `scanPlanning` (`planning/scan.js`) populates `task.linkedFiles` but **never** `task.symbols` (verified: 0 of 205 tasks). And `task.evidence` rows are **opaque strings**, not objects: `planning/parse-markdown.js:63` pushes `- evidence:` lines as trimmed strings, and `planning/scan.js:164` merges `backfillArchiveEvidence`'s output — also strings like `"archive:mem_….md"` (verified: 131 of 131 evidence rows are strings, 0 objects). No producer anywhere emits `{symbols, commitSha, codeReferenceId, filePath}` evidence rows. Therefore the linker's rule-gated links — `implements_task:derived` (needs `task.symbols` OR `evidence.symbols` OR an `evidence.commitSha` diff-range tie), `verified_by_test`, `evidenced_by_archive` (both need `evidence.codeReferenceId` OR a resolvable `evidence.filePath`) — are **ALL unreachable on the default data**. What DOES fire: `declares_file` (1.0), `changed_by_commit` (1.0), `related_to_focus` (1.0), and the weak `implements_task:proposed` (title-heuristic, ≤0.5, needs no evidence). **M1/M2 are correct but DORMANT compatibility seams** for a future explicit producer / configured planning provider / Evidence IR — they are NOT evidence that the built-in pipeline produces Task-to-Symbol links. The service must retain opaque evidence verbatim (as `{taskId, raw, linkable:false}`), emit ONE aggregated `unstructured-evidence` diagnostic, and never synthesize a code anchor it did not receive.
 - **`buildGovernanceLinks`** (`governance-linker.js`) `implements_task` derived confidence is `clampConfidence(symRef.resolutionConfidence)` → **0 when `resolutionConfidence` is undefined** (the M2 trigger). `declares_file`/`depends_on_file`/`changed_by_commit` are conf 1.0; heuristic `implements_task` proposed is ≤0.5; `verified_by_test`/`evidenced_by_archive`/`related_to_focus` are 1.0.
 - **`readActiveContext`** is exported by `memory.service.js` (canonical, full parse). `sections.focus` is FREE TEXT — no structured spec/task field. Its `tasks[]` come from `parseBacklogTasks`, whose row shape is **`{checked, hash, line, text}`** — there is **NO `id` field**.
 - **The active-context backlog is NOT a task registry.** `hash` is a free-form human slug — real rows from this repo parse to `hash: 'fresh-plan-progress'` and `hash: '06fd'`. These never equal a Planning-IR task id (`task:ce-seam`), so matching backlog rows against `planIR.tasks` cannot fire on real data. Verified by running the real parser over the real file.
@@ -270,9 +270,9 @@ EOF
   - `async exploreCode(query: string, opts?: ExploreOpts) -> UnifiedExploreResult`. `ExploreOpts = {focusId?, preferredProvider?, includeSource?, includeImpact?, includeGovernance?, maxResults?, maxSourceChars?, projectRoot?, config?, registry?, activeContext?, commits?, acceptanceDependencies?}`. `projectRoot`/`config`/`registry`/`activeContext`/`commits`/`acceptanceDependencies` are DI seams for tests and callers — `activeContext` overrides the host-bound `memory.service.readActiveContext()` (which is pinned to a module-load `ACTIVE_CONTEXT_PATH`, so a foreign `projectRoot` with no injected `activeContext` gets an EMPTY context + diagnostic, never the host's focus). `commits`/`acceptanceDependencies` feed the ② linker's Layer-1/Layer-2 inputs; when omitted, `commits` is read from the persisted post-commit run (explore never shells `git log`). Never throws; internal exceptions become diagnostics + `result.ok=false` only for true invariant breaks.
   - Reads (best-effort, may be absent): `<root>/.evo-lite/generated/code-perception/governance-links.json` (persisted graph — merged, deduped by link id, so `changed_by_commit` links survive into explore) and `.../post-commit-last-run.json`, whose REAL shape is `{ commit: '<headSha>', changedFiles: [...] }` (verified in `post-commit-code-perception.js` — it writes `commit`, there is NO `commits` or `headSha` key; reading those would silently yield zero commits).
   - `rankRecommendedReading(inputs) -> ReadingItem[]` where `ReadingItem = {path, kind, reason, priority, confidence}` sorted by §2.3 order.
-  - `UnifiedExploreResult = {query, ok, freshness, providers, matches, relationships, impact?, source, files, modules, focus, governance, recommendedReading, diagnostics}` (spec §2). `focus = {entityId, taskId, resolved}` — the CANONICAL resolved focus; the Wiki/Inspector must render this rather than re-deriving focus (e.g. "all unfinished tasks" is not the focus). `ok:false` is returned for the §3.1 FATAL set only (`adapter-exception`, `security-violation`, `unparseable-response`, `internal-error`) — capability gaps stay `ok:true`. `freshness = {stale, dirty, indexedCommit?, currentCommit?}`. `governance = {specs, plans, tasks, commits, evidence, links, linkSummary}`. `files = string[]` (sorted repo-relative paths from native-lite file facts). `modules = [{id, files:string[], taskIds:string[], changed}]` (declared moduleId, else top-level path segment). Both are produced here but consumed only by the parked Phase 4b Wiki (module pages + unresolved-link detection); they stay in the shape so activating 4b needs no T2 signature change.
+  - `UnifiedExploreResult = {query, ok, freshness, providers, matches, relationships, impact?, source, files, modules, focus, governance, recommendedReading, diagnostics}` (spec §2). `focus = {entityId, taskId, resolved}` — the CANONICAL resolved focus; the Wiki/Inspector must render this rather than re-deriving focus (e.g. "all unfinished tasks" is not the focus). `ok:false` is returned for the §3.1 FATAL set only (`adapter-exception`, `security-violation`, `unparseable-response`, `internal-error`) — capability gaps stay `ok:true`. `freshness = {stale, dirty, indexedCommit?, currentCommit?}`. `governance = {specs, plans, tasks, commits, evidence, links, linkSummary}`. `governance.evidence` retains ALL real evidence verbatim (opaque built-in rows appear as `{taskId, raw, linkable:false}`); only structured rows carrying a code anchor are handed to the linker, so on the default pipeline `implements_task:derived` / `verified_by_test` / `evidenced_by_archive` are **not produced** and an aggregated `unstructured-evidence` diagnostic explains why (see Grounded reality). `files = string[]` (sorted repo-relative paths from native-lite file facts). `modules = [{id, files:string[], taskIds:string[], changed}]` (declared moduleId, else top-level path segment). Both are produced here but consumed only by the parked Phase 4b Wiki (module pages + unresolved-link detection); they stay in the shape so activating 4b needs no T2 signature change.
 
-- [ ] **Step 1: Write the failing test** — append inside `runGovernanceTests()` after the T-ce-seam block. THREE scenarios (a single test cannot exercise all provider realities). **Scenario A** = the native-lite degradation dogfood (the common host state — no structural provider; also pins the real post-commit blob shape + the real backlog `hash` shape); **Scenario B** = an injected structural fixture provider (proves the full symbol/relationship/impact/source path + the M1/M2 seams end-to-end); **Scenario C** = a ready provider that throws, proving the SERVICE itself produces the `ok:false` fatal that T4's and T5's surface mappings depend on. All `git init` the temp workspace because native-lite `getFiles` runs `git ls-files --cached --others --exclude-standard` and returns `files:[]` + a `git-enumeration-failed` diagnostic when the root is not a repo — so without a real repo the file facts (and every `declares_file` link) would be empty and the asserts could never pass.
+- [ ] **Step 1: Write the failing test** — append inside `runGovernanceTests()` after the T-ce-seam block. THREE scenarios (a single test cannot exercise all provider realities). **Scenario A** = the native-lite degradation dogfood (the common host state — no structural provider; also pins the real post-commit blob shape + the real backlog `hash` shape); **Scenario B** = an injected structural fixture provider (proves the full symbol/relationship/impact/source path and that M1 produces valid SymbolReferences — while asserting the service does NOT fabricate symbol-level governance links the built-in producer can't supply); **Scenario C** = a ready provider that throws, proving the SERVICE itself produces the `ok:false` fatal that T4's and T5's surface mappings depend on. All `git init` the temp workspace because native-lite `getFiles` runs `git ls-files --cached --others --exclude-standard` and returns `files:[]` + a `git-enumeration-failed` diagnostic when the root is not a repo — so without a real repo the file facts (and every `declares_file` link) would be empty and the asserts could never pass.
 
 ```javascript
         const { execFileSync } = require('node:child_process');
@@ -365,11 +365,13 @@ EOF
             const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
             const runtime = createTempRuntimeRoot('ce-explore-b');
             writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
-            // evidence.symbols names the symbol -> implements_task derived fires (linker rule);
-            // M2 then floors its confidence > 0.
+            // Evidence uses the REAL built-in producer shape: an opaque string. It must NOT
+            // fabricate a rule-gated link, and it must survive verbatim into governance.evidence.
+            // (A structured {symbols,...} row would be a shape no producer emits — the exact
+            // category error this suite exists to prevent.)
             seedPlanIR(runtime.runtimeRoot,
                 [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'],
-                   evidence: [{ kind: 'test', symbols: ['selectEngine'] }] }],
+                   evidence: ['archive:mem_2026-07-15_demo.md'] }],
                 [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
             gitInit(runtime.workspaceRoot);
 
@@ -413,10 +415,24 @@ EOF
             assert.ok(result.impact && Array.isArray(result.impact.downstream) && result.impact.downstream.length >= 1, 'B: impact shape with downstream');
             assert.ok(['low', 'medium', 'high', 'unknown'].includes(result.impact.risk), 'B: impact carries a risk level');
             assert.ok(result.source.length >= 1 && typeof result.source[0].excerpt === 'string', 'B: source excerpt present');
-            // implements_task derived (via evidence.symbols) MUST exist and carry confidence > 0 (M1 produced the symbolRef; M2 floored it).
+            // M1 must produce a valid SymbolReference from the structural match (this is the
+            // dormant seam's unit-level proof — it just is not FED by the built-in producer).
+            assert.ok(result.matches.some(m => m.filePath === 'src/engine.js' && m.name === 'selectEngine'),
+                'B: M1 normalized the structural match into a resolvable reference');
+            // The default Planning IR has no task.symbols and no structured evidence, so the
+            // service must NOT fabricate a symbol-level Task-to-Code link. Guarding at 0 is the
+            // whole point: a structural provider finding a symbol is NOT the same as governance
+            // data binding a task to that symbol.
             const derived = result.governance.links.filter(l => l.kind === 'implements_task' && l.status === 'derived');
-            assert.ok(derived.length >= 1, 'B: implements_task derived link exists (M1 bridge fed the linker)');
-            assert.ok(derived.every(l => l.confidence > 0), 'B: derived link confidence floored > 0 (M2)');
+            assert.strictEqual(derived.length, 0,
+                'B: no task.symbols / structured evidence -> service must not fabricate derived Task-to-Symbol links');
+            // The opaque evidence is retained, marked non-linkable, and explained by ONE diagnostic.
+            assert.ok(result.governance.evidence.some(e => e.raw === 'archive:mem_2026-07-15_demo.md' && e.linkable === false),
+                'B: opaque evidence is retained verbatim in governance.evidence, flagged non-linkable');
+            assert.ok(result.diagnostics.some(d => (d.code || '') === 'unstructured-evidence'),
+                'B: an aggregated unstructured-evidence diagnostic explains the limitation');
+            assert.ok(!result.diagnostics.some(d => (d.code || '') === 'unresolved-code-reference'),
+                'B: opaque evidence is NOT handed to the linker, so no per-row unresolved-code-reference noise');
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-explore-B injected structural provider passed');
@@ -785,20 +801,51 @@ async function exploreCode(query, opts) {
             : [];
         const commits = Array.isArray(options.commits) ? options.commits : persistedCommits;
         const acceptanceDependencies = Array.isArray(options.acceptanceDependencies) ? options.acceptanceDependencies : [];
-        const evidence = [];
+
+        // Evidence has TWO audiences and they are NOT the same set (this distinction
+        // is the whole point — conflating them either hides real evidence or fabricates
+        // links). The built-in Planning producer emits evidence as OPAQUE STRINGS
+        // (e.g. "archive:mem_...md" from planning/parse-markdown.js + scan.js); it emits
+        // no task.symbols and no structured {symbols,commitSha,codeReferenceId,filePath}
+        // rows. So on real data NONE of the rule-gated evidence links can fire.
+        //   - allEvidence  -> surfaced verbatim in governance.evidence so the CLI/MCP show
+        //     that evidence EXISTS. Opaque strings are projected as {taskId, raw, linkable:false}.
+        //     We NEVER synthesize symbols/commitSha/codeReferenceId/filePath we did not see.
+        //   - linkableEvidence -> only rows the linker can actually consume: a plain object
+        //     carrying codeReferenceId OR a resolvable filePath (+ recognized kind). Today the
+        //     built-in producer yields zero of these; a DI caller or a future Evidence IR may.
+        const allEvidence = [];
+        const linkableEvidence = [];
+        let opaqueEvidenceCount = 0;
         for (const t of (planIR.tasks || [])) {
             for (const e of (Array.isArray(t.evidence) ? t.evidence : [])) {
-                if (e && typeof e === 'object') evidence.push(Object.assign({ taskId: t.id }, e));
+                if (e && typeof e === 'object') {
+                    const row = Object.assign({ taskId: t.id }, e);
+                    allEvidence.push(row);
+                    // Linkable ONLY if it already carries a code anchor the linker resolves.
+                    if (row.codeReferenceId || row.filePath) linkableEvidence.push(row);
+                    else opaqueEvidenceCount += 1;
+                } else if (typeof e === 'string' && e.length) {
+                    allEvidence.push({ taskId: t.id, raw: e, linkable: false });
+                    opaqueEvidenceCount += 1;
+                }
             }
+        }
+        // ONE aggregated diagnostic — never 131 duplicate lines. It explains the
+        // limitation instead of silently dropping the evidence.
+        if (opaqueEvidenceCount > 0) {
+            diagnostics.push(diag('unstructured-evidence',
+                `${opaqueEvidenceCount} evidence entr${opaqueEvidenceCount === 1 ? 'y is an opaque string' : 'ies are opaque strings'} and cannot produce symbol/evidence-to-code governance links (no codeReferenceId or resolvable filePath). They are retained as raw evidence.`));
         }
         let links = [];
         if (includeGovernance) {
             // Build the full input set (spec §2.2 Layers 1-3): file/symbol/focus/
-            // commit/acceptance/evidence — NOT just files+symbols.
+            // commit/acceptance + ONLY the linkable evidence. Handing the linker opaque
+            // string evidence would just make it emit per-row unresolved-code-reference noise.
             const built = linker.buildGovernanceLinks({
                 planIR: { tasks: planIR.tasks },
                 fileReferences, symbolReferences, focusReferences,
-                commits, acceptanceDependencies, evidence,
+                commits, acceptanceDependencies, evidence: linkableEvidence,
             });
             links = Array.isArray(built.links) ? built.links : [];
             if (Array.isArray(built.diagnostics)) diagnostics.push(...built.diagnostics);
@@ -833,7 +880,7 @@ async function exploreCode(query, opts) {
         const linkSummary = statusReport.links;
         const governance = {
             specs: planIR.specs || [], plans: planIR.plans || [], tasks: planIR.tasks || [],
-            commits, evidence, links, linkSummary,
+            commits, evidence: allEvidence, links, linkSummary,
         };
 
         // §3.1 fatal gate — a READY provider that threw (adapter-exception), a
@@ -970,7 +1017,7 @@ A fourth was found while writing this task and is the reason the focus design be
 
 **Interfaces:**
 - Consumes: `./code-perception/post-commit-code-perception.js#runPostCommitCodePerception({projectRoot, headSha, changedFiles, cache?}) -> {report, diagnostics}` (the REAL blob producer — never throws); `./memory.service.js#readActiveContext()` (the REAL active-context parser, bound to a module-load `ACTIVE_CONTEXT_PATH`); `./code-perception.js#exploreCode` (T2).
-- Produces: no production API. Two regression tests that fail if a producer's real output stops feeding the consumer.
+- Produces: no production API. THREE regression tests that fail if a producer's real output stops feeding the consumer: **A** commit graph (real post-commit blob), **B** focus (real `active_context.md` parse), **C** archive evidence (real backfill + scan chain — pins that opaque string evidence is retained + explained + never fabricated into links).
 
 - [ ] **Step 1: Write the failing tests** — append after the T-ce-explore-C block:
 
@@ -1055,12 +1102,71 @@ A fourth was found while writing this task and is the reason the focus design be
             }
         }
         console.log('✅ T-ce-compose-B real focus composes');
+
+        console.log('T-ce-compose-C. REAL archive evidence chain -> exploreCode retains-but-does-not-fabricate ...');
+        {
+            // The built-in Planning producer emits evidence as OPAQUE STRINGS. This pins the
+            // honest degradation with the REAL producer chain end-to-end — NO hand-authored
+            // planIR.tasks[].evidence: a real raw_memory archive, the real backfill, the real
+            // scanner + writer, then the service. The contract under test is: retain the
+            // evidence, explain the limitation, and REFUSE to fabricate symbol/evidence links.
+            const { execFileSync } = require('node:child_process');
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const scan = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'scan.js'));
+            const backfill = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'backfill-evidence.js'));
+            const runtime = createTempRuntimeRoot('ce-compose-c');
+            const ws = runtime.workspaceRoot;
+            writeText(path.join(ws, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            // A real plan (compact checkbox format -> author-controlled task id + linkedFiles).
+            writeText(path.join(ws, 'docs', 'plans', 'demo.md'),
+                '---\nid: plan:demo\ntitle: Demo\nstatus: active\n---\n\n# Demo\n\n- [ ] [task:demo] Engine work\n  - files: src/engine.js\n');
+            // A real archive that binds itself to the task via a `task:demo` reference in its body.
+            writeText(path.join(runtime.runtimeRoot, 'raw_memory', 'mem_2026-07-15_demo.md'),
+                '# Archive\n\nClosure for task:demo — implemented selectEngine.\n');
+            gitInit(ws);
+
+            // REAL producer chain: backfill -> scan -> write. No hand-forged evidence rows.
+            const bf = backfill.backfillArchiveEvidence(ws);
+            assert.ok(bf.taskIdToArchives['task:demo'] && bf.taskIdToArchives['task:demo'].length >= 1,
+                'C: backfill binds the real archive to task:demo');
+            const ir = scan.scanPlanning(ws);
+            scan.writePlanIR(ir, ws);
+            const irTask = ir.tasks.find(t => t.id === 'task:demo');
+            assert.ok(irTask, 'C: scanner produced task:demo');
+            assert.ok(irTask.evidence.length >= 1 && irTask.evidence.every(e => typeof e === 'string'),
+                'C: the REAL producer emits evidence as opaque STRINGS (this is the shape the service must handle)');
+
+            const result = await svc.exploreCode('', { projectRoot: ws, config: {}, includeSource: false, includeImpact: false });
+
+            assert.strictEqual(result.ok, true, 'C: ok:true');
+            // 1. Evidence is RETAINED (never silently dropped) and flagged non-linkable.
+            const kept = result.governance.evidence.filter(e => e.taskId === 'task:demo');
+            assert.ok(kept.length >= 1 && kept.some(e => /archive:mem_2026-07-15_demo\.md/.test(e.raw || '')),
+                'C: real opaque evidence is retained verbatim in governance.evidence');
+            assert.ok(kept.every(e => e.linkable === false), 'C: opaque evidence is flagged non-linkable');
+            // 2. ONE aggregated diagnostic explains the limitation (not 1-per-row).
+            const unstructured = result.diagnostics.filter(d => (d.code || '') === 'unstructured-evidence');
+            assert.strictEqual(unstructured.length, 1, 'C: exactly one aggregated unstructured-evidence diagnostic');
+            // 3. declares_file still works (file-level governance is the real 4a deliverable).
+            assert.ok(result.governance.links.some(l => l.kind === 'declares_file'),
+                'C: declares_file still fires from task.linkedFiles + native-lite file facts');
+            // 4. NO fabricated symbol/evidence links, and NO per-row unresolved noise.
+            for (const kind of ['implements_task', 'verified_by_test', 'evidenced_by_archive']) {
+                const derivedish = result.governance.links.filter(l => l.kind === kind && l.status !== 'proposed');
+                assert.strictEqual(derivedish.length, 0,
+                    `C: default pipeline must not fabricate ${kind} (confirmed/derived) links from opaque evidence`);
+            }
+            assert.ok(!result.diagnostics.some(d => (d.code || '') === 'unresolved-code-reference'),
+                'C: opaque evidence never reaches the linker, so no unresolved-code-reference noise');
+            fs.rmSync(ws, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-compose-C real evidence chain degrades honestly');
 ```
 
 - [ ] **Step 2: Run to verify they fail (or reveal a real mismatch)**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-compose|AssertionError" | head`
-Expected: FAIL before T2's service exists. Once T2 exists, these MUST pass without touching them — if either fails, the SERVICE is wrong (or a producer's shape was misread again). **Fix the service, never the test's expectation of the producer.**
+Expected: FAIL before T2's service exists. Once T2 exists, all THREE (A/B/C) MUST pass without touching them — if any fails, the SERVICE is wrong (or a producer's shape was misread again). **Fix the service, never the test's expectation of the producer.** In particular, T-ce-compose-C must never be made green by teaching the service to synthesize a symbol/commit/codeReferenceId the producer did not emit — that is the exact defect this task exists to catch.
 
 - [ ] **Step 3: No implementation of its own**
 
@@ -1596,7 +1702,7 @@ The generated lock `.evo-lite/generated/runtime-mirror.lock.json` is git-ignored
 
 | AC (spec §9) | 4a status | Satisfied by |
 |----|----|----|
-| `ac-unified-explore` | **closed by 4a** | T2 (service) + T1 (M1/M2 seam) + T3 (real composition) + T4 (`mem code explore --json` verifier). Scenarios: **A** native-lite degradation (`ok:true`, `matches:[]`, `capability-unavailable`, non-dangling `declares_file`, floored derived links), **B** injected structural provider (matches/relationships/impact/source + `implements_task` derived via M1/M2 with confidence > 0), **C** ready-provider throw → `ok:false` + `adapter-exception`. |
+| `ac-unified-explore` | **closed by 4a** (with the symbol-level-governance caveat below) | T2 (service) + T1 (M1/M2 seam) + T3 (real composition) + T4 (`mem code explore --json` verifier). Scenarios: **A** native-lite degradation (`ok:true`, `matches:[]`, `capability-unavailable`, non-dangling `declares_file`), **B** injected structural provider (matches/relationships/impact/source; M1 produces a valid SymbolReference; and — because the default Planning IR carries no `task.symbols`/structured evidence — the service must NOT fabricate a derived Task-to-Symbol link, so `derived === 0` and opaque evidence is retained + explained), **C** ready-provider throw → `ok:false` + `adapter-exception`. |
 | `ac-mcp-code-explore` | **closed by 4a** | T5 (tool + exported handler; `ok:false` → throw → `isError:true`; capability gaps stay success-shaped) + `mcp-validate.js` registration (the AC's verifier). |
 | `ac-mirror-parity` | **partially closed** | T6 covers every managed file 4a touches, derived from the manifest. 4b re-runs closure for the files it adds. |
 | `ac-minimal-code-wiki` | **OPEN — parked** | `plan:code-wiki-inspector-projection` |
@@ -1604,9 +1710,11 @@ The generated lock `.evo-lite/generated/runtime-mirror.lock.json` is git-ignored
 
 **The parent spec must NOT be marked done when this plan completes.** Two of its five ACs stay genuinely open. Honest state: `plan:unified-code-explore-agent-surface-mvp = done`, `spec:unified-code-explore-wiki-projection = adopted/active`, `plan:code-wiki-inspector-projection = parked`.
 
+**Symbol-level-governance caveat (what 4a actually delivers).** 4a delivers **structural code exploration** (matches / callers / callees / impact / source, when a structural provider is present) plus **file-, commit-, and focus-level governance links** (`declares_file`, `changed_by_commit`, `related_to_focus`, all confidence 1.0). It does **NOT** deliver confirmed/derived **symbol-level** Task-to-Code or Evidence-to-Code links on the built-in pipeline: the default Planning producer emits no `task.symbols` and only opaque string evidence, so those rule-gated links have no live input path (see Grounded reality). The M1/M2 seams are implemented, unit-proven, and ready for a future explicit producer, but must not be described as a shipped default capability. External validation should validate this real product — Task→File→Commit→Focus — not a fixture-simulated Task→Symbol.
+
 ### Spec section coverage
 
-§2 `UnifiedExploreResult` (incl. `files`/`modules`/`focus`) → T2. §2.1 ExploreQuery → T2 `ExploreOpts`. §2.2 steps 1–10 → T2 orchestration (focus resolved by exact order; governance built from files+symbols+focus+commits+acceptance+evidence + persisted-graph merge). §2.3 recommended-reading order → T2 `rankRecommendedReading` (8 tiers, each with a `reason`). §2.4 M1/M2 → T1, wired in T2. §3 CLI contract → T4. §3.1 unified exit/error model → T2 fatal gate (`FATAL_CODES`) + T4 `exitFor` (ok:false→1) and scoped `exitOverride` (invalid args→2) + T5 MCP (`ok:false`→throw→isError). §4 MCP → T5. §7 mirror parity → T6. §8 phases → this plan IS Phase 4a. §5 Code Wiki / §6 Inspector → **not in this plan** (4b).
+§2 `UnifiedExploreResult` (incl. `files`/`modules`/`focus`) → T2. §2.1 ExploreQuery → T2 `ExploreOpts`. §2.2 steps 1–10 → T2 orchestration (focus resolved by exact order; governance built from files+symbols+focus+commits+acceptance + linkable-only evidence + persisted-graph merge; opaque evidence retained separately in `governance.evidence`). §2.3 recommended-reading order → T2 `rankRecommendedReading` (8 tiers, each with a `reason`). §2.4 M1/M2 → T1, wired in T2. §3 CLI contract → T4. §3.1 unified exit/error model → T2 fatal gate (`FATAL_CODES`) + T4 `exitFor` (ok:false→1) and scoped `exitOverride` (invalid args→2) + T5 MCP (`ok:false`→throw→isError). §4 MCP → T5. §7 mirror parity → T6. §8 phases → this plan IS Phase 4a. §5 Code Wiki / §6 Inspector → **not in this plan** (4b).
 
 `files`/`modules` remain in the T2 result shape even though only 4b renders them: they are cheap, derived from file facts the service already fetches, and dropping them would force a T2 signature change when 4b activates. `focus` is consumed by 4a itself (T3-B asserts it).
 
@@ -1617,7 +1725,7 @@ The generated lock `.evo-lite/generated/runtime-mirror.lock.json` is git-ignored
 - `exploreCode(query, opts) -> UnifiedExploreResult{query,ok,freshness,providers,matches,relationships,impact?,source,files,modules,focus,governance,recommendedReading,diagnostics}` — defined T2, consumed identically in T3 (composition), T4 (CLI), T5 (MCP). ✔
 - `handleCodeExplore(args, deps?)` — defined + exported T5; `deps` exists solely so the test can inject an `ok:false` service deterministically. ✔
 - `registerCodeCommands(program)` — defined T4, thunked in `memory.js` via `safeRegister`; scoped `exitOverride` maps invalid args → 2 (commander's default is 1). ✔
-- `buildGovernanceLinks` inputs used (`planIR.tasks`, `fileReferences`, `symbolReferences`, `focusReferences`, `commits`, `acceptanceDependencies`, `evidence`) match the API map; `implements_task` derives via `evidence.symbols` / commit diff-ranges (NOT `task.symbols`, which the scanner never populates). ✔
+- `buildGovernanceLinks` inputs used (`planIR.tasks`, `fileReferences`, `symbolReferences`, `focusReferences`, `commits`, `acceptanceDependencies`, and ONLY the **linkable** evidence) match the API map. The service hands the linker only evidence rows carrying a code anchor (`codeReferenceId` / resolvable `filePath`); the built-in producer yields none, so `implements_task:derived` / `verified_by_test` / `evidenced_by_archive` are dormant on the default pipeline (see Grounded reality). ✔
 
 ### Verified producer shapes this plan binds to
 
