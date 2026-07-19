@@ -310,20 +310,51 @@ async function exploreCode(query, opts) {
             : [];
         const commits = Array.isArray(options.commits) ? options.commits : persistedCommits;
         const acceptanceDependencies = Array.isArray(options.acceptanceDependencies) ? options.acceptanceDependencies : [];
-        const evidence = [];
+
+        // Evidence has TWO audiences and they are NOT the same set (this distinction
+        // is the whole point — conflating them either hides real evidence or fabricates
+        // links). The built-in Planning producer emits evidence as OPAQUE STRINGS
+        // (e.g. "archive:mem_...md" from planning/parse-markdown.js + scan.js); it emits
+        // no task.symbols and no structured {symbols,commitSha,codeReferenceId,filePath}
+        // rows. So on real data NONE of the rule-gated evidence links can fire.
+        //   - allEvidence  -> surfaced verbatim in governance.evidence so the CLI/MCP show
+        //     that evidence EXISTS. Opaque strings are projected as {taskId, raw, linkable:false}.
+        //     We NEVER synthesize symbols/commitSha/codeReferenceId/filePath we did not see.
+        //   - linkableEvidence -> only rows the linker can actually consume: a plain object
+        //     carrying codeReferenceId OR a resolvable filePath (+ recognized kind). Today the
+        //     built-in producer yields zero of these; a DI caller or a future Evidence IR may.
+        const allEvidence = [];
+        const linkableEvidence = [];
+        let opaqueEvidenceCount = 0;
         for (const t of (planIR.tasks || [])) {
             for (const e of (Array.isArray(t.evidence) ? t.evidence : [])) {
-                if (e && typeof e === 'object') evidence.push(Object.assign({ taskId: t.id }, e));
+                if (e && typeof e === 'object') {
+                    const row = Object.assign({ taskId: t.id }, e);
+                    allEvidence.push(row);
+                    // Linkable ONLY if it already carries a code anchor the linker resolves.
+                    if (row.codeReferenceId || row.filePath) linkableEvidence.push(row);
+                    else opaqueEvidenceCount += 1;
+                } else if (typeof e === 'string' && e.length) {
+                    allEvidence.push({ taskId: t.id, raw: e, linkable: false });
+                    opaqueEvidenceCount += 1;
+                }
             }
+        }
+        // ONE aggregated diagnostic — never 131 duplicate lines. It explains the
+        // limitation instead of silently dropping the evidence.
+        if (opaqueEvidenceCount > 0) {
+            diagnostics.push(diag('unstructured-evidence',
+                `${opaqueEvidenceCount} evidence entr${opaqueEvidenceCount === 1 ? 'y is an opaque string' : 'ies are opaque strings'} and cannot produce symbol/evidence-to-code governance links (no codeReferenceId or resolvable filePath). They are retained as raw evidence.`));
         }
         let links = [];
         if (includeGovernance) {
             // Build the full input set (spec §2.2 Layers 1-3): file/symbol/focus/
-            // commit/acceptance/evidence — NOT just files+symbols.
+            // commit/acceptance + ONLY the linkable evidence. Handing the linker opaque
+            // string evidence would just make it emit per-row unresolved-code-reference noise.
             const built = linker.buildGovernanceLinks({
                 planIR: { tasks: planIR.tasks },
                 fileReferences, symbolReferences, focusReferences,
-                commits, acceptanceDependencies, evidence,
+                commits, acceptanceDependencies, evidence: linkableEvidence,
             });
             links = Array.isArray(built.links) ? built.links : [];
             if (Array.isArray(built.diagnostics)) diagnostics.push(...built.diagnostics);
@@ -358,7 +389,7 @@ async function exploreCode(query, opts) {
         const linkSummary = statusReport.links;
         const governance = {
             specs: planIR.specs || [], plans: planIR.plans || [], tasks: planIR.tasks || [],
-            commits, evidence, links, linkSummary,
+            commits, evidence: allEvidence, links, linkSummary,
         };
 
         // §3.1 fatal gate — a READY provider that threw (adapter-exception), a

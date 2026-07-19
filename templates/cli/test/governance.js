@@ -7207,11 +7207,13 @@ async function runChildRuntimeTests() {
             const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
             const runtime = createTempRuntimeRoot('ce-explore-b');
             writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
-            // evidence.symbols names the symbol -> implements_task derived fires (linker rule);
-            // M2 then floors its confidence > 0.
+            // Evidence uses the REAL built-in producer shape: an opaque string. It must NOT
+            // fabricate a rule-gated link, and it must survive verbatim into governance.evidence.
+            // (A structured {symbols,...} row would be a shape no producer emits — the exact
+            // category error this suite exists to prevent.)
             seedPlanIR(runtime.runtimeRoot,
                 [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'],
-                   evidence: [{ kind: 'test', symbols: ['selectEngine'] }] }],
+                   evidence: ['archive:mem_2026-07-15_demo.md'] }],
                 [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
             gitInit(runtime.workspaceRoot);
 
@@ -7255,10 +7257,24 @@ async function runChildRuntimeTests() {
             assert.ok(result.impact && Array.isArray(result.impact.downstream) && result.impact.downstream.length >= 1, 'B: impact shape with downstream');
             assert.ok(['low', 'medium', 'high', 'unknown'].includes(result.impact.risk), 'B: impact carries a risk level');
             assert.ok(result.source.length >= 1 && typeof result.source[0].excerpt === 'string', 'B: source excerpt present');
-            // implements_task derived (via evidence.symbols) MUST exist and carry confidence > 0 (M1 produced the symbolRef; M2 floored it).
+            // M1 must produce a valid SymbolReference from the structural match (this is the
+            // dormant seam's unit-level proof — it just is not FED by the built-in producer).
+            assert.ok(result.matches.some(m => m.filePath === 'src/engine.js' && m.name === 'selectEngine'),
+                'B: M1 normalized the structural match into a resolvable reference');
+            // The default Planning IR has no task.symbols and no structured evidence, so the
+            // service must NOT fabricate a symbol-level Task-to-Code link. Guarding at 0 is the
+            // whole point: a structural provider finding a symbol is NOT the same as governance
+            // data binding a task to that symbol.
             const derived = result.governance.links.filter(l => l.kind === 'implements_task' && l.status === 'derived');
-            assert.ok(derived.length >= 1, 'B: implements_task derived link exists (M1 bridge fed the linker)');
-            assert.ok(derived.every(l => l.confidence > 0), 'B: derived link confidence floored > 0 (M2)');
+            assert.strictEqual(derived.length, 0,
+                'B: no task.symbols / structured evidence -> service must not fabricate derived Task-to-Symbol links');
+            // The opaque evidence is retained, marked non-linkable, and explained by ONE diagnostic.
+            assert.ok(result.governance.evidence.some(e => e.raw === 'archive:mem_2026-07-15_demo.md' && e.linkable === false),
+                'B: opaque evidence is retained verbatim in governance.evidence, flagged non-linkable');
+            assert.ok(result.diagnostics.some(d => (d.code || '') === 'unstructured-evidence'),
+                'B: an aggregated unstructured-evidence diagnostic explains the limitation');
+            assert.ok(!result.diagnostics.some(d => (d.code || '') === 'unresolved-code-reference'),
+                'B: opaque evidence is NOT handed to the linker, so no per-row unresolved-code-reference noise');
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-explore-B injected structural provider passed');
