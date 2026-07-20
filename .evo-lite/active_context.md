@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 1ee423798def1d685663c82db4cec008f8d09686
+> headSha: da53d3de5662e237396ca3eb01ab6008d5cd9c69
 > upstreamSha: 614fb32fae946756b38546a06abaa269c4678bbe
-> ahead: 5
+> ahead: 7
 > behind: 0
-> focusUpdatedAt: 2026-07-20T12:48:57.972Z
+> focusUpdatedAt: 2026-07-20T13:23:07.320Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -26,6 +26,7 @@ No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit mes
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [da53d3d] 2026-07-20 bug-fix: CodePLC (registered hive child, no templates/ tree) dogfooded the 2026-07-20 nurture and hit two cla
 - [1ee4237] 2026-07-20 bug-fix: advanceFocusFromCommit extracts a plan/spec token from the LATEST commit message (full body, via git
 - [366b66a] 2026-07-20 focus-fix: Post-commit hook auto-advanced focus onto plan:code-wiki-inspector-projection (parked, 0/3) since it
 - [5ebbc1b] 2026-07-20 focus-fix: Rewrote focus text to describe only the shipped Phase 4a plan (dropped the stray plan:code-wiki-insp
@@ -35,7 +36,6 @@ No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit mes
 - [d7eb5d0] 2026-07-10 spec-portfolio-governance shipped: plan 9/9, whole-branch SHIP: intake gate (mem spec adopt: normalize+size WARN+relation+transactional
 - [8402c32] 2026-07-09 release-cut-2.3.0: 2.3.0 cut: CHANGELOG Unreleased -> 2.3.0 (feedback loop, mutation preflight w/ CRLF exemption, zvec-
 - [64267b4] 2026-07-09 child-feedback-closure: zvec-optin-docs closed: new managed rule gene .agents/rules/zvec-optin.md (agents-rules family) - wh
-- [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 20bb fixed in eb25af2: engine degradation WARN now gives concrete 3-step zvec enable path (npm i @zv
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
