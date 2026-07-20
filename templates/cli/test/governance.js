@@ -7582,6 +7582,38 @@ async function runChildRuntimeTests() {
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-cli mem code CLI passed');
+
+        console.log('T-ce-mcp. Testing evo_code_explore MCP tool (registered + unified error model) ...');
+        {
+            const mcp = require(path.join(TEMPLATE_CLI_DIR, 'mcp-server.js'));
+            const tool = mcp.TOOLS.find(t => t.name === 'evo_code_explore');
+            assert.ok(tool, 'evo_code_explore must be registered in TOOLS');
+            assert.ok(tool.inputSchema && tool.inputSchema.properties && tool.inputSchema.properties.query, 'tool schema declares query');
+            assert.deepStrictEqual(tool.inputSchema.required, ['query'], 'query is required');
+            // Validator must include it so AC ac-mcp-code-explore stays green.
+            const valSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'mcp-validate.js'), 'utf8');
+            assert.ok(valSrc.includes('evo_code_explore'), 'mcp-validate.js must call evo_code_explore');
+
+            // Unified error model — capability gap is success-shaped: handler RESOLVES (never throws).
+            const okResult = await mcp.handleCodeExplore({ query: 'x' }, {
+                service: { exploreCode: async () => ({ ok: true, query: 'x', matches: [], providers: [], diagnostics: [], governance: { links: [] } }) },
+            });
+            assert.strictEqual(okResult.ok, true, 'capability gap returns a success-shaped result (no isError)');
+
+            // Unified error model — a true fatal (ok:false) MUST throw so the CallTool
+            // catch sets isError:true; it must NOT be wrapped as a success envelope.
+            let threw = false;
+            try {
+                await mcp.handleCodeExplore({ query: 'x' }, {
+                    service: { exploreCode: async () => ({ ok: false, diagnostics: [{ code: 'internal-error', message: 'boom' }] }) },
+                });
+            } catch (err) {
+                threw = true;
+                assert.ok(/boom/.test(err.message), 'fatal error message carries the diagnostics');
+            }
+            assert.ok(threw, 'result.ok===false must throw (maps to isError:true), not return a success envelope');
+        }
+        console.log('✅ T-ce-mcp evo_code_explore passed');
 }
 
 module.exports = { runGovernanceTests };

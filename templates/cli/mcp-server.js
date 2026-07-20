@@ -69,6 +69,21 @@ const TOOLS = [
         description: 'Return parsed active_context.md: meta, current focus, backlog, recent trajectory.',
         inputSchema: { type: 'object', properties: {} },
     },
+    {
+        name: 'evo_code_explore',
+        description: 'Explore code and its Evo-Lite governance context using the best available code-perception provider.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string' },
+                focusId: { type: 'string' },
+                includeSource: { type: 'boolean', default: true },
+                includeImpact: { type: 'boolean', default: true },
+                maxResults: { type: 'number', default: 10 },
+            },
+            required: ['query'],
+        },
+    },
 ];
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -151,6 +166,29 @@ function handleActiveContext() {
     return extractActiveContext(md);
 }
 
+async function handleCodeExplore(args, deps) {
+    const service = (deps && deps.service) || freshRequire('./code-perception');
+    const result = await service.exploreCode((args && args.query) || '', {
+        focusId: args && args.focusId,
+        includeSource: !(args && args.includeSource === false),
+        includeImpact: !(args && args.includeImpact === false),
+        maxResults: Number(args && args.maxResults) || 10,
+    });
+    // Unified error model (spec §3.1 / §4). Capability gaps are SUCCESS-shaped
+    // (result.ok === true) and returned verbatim — never isError. But result.ok
+    // === false is the service's ONLY signal of a true fatal (internal invariant /
+    // adapter break with no fallback). The CallTool handler sets isError:true ONLY
+    // when the tool handler throws, so a fatal must throw here rather than be wrapped
+    // as a success envelope. The diagnostics travel in the error message.
+    if (result && result.ok === false) {
+        const reasons = (result.diagnostics || []).map(d => d.message || d.code).filter(Boolean).join('; ');
+        const err = new Error(`code explore failed: ${reasons || 'internal invariant error'}`);
+        err.result = result;
+        throw err;
+    }
+    return result;
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 async function dispatch(name, args) {
@@ -161,6 +199,7 @@ async function dispatch(name, args) {
         case 'evo_architecture_status': return handleArchitectureStatus();
         case 'evo_drift_status':      return handleDriftStatus();
         case 'evo_active_context':    return handleActiveContext();
+        case 'evo_code_explore':      return handleCodeExplore(args);
         default: throw new Error(`Unknown tool: ${name}`);
     }
 }
@@ -199,4 +238,4 @@ async function runMcpServer() {
     process.once('SIGTERM', async () => { await server.close(); process.exit(0); });
 }
 
-module.exports = { runMcpServer, TOOLS, __freshRequire: freshRequire };
+module.exports = { runMcpServer, TOOLS, handleCodeExplore, __freshRequire: freshRequire };
