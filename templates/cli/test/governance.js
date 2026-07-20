@@ -7591,6 +7591,15 @@ async function runChildRuntimeTests() {
                 cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8',
             });
             assert.strictEqual(bad.status, 2, 'invalid CLI args must exit 2 (spec §3.1 / Global Constraint)');
+            // `mem code context --json` with no --task/--spec uses the current focus by default
+            // (the default focus IS the behavior — there is no --focus flag). Success-shaped.
+            const ctx = cp.spawnSync(process.execPath, [memCli, 'code', 'context', '--json'], {
+                cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8',
+            });
+            assert.strictEqual(ctx.status, 0, 'code context --json (default focus) must exit 0: ' + (ctx.stderr || ''));
+            const ctxParsed = JSON.parse(ctx.stdout);
+            assert.strictEqual(ctxParsed.scope, 'focus', 'default context scope is the current focus');
+            assert.ok(Array.isArray(ctxParsed.links), 'context JSON carries a links array');
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-cli mem code CLI passed');

@@ -5,7 +5,6 @@
 // capability-degraded both exit 0; only result.ok===false (internal invariant /
 // adapter break with no fallback) exits 1; commander handles invalid args (exit 2).
 
-const path = require('node:path');
 
 function printResult(result, options) {
     if (options && options.json) {
@@ -121,7 +120,6 @@ function registerCodeCommands(program) {
 
     code.command('context')
         .description('Governance context for the current focus / a task / a spec.')
-        .option('--focus', 'Use the current focus')
         .option('--task <task-id>', 'Scope to a task id')
         .option('--spec <spec-id>', 'Scope to a spec id')
         .option('--json', 'Print JSON output')
@@ -144,7 +142,6 @@ function registerCodeCommands(program) {
     const scoped = [code, ...code.commands];
     for (const c of code.commands) scoped.push(...(Array.isArray(c.commands) ? c.commands : []));
     for (const c of scoped) c.exitOverride(invalidArgsExit);
-    void path;
 }
 
 module.exports = { registerCodeCommands };

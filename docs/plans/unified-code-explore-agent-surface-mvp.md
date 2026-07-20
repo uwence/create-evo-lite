@@ -1358,6 +1358,15 @@ EOF
                 cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8',
             });
             assert.strictEqual(bad.status, 2, 'invalid CLI args must exit 2 (spec §3.1 / Global Constraint)');
+            // `mem code context --json` with no --task/--spec uses the current focus by default
+            // (the default focus IS the behavior — there is no --focus flag). Success-shaped.
+            const ctx = cp.spawnSync(process.execPath, [memCli, 'code', 'context', '--json'], {
+                cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8',
+            });
+            assert.strictEqual(ctx.status, 0, 'code context --json (default focus) must exit 0: ' + (ctx.stderr || ''));
+            const ctxParsed = JSON.parse(ctx.stdout);
+            assert.strictEqual(ctxParsed.scope, 'focus', 'default context scope is the current focus');
+            assert.ok(Array.isArray(ctxParsed.links), 'context JSON carries a links array');
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-cli mem code CLI passed');
@@ -1377,8 +1386,6 @@ Expected: FAIL — `mem code` is not a known command yet (the `safeRegister('cod
 // service (../code-perception.js). Unified exit model (spec §3.1): success and
 // capability-degraded both exit 0; only result.ok===false (internal invariant /
 // adapter break with no fallback) exits 1; commander handles invalid args (exit 2).
-
-const path = require('node:path');
 
 function printResult(result, options) {
     if (options && options.json) {
@@ -1494,7 +1501,6 @@ function registerCodeCommands(program) {
 
     code.command('context')
         .description('Governance context for the current focus / a task / a spec.')
-        .option('--focus', 'Use the current focus')
         .option('--task <task-id>', 'Scope to a task id')
         .option('--spec <spec-id>', 'Scope to a spec id')
         .option('--json', 'Print JSON output')
@@ -1517,7 +1523,6 @@ function registerCodeCommands(program) {
     const scoped = [code, ...code.commands];
     for (const c of code.commands) scoped.push(...(Array.isArray(c.commands) ? c.commands : []));
     for (const c of scoped) c.exitOverride(invalidArgsExit);
-    void path;
 }
 
 module.exports = { registerCodeCommands };
