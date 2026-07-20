@@ -1447,6 +1447,13 @@ function advanceFocusFromCommit(options = {}) {
         }
     }
     if (!plan) return { status: 'no-match', focusChanged: false, ref: ref.token };
+    // A commit message can name a plan/spec in passing (documenting a bug,
+    // explaining a rollback) without meaning "focus here now". A parked plan
+    // is explicitly shelved — auto-advancing onto it fabricates a false
+    // "current work" signal and immediately trips R012 phantom-focus.
+    if (plan.status === 'parked') {
+        return { status: 'plan-not-startable', focusChanged: false, ref: ref.token, plan: plan.id };
+    }
 
     const todoTask = (planIR.tasks || [])
         .filter(t => t.linkedPlan === plan.id && t.status === 'todo')[0];

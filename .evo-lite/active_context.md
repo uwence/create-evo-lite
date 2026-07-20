@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-No active plan. Unified Code Explore Agent Surface (Phase 4a) SHIPPED 6/6; the Wiki/Inspector follow-up stays parked pending a Validation Sprint (do not auto-resume it). Next: pick from backlog (postcommit-autofocus-parked bug, R008 archive-evidence gaps, or the oversized code-perception-foundation spec split).
+No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit message naming a parked plan no longer auto-advances focus onto it (task:postcommit-autofocus-parked).
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)

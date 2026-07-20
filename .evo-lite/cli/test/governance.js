@@ -1865,7 +1865,10 @@ async function runGovernanceTests() {
             fs.mkdirSync(planningDir, { recursive: true });
             writeText(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
                 version: 'evo-plan-ir@1', specs: [], warnings: [],
-                plans: [{ id: 'plan:demo', title: 'Demo Plan', status: 'draft', taskIds: ['task:demo-1'] }],
+                plans: [
+                    { id: 'plan:demo', title: 'Demo Plan', status: 'draft', taskIds: ['task:demo-1'] },
+                    { id: 'plan:shelved', title: 'Shelved Plan', status: 'parked', taskIds: [] },
+                ],
                 tasks: [{ id: 'task:demo-1', title: 'First task', status: 'todo', linkedPlan: 'plan:demo' }],
             }, null, 2));
             writeText(
@@ -1899,6 +1902,15 @@ async function runGovernanceTests() {
             // 4) the post-commit hook body wires the conservative advance in
             const { buildHookBody } = require(path.join(TEMPLATE_CLI_DIR, 'hooks'));
             assert.ok(buildHookBody().includes('context advance-focus'), 'post-commit hook must invoke context advance-focus');
+
+            // 5) a commit message that merely NAMES a parked plan (e.g. explaining a bug
+            // or a rollback in prose) must not auto-advance focus onto it. A parked plan
+            // is explicitly shelved; fabricating a "current work" focus there is a false
+            // signal and immediately trips R012 phantom-focus (regression: a doc/commit
+            // discussing plan:shelved was silently adopted as the new focus).
+            const parked = loaded.service.advanceFocusFromCommit({ commitMessage: 'chore(context): explain why plan:shelved stays parked' });
+            assert.strictEqual(parked.status, 'plan-not-startable', 'a parked-plan reference must not be treated as a focus signal');
+            assert.strictEqual(parked.focusChanged, false, 'a parked-plan reference must not change focus');
 
             console.log('✅ T27 commit-evidence focus auto-advance passed');
         }
