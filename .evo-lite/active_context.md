@@ -3,17 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: f004e62db88d0180dc53e692e7c36d17b581bec5
+> headSha: 5ebbc1b73bb9d4879be6c7e05f82596ade5a3d9f
 > upstreamSha: 614fb32fae946756b38546a06abaa269c4678bbe
-> ahead: 1
+> ahead: 2
 > behind: 0
-> focusUpdatedAt: 2026-07-20T12:30:11.224Z
+> focusUpdatedAt: 2026-07-20T12:36:52.640Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Unified Code Explore — Agent Surface (Phase 4a) Implementation Plan: SHIPPED (6/6 tasks, governance-green). No active plan — parent spec:unified-code-explore-wiki-projection stays adopted/active; plan:code-wiki-inspector-projection remains parked pending Validation Sprint.
+Unified Code Explore — Agent Surface (Phase 4a) Implementation Plan: SHIPPED — 6/6 tasks done, governance test suite green (T-ce-seam through T-ce-manifest-sync-4a).
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -26,6 +26,7 @@ Unified Code Explore — Agent Surface (Phase 4a) Implementation Plan: SHIPPED (
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [5ebbc1b] 2026-07-20 focus-fix: Rewrote focus text to describe only the shipped Phase 4a plan (dropped the stray plan:code-wiki-insp
 - [f004e62] 2026-07-20 plan-closure: Retroactive closure of plan:unified-code-explore-agent-surface-mvp. All 6 tasks (M1/M2 seam, unified
 - [8645418] 2026-07-15 plan-progress-reflection: Sub-spec ② (codegraph-adapter-governance-linker) plan-progress reflection: 14/15 tasks implemented +
 - [3818745] 2026-07-11 spec-portfolio-governance re-closed after 3 independent review rounds: P0 adopt path containment BOTH sides: source (a92c7e7 realpath/symlink/isFile/.md) + target-dir/pare
@@ -35,7 +36,6 @@ Unified Code Explore — Agent Surface (Phase 4a) Implementation Plan: SHIPPED (
 - [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 20bb fixed in eb25af2: engine degradation WARN now gives concrete 3-step zvec enable path (npm i @zv
 - [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 36e1 fixed in eb25af2: CLI top-level errors print to stdout so context-mode-wrapped hosts see the re
 - [eb25af2] 2026-07-09 backlog-dogfood-fixes: Three CodePLC dogfood fixes: (1) nurture-tag: rollback tag now evo-nurture-pre-<v>-<stamp> via injec
-- [a5ffd9f] 2026-07-09 plan:hive-child-feedback-loop: hive-child-feedback-loop shipped: feedback outbox (parse/mark/read module, nurture exactly-once coll
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
