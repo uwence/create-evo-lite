@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: da53d3de5662e237396ca3eb01ab6008d5cd9c69
+> headSha: 404343f1dc796569ca0b906c58dadfca3843909f
 > upstreamSha: 614fb32fae946756b38546a06abaa269c4678bbe
-> ahead: 7
+> ahead: 9
 > behind: 0
-> focusUpdatedAt: 2026-07-20T13:23:07.320Z
+> focusUpdatedAt: 2026-07-20T13:34:17.381Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -26,6 +26,7 @@ No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit mes
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [404343f] 2026-07-20 bug-fix: Follow-up to da53d3d. CodePLC re-dogfooded the nurtured fix and found a second, adjacent gap: templa
 - [da53d3d] 2026-07-20 bug-fix: CodePLC (registered hive child, no templates/ tree) dogfooded the 2026-07-20 nurture and hit two cla
 - [1ee4237] 2026-07-20 bug-fix: advanceFocusFromCommit extracts a plan/spec token from the LATEST commit message (full body, via git
 - [366b66a] 2026-07-20 focus-fix: Post-commit hook auto-advanced focus onto plan:code-wiki-inspector-projection (parked, 0/3) since it
@@ -35,7 +36,6 @@ No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit mes
 - [3818745] 2026-07-11 spec-portfolio-governance re-closed after 3 independent review rounds: P0 adopt path containment BOTH sides: source (a92c7e7 realpath/symlink/isFile/.md) + target-dir/pare
 - [d7eb5d0] 2026-07-10 spec-portfolio-governance shipped: plan 9/9, whole-branch SHIP: intake gate (mem spec adopt: normalize+size WARN+relation+transactional
 - [8402c32] 2026-07-09 release-cut-2.3.0: 2.3.0 cut: CHANGELOG Unreleased -> 2.3.0 (feedback loop, mutation preflight w/ CRLF exemption, zvec-
-- [64267b4] 2026-07-09 child-feedback-closure: zvec-optin-docs closed: new managed rule gene .agents/rules/zvec-optin.md (agents-rules family) - wh
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
