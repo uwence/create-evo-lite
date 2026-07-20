@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 86454183a03a33b705ebad60ef9f4bd449fe998a
-> upstreamSha: 0039ca81023f780f7ccaed400c13c2bf774711d0
+> headSha: f004e62db88d0180dc53e692e7c36d17b581bec5
+> upstreamSha: 614fb32fae946756b38546a06abaa269c4678bbe
 > ahead: 1
 > behind: 0
-> focusUpdatedAt: 2026-07-15T08:52:49.900Z
+> focusUpdatedAt: 2026-07-20T12:30:11.224Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -26,6 +26,7 @@ Unified Code Explore — Agent Surface (Phase 4a) Implementation Plan: SHIPPED (
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [f004e62] 2026-07-20 plan-closure: Retroactive closure of plan:unified-code-explore-agent-surface-mvp. All 6 tasks (M1/M2 seam, unified
 - [8645418] 2026-07-15 plan-progress-reflection: Sub-spec ② (codegraph-adapter-governance-linker) plan-progress reflection: 14/15 tasks implemented +
 - [3818745] 2026-07-11 spec-portfolio-governance re-closed after 3 independent review rounds: P0 adopt path containment BOTH sides: source (a92c7e7 realpath/symlink/isFile/.md) + target-dir/pare
 - [d7eb5d0] 2026-07-10 spec-portfolio-governance shipped: plan 9/9, whole-branch SHIP: intake gate (mem spec adopt: normalize+size WARN+relation+transactional
@@ -35,7 +36,6 @@ Unified Code Explore — Agent Surface (Phase 4a) Implementation Plan: SHIPPED (
 - [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 36e1 fixed in eb25af2: CLI top-level errors print to stdout so context-mode-wrapped hosts see the re
 - [eb25af2] 2026-07-09 backlog-dogfood-fixes: Three CodePLC dogfood fixes: (1) nurture-tag: rollback tag now evo-nurture-pre-<v>-<stamp> via injec
 - [a5ffd9f] 2026-07-09 plan:hive-child-feedback-loop: hive-child-feedback-loop shipped: feedback outbox (parse/mark/read module, nurture exactly-once coll
-- [20e5fb7] 2026-07-08 db.js exports DEFAULT_ENGINE(_VERSION); SqliteFtsIndex.engine concrete; tests de-vacuumed (literal + sqlite-mode guard): Latent bug exposed by config-retrieval fix during CodePLC nurture: db.js never exported DEFAULT_ENGI
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
