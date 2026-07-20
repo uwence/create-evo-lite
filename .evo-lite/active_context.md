@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 366b66ae4d08f23de4cc108830ce23310a51d5c9
+> headSha: 1ee423798def1d685663c82db4cec008f8d09686
 > upstreamSha: 614fb32fae946756b38546a06abaa269c4678bbe
-> ahead: 3
+> ahead: 5
 > behind: 0
-> focusUpdatedAt: 2026-07-20T12:38:36.582Z
+> focusUpdatedAt: 2026-07-20T12:48:57.972Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -21,12 +21,12 @@ No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit mes
 <!-- BEGIN_BACKLOG -->
 - [ ] [fresh-plan-progress] fresh scaffold baseline commit的governance hook中plan progress因无plan-ir.json而fail, 导致新项目verify显示last_run=failed-last-run. 修: plan progress在无IR时应graceful no-op(提示run plan scan)而非exit 1. 非回归, 2.3.0 consume-test发现
 - [ ] [06fd] [mcp-detect-missing] test/integration.js:551 + test/harness.js:330 require templates/cli/mcp-detect.js which has NEVER existed in git (absent at 63c019c baseline). Pre-existing: 'test.js all' fails in integration section. Fix: create mcp-detect.js OR remove the dangling references. Surfaced during spec-portfolio Task 8 regression.
-- [ ] [postcommit-autofocus-parked] post-commit hook 的 advanceFocusFromCommit 会把 focus 自动前移到组合中的下一个 plan,但没有跳过 status:parked 的 plan —— Phase 4a 收尾提交后自动跳到了 plan:code-wiki-inspector-projection(parked, 0/3),立刻触发 R012 phantom-focus 假警报。修复面: advanceFocusFromCommit 选下一个候选 plan 时应过滤掉 parked/done,只在 active/draft 里选,找不到就保持 no-active-focus 而不是硬选一个。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [1ee4237] 2026-07-20 bug-fix: advanceFocusFromCommit extracts a plan/spec token from the LATEST commit message (full body, via git
 - [366b66a] 2026-07-20 focus-fix: Post-commit hook auto-advanced focus onto plan:code-wiki-inspector-projection (parked, 0/3) since it
 - [5ebbc1b] 2026-07-20 focus-fix: Rewrote focus text to describe only the shipped Phase 4a plan (dropped the stray plan:code-wiki-insp
 - [f004e62] 2026-07-20 plan-closure: Retroactive closure of plan:unified-code-explore-agent-surface-mvp. All 6 tasks (M1/M2 seam, unified
@@ -36,7 +36,6 @@ No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit mes
 - [8402c32] 2026-07-09 release-cut-2.3.0: 2.3.0 cut: CHANGELOG Unreleased -> 2.3.0 (feedback loop, mutation preflight w/ CRLF exemption, zvec-
 - [64267b4] 2026-07-09 child-feedback-closure: zvec-optin-docs closed: new managed rule gene .agents/rules/zvec-optin.md (agents-rules family) - wh
 - [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 20bb fixed in eb25af2: engine degradation WARN now gives concrete 3-step zvec enable path (npm i @zv
-- [31a4c2d] 2026-07-09 backlog-dogfood-fixes: 36e1 fixed in eb25af2: CLI top-level errors print to stdout so context-mode-wrapped hosts see the re
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
