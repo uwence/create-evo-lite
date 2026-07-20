@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Code Perception: Provider Contract & Native Lite — MVP Plan (sub-spec ①): all tasks implemented
+Unified Code Explore — Agent Surface (Phase 4a) Implementation Plan: SHIPPED (6/6 tasks, governance-green). No active plan — parent spec:unified-code-explore-wiki-projection stays adopted/active; plan:code-wiki-inspector-projection remains parked pending Validation Sprint.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)

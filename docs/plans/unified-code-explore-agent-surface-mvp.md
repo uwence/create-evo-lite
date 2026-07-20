@@ -1,7 +1,7 @@
 ---
 id: plan:unified-code-explore-agent-surface-mvp
 title: Unified Code Explore — Agent Surface (Phase 4a)
-status: active
+status: done
 linkedSpec: spec:unified-code-explore-wiki-projection
 ---
 
@@ -104,7 +104,7 @@ T3 sits immediately after the service, not at the end, so a producer/consumer sh
   - `toSymbolReferences(matches: CodeReference[], opts?: string | {focusId?: string}) -> SymbolReference[]` where `SymbolReference = {reference: CodeReference, filePath?: string, lineRange?: [number,number], resolutionConfidence: number}`. Pure, total, never throws, never drops a match; a match with no resolvable `reference.id` becomes a `{code:'unresolved-reference', ...}` diagnostic-shaped entry is NOT produced here (the linker emits that) — instead its `resolutionConfidence` is floored so downstream never sees 0.
   - `normalizeDerivedLinkConfidence(links: Link[]) -> Link[]` — pure; returns a NEW array; for every `link.status==='derived'` whose `confidence` is missing/0/non-finite, sets `confidence = DERIVED_LINK_CONFIDENCE_FLOOR`; leaves `confirmed`/`proposed` links untouched.
 
-- [ ] **Step 1: Write the failing test** — append inside `runGovernanceTests()` try-block in `templates/cli/test/governance.js`, after the last existing `T-…` block (before the final success `console.log`):
+- [x] **Step 1: Write the failing test** — append inside `runGovernanceTests()` try-block in `templates/cli/test/governance.js`, after the last existing `T-…` block (before the final success `console.log`):
 
 ```javascript
         console.log('T-ce-seam. Testing M1 toSymbolReferences + M2 derived-confidence floor ...');
@@ -155,12 +155,12 @@ T3 sits immediately after the service, not at the end, so a producer/consumer sh
         console.log('✅ T-ce-seam M1/M2 seam passed');
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-seam|not a function|is not|AssertionError" | head`
 Expected: FAIL — `TypeError: toSymbolReferences is not a function` (or the `DERIVED_LINK_CONFIDENCE_FLOOR must be a positive number` assertion).
 
-- [ ] **Step 3: Write the implementation** — in `templates/cli/code-perception/normalize.js`, add the constant + two functions above the `module.exports` block:
+- [x] **Step 3: Write the implementation** — in `templates/cli/code-perception/normalize.js`, add the constant + two functions above the `module.exports` block:
 
 ```javascript
 // ── M1/M2 adapter↔linker seam (spec §2.4) ─────────────────────────────────────
@@ -228,12 +228,12 @@ module.exports = {
 };
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-seam"`
 Expected: PASS — `✅ T-ce-seam M1/M2 seam passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/code-perception/normalize.js templates/cli/test/governance.js
@@ -272,7 +272,7 @@ EOF
   - `rankRecommendedReading(inputs) -> ReadingItem[]` where `ReadingItem = {path, kind, reason, priority, confidence}` sorted by §2.3 order.
   - `UnifiedExploreResult = {query, ok, freshness, providers, matches, relationships, impact?, source, files, modules, focus, governance, recommendedReading, diagnostics}` (spec §2). `focus = {entityId, taskId, resolved}` — the CANONICAL resolved focus; the Wiki/Inspector must render this rather than re-deriving focus (e.g. "all unfinished tasks" is not the focus). `ok:false` is returned for the §3.1 FATAL set only (`adapter-exception`, `security-violation`, `unparseable-response`, `internal-error`) — capability gaps stay `ok:true`. `freshness = {stale, dirty, indexedCommit?, currentCommit?}`. `governance = {specs, plans, tasks, commits, evidence, links, linkSummary}`. `governance.evidence` retains ALL real evidence verbatim (opaque built-in rows appear as `{taskId, raw, linkable:false}`; structured rows are kept as-is with a `linkable` flag). Only rows carrying a linker signal (`codeReferenceId` / `filePath` / non-empty `symbols` / `commitSha`) are handed to the linker — NOT narrowed to code anchors, so a future structured `{symbols}`/`{commitSha}` row still reaches the derived-link rules. On the default pipeline the producer emits none of these signals, so `implements_task:derived` / `verified_by_test` / `evidenced_by_archive` are **not produced** and an aggregated `unstructured-evidence` diagnostic explains why (see Grounded reality). `files = string[]` (sorted repo-relative paths from native-lite file facts). `modules = [{id, files:string[], taskIds:string[], changed}]` (declared moduleId, else top-level path segment). Both are produced here but consumed only by the parked Phase 4b Wiki (module pages + unresolved-link detection); they stay in the shape so activating 4b needs no T2 signature change.
 
-- [ ] **Step 1: Write the failing test** — append inside `runGovernanceTests()` after the T-ce-seam block. FOUR scenarios (a single test cannot exercise all provider realities). **Scenario A** = the native-lite degradation dogfood (the common host state — no structural provider; also pins the real post-commit blob shape + the real backlog `hash` shape); **Scenario B** = an injected structural fixture provider (proves the full symbol/relationship/impact/source path and that M1 produces valid SymbolReferences — while asserting the service does NOT fabricate symbol-level governance links the built-in producer can't supply); **Scenario B2** = a compatibility-contract test proving a structured `evidence.symbols` row (no code anchor) still reaches the linker — guarding the dormant seam against being severed at the service layer, WITHOUT claiming the built-in producer emits that shape; **Scenario C** = a ready provider that throws, proving the SERVICE itself produces the `ok:false` fatal that T4's and T5's surface mappings depend on. All `git init` the temp workspace because native-lite `getFiles` runs `git ls-files --cached --others --exclude-standard` and returns `files:[]` + a `git-enumeration-failed` diagnostic when the root is not a repo — so without a real repo the file facts (and every `declares_file` link) would be empty and the asserts could never pass.
+- [x] **Step 1: Write the failing test** — append inside `runGovernanceTests()` after the T-ce-seam block. FOUR scenarios (a single test cannot exercise all provider realities). **Scenario A** = the native-lite degradation dogfood (the common host state — no structural provider; also pins the real post-commit blob shape + the real backlog `hash` shape); **Scenario B** = an injected structural fixture provider (proves the full symbol/relationship/impact/source path and that M1 produces valid SymbolReferences — while asserting the service does NOT fabricate symbol-level governance links the built-in producer can't supply); **Scenario B2** = a compatibility-contract test proving a structured `evidence.symbols` row (no code anchor) still reaches the linker — guarding the dormant seam against being severed at the service layer, WITHOUT claiming the built-in producer emits that shape; **Scenario C** = a ready provider that throws, proving the SERVICE itself produces the `ok:false` fatal that T4's and T5's surface mappings depend on. All `git init` the temp workspace because native-lite `getFiles` runs `git ls-files --cached --others --exclude-standard` and returns `files:[]` + a `git-enumeration-failed` diagnostic when the root is not a repo — so without a real repo the file facts (and every `declares_file` link) would be empty and the asserts could never pass.
 
 ```javascript
         const { execFileSync } = require('node:child_process');
@@ -562,12 +562,12 @@ EOF
 
 > **Cross-surface reuse (spec Global Constraint "NO duplicate logic"):** Scenario B proves the shared service produces the full structural result. **T4** proves the CLI consumes that service; **T5** proves MCP consumes the same service. Each `require`s `code-perception.js#exploreCode` and asserts against its result — neither re-implements provider orchestration. Wiki/Inspector consumption is intentionally deferred to the parked Phase 4b plan and is NOT an acceptance requirement here.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-explore|Cannot find module|is not a function" | head`
 Expected: FAIL — `Cannot find module '.../code-perception.js'`.
 
-- [ ] **Step 3: Write the implementation** — create `templates/cli/code-perception.js`:
+- [x] **Step 3: Write the implementation** — create `templates/cli/code-perception.js`:
 
 ```javascript
 'use strict';
@@ -1083,12 +1083,12 @@ function rankRecommendedReading(inputs) {
 module.exports = { exploreCode, rankRecommendedReading };
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-explore"`
 Expected: PASS — all four: `✅ T-ce-explore-A native-lite degradation passed`, `✅ T-ce-explore-B injected structural provider passed`, `✅ T-ce-explore-B2 structured-evidence compatibility contract passed`, `✅ T-ce-explore-C adapter-exception fatal passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/code-perception.js templates/cli/test/governance.js
@@ -1124,7 +1124,7 @@ A fourth was found while writing this task and is the reason the focus design be
 - Consumes: `./code-perception/post-commit-code-perception.js#runPostCommitCodePerception({projectRoot, headSha, changedFiles, cache?}) -> {report, diagnostics}` (the REAL blob producer — never throws); `./memory.service.js#readActiveContext()` (the REAL active-context parser, bound to a module-load `ACTIVE_CONTEXT_PATH`); `./code-perception.js#exploreCode` (T2).
 - Produces: no production API. THREE regression tests that fail if a producer's real output stops feeding the consumer: **A** commit graph (real post-commit blob), **B** focus (real `active_context.md` parse), **C** archive evidence (real backfill + scan chain — pins that opaque string evidence is retained + explained + never fabricated into links).
 
-- [ ] **Step 1: Write the failing tests** — append after the T-ce-explore-C block:
+- [x] **Step 1: Write the failing tests** — append after the T-ce-explore-C block:
 
 ```javascript
         console.log('T-ce-compose-A. REAL post-commit producer -> exploreCode consumer (commit graph) ...');
@@ -1280,16 +1280,16 @@ A fourth was found while writing this task and is the reason the focus design be
         console.log('✅ T-ce-compose-C real evidence chain degrades honestly');
 ```
 
-- [ ] **Step 2: Run to verify they fail (or reveal a real mismatch)**
+- [x] **Step 2: Run to verify they fail (or reveal a real mismatch)**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-compose|AssertionError" | head`
 Expected: FAIL before T2's service exists. Once T2 exists, all THREE (A/B/C) MUST pass without touching them — if any fails, the SERVICE is wrong (or a producer's shape was misread again). **Fix the service, never the test's expectation of the producer.** In particular, T-ce-compose-C must never be made green by teaching the service to synthesize a symbol/commit/codeReferenceId the producer did not emit — that is the exact defect this task exists to catch.
 
-- [ ] **Step 3: No implementation of its own**
+- [x] **Step 3: No implementation of its own**
 
 This task adds no production code. If a composition test fails, apply the minimal fix to `code-perception.js` so the consumer reads what the producer really emits, and record the corrected shape in the plan's **Grounded reality** section so the next consumer inherits the fact.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add templates/cli/test/governance.js templates/cli/code-perception.js
@@ -1317,7 +1317,7 @@ EOF
 - Produces: `registerCodeCommands(program)` registering `mem code <providers|status|search|explore|callers|callees|impact|context>`. Exit codes: success/degraded → 0; internal invariant/security → 1 (`result.ok===false`); invalid args → 2 via a SCOPED `exitOverride` on the `code` group + every subcommand (commander's default is 1, so the override is required — it must NOT be placed on the root program or it would change every other `mem` command's exit codes).
 - **No `mem code wiki` subgroup in 4a.** It would `require('./wiki')`, which Phase 4b creates; registering it now would either brick the group or ship a command that always throws. Phase 4b adds the subgroup together with the module.
 
-- [ ] **Step 1: Write the failing test** — append after the T-ce-compose-B block. Run the **template** `memory.js` directly (NOT the mirror): `code-perception/cli.js` is not manifest-managed until **Task 6**, so a `sync-runtime-entry` mirror would omit it and `mem code` would be unknown. Running the template source exercises the real production registrar in place; mirror parity is proven separately in **T6**. `git init` so native-lite `getFiles` enumerates (degradation stays success-shaped either way, but this keeps the run realistic).
+- [x] **Step 1: Write the failing test** — append after the T-ce-compose-B block. Run the **template** `memory.js` directly (NOT the mirror): `code-perception/cli.js` is not manifest-managed until **Task 6**, so a `sync-runtime-entry` mirror would omit it and `mem code` would be unknown. Running the template source exercises the real production registrar in place; mirror parity is proven separately in **T6**. `git init` so native-lite `getFiles` enumerates (degradation stays success-shaped either way, but this keeps the run realistic).
 
 ```javascript
         console.log('T-ce-cli. Testing `mem code explore --json` success-shaped exit + exit-2 on bad args ...');
@@ -1372,12 +1372,12 @@ EOF
         console.log('✅ T-ce-cli mem code CLI passed');
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-cli|exit 0|exit 2" | head`
 Expected: FAIL — `mem code` is not a known command yet (the `safeRegister('code', …)` thunk's `require('./code-perception/cli')` throws and warns), so commander reports an unknown command and `res.status` is `1`, not `0`.
 
-- [ ] **Step 3a: Create `templates/cli/code-perception/cli.js`**
+- [x] **Step 3a: Create `templates/cli/code-perception/cli.js`**
 
 ```javascript
 'use strict';
@@ -1528,7 +1528,7 @@ function registerCodeCommands(program) {
 module.exports = { registerCodeCommands };
 ```
 
-- [ ] **Step 3b: Wire the thunk in `templates/cli/memory.js`** — add one line immediately after the existing `code-perception` registrar (line ~731):
+- [x] **Step 3b: Wire the thunk in `templates/cli/memory.js`** — add one line immediately after the existing `code-perception` registrar (line ~731):
 
 Find:
 
@@ -1542,14 +1542,14 @@ Add directly below it:
     safeRegister('code', () => require('./code-perception/cli').registerCodeCommands(program));
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-cli"`
 Expected: PASS — `✅ T-ce-cli mem code CLI passed`.
 
 *(Phase 4a intentionally registers no `mem code wiki` subgroup. `code-perception/wiki.js` and its CLI handlers belong exclusively to the parked Phase 4b plan, which adds the subgroup together with the module.)*
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/code-perception/cli.js templates/cli/memory.js templates/cli/test/governance.js
@@ -1574,7 +1574,7 @@ EOF
 - Consumes: `code-perception.js#exploreCode` via `freshRequire('./code-perception')` (same service, hot-reloadable in the long-lived MCP process).
 - Produces: MCP tool `evo_code_explore` (schema per spec §4) + an exported `handleCodeExplore(args, deps?)`. Returns the `UnifiedExploreResult` as JSON text; NEVER `isError:true` for capability gaps (`result.ok === true`). A `result.ok === false` (true fatal) is re-thrown so the CallTool catch produces `isError:true` — the unified error model must not wrap a fatal as a success envelope.
 
-- [ ] **Step 1: Write the failing test** — append after the T-ce-cli block:
+- [x] **Step 1: Write the failing test** — append after the T-ce-cli block:
 
 ```javascript
         console.log('T-ce-mcp. Testing evo_code_explore MCP tool (registered + unified error model) ...');
@@ -1610,12 +1610,12 @@ EOF
         console.log('✅ T-ce-mcp evo_code_explore passed');
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-mcp"`
 Expected: FAIL — `evo_code_explore must be registered in TOOLS` (and `mcp.handleCodeExplore` is not yet exported).
 
-- [ ] **Step 3a: Add the tool to `templates/cli/mcp-server.js`** — append to the `TOOLS` array (after the `evo_active_context` entry, before the closing `]`):
+- [x] **Step 3a: Add the tool to `templates/cli/mcp-server.js`** — append to the `TOOLS` array (after the `evo_active_context` entry, before the closing `]`):
 
 ```javascript
     {
@@ -1670,7 +1670,7 @@ Add the dispatch case (in the `switch (name)`):
 
 Export `handleCodeExplore` alongside the existing `module.exports` (so the test can exercise the error mapping directly): add `handleCodeExplore` to the exported object.
 
-- [ ] **Step 3b: Add to `templates/cli/mcp-validate.js`** — append to that file's own `TOOLS` list:
+- [x] **Step 3b: Add to `templates/cli/mcp-validate.js`** — append to that file's own `TOOLS` list:
 
 ```javascript
     { name: 'evo_code_explore', arguments: { query: 'memory engine selection', includeSource: false } },
@@ -1682,12 +1682,12 @@ And add a `summarise` case:
         case 'evo_code_explore': return `${(data.matches || []).length} matches, ${(data.governance?.links || []).length} links, providers ${(data.providers || []).length}`;
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-mcp"`
 Expected: PASS — `✅ T-ce-mcp evo_code_explore passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/mcp-server.js templates/cli/mcp-validate.js templates/cli/test/governance.js
@@ -1716,7 +1716,7 @@ EOF
 
 **Why the check must not skip or approximate:** the manifest is the exact expectation, so the test asserts `checked === core.files.length` (90 entries today) and asserts each template EXISTS rather than `continue`-ing past it. A `if (!exists) continue` + `checked >= 50` shape would re-open the exact hole a derived check exists to close: a managed entry pointing at a missing template would be silently skipped, `sync-runtime` would silently not copy it, and the suite would still be green. Verified against the current tree: all 90 core-cli entries resolve to real templates, so the strict form has no legitimate skip to accommodate.
 
-- [ ] **Step 1: Write the failing test** — append after the T-ce-mcp block:
+- [x] **Step 1: Write the failing test** — append after the T-ce-mcp block:
 
 ```javascript
         console.log('T-ce-manifest-sync-4a. New files managed + EVERY managed mirror byte-identical ...');
@@ -1776,19 +1776,19 @@ EOF
         console.log('✅ T-ce-manifest-sync-4a mirror parity passed');
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node templates/cli/test.js governance 2>&1 | grep -E "T-ce-manifest-sync-4a|must be a managed" | head`
 Expected: FAIL — `code-perception.js must be a managed core-cli template`.
 
-- [ ] **Step 3a: Register the files** in `templates/cli/template-manifest.js`. In the `core-cli` family `files` array, add the two entries next to the existing `code-perception/*` group (e.g. right after `'code-perception/provider-router.js',`):
+- [x] **Step 3a: Register the files** in `templates/cli/template-manifest.js`. In the `core-cli` family `files` array, add the two entries next to the existing `code-perception/*` group (e.g. right after `'code-perception/provider-router.js',`):
 
 ```javascript
             'code-perception.js',
             'code-perception/cli.js',
 ```
 
-- [ ] **Step 3b: Converge the real mirror** — seed from the template entry, then let the standalone entry converge to zero:
+- [x] **Step 3b: Converge the real mirror** — seed from the template entry, then let the standalone entry converge to zero:
 
 ```bash
 node templates/cli/sync-runtime-entry.js
@@ -1798,7 +1798,7 @@ node ./.evo-lite/cli/sync-runtime-entry.js
 
 Expected on the final run: `copied: 0` (converged).
 
-- [ ] **Step 4: Run both suites DIRECTLY and confirm exit 0**
+- [x] **Step 4: Run both suites DIRECTLY and confirm exit 0**
 
 No `| tail` — a pipe masks the exit code:
 
@@ -1809,7 +1809,7 @@ node ./.evo-lite/cli/test.js all; echo "runtime suite exit:  $?"
 
 Expected: both print `exit: 0` and include the passing `T-ce-*` blocks. The runtime run proves the mirror is coherent and executable.
 
-- [ ] **Step 5: Commit** — stage the templates this task edited plus **whatever mirror files the convergence actually rewrote**. Derive that list from git, do not type it from memory:
+- [x] **Step 5: Commit** — stage the templates this task edited plus **whatever mirror files the convergence actually rewrote**. Derive that list from git, do not type it from memory:
 
 ```bash
 git status --short .evo-lite/cli   # <- this is the authoritative list
