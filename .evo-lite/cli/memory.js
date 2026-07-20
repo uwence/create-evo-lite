@@ -729,6 +729,7 @@ function buildProgram() {
     safeRegister('hooks', () => require('./hooks').registerHookCommands(program));
     safeRegister('sync-runtime', () => require('./sync-runtime').registerSyncRuntimeCommands(program));
     safeRegister('code-perception', () => require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program));
+    safeRegister('code', () => require('./code-perception/cli').registerCodeCommands(program));
 
     program.command('inspect')
         .description('Run the inspector HTTP server.')

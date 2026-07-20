@@ -79,6 +79,8 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'code-perception/status.js',
             'code-perception/governance-linker.js',
             'code-perception/post-commit-code-perception.js',
+            'code-perception.js',
+            'code-perception/cli.js',
             'code-perception/dogfood-validate.js',
             'code-perception/providers/codegraph-exec.js',
             'code-perception/providers/codegraph.js',

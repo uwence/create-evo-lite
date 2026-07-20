@@ -1182,9 +1182,21 @@ A fourth was found while writing this task and is the reason the focus design be
                 `<!-- BEGIN_FOCUS -->\nDemo Plan: ${TASK_TITLE}\n<!-- END_FOCUS -->`);
             fs.writeFileSync(acPath, ac, 'utf8');
 
+            // memory.service pins ACTIVE_CONTEXT_PATH at module load, so it must be reloaded
+            // AFTER EVO_LITE_ROOT is set. `resetCliModuleCache()` clears CLI_DIR, but this block
+            // requires from TEMPLATE_CLI_DIR — those dirs DIFFER when the suite runs from the
+            // runtime mirror entry (CLI_DIR=.evo-lite/cli, TEMPLATE_CLI_DIR=templates/cli), so the
+            // CLI_DIR-scoped clear would miss the module and read a stale (real-repo) context.
+            // Clear the exact TEMPLATE_CLI_DIR modules this block loads so it is entry-point-robust.
+            const resetTemplateCliCache = () => {
+                for (const f of ['runtime.js', 'db.js', 'models.js', 'memory-index-util.js', 'memory-index.js', 'memory-index-zvec.js', 'memory.service.js']) {
+                    const p = path.join(TEMPLATE_CLI_DIR, f);
+                    if (fs.existsSync(p)) delete require.cache[require.resolve(p)];
+                }
+            };
             const prevRoot = process.env.EVO_LITE_ROOT;
             process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
-            resetCliModuleCache();   // memory.service pins ACTIVE_CONTEXT_PATH at module load
+            resetTemplateCliCache();
             try {
                 const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'));
                 const realAc = memoryService.readActiveContext();   // REAL parser output
@@ -1202,7 +1214,7 @@ A fourth was found while writing this task and is the reason the focus design be
                 assert.ok(focusLinks.length >= 1, 'B: related_to_focus is non-empty end-to-end');
             } finally {
                 if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
-                resetCliModuleCache();
+                resetTemplateCliCache();
                 fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
             }
         }
@@ -1716,11 +1728,21 @@ EOF
                 'code-wiki is Phase 4b — 4a must not register it');
 
             // Converge into a TEMP workspace — never mutate the real repo's mirror in a test.
+            // sync-runtime resolves its template SOURCE from EVO_LITE_TEMPLATE_CLI_DIR /
+            // EVO_LITE_TEMPLATE_ROOT_DIR (sync-runtime.js:10-16); without them a run whose cwd is
+            // the temp workspace finds no templates and returns status:'no-templates' (copies
+            // nothing). Point them at the REAL template tree so the temp mirror converges from it.
+            // Same override pattern as T-sr-entry.
             const runtime = createTempRuntimeRoot('ce-manifest-4a');
             const entry = path.join(TEMPLATE_CLI_DIR, 'sync-runtime-entry.js');
             const run = () => JSON.parse(cp.execFileSync(process.execPath, [entry, '--json'], {
                 cwd: runtime.workspaceRoot,
-                env: { ...process.env, EVO_LITE_WORKSPACE_ROOT: runtime.workspaceRoot },
+                env: {
+                    ...process.env,
+                    EVO_LITE_WORKSPACE_ROOT: runtime.workspaceRoot,
+                    EVO_LITE_TEMPLATE_CLI_DIR: TEMPLATE_CLI_DIR,
+                    EVO_LITE_TEMPLATE_ROOT_DIR: path.join(WORKSPACE_ROOT, 'templates'),
+                },
                 encoding: 'utf8',
             }));
             run();                      // seed from the template entry

@@ -7069,6 +7069,619 @@ async function runChildRuntimeTests() {
             void execFileSync;
         }
         console.log('✅ T-plan-progress-no-ir passed');
+
+        console.log('T-ce-seam. Testing M1 toSymbolReferences + M2 derived-confidence floor ...');
+        {
+            const norm = require(require('path').join(TEMPLATE_CLI_DIR, 'code-perception', 'normalize.js'));
+            const { toSymbolReferences, normalizeDerivedLinkConfidence, DERIVED_LINK_CONFIDENCE_FLOOR } = norm;
+
+            // Floor is a real positive number.
+            assert.ok(typeof DERIVED_LINK_CONFIDENCE_FLOOR === 'number' && DERIVED_LINK_CONFIDENCE_FLOOR > 0,
+                'DERIVED_LINK_CONFIDENCE_FLOOR must be a positive number');
+
+            // (a) flat CR[] -> wrapper shape, carrying filePath/lineRange, nonzero confidence.
+            const cr = {
+                id: 'code-ref:provider:codegraph:abc123abc123', providerId: 'provider:codegraph',
+                providerEntityId: 'sym-1', kind: 'function', name: 'selectEngine',
+                filePath: 'src/engine.js', lineRange: [10, 42],
+                provenance: { providerId: 'provider:codegraph', method: 'provider-structural', authority: 'structural', confidence: 0.9 },
+            };
+            const [wrapped] = toSymbolReferences([cr]);
+            assert.strictEqual(wrapped.reference, cr, 'wrapper must carry the original reference');
+            assert.strictEqual(wrapped.filePath, 'src/engine.js', 'wrapper must lift filePath');
+            assert.deepStrictEqual(wrapped.lineRange, [10, 42], 'wrapper must lift lineRange');
+            assert.ok(wrapped.resolutionConfidence > 0, 'resolved match must have nonzero resolutionConfidence');
+
+            // (b) unresolved / zero-confidence match -> floored (never 0), still not dropped.
+            const weak = { id: 'code-ref:x:0', providerId: 'x', providerEntityId: '', kind: 'unknown', name: '',
+                provenance: { providerId: 'x', method: 'heuristic', authority: 'enrichment', confidence: 0 } };
+            const out = toSymbolReferences([cr, weak]);
+            assert.strictEqual(out.length, 2, 'toSymbolReferences must never drop a match');
+            assert.ok(out[1].resolutionConfidence >= DERIVED_LINK_CONFIDENCE_FLOOR,
+                'unresolved match resolutionConfidence must be floored, never 0');
+
+            // (c) derived link floor pass: derived@0 and derived@undefined -> floor; confirmed/proposed untouched.
+            const links = [
+                { id: 'a', status: 'derived', confidence: 0 },
+                { id: 'b', status: 'derived', confidence: undefined },
+                { id: 'c', status: 'confirmed', confidence: 1 },
+                { id: 'd', status: 'proposed', confidence: 0.4 },
+            ];
+            const floored = normalizeDerivedLinkConfidence(links);
+            assert.strictEqual(floored[0].confidence, DERIVED_LINK_CONFIDENCE_FLOOR, 'derived@0 must be floored');
+            assert.strictEqual(floored[1].confidence, DERIVED_LINK_CONFIDENCE_FLOOR, 'derived@undefined must be floored');
+            assert.strictEqual(floored[2].confidence, 1, 'confirmed must stay 1.0');
+            assert.strictEqual(floored[3].confidence, 0.4, 'proposed must keep its value');
+            assert.strictEqual(links[0].confidence, 0, 'normalizeDerivedLinkConfidence must be pure (no mutation)');
+            for (const l of floored) assert.ok(!(l.status === 'derived' && !(l.confidence > 0)), 'no derived link may end at 0');
+        }
+        console.log('✅ T-ce-seam M1/M2 seam passed');
+
+        const { execFileSync } = require('node:child_process');
+        function gitInit(root) {
+            // Minimal repo so native-lite `git ls-files` enumerates the tree.
+            execFileSync('git', ['init', '-q'], { cwd: root });
+            execFileSync('git', ['config', 'user.email', 'test@evo.local'], { cwd: root });
+            execFileSync('git', ['config', 'user.name', 'evo-test'], { cwd: root });
+            execFileSync('git', ['add', '-A'], { cwd: root });
+            execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: root });
+        }
+        function seedPlanIR(runtimeRoot, tasks, plans) {
+            const planDir = path.join(runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(planDir, { recursive: true });
+            fs.writeFileSync(path.join(planDir, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: plans || [], tasks: tasks || [], warnings: [],
+            }, null, 2), 'utf8');
+        }
+
+        console.log('T-ce-explore-A. Unified explore — native-lite degradation is success-shaped ...');
+        {
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-explore-a');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+            // Persisted post-commit blob in its REAL shape ({commit, changedFiles}) —
+            // this is the ONLY commit source explore has (it never shells `git log`).
+            const cpDir = path.join(runtime.runtimeRoot, 'generated', 'code-perception');
+            fs.mkdirSync(cpDir, { recursive: true });
+            const FIXTURE_SHA = 'a'.repeat(40);
+            fs.writeFileSync(path.join(cpDir, 'post-commit-last-run.json'), JSON.stringify({
+                commit: FIXTURE_SHA, changedFiles: ['src/engine.js'],
+            }, null, 2), 'utf8');
+
+            // No codegraph configured -> native-lite fallback. `symbols` absent -> matches [].
+            // activeContext is injected so the host repo's focus never leaks into the fixture.
+            // FOCUS text uses the REAL production shape "<plan title>: <task title>" written by
+            // advanceFocusFromCommit — it contains NO task id, so the exact-title bridge is what
+            // must resolve it. The backlog rows carry a realistic free-form human slug: they are
+            // deliberately IRRELEVANT to focus resolution and must not influence the result
+            // (the backlog is a scratchpad, not a task registry — see Grounded reality).
+            const result = await svc.exploreCode('engine selection', {
+                projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: true,
+                activeContext: {
+                    sections: { focus: 'Demo Plan: Engine' },
+                    summary: { focus: 'Demo Plan: Engine' },
+                    tasks: [{ hash: 'fresh-plan-progress', checked: false, line: '- [ ] [fresh-plan-progress] Example backlog item', text: 'Example backlog item' }],
+                    trajectory: [],
+                },
+            });
+
+            assert.strictEqual(result.ok, true, 'A: capability gap must be success-shaped (ok:true)');
+            assert.strictEqual(result.matches.length, 0, 'A: no structural provider -> zero symbol matches');
+            // The persisted commit must actually reach governance (blob key is `commit`).
+            assert.strictEqual(result.governance.commits.length, 1, 'A: persisted post-commit blob yields exactly one commit');
+            assert.strictEqual(result.governance.commits[0].sha, FIXTURE_SHA, 'A: governance.commits carries the fixture SHA');
+            const changedLinks = result.governance.links.filter(l => l.kind === 'changed_by_commit');
+            assert.ok(changedLinks.length >= 1, 'A: changed_by_commit links built from the persisted commit + file facts');
+            assert.ok(changedLinks.every(l => l.governanceEntityId === `commit:${FIXTURE_SHA}`),
+                'A: changed_by_commit is keyed by commit:<sha> (NOT a task id)');
+            assert.strictEqual(result.focus.entityId, 'task:x',
+                'A: focus resolves through the exact task title in REAL FOCUS text; the backlog hash is irrelevant to resolution');
+            assert.ok(result.diagnostics.some(d => (d.code || '') === 'capability-unavailable'),
+                'A: a capability-unavailable diagnostic explains the missing symbols capability');
+            const nl = result.providers.find(p => /native-lite/.test(p.id || ''));
+            assert.ok(nl && nl.ready === true, 'A: native-lite provider present and ready');
+            // declares_file (conf 1.0) from task.linkedFiles ∩ native-lite file facts; and NO dangling link.
+            const declares = result.governance.links.filter(l => l.kind === 'declares_file');
+            assert.ok(declares.length >= 1, 'A: declares_file link derived from linkedFiles + native-lite file facts');
+            // No dangling: every link points at a real code-ref id (file facts / matches).
+            for (const l of result.governance.links) {
+                assert.ok(/^code-ref:/.test(l.codeReferenceId), 'A: every link points at a real code-ref id (no dangling)');
+            }
+            // No derived link may carry 0 (M2 wired through the service).
+            for (const l of result.governance.links) {
+                assert.ok(!(l.status === 'derived' && !(l.confidence > 0)), 'A: service must floor derived links (M2)');
+            }
+            assert.ok(result.recommendedReading.length >= 1, 'A: recommendedReading non-empty');
+            assert.ok(result.recommendedReading.some(r => /engine\.js$/.test(r.path)), 'A: recommendedReading contains the fixture file');
+            for (const r of result.recommendedReading) assert.ok(typeof r.reason === 'string' && r.reason.length > 0, 'A: every reading item explains why');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-explore-A native-lite degradation passed');
+
+        console.log('T-ce-explore-B. Unified explore — injected structural provider drives the full path ...');
+        {
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-explore-b');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            // Evidence uses the REAL built-in producer shape: an opaque string. It must NOT
+            // fabricate a rule-gated link, and it must survive verbatim into governance.evidence.
+            // (A structured {symbols,...} row would be a shape no producer emits — the exact
+            // category error this suite exists to prevent.)
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'],
+                   evidence: ['archive:mem_2026-07-15_demo.md'] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+
+            // A structural provider shaped to the SERVICE call sites (NOT the shared
+            // fixture-provider.js, whose getCallers returns a bare array by ①'s contract).
+            const PID = 'provider:fixture-structural';
+            const structuralStatus = {
+                providerId: PID, adapterVersion: '0.0.1', providerVersion: '9.9.9', available: true, ready: true,
+                indexState: 'ready', freshness: 'fresh', dirty: 'clean', compatibility: 'supported',
+                capabilities: { files: false, symbols: true, source: true, callers: true, callees: true, impact: true, affectedTests: false, modules: false },
+                diagnostics: [],
+            };
+            const structuralProvider = {
+                id: PID, name: 'Fixture Structural', adapterVersion: '0.0.1', capabilities: structuralStatus.capabilities,
+                async check() { return { available: true, ready: true, installed: true, indexState: 'ready' }; },
+                async getStatus() { return structuralStatus; },
+                // RAW matches -> the service normalizes via normalizeSearchResult(status, raw).
+                async search() { return { query: 'engine', matches: [{ providerEntityId: 'sym:selectEngine', name: 'selectEngine', kind: 'function', filePath: 'src/engine.js', lineRange: [1, 1] }], diagnostics: [] }; },
+                async getCallers() { return { relationships: [{ providerId: PID, source: { name: 'main', filePath: 'src/main.js' }, target: { name: 'selectEngine', filePath: 'src/engine.js' }, kind: 'called_by', confidence: 0.9 }], diagnostics: [] }; },
+                async getCallees() { return { relationships: [], diagnostics: [] }; },
+                // RAW impact -> the service normalizes via normalizeImpactResult(status, raw).
+                async impact() { return { target: { name: 'selectEngine', filePath: 'src/engine.js' }, downstream: [{ name: 'main', filePath: 'src/main.js' }], risk: 'medium', diagnostics: [] }; },
+                async getEntity() { return { reference: { name: 'selectEngine', filePath: 'src/engine.js' }, content: 'function selectEngine(){ return 1; }', truncated: false, diagnostics: [] }; },
+            };
+            const registry = Object.assign({}, require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader')).DEFAULT_REGISTRY,
+                { [PID]: { role: 'structural-primary', create: () => structuralProvider } });
+            const config = { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } };
+
+            const result = await svc.exploreCode('engine', {
+                projectRoot: runtime.workspaceRoot, config, registry, includeSource: true, includeImpact: true,
+                // Real FOCUS shape ("<plan title>: <task title>"); no backlog rows needed —
+                // focus never comes from the backlog. T3-B covers the real parser end-to-end.
+                activeContext: { sections: { focus: 'Demo Plan: Engine' }, summary: { focus: 'Demo Plan: Engine' }, tasks: [], trajectory: [] },
+            });
+
+            assert.strictEqual(result.ok, true, 'B: ok:true');
+            assert.ok(result.matches.length >= 1, 'B: structural provider yields symbol matches');
+            assert.ok(result.matches.every(m => /^code-ref:/.test(m.id)), 'B: matches are normalized CodeReferences');
+            assert.ok(result.relationships.length >= 1, 'B: callers relationships present');
+            assert.ok(result.relationships.every(r => r.source && r.target && typeof r.kind === 'string'), 'B: relationships normalized');
+            assert.ok(result.impact && Array.isArray(result.impact.downstream) && result.impact.downstream.length >= 1, 'B: impact shape with downstream');
+            assert.ok(['low', 'medium', 'high', 'unknown'].includes(result.impact.risk), 'B: impact carries a risk level');
+            assert.ok(result.source.length >= 1 && typeof result.source[0].excerpt === 'string', 'B: source excerpt present');
+            // M1 must produce a valid SymbolReference from the structural match (this is the
+            // dormant seam's unit-level proof — it just is not FED by the built-in producer).
+            assert.ok(result.matches.some(m => m.filePath === 'src/engine.js' && m.name === 'selectEngine'),
+                'B: M1 normalized the structural match into a resolvable reference');
+            // The default Planning IR has no task.symbols and no structured evidence, so the
+            // service must NOT fabricate a symbol-level Task-to-Code link. Guarding at 0 is the
+            // whole point: a structural provider finding a symbol is NOT the same as governance
+            // data binding a task to that symbol.
+            const derived = result.governance.links.filter(l => l.kind === 'implements_task' && l.status === 'derived');
+            assert.strictEqual(derived.length, 0,
+                'B: no task.symbols / structured evidence -> service must not fabricate derived Task-to-Symbol links');
+            // The opaque evidence is retained, marked non-linkable, and explained by ONE diagnostic.
+            assert.ok(result.governance.evidence.some(e => e.raw === 'archive:mem_2026-07-15_demo.md' && e.linkable === false),
+                'B: opaque evidence is retained verbatim in governance.evidence, flagged non-linkable');
+            assert.ok(result.diagnostics.some(d => (d.code || '') === 'unstructured-evidence'),
+                'B: an aggregated unstructured-evidence diagnostic explains the limitation');
+            // Precise invariant: opaque evidence must not add an EVIDENCE-path
+            // unresolved-code-reference. (declares_file may legitimately emit that code for a
+            // linkedFile not in the tree, so a blanket "zero unresolved-code-reference" would be
+            // false on real data — assert the `evidence:`-prefixed message specifically.)
+            assert.ok(!result.diagnostics.some(d => (d.code || '') === 'unresolved-code-reference' && /^evidence:/.test(d.message || '')),
+                'B: opaque evidence is NOT handed to the linker, so it produces no evidence-path unresolved-code-reference');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-explore-B injected structural provider passed');
+
+        console.log('T-ce-explore-B2. COMPATIBILITY CONTRACT — structured evidence.symbols reaches the linker ...');
+        {
+            // This proves the SUPPORTED contract ONLY: a structured evidence row carrying a
+            // linker signal (symbols) must survive the service's evidence split and reach the
+            // linker, even though it has NO codeReferenceId/filePath. It does NOT claim the
+            // built-in Planning producer emits this shape — it does not (see Grounded reality).
+            // Its purpose is to guard against the service silently severing the dormant M1/M2 seam.
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-explore-b2');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            // Structured evidence with symbols and NO code anchor — a DI-shaped row, explicitly
+            // NOT what scanPlanning produces. task.symbols left empty on purpose.
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'],
+                   evidence: [{ kind: 'test', symbols: ['selectEngine'] }] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+
+            const PID = 'provider:fixture-structural-b2';
+            const status = {
+                providerId: PID, adapterVersion: '0.0.1', providerVersion: '9.9.9', available: true, ready: true,
+                indexState: 'ready', freshness: 'fresh', dirty: 'clean', compatibility: 'supported',
+                capabilities: { files: false, symbols: true, source: false, callers: false, callees: false, impact: false },
+                diagnostics: [],
+            };
+            const provider = {
+                id: PID, name: 'Fixture B2', adapterVersion: '0.0.1', capabilities: status.capabilities,
+                async check() { return { available: true, ready: true, installed: true, indexState: 'ready' }; },
+                async getStatus() { return status; },
+                async search() { return { query: 'engine', matches: [{ providerEntityId: 'sym:selectEngine', name: 'selectEngine', kind: 'function', filePath: 'src/engine.js', lineRange: [1, 1] }], diagnostics: [] }; },
+            };
+            const registry = Object.assign({}, require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader')).DEFAULT_REGISTRY,
+                { [PID]: { role: 'structural-primary', create: () => provider } });
+
+            const result = await svc.exploreCode('engine', {
+                projectRoot: runtime.workspaceRoot, includeSource: false, includeImpact: false,
+                config: { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } },
+                registry, activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+
+            assert.strictEqual(result.ok, true, 'B2: ok:true');
+            // The structured symbols row reached the linker: implements_task derived exists.
+            const derived = result.governance.links.filter(l => l.kind === 'implements_task' && l.status === 'derived');
+            assert.ok(derived.length >= 1,
+                'B2: a structured evidence.symbols row (no code anchor) MUST reach the linker and yield an implements_task derived link — the service must not sever the seam');
+            assert.ok(derived.every(l => l.confidence > 0), 'B2: M2 floored the derived confidence > 0');
+            // The structured row is retained AND flagged linkable in governance.evidence.
+            assert.ok(result.governance.evidence.some(e => Array.isArray(e.symbols) && e.symbols.includes('selectEngine') && e.linkable === true),
+                'B2: the structured evidence row is retained and flagged linkable:true');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+
+            // B2-mismatch: a row whose OWN taskId points at a different task must be
+            // fail-closed — retained for observation but NEVER linked (no cross-task fabrication).
+            const runtime2 = createTempRuntimeRoot('ce-explore-b2m');
+            writeText(path.join(runtime2.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            seedPlanIR(runtime2.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'],
+                   evidence: [{ taskId: 'task:y', kind: 'test', symbols: ['selectEngine'] }] },
+                 { id: 'task:y', title: 'Other', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: [], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime2.workspaceRoot);
+            const result2 = await svc.exploreCode('engine', {
+                projectRoot: runtime2.workspaceRoot, includeSource: false, includeImpact: false,
+                config: { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } },
+                registry, activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+            assert.strictEqual(result2.diagnostics.filter(d => (d.code || '') === 'evidence-task-mismatch').length, 1,
+                'B2-mismatch: exactly one evidence-task-mismatch diagnostic');
+            assert.ok(result2.governance.evidence.some(e => Array.isArray(e.symbols) && e.symbols.includes('selectEngine') && e.taskId === 'task:x' && e.linkable === false),
+                'B2-mismatch: conflicting row is retained under its OWNER task:x and flagged non-linkable');
+            const impl = result2.governance.links.filter(l => l.kind === 'implements_task' && l.status === 'derived');
+            assert.ok(!impl.some(l => l.governanceEntityId === 'task:y'), 'B2-mismatch: no fabricated task:y implements link');
+            assert.ok(!impl.some(l => l.governanceEntityId === 'task:x'), 'B2-mismatch: and no task:x link either (the mismatched row is not linked at all)');
+            fs.rmSync(runtime2.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-explore-B2 structured-evidence compatibility contract passed');
+
+        console.log('T-ce-explore-C. Unified explore — adapter exception is FATAL (ok:false) ...');
+        {
+            // The service itself must generate ok:false for an adapter/invariant break.
+            // T4/T5 only prove the SURFACE mapping given an ok:false; without this the
+            // production service would never produce one and those mappings are dead code.
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-explore-c');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = 1;\n');
+            seedPlanIR(runtime.runtimeRoot, [], []);
+            gitInit(runtime.workspaceRoot);
+
+            const PID = 'provider:exploding';
+            const status = {
+                providerId: PID, adapterVersion: '0.0.1', providerVersion: '9.9.9', available: true, ready: true,
+                indexState: 'ready', freshness: 'fresh', dirty: 'clean', compatibility: 'supported',
+                // symbols ONLY -> a throw here has no same-capability fallback.
+                capabilities: { files: false, symbols: true, source: false, callers: false, callees: false, impact: false },
+                diagnostics: [],
+            };
+            const exploding = {
+                id: PID, name: 'Exploding', adapterVersion: '0.0.1', capabilities: status.capabilities,
+                async check() { return { available: true, ready: true, installed: true, indexState: 'ready' }; },
+                async getStatus() { return status; },
+                async search() { throw new Error('adapter blew up'); },
+            };
+            const registry = Object.assign({}, require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'provider-loader')).DEFAULT_REGISTRY,
+                { [PID]: { role: 'structural-primary', create: () => exploding } });
+
+            const result = await svc.exploreCode('engine', {
+                projectRoot: runtime.workspaceRoot,
+                config: { codePerception: { providers: [{ id: PID, enabled: true, role: 'structural-primary' }] } },
+                registry, activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+
+            assert.strictEqual(result.ok, false, 'C: a ready provider throwing is FATAL -> ok:false (not success-shaped)');
+            assert.ok(result.diagnostics.some(d => (d.code || '') === 'adapter-exception'),
+                'C: diagnostics carry adapter-exception');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-explore-C adapter-exception fatal passed');
+
+        console.log('T-ce-compose-A. REAL post-commit producer -> exploreCode consumer (commit graph) ...');
+        {
+            const { execFileSync } = require('node:child_process');
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const pc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'post-commit-code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-compose-a');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+            const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: runtime.workspaceRoot, encoding: 'utf8' }).trim();
+
+            // PRODUCER: the real post-commit path writes the blob. Nothing is hand-forged.
+            pc.runPostCommitCodePerception({ projectRoot: runtime.workspaceRoot, headSha, changedFiles: ['src/engine.js'] });
+            const blobPath = path.join(runtime.runtimeRoot, 'generated', 'code-perception', 'post-commit-last-run.json');
+            assert.ok(fs.existsSync(blobPath), 'A: the real producer wrote post-commit-last-run.json');
+
+            // CONSUMER: the service must read what the producer actually wrote.
+            const result = await svc.exploreCode('', {
+                projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: false,
+                activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+            assert.strictEqual(result.ok, true, 'A: ok:true');
+            assert.ok(result.governance.commits.length >= 1,
+                'A: governance.commits is non-empty — the service reads the producer\'s REAL key (this fails if it reads `commits`/`headSha`)');
+            assert.strictEqual(result.governance.commits[0].sha, headSha, 'A: the commit sha round-trips producer -> consumer');
+            const changed = result.governance.links.filter(l => l.kind === 'changed_by_commit');
+            assert.ok(changed.length >= 1, 'A: changed_by_commit links exist end-to-end');
+            assert.ok(changed.every(l => l.governanceEntityId === `commit:${headSha}`),
+                'A: changed_by_commit keyed by commit:<sha> (consumers must not filter these by task id)');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-compose-A real commit graph composes');
+
+        console.log('T-ce-compose-B. REAL active_context.md -> memory.service parser -> exploreCode focus ...');
+        {
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-compose-b');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            const TASK_TITLE = 'M1/M2 reference seam in normalize.js';
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: TASK_TITLE, status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+
+            // PRODUCER: write the FOCUS section in the exact shape advanceFocusFromCommit
+            // emits — "<plan title>: <task title>" — into the real active_context.md, then
+            // let the REAL parser read it. The parser, not a hand-built object, feeds the service.
+            const acPath = path.join(runtime.runtimeRoot, 'active_context.md');
+            const ac = fs.readFileSync(acPath, 'utf8').replace(
+                /<!-- BEGIN_FOCUS -->[\s\S]*?<!-- END_FOCUS -->/,
+                `<!-- BEGIN_FOCUS -->\nDemo Plan: ${TASK_TITLE}\n<!-- END_FOCUS -->`);
+            fs.writeFileSync(acPath, ac, 'utf8');
+
+            // memory.service pins ACTIVE_CONTEXT_PATH at module load, so it must be reloaded
+            // AFTER EVO_LITE_ROOT is set. `resetCliModuleCache()` clears CLI_DIR, but this block
+            // requires from TEMPLATE_CLI_DIR — those dirs DIFFER when the suite runs from the
+            // runtime mirror entry (CLI_DIR=.evo-lite/cli, TEMPLATE_CLI_DIR=templates/cli), so the
+            // CLI_DIR-scoped clear would miss the module and read a stale (real-repo) context.
+            // Clear the exact TEMPLATE_CLI_DIR modules this block loads so it is entry-point-robust.
+            const resetTemplateCliCache = () => {
+                for (const f of ['runtime.js', 'db.js', 'models.js', 'memory-index-util.js', 'memory-index.js', 'memory-index-zvec.js', 'memory.service.js']) {
+                    const p = path.join(TEMPLATE_CLI_DIR, f);
+                    if (fs.existsSync(p)) delete require.cache[require.resolve(p)];
+                }
+            };
+            const prevRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
+            resetTemplateCliCache();
+            try {
+                const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'));
+                const realAc = memoryService.readActiveContext();   // REAL parser output
+                assert.ok(realAc.sections.focus.includes(TASK_TITLE), 'B: precondition — the real parser sees the focus text');
+
+                const result = await svc.exploreCode('', {
+                    projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: false,
+                    activeContext: realAc,   // <- the parser's output, NOT a hand-written shape
+                });
+                assert.strictEqual(result.ok, true, 'B: ok:true');
+                assert.strictEqual(result.focus.resolved, true,
+                    'B: focus resolves from a REAL active_context.md (fails if resolution depends on ids/hashes that real focus text never contains)');
+                assert.strictEqual(result.focus.entityId, 'task:x', 'B: focus binds the canonical Planning-IR task id');
+                const focusLinks = result.governance.links.filter(l => l.kind === 'related_to_focus');
+                assert.ok(focusLinks.length >= 1, 'B: related_to_focus is non-empty end-to-end');
+            } finally {
+                if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
+                resetTemplateCliCache();
+                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+            }
+        }
+        console.log('✅ T-ce-compose-B real focus composes');
+
+        console.log('T-ce-compose-C. REAL archive evidence chain -> exploreCode retains-but-does-not-fabricate ...');
+        {
+            // The built-in Planning producer emits evidence as OPAQUE STRINGS. This pins the
+            // honest degradation with the REAL producer chain end-to-end — NO hand-authored
+            // planIR.tasks[].evidence: a real raw_memory archive, the real backfill, the real
+            // scanner + writer, then the service. The contract under test is: retain the
+            // evidence, explain the limitation, and REFUSE to fabricate symbol/evidence links.
+            const { execFileSync } = require('node:child_process');
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const scan = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'scan.js'));
+            const backfill = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'backfill-evidence.js'));
+            const runtime = createTempRuntimeRoot('ce-compose-c');
+            const ws = runtime.workspaceRoot;
+            writeText(path.join(ws, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            // A real plan (compact checkbox format -> author-controlled task id + linkedFiles).
+            writeText(path.join(ws, 'docs', 'plans', 'demo.md'),
+                '---\nid: plan:demo\ntitle: Demo\nstatus: active\n---\n\n# Demo\n\n- [ ] [task:demo] Engine work\n  - files: src/engine.js\n');
+            // A real archive that binds itself to the task via a `task:demo` reference in its body.
+            writeText(path.join(runtime.runtimeRoot, 'raw_memory', 'mem_2026-07-15_demo.md'),
+                '# Archive\n\nClosure for task:demo — implemented selectEngine.\n');
+            gitInit(ws);
+
+            // REAL producer chain: backfill -> scan -> write. No hand-forged evidence rows.
+            const bf = backfill.backfillArchiveEvidence(ws);
+            assert.ok(bf.taskIdToArchives['task:demo'] && bf.taskIdToArchives['task:demo'].length >= 1,
+                'C: backfill binds the real archive to task:demo');
+            const ir = scan.scanPlanning(ws);
+            scan.writePlanIR(ir, ws);
+            const irTask = ir.tasks.find(t => t.id === 'task:demo');
+            assert.ok(irTask, 'C: scanner produced task:demo');
+            assert.ok(irTask.evidence.length >= 1 && irTask.evidence.every(e => typeof e === 'string'),
+                'C: the REAL producer emits evidence as opaque STRINGS (this is the shape the service must handle)');
+
+            const result = await svc.exploreCode('', { projectRoot: ws, config: {}, includeSource: false, includeImpact: false });
+
+            assert.strictEqual(result.ok, true, 'C: ok:true');
+            // 1. Evidence is RETAINED (never silently dropped) and flagged non-linkable.
+            const kept = result.governance.evidence.filter(e => e.taskId === 'task:demo');
+            assert.ok(kept.length >= 1 && kept.some(e => /archive:mem_2026-07-15_demo\.md/.test(e.raw || '')),
+                'C: real opaque evidence is retained verbatim in governance.evidence');
+            assert.ok(kept.every(e => e.linkable === false), 'C: opaque evidence is flagged non-linkable');
+            // 2. ONE aggregated diagnostic explains the limitation (not 1-per-row).
+            const unstructured = result.diagnostics.filter(d => (d.code || '') === 'unstructured-evidence');
+            assert.strictEqual(unstructured.length, 1, 'C: exactly one aggregated unstructured-evidence diagnostic');
+            // 3. declares_file still works (file-level governance is the real 4a deliverable).
+            assert.ok(result.governance.links.some(l => l.kind === 'declares_file'),
+                'C: declares_file still fires from task.linkedFiles + native-lite file facts');
+            // 4. NO fabricated symbol/evidence links, and NO per-row unresolved noise.
+            for (const kind of ['implements_task', 'verified_by_test', 'evidenced_by_archive']) {
+                const derivedish = result.governance.links.filter(l => l.kind === kind && l.status !== 'proposed');
+                assert.strictEqual(derivedish.length, 0,
+                    `C: default pipeline must not fabricate ${kind} (confirmed/derived) links from opaque evidence`);
+            }
+            assert.ok(!result.diagnostics.some(d => (d.code || '') === 'unresolved-code-reference' && /^evidence:/.test(d.message || '')),
+                'C: opaque evidence never reaches the linker, so no evidence-path unresolved-code-reference (declares_file may still emit its own for absent files — that is legitimate)');
+            fs.rmSync(ws, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-compose-C real evidence chain degrades honestly');
+
+        console.log('T-ce-cli. Testing `mem code explore --json` success-shaped exit + exit-2 on bad args ...');
+        {
+            const cp = require('child_process');
+            const { execFileSync } = require('node:child_process');
+            const runtime = createTempRuntimeRoot('ce-cli');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            execFileSync('git', ['init', '-q'], { cwd: runtime.workspaceRoot });
+            execFileSync('git', ['config', 'user.email', 'test@evo.local'], { cwd: runtime.workspaceRoot });
+            execFileSync('git', ['config', 'user.name', 'evo-test'], { cwd: runtime.workspaceRoot });
+            execFileSync('git', ['add', '-A'], { cwd: runtime.workspaceRoot });
+            execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: runtime.workspaceRoot });
+
+            const memCli = path.join(TEMPLATE_CLI_DIR, 'memory.js'); // template source, not the mirror
+            // memory.js -> memory.service -> db.js -> require('better-sqlite3'), which is
+            // NOT a package dependency: it lives in the WORKSPACE RUNTIME's node_modules
+            // (.evo-lite/node_modules). Module resolution is file-relative, so a spawn of
+            // templates/cli/memory.js resolves up to the repo root and fails with
+            // MODULE_NOT_FOUND unless NODE_PATH points at that runtime. Established idiom:
+            // harness.js:18 and integration.js:650/678/705 do exactly this.
+            const childEnv = {
+                ...process.env,
+                EVO_LITE_ROOT: runtime.runtimeRoot,
+                NODE_PATH: [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH]
+                    .filter(Boolean).join(path.delimiter),
+            };
+            const res = cp.spawnSync(process.execPath, [memCli, 'code', 'explore', 'engine selection', '--json'], {
+                cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8',
+            });
+            assert.strictEqual(res.status, 0, 'capability gap must exit 0 (success-shaped): ' + (res.stderr || ''));
+            const parsed = JSON.parse(res.stdout);
+            assert.strictEqual(parsed.query, 'engine selection', 'JSON echoes query');
+            assert.ok(Array.isArray(parsed.providers), 'JSON carries providers');
+            assert.ok(parsed.freshness && typeof parsed.freshness.stale === 'boolean', 'JSON carries freshness');
+            // Invalid subcommand under `mem code` -> the group's scoped exitOverride maps it to exit 2.
+            const bad = cp.spawnSync(process.execPath, [memCli, 'code', 'nonexistent-subcmd'], {
+                cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8',
+            });
+            assert.strictEqual(bad.status, 2, 'invalid CLI args must exit 2 (spec §3.1 / Global Constraint)');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-cli mem code CLI passed');
+
+        console.log('T-ce-mcp. Testing evo_code_explore MCP tool (registered + unified error model) ...');
+        {
+            const mcp = require(path.join(TEMPLATE_CLI_DIR, 'mcp-server.js'));
+            const tool = mcp.TOOLS.find(t => t.name === 'evo_code_explore');
+            assert.ok(tool, 'evo_code_explore must be registered in TOOLS');
+            assert.ok(tool.inputSchema && tool.inputSchema.properties && tool.inputSchema.properties.query, 'tool schema declares query');
+            assert.deepStrictEqual(tool.inputSchema.required, ['query'], 'query is required');
+            // Validator must include it so AC ac-mcp-code-explore stays green.
+            const valSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'mcp-validate.js'), 'utf8');
+            assert.ok(valSrc.includes('evo_code_explore'), 'mcp-validate.js must call evo_code_explore');
+
+            // Unified error model — capability gap is success-shaped: handler RESOLVES (never throws).
+            const okResult = await mcp.handleCodeExplore({ query: 'x' }, {
+                service: { exploreCode: async () => ({ ok: true, query: 'x', matches: [], providers: [], diagnostics: [], governance: { links: [] } }) },
+            });
+            assert.strictEqual(okResult.ok, true, 'capability gap returns a success-shaped result (no isError)');
+
+            // Unified error model — a true fatal (ok:false) MUST throw so the CallTool
+            // catch sets isError:true; it must NOT be wrapped as a success envelope.
+            let threw = false;
+            try {
+                await mcp.handleCodeExplore({ query: 'x' }, {
+                    service: { exploreCode: async () => ({ ok: false, diagnostics: [{ code: 'internal-error', message: 'boom' }] }) },
+                });
+            } catch (err) {
+                threw = true;
+                assert.ok(/boom/.test(err.message), 'fatal error message carries the diagnostics');
+            }
+            assert.ok(threw, 'result.ok===false must throw (maps to isError:true), not return a success envelope');
+        }
+        console.log('✅ T-ce-mcp evo_code_explore passed');
+
+        console.log('T-ce-manifest-sync-4a. New files managed + EVERY managed mirror byte-identical ...');
+        {
+            const cp = require('child_process');
+            const manifest = require(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'));
+            const core = manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli');
+
+            // The 2 files 4a introduces must be registered (wiki.js belongs to 4b).
+            for (const f of ['code-perception.js', 'code-perception/cli.js']) {
+                assert.ok(core.files.includes(f), `${f} must be a managed core-cli template`);
+            }
+            assert.ok(!core.files.includes('code-perception/wiki.js'),
+                'code-wiki is Phase 4b — 4a must not register it');
+
+            // Converge into a TEMP workspace — never mutate the real repo's mirror in a test.
+            // sync-runtime resolves its template SOURCE from EVO_LITE_TEMPLATE_CLI_DIR /
+            // EVO_LITE_TEMPLATE_ROOT_DIR (sync-runtime.js:10-16); without them a run whose cwd is
+            // the temp workspace finds no templates and returns status:'no-templates' (copies
+            // nothing). Point them at the REAL template tree so the temp mirror converges from it.
+            // Same override pattern as T-sr-entry.
+            const runtime = createTempRuntimeRoot('ce-manifest-4a');
+            const entry = path.join(TEMPLATE_CLI_DIR, 'sync-runtime-entry.js');
+            const run = () => JSON.parse(cp.execFileSync(process.execPath, [entry, '--json'], {
+                cwd: runtime.workspaceRoot,
+                env: {
+                    ...process.env,
+                    EVO_LITE_WORKSPACE_ROOT: runtime.workspaceRoot,
+                    EVO_LITE_TEMPLATE_CLI_DIR: TEMPLATE_CLI_DIR,
+                    EVO_LITE_TEMPLATE_ROOT_DIR: path.join(WORKSPACE_ROOT, 'templates'),
+                },
+                encoding: 'utf8',
+            }));
+            run();                      // seed from the template entry
+            const second = run();       // must converge
+            assert.strictEqual(second.copied.length, 0, 'second sync-runtime-entry run must report zero copies (converged)');
+
+            // EVERY managed core-cli entry — derived from the manifest, not a hand list.
+            // No skipping: a manifest entry whose template is missing is itself a defect
+            // (sync-runtime would silently not copy it), so assert existence rather than
+            // `continue`. And assert the exact count from the manifest — a `>= N` gate
+            // would let a skipped entry pass unnoticed, which is the very hole a derived
+            // check exists to close.
+            const mirrorCliDir = path.join(runtime.workspaceRoot, '.evo-lite', 'cli');
+            let checked = 0;
+            for (const rel of core.files) {
+                const tpl = path.join(TEMPLATE_CLI_DIR, ...rel.split('/'));
+                const mir = path.join(mirrorCliDir, ...rel.split('/'));
+                assert.ok(fs.existsSync(tpl), `${rel} is declared as managed but the template file is missing`);
+                assert.ok(fs.existsSync(mir), `${rel} must exist in the runtime mirror`);
+                assert.ok(fs.readFileSync(tpl).equals(fs.readFileSync(mir)), `${rel} mirror must be byte-identical to template`);
+                checked += 1;
+            }
+            assert.strictEqual(checked, core.files.length, 'every core-cli manifest entry must be checked');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-manifest-sync-4a mirror parity passed');
 }
 
 module.exports = { runGovernanceTests };

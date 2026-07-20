@@ -7456,9 +7456,21 @@ async function runChildRuntimeTests() {
                 `<!-- BEGIN_FOCUS -->\nDemo Plan: ${TASK_TITLE}\n<!-- END_FOCUS -->`);
             fs.writeFileSync(acPath, ac, 'utf8');
 
+            // memory.service pins ACTIVE_CONTEXT_PATH at module load, so it must be reloaded
+            // AFTER EVO_LITE_ROOT is set. `resetCliModuleCache()` clears CLI_DIR, but this block
+            // requires from TEMPLATE_CLI_DIR — those dirs DIFFER when the suite runs from the
+            // runtime mirror entry (CLI_DIR=.evo-lite/cli, TEMPLATE_CLI_DIR=templates/cli), so the
+            // CLI_DIR-scoped clear would miss the module and read a stale (real-repo) context.
+            // Clear the exact TEMPLATE_CLI_DIR modules this block loads so it is entry-point-robust.
+            const resetTemplateCliCache = () => {
+                for (const f of ['runtime.js', 'db.js', 'models.js', 'memory-index-util.js', 'memory-index.js', 'memory-index-zvec.js', 'memory.service.js']) {
+                    const p = path.join(TEMPLATE_CLI_DIR, f);
+                    if (fs.existsSync(p)) delete require.cache[require.resolve(p)];
+                }
+            };
             const prevRoot = process.env.EVO_LITE_ROOT;
             process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
-            resetCliModuleCache();   // memory.service pins ACTIVE_CONTEXT_PATH at module load
+            resetTemplateCliCache();
             try {
                 const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'));
                 const realAc = memoryService.readActiveContext();   // REAL parser output
@@ -7476,7 +7488,7 @@ async function runChildRuntimeTests() {
                 assert.ok(focusLinks.length >= 1, 'B: related_to_focus is non-empty end-to-end');
             } finally {
                 if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
-                resetCliModuleCache();
+                resetTemplateCliCache();
                 fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
             }
         }
@@ -7614,6 +7626,62 @@ async function runChildRuntimeTests() {
             assert.ok(threw, 'result.ok===false must throw (maps to isError:true), not return a success envelope');
         }
         console.log('✅ T-ce-mcp evo_code_explore passed');
+
+        console.log('T-ce-manifest-sync-4a. New files managed + EVERY managed mirror byte-identical ...');
+        {
+            const cp = require('child_process');
+            const manifest = require(path.join(TEMPLATE_CLI_DIR, 'template-manifest.js'));
+            const core = manifest.MANAGED_TEMPLATE_FAMILIES.find(f => f.key === 'core-cli');
+
+            // The 2 files 4a introduces must be registered (wiki.js belongs to 4b).
+            for (const f of ['code-perception.js', 'code-perception/cli.js']) {
+                assert.ok(core.files.includes(f), `${f} must be a managed core-cli template`);
+            }
+            assert.ok(!core.files.includes('code-perception/wiki.js'),
+                'code-wiki is Phase 4b — 4a must not register it');
+
+            // Converge into a TEMP workspace — never mutate the real repo's mirror in a test.
+            // sync-runtime resolves its template SOURCE from EVO_LITE_TEMPLATE_CLI_DIR /
+            // EVO_LITE_TEMPLATE_ROOT_DIR (sync-runtime.js:10-16); without them a run whose cwd is
+            // the temp workspace finds no templates and returns status:'no-templates' (copies
+            // nothing). Point them at the REAL template tree so the temp mirror converges from it.
+            // Same override pattern as T-sr-entry.
+            const runtime = createTempRuntimeRoot('ce-manifest-4a');
+            const entry = path.join(TEMPLATE_CLI_DIR, 'sync-runtime-entry.js');
+            const run = () => JSON.parse(cp.execFileSync(process.execPath, [entry, '--json'], {
+                cwd: runtime.workspaceRoot,
+                env: {
+                    ...process.env,
+                    EVO_LITE_WORKSPACE_ROOT: runtime.workspaceRoot,
+                    EVO_LITE_TEMPLATE_CLI_DIR: TEMPLATE_CLI_DIR,
+                    EVO_LITE_TEMPLATE_ROOT_DIR: path.join(WORKSPACE_ROOT, 'templates'),
+                },
+                encoding: 'utf8',
+            }));
+            run();                      // seed from the template entry
+            const second = run();       // must converge
+            assert.strictEqual(second.copied.length, 0, 'second sync-runtime-entry run must report zero copies (converged)');
+
+            // EVERY managed core-cli entry — derived from the manifest, not a hand list.
+            // No skipping: a manifest entry whose template is missing is itself a defect
+            // (sync-runtime would silently not copy it), so assert existence rather than
+            // `continue`. And assert the exact count from the manifest — a `>= N` gate
+            // would let a skipped entry pass unnoticed, which is the very hole a derived
+            // check exists to close.
+            const mirrorCliDir = path.join(runtime.workspaceRoot, '.evo-lite', 'cli');
+            let checked = 0;
+            for (const rel of core.files) {
+                const tpl = path.join(TEMPLATE_CLI_DIR, ...rel.split('/'));
+                const mir = path.join(mirrorCliDir, ...rel.split('/'));
+                assert.ok(fs.existsSync(tpl), `${rel} is declared as managed but the template file is missing`);
+                assert.ok(fs.existsSync(mir), `${rel} must exist in the runtime mirror`);
+                assert.ok(fs.readFileSync(tpl).equals(fs.readFileSync(mir)), `${rel} mirror must be byte-identical to template`);
+                checked += 1;
+            }
+            assert.strictEqual(checked, core.files.length, 'every core-cli manifest entry must be checked');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-manifest-sync-4a mirror parity passed');
 }
 
 module.exports = { runGovernanceTests };

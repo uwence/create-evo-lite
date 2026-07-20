@@ -15,6 +15,7 @@ const TOOLS = [
     { name: 'evo_architecture_status', arguments: {} },
     { name: 'evo_drift_status', arguments: {} },
     { name: 'evo_active_context', arguments: {} },
+    { name: 'evo_code_explore', arguments: { query: 'memory engine selection', includeSource: false } },
 ];
 
 function buildMsg(id, method, params) {
@@ -107,6 +108,7 @@ function summarise(tool, data) {
         case 'evo_architecture_status': return `${data.moduleCount} modules, ${data.fileCount} files`;
         case 'evo_drift_status': return `${data.summary?.total ?? 0} findings (${data.summary?.errors ?? 0} errors, ${data.summary?.warnings ?? 0} warnings)`;
         case 'evo_active_context': return `focus: "${(data.focus || '').slice(0, 60)}"`;
+        case 'evo_code_explore': return `${(data.matches || []).length} matches, ${(data.governance?.links || []).length} links, providers ${(data.providers || []).length}`;
         default: return null;
     }
 }
