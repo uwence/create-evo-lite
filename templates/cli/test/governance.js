@@ -7400,6 +7400,146 @@ async function runChildRuntimeTests() {
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-explore-C adapter-exception fatal passed');
+
+        console.log('T-ce-compose-A. REAL post-commit producer -> exploreCode consumer (commit graph) ...');
+        {
+            const { execFileSync } = require('node:child_process');
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const pc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception', 'post-commit-code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-compose-a');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: 'Engine', status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+            const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: runtime.workspaceRoot, encoding: 'utf8' }).trim();
+
+            // PRODUCER: the real post-commit path writes the blob. Nothing is hand-forged.
+            pc.runPostCommitCodePerception({ projectRoot: runtime.workspaceRoot, headSha, changedFiles: ['src/engine.js'] });
+            const blobPath = path.join(runtime.runtimeRoot, 'generated', 'code-perception', 'post-commit-last-run.json');
+            assert.ok(fs.existsSync(blobPath), 'A: the real producer wrote post-commit-last-run.json');
+
+            // CONSUMER: the service must read what the producer actually wrote.
+            const result = await svc.exploreCode('', {
+                projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: false,
+                activeContext: { sections: { focus: '' }, summary: { focus: '' }, tasks: [], trajectory: [] },
+            });
+            assert.strictEqual(result.ok, true, 'A: ok:true');
+            assert.ok(result.governance.commits.length >= 1,
+                'A: governance.commits is non-empty — the service reads the producer\'s REAL key (this fails if it reads `commits`/`headSha`)');
+            assert.strictEqual(result.governance.commits[0].sha, headSha, 'A: the commit sha round-trips producer -> consumer');
+            const changed = result.governance.links.filter(l => l.kind === 'changed_by_commit');
+            assert.ok(changed.length >= 1, 'A: changed_by_commit links exist end-to-end');
+            assert.ok(changed.every(l => l.governanceEntityId === `commit:${headSha}`),
+                'A: changed_by_commit keyed by commit:<sha> (consumers must not filter these by task id)');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-compose-A real commit graph composes');
+
+        console.log('T-ce-compose-B. REAL active_context.md -> memory.service parser -> exploreCode focus ...');
+        {
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const runtime = createTempRuntimeRoot('ce-compose-b');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            const TASK_TITLE = 'M1/M2 reference seam in normalize.js';
+            seedPlanIR(runtime.runtimeRoot,
+                [{ id: 'task:x', title: TASK_TITLE, status: 'todo', linkedPlan: 'plan:x', sourcePath: 'docs/plans/x.md', linkedFiles: ['src/engine.js'], evidence: [] }],
+                [{ id: 'plan:x', status: 'active', sourcePath: 'docs/plans/x.md' }]);
+            gitInit(runtime.workspaceRoot);
+
+            // PRODUCER: write the FOCUS section in the exact shape advanceFocusFromCommit
+            // emits — "<plan title>: <task title>" — into the real active_context.md, then
+            // let the REAL parser read it. The parser, not a hand-built object, feeds the service.
+            const acPath = path.join(runtime.runtimeRoot, 'active_context.md');
+            const ac = fs.readFileSync(acPath, 'utf8').replace(
+                /<!-- BEGIN_FOCUS -->[\s\S]*?<!-- END_FOCUS -->/,
+                `<!-- BEGIN_FOCUS -->\nDemo Plan: ${TASK_TITLE}\n<!-- END_FOCUS -->`);
+            fs.writeFileSync(acPath, ac, 'utf8');
+
+            const prevRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = runtime.runtimeRoot;
+            resetCliModuleCache();   // memory.service pins ACTIVE_CONTEXT_PATH at module load
+            try {
+                const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'));
+                const realAc = memoryService.readActiveContext();   // REAL parser output
+                assert.ok(realAc.sections.focus.includes(TASK_TITLE), 'B: precondition — the real parser sees the focus text');
+
+                const result = await svc.exploreCode('', {
+                    projectRoot: runtime.workspaceRoot, config: {}, includeSource: false, includeImpact: false,
+                    activeContext: realAc,   // <- the parser's output, NOT a hand-written shape
+                });
+                assert.strictEqual(result.ok, true, 'B: ok:true');
+                assert.strictEqual(result.focus.resolved, true,
+                    'B: focus resolves from a REAL active_context.md (fails if resolution depends on ids/hashes that real focus text never contains)');
+                assert.strictEqual(result.focus.entityId, 'task:x', 'B: focus binds the canonical Planning-IR task id');
+                const focusLinks = result.governance.links.filter(l => l.kind === 'related_to_focus');
+                assert.ok(focusLinks.length >= 1, 'B: related_to_focus is non-empty end-to-end');
+            } finally {
+                if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
+                resetCliModuleCache();
+                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+            }
+        }
+        console.log('✅ T-ce-compose-B real focus composes');
+
+        console.log('T-ce-compose-C. REAL archive evidence chain -> exploreCode retains-but-does-not-fabricate ...');
+        {
+            // The built-in Planning producer emits evidence as OPAQUE STRINGS. This pins the
+            // honest degradation with the REAL producer chain end-to-end — NO hand-authored
+            // planIR.tasks[].evidence: a real raw_memory archive, the real backfill, the real
+            // scanner + writer, then the service. The contract under test is: retain the
+            // evidence, explain the limitation, and REFUSE to fabricate symbol/evidence links.
+            const { execFileSync } = require('node:child_process');
+            const svc = require(path.join(TEMPLATE_CLI_DIR, 'code-perception.js'));
+            const scan = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'scan.js'));
+            const backfill = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'backfill-evidence.js'));
+            const runtime = createTempRuntimeRoot('ce-compose-c');
+            const ws = runtime.workspaceRoot;
+            writeText(path.join(ws, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            // A real plan (compact checkbox format -> author-controlled task id + linkedFiles).
+            writeText(path.join(ws, 'docs', 'plans', 'demo.md'),
+                '---\nid: plan:demo\ntitle: Demo\nstatus: active\n---\n\n# Demo\n\n- [ ] [task:demo] Engine work\n  - files: src/engine.js\n');
+            // A real archive that binds itself to the task via a `task:demo` reference in its body.
+            writeText(path.join(runtime.runtimeRoot, 'raw_memory', 'mem_2026-07-15_demo.md'),
+                '# Archive\n\nClosure for task:demo — implemented selectEngine.\n');
+            gitInit(ws);
+
+            // REAL producer chain: backfill -> scan -> write. No hand-forged evidence rows.
+            const bf = backfill.backfillArchiveEvidence(ws);
+            assert.ok(bf.taskIdToArchives['task:demo'] && bf.taskIdToArchives['task:demo'].length >= 1,
+                'C: backfill binds the real archive to task:demo');
+            const ir = scan.scanPlanning(ws);
+            scan.writePlanIR(ir, ws);
+            const irTask = ir.tasks.find(t => t.id === 'task:demo');
+            assert.ok(irTask, 'C: scanner produced task:demo');
+            assert.ok(irTask.evidence.length >= 1 && irTask.evidence.every(e => typeof e === 'string'),
+                'C: the REAL producer emits evidence as opaque STRINGS (this is the shape the service must handle)');
+
+            const result = await svc.exploreCode('', { projectRoot: ws, config: {}, includeSource: false, includeImpact: false });
+
+            assert.strictEqual(result.ok, true, 'C: ok:true');
+            // 1. Evidence is RETAINED (never silently dropped) and flagged non-linkable.
+            const kept = result.governance.evidence.filter(e => e.taskId === 'task:demo');
+            assert.ok(kept.length >= 1 && kept.some(e => /archive:mem_2026-07-15_demo\.md/.test(e.raw || '')),
+                'C: real opaque evidence is retained verbatim in governance.evidence');
+            assert.ok(kept.every(e => e.linkable === false), 'C: opaque evidence is flagged non-linkable');
+            // 2. ONE aggregated diagnostic explains the limitation (not 1-per-row).
+            const unstructured = result.diagnostics.filter(d => (d.code || '') === 'unstructured-evidence');
+            assert.strictEqual(unstructured.length, 1, 'C: exactly one aggregated unstructured-evidence diagnostic');
+            // 3. declares_file still works (file-level governance is the real 4a deliverable).
+            assert.ok(result.governance.links.some(l => l.kind === 'declares_file'),
+                'C: declares_file still fires from task.linkedFiles + native-lite file facts');
+            // 4. NO fabricated symbol/evidence links, and NO per-row unresolved noise.
+            for (const kind of ['implements_task', 'verified_by_test', 'evidenced_by_archive']) {
+                const derivedish = result.governance.links.filter(l => l.kind === kind && l.status !== 'proposed');
+                assert.strictEqual(derivedish.length, 0,
+                    `C: default pipeline must not fabricate ${kind} (confirmed/derived) links from opaque evidence`);
+            }
+            assert.ok(!result.diagnostics.some(d => (d.code || '') === 'unresolved-code-reference' && /^evidence:/.test(d.message || '')),
+                'C: opaque evidence never reaches the linker, so no evidence-path unresolved-code-reference (declares_file may still emit its own for absent files — that is legitimate)');
+            fs.rmSync(ws, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-compose-C real evidence chain degrades honestly');
 }
 
 module.exports = { runGovernanceTests };
