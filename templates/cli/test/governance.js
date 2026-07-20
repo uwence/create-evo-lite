@@ -7540,6 +7540,48 @@ async function runChildRuntimeTests() {
             fs.rmSync(ws, { recursive: true, force: true });
         }
         console.log('✅ T-ce-compose-C real evidence chain degrades honestly');
+
+        console.log('T-ce-cli. Testing `mem code explore --json` success-shaped exit + exit-2 on bad args ...');
+        {
+            const cp = require('child_process');
+            const { execFileSync } = require('node:child_process');
+            const runtime = createTempRuntimeRoot('ce-cli');
+            writeText(path.join(runtime.workspaceRoot, 'src', 'engine.js'), 'module.exports = function selectEngine(){ return 1; };\n');
+            execFileSync('git', ['init', '-q'], { cwd: runtime.workspaceRoot });
+            execFileSync('git', ['config', 'user.email', 'test@evo.local'], { cwd: runtime.workspaceRoot });
+            execFileSync('git', ['config', 'user.name', 'evo-test'], { cwd: runtime.workspaceRoot });
+            execFileSync('git', ['add', '-A'], { cwd: runtime.workspaceRoot });
+            execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: runtime.workspaceRoot });
+
+            const memCli = path.join(TEMPLATE_CLI_DIR, 'memory.js'); // template source, not the mirror
+            // memory.js -> memory.service -> db.js -> require('better-sqlite3'), which is
+            // NOT a package dependency: it lives in the WORKSPACE RUNTIME's node_modules
+            // (.evo-lite/node_modules). Module resolution is file-relative, so a spawn of
+            // templates/cli/memory.js resolves up to the repo root and fails with
+            // MODULE_NOT_FOUND unless NODE_PATH points at that runtime. Established idiom:
+            // harness.js:18 and integration.js:650/678/705 do exactly this.
+            const childEnv = {
+                ...process.env,
+                EVO_LITE_ROOT: runtime.runtimeRoot,
+                NODE_PATH: [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH]
+                    .filter(Boolean).join(path.delimiter),
+            };
+            const res = cp.spawnSync(process.execPath, [memCli, 'code', 'explore', 'engine selection', '--json'], {
+                cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8',
+            });
+            assert.strictEqual(res.status, 0, 'capability gap must exit 0 (success-shaped): ' + (res.stderr || ''));
+            const parsed = JSON.parse(res.stdout);
+            assert.strictEqual(parsed.query, 'engine selection', 'JSON echoes query');
+            assert.ok(Array.isArray(parsed.providers), 'JSON carries providers');
+            assert.ok(parsed.freshness && typeof parsed.freshness.stale === 'boolean', 'JSON carries freshness');
+            // Invalid subcommand under `mem code` -> the group's scoped exitOverride maps it to exit 2.
+            const bad = cp.spawnSync(process.execPath, [memCli, 'code', 'nonexistent-subcmd'], {
+                cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8',
+            });
+            assert.strictEqual(bad.status, 2, 'invalid CLI args must exit 2 (spec §3.1 / Global Constraint)');
+            fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-ce-cli mem code CLI passed');
 }
 
 module.exports = { runGovernanceTests };
