@@ -6500,8 +6500,12 @@ async function runChildRuntimeTests() {
         console.log('T-hive-version-truth. hive reads evo-lite-version.json, package.json only as legacy ...');
         {
             const { childStatus } = require('../hive/status');
-            const motherRoot = process.cwd(); // real templates/ tree for gene parity
-            const motherVersion = require(path.join(motherRoot, 'package.json')).version;
+            // Synthetic mother (never process.cwd()/real templates tree): this block runs
+            // inside runChildRuntimeTests, which a real child hive executes directly — cwd
+            // there is the CHILD's own project root, not an evo-lite mother.
+            const motherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hive-ver-mother-'));
+            const motherVersion = '9.9.9';
+            fs.writeFileSync(path.join(motherRoot, 'package.json'), JSON.stringify({ version: motherVersion }));
 
             function makeChild(withVersionFile) {
                 const c = fs.mkdtempSync(path.join(os.tmpdir(), 'hive-ver-'));
@@ -6531,14 +6535,17 @@ async function runChildRuntimeTests() {
 
             fs.rmSync(fresh, { recursive: true, force: true });
             fs.rmSync(legacy, { recursive: true, force: true });
+            fs.rmSync(motherRoot, { recursive: true, force: true });
             console.log('✅ T-hive-version-truth passed');
         }
 
         console.log('T-nurture-preserves-manifest. nurture updates product file, not the manifest ...');
         {
             const { nurtureChild } = require('../hive/nurture');
-            const motherRoot = process.cwd();
-            const motherVersion = require(path.join(motherRoot, 'package.json')).version;
+            // Synthetic mother — see T-hive-version-truth above for why process.cwd() is unsafe here.
+            const motherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nurt-man-mother-'));
+            const motherVersion = '9.9.9';
+            fs.writeFileSync(path.join(motherRoot, 'package.json'), JSON.stringify({ version: motherVersion }));
             const child = fs.mkdtempSync(path.join(os.tmpdir(), 'nurt-man-'));
             const evo = path.join(child, '.evo-lite');
             fs.mkdirSync(path.join(evo, 'cli'), { recursive: true });
@@ -6555,6 +6562,7 @@ async function runChildRuntimeTests() {
             assert.strictEqual(JSON.parse(fs.readFileSync(path.join(evo, 'evo-lite-version.json'), 'utf8')).version,
                 motherVersion, 'product version file updated to mother version');
             fs.rmSync(child, { recursive: true, force: true });
+            fs.rmSync(motherRoot, { recursive: true, force: true });
             console.log('✅ T-nurture-preserves-manifest passed');
         }
 
@@ -6585,7 +6593,9 @@ async function runChildRuntimeTests() {
         console.log('T-nurture-transactional. a mid-apply failure restores every snapshotted file ...');
         {
             const nurtureMod = require('../hive/nurture');
-            const motherRoot = process.cwd();
+            // Synthetic mother — see T-hive-version-truth above for why process.cwd() is unsafe here.
+            const motherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nurt-txn-mother-'));
+            fs.writeFileSync(path.join(motherRoot, 'package.json'), JSON.stringify({ version: '9.9.9' }));
             const child = fs.mkdtempSync(path.join(os.tmpdir(), 'nurt-txn-'));
             const evo = path.join(child, '.evo-lite');
             fs.mkdirSync(path.join(evo, 'cli'), { recursive: true });
@@ -6610,6 +6620,7 @@ async function runChildRuntimeTests() {
             assert.ok(!fs.existsSync(path.join(evo, 'generated', 'runtime-mirror.lock.json')),
                 'mirror lock written before the throw must be removed on rollback');
             fs.rmSync(child, { recursive: true, force: true });
+            fs.rmSync(motherRoot, { recursive: true, force: true });
             console.log('✅ T-nurture-transactional passed');
         }
 
@@ -6711,6 +6722,17 @@ async function runChildRuntimeTests() {
                 else process.env.EVO_LITE_MEMORY_ENGINE = prevEnv;
             }
             console.log('✅ T-engine-impl passed');
+        }
+
+        // Everything below this point requires TEMPLATE_CLI_DIR (templates/cli source
+        // tree), which exists only in a mother workspace. A real child hive has no
+        // templates/ dir — hitting one of these blocks there throws MODULE_NOT_FOUND
+        // before any assertion runs. This function is also called from the mother-only
+        // path above (line ~5920), where TEMPLATE_CLI_DIR is real, so skip only when
+        // actually executing as a child.
+        if (require('./harness').IS_CHILD_RUNTIME) {
+            console.log('⏭️ skipped (child runtime): T-spec-cli onward are mother-bound (need templates/ tree)');
+            return;
         }
 
         console.log('T-spec-cli. Testing registerSpecPortfolioCommands wiring + EUSAGE exit-code mapping ...');
