@@ -1,5 +1,5 @@
 'use strict';
-const { TEST_SCOPE, shouldRun } = require('./test/harness');
+const { TEST_SCOPE, shouldRun, IS_CHILD_RUNTIME } = require('./test/harness');
 const { runGovernanceTests } = require('./test/governance');
 const { runIntegrationTests } = require('./test/integration');
 
@@ -39,6 +39,14 @@ async function runTests() {
         }
 
         if (TEST_SCOPE === 'governance') return;
+    }
+
+    // Integration suite loads mother-only modules (e.g. templates/cli/planning/progress.js)
+    // that don't exist in a child hive checkout. A child running the default/'all' scope
+    // must stop after governance rather than crash trying to load them.
+    if (IS_CHILD_RUNTIME) {
+        console.log('⏭️ skipped (child runtime): CLI integration tests (need templates/ tree)');
+        return;
     }
 
     await runIntegrationTests();

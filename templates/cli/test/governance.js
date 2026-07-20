@@ -6724,6 +6724,24 @@ async function runChildRuntimeTests() {
             console.log('✅ T-engine-impl passed');
         }
 
+        console.log('T-entry-child-guard. test.js entry point must skip the integration suite in a child runtime ...');
+        {
+            // CLI_DIR (not TEMPLATE_CLI_DIR) so this reads whichever copy is actually
+            // executing — the mother's templates/cli or a nurtured child's .evo-lite/cli —
+            // keeping the assertion valid in both places this function runs from.
+            const entrySrc = fs.readFileSync(path.join(CLI_DIR, 'test.js'), 'utf8');
+            assert.ok(/IS_CHILD_RUNTIME/.test(entrySrc), 'test.js must import IS_CHILD_RUNTIME from harness');
+            assert.ok(
+                /if\s*\(\s*IS_CHILD_RUNTIME\s*\)\s*\{[^}]*return/.test(entrySrc),
+                'test.js must return before runIntegrationTests() when IS_CHILD_RUNTIME (integration suite needs templates/ tree)'
+            );
+            const integrationIdx = entrySrc.indexOf('await runIntegrationTests()');
+            const guardIdx = entrySrc.indexOf('if (IS_CHILD_RUNTIME)');
+            assert.ok(guardIdx !== -1 && integrationIdx !== -1 && guardIdx < integrationIdx,
+                'the IS_CHILD_RUNTIME guard must appear before the runIntegrationTests() call');
+            console.log('✅ T-entry-child-guard passed');
+        }
+
         // Everything below this point requires TEMPLATE_CLI_DIR (templates/cli source
         // tree), which exists only in a mother workspace. A real child hive has no
         // templates/ dir — hitting one of these blocks there throws MODULE_NOT_FOUND
