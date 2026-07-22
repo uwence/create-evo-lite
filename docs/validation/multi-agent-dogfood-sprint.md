@@ -94,15 +94,15 @@
 
 | 维度 | Codex | Claude | Antigravity | ChatGPT GitHub | 原因/备注 |
 |---|---|---|---|---|---|
-| 找到正确文件 | | | | | |
-| 理解当前 focus | | | | | |
-| 区分确定/推测链接 | | | | | |
-| 识别能力降级 | | | | | |
-| 避免虚构 Task→Symbol | | | | | |
-| 正确识别影响范围 | | | | | |
-| 使用 Code Explore | | | | | |
-| 需要人工补充上下文 | | | | | |
-| 是否需要可视化页面 | | | | | |
+| 找到正确文件 | | | 通过 | | AG: 所引文件全部存在;正确区分 templates/cli 权威源 vs .evo-lite/cli 运行副本 |
+| 理解当前 focus | | | 通过 | | AG: focus 文本逐字准确读自 active_context.md |
+| 区分确定/推测链接 | | | 未验证 | | AG: 全程未触及 governance links |
+| 识别能力降级 | | | 未验证 | | |
+| 避免虚构 Task→Symbol | | | 未验证 | | AG: 未触及 Task→Symbol;但出现**别处虚构**——给项目冠名"(EvoRouter)",仓库零出现(系本机另一项目名,跨项目串联幻觉) |
+| 正确识别影响范围 | | | 未验证 | | 任务 A 不含 |
+| 使用 Code Explore | | | 失败 | | AG: 全程未用 `mem code` CLI 或 MCP;靠目录列举 + 4 次文件读取完成接手 |
+| 需要人工补充上下文 | | | 部分通过 | | AG: 能自助读治理面,但把陈旧 backlog 当活跃待办上报,需人工纠正(见 Session 1 产品侧发现) |
+| 是否需要可视化页面 | | | 未验证 | | |
 
 ## 主用户五问(每次真实开发结束后回答)
 
@@ -127,7 +127,20 @@
 - 摩擦点:
 ```
 
-(待填)
+### Session 1 — 2026-07-22 — 任务 A 项目接手(Antigravity)
+
+- 任务类型:A
+- Agent:Antigravity(目录列举 + 读 active_context.md / package.json / templates/cli 结构,共 5 次工具调用)
+- 矩阵增量:找到正确文件=通过;理解当前 focus=通过;使用 Code Explore=**失败**;需要人工补充上下文=部分通过;其余未验证
+- **Agent 侧发现:**
+  - ✅ focus/backlog 逐字准确;正确识别 templates/cli(权威)vs .evo-lite/cli(运行副本);推荐阅读顺序合理(状态→规则→架构→实现)。
+  - ❌ 冠名虚构:称项目为"上下文/记忆流转框架 (EvoRouter)"——仓库全文零出现,EvoRouter 是同机另一项目,属跨项目串联幻觉。
+  - ❌ 零验证转述:把 backlog 两条陈旧项当"活跃待处理问题"上报,未做任何一步核实(`ls templates/cli/mcp-detect.js` 一条命令即可证伪 [06fd])。
+  - ❌ 未使用 `mem code` / MCP:接手路径完全绕开 Phase 4a 交付面。
+- **产品侧发现(更重要):**
+  - **P1 — backlog 闭环债在实战中直接误导接手 Agent**:`[fresh-plan-progress]` 已于 2.3.0 修复发布、`[06fd]` 的 mcp-detect.js 现已存在且 `test.js all` 长期 EXIT 0,但两条 backlog 均未勾销 → 治理面向 Agent 提供了错误的"当前待办"。这是 governance-closure-debt 方向的实证,**不是** 4b 证据。
+  - **P2 — Code Explore 可发现性缺口**:接手指令未提及工具时,Agent 不会自发使用 `mem code`;AGENTS.md / .agents/rules 的接手路径也未引导到它 → 4a.x DX Hardening 候选("项目接手聚合命令" + 接手文档引导)。
+- 摩擦点:陈旧 backlog 需人工纠偏;Code Explore 零使用。
 
 ## 决策规则
 
