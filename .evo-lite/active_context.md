@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Phase 4b-1 discovery: validate architecture-governance wiki design; brainstorming pending; no implementation authorized. Old plan:code-wiki-inspector-projection cw-wiki scope superseded — do not execute; Inspector portion remains parked.
+Phase 4b-1: plan:architecture-governance-wiki-mvp authored (7 tasks, spec:architecture-governance-wiki adopted); awaiting external plan review — implementation NOT authorized until review passes. Old cw-wiki scope stays superseded; Inspector stays parked.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
