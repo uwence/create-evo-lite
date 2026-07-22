@@ -94,15 +94,15 @@
 
 | 维度 | Codex | Claude | Antigravity | ChatGPT GitHub | 原因/备注 |
 |---|---|---|---|---|---|
-| 找到正确文件 | | | 通过 | | AG: 所引文件全部存在;正确区分 templates/cli 权威源 vs .evo-lite/cli 运行副本 |
-| 理解当前 focus | | | 通过 | | AG: focus 文本逐字准确读自 active_context.md |
-| 区分确定/推测链接 | | | 未验证 | | AG: 全程未触及 governance links |
-| 识别能力降级 | | | 未验证 | | |
-| 避免虚构 Task→Symbol | | | 未验证 | | AG: 未触及 Task→Symbol;但出现**别处虚构**——给项目冠名"(EvoRouter)",仓库零出现(系本机另一项目名,跨项目串联幻觉) |
-| 正确识别影响范围 | | | 未验证 | | 任务 A 不含 |
-| 使用 Code Explore | | | 失败 | | AG: 全程未用 `mem code` CLI 或 MCP;靠目录列举 + 4 次文件读取完成接手 |
-| 需要人工补充上下文 | | | 部分通过 | | AG: 能自助读治理面,但把陈旧 backlog 当活跃待办上报,需人工纠正(见 Session 1 产品侧发现) |
-| 是否需要可视化页面 | | | 未验证 | | |
+| 找到正确文件 | | 通过 | 通过 | | AG: 所引文件全部存在;正确区分 templates/cli 权威源 vs .evo-lite/cli 运行副本。CL: 同样正确,且给出 sync 方向(改 templates 后跑同步、勿直改镜像) |
+| 理解当前 focus | | 通过 | 通过 | | AG: focus 文本逐字准确读自 active_context.md。CL: 逐字准确 + 主动对照 Session 1 时点差异(backlog 已清空),并区分"parked/draft 方向 ≠ 正在做" |
+| 区分确定/推测链接 | | 未验证 | 未验证 | | 两者均未触及 governance links |
+| 识别能力降级 | | 未验证 | 未验证 | | |
+| 避免虚构 Task→Symbol | | 未验证 | 未验证 | | AG: 未触及 Task→Symbol;但出现**别处虚构**——给项目冠名"(EvoRouter)",仓库零出现(系本机另一项目名,跨项目串联幻觉)。CL: 全文零虚构,所有可复核数字精确命中 |
+| 正确识别影响范围 | | 未验证 | 未验证 | | 任务 A 不含 |
+| 使用 Code Explore | | 部分通过 | 失败 | | AG: 全程未用 `mem code` CLI 或 MCP;靠目录列举 + 4 次文件读取完成接手。CL: 重度使用 evo_active_context/evo_plan_status/evo_drift_status(治理 MCP 面),但未用 evo_code_explore 本体(任务 A 无代码查询需求,情有可原) |
+| 需要人工补充上下文 | | 通过 | 部分通过 | | AG: 能自助读治理面,但把陈旧 backlog 当活跃待办上报,需人工纠正(见 Session 1 产品侧发现)。CL: 零人工纠偏;唯一小瑕:闭环 commit 指认 035afb0(实为 8ef921f 落库;035afb0 是 resolve 时点 HEAD,治理数据本身如此记录) |
+| 是否需要可视化页面 | | 未验证 | 未验证 | | CL: 终端表格自答了 plan 全景,未表现出可视化需求 |
 
 ## 主用户五问(每次真实开发结束后回答)
 
@@ -141,6 +141,25 @@
   - **P1 — backlog 闭环债在实战中直接误导接手 Agent**:`[fresh-plan-progress]` 已于 2.3.0 修复发布、`[06fd]` 的 mcp-detect.js 现已存在且 `test.js all` 长期 EXIT 0,但两条 backlog 均未勾销 → 治理面向 Agent 提供了错误的"当前待办"。这是 governance-closure-debt 方向的实证,**不是** 4b 证据。
   - **P2 — Code Explore 可发现性缺口**:接手指令未提及工具时,Agent 不会自发使用 `mem code`;AGENTS.md / .agents/rules 的接手路径也未引导到它 → 4a.x DX Hardening 候选("项目接手聚合命令" + 接手文档引导)。
 - 摩擦点:陈旧 backlog 需人工纠偏;Code Explore 零使用。
+
+### Session 2 — 2026-07-22 — 任务 A 项目接手(Claude,干净会话)
+
+- 任务类型:A
+- Agent:Claude Code(evo_active_context + evo_plan_status + evo_drift_status 实时 MCP 读取,自称"非转述"——复核属实)
+- 矩阵增量:找到正确文件=通过;理解当前 focus=通过;使用 Code Explore=部分通过;需要人工补充上下文=**通过**;避免虚构=备注零虚构
+- **复核结果(逐项对照 CLI 实测):**
+  - ✅ 35 specs / 35 plans / 205 tasks、190 implemented / 15 todo —— 精确命中
+  - ✅ 4 个未完成 plan 及进度(4b parked 0/3、linker-mvp draft 14/15、evidence-durability 0/5、hive-nurture 0/6)—— 精确命中
+  - ✅ drift 45 warnings 0 errors(43×R008 evidence + 2×R011)、R011 语义解读正确 —— 精确命中
+  - ✅ templates/cli 顶层 26 个 .js —— 精确命中
+  - ✅ 主动声明"没跑 mem verify,属 /evo 完整协议范畴"—— 诚实的范围披露
+  - ⚠️ 唯一瑕疵:把 backlog 闭环指认为 commit 035afb0(实际落库于 8ef921f;035afb0 是 resolve 时点 HEAD,trajectory/archive 文件名即如此记录 —— 治理数据自身的时点语义所致,详见 P4)
+- **A/B 对照(P1 修复生效验证):**backlog 清空后,Session 2 正确报告"暂无活跃任务"并主动指出与 Session 1 时点的状态差异 —— 治理面修复直接改变了接手结论,P1 闭环有效。
+- **验证效度注记:**Session 2 读过本 sprint 文档,知晓 Session 1 的失败模式并刻意规避("我这次刻意用了实时 MCP……就是针对第一个问题")。跨 Agent 盲测可比性受损;但这恰是产品期望行为 —— **入库的失败模式记录真的能引导后续 Agent**,本身是正面产品信号。
+- **产品侧发现:**
+  - **P3 — R011 多 plan 盲区**:spec:unified-code-explore-wiki-projection 有意保持 adopted(等 4b 收口),但 R011 只看到已全部 implemented 的 4a plan 就要求 status: done,无视同 spec 下 parked 0/3 的 4b plan → 4b parked 期间该警告将永久误报,且无 waiver 机制。
+  - **P4 — trajectory/archive 记录 resolve 时点 HEAD 而非落库 commit**:导致 Agent 从治理数据推断出"035afb0 关闭了 backlog"的错误归因。轻微,但属"治理数据把 Agent 引向错误结论"一类。
+- 摩擦点:几乎为零;两条产品侧误导(P3、P4)均源于治理面自身语义,非 Agent 能力。
 
 ## 决策规则
 
