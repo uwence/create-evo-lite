@@ -179,6 +179,24 @@
 - **Agent 特质画像(跨 S1/S3 稳定):**Antigravity 的失败类固定为"似真名称补全"(EvoRouter → specs.js)—— 对不确定的名字宁可编一个像的也不验证。协议可压制其幅度,不能根除。
 - 摩擦点:小虚构仍需人工纠偏;backlog 状态遗漏。
 
+### Session 4 — 2026-07-22 — 任务 A 项目接手(Claude,`/evo` 前置)
+
+- 任务类型:A(变体:`/evo` 前置,与 Session 2 干净会话对照;与 Session 3 构成同协议跨 Agent 对照)
+- Agent:Claude Code(/evo 接管 + GitNexus 索引刷新至 HEAD + 行号级代码定位)
+- 矩阵增量:无降级;找到正确文件维持通过(升至**行号级精度**)
+- **复核结果(逐项实测):**
+  - ✅ extractPlanRefFromMessage L1404(报告"约 L1403-1408")、checkR012 L324(报告 L323-359)、checkR011 L277、checkR003 L108 —— 行号级命中
+  - ✅ buildGovernanceSummary L81 / buildDashboardData L137、T27 用例存在 —— 命中
+  - ✅ advanceFocusFromCommit 修复机制描述精确:`if (plan.status === 'parked')` 守卫确实存在(commit 1ee4237),含 R012 phantom-focus 关联
+  - ✅ trajectory 解读正确(两条 backlog 收尾在前、autofocus 修复在后);linker-mvp 只剩 1 task 正确
+  - ✅ GitNexus "288 flows" 与 .gitnexus/meta.json 精确命中(索引确实被刷新;3332 symbols 未独立复核但同源可信)
+  - ⚠️ "FOCUS 目前为空" —— 字面不准(锚点非空,内容为 "No active plan...");语义正确且随即给出完整收敛史,读者不致误判
+- **产品侧发现:**
+  - **P5 — mem code 在母仓被 GitNexus 挤出**:S4 的代码定位全部走 GitNexus(且 CLAUDE.md 适配层本身强制 GitNexus 做代码探索)→ 在配备 GitNexus 的仓库里,任务 A 永远不会自然触发 `mem code`。4a 面向的真实生态位是**无 GitNexus 的子项目 / GitHub-only Agent / 任务 B·C 类查询**;sprint 后续必须用这些场景验证 4a,否则"使用 Code Explore"维度在母仓恒为未触发,不构成 4a 失败证据。
+  - 跨会话记忆生效:S4 从 Claude 自动记忆中调出本 sprint 文档并主动列入阅读建议 —— Claude 特有优势,非产品面贡献。
+- **跨 Session 对照:**S2(干净)→ 治理面精确转述;S4(/evo)→ 在此之上叠加行号级代码定位与修复机制解释。/evo 对 Claude 的增益是**深度**(治理→代码语义),对 Antigravity 的增益是**纪律**(裸猜→用 CLI)。协议对不同能力档 Agent 的收益维度不同。
+- 摩擦点:仅"FOCUS 为空"字面表述;近零纠偏。
+
 ## 决策规则
 
 | 情况 | 证据 | 结论 |
