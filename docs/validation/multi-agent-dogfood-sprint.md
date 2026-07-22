@@ -92,17 +92,17 @@
 
 每个 Agent 执行相同或相近任务,记录结果。取值:`通过 / 部分通过 / 失败 / 未验证`,并补一列原因。
 
-| 维度 | Codex | Claude | Antigravity | Hermes(代 ChatGPT GitHub 位;实为本地读取,GitHub-only 未测) | 原因/备注 |
-|---|---|---|---|---|---|
-| 找到正确文件 | 通过 | 通过 | 部分通过 | 部分通过 | AG(S1): 所引文件全部存在;正确区分 templates/cli 权威源 vs .evo-lite/cli 运行副本。AG(S3): 结构图正确且补全 sync 纪律,但列举了不存在的 `templates/cli/specs.js`(实为 spec-portfolio.js)。CL: 全部正确,且给出 sync 方向,S4 达行号级。CX(S5): 职责表全对,4 个行号引用 ±1 命中。HM(S6): 拓扑正确、3 个文件体积精确命中(104K/27K/135K),但计数系统性偏差(plan/spec 实为 9/9 报 8/8;"31 个文件"与实际不符;"4 条 Non-Negotiables"把章节号当条数,实为 7 条) |
-| 理解当前 focus | 通过 | 通过 | 通过 | 通过 | AG: focus 文本逐字准确读自 active_context.md。CL: 逐字准确 + 主动对照 Session 1 时点差异(backlog 已清空),并区分"parked/draft 方向 ≠ 正在做"。CX: 唯一以"当前工作是 dogfood sprint 本身,非新功能"作顶层框架的 Agent;4b parked 边界明确;正确推断下一步是任务 B。HM: focus 逐字 + trajectory 最新 3 条准确 + "主动留白的 idle 态"解读到位 |
-| 区分确定/推测链接 | | 未验证 | 未验证 | | 两者均未触及 governance links |
-| 识别能力降级 | | 未验证 | 未验证 | | |
-| 避免虚构 Task→Symbol | 未验证 | 未验证 | 未验证 | 未验证 | AG: 未触及 Task→Symbol;但出现**别处虚构**——给项目冠名"(EvoRouter)",仓库零出现(系本机另一项目名,跨项目串联幻觉)。CL: 全文零虚构,所有可复核数字精确命中。CX: 零虚构。HM: **任务 C 描述虚构**("写一份 code wiki",实为"继续实现"——且指向 parked 4b 方向);自称 Codex(实为 Hermes);引用不可核实的"上次答" |
-| 正确识别影响范围 | | 未验证 | 未验证 | | 任务 A 不含 |
-| 使用 Code Explore | 部分通过 | 部分通过 | 部分通过 | 部分通过 | AG(S1 裸指令): 零 CLI/MCP,靠目录列举 + 读文件。AG(S3 /evo 前置): 用了 `mem portfolio status` + `mem spec status`(治理 CLI 面),仍未用 `mem code`。CL: 重度使用治理 MCP 三件套,但未用 evo_code_explore 本体。CX: /evo 治理面,未用 mem code。HM: 同前。**全体未触发 mem code —— 见 P5,母仓任务 A 不构成 4a 证据** |
-| 需要人工补充上下文 | 通过 | 通过 | 部分通过 | 部分通过 | AG: 能自助读治理面,但把陈旧 backlog 当活跃待办上报,需人工纠正(见 Session 1 产品侧发现)。CL: 零人工纠偏;唯一小瑕:闭环 commit 指认 035afb0(实为 8ef921f 落库;035afb0 是 resolve 时点 HEAD,治理数据本身如此记录)。CX: 零纠偏,时点自洽。HM: 任务 C 虚构与计数偏差需人工纠正 |
-| 是否需要可视化页面 | | 未验证 | 未验证 | | CL: 终端表格自答了 plan 全景,未表现出可视化需求 |
+| 维度 | Codex | Claude | Antigravity | Hermes(本地,代位) | ChatGPT GitHub(真远程,S7) | 原因/备注 |
+|---|---|---|---|---|---|---|
+| 找到正确文件 | 通过 | 通过 | 部分通过 | 部分通过 | 通过 | CG(S7): GitHub-only 达行号级(plan-not-startable 实存 memory.service.js:1455、code-perception.js 四函数名全对、plan status:done、META 逐字)。AG(S1): 所引文件全部存在;正确区分 templates/cli 权威源 vs .evo-lite/cli 运行副本。AG(S3): 结构图正确且补全 sync 纪律,但列举了不存在的 `templates/cli/specs.js`(实为 spec-portfolio.js)。CL: 全部正确,且给出 sync 方向,S4 达行号级。CX(S5): 职责表全对,4 个行号引用 ±1 命中。HM(S6): 拓扑正确、3 个文件体积精确命中(104K/27K/135K),但计数系统性偏差(plan/spec 实为 9/9 报 8/8;"31 个文件"与实际不符;"4 条 Non-Negotiables"把章节号当条数,实为 7 条) |
+| 理解当前 focus | 通过 | 通过 | 通过 | 通过 | 通过 | CG: 全场唯一双层区分"正式治理 focus(无活跃 plan)vs 实际工作(Phase V sprint)";并正确把上传的旧评审文档判为历史时点而非现状。AG: focus 文本逐字准确读自 active_context.md。CL: 逐字准确 + 主动对照 Session 1 时点差异(backlog 已清空),并区分"parked/draft 方向 ≠ 正在做"。CX: 唯一以"当前工作是 dogfood sprint 本身,非新功能"作顶层框架的 Agent;4b parked 边界明确;正确推断下一步是任务 B。HM: focus 逐字 + trajectory 最新 3 条准确 + "主动留白的 idle 态"解读到位 |
+| 区分确定/推测链接 | | 未验证 | 未验证 | | 通过 | CG(S7) 首次触发此维度:准确陈述默认 pipeline 只能产 declares_file / changed_by_commit / related_to_focus,而 implements_task:derived / verified_by_test / evidenced_by_archive 默认端到端不可产出(与 spec §3.5 逐点一致);本地 Agent 均未触及 |
+| 识别能力降级 | | 未验证 | 未验证 | | 通过 | CG: 正确描述"能力不足返回成功形态降级而非报错"与"MCP 不得误报 isError:true"(§3.1 语义) |
+| 避免虚构 Task→Symbol | 未验证 | 未验证 | 未验证 | 未验证 | 通过 | CG: 主动解释"为什么不能把 linkedFile 全部 symbol 当作 Task 实现"。AG: 未触及 Task→Symbol;但出现**别处虚构**——给项目冠名"(EvoRouter)",仓库零出现(系本机另一项目名,跨项目串联幻觉)。CL: 全文零虚构,所有可复核数字精确命中。CX: 零虚构。HM: **任务 C 描述虚构**("写一份 code wiki",实为"继续实现"——且指向 parked 4b 方向);自称 Codex(实为 Hermes);引用不可核实的"上次答" |
+| 正确识别影响范围 | | 未验证 | 未验证 | | 未验证 | 任务 A 不含 |
+| 使用 Code Explore | 部分通过 | 部分通过 | 部分通过 | 部分通过 | 未验证(无运行时) | CG: GitHub-only 无法执行 CLI/MCP,维度不适用;但准确列出 8 个 mem code 子命令与注册位置。AG(S1 裸指令): 零 CLI/MCP,靠目录列举 + 读文件。AG(S3 /evo 前置): 用了 `mem portfolio status` + `mem spec status`(治理 CLI 面),仍未用 `mem code`。CL: 重度使用治理 MCP 三件套,但未用 evo_code_explore 本体。CX: /evo 治理面,未用 mem code。HM: 同前。**全体未触发 mem code —— 见 P5,母仓任务 A 不构成 4a 证据** |
+| 需要人工补充上下文 | 通过 | 通过 | 部分通过 | 部分通过 | 通过 | CG: 零纠偏,且自行完成陈旧上传材料的时点甄别。AG: 能自助读治理面,但把陈旧 backlog 当活跃待办上报,需人工纠正(见 Session 1 产品侧发现)。CL: 零人工纠偏;唯一小瑕:闭环 commit 指认 035afb0(实为 8ef921f 落库;035afb0 是 resolve 时点 HEAD,治理数据本身如此记录)。CX: 零纠偏,时点自洽。HM: 任务 C 虚构与计数偏差需人工纠正 |
+| 是否需要可视化页面 | | 未验证 | 未验证 | | 通过(不需要) | **CG(S7) 决定性证据:GitHub-only 仅凭现有文本面(plan/spec/rules/sprint/active_context)重建全貌至行号级,并明确反对现在创建 wiki.js —— 4b 激活标准第 3 条被测且不触发**。CL: 终端表格自答了 plan 全景,未表现出可视化需求 |
 
 ## 主用户五问(每次真实开发结束后回答)
 
@@ -227,6 +227,24 @@
 - **Agent 特质画像:**叙事与解读最佳(idle 态、受控实验、因果阅读序),但**数字与列表边界不可靠**——体积能精确到 K 却数不对文件数,说明其信息来自部分采样 + 补全,与 AG 的"似真名称补全"同类但表现在计数层。
 - **产品侧注记:**GitHub-only 面(4b 激活标准第 3 条)因代位失去测试者 —— 该条标准要么后续找真远程 Agent 补测,要么在决策时按"不可评估"处理,不得默认触发。
 - 摩擦点:任务 C 虚构需纠正(若被执行会误开 4b 方向的工作);计数不可直接引用。
+
+### Session 7 — 2026-07-22 — 任务 A/D 项目接手(ChatGPT 网页版,GitHub-only 真远程)
+
+- 任务类型:A + D(**首个真正的 GitHub-only 被测体**,补上 Hermes 代位留下的空格;另带少量用户上传的历史文档)
+- Agent:ChatGPT(GitHub 仓库读取,无本地运行时,无法执行 CLI/MCP)
+- 矩阵增量:第 5 列全新填入 —— **首次触发 3 个此前全场未验证的维度**(区分确定/推测链接=通过;识别能力降级=通过;避免虚构 Task→Symbol=通过);是否需要可视化页面=通过(不需要)
+- **复核结果(独有断言逐项实测,零虚构):**
+  - ✅ `plan-not-startable` 逐字实存(memory.service.js:1455)—— GitHub-only 达行号级
+  - ✅ code-perception.js 四函数名全对(safeReadActiveContext L52 / resolveFocusReferences L83 / callProvider L160 / rankRecommendedReading L440)
+  - ✅ 4a plan `status: done`、8 个 mem code 子命令、provider 目录结构、META"无感高压治理挂件"逐字
+  - ✅ spec §3.5 默认 pipeline 边界逐点复述正确(只产 declares_file/changed_by_commit/related_to_focus)
+  - ✅ 4b 五条激活标准转述准确;明确"目前不应创建 wiki.js"
+  - ✅ 双层 focus 区分(正式治理 focus vs Phase V 实际工作)全场最佳;把上传的旧评审文档正确判为历史时点
+- **决定性产品发现:**
+  - **P6 — 4b 激活标准第 3 条被测且不触发**:GitHub-only Agent 凭现有文本面高效重建了项目全貌(定位、阶段、边界、下一步),精度达行号级 —— "GitHub-only Agent 无法高效重建项目结构"不成立。**4b 激活标准至此 5 条全部可评估,0 条触发。**
+  - 值得注意的机制:它能做到这一点,靠的正是 Evo-Lite 强迫沉淀的文本产物(plan/spec/rules/sprint/active_context)—— 治理文本面本身就是"可浏览的项目全貌",这是 4a 路线的间接胜利。
+- **任务 A/D 阶段终局(S1-S7):**5 个 Agent、裸指令/协议/本地/远程四象限覆盖完毕。接手向证据全部收齐,矩阵 9 维中 8 维至少被一个 Agent 触发(仅"正确识别影响范围"待任务 B)。
+- 摩擦点:零(其引用系统 fileciteturn 占位符为 ChatGPT 界面产物,非内容错误)。
 
 ## 决策规则
 
