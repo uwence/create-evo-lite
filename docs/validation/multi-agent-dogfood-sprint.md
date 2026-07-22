@@ -265,6 +265,16 @@
   - **P7 — 母仓 provider 缺席**:4a 的结构能力(impact/callers/callees)在主用户自己的仓库不可用,因 CodeGraph 未安装、native-lite 只有文件级降级。要让"CLI/MCP 是否足够"得到公平回答,需要:在母仓安装 CodeGraph 做真实 dogfood,或在无 GitNexus 的子项目(CodePLC 等)测任务 B/C。否则 4a 结构面的 dogfood 恒为空转。
 - 摩擦点:`mem code impact` 空转(P7);其余流程(TDD/sync/双侧回归)顺滑。
 
+### Session 9(准备)— 2026-07-22 — 子项目 CodePLC dogfood 环境就绪
+
+- 依据 Session 8 P7 决策:转入无 GitNexus 的子项目验证 4a 真实生态位(用户选定路线 b)
+- 环境动作:`mem hive nurture CodePLC` applied(copied=2,恰为当日 R011 修复 + T26b;rollback tag evo-nurture-pre-2.3.0-20260722T114446);子项目已 commit 248ea0b 收编
+- **子项目 4a 基线(后续 Session 的对照原点):**
+  - providers:仅 native-lite(fallback, ready, degraded)—— 无 GitNexus、无 CodeGraph,4a 是唯一代码感知面
+  - governance links:**confirmed=202 / derived=0 / proposed=0**(子项目自有 Planning IR 产生的真实链)
+  - `code search`:0 matches(native-lite 无符号级检索,诚实降级)
+- 待执行:在 CodePLC 用干净 Agent 跑任务 A(裸指令 vs /evo)、任务 B(真实改动的影响分析,先裸后引导)、任务 C(真实小改动);观察 mem code 在无竞争环境下的自发使用率与实际效用
+
 ## 决策规则
 
 | 情况 | 证据 | 结论 |
