@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 404343f1dc796569ca0b906c58dadfca3843909f
-> upstreamSha: 614fb32fae946756b38546a06abaa269c4678bbe
-> ahead: 9
+> headSha: 035afb0b6879e7ce5ccb79df4c33b6425abde3da
+> upstreamSha: 035afb0b6879e7ce5ccb79df4c33b6425abde3da
+> ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-07-20T13:34:17.381Z
+> focusUpdatedAt: 2026-07-22T08:59:06.029Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -19,13 +19,14 @@ No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit mes
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] [fresh-plan-progress] fresh scaffold baseline commit的governance hook中plan progress因无plan-ir.json而fail, 导致新项目verify显示last_run=failed-last-run. 修: plan progress在无IR时应graceful no-op(提示run plan scan)而非exit 1. 非回归, 2.3.0 consume-test发现
-- [ ] [06fd] [mcp-detect-missing] test/integration.js:551 + test/harness.js:330 require templates/cli/mcp-detect.js which has NEVER existed in git (absent at 63c019c baseline). Pre-existing: 'test.js all' fails in integration section. Fix: create mcp-detect.js OR remove the dangling references. Surfaced during spec-portfolio Task 8 regression.
+- [ ] 暂无活跃任务。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [035afb0] 2026-07-22 backlog-closure: Close stale backlog [06fd][mcp-detect-missing]: templates/cli/mcp-detect.js now exists (6.1K) and te
+- [035afb0] 2026-07-22 backlog-closure: Close stale backlog [fresh-plan-progress]: fixed pre-2.3.0 in templates/cli/planning.js (plan progre
 - [404343f] 2026-07-20 bug-fix: Follow-up to da53d3d. CodePLC re-dogfooded the nurtured fix and found a second, adjacent gap: templa
 - [da53d3d] 2026-07-20 bug-fix: CodePLC (registered hive child, no templates/ tree) dogfooded the 2026-07-20 nurture and hit two cla
 - [1ee4237] 2026-07-20 bug-fix: advanceFocusFromCommit extracts a plan/spec token from the LATEST commit message (full body, via git
@@ -34,8 +35,6 @@ No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit mes
 - [f004e62] 2026-07-20 plan-closure: Retroactive closure of plan:unified-code-explore-agent-surface-mvp. All 6 tasks (M1/M2 seam, unified
 - [8645418] 2026-07-15 plan-progress-reflection: Sub-spec ② (codegraph-adapter-governance-linker) plan-progress reflection: 14/15 tasks implemented +
 - [3818745] 2026-07-11 spec-portfolio-governance re-closed after 3 independent review rounds: P0 adopt path containment BOTH sides: source (a92c7e7 realpath/symlink/isFile/.md) + target-dir/pare
-- [d7eb5d0] 2026-07-10 spec-portfolio-governance shipped: plan 9/9, whole-branch SHIP: intake gate (mem spec adopt: normalize+size WARN+relation+transactional
-- [8402c32] 2026-07-09 release-cut-2.3.0: 2.3.0 cut: CHANGELOG Unreleased -> 2.3.0 (feedback loop, mutation preflight w/ CRLF exemption, zvec-
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
