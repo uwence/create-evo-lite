@@ -99,8 +99,8 @@
 | 区分确定/推测链接 | | 未验证 | 未验证 | | 通过 | CG(S7) 首次触发此维度:准确陈述默认 pipeline 只能产 declares_file / changed_by_commit / related_to_focus,而 implements_task:derived / verified_by_test / evidenced_by_archive 默认端到端不可产出(与 spec §3.5 逐点一致);本地 Agent 均未触及 |
 | 识别能力降级 | | 未验证 | 未验证 | | 通过 | CG: 正确描述"能力不足返回成功形态降级而非报错"与"MCP 不得误报 isError:true"(§3.1 语义) |
 | 避免虚构 Task→Symbol | 未验证 | 未验证 | 未验证 | 未验证 | 通过 | CG: 主动解释"为什么不能把 linkedFile 全部 symbol 当作 Task 实现"。AG: 未触及 Task→Symbol;但出现**别处虚构**——给项目冠名"(EvoRouter)",仓库零出现(系本机另一项目名,跨项目串联幻觉)。CL: 全文零虚构,所有可复核数字精确命中。CX: 零虚构。HM: **任务 C 描述虚构**("写一份 code wiki",实为"继续实现"——且指向 parked 4b 方向);自称 Codex(实为 Hermes);引用不可核实的"上次答" |
-| 正确识别影响范围 | | 通过 | 未验证 | | 未验证 | CL(S8,注:执行者为已载入上下文的控制会话,非干净被测体): 经 GitNexus impact 得出 checkR011 爆炸半径(d1=runPlanningDrift 唯一直接调用者;d2=MCP/CLI/Inspector 三表面),预测范围与 detect_changes 实际改动符号完全一致。`mem code impact` 在母仓无 structural provider,诚实降级但零信息量(P5 第三次实证,本次为任务 B 形态) |
-| 使用 Code Explore | 部分通过 | 部分通过 | 部分通过 | 部分通过 | 未验证(无运行时) | CG: GitHub-only 无法执行 CLI/MCP,维度不适用;但准确列出 8 个 mem code 子命令与注册位置。AG(S1 裸指令): 零 CLI/MCP,靠目录列举 + 读文件。AG(S3 /evo 前置): 用了 `mem portfolio status` + `mem spec status`(治理 CLI 面),仍未用 `mem code`。CL: 重度使用治理 MCP 三件套,但未用 evo_code_explore 本体。CX: /evo 治理面,未用 mem code。HM: 同前。**全体未触发 mem code —— 见 P5,母仓任务 A 不构成 4a 证据** |
+| 正确识别影响范围 | 通过 | 通过 | 未验证 | | 未验证 | CX(S9b): 无任何结构工具辅助,凭源码给出跨 CLI/workspace/MCP/bridge/治理五层影响面,行号抽查 4/4 命中;mem code 第二轮补强治理维度而不推翻。CL(S8,控制会话非干净被测体): GitNexus impact 预测与 detect_changes 实际改动完全一致;`mem code impact` 母仓零信息量(P5) |
+| 使用 Code Explore | 部分通过 | 部分通过 | 部分通过 | 部分通过 | 未验证(无运行时) | CX(S9b 子项目,零竞争): 裸场景自发性=**失败**;引导后六件套用满,效用=部分(治理链有效、结构查询空)—— P2/P7 终版证据。CG: GitHub-only 无法执行 CLI/MCP,维度不适用;但准确列出 8 个 mem code 子命令与注册位置。AG(S1 裸指令): 零 CLI/MCP,靠目录列举 + 读文件。AG(S3 /evo 前置): 用了 `mem portfolio status` + `mem spec status`(治理 CLI 面),仍未用 `mem code`。CL: 重度使用治理 MCP 三件套,但未用 evo_code_explore 本体。CX: /evo 治理面,未用 mem code。HM: 同前。**全体未触发 mem code —— 见 P5,母仓任务 A 不构成 4a 证据** |
 | 需要人工补充上下文 | 通过 | 通过 | 部分通过 | 部分通过 | 通过 | CG: 零纠偏,且自行完成陈旧上传材料的时点甄别。AG: 能自助读治理面,但把陈旧 backlog 当活跃待办上报,需人工纠正(见 Session 1 产品侧发现)。CL: 零人工纠偏;唯一小瑕:闭环 commit 指认 035afb0(实为 8ef921f 落库;035afb0 是 resolve 时点 HEAD,治理数据本身如此记录)。CX: 零纠偏,时点自洽。HM: 任务 C 虚构与计数偏差需人工纠正 |
 | 是否需要可视化页面 | | 未验证 | 未验证 | | 通过(不需要) | **CG(S7) 决定性证据:GitHub-only 仅凭现有文本面(plan/spec/rules/sprint/active_context)重建全貌至行号级,并明确反对现在创建 wiki.js —— 4b 激活标准第 3 条被测且不触发**。CL: 终端表格自答了 plan 全景,未表现出可视化需求 |
 
@@ -274,6 +274,21 @@
   - governance links:**confirmed=202 / derived=0 / proposed=0**(子项目自有 Planning IR 产生的真实链)
   - `code search`:0 matches(native-lite 无符号级检索,诚实降级)
 - 待执行:在 CodePLC 用干净 Agent 跑任务 A(裸指令 vs /evo)、任务 B(真实改动的影响分析,先裸后引导)、任务 C(真实小改动);观察 mem code 在无竞争环境下的自发使用率与实际效用
+
+### Session 9a/9b/9c — 2026-07-22 — 子项目 CodePLC 任务 A+B+C(Codex)
+
+- 执行环境:CodePLC(无 GitNexus / 无 CodeGraph,4a 唯一感知面);执行者 Codex
+- **9a 任务 A 复核:**focus 逐字准确(P0-3 await Task 5 review / Task 6 未授权);`7fdf1f08` 实存且文件对应;"main ahead 1"与当时未推的 nurture 收编 commit 一致;主动指出 active_context 焦点时效性(07-17 记录 vs 07-22 HEAD)—— 子项目同样存在轻度状态陈旧(P1 家族)。质量:通过。
+- **9b 任务 B(两轮对照,本 sprint 最关键的 4a 数据):**
+  - 第一轮(裸):完全凭源码分析给出跨层影响面(CLI/workspace/MCP/bridge/治理),行号引用抽查 4/4 命中(drift.py:381=projectLogicalId、operations.py:58=build_project、server.py:483=call_tool、apply.py:85);质量高。**全程未用 mem code —— 在零竞争环境下自发性仍为失败**(Codex 自评"未达标",诚实)。
+  - 第二轮(引导):用满 providers/status/context/search/explore/impact 六件套。**效用自评"部分有效",与实测一致**:治理链(confirmed=202)把改动关联到 apply safety / Windows 受控路径 / workspace manifest 等治理资产 —— 真实增益;但 search/explore/impact 全部 0 结果(native-lite 无结构能力),**不能替代第一轮的源码调用链分析**。结论未被推翻,只被治理维度补强。
+- **9c 任务 C:**落地 managed-project-copy 于分支 codex/managed-project-copy;608 passed / 契约 2/2 PASS / active_context valid / 工作树干净;**完整治理闭环三连 commit 实存**(verify contract → close spec → context track)。
+- **矩阵增量:**Codex 正确识别影响范围=通过;使用 Code Explore 裸场景自发性=失败(见 P2 终版)。
+- **产品侧定论级发现:**
+  - **P2(终版):可发现性缺口是结构性的,与竞争无关** —— 零竞争环境 + 裸指令,Agent 依然不用 mem code。修复只能靠引导面(4a.x:接手聚合命令 + AGENTS.md/rules 显式路由)。
+  - **P7(终版):无 structural provider 时,4a 结构面在真实任务 B 中为零产出**;4a 今天的真实价值 = **治理上下文面**(202 条 confirmed 链真实帮到了影响分析的治理维度)。要结构面兑现,需在子项目采纳 CodeGraph,或明确将 mem code 定位为治理上下文工具。
+  - **P8(正向):子项目治理全闭环被非 Claude Agent 走通** —— spec→plan→契约→close→track→干净工作树,由 Codex 独立完成。治理系统的可迁移性得到最强实证。
+- 摩擦点:native-lite 结构查询空转伴"文件被占用"诊断;其余顺滑。
 
 ## 决策规则
 
