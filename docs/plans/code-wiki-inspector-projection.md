@@ -29,15 +29,19 @@ Building it before validation would add permanent maintenance surface to answer 
 
 ## Activation criteria
 
-Activate ONLY when external validation produces at least one of these, from a real user who is not the author:
+This project's product definition: the primary user IS the author, and the consumers are multiple agents (Claude/Claude Code, Codex, Antigravity, GitHub-only agents such as ChatGPT). Activation evidence therefore comes **from sustained dogfood evidence by the primary user, or from a real collaborator** — NOT from a hypothetical non-author external user.
 
-- a user asks for a browsable/visual surface after using `mem code explore` — not instead of trying it;
-- a user cannot read the CLI/MCP JSON or terminal output and is blocked by that;
-- a non-developer needs to browse Task-to-Code links;
-- a teammate needs a shared, read-only project view;
-- a user explicitly asks for a persistent, navigable Code Wiki.
+Activate ONLY when at least one of these is supported by **repeated real-work evidence** (the Primary-User Multi-Agent Dogfood Sprint, `docs/validation/multi-agent-dogfood-sprint.md`):
 
-If users are served by `mem code explore` + MCP alone, **this plan stays parked and its cost is never paid**.
+- the primary user repeatedly needs a persistent, browsable view **after** using `mem code explore` / MCP — not instead of trying them;
+- switching between agents still requires substantial manual project re-explanation that a browsable view would remove;
+- a GitHub-only agent (no local CLI/MCP) cannot efficiently reconstruct project structure from the current surfaces;
+- the primary user needs a shared, read-only view for reviewing agent work;
+- a real collaborator explicitly requires a browsable Code Wiki.
+
+If the primary user and the agents are served by `mem code explore` + MCP alone, **this plan stays parked and its cost is never paid**. Repeated CLI-output friction that a better text rendering would fix is **4a.x Agent/DX Hardening**, not activation evidence for this plan.
+
+**Staged activation:** when the evidence arrives, activate **4b-1 Minimal Code Wiki only** (Task cw-wiki) first. The Inspector Server (Task cw-inspector) stays parked until the static Wiki has been validated against the same friction and shown insufficient — a live server must not ride in on Wiki evidence.
 
 ## Prerequisites (all from Phase 4a)
 

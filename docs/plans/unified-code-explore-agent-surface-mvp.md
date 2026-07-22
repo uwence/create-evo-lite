@@ -1883,4 +1883,4 @@ No `TODO` / "add error handling" / "similar to Task N" / prose-instead-of-code. 
 
 **2. Inline Execution** — execute tasks in this session with checkpoints. REQUIRED SUB-SKILL: superpowers:executing-plans.
 
-On completion: **freeze feature work** and start the external Validation Sprint (publish, 5-minute install path, 3-minute `mem code explore` + MCP demo, 3–5 external users). Do NOT start `plan:code-wiki-inspector-projection` until that sprint produces evidence for it.
+On completion: **freeze feature work** and start the **Primary-User Multi-Agent Dogfood Sprint** (`docs/validation/multi-agent-dogfood-sprint.md`): the primary user + multiple agent consumers (Claude/Claude Code, Codex, Antigravity, GitHub-only agents) run real tasks against the 4a surfaces and record a validation matrix over 3–5 real development sessions. Do NOT start `plan:code-wiki-inspector-projection` until that sprint produces repeated real-work evidence for it (see that plan's Activation criteria).
