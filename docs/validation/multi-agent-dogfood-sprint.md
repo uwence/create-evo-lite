@@ -94,13 +94,13 @@
 
 | 维度 | Codex | Claude | Antigravity | ChatGPT GitHub | 原因/备注 |
 |---|---|---|---|---|---|
-| 找到正确文件 | | 通过 | 通过 | | AG: 所引文件全部存在;正确区分 templates/cli 权威源 vs .evo-lite/cli 运行副本。CL: 同样正确,且给出 sync 方向(改 templates 后跑同步、勿直改镜像) |
+| 找到正确文件 | | 通过 | 部分通过 | | AG(S1): 所引文件全部存在;正确区分 templates/cli 权威源 vs .evo-lite/cli 运行副本。AG(S3): 结构图正确且补全 sync 纪律,但列举了不存在的 `templates/cli/specs.js`(实为 spec-portfolio.js)。CL: 全部正确,且给出 sync 方向 |
 | 理解当前 focus | | 通过 | 通过 | | AG: focus 文本逐字准确读自 active_context.md。CL: 逐字准确 + 主动对照 Session 1 时点差异(backlog 已清空),并区分"parked/draft 方向 ≠ 正在做" |
 | 区分确定/推测链接 | | 未验证 | 未验证 | | 两者均未触及 governance links |
 | 识别能力降级 | | 未验证 | 未验证 | | |
 | 避免虚构 Task→Symbol | | 未验证 | 未验证 | | AG: 未触及 Task→Symbol;但出现**别处虚构**——给项目冠名"(EvoRouter)",仓库零出现(系本机另一项目名,跨项目串联幻觉)。CL: 全文零虚构,所有可复核数字精确命中 |
 | 正确识别影响范围 | | 未验证 | 未验证 | | 任务 A 不含 |
-| 使用 Code Explore | | 部分通过 | 失败 | | AG: 全程未用 `mem code` CLI 或 MCP;靠目录列举 + 4 次文件读取完成接手。CL: 重度使用 evo_active_context/evo_plan_status/evo_drift_status(治理 MCP 面),但未用 evo_code_explore 本体(任务 A 无代码查询需求,情有可原) |
+| 使用 Code Explore | | 部分通过 | 部分通过 | | AG(S1 裸指令): 零 CLI/MCP,靠目录列举 + 读文件。AG(S3 /evo 前置): 用了 `mem portfolio status` + `mem spec status`(治理 CLI 面),仍未用 `mem code`。CL: 重度使用治理 MCP 三件套,但未用 evo_code_explore 本体(任务 A 无代码查询需求,情有可原) |
 | 需要人工补充上下文 | | 通过 | 部分通过 | | AG: 能自助读治理面,但把陈旧 backlog 当活跃待办上报,需人工纠正(见 Session 1 产品侧发现)。CL: 零人工纠偏;唯一小瑕:闭环 commit 指认 035afb0(实为 8ef921f 落库;035afb0 是 resolve 时点 HEAD,治理数据本身如此记录) |
 | 是否需要可视化页面 | | 未验证 | 未验证 | | CL: 终端表格自答了 plan 全景,未表现出可视化需求 |
 
@@ -160,6 +160,24 @@
   - **P3 — R011 多 plan 盲区**:spec:unified-code-explore-wiki-projection 有意保持 adopted(等 4b 收口),但 R011 只看到已全部 implemented 的 4a plan 就要求 status: done,无视同 spec 下 parked 0/3 的 4b plan → 4b parked 期间该警告将永久误报,且无 waiver 机制。
   - **P4 — trajectory/archive 记录 resolve 时点 HEAD 而非落库 commit**:导致 Agent 从治理数据推断出"035afb0 关闭了 backlog"的错误归因。轻微,但属"治理数据把 Agent 引向错误结论"一类。
 - 摩擦点:几乎为零;两条产品侧误导(P3、P4)均源于治理面自身语义,非 Agent 能力。
+
+### Session 3 — 2026-07-22 — 任务 A 项目接手(Antigravity,`/evo` 前置)
+
+- 任务类型:A(变体:同一 Agent、同一指令,但先执行 `/evo` 接管协议 —— 与 Session 1 构成协议 A/B 对照)
+- Agent:Antigravity(`mem portfolio status` + `mem spec status` + 目录列举 + 读 package.json)
+- 矩阵增量:使用 Code Explore=失败→**部分通过**;找到正确文件=通过→**部分通过**(新虚构见下)
+- **复核结果:**
+  - ✅ focus 准确(无活跃 plan / Phase 4a 6/6 / advanceFocusFromCommit 修复)
+  - ✅ spec 体量告警转述精确(`AC=14, Phase=10`,与 verify 输出逐字一致)
+  - ✅ 4 锚点块 META/FOCUS/BACKLOG/TRAJECTORY 精确
+  - ✅ sync 纪律表述正确(只改 templates/cli,跑 sync-runtime,勿直改镜像)
+  - ✅ 本轮无 "EvoRouter" 级冠名虚构
+  - ❌ 仍有小虚构:列举了不存在的 `templates/cli/specs.js`(实为 spec-portfolio.js;`ls` 一条命令可证伪)
+  - ⚠️ 把 `/wash` 归到 `.agents/workflows/`(该目录实为 evo/commit/mem/walkthrough 四文件,无 wash.md;/wash 语义在 CLAUDE.md 适配层)
+  - ⚠️ 未报告 backlog 状态(当前为空 —— 接手报告应含)
+- **协议 A/B 对照(本 Session 核心发现):**同一 Agent,裸指令(S1)→ 零 CLI + 冠名虚构 + 陈旧转述;`/evo` 前置(S3)→ 主动用治理 CLI、无大虚构、状态转述精确。**接管协议实质性提升了接手质量** —— P2 的答案是:协议驱动的可发现性已生效,缺的是裸指令场景的引导(4a.x "项目接手聚合命令" 的价值边界就在这)。
+- **Agent 特质画像(跨 S1/S3 稳定):**Antigravity 的失败类固定为"似真名称补全"(EvoRouter → specs.js)—— 对不确定的名字宁可编一个像的也不验证。协议可压制其幅度,不能根除。
+- 摩擦点:小虚构仍需人工纠偏;backlog 状态遗漏。
 
 ## 决策规则
 
