@@ -9,6 +9,8 @@ linkedSpec: spec:unified-code-explore-wiki-projection
 
 > **STATUS: PARKED — do not execute.** This plan is deliberately not active. See **Activation criteria** below. It is kept fully specified so that, if the evidence arrives, execution can start immediately without re-derivation.
 
+> **2026-07-22 supersession note (dogfood Sessions 10-11, strike 2/2):** the 4b-1 direction IS activated — but with a **redefined scope** that this plan does not describe. The original cw-wiki task (Markdown overview/providers/modules/tasks pages, no architecture diagram, no human-language translation layer) is **superseded — do not execute it**: real primary-user testing showed it would produce another "filed jargon panel". The replacement scope is an architecture-map + module-progress wiki (design input: `docs/validation/code-wiki-gap-analysis.md`; Session 11 record in `docs/validation/multi-agent-dogfood-sprint.md`), to be authored as a fresh spec (planned id: `spec:architecture-governance-wiki`, spawned-from `spec:unified-code-explore-wiki-projection`). The Inspector portion (cw-inspector / cw-closure) **remains parked** under the original criteria. Until that new spec + plan exist and are adopted, no 4b implementation is authorized.
+
 > **For agentic workers:** REQUIRED SUB-SKILL (once activated): Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Project the ONE Unified Explore service (`code-perception.js#exploreCode`, shipped by `plan:unified-code-explore-agent-surface-mvp`) into two **human** surfaces: a pure-derived Code Wiki and a read-only Inspector Code page.

@@ -13,13 +13,13 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-No active plan. Phase 4a shipped 6/6. Fixed advanceFocusFromCommit: a commit message naming a parked plan no longer auto-advances focus onto it (task:postcommit-autofocus-parked).
+Phase 4b-1 discovery: validate architecture-governance wiki design; brainstorming pending; no implementation authorized. Old plan:code-wiki-inspector-projection cw-wiki scope superseded — do not execute; Inspector portion remains parked.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] 暂无活跃任务。
+- [ ] [agent-code-routing] 4a.x debt (P2 final): agents never discover mem code under bare prompts, even with zero competing surface (S9b CodePLC). Fix direction: takeover aggregate command or explicit routing in .agents/rules. Independent of 4b-1 — the Wiki serves humans and cannot substitute agent routing.
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)

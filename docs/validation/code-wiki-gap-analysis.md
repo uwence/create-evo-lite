@@ -48,8 +48,18 @@ Code Wiki 只讲"代码是什么";Evo-Lite 治理面另有"**做到哪了**":
 5. 术语翻译层是硬要求:出现治理词(R008/IR/drift)必须伴人话解释或直接用人话替代。
 6. 不做内嵌 chat(主用户的 chat 就是 AI 助手本体)。
 
-## 开放问题(留给 4b-1 spec)
+## 开放问题(留给 4b-1 brainstorm/spec)
 
-- 架构图渲染:mermaid(生成 md 嵌入)vs 静态 SVG?点击跳转如何实现?
-- 人话叙事的生成者:模板化(无 AI、确定性)能到什么程度?哪些段落值得留给 Agent 按 `/wiki` 工作流补写?(治理约束:生成物必须可从零重建,Agent 补写部分需可区分)
-- 模块粒度:architecture IR 的 modules 直接用,还是需要人工分组?
+1. 架构图渲染:mermaid(生成 md 嵌入)vs 静态 SVG?点击跳转如何实现?
+2. 人话叙事的生成者:模板化(无 AI、确定性)能到什么程度?哪些段落值得留给 Agent 按 `/wiki` 工作流补写?(治理约束:生成物必须可从零重建,Agent 补写部分需可区分)
+3. 模块粒度:architecture IR 的 modules 直接用,还是需要人工分组?
+4. **链接契约(2026-07-22 复审补充):**"一切可点"必须先定义链到哪 —— GitHub `blob/<sha>/file#L` / 本地生成的源码 HTML 页 / wiki 章节锚点 / VS Code URI / `file://`。难点:未 push 的本地 commit 无 GitHub 深链;静态 HTML 难以可靠唤起本地编辑器精确行号。
+5. **进度与健康的计算语义(2026-07-22 复审补充):**"implemented/total"背后必须先锁定 —— 跨模块 task 是否重复计数;todo/active/implemented/verified/done 各如何计入;无 task 模块显示 0/0、N/A 还是"尚未纳入规划";proposed link 是否参与;drift warning → 正常/注意/风险的映射;verify 失败与 provider stale 的优先级;"最近变更"的时间窗。**这些不能交给叙事层自由发挥。**
+
+## 初步倾向(2026-07-22 复审,brainstorm 起点非终裁)
+
+- **架构图:优先静态 SVG**(节点精确点击、状态/进度/焦点可视化、无运行时依赖、离线可开、输出可测试);mermaid 仅作低成本 fallback/调试输出。
+- **叙事分两层:事实层 100% 确定性生成(可删可重建);解释层 Agent 可补写但必须标注来源/时间/commit**,且只能翻译已确定的事实,不得新增任务状态、依赖或健康结论。MVP 必须在无模型时也能生成可用页面。
+- **模块粒度:Architecture IR 为 canonical,页面层允许独立 view grouping**(一个展示分组可含多个 IR 模块),不为布局改 IR、不动治理链接身份。
+- **链接契约倾向:MVP 自生成轻量源码查看页** `source/<encoded-path>.html#L123`(本地离线可用、行号稳定、无服务器、名词皆可链),另提供可选 GitHub commit permalink。
+- **进度/健康倾向:先建确定性 `ModuleProjection` 模型**(moduleId / taskCounts / progressState / healthState / focusState / changedFiles / recentCommits / provenance),叙事层只解释该模型,不自行计算事实。

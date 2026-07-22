@@ -327,6 +327,16 @@
   - 质量基准:Google Code Wiki 的差距分析(另行调研记录)
 - **失败教训入档:**Inspector 现有各页 = "治理数据的直接投影";主用户需要的是"治理数据的**人话翻译 + 空间化导航**"。数据一样,形态决定成败 —— 这正是原 4b 计划 review 阶段"离验证 producer 最远、缺陷最多"警告的另一面:不做用户测试,连"该投影成什么"都不知道。
 
+### Session 12 — 2026-07-22 — 外部复审裁定 + 治理状态对齐
+
+- **外部复审(GitHub-only)裁定:**4a 闭环通过;4b-1 激活证据通过;差距分析可作 brainstorm 输入;**直接执行旧 4b Plan = 阻断;进入 brainstorming = 批准;进入实现 = 尚未批准**。采纳其标准表述:**"Phase 4a 已兑现跨 Agent 治理上下文连续性;结构代码智能仍依赖 CodeGraph/GitNexus 等结构 Provider。"**
+- **治理对齐动作(全部落地):**
+  1. P0:旧 `plan:code-wiki-inspector-projection` 打 supersession 标注 —— cw-wiki 原始范围 superseded(do not execute,理由:会产出"文件化术语面板");Inspector 部分照旧 parked;新 spec 规划 id `spec:architecture-governance-wiki`(spawned-from 原 spec)。
+  2. P1a:focus 经 CLI 更新为 "Phase 4b-1 discovery: … brainstorming pending; no implementation authorized"。
+  3. P1b:Session 10 三项 4a.x 裁定 —— **人侧入口:由 4b-1 supersede**(Wiki 即人侧入口);**Agent 裸指令路由:独立债,入 backlog `[agent-code-routing]`**(Wiki 服务人,不能替代 Agent routing);**P4 时点归因:dropped**(resolve 时点 HEAD 属既定 provenance 语义,危害限于归因措辞,S2/P4 已留档,不值单独工程)。
+  4. 差距分析补开放问题 4(链接契约)与 5(ModuleProjection 计算语义)+ 五项初步倾向(SVG 优先 / 两层叙事 / IR canonical + view grouping / 本地源码页链接 / 确定性 ModuleProjection)。
+- **当前授权边界:**可 brainstorm;不可写 4b 实现代码;不可执行旧 cw-wiki 任务。
+
 ## 决策规则
 
 | 情况 | 证据 | 结论 |
