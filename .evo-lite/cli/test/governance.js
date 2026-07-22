@@ -1858,6 +1858,60 @@ async function runGovernanceTests() {
             console.log('✅ T26 R012 focus-health passed');
         }
 
+        console.log('T26b. Testing R011 groups by spec: an incomplete sibling plan suppresses the nag ...');
+        {
+            const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            delete require.cache[gapsPath];
+            const { checkR011 } = require(gapsPath);
+
+            // Multi-plan spec: a shipped 4a-style plan + a parked 4b-style plan
+            // with open tasks. The spec is intentionally still open — R011 must
+            // stay silent instead of nagging "status: done" forever.
+            const multi = {
+                specs: [{ id: 'spec:multi', status: 'adopted', sourcePath: 'docs/specs/multi.md' }],
+                plans: [
+                    { id: 'plan:multi-a', status: 'done', linkedSpec: 'spec:multi', sourcePath: 'docs/plans/a.md' },
+                    { id: 'plan:multi-b', status: 'parked', linkedSpec: 'spec:multi', sourcePath: 'docs/plans/b.md' },
+                ],
+                tasks: [
+                    { id: 'plan:multi-a/task-1', linkedPlan: 'plan:multi-a', status: 'implemented' },
+                    { id: 'plan:multi-b/task-1', linkedPlan: 'plan:multi-b', status: 'todo' },
+                ],
+            };
+            assert.strictEqual(checkR011(multi).length, 0,
+                'R011 must not fire while a sibling plan of the same spec still has open tasks');
+
+            // Single complete plan on a non-done spec → exactly one finding, and
+            // the message keeps the legacy single-plan wording.
+            const single = {
+                specs: [{ id: 'spec:single', status: 'draft', sourcePath: 'docs/specs/single.md' }],
+                plans: [{ id: 'plan:single-a', status: 'done', linkedSpec: 'spec:single', sourcePath: 'docs/plans/sa.md' }],
+                tasks: [{ id: 'plan:single-a/task-1', linkedPlan: 'plan:single-a', status: 'implemented' }],
+            };
+            const one = checkR011(single);
+            assert.strictEqual(one.length, 1, 'R011 must fire when every linked plan is complete');
+            assert.strictEqual(one[0].id, 'R011:spec:single');
+            assert.ok(one[0].message.includes('linked plan plan:single-a has all tasks implemented'),
+                'single-plan message must keep the legacy wording');
+
+            // Two complete plans on one spec → still exactly ONE finding (the old
+            // per-plan loop emitted duplicate R011:<spec> ids here).
+            const dup = {
+                specs: [{ id: 'spec:dup', status: 'adopted', sourcePath: 'docs/specs/dup.md' }],
+                plans: [
+                    { id: 'plan:dup-a', status: 'done', linkedSpec: 'spec:dup', sourcePath: 'docs/plans/da.md' },
+                    { id: 'plan:dup-b', status: 'done', linkedSpec: 'spec:dup', sourcePath: 'docs/plans/db.md' },
+                ],
+                tasks: [
+                    { id: 'plan:dup-a/task-1', linkedPlan: 'plan:dup-a', status: 'implemented' },
+                    { id: 'plan:dup-b/task-1', linkedPlan: 'plan:dup-b', status: 'implemented' },
+                ],
+            };
+            assert.strictEqual(checkR011(dup).length, 1,
+                'R011 must emit one finding per spec, not one per complete plan');
+            console.log('✅ T26b R011 spec-grouped multi-plan passed');
+        }
+
         console.log('T27. Testing commit-evidence focus auto-advance is conservative ...');
         {
             const runtime = createTempRuntimeRoot('focus-advance');

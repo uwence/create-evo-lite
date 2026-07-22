@@ -277,16 +277,30 @@ function checkR010(projectRoot, planIR) {
 function checkR011(planIR) {
     if (!planIR) return [];
     const specMap = new Map((planIR.specs || []).map(s => [s.id, s]));
-    const findings = [];
 
+    // Group plans by spec: a spec is only "done in practice" when EVERY linked
+    // plan is complete. A parked/draft sibling with open (or no) tasks keeps the
+    // spec open by design — e.g. a shipped Phase 4a plan + a parked Phase 4b
+    // plan on the same spec must NOT trigger the status: done nag. Grouping also
+    // guarantees one finding per spec (the per-plan loop emitted duplicate
+    // `R011:<spec>` ids when two complete plans shared a spec).
+    const bySpec = new Map();
     for (const plan of (planIR.plans || [])) {
         if (!plan.linkedSpec) continue;
-        const spec = specMap.get(plan.linkedSpec);
+        if (!bySpec.has(plan.linkedSpec)) bySpec.set(plan.linkedSpec, []);
+        bySpec.get(plan.linkedSpec).push(plan);
+    }
+
+    const findings = [];
+    for (const [specId, plans] of bySpec) {
+        const spec = specMap.get(specId);
         if (!spec || spec.status === 'done') continue;
 
-        const planTasks = (planIR.tasks || []).filter(t => t.linkedPlan === plan.id);
-        if (planTasks.length === 0) continue;
-        if (!planTasks.every(t => t.readOnly || t.status === 'implemented')) continue;
+        const isComplete = plan => {
+            const planTasks = (planIR.tasks || []).filter(t => t.linkedPlan === plan.id);
+            return planTasks.length > 0 && planTasks.every(t => t.readOnly || t.status === 'implemented');
+        };
+        if (!plans.every(isComplete)) continue;
 
         findings.push({
             id: `R011:${spec.id}`,
@@ -294,7 +308,7 @@ function checkR011(planIR) {
             scope: 'planning',
             level: 'warning',
             type: 'spec-status-drift',
-            message: `Spec ${spec.id} is [${spec.status}] but linked plan ${plan.id} has all tasks implemented`,
+            message: `Spec ${spec.id} is [${spec.status}] but ${plans.length > 1 ? `all ${plans.length} linked plans have` : `linked plan ${plans[0].id} has`} all tasks implemented`,
             evidence: [spec.sourcePath],
             suggestedAction: `Update status in ${spec.sourcePath} to: status: done`,
         });
@@ -452,6 +466,7 @@ module.exports = {
     checkR006,
     checkR008,
     checkR009,
+    checkR011,
     checkR012,
     checkR013,
     getChangedFiles,
