@@ -99,7 +99,7 @@
 | 区分确定/推测链接 | | 未验证 | 未验证 | | 通过 | CG(S7) 首次触发此维度:准确陈述默认 pipeline 只能产 declares_file / changed_by_commit / related_to_focus,而 implements_task:derived / verified_by_test / evidenced_by_archive 默认端到端不可产出(与 spec §3.5 逐点一致);本地 Agent 均未触及 |
 | 识别能力降级 | | 未验证 | 未验证 | | 通过 | CG: 正确描述"能力不足返回成功形态降级而非报错"与"MCP 不得误报 isError:true"(§3.1 语义) |
 | 避免虚构 Task→Symbol | 未验证 | 未验证 | 未验证 | 未验证 | 通过 | CG: 主动解释"为什么不能把 linkedFile 全部 symbol 当作 Task 实现"。AG: 未触及 Task→Symbol;但出现**别处虚构**——给项目冠名"(EvoRouter)",仓库零出现(系本机另一项目名,跨项目串联幻觉)。CL: 全文零虚构,所有可复核数字精确命中。CX: 零虚构。HM: **任务 C 描述虚构**("写一份 code wiki",实为"继续实现"——且指向 parked 4b 方向);自称 Codex(实为 Hermes);引用不可核实的"上次答" |
-| 正确识别影响范围 | | 未验证 | 未验证 | | 未验证 | 任务 A 不含 |
+| 正确识别影响范围 | | 通过 | 未验证 | | 未验证 | CL(S8,注:执行者为已载入上下文的控制会话,非干净被测体): 经 GitNexus impact 得出 checkR011 爆炸半径(d1=runPlanningDrift 唯一直接调用者;d2=MCP/CLI/Inspector 三表面),预测范围与 detect_changes 实际改动符号完全一致。`mem code impact` 在母仓无 structural provider,诚实降级但零信息量(P5 第三次实证,本次为任务 B 形态) |
 | 使用 Code Explore | 部分通过 | 部分通过 | 部分通过 | 部分通过 | 未验证(无运行时) | CG: GitHub-only 无法执行 CLI/MCP,维度不适用;但准确列出 8 个 mem code 子命令与注册位置。AG(S1 裸指令): 零 CLI/MCP,靠目录列举 + 读文件。AG(S3 /evo 前置): 用了 `mem portfolio status` + `mem spec status`(治理 CLI 面),仍未用 `mem code`。CL: 重度使用治理 MCP 三件套,但未用 evo_code_explore 本体。CX: /evo 治理面,未用 mem code。HM: 同前。**全体未触发 mem code —— 见 P5,母仓任务 A 不构成 4a 证据** |
 | 需要人工补充上下文 | 通过 | 通过 | 部分通过 | 部分通过 | 通过 | CG: 零纠偏,且自行完成陈旧上传材料的时点甄别。AG: 能自助读治理面,但把陈旧 backlog 当活跃待办上报,需人工纠正(见 Session 1 产品侧发现)。CL: 零人工纠偏;唯一小瑕:闭环 commit 指认 035afb0(实为 8ef921f 落库;035afb0 是 resolve 时点 HEAD,治理数据本身如此记录)。CX: 零纠偏,时点自洽。HM: 任务 C 虚构与计数偏差需人工纠正 |
 | 是否需要可视化页面 | | 未验证 | 未验证 | | 通过(不需要) | **CG(S7) 决定性证据:GitHub-only 仅凭现有文本面(plan/spec/rules/sprint/active_context)重建全貌至行号级,并明确反对现在创建 wiki.js —— 4b 激活标准第 3 条被测且不触发**。CL: 终端表格自答了 plan 全景,未表现出可视化需求 |
@@ -245,6 +245,25 @@
   - 值得注意的机制:它能做到这一点,靠的正是 Evo-Lite 强迫沉淀的文本产物(plan/spec/rules/sprint/active_context)—— 治理文本面本身就是"可浏览的项目全貌",这是 4a 路线的间接胜利。
 - **任务 A/D 阶段终局(S1-S7):**5 个 Agent、裸指令/协议/本地/远程四象限覆盖完毕。接手向证据全部收齐,矩阵 9 维中 8 维至少被一个 Agent 触发(仅"正确识别影响范围"待任务 B)。
 - 摩擦点:零(其引用系统 fileciteturn 占位符为 ChatGPT 界面产物,非内容错误)。
+
+### Session 8 — 2026-07-22 — 任务 B+C 合并:影响分析 + 真实修复 P3(Claude 控制会话)
+
+- 任务类型:B(影响分析)+ C(继续实现)。真实工作:修复 Session 2 发现的 P3(R011 多 plan 盲区),非造题
+- 执行者:Claude(本 sprint 的控制会话,已载入全量上下文 —— 非干净被测体,矩阵记录已注明)
+- **任务 B 实测:**
+  - `mem code impact checkR011` → "no structural provider",exit 0 诚实降级;`mem code callers` → 0。**首次在真实任务中主动使用 4a 面,结果零信息量** —— 母仓只有 native-lite(fallback),CodeGraph 未安装。P5 第三次实证,且暴露新问题:**主用户自己的仓库尚未安装 4a 设计所依赖的 structural provider**,"CLI/MCP 是否足够"的问题在母仓实际上是"provider 是否在场"的问题。
+  - GitNexus impact:CRITICAL(共享底层高扇出);d1 仅 runPlanningDrift;d2 波及 MCP evo_drift_status / mem plan gaps / Inspector API。判定可安全推进(只收紧触发条件、不改输出形状)。
+  - 事后校验:detect_changes 实际改动符号(checkR011 + 测试)与预测完全一致。
+- **任务 C 实施(TDD):**
+  - RED:multi=1(应 0,盲区)、dup=2(应 1,重复 finding —— 复核中发现的**潜伏第二缺陷**:同 spec 两个完成 plan 产生重复 `R011:<spec>` id)
+  - GREEN:checkR011 改为按 spec 分组,仅当该 spec 全部 linked plan 完成才触发;单 plan 消息保持旧措辞;补导出 checkR011;新增 T26b(压制/触发/去重三例)
+  - 实景效果:`plan gaps` 由 2×R011 → 1×R011(wiki-projection 误报消失,hive-nurture 真债保留);双侧 all EXIT 0;镜像二次 sync copied:0
+  - 纪律核查:只改 templates/cli 后同步;未触碰 parked 4b;R009(architecture IR 落后)为治理机对本次在途编辑的正确感知,commit 后由钩子刷新
+  - 落库:fix b4477a8 + chore 493b52c(GitNexus 索引头 2045→3332,系 S4 刷新副产物,数字与 S4 报告互证)
+- **P3 状态:已修复关闭。**
+- **产品侧新发现:**
+  - **P7 — 母仓 provider 缺席**:4a 的结构能力(impact/callers/callees)在主用户自己的仓库不可用,因 CodeGraph 未安装、native-lite 只有文件级降级。要让"CLI/MCP 是否足够"得到公平回答,需要:在母仓安装 CodeGraph 做真实 dogfood,或在无 GitNexus 的子项目(CodePLC 等)测任务 B/C。否则 4a 结构面的 dogfood 恒为空转。
+- 摩擦点:`mem code impact` 空转(P7);其余流程(TDD/sync/双侧回归)顺滑。
 
 ## 决策规则
 
