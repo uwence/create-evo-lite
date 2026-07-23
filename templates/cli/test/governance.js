@@ -2717,6 +2717,7 @@ async function runGovernanceTests() {
                             a._withCollection(() => { throw new Error('inner failure'); });
                         });
                     } catch (_) {}
+                    assert.strictEqual(a._depth, 0, 'depth restored after nested throw');
                     assert.strictEqual(a._col, null, 'outer finally released despite inner throw');
 
                     // default mode:未设环境变量 → op 后集合仍开(现行为不变)
