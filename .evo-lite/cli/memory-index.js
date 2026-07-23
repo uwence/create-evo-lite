@@ -227,4 +227,10 @@ function resetMemoryIndex() {
     active = null;
 }
 
-module.exports = { SqliteFtsIndex, getMemoryIndex, resetMemoryIndex, resolveEngine, resolveActiveImpl, selectEngine, DEFAULT_ENGINE_CHOICE };
+// 只读访问当前活动索引(不创建实例)。MCP shutdown 用它收尾:实例从未创建时
+// 不应因收尾反而去打开一次索引。
+function peekMemoryIndex() {
+    return active;
+}
+
+module.exports = { SqliteFtsIndex, getMemoryIndex, resetMemoryIndex, peekMemoryIndex, resolveEngine, resolveActiveImpl, selectEngine, DEFAULT_ENGINE_CHOICE };

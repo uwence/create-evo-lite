@@ -207,6 +207,12 @@ async function dispatch(name, args) {
 // ── Server bootstrap ──────────────────────────────────────────────────────────
 
 async function runMcpServer() {
+    // [a177] 长活 MCP 的锁治理:ephemeral 租期(每请求 open→op→finalize)
+    // + 进程身份声明(owner sidecar 的 mode 可信来源)。两变量职责正交:
+    // 前者定锁租期,后者定进程身份,不得互相推导。
+    process.env.EVO_LITE_INDEX_EPHEMERAL = '1';
+    process.env.EVO_LITE_PROCESS_MODE = 'mcp';
+
     try { require('./db').getDb(); } catch (_) {}
 
     const server = new Server(
@@ -234,8 +240,30 @@ async function runMcpServer() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
 
-    process.once('SIGINT', async () => { await server.close(); process.exit(0); });
-    process.once('SIGTERM', async () => { await server.close(); process.exit(0); });
+    // [a177] 生命周期收敛:宿主死亡(stdin EOF/close)、transport 关闭、信号,
+    // 全部走同一个幂等 shutdown —— 停止接入 → 关 server → 收尾索引(经
+    // peekMemoryIndex,从未打开则不为收尾反而去打开)→ exitCode → 有界兜底。
+    let shuttingDown = false;
+    async function shutdown() {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        try { await server.close(); } catch (_) {}
+        try {
+            const idx = require('./memory-index').peekMemoryIndex();
+            if (idx && typeof idx.close === 'function') idx.close();
+        } catch (_) {}
+        process.exitCode = 0;
+        // stdio 句柄可能仍挂在事件循环上;兜底定时器保证进程一定退出,
+        // unref 使其不反过来拖住本可自然退出的进程。
+        const failsafe = setTimeout(() => process.exit(0), 1500);
+        failsafe.unref();
+    }
+
+    process.stdin.once('end', shutdown);
+    process.stdin.once('close', shutdown);
+    server.onclose = () => { shutdown(); };
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
 }
 
 module.exports = { runMcpServer, TOOLS, handleCodeExplore, __freshRequire: freshRequire };
