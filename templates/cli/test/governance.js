@@ -2667,6 +2667,76 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-lock-coordination passed');
 
+        console.log('T-lock-ephemeral. Testing ephemeral lock tenure matrix (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
+            } else {
+                const prevEphemeral = process.env.EVO_LITE_INDEX_EPHEMERAL;
+                const runtime = createTempRuntimeRoot('lock-ephemeral');
+                await bootstrapRuntime(runtime.runtimeRoot);
+                const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+                try {
+                    process.env.EVO_LITE_INDEX_EPHEMERAL = '1';
+                    resetCliModuleCache();
+                    const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                    const a = new ZvecMemoryIndex();
+
+                    // success → close:公共契约是"第二实例可立即打开"
+                    a.upsert({ content: 'ephemeral tenure probe recall', namespace: 'prose', timestamp: '2026-07-23T00:00:00Z' });
+                    assert.strictEqual(a._col, null, 'aux white-box: collection released after op');
+                    const b = new ZvecMemoryIndex();
+                    b.initialize(); // a 若仍持锁,这里会 Can't lock
+                    b.close();
+                    assert.strictEqual(lock.readOwner(a._dir).state, 'missing', 'owner cleared after finalize');
+
+                    // throw → close:异常路径 finally 释放
+                    let threw = false;
+                    try {
+                        a._withCollection(() => { throw new Error('op failure'); });
+                    } catch (_) { threw = true; }
+                    assert.ok(threw, 'op error propagates');
+                    assert.strictEqual(a._col, null, 'released after throwing op');
+                    const c = new ZvecMemoryIndex();
+                    c.initialize();
+                    c.close();
+
+                    // nested success:inner 不提前 close,outer 归零才 finalize
+                    a._withCollection(() => {
+                        const hits = a.searchText('ephemeral', { topK: 3 });
+                        assert.ok(Array.isArray(hits), 'inner op works');
+                        assert.ok(a._col !== null, 'inner op must not close while outer active');
+                    });
+                    assert.strictEqual(a._col, null, 'outer exit finalizes');
+
+                    // nested throw:不破坏 depth,outer finally 正常释放
+                    try {
+                        a._withCollection(() => {
+                            a._withCollection(() => { throw new Error('inner failure'); });
+                        });
+                    } catch (_) {}
+                    assert.strictEqual(a._col, null, 'outer finally released despite inner throw');
+
+                    // default mode:未设环境变量 → op 后集合仍开(现行为不变)
+                    delete process.env.EVO_LITE_INDEX_EPHEMERAL;
+                    resetCliModuleCache();
+                    const { ZvecMemoryIndex: DefaultZvec } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                    const d = new DefaultZvec();
+                    d.upsert({ content: 'default tenure probe', namespace: 'prose', timestamp: '2026-07-23T00:01:00Z' });
+                    assert.ok(d._col !== null, 'default mode keeps collection open after op');
+                    d.close();
+                    assert.strictEqual(lock.readOwner(d._dir).state, 'missing', 'close clears owner in default mode too');
+                } finally {
+                    if (prevEphemeral === undefined) delete process.env.EVO_LITE_INDEX_EPHEMERAL;
+                    else process.env.EVO_LITE_INDEX_EPHEMERAL = prevEphemeral;
+                    resetCliModuleCache();
+                }
+            }
+        }
+        console.log('✅ T-lock-ephemeral passed');
+
         console.log('T-SPACE-ENGINE. Testing verify memory-space line reports the ACTIVE index engine (skips if @zvec/zvec absent) ...');
         {
             let zvecAvailable = true;
