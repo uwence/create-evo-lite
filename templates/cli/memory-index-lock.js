@@ -223,6 +223,79 @@ function isExpectedMcpProcess(snapshot, owner) {
     return Math.abs(ownerT - snapT) <= STARTED_AT_TOLERANCE_MS;
 }
 
+function enumerationCommand() {
+    if (process.platform === 'win32') {
+        return 'Get-CimInstance Win32_Process -Filter "Name=\'node.exe\'" | Where-Object { $_.CommandLine -match \'memory\\.js mcp\' } | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine';
+    }
+    return 'ps -eo pid,ppid,lstart,args | grep "memory\\.js mcp"';
+}
+
+// 四道闸判定(设计 §4.2,R2):只有全部通过才判 orphaned-own-mcp(可自愈);
+// 任何一道不过或信息不可得 → live-foreign / unknown(report-only)。
+// verdict 'dead-holder' 是闸① ESRCH 分支的显式编码(清理仍走 CAS)。
+function diagnoseLockConflict(dir, ctx = {}) {
+    const lockPath = path.join(dir, 'collection', 'LOCK');
+    const base = { lockPath, enumerate: enumerationCommand() };
+    const rec = readOwner(dir);
+    // 前置:readOwner.state !== 'valid' → unknown,不进闸不进自愈(R1 P0-2)
+    if (rec.state !== 'valid') {
+        return {
+            verdict: 'unknown', owner: rec.owner, snapshot: null,
+            report: { ...base, reason: `owner sidecar ${rec.state}(${rec.errors.join('; ')});持有者未登记(可能为旧版 evo-lite MCP),绝不自动终止` },
+        };
+    }
+    const owner = rec.owner;
+    const snapshot = getProcessSnapshot(owner.pid, ctx.seams);
+    // 闸①:已死 → 死持有者(无进程可杀,仅允许 CAS 清 stale owner)
+    if (snapshot && snapshot.alive === false) {
+        return {
+            verdict: 'dead-holder', owner, snapshot, observedLeaseId: owner.leaseId,
+            report: { ...base, reason: `holder pid ${owner.pid} 已退出,残留 stale owner,可安全清理后重试` },
+        };
+    }
+    // 快照不可得(查询失败/权限不足)→ unknown
+    if (!snapshot || snapshot.isNode == null || !snapshot.commandLine || !snapshot.startedAt) {
+        return {
+            verdict: 'unknown', owner, snapshot,
+            report: { ...base, reason: `无法确认 pid ${owner.pid} 的进程身份(查询失败或权限不足),绝不自动终止` },
+        };
+    }
+    // 闸②:live 身份复验(isNode + memory.js 归一路径 + mcp token + startedAt 吻合)
+    if (!isExpectedMcpProcess(snapshot, owner)) {
+        return {
+            verdict: 'unknown', owner, snapshot,
+            report: { ...base, reason: `pid ${owner.pid} 不是预期的 memory.js mcp 进程(可能 PID 复用或身份伪报),绝不自动终止` },
+        };
+    }
+    // 闸④:项目归属 + 角色声明
+    const projectRoot = ctx.projectRoot || process.cwd();
+    if (normalizePath(owner.projectRoot) !== normalizePath(projectRoot) || owner.mode !== 'mcp') {
+        return {
+            verdict: 'live-foreign', owner, snapshot,
+            report: { ...base, reason: `pid ${owner.pid} 属于其他项目或非 MCP 角色,不会自动终止该进程` },
+        };
+    }
+    // 平台策略(plan R1 P1-2):孤儿自愈仅 win32 —— unix detached 孤儿会被
+    // init/systemd 接管(ppid→1 且存活),闸③在 unix 上不可靠,一律 report-only。
+    if (process.platform !== 'win32') {
+        return {
+            verdict: 'live-foreign', owner, snapshot,
+            report: { ...base, reason: `pid ${owner.pid}:unix 平台孤儿自愈默认关闭(孤儿被 init 接管,父进程判定不可靠),仅诊断不终止` },
+        };
+    }
+    // 闸③:父进程仍活着 = 有人管着它
+    if (snapshot.ppidAlive !== false) {
+        return {
+            verdict: 'live-foreign', owner, snapshot,
+            report: { ...base, reason: `pid ${owner.pid} 的父进程 ${snapshot.ppid} 仍存活,不会自动终止该进程` },
+        };
+    }
+    return {
+        verdict: 'orphaned-own-mcp', owner, snapshot, observedLeaseId: owner.leaseId,
+        report: { ...base, reason: `pid ${owner.pid} 为本仓孤儿 MCP(四道闸全部通过),允许安全自愈` },
+    };
+}
+
 module.exports = {
     OWNER_FILE,
     SCHEMA_VERSION,
@@ -238,4 +311,6 @@ module.exports = {
     normalizePath,
     commandTokens,
     isExpectedMcpProcess,
+    enumerationCommand,
+    diagnoseLockConflict,
 };

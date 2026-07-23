@@ -2280,6 +2280,167 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-lock-ident passed');
 
+        console.log('T-lock-orphan-refusal-matrix. Testing four-gate refusal — 11 cases, never killable ...');
+        {
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+            const HERE = WORKSPACE_ROOT;
+            const mkLockDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-refuse-'));
+            const writeRaw = (dir, obj) => fs.writeFileSync(
+                path.join(dir, 'owner.json'),
+                typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2), 'utf8');
+            const baseOwner = (over = {}) => ({
+                schemaVersion: 1, leaseId: 'lease-refuse', pid: 999999, ppid: 1,
+                processStartedAt: '2026-07-23T00:00:00.000Z',
+                entrypoint: path.join(os.tmpdir(), 'fake-entry', 'memory.js'),
+                mode: 'mcp', access: 'write', projectRoot: HERE,
+                createdAt: '2026-07-23T00:00:00.000Z', ...over,
+            });
+            // 拒杀三件套:verdict 绝非 orphaned / 诊断信息在场 / owner 未被删改 / 目标进程存活
+            const ownerBytes = dir => fs.readFileSync(path.join(dir, 'owner.json'), 'utf8');
+            const assertRefusal = (dir, before, diag, holderPid) => {
+                assert.notStrictEqual(diag.verdict, 'orphaned-own-mcp', 'must never be killable');
+                assert.notStrictEqual(diag.verdict, 'dead-holder', 'must not treat as cleanable stale owner');
+                assert.ok(diag.report && diag.report.reason, 'report carries a reason');
+                assert.ok(diag.report.lockPath.includes('LOCK'), 'report names the LOCK path');
+                assert.ok(diag.report.enumerate.includes('memory'), 'report carries enumeration command');
+                assert.strictEqual(ownerBytes(dir), before, 'owner.json untouched');
+                if (holderPid) assert.ok(lock.pidAlive(holderPid), 'target process must survive');
+            };
+            // 长驻 holder:脚本文件名与 argv 可控(伪装 memory.js mcp / stats 等形态)
+            const spawnHolder = (scriptName, args) => {
+                const hd = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-holder-'));
+                const scriptPath = path.join(hd, scriptName);
+                fs.writeFileSync(scriptPath, 'setInterval(() => {}, 1000);\n', 'utf8');
+                const child = childProcess.spawn(process.execPath, [scriptPath, ...args], { stdio: 'ignore' });
+                return { child, scriptPath };
+            };
+            const holders = [];
+            try {
+                // 1. pid 存活但非 memory.js 进程(闸②:entrypoint 不匹配)
+                {
+                    const dir = mkLockDir();
+                    const { child, scriptPath } = spawnHolder('plain.js', []);
+                    holders.push(child);
+                    writeRaw(dir, baseOwner({ pid: child.pid, entrypoint: scriptPath }));
+                    const before = ownerBytes(dir);
+                    const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
+                    assert.strictEqual(diag.verdict, 'unknown', 'case 1: non-memory.js holder');
+                    assertRefusal(dir, before, diag, child.pid);
+                }
+                // 2. projectRoot 不一致(闸④)—— holder 是 memory.js mcp 形态,身份闸通过
+                {
+                    const dir = mkLockDir();
+                    const { child, scriptPath } = spawnHolder('memory.js', ['mcp']);
+                    holders.push(child);
+                    const snap = lock.getProcessSnapshot(child.pid);
+                    assert.ok(snap && snap.startedAt, 'live snapshot available for holder');
+                    writeRaw(dir, baseOwner({
+                        pid: child.pid, entrypoint: scriptPath,
+                        processStartedAt: snap.startedAt,
+                        projectRoot: path.join(os.tmpdir(), 'some-other-repo'),
+                    }));
+                    const before = ownerBytes(dir);
+                    const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
+                    assert.strictEqual(diag.verdict, 'live-foreign', 'case 2: foreign project');
+                    assertRefusal(dir, before, diag, child.pid);
+                }
+                // 3. ppid 仍存活(闸③)—— holder 由测试进程直接 spawn
+                {
+                    const dir = mkLockDir();
+                    const { child, scriptPath } = spawnHolder('memory.js', ['mcp']);
+                    holders.push(child);
+                    const snap = lock.getProcessSnapshot(child.pid);
+                    writeRaw(dir, baseOwner({ pid: child.pid, entrypoint: scriptPath, processStartedAt: snap.startedAt }));
+                    const before = ownerBytes(dir);
+                    const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
+                    assert.strictEqual(diag.verdict, 'live-foreign', 'case 3: parent still alive');
+                    assert.ok(String(diag.report.reason).includes('不会自动终止'), 'live-foreign states no auto-kill');
+                    assertRefusal(dir, before, diag, child.pid);
+                }
+                // 4. 快照不可得(seam 返回 null)
+                {
+                    const dir = mkLockDir();
+                    writeRaw(dir, baseOwner());
+                    const before = ownerBytes(dir);
+                    const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE, seams: { snapshotFn: () => null } });
+                    assert.strictEqual(diag.verdict, 'unknown', 'case 4: snapshot unavailable');
+                    assertRefusal(dir, before, diag, null);
+                }
+                // 5. owner 损坏(半截 JSON)
+                {
+                    const dir = mkLockDir();
+                    writeRaw(dir, '{ "schemaVersion": 1, "leaseId": "trunc');
+                    const before = ownerBytes(dir);
+                    const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
+                    assert.strictEqual(diag.verdict, 'unknown', 'case 5: corrupt owner');
+                    assert.ok(String(diag.report.reason).includes('持有者未登记'), 'corrupt reads as unregistered holder');
+                    assertRefusal(dir, before, diag, null);
+                }
+                // 6. PID 复用(闸②:startedAt 与快照不符)
+                {
+                    const dir = mkLockDir();
+                    const { child, scriptPath } = spawnHolder('memory.js', ['mcp']);
+                    holders.push(child);
+                    writeRaw(dir, baseOwner({ pid: child.pid, entrypoint: scriptPath, processStartedAt: '2020-01-01T00:00:00.000Z' }));
+                    const before = ownerBytes(dir);
+                    const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
+                    assert.strictEqual(diag.verdict, 'unknown', 'case 6: startedAt mismatch = PID reuse');
+                    assertRefusal(dir, before, diag, child.pid);
+                }
+                // 7. 权限不足(seam 抛 access-denied)
+                {
+                    const dir = mkLockDir();
+                    writeRaw(dir, baseOwner());
+                    const before = ownerBytes(dir);
+                    const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE, seams: { snapshotFn: () => { throw new Error('access denied'); } } });
+                    assert.strictEqual(diag.verdict, 'unknown', 'case 7: access denied');
+                    assertRefusal(dir, before, diag, null);
+                }
+                // 8/9/10. identity-critical 缺失或 schemaVersion 未知(R1 P0-2)
+                {
+                    const mutations = [
+                        ['missing processStartedAt', o => { delete o.processStartedAt; }],
+                        ['missing leaseId', o => { delete o.leaseId; }],
+                        ['schemaVersion 99', o => { o.schemaVersion = 99; }],
+                    ];
+                    for (const [label, mutate] of mutations) {
+                        const dir = mkLockDir();
+                        const o = baseOwner();
+                        mutate(o);
+                        writeRaw(dir, o);
+                        const before = ownerBytes(dir);
+                        const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
+                        assert.strictEqual(diag.verdict, 'unknown', `case 8-10 (${label}): invalid owner is report-only`);
+                        assertRefusal(dir, before, diag, null);
+                    }
+                }
+                // 11. 实际命令非 mcp + owner.mode 伪造 'mcp'(R1 P1)
+                {
+                    const dir = mkLockDir();
+                    const { child, scriptPath } = spawnHolder('memory.js', ['stats']);
+                    holders.push(child);
+                    const snap = lock.getProcessSnapshot(child.pid);
+                    writeRaw(dir, baseOwner({ pid: child.pid, entrypoint: scriptPath, processStartedAt: snap.startedAt, mode: 'mcp' }));
+                    const before = ownerBytes(dir);
+                    const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
+                    assert.strictEqual(diag.verdict, 'unknown', 'case 11: stats holder with forged mode must never be killable');
+                    assertRefusal(dir, before, diag, child.pid);
+                }
+                // 正向对照:闸① ESRCH → dead-holder + observedLeaseId(观察字段;接管路径不预删 owner)
+                {
+                    const dir = mkLockDir();
+                    const dead = childProcess.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+                    writeRaw(dir, baseOwner({ pid: dead.pid }));
+                    const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
+                    assert.strictEqual(diag.verdict, 'dead-holder');
+                    assert.strictEqual(diag.observedLeaseId, 'lease-refuse', 'observed leaseId captured for diagnostics');
+                }
+            } finally {
+                for (const h of holders) { try { h.kill(); } catch (_) {} }
+            }
+        }
+        console.log('✅ T-lock-orphan-refusal-matrix passed (11/11 refusals + dead-holder probe)');
+
         console.log('T-SPACE-ENGINE. Testing verify memory-space line reports the ACTIVE index engine (skips if @zvec/zvec absent) ...');
         {
             let zvecAvailable = true;
