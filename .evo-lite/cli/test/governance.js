@@ -2314,6 +2314,17 @@ async function runGovernanceTests() {
                 const child = childProcess.spawn(process.execPath, [scriptPath, ...args], { stdio: 'ignore' });
                 return { child, scriptPath };
             };
+            // 防 flake:等待 OS 进程表可见(快照含 startedAt)再继续
+            const waitForSnapshot = pid => {
+                const deadline = Date.now() + 5000;
+                let snap = lock.getProcessSnapshot(pid);
+                while ((!snap || !snap.startedAt) && Date.now() < deadline) {
+                    lock.sleepSync(100);
+                    snap = lock.getProcessSnapshot(pid);
+                }
+                assert.ok(snap && snap.startedAt, `snapshot for pid ${pid} must become available`);
+                return snap;
+            };
             const holders = [];
             try {
                 // 1. pid 存活但非 memory.js 进程(闸②:entrypoint 不匹配)
@@ -2332,8 +2343,7 @@ async function runGovernanceTests() {
                     const dir = mkLockDir();
                     const { child, scriptPath } = spawnHolder('memory.js', ['mcp']);
                     holders.push(child);
-                    const snap = lock.getProcessSnapshot(child.pid);
-                    assert.ok(snap && snap.startedAt, 'live snapshot available for holder');
+                    const snap = waitForSnapshot(child.pid);
                     writeRaw(dir, baseOwner({
                         pid: child.pid, entrypoint: scriptPath,
                         processStartedAt: snap.startedAt,
@@ -2349,7 +2359,7 @@ async function runGovernanceTests() {
                     const dir = mkLockDir();
                     const { child, scriptPath } = spawnHolder('memory.js', ['mcp']);
                     holders.push(child);
-                    const snap = lock.getProcessSnapshot(child.pid);
+                    const snap = waitForSnapshot(child.pid);
                     writeRaw(dir, baseOwner({ pid: child.pid, entrypoint: scriptPath, processStartedAt: snap.startedAt }));
                     const before = ownerBytes(dir);
                     const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
@@ -2419,7 +2429,7 @@ async function runGovernanceTests() {
                     const dir = mkLockDir();
                     const { child, scriptPath } = spawnHolder('memory.js', ['stats']);
                     holders.push(child);
-                    const snap = lock.getProcessSnapshot(child.pid);
+                    const snap = waitForSnapshot(child.pid);
                     writeRaw(dir, baseOwner({ pid: child.pid, entrypoint: scriptPath, processStartedAt: snap.startedAt, mode: 'mcp' }));
                     const before = ownerBytes(dir);
                     const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
@@ -2855,6 +2865,7 @@ async function runGovernanceTests() {
                         const held = lock.readOwner(zvecDir);
                         assert.strictEqual(held.state, 'valid', 'owner present while index holds the lock');
                         assert.strictEqual(held.owner.pid, Number(fs.readFileSync(readyFile, 'utf8')), 'owner is the wrapper process');
+                        assert.strictEqual(held.owner.mode, 'cli', 'wrapper index opened before runMcpServer declares mcp mode');
                         child.stdin.write(rpc(0, 'initialize', {
                             protocolVersion: '2024-11-05', capabilities: {},
                             clientInfo: { name: 't-lock-stdin-b', version: '1' },

@@ -250,7 +250,7 @@ function diagnoseLockConflict(dir, ctx = {}) {
     if (snapshot && snapshot.alive === false) {
         return {
             verdict: 'dead-holder', owner, snapshot, observedLeaseId: owner.leaseId,
-            report: { ...base, reason: `holder pid ${owner.pid} 已退出,残留 stale owner,可安全清理后重试` },
+            report: { ...base, reason: `holder pid ${owner.pid} 已退出,残留 stale owner(接管成功时将被原子覆盖,无需手动清理),可重试` },
         };
     }
     // 快照不可得(查询失败/权限不足)→ unknown
@@ -285,9 +285,12 @@ function diagnoseLockConflict(dir, ctx = {}) {
     }
     // 闸③:父进程仍活着 = 有人管着它
     if (snapshot.ppidAlive !== false) {
+        const ppidState = snapshot.ppidAlive === true
+            ? `父进程 ${snapshot.ppid} 仍存活`
+            : `父进程状态无法确认(ppid ${snapshot.ppid})`;
         return {
             verdict: 'live-foreign', owner, snapshot,
-            report: { ...base, reason: `pid ${owner.pid} 的父进程 ${snapshot.ppid} 仍存活,不会自动终止该进程` },
+            report: { ...base, reason: `pid ${owner.pid} 的${ppidState},不会自动终止该进程` },
         };
     }
     return {
