@@ -357,6 +357,9 @@ JSON-RPC,**等到 initialize response**(不用固定 sleep)→ `stdin.end()` →
 4. reader close 后 writer 是否立即成功;5. writer 存活时 reader 是否失败;
 6. writer close 后 reader 是否恢复;7. Windows + Node binding 的错误形状
    (isZVecError / message 是否仍匹配 `isLockError`)。
+8. **必须重验 `isLockError` 的 message 匹配**(终局复审要求):检测锚定在
+   0.5.0 的 `/can't lock/i` 错误文本上,0.6 若变更文案会把所有锁冲突静默降级
+   为原样 rethrow(失去诊断),升级时第一优先验证。
 
 实测结论决定:MCP 可否长活持有 read-only handle,还是维持每请求开合;
 coordinator 是否需要同时管理 reader 与 writer。

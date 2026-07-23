@@ -1,7 +1,7 @@
 ---
 id: plan:mcp-zvec-lock-mvp
 title: "Plan: MCP zvec lock coordination (a177)"
-status: active
+status: done
 ---
 
 # [a177] MCP zvec 锁协调 Implementation Plan
@@ -69,7 +69,7 @@ status: active
   - `processMode() → 'mcp'|'cli'` — 读 `EVO_LITE_PROCESS_MODE`。
   - 常量 `OWNER_FILE = 'owner.json'`、`SCHEMA_VERSION = 1`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `templates/cli/test/governance.js` 顶部 import 区确认存在 `const childProcess = require('child_process');`,没有则在 `const assert = require('assert');` 之后加上。然后在 `console.log('✅ T-ZV ZvecMemoryIndex passed');` 行之后插入:
 
@@ -139,12 +139,12 @@ status: active
         console.log('✅ T-lock-owner owner sidecar passed');
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL,`Cannot find module '...memory-index-lock.js'`。
 
-- [ ] **Step 3: 实现 `templates/cli/memory-index-lock.js`(初版:sidecar 部分)**
+- [x] **Step 3: 实现 `templates/cli/memory-index-lock.js`(初版:sidecar 部分)**
 
 ```js
 'use strict';
@@ -269,16 +269,16 @@ module.exports = {
 };
 ```
 
-- [ ] **Step 4: harness 缓存列表加新模块**
+- [x] **Step 4: harness 缓存列表加新模块**
 
 `templates/cli/test/harness.js` 中 `resetCliModuleCache` 的文件数组(现为 `['runtime.js', 'db.js', 'models.js', 'memory-index-util.js', 'memory-index.js', 'memory-index-zvec.js', 'memory.service.js', 'mcp-detect.js', 'memory.js']`)在 `'memory-index-zvec.js'` 后插入 `'memory-index-lock.js'`。
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS,输出含 `✅ T-lock-owner owner sidecar passed`。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/memory-index-lock.js templates/cli/test/governance.js templates/cli/test/harness.js
@@ -301,7 +301,7 @@ git commit -m "feat(lock): owner sidecar with atomic publish, lease CAS, schema-
   - `isExpectedMcpProcess(snapshot, owner) → boolean` — isNode + 存在 token 与归一化 owner.entrypoint **精确等值**(禁止 suffix 匹配)+ 其后 token === `'mcp'` + `processStartedAt` **必须存在**且与 snapshot.startedAt 在 ±2s(`STARTED_AT_TOLERANCE_MS = 2000`)内吻合。
   - `normalizePath(p) → string`、`commandTokens(commandLine) → string[]`(quote-aware:支持双/单引号包裹的含空格路径)。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 插在 `console.log('✅ T-lock-owner owner sidecar passed');` 之后:
 
@@ -362,12 +362,12 @@ git commit -m "feat(lock): owner sidecar with atomic publish, lease CAS, schema-
         console.log('✅ T-lock-ident passed');
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL,`lock.getProcessSnapshot is not a function`。
 
-- [ ] **Step 3: 实现(在 `memory-index-lock.js` 的 `readOwner` 之后、`module.exports` 之前追加)**
+- [x] **Step 3: 实现(在 `memory-index-lock.js` 的 `readOwner` 之后、`module.exports` 之前追加)**
 
 ```js
 const { execFileSync } = require('child_process');
@@ -507,12 +507,12 @@ module.exports = {
 
 (`const { execFileSync } = require('child_process');` 移到文件顶部 require 区。)
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS,输出含 `✅ T-lock-ident passed`。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/memory-index-lock.js templates/cli/test/governance.js
@@ -538,7 +538,7 @@ git commit -m "feat(lock): process snapshot (CIM/ps) + isExpectedMcpProcess with
     - `report = { lockPath, reason, enumerate }`;`observedLeaseId` 仅在 dead-holder / orphaned-own-mcp 时给出(观察字段;plan R1 P0-1 后接管路径**不预删** owner,该字段仅供诊断展示)。
   - `enumerationCommand() → string`(可复制的持有者枚举命令)。
 
-- [ ] **Step 1: 写失败测试(11 例拒杀矩阵,含设计 R1 增补)**
+- [x] **Step 1: 写失败测试(11 例拒杀矩阵,含设计 R1 增补)**
 
 插在 `console.log('✅ T-lock-ident passed');` 之后:
 
@@ -705,12 +705,12 @@ git commit -m "feat(lock): process snapshot (CIM/ps) + isExpectedMcpProcess with
         console.log('✅ T-lock-orphan-refusal-matrix passed (11/11 refusals + dead-holder probe)');
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL,`lock.diagnoseLockConflict is not a function`。
 
-- [ ] **Step 3: 实现(在 `isExpectedMcpProcess` 之后追加)**
+- [x] **Step 3: 实现(在 `isExpectedMcpProcess` 之后追加)**
 
 ```js
 function enumerationCommand() {
@@ -789,12 +789,12 @@ function diagnoseLockConflict(dir, ctx = {}) {
 
 `module.exports` 追加 `enumerationCommand,`、`diagnoseLockConflict,` 两项。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS,输出含 `✅ T-lock-orphan-refusal-matrix passed (11/11 refusals + dead-holder probe)`。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/memory-index-lock.js templates/cli/test/governance.js
@@ -819,7 +819,7 @@ git commit -m "feat(lock): four-gate diagnoseLockConflict + 11-case refusal matr
   - `sleepSync(ms)`、`waitForExit(pid, timeoutMs) → boolean`。
   - 常量 `BACKOFF_RETRIES = 3`、`BACKOFF_MS = 100`、`TERM_WAIT_MS = 1500`、`KILL_WAIT_MS = 1000`、`POLL_MS = 100`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 插在 `console.log('✅ T-lock-orphan-refusal-matrix passed (11/11 refusals + dead-holder probe)');` 之后:
 
@@ -1051,12 +1051,12 @@ git commit -m "feat(lock): four-gate diagnoseLockConflict + 11-case refusal matr
         console.log('✅ T-lock-coordination passed');
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL,`lock.openWithCoordination is not a function`。
 
-- [ ] **Step 3: 实现(在 `diagnoseLockConflict` 之后追加)**
+- [x] **Step 3: 实现(在 `diagnoseLockConflict` 之后追加)**
 
 ```js
 const BACKOFF_RETRIES = 3;
@@ -1219,12 +1219,12 @@ function openWithCoordination(openFn, dir, ctx = {}) {
 
 `module.exports` 追加:`BACKOFF_RETRIES, BACKOFF_MS, TERM_WAIT_MS, KILL_WAIT_MS, POLL_MS, POST_KILL_SETTLE_MS, sleepSync, waitForExit, isLockError, attemptSelfHeal, openWithCoordination,`。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS,输出含 `✅ T-lock-coordination passed`(zvec 在场时 live-foreign + orphan 两例都执行)。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/memory-index-lock.js templates/cli/test/governance.js
@@ -1243,7 +1243,7 @@ git commit -m "feat(lock): openWithCoordination with backoff, CAS dead-holder cl
 - Consumes: Task 4 `openWithCoordination`;Task 1 `clearOwner`;`./runtime` 的 `getWorkspaceRoot`。
 - Produces: `EVO_LITE_INDEX_EPHEMERAL=1` 下所有公开操作(upsert/searchText/delete/stats/list)open→op→finalize;`_withCollection(fn)` 重入计数;`_finalizeSync` 末尾 CAS 清 owner。环境变量未设 → 现行为完全不变。`SqliteFtsIndex` 不改。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 插在 `console.log('✅ T-lock-coordination passed');` 之后:
 
@@ -1320,12 +1320,12 @@ git commit -m "feat(lock): openWithCoordination with backoff, CAS dead-holder cl
         console.log('✅ T-lock-ephemeral passed');
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL(`a._col` 在 upsert 后非 null,或 `_withCollection` 不存在)。
 
-- [ ] **Step 3: 修改 `templates/cli/memory-index-zvec.js`**
+- [x] **Step 3: 修改 `templates/cli/memory-index-zvec.js`**
 
 require 区(第 5-7 行附近)改为:
 
@@ -1532,12 +1532,12 @@ initialize 的打开语句改为(exit hook 与 idFile 逻辑不动):
     }
 ```
 
-- [ ] **Step 4: 跑测试确认通过(含既有 T-ZV 回归)**
+- [x] **Step 4: 跑测试确认通过(含既有 T-ZV 回归)**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS,`✅ T-lock-ephemeral passed` 与 `✅ T-ZV ZvecMemoryIndex passed` 同时在场(默认模式行为未变)。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/memory-index-zvec.js templates/cli/test/governance.js
@@ -1557,7 +1557,7 @@ git commit -m "feat(lock): ephemeral lock tenure in ZvecMemoryIndex via reentran
 - Consumes: Task 5 的 ephemeral 行为;Task 1 `readOwner`。
 - Produces: `runMcpServer` 启动即设 `EVO_LITE_INDEX_EPHEMERAL=1` + `EVO_LITE_PROCESS_MODE='mcp'`;stdin `end`/`close`、`server.onclose`、SIGINT/SIGTERM 全部收敛到幂等 `shutdown()`;`memory-index.js` 导出 `peekMemoryIndex() → MemoryIndex|null`(只读,不创建实例)。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 插在 `console.log('✅ T-lock-ephemeral passed');` 之后:
 
@@ -1706,12 +1706,12 @@ git commit -m "feat(lock): ephemeral lock tenure in ZvecMemoryIndex via reentran
         console.log('✅ T-mcp-stdin-exit passed (A: lifecycle, B: shutdown cleanup)');
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL —— 现版 MCP 无 stdin 处理,stdin EOF 后进程不退出,failsafe 触发 `killedByTimeout = true` 断言失败。
 
-- [ ] **Step 3: `templates/cli/memory-index.js` 新增只读访问器**
+- [x] **Step 3: `templates/cli/memory-index.js` 新增只读访问器**
 
 在 `getMemoryIndex` / `resetMemoryIndex`(约 215-230 行)旁新增并导出:
 
@@ -1725,7 +1725,7 @@ function peekMemoryIndex() {
 
 `module.exports` 追加 `peekMemoryIndex`。
 
-- [ ] **Step 4: 改写 `runMcpServer`(templates/cli/mcp-server.js)**
+- [x] **Step 4: 改写 `runMcpServer`(templates/cli/mcp-server.js)**
 
 整个函数替换为:
 
@@ -1791,12 +1791,12 @@ async function runMcpServer() {
 }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS,输出含 `✅ T-mcp-stdin-exit passed (A: lifecycle, B: shutdown cleanup)`。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add templates/cli/mcp-server.js templates/cli/memory-index.js templates/cli/test/governance.js
@@ -1815,7 +1815,7 @@ git commit -m "feat(lock): MCP stdin-EOF lifecycle + process-mode declaration + 
 - Consumes: Task 1-6 全部产出。
 - Produces: 模板/镜像 byte-identical;双侧 all 套件绿;manifest +1 条。
 
-- [ ] **Step 1: manifest 注册**
+- [x] **Step 1: manifest 注册**
 
 `templates/cli/template-manifest.js` core-cli `files` 数组中,`'memory-index-zvec.js',` 之后插入一行:
 
@@ -1823,12 +1823,12 @@ git commit -m "feat(lock): MCP stdin-EOF lifecycle + process-mode declaration + 
             'memory-index-lock.js',
 ```
 
-- [ ] **Step 2: 模板侧全量回归**
+- [x] **Step 2: 模板侧全量回归**
 
 Run: `node templates/cli/test.js all`
 Expected: EXIT 0(governance + integration 全绿;若有 manifest 一致性断言,按其报错把断言集合更新为含 `memory-index-lock.js` 的新集合 —— 用集合相等,不硬编码计数)。
 
-- [ ] **Step 3: 同步镜像至收敛**
+- [x] **Step 3: 同步镜像至收敛**
 
 Run(重复直到输出 `copied: 0`,manifest 变更时预期 2-3 次):
 
@@ -1839,12 +1839,12 @@ Run(重复直到输出 `copied: 0`,manifest 变更时预期 2-3 次):
 
 Expected: 最后一次 `copied: 0`,无 divergence 警告。
 
-- [ ] **Step 4: 镜像侧全量回归**
+- [x] **Step 4: 镜像侧全量回归**
 
 Run: `node .evo-lite/cli/test.js all`
 Expected: EXIT 0。
 
-- [ ] **Step 5: 母仓实景 smoke**
+- [x] **Step 5: 母仓实景 smoke**
 
 ```powershell
 .\.evo-lite\mem.cmd verify
@@ -1852,7 +1852,7 @@ Expected: EXIT 0。
 
 Expected: EXIT 0,verify 输出健康(不引入新 findings)。
 
-- [ ] **Step 6: Commit(模板 + 镜像一起)**
+- [x] **Step 6: Commit(模板 + 镜像一起)**
 
 ```bash
 git add templates/cli/template-manifest.js .evo-lite/cli/

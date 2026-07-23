@@ -1,7 +1,7 @@
 ---
 id: spec:mcp-zvec-lock
 title: "Spec: MCP zvec lock coordination (a177)"
-status: adopted
+status: done
 linkedPlan: plan:mcp-zvec-lock-mvp
 ---
 
@@ -37,6 +37,17 @@ linkedPlan: plan:mcp-zvec-lock-mvp
 
 收口条件:上述测试全绿 + 双侧 all 套件全绿 + 镜像 double-run-zero + 母仓实景
 `mem commit` 不再撞锁 + 两个子仓 nurture 完成。
+
+**收口记录(2026-07-23):**Task 1-7 实施于 `c9df604..ed9f0bd`(SDD,逐任务独立
+复审 + 3 个 fix wave;opus 终局全分支复审 **Ready to merge: Yes**,终局 fix wave
+`de2478f`+镜像 `e1a7ccd`)。双侧 `test.js all` 控制器亲验 EXIT 0;镜像 copied: 0;
+终局门演练:枚举命令逐字可跑;存量清点 0 孤儿(两个在场 MCP 父进程均为存活
+claude 会话 → live-foreign 政策正确不杀);legacy-zombie 合成演练 PASS(无
+owner.json 持锁者 → EVO_ZVEC_LOCKED/unknown 拒杀 + 持有者未登记 + 枚举命令)。
+**Rollout 注意:**(1) 旧版僵尸(无 owner sidecar)只能诊断不能自愈,上线时需
+一次手动清扫,此后由 Layer 2/3 接管;(2) 子仓 nurture 若分批落盘,
+`memory-index-lock.js` 未到位期间引擎会优雅降级 sqlite(console.warn),再跑一次
+sync 收敛即恢复;(3) SIGKILL 打断写入的极端情形下,`mem rebuild` 是恢复路径。
 
 ## Phases
 
