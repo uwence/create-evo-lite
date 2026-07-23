@@ -90,7 +90,7 @@ node templates/cli/test.js governance
 **Interfaces:**
 - Produces: `createPageMap(opts?:{hashFn?:(raw:string)=>string}) -> { modulePage(moduleId:string):string, sourcePage(repoRelPath:string):string, modulePages():Record<string,string> }`;`readableSegment(raw)`;`normalizeRepoPath(p)`;`fullHash(raw)`。`hashFn` 默认 `fullHash`(sha1),注入缝仅供测试制造 hash8 碰撞。后续任务(render/build/source-pages)只经此模块生成页面链接,禁止手拼。
 
-- [ ] **Step 1: 写失败测试**(追加到 governance.js `runChildRuntimeTests()` 内、T-ce 系列块之后)
+- [x] **Step 1: 写失败测试**(追加到 governance.js `runChildRuntimeTests()` 内、T-ce 系列块之后)
 
 ```js
 console.log('T-wiki-pagemap. Unified Windows-safe page mapping with collision rules ...');
@@ -136,14 +136,14 @@ console.log('T-wiki-pagemap. Unified Windows-safe page mapping with collision ru
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 node templates/cli/test.js governance
 ```
 预期:`Cannot find module ... wiki/page-map`。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```js
 'use strict';
@@ -207,7 +207,7 @@ function createPageMap(opts) {
 module.exports = { createPageMap, readableSegment, normalizeRepoPath, fullHash };
 ```
 
-- [ ] **Step 4: 建立 Architecture module 规则**
+- [x] **Step 4: 建立 Architecture module 规则**
 
 `templates/cli/architecture/infer-modules.js` — MODULE_RULES 数组 `module:dashboard` 规则之后(`module:runtime` 之前)插入:
 
@@ -224,7 +224,7 @@ module.exports = { createPageMap, readableSegment, normalizeRepoPath, fullHash }
 
 (first-match-wins;`templates/cli/wiki/` 不与任何既有规则重叠,插入点仅为可读性。)
 
-- [ ] **Step 5: 登记 template-manifest(sync 前置条件 —— 未登记的文件镜像不会生成)**
+- [x] **Step 5: 登记 template-manifest(sync 前置条件 —— 未登记的文件镜像不会生成)**
 
 `templates/cli/template-manifest.js` — core-cli `files` 数组 `'code-perception/cli.js',` 之后追加:
 
@@ -232,14 +232,14 @@ module.exports = { createPageMap, readableSegment, normalizeRepoPath, fullHash }
             'wiki/page-map.js',
 ```
 
-- [ ] **Step 6: 跑测试确认通过**
+- [x] **Step 6: 跑测试确认通过**
 
 ```bash
 node templates/cli/test.js governance
 ```
 预期:`✅ T-wiki-pagemap passed`,套件 EXIT 0(含 manifest/mirror 相关既有测试)。
 
-- [ ] **Step 7: 同步镜像 + 提交**
+- [x] **Step 7: 同步镜像 + 提交**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
@@ -260,7 +260,7 @@ git commit -m "feat(wiki): unified Windows-safe page mapping + module:architectu
 - Consumes: 无(独立)。
 - Produces: `loadWikiGroups(projectRoot, knownModuleIds:string[]) -> { ok:true, config:null | { laneLabels:Record<string,string>, moduleAliases:Record<string,string>, groups:[{id,name,order,moduleIds}] } } | { ok:false, errors:string[] }`。`config:null` 表示无配置文件(默认 role 泳道);`ok:false` 由 CLI 映射为 exit 2。`GROUPS_VERSION = 'evo-wiki-groups@1'`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```js
 console.log('T-wiki-groups. wiki-groups.json validation: exit-2 matrix + defaults ...');
@@ -319,9 +319,9 @@ console.log('T-wiki-groups. wiki-groups.json validation: exit-2 matrix + default
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/groups`)
+- [x] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/groups`)
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```js
 'use strict';
@@ -393,7 +393,7 @@ function loadWikiGroups(projectRoot, knownModuleIds) {
 module.exports = { loadWikiGroups, GROUPS_VERSION };
 ```
 
-- [ ] **Step 4: 登记 template-manifest**
+- [x] **Step 4: 登记 template-manifest**
 
 `templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/page-map.js',` 之后追加:
 
@@ -401,9 +401,9 @@ module.exports = { loadWikiGroups, GROUPS_VERSION };
             'wiki/groups.js',
 ```
 
-- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-groups passed`,EXIT 0)
+- [x] **Step 5: 跑测试确认通过**(`✅ T-wiki-groups passed`,EXIT 0)
 
-- [ ] **Step 6: 同步镜像 + 提交**
+- [x] **Step 6: 同步镜像 + 提交**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
@@ -452,7 +452,7 @@ git commit -m "feat(wiki): evo-wiki-groups@1 display-grouping validation with ex
   freshness 规则(canonical 三态):`fresh`/`stale` **只**允许来自 producer 显式记录的可比对快照对(`ir.sourceFingerprint` vs `ir.observedFingerprint`,当前 IR 均无 → 恒 unknown,这是前向兼容缝而非现状承诺);禁止用 generatedAt / mtime / build 成功 / drift 无警告(含 `dashboard-data.generatedDataFresh`)推断。
   数据不静默消失原则:info findings 计入 `driftInfo`(不参与健康分级);不可归属 findings 进 `unattributedFindings`;providers/结构索引 freshness、待确认关联(`linkSummary.proposed`)原样投影为确定性字段,由渲染层决定呈现。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```js
 console.log('T-wiki-projection. Deterministic ModuleProjection + ProjectHealth semantics ...');
@@ -560,9 +560,9 @@ console.log('T-wiki-projection. Deterministic ModuleProjection + ProjectHealth s
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/projection`)
+- [x] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/projection`)
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```js
 'use strict';
@@ -787,7 +787,7 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
 module.exports = { buildProjection, taskCompletion, computeFreshness, CANONICAL_ROLES, DONE_STATUSES, OPEN_STATUSES };
 ```
 
-- [ ] **Step 4: 登记 template-manifest**
+- [x] **Step 4: 登记 template-manifest**
 
 `templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/groups.js',` 之后追加:
 
@@ -795,9 +795,9 @@ module.exports = { buildProjection, taskCompletion, computeFreshness, CANONICAL_
             'wiki/projection.js',
 ```
 
-- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-projection passed`,EXIT 0)
+- [x] **Step 5: 跑测试确认通过**(`✅ T-wiki-projection passed`,EXIT 0)
 
-- [ ] **Step 6: 同步镜像 + 提交**
+- [x] **Step 6: 同步镜像 + 提交**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
@@ -826,7 +826,7 @@ git commit -m "feat(wiki): deterministic ModuleProjection + ProjectHealth fact m
   listBareTerms(text) -> string[]                 // 返回叙事中裸出现的 Rxxx(供测试断言为空)
   ```
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```js
 console.log('T-wiki-dictionary. Chinese dictionary coverage: no bare Rxxx in generated narrative ...');
@@ -852,9 +852,9 @@ console.log('T-wiki-dictionary. Chinese dictionary coverage: no bare Rxxx in gen
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/dictionary`)
+- [x] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/dictionary`)
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```js
 'use strict';
@@ -917,7 +917,7 @@ function listBareTerms(text) {
 module.exports = { RULE_LABELS, translateRule, healthLabel, roleLabel, progressLabel, moduleNarrative, listBareTerms };
 ```
 
-- [ ] **Step 4: 登记 template-manifest**
+- [x] **Step 4: 登记 template-manifest**
 
 `templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/projection.js',` 之后追加:
 
@@ -925,9 +925,9 @@ module.exports = { RULE_LABELS, translateRule, healthLabel, roleLabel, progressL
             'wiki/dictionary.js',
 ```
 
-- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-dictionary passed`,EXIT 0)
+- [x] **Step 5: 跑测试确认通过**(`✅ T-wiki-dictionary passed`,EXIT 0)
 
-- [ ] **Step 6: 同步镜像 + 提交**
+- [x] **Step 6: 同步镜像 + 提交**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
@@ -969,7 +969,7 @@ git commit -m "feat(wiki): Chinese dictionary + deterministic narrative template
 
 **布局规则(确定性,无布局引擎):** 泳道 = role(或 groups 配置);泳道按设计 §2.1 固定顺序 `entry, service, feature, ui, runtime, scanner, governance, docs, test, unknown, <其他按字典序>`;泳道内模块按 moduleId 字典序;卡片坐标 = 纯函数(泳道索引 × 列宽, 卡片索引 × 行高)。有合法边时在卡片中心间画折线。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```js
 console.log('T-wiki-render. SVG map: lanes, no-edge honesty, edge contract, unknown role ...');
@@ -1064,9 +1064,9 @@ console.log('T-wiki-render. SVG map: lanes, no-edge honesty, edge contract, unkn
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/render`)
+- [x] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/render`)
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```js
 'use strict';
@@ -1310,7 +1310,7 @@ function renderModulePage({ mp, pageMap, meta, sourcePageFor, groupsConfig }) {
 module.exports = { escapeHtml, validateEdges, computeLanes, renderSvgMap, renderIndex, renderModulePage, pageChrome };
 ```
 
-- [ ] **Step 4: 登记 template-manifest**
+- [x] **Step 4: 登记 template-manifest**
 
 `templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/dictionary.js',` 之后追加:
 
@@ -1318,9 +1318,9 @@ module.exports = { escapeHtml, validateEdges, computeLanes, renderSvgMap, render
             'wiki/render.js',
 ```
 
-- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-render passed`,EXIT 0)
+- [x] **Step 5: 跑测试确认通过**(`✅ T-wiki-render passed`,EXIT 0)
 
-- [ ] **Step 6: 同步镜像 + 提交**
+- [x] **Step 6: 同步镜像 + 提交**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
@@ -1348,7 +1348,7 @@ git commit -m "feat(wiki): SVG module map + index/module pages with Q5 page cont
   W7 build 用返回的 `pages` 落盘;module 页经 `sourcePageFor(f)` 查询(命中 pages → {page},命中 skipped → {reason})。
   **规模契约(设计 §2.3):**超过 `limitBytes` 的文本文件生成**说明页**(stub:解释未渲染正文的原因与实际大小,绝不嵌入内容),不是静默跳过;二进制/越界/不可读文件保持 skipped + 原因,由模块页展示。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```js
 console.log('T-wiki-source. Source pages: containment, escaping, line anchors, binary/size caps ...');
@@ -1408,9 +1408,9 @@ console.log('T-wiki-source. Source pages: containment, escaping, line anchors, b
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/source-pages`)
+- [x] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/source-pages`)
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```js
 'use strict';
@@ -1479,7 +1479,7 @@ function generateSourcePages({ projectRoot, files, pageMap, meta, limitBytes = D
 module.exports = { generateSourcePages, resolveContained, DEFAULT_LIMIT };
 ```
 
-- [ ] **Step 4: 登记 template-manifest**
+- [x] **Step 4: 登记 template-manifest**
 
 `templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/render.js',` 之后追加:
 
@@ -1487,9 +1487,9 @@ module.exports = { generateSourcePages, resolveContained, DEFAULT_LIMIT };
             'wiki/source-pages.js',
 ```
 
-- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-source passed`,EXIT 0)
+- [x] **Step 5: 跑测试确认通过**(`✅ T-wiki-source passed`,EXIT 0)
 
-- [ ] **Step 6: 同步镜像 + 提交**
+- [x] **Step 6: 同步镜像 + 提交**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
@@ -1519,7 +1519,7 @@ git commit -m "feat(wiki): read-only source pages with containment, escaping, si
 
 **build 流程(确定性顺序):** 读 architecture-ir.json + plan-ir.json(任一缺失 → `{ok:false, error:'run: mem architecture scan / mem plan scan'}`)→ 读 drift-report.json(缺失=零 findings)→ `deps.explore` 取 focus(异常 → `{resolved:false}` + warning)→ `deps.verifySummary`(异常 → null + warning)→ `deps.gitLog` 取最近 10 commit(非 git 环境 → `[]` + warning)→ `loadWikiGroups`(`ok:false` → 原样返回给 CLI 映射 exit 2,fail-fast)→ `validateEdges` → `buildProjection` → 按 moduleId 排序申请 module 页、按路径排序申请 source 页 → 渲染全部页面 → 写盘(先清空 outDir)→ 写 manifest(pages 排序)。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```js
 console.log('T-wiki-build. Determinism (injected clock), manifest contract, rebuild identity ...');
@@ -1651,9 +1651,9 @@ console.log('T-wiki-cli. mem wiki build exit-code matrix: 0 / 1 / 2 / --open-fai
 
 注:governance.js 的该测试块所在函数若非 async,把 `await buildWiki(...)` 改为 `buildWiki(...).then(...)` 链式,或将块包入 `(async () => { ... })()` 并在既有 async 测试模式处等待——**沿用 T-ce 系列已有的 async 处理方式,保持一致**。
 
-- [ ] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/build`)
+- [x] **Step 2: 跑测试确认失败**(`Cannot find module ... wiki/build`)
 
-- [ ] **Step 3: 实现 build.js**
+- [x] **Step 3: 实现 build.js**
 
 ```js
 'use strict';
@@ -1802,7 +1802,7 @@ async function buildWiki({ projectRoot, now, deps }) {
 module.exports = { buildWiki };
 ```
 
-- [ ] **Step 4: 实现 cli.js + memory.js 注册 + manifest 登记**
+- [x] **Step 4: 实现 cli.js + memory.js 注册 + manifest 登记**
 
 `templates/cli/wiki/cli.js`:
 
@@ -1885,14 +1885,14 @@ module.exports = { registerWikiCommands };
             'wiki/cli.js',
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 ```bash
 node templates/cli/test.js governance
 ```
 预期:T-wiki-build、T-wiki-cli 通过,全部既有测试不回归,EXIT 0。
 
-- [ ] **Step 6: 母仓实景冒烟(不入库,产物是 git-ignored 生成物)**
+- [x] **Step 6: 母仓实景冒烟(不入库,产物是 git-ignored 生成物)**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js       # 镜像含全部 wiki/*(W1-W6 已逐任务登记)
@@ -1917,7 +1917,7 @@ console.log('modulePages === architecture modules (' + ir.modules.length + ')');
 
 人工打开 index.html:确认架构图含「Architecture Governance Wiki」模块卡片、其模块页列出 8 个 wiki 源文件、中文叙事与点击链路完整。
 
-- [ ] **Step 7: 全量闭环 + 提交**
+- [x] **Step 7: 全量闭环 + 提交**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js       # 第二次必须 copied: 0

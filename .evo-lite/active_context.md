@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Phase 4b-1 EXECUTING: plan:architecture-governance-wiki-mvp approved by external review (R3) — Subagent-Driven Development, current task W1 page-map + module:architecture-wiki rule. Inspector stays parked; old cw-wiki scope stays superseded.
+Architecture-Governance Wiki (4b-1) Implementation Plan: [W1] wiki/page-map.js — 统一页面路径映射
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
