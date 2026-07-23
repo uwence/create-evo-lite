@@ -204,8 +204,10 @@ function writeOwner(dir, info = {}) {
     return leaseId;
 }
 
-// CAS:唯一的 owner 删除入口。晚到的 finalize、自愈清理、死持有者清理都必须
-// 携带自己观察到的 leaseId;不匹配 = 新持有者已接管 → 静默不动。
+// CAS:唯一的 owner 删除入口,仅由 finalize 在**仍持有 zvec 独占锁期间**调用
+// (plan R1 P0-1:read→unlink 非跨进程原子,锁才是互斥边界;接管路径不删
+// owner,由接管成功后的 writeOwner 原子覆盖)。lease 比对是锁内的二重保险:
+// 不匹配 = 记录不属于自己 → 静默不动。
 function clearOwner(dir, leaseId) {
     if (!leaseId) return false;
     const p = ownerPath(dir);
@@ -295,8 +297,8 @@ git commit -m "feat(lock): owner sidecar with atomic publish, lease CAS, schema-
 - Produces(Task 3/4 依赖,签名逐字):
   - `pidAlive(pid) → boolean`(`process.kill(pid, 0)`,EPERM 视为存活)。
   - `getProcessSnapshot(pid, seams?) → { alive, isNode, commandLine, ppid, ppidAlive, startedAt } | null` — 一次系统查询;失败/权限不足 → `null`;`seams.snapshotFn` 为测试注入点(抛错时返回 null)。
-  - `isExpectedMcpProcess(snapshot, owner) → boolean` — isNode + 归一化 entrypoint 含 `memory.js` + 命令 token === `'mcp'` + `processStartedAt` **必须存在**且与 snapshot.startedAt 在 ±2s(`STARTED_AT_TOLERANCE_MS = 2000`)内吻合。
-  - `normalizePath(p) → string`、`commandTokens(commandLine) → string[]`。
+  - `isExpectedMcpProcess(snapshot, owner) → boolean` — isNode + 存在 token 与归一化 owner.entrypoint **精确等值**(禁止 suffix 匹配)+ 其后 token === `'mcp'` + `processStartedAt` **必须存在**且与 snapshot.startedAt 在 ±2s(`STARTED_AT_TOLERANCE_MS = 2000`)内吻合。
+  - `normalizePath(p) → string`、`commandTokens(commandLine) → string[]`(quote-aware:支持双/单引号包裹的含空格路径)。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -327,19 +329,33 @@ git commit -m "feat(lock): owner sidecar with atomic publish, lease CAS, schema-
             // seam:注入失败 → null(调用方按不可确认处理)
             assert.strictEqual(lock.getProcessSnapshot(1, { snapshotFn: () => { throw new Error('denied'); } }), null);
 
-            // isExpectedMcpProcess:命令 token 必须是 mcp,entrypoint 必须归一匹配,
-            // startedAt 必须存在且吻合
-            const owner = { entrypoint: 'C:/tmp/x/memory.js', processStartedAt: '2026-07-23T08:00:00.000Z' };
+            // quote-aware tokenizer(plan R1 P0-3):带空格路径不得被拆碎
+            assert.deepStrictEqual(
+                lock.commandTokens('node "C:\\tmp path\\x\\memory.js" mcp'),
+                ['node', 'C:\\tmp path\\x\\memory.js', 'mcp']);
+            assert.deepStrictEqual(
+                lock.commandTokens("node '/tmp/my dir/memory.js' mcp"),
+                ['node', '/tmp/my dir/memory.js', 'mcp']);
+            assert.deepStrictEqual(
+                lock.commandTokens('node C:/plain/memory.js stats'),
+                ['node', 'C:/plain/memory.js', 'stats']);
+
+            // isExpectedMcpProcess:entrypoint 归一化精确等值(禁止 suffix 匹配),
+            // 命令 token 必须是 mcp,startedAt 必须存在且吻合
+            const owner = { entrypoint: 'C:/tmp path/x/memory.js', processStartedAt: '2026-07-23T08:00:00.000Z' };
             const snapOf = cmd => ({ alive: true, isNode: true, commandLine: cmd, ppid: 1, ppidAlive: false, startedAt: '2026-07-23T08:00:01.000Z' });
-            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:/tmp/x/memory.js mcp'), owner), true, 'real mcp accepted');
-            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:\\tmp\\x\\memory.js mcp'), owner), true, 'backslash path normalized');
-            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:/tmp/x/memory.js stats'), owner), false, 'stats must NOT pass');
-            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:/tmp/x/memory.js rebuild'), owner), false, 'rebuild must NOT pass');
-            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:/other/elsewhere.js mcp'), owner), false, 'wrong entrypoint rejected');
-            assert.strictEqual(lock.isExpectedMcpProcess({ ...snapOf('node C:/tmp/x/memory.js mcp'), startedAt: '2026-07-23T09:00:00.000Z' }, owner), false, 'startedAt mismatch = PID reuse, rejected');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\tmp path\\x\\memory.js" mcp'), owner), true, 'quoted spaced path, exact match, accepted');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\other path\\x\\memory.js" mcp'), owner), false, 'different path rejected');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\tmp path\\x\\memory.js" stats'), owner), false, 'stats must NOT pass');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\tmp path\\x\\memory.js" rebuild'), owner), false, 'rebuild must NOT pass');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\tmp path\\x\\memory.js" mcp-extra'), owner), false, 'mcp-extra is not the mcp token');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\x\\memory.js" mcp'), owner), false, 'suffix-only overlap rejected (exact equality required)');
+            const plainOwner = { entrypoint: 'C:/tmp/x/memory.js', processStartedAt: '2026-07-23T08:00:00.000Z' };
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:\\tmp\\x\\memory.js mcp'), plainOwner), true, 'backslash path normalized to exact match');
+            assert.strictEqual(lock.isExpectedMcpProcess({ ...snapOf('node C:/tmp/x/memory.js mcp'), startedAt: '2026-07-23T09:00:00.000Z' }, plainOwner), false, 'startedAt mismatch = PID reuse, rejected');
             assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:/tmp/x/memory.js mcp'), { entrypoint: 'C:/tmp/x/memory.js' }), false, 'missing processStartedAt = gate fails, not skipped');
-            assert.strictEqual(lock.isExpectedMcpProcess({ ...snapOf('node C:/tmp/x/memory.js mcp'), isNode: false }, owner), false, 'non-node rejected');
-            assert.strictEqual(lock.isExpectedMcpProcess(null, owner), false);
+            assert.strictEqual(lock.isExpectedMcpProcess({ ...snapOf('node C:/tmp/x/memory.js mcp'), isNode: false }, plainOwner), false, 'non-node rejected');
+            assert.strictEqual(lock.isExpectedMcpProcess(null, plainOwner), false);
             assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:/tmp/x/memory.js mcp'), null), false);
         }
         console.log('✅ T-lock-ident passed');
@@ -421,13 +437,35 @@ function normalizePath(p) {
     return String(p || '').replace(/\\/g, '/').toLowerCase();
 }
 
+// quote-aware argv tokenizer(plan R1 P0-3):支持双/单引号包裹的含空格路径。
+// 未闭合引号按"读到串尾"处理 —— 解析失败宁可产生不匹配的 token(→ unknown,
+// 拒杀),也不做任何宽松猜测。
 function commandTokens(commandLine) {
-    return String(commandLine || '').replace(/"/g, '').split(/\s+/).filter(Boolean);
+    const s = String(commandLine || '');
+    const tokens = [];
+    let cur = '';
+    let quote = null;
+    for (const ch of s) {
+        if (quote) {
+            if (ch === quote) quote = null;
+            else cur += ch;
+        } else if (ch === '"' || ch === "'") {
+            quote = ch;
+        } else if (/\s/.test(ch)) {
+            if (cur) { tokens.push(cur); cur = ''; }
+        } else {
+            cur += ch;
+        }
+    }
+    if (cur) tokens.push(cur);
+    return tokens;
 }
 
 // R1 P1:live snapshot 独立确认身份 —— sidecar 自报的 mode 不构成杀进程依据。
 // 仅含 memory.js 不够(stats/rebuild 同样命中):entrypoint 后的 token 必须是 mcp。
 // R1 P0-2:processStartedAt 必须存在并吻合;缺失 = 闸不过,不是跳过。
+// plan R1 P0-3:entrypoint 匹配必须是归一化后的**精确等值** —— 杀进程闸不做
+// 任意 suffix 匹配;路径别名/short-name 未来如需支持须走显式 realpath。
 function isExpectedMcpProcess(snapshot, owner) {
     if (!snapshot || !owner) return false;
     if (snapshot.isNode !== true) return false;
@@ -435,8 +473,7 @@ function isExpectedMcpProcess(snapshot, owner) {
     const entry = normalizePath(owner.entrypoint);
     if (!entry || !entry.endsWith('memory.js')) return false;
     const tokens = commandTokens(snapshot.commandLine).map(normalizePath);
-    const entryIdx = tokens.findIndex(tok =>
-        tok.endsWith('memory.js') && (tok === entry || tok.endsWith(entry) || entry.endsWith(tok)));
+    const entryIdx = tokens.findIndex(tok => tok === entry);
     if (entryIdx === -1) return false;
     if (tokens[entryIdx + 1] !== 'mcp') return false;
     const ownerT = Date.parse(owner.processStartedAt || '');
@@ -497,7 +534,7 @@ git commit -m "feat(lock): process snapshot (CIM/ps) + isExpectedMcpProcess with
   - `diagnoseLockConflict(dir, ctx?) → { verdict, owner, snapshot, observedLeaseId?, report }`
     - `ctx = { projectRoot?: string, seams?: { snapshotFn?, killFn? } }`(projectRoot 缺省 `process.cwd()`)。
     - `verdict ∈ 'orphaned-own-mcp' | 'live-foreign' | 'unknown' | 'dead-holder'`(dead-holder 是设计 §4.3 闸① ESRCH 分支的显式编码;只有 `orphaned-own-mcp` 允许自愈)。
-    - `report = { lockPath, reason, enumerate }`;`observedLeaseId` 仅在 dead-holder / orphaned-own-mcp 时给出(供 CAS 清理)。
+    - `report = { lockPath, reason, enumerate }`;`observedLeaseId` 仅在 dead-holder / orphaned-own-mcp 时给出(观察字段;plan R1 P0-1 后接管路径**不预删** owner,该字段仅供诊断展示)。
   - `enumerationCommand() → string`(可复制的持有者枚举命令)。
 
 - [ ] **Step 1: 写失败测试(11 例拒杀矩阵,含设计 R1 增补)**
@@ -651,14 +688,14 @@ git commit -m "feat(lock): process snapshot (CIM/ps) + isExpectedMcpProcess with
                     assert.strictEqual(diag.verdict, 'unknown', 'case 11: stats holder with forged mode must never be killable');
                     assertRefusal(dir, before, diag, child.pid);
                 }
-                // 正向对照:闸① ESRCH → dead-holder + observedLeaseId(清理走 CAS,Task 4 使用)
+                // 正向对照:闸① ESRCH → dead-holder + observedLeaseId(观察字段;接管路径不预删 owner)
                 {
                     const dir = mkLockDir();
                     const dead = childProcess.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
                     writeRaw(dir, baseOwner({ pid: dead.pid }));
                     const diag = lock.diagnoseLockConflict(dir, { projectRoot: HERE });
                     assert.strictEqual(diag.verdict, 'dead-holder');
-                    assert.strictEqual(diag.observedLeaseId, 'lease-refuse', 'observed leaseId captured for CAS cleanup');
+                    assert.strictEqual(diag.observedLeaseId, 'lease-refuse', 'observed leaseId captured for diagnostics');
                 }
             } finally {
                 for (const h of holders) { try { h.kill(); } catch (_) {} }
@@ -727,6 +764,14 @@ function diagnoseLockConflict(dir, ctx = {}) {
             report: { ...base, reason: `pid ${owner.pid} 属于其他项目或非 MCP 角色,不会自动终止该进程` },
         };
     }
+    // 平台策略(plan R1 P1-2):孤儿自愈仅 win32 —— unix detached 孤儿会被
+    // init/systemd 接管(ppid→1 且存活),闸③在 unix 上不可靠,一律 report-only。
+    if (process.platform !== 'win32') {
+        return {
+            verdict: 'live-foreign', owner, snapshot,
+            report: { ...base, reason: `pid ${owner.pid}:unix 平台孤儿自愈默认关闭(孤儿被 init 接管,父进程判定不可靠),仅诊断不终止` },
+        };
+    }
     // 闸③:父进程仍活着 = 有人管着它
     if (snapshot.ppidAlive !== false) {
         return {
@@ -767,8 +812,9 @@ git commit -m "feat(lock): four-gate diagnoseLockConflict + 11-case refusal matr
 - Consumes: Task 1-3 全部导出。
 - Produces(Task 5 依赖,签名逐字):
   - `isLockError(err) → boolean`(懒加载 `@zvec/zvec` 的 `isZVecError`,不可用时退化为 err.name 含 zvec 的 message 匹配;message 须命中 `/can't lock/i`)。
-  - `openWithCoordination(openFn, dir, ctx?) → { result, leaseId }`(成功即 `writeOwner`;失败 throw 富化错误 `{ code: 'EVO_ZVEC_LOCKED', verdict, report, cause }`;非锁错误原样 rethrow)。
-  - `attemptSelfHeal(dir, diag, ctx?) → { healed: boolean, reason?: string }`(身份复核 → SIGTERM → 有界等待 → SIGKILL → 等消失 → `clearOwner(dir, diag.observedLeaseId)` CAS)。
+  - `openWithCoordination(openFn, dir, ctx?) → { result, leaseId }`(成功经内部 `publishOpened` 发布 —— `writeOwner` 抛错时立即 `closeSync()` 回收再原样抛出,绝不留"持锁无 sidecar"进程;失败 throw 富化错误 `{ code: 'EVO_ZVEC_LOCKED', verdict, report, cause }`;非锁错误原样 rethrow;**接管路径不预删 stale owner** —— zvec 独占锁是 owner 变更的互斥边界,打开成功即 `writeOwner` 原子覆盖,失败绝不删除)。
+  - `attemptSelfHeal(dir, diag, ctx?) → { healed: boolean, reason?: string }`(身份复核 → SIGTERM → 有界等待 → SIGKILL → 等消失;**只杀进程与确认死亡,不动 owner**)。
+  - seams 全集:`ctx.seams = { snapshotFn?, killFn?, writeOwnerFn?, isLockErrorFn? }`(后两者供测试注入发布失败与锁错误判定)。
   - `sleepSync(ms)`、`waitForExit(pid, timeoutMs) → boolean`。
   - 常量 `BACKOFF_RETRIES = 3`、`BACKOFF_MS = 100`、`TERM_WAIT_MS = 1500`、`KILL_WAIT_MS = 1000`、`POLL_MS = 100`。
 
@@ -796,19 +842,85 @@ git commit -m "feat(lock): four-gate diagnoseLockConflict + 11-case refusal matr
                 assert.ok(!fs.existsSync(path.join(dir, 'owner.json')), 'no owner written on failure');
             }
 
-            // 自愈后 CAS(R1 P0-1):死者清理不得删除新接管者的 owner
+            // P0-2:open 成功但 owner 发布失败 → 立即 closeSync 回收,不留无 sidecar 的锁
             {
-                const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-healcas-'));
+                const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-publish-'));
+                let closed = 0;
+                const fakeCol = { closeSync() { closed++; } };
+                const boom = new Error('rename denied');
+                let threw = null;
+                try {
+                    lock.openWithCoordination(() => fakeCol, dir, {
+                        projectRoot: HERE,
+                        seams: { writeOwnerFn: () => { throw boom; } },
+                    });
+                } catch (err) { threw = err; }
+                assert.strictEqual(threw, boom, 'publish failure rethrown untouched');
+                assert.strictEqual(closed, 1, 'collection closed exactly once on publish failure');
+                assert.ok(!fs.existsSync(path.join(dir, 'owner.json')), 'no owner left behind');
+                const ok = lock.openWithCoordination(() => fakeCol, dir, { projectRoot: HERE });
+                assert.ok(ok.leaseId, 'second opener publishes normally');
+                lock.clearOwner(dir, ok.leaseId); // 测试清理
+            }
+
+            // P0-1(TOCTOU):dead-holder 接管不预删 stale owner;重试瞬间 B 抢先
+            // 接管 → A 失败后绝不删除 B 的 owner,重新诊断一轮后抛富化错误
+            {
+                const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-toctou-'));
                 const dead = childProcess.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
-                const staleDiag = {
-                    owner: { pid: dead.pid },
-                    observedLeaseId: 'stale-lease-of-dead-holder',
-                    report: { lockPath: path.join(dir, 'collection', 'LOCK'), reason: 't', enumerate: 't' },
+                const staleOwner = {
+                    schemaVersion: 1, leaseId: 'stale-dead-lease', pid: dead.pid, ppid: 1,
+                    processStartedAt: '2026-07-23T00:00:00.000Z',
+                    entrypoint: path.join(os.tmpdir(), 'fake-entry', 'memory.js'),
+                    mode: 'mcp', access: 'write', projectRoot: HERE,
+                    createdAt: '2026-07-23T00:00:00.000Z',
                 };
-                const leaseB = lock.writeOwner(dir, { mode: 'cli', projectRoot: HERE }); // B 已接管
-                const heal = lock.attemptSelfHeal(dir, staleDiag, { projectRoot: HERE });
-                assert.strictEqual(heal.healed, true, 'dead pid heals without kill');
-                assert.strictEqual(lock.readOwner(dir).owner.leaseId, leaseB, 'new holder owner survives self-heal CAS');
+                fs.writeFileSync(path.join(dir, 'owner.json'), JSON.stringify(staleOwner), 'utf8');
+                const lockErr = new Error("Can't lock read-write collection: LOCK");
+                let calls = 0;
+                let leaseB = null;
+                let threw = null;
+                try {
+                    lock.openWithCoordination(() => {
+                        calls++;
+                        if (calls === 5) {
+                            // dead-holder 分支的最终重试瞬间:B 抢先接管
+                            leaseB = lock.writeOwner(dir, { mode: 'cli', projectRoot: HERE });
+                        }
+                        throw lockErr;
+                    }, dir, { projectRoot: HERE, seams: { isLockErrorFn: () => true } });
+                } catch (err) { threw = err; }
+                assert.ok(threw && threw.code === 'EVO_ZVEC_LOCKED', 'still-locked takeover throws enriched error');
+                assert.ok(leaseB, 'race actually injected at the takeover retry');
+                assert.strictEqual(lock.readOwner(dir).owner.leaseId, leaseB, 'B owner survives — A never deletes on failure');
+                lock.clearOwner(dir, leaseB); // 测试清理
+            }
+
+            // P0-1:接管成功 = 持锁期间 writeOwner 原子覆盖 stale,全程无 unlink
+            {
+                const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-takeover-'));
+                const dead = childProcess.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+                const staleOwner = {
+                    schemaVersion: 1, leaseId: 'stale-dead-lease', pid: dead.pid, ppid: 1,
+                    processStartedAt: '2026-07-23T00:00:00.000Z',
+                    entrypoint: path.join(os.tmpdir(), 'fake-entry', 'memory.js'),
+                    mode: 'mcp', access: 'write', projectRoot: HERE,
+                    createdAt: '2026-07-23T00:00:00.000Z',
+                };
+                fs.writeFileSync(path.join(dir, 'owner.json'), JSON.stringify(staleOwner), 'utf8');
+                const lockErr = new Error("Can't lock read-write collection: LOCK");
+                let calls = 0;
+                const fakeCol = { closeSync() {} };
+                const opened = lock.openWithCoordination(() => {
+                    calls++;
+                    if (calls <= 4) throw lockErr; // backoff 期间全部失败
+                    return fakeCol;                // dead-holder 最终重试成功
+                }, dir, { projectRoot: HERE, seams: { isLockErrorFn: () => true } });
+                assert.strictEqual(opened.result, fakeCol);
+                const rec = lock.readOwner(dir);
+                assert.strictEqual(rec.state, 'valid');
+                assert.strictEqual(rec.owner.pid, process.pid, 'stale owner atomically replaced by takeover writeOwner');
+                lock.clearOwner(dir, opened.leaseId); // 测试清理
             }
 
             let zvecAvailable = true;
@@ -893,7 +1005,10 @@ git commit -m "feat(lock): four-gate diagnoseLockConflict + 11-case refusal matr
                 }
 
                 // orphan self-heal(原事故最小复刻):中间 spawner detached 拉起孙子后退出
-                {
+                // plan R1 P1-2:自愈限定 win32 —— unix 孤儿被 init 接管(ppid→1),仅诊断
+                if (process.platform !== 'win32') {
+                    console.log('   ⏭️ orphan self-heal case skipped — 自愈限定 win32,unix 为 report-only 策略');
+                } else {
                     const { dir, colPath } = mkCollection();
                     const scriptPath = writeHolderScript();
                     const SPAWNER_SRC = [
@@ -1000,9 +1115,9 @@ function attemptSelfHeal(dir, diag, ctx = {}) {
             }
         }
     }
-    // R1 P0-1:清理必须走 CAS(observedLeaseId)。不匹配 = 新持有者已接管,
-    // 不删除;调用方直接重试 open。
-    clearOwner(dir, diag.observedLeaseId);
+    // plan R1 P0-1:自愈阶梯到此为止,**不动 owner** —— read→unlink 即便带
+    // CAS 也非跨进程原子;zvec 独占锁才是 owner 变更的互斥边界。stale owner
+    // 留给接管成功后的 writeOwner 原子覆盖;接管失败则绝不删除。
     return { healed: true };
 }
 
@@ -1022,28 +1137,49 @@ function buildLockError(diag, cause) {
     return err;
 }
 
-// 协调打开(设计 §4.3):backoff 吸收瞬时交错 → 诊断 → dead-holder CAS 清理
-// / orphan 自愈 → 各自最终重试一次;重试仍冲突则重新诊断一轮后抛富化错误。
+// 成功发布(plan R1 P0-2):openFn 成功后 writeOwner 若抛错(权限/rename/
+// 磁盘),立即 closeSync 回收 collection 再原样抛出 —— 绝不留下"持锁但无
+// sidecar"的进程,那正是本议题要消灭的最差状态。
+function publishOpened(result, dir, ctx = {}) {
+    const write = (ctx.seams && typeof ctx.seams.writeOwnerFn === 'function')
+        ? ctx.seams.writeOwnerFn
+        : writeOwner;
+    try {
+        const leaseId = write(dir, { projectRoot: ctx.projectRoot });
+        return { result, leaseId };
+    } catch (err) {
+        try {
+            if (result && typeof result.closeSync === 'function') result.closeSync();
+        } catch (_) {}
+        throw err;
+    }
+}
+
+// 协调打开(设计 §4.3):backoff 吸收瞬时交错 → 诊断 → dead-holder / orphan
+// 自愈 → 各自最终重试一次;重试仍冲突则重新诊断一轮后抛富化错误。
+// plan R1 P0-1:接管路径**不预删** stale owner —— zvec 独占锁本身是 owner
+// 变更的互斥边界;打开成功即持锁,writeOwner 原子覆盖 stale;失败绝不删除。
 // 非锁错误在任何阶段都原样 rethrow。
 function openWithCoordination(openFn, dir, ctx = {}) {
-    const succeed = result => ({ result, leaseId: writeOwner(dir, { projectRoot: ctx.projectRoot }) });
+    const isLock = (ctx.seams && typeof ctx.seams.isLockErrorFn === 'function')
+        ? ctx.seams.isLockErrorFn
+        : isLockError;
     let lastErr = null;
     for (let attempt = 0; attempt <= BACKOFF_RETRIES; attempt++) {
         if (attempt > 0) sleepSync(BACKOFF_MS);
         try {
-            return succeed(openFn());
+            return publishOpened(openFn(), dir, ctx);
         } catch (err) {
-            if (!isLockError(err)) throw err;
+            if (!isLock(err)) throw err;
             lastErr = err;
         }
     }
     let diag = diagnoseLockConflict(dir, ctx);
     if (diag.verdict === 'dead-holder') {
-        clearOwner(dir, diag.observedLeaseId);
         try {
-            return succeed(openFn());
+            return publishOpened(openFn(), dir, ctx); // 成功 = 持锁,writeOwner 覆盖 stale
         } catch (err) {
-            if (!isLockError(err)) throw err;
+            if (!isLock(err)) throw err;
             lastErr = err;
             diag = diagnoseLockConflict(dir, ctx); // 重新诊断,最多一轮(不变量 4)
         }
@@ -1052,9 +1188,9 @@ function openWithCoordination(openFn, dir, ctx = {}) {
         const heal = attemptSelfHeal(dir, diag, ctx);
         if (heal.healed) {
             try {
-                return succeed(openFn());
+                return publishOpened(openFn(), dir, ctx); // 同上:覆盖而非预删
             } catch (err) {
-                if (!isLockError(err)) throw err;
+                if (!isLock(err)) throw err;
                 lastErr = err;
                 diag = diagnoseLockConflict(dir, ctx); // 新持有者可能已接管;最多一轮
             }
@@ -1242,12 +1378,15 @@ initialize 的打开语句改为(exit hook 与 idFile 逻辑不动):
             try { this._col.optimizeSync(); } catch (_) {}
             this._dirty = false;
         }
-        try { this._col.closeSync(); } catch (_) {}
-        this._col = null;
+        // plan R1 P0-1:owner 清理必须发生在仍持有 zvec 独占锁期间 —— 关锁后
+        // 再清会与新 writer 的接管竞态(read→unlink TOCTOU)。清理失败也必须
+        // 继续关锁:最多留 stale owner(可诊断),绝不为 owner 清理泄漏锁。
         if (this._leaseId) {
             try { clearOwner(this._dir, this._leaseId); } catch (_) {}
             this._leaseId = null;
         }
+        try { this._col.closeSync(); } catch (_) {}
+        this._col = null;
     }
 ```
 
@@ -1408,61 +1547,146 @@ git commit -m "feat(lock): ephemeral lock tenure in ZvecMemoryIndex via reentran
 插在 `console.log('✅ T-lock-ephemeral passed');` 之后:
 
 ```js
-        console.log('T-mcp-stdin-exit. Testing MCP exits on stdin EOF, clears owner, releases lock (skips if @zvec/zvec absent) ...');
+        console.log('T-mcp-stdin-exit. Testing MCP stdin-EOF lifecycle (A) + shutdown cleanup of a held lock (B) (skips if @zvec/zvec absent) ...');
         {
             let zvecAvailable = true;
             try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
             if (!zvecAvailable) {
                 console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
             } else {
-                const runtime = createTempRuntimeRoot('mcp-stdin-exit');
-                await bootstrapRuntime(runtime.runtimeRoot);
                 const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
-                const memJs = path.join(CLI_DIR, 'memory.js');
-                const child = childProcess.spawn(process.execPath, [memJs, 'mcp'], {
-                    cwd: runtime.workspaceRoot,
-                    env: {
-                        ...process.env,
-                        EVO_LITE_ROOT: runtime.runtimeRoot,
-                        EVO_LITE_SKIP_GIT_GUARD: '1',
-                        EVO_LITE_MEMORY_ENGINE: 'zvec', // 显式固定,防前序测试遗留 env 干扰
-                    },
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                });
-                const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
-                let killedByTimeout = false;
-                const failsafe = setTimeout(() => { killedByTimeout = true; try { child.kill(); } catch (_) {} }, 20000);
-                try {
-                    const msg = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n';
-                    child.stdin.write(msg(0, 'initialize', {
-                        protocolVersion: '2024-11-05', capabilities: {},
-                        clientInfo: { name: 't-lock-stdin', version: '1' },
-                    }));
-                    await new Promise(r => setTimeout(r, 800));
-                    // 让索引真实打开过一次(ephemeral:op 后立即释放)
-                    child.stdin.write(msg(1, 'tools/call', { name: 'evo_recall', arguments: { query: 'lock probe', k: 2 } }));
-                    await new Promise(r => setTimeout(r, 2000));
-                    child.stdin.end(); // 宿主死亡的最小模拟:stdin EOF
-                    const code = await exited;
-                    clearTimeout(failsafe);
-                    assert.ok(!killedByTimeout, 'server must exit on its own after stdin EOF (no zombie)');
-                    assert.strictEqual(code, 0, `exit code 0 expected, got ${code}`);
-                    // owner 已清
-                    const zvecDir = path.join(runtime.runtimeRoot, 'zvec');
-                    assert.strictEqual(lock.readOwner(zvecDir).state, 'missing', 'owner cleared after shutdown');
-                    // 不变量 6:native 锁确实释放 —— 新 writer 立即 initialize 成功
-                    resetCliModuleCache();
-                    const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
-                    const writer = new ZvecMemoryIndex();
-                    writer.initialize(); // 若死服务器仍持锁,这里 Can't lock
-                    writer.close();
-                } finally {
-                    clearTimeout(failsafe);
-                    try { child.kill(); } catch (_) {}
+                // 逐行解析 stdout JSON-RPC,等待指定 id 的 response(plan R1 P1-1:
+                // 不用固定 sleep 猜时序)
+                const attachRpcReader = child => {
+                    const seen = new Map();
+                    let buf = '';
+                    child.stdout.on('data', chunk => {
+                        buf += chunk.toString();
+                        const lines = buf.split('\n');
+                        buf = lines.pop();
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const parsed = JSON.parse(line);
+                                if (parsed.id != null) seen.set(parsed.id, parsed);
+                            } catch (_) {}
+                        }
+                    });
+                    return async (id, timeoutMs) => {
+                        const deadline = Date.now() + timeoutMs;
+                        while (Date.now() < deadline) {
+                            if (seen.has(id)) return seen.get(id);
+                            await new Promise(r => setTimeout(r, 50));
+                        }
+                        return seen.get(id) || null;
+                    };
+                };
+                const rpc = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n';
+
+                // A. 真实 entrypoint 生命周期:initialize 有响应后 stdin EOF → 自行 exit 0
+                {
+                    const runtime = createTempRuntimeRoot('mcp-stdin-a');
+                    await bootstrapRuntime(runtime.runtimeRoot);
+                    const memJs = path.join(CLI_DIR, 'memory.js');
+                    const child = childProcess.spawn(process.execPath, [memJs, 'mcp'], {
+                        cwd: runtime.workspaceRoot,
+                        env: {
+                            ...process.env,
+                            EVO_LITE_ROOT: runtime.runtimeRoot,
+                            EVO_LITE_SKIP_GIT_GUARD: '1',
+                            EVO_LITE_MEMORY_ENGINE: 'zvec', // 显式固定,防前序测试遗留 env 干扰
+                        },
+                        stdio: ['pipe', 'pipe', 'pipe'],
+                    });
+                    const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
+                    let killedByTimeout = false;
+                    const failsafe = setTimeout(() => { killedByTimeout = true; try { child.kill(); } catch (_) {} }, 20000);
+                    try {
+                        const waitFor = attachRpcReader(child);
+                        child.stdin.write(rpc(0, 'initialize', {
+                            protocolVersion: '2024-11-05', capabilities: {},
+                            clientInfo: { name: 't-lock-stdin-a', version: '1' },
+                        }));
+                        assert.ok(await waitFor(0, 10000), 'initialize response received before EOF');
+                        child.stdin.end(); // 宿主死亡的最小模拟:stdin EOF
+                        const code = await exited;
+                        clearTimeout(failsafe);
+                        assert.ok(!killedByTimeout, 'server exits on its own after stdin EOF (no zombie)');
+                        assert.strictEqual(code, 0, `exit code 0 expected, got ${code}`);
+                    } finally {
+                        clearTimeout(failsafe);
+                        try { child.kill(); } catch (_) {}
+                    }
+                }
+
+                // B. shutdown cleanup(plan R1 P1-1):server 启动前索引已以非
+                //    ephemeral 状态真实持锁 + owner 在场 → stdin EOF → shutdown
+                //    必须 close 活动索引、清 owner、释放 native 锁。
+                //    (ephemeral 路径下 recall 返回时锁本已释放,只有本场景能
+                //    证明 shutdown 会收尾活动 collection。)
+                {
+                    const runtime = createTempRuntimeRoot('mcp-stdin-b');
+                    await bootstrapRuntime(runtime.runtimeRoot);
+                    const wrapDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-mcpwrap-'));
+                    const readyFile = path.join(wrapDir, 'wrapper-ready.txt');
+                    const WRAPPER_SRC = [
+                        "'use strict';",
+                        `process.env.EVO_LITE_ROOT = ${JSON.stringify(runtime.runtimeRoot)};`,
+                        "process.env.EVO_LITE_SKIP_GIT_GUARD = '1';",
+                        "process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';",
+                        `const { getMemoryIndex } = require(${JSON.stringify(path.join(CLI_DIR, 'memory-index.js'))});`,
+                        "const idx = getMemoryIndex();",
+                        "idx.initialize(); // 此刻 EVO_LITE_INDEX_EPHEMERAL 未设 → 真实持锁 + owner 在场",
+                        `require('fs').writeFileSync(${JSON.stringify(readyFile)}, String(process.pid), 'utf8');`,
+                        `const { runMcpServer } = require(${JSON.stringify(path.join(CLI_DIR, 'mcp-server.js'))});`,
+                        "runMcpServer();",
+                    ].join('\n');
+                    const wrapperPath = path.join(wrapDir, 'mcp-wrapper.js');
+                    fs.writeFileSync(wrapperPath, WRAPPER_SRC, 'utf8');
+                    const child = childProcess.spawn(process.execPath, [wrapperPath], {
+                        cwd: runtime.workspaceRoot,
+                        env: { ...process.env },
+                        stdio: ['pipe', 'pipe', 'pipe'],
+                    });
+                    const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
+                    let killedByTimeout = false;
+                    const failsafe = setTimeout(() => { killedByTimeout = true; try { child.kill(); } catch (_) {} }, 20000);
+                    try {
+                        const waitFor = attachRpcReader(child);
+                        const deadline = Date.now() + 10000;
+                        while (!fs.existsSync(readyFile) && Date.now() < deadline) {
+                            await new Promise(r => setTimeout(r, 50));
+                        }
+                        assert.ok(fs.existsSync(readyFile), 'wrapper initialized a lock-holding index');
+                        const zvecDir = path.join(runtime.runtimeRoot, 'zvec');
+                        const held = lock.readOwner(zvecDir);
+                        assert.strictEqual(held.state, 'valid', 'owner present while index holds the lock');
+                        assert.strictEqual(held.owner.pid, Number(fs.readFileSync(readyFile, 'utf8')), 'owner is the wrapper process');
+                        child.stdin.write(rpc(0, 'initialize', {
+                            protocolVersion: '2024-11-05', capabilities: {},
+                            clientInfo: { name: 't-lock-stdin-b', version: '1' },
+                        }));
+                        assert.ok(await waitFor(0, 10000), 'server responsive before EOF');
+                        child.stdin.end();
+                        const code = await exited;
+                        clearTimeout(failsafe);
+                        assert.ok(!killedByTimeout, 'wrapper exits on its own (shutdown closed the active index)');
+                        assert.strictEqual(code, 0, `exit code 0 expected, got ${code}`);
+                        assert.strictEqual(lock.readOwner(zvecDir).state, 'missing', 'shutdown cleared the active owner');
+                        // 不变量 6:native 锁确实释放 —— 新 writer 立即 initialize 成功
+                        resetCliModuleCache();
+                        const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                        const writer = new ZvecMemoryIndex();
+                        writer.initialize(); // 死服务器若仍持锁,这里 Can't lock
+                        writer.close();
+                    } finally {
+                        clearTimeout(failsafe);
+                        try { child.kill(); } catch (_) {}
+                    }
                 }
             }
         }
-        console.log('✅ T-mcp-stdin-exit passed');
+        console.log('✅ T-mcp-stdin-exit passed (A: lifecycle, B: shutdown cleanup)');
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -1553,7 +1777,7 @@ async function runMcpServer() {
 - [ ] **Step 5: 跑测试确认通过**
 
 Run: `node templates/cli/test.js governance`
-Expected: PASS,输出含 `✅ T-mcp-stdin-exit passed`。
+Expected: PASS,输出含 `✅ T-mcp-stdin-exit passed (A: lifecycle, B: shutdown cleanup)`。
 
 - [ ] **Step 6: Commit**
 
@@ -1619,6 +1843,32 @@ git commit -m "feat(lock): register memory-index-lock in template manifest + mir
 ```
 
 ---
+
+## 复阅修订记录 R1(2026-07-23,实施计划复阅 CHANGES REQUIRED → 五项全部折入)
+
+1. **P0-1(TOCTOU)**:owner 变更的互斥边界改为 zvec 独占锁本身 ——
+   `_finalizeSync` 顺序固定为 optimize → clearOwner(仍持锁)→ closeSync;
+   dead-holder / 自愈接管**不预删** stale owner(打开成功即持锁,`writeOwner`
+   原子覆盖;失败绝不删除,重新诊断一轮);`attemptSelfHeal` 只杀进程与确认
+   死亡,不再动 owner。新增两例测试:接管重试瞬间 B 抢先接管 → A 失败后
+   B 的 owner 幸存;接管成功 → stale 被 writeOwner 覆盖、全程无 unlink。
+2. **P0-2(发布失败泄漏)**:新增 `publishOpened` —— `openFn()` 成功但
+   `writeOwner` 抛错时立即 `closeSync()` 回收再原样抛出;seam
+   `ctx.seams.writeOwnerFn` 注入发布失败,断言 closeSync 恰好一次、无 owner
+   残留、第二次 opener 正常。
+3. **P0-3(argv 解析)**:`commandTokens` 改为 quote-aware tokenizer(双/单
+   引号包裹的含空格路径);entrypoint 匹配从双向 suffix 收紧为归一化
+   **精确等值**;新增带空格路径 / 异路径 / `mcp-extra` / suffix-only 拒绝
+   等测试。
+4. **P1-1(stdin-exit 空洞)**:T-mcp-stdin-exit 拆为 A(真实 entrypoint
+   生命周期,等 JSON-RPC response 而非固定 sleep)与 B(wrapper 预置非
+   ephemeral 持锁索引,验证 shutdown 真正 close 活动 collection、清 owner、
+   释放 native 锁)。
+5. **P1-2(unix 孤儿)**:自愈限定 win32;`diagnoseLockConflict` 在非 win32
+   平台于闸③前直接返回 `live-foreign`(report-only,文案言明策略);
+   orphan-selfheal 测试仅 win32 执行。
+
+同步回灌设计文档修订记录 R2-plan(canonical 契约一致)。
 
 ## 计划外(终局门,复阅通过后由控制器随收口执行,不属于任务复审范围)
 

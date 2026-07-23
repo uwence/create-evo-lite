@@ -1,8 +1,8 @@
 # [a177] mcp-zvec-lock — 锁生命周期与单写者协调设计
 
 - 日期:2026-07-23
-- 状态:R2 待批(§1/§2/§3 逐节口头批准 → 外部测试契约复阅折入 → 设计 R1
-  CHANGES REQUIRED 三项已全部折入,见文末修订记录)
+- 状态:设计 R2 外部终批 APPROVED(2026-07-23);实施计划复阅 R1 五项
+  修正已回灌本契约(见文末修订记录 R2-plan)
 - 议题来源:backlog `[a177]`(4a.x/hive 可靠性;治理链路可用性优先级)
 - 事故根因:2026-07-23 收口 4b-1 时,`mem commit`/`context track` 死于
   `.evo-lite/zvec/collection/LOCK` —— 8 个跨会话遗留的
@@ -72,7 +72,11 @@ writeOwner(dir, { mode, projectRoot })
 clearOwner(dir, leaseId)
 //   CAS:读盘 owner.json,仅当 disk.leaseId === leaseId 才 unlink;
 //   不匹配 / 不存在 / 损坏 → 静默不动(旧实例晚到的 finalize 不得删新实例的 owner)。
-//   这是**唯一**的 owner 删除入口 —— 自愈路径与死持有者清理同样必须经此 CAS(R1 P0-1)。
+//   这是**唯一**的 owner 删除入口(R1 P0-1)。
+//   互斥边界(plan R1 P0-1):检查与 unlink 非原子(TOCTOU),因此调用**必须
+//   发生在仍持有 zvec 独占锁期间**(finalize 在 closeSync 之前清);接管路径
+//   (dead-holder / 自愈后)一律**不预删** stale owner —— 打开成功即持锁,
+//   writeOwner 原子覆盖;打开失败绝不删除。
 readOwner(dir)
 //   → { state: 'valid'|'missing'|'corrupt'|'invalid', owner, errors }
 //   state === 'valid' 要求 identity-critical schema 全字段通过(R1 P0-2):
@@ -106,9 +110,9 @@ verdict ∈ `'orphaned-own-mcp' | 'live-foreign' | 'unknown'`。
 
 | 闸 | 判定 | 不过时降级为 |
 |---|---|---|
-| ① 存活 | `process.kill(pid, 0)` 成功或 EPERM → 存活;ESRCH → 已死 | 已死 → 走"死持有者清理"(仅清 stale owner,无进程可杀) |
-| ② 身份 | `isExpectedMcpProcess(snapshot, owner)`(R1 P0-2/P1):snapshot.isNode **且** commandLine 归一化后含 owner.entrypoint 对应的 `memory.js` 路径 **且** 命令 token === `mcp`(仅含 `memory.js` 不够 —— `stats`/`rebuild` 同样命中)**且** owner.processStartedAt **必须存在**并与 snapshot.startedAt 吻合(±2s 容差,格式归一后比对;缺失 = 闸不过,不是跳过) | 任一不符 → `unknown`(PID 已被复用或非本系进程,绝不杀) |
-| ③ 父进程 | snapshot.ppid 已死(kill(ppid,0) ESRCH) | ppid 存活 → `live-foreign`(有人还管着它,绝不杀) |
+| ① 存活 | `process.kill(pid, 0)` 成功或 EPERM → 存活;ESRCH → 已死 | 已死 → `dead-holder`:**不预删** stale owner,直接重试接管(成功即持锁,writeOwner 原子覆盖;plan R1 P0-1) |
+| ② 身份 | `isExpectedMcpProcess(snapshot, owner)`(R1 P0-2/P1 + plan R1 P0-3):snapshot.isNode **且** commandLine 经 **quote-aware tokenizer** 解析(支持双/单引号包裹的含空格路径)后,存在 token 与 owner.entrypoint **归一化精确等值**(禁止任意 suffix 匹配)**且**其后一个 token === `mcp`(仅含 `memory.js` 不够 —— `stats`/`rebuild` 同样命中)**且** owner.processStartedAt **必须存在**并与 snapshot.startedAt 吻合(±2s 容差,格式归一后比对;缺失 = 闸不过,不是跳过) | 任一不符 → `unknown`(PID 已被复用或非本系进程,绝不杀) |
+| ③ 父进程 | **仅 win32**:snapshot.ppid 已死(kill(ppid,0) ESRCH)。**unix 平台孤儿自愈整体关闭**(plan R1 P1-2:detached 孤儿被 init/systemd 接管,ppid→1 且存活,本闸不可靠)→ 一律 `live-foreign` report-only | ppid 存活 → `live-foreign`(有人还管着它,绝不杀) |
 | ④ 归属 | owner.projectRoot === 当前仓根 **且** owner.mode === 'mcp' | 不符 → `live-foreign`(别的仓/别的角色,绝不杀) |
 
 前置条件:`readOwner().state !== 'valid'`(缺失/损坏/**缺任一 identity-critical 字段**)或 snapshot 关键字段为 null(查询失败/权限不足)→ 直接 `unknown`,不进闸、不进自愈。
@@ -133,10 +137,15 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 └─ 锁错误 → backoff 重试 3×100ms(吸收 CLI/MCP 瞬时交错)
     ├─ 期间成功 → writeOwner → 返回
     └─ 仍失败 → diagnoseLockConflict
-        ├─ orphaned-own-mcp → 自愈阶梯(4.4)→ 成功则 writeOwner 返回
-        ├─ 死持有者(闸① ESRCH)→ clearOwner(dir, observedLeaseId)(CAS,
-        │   基于诊断时读到的 leaseId,绝非无条件 unlink)→ 最终重试一次
+        ├─ orphaned-own-mcp → 自愈阶梯(4.4,仅杀进程不动 owner)→ 最终重试一次
+        ├─ 死持有者(闸① ESRCH)→ **不预删** stale owner,直接最终重试一次
+        │   (成功 = 已持 zvec 独占锁 → writeOwner 原子覆盖 stale;
+        │    失败 → 重新诊断一轮,绝不删除 —— plan R1 P0-1)
         └─ live-foreign / unknown / 自愈失败 → throw 富化错误(含 report)
+
+打开成功的发布统一走 `publishOpened`(plan R1 P0-2):`writeOwner` 抛错
+(权限/rename/磁盘)时立即 `closeSync()` 回收 collection 再原样抛出 ——
+绝不留下"持锁但无 sidecar"的进程(那正是本议题要消灭的最差状态)。
 ```
 
 ### 4.4 自愈阶梯(复阅"graceful → 确认 → hard → 等消失"修订)
@@ -152,14 +161,12 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
    win32 退化为单级;**等待与复核两步在所有平台保留** —— 防 kill 返回后
    native handle 尚未释放就重开导致偶发失败。)
 5. 仍存活 → 放弃自愈,throw `unknown` 富化错误(report 注明"自愈失败,进程未退出")。
-6. 已消失 → `clearOwner(dir, observedLeaseId)`(R1 P0-1:observedLeaseId
-   为**诊断时**读到的死者 leaseId,走 CAS —— 死者进程无法自清,但锁释放到
-   删除之间存在竞态窗口:新持有者 B 可能已抢开集合并 writeOwner(leaseB),
-   无条件 unlink 会误删 B 的合法 owner)。
-   - CAS 命中 → 删除成功 → 最终重试 openFn 一次。
-   - CAS 不匹配 → owner 已被新持有者接管,**不删除**,直接重试 openFn;
-     仍锁冲突 → 重新 readOwner + 重新诊断当前持有者(最多一轮,防循环),
-     按新 verdict 处置。
+6. 已消失 → **自愈阶梯到此为止,不动 owner**(plan R1 P0-1:read→unlink
+   即便带 CAS 也非原子;zvec 独占锁才是 owner 变更的互斥边界)。协调层直接
+   最终重试 openFn:
+   - 成功 → 当前进程已持锁,`writeOwner` 原子覆盖死者的 stale owner。
+   - 失败(新持有者 B 已抢先接管)→ **绝不删除**,重新诊断一轮
+     (最多一轮,防循环),按新 verdict 处置。
 
 ### 4.5 修改 `templates/cli/memory-index-zvec.js`(Layer 1)
 
@@ -169,7 +176,9 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   _depth === 0 && ephemeral && _finalizeSync() }`。
   **所有公开操作**(upsert/searchText/delete/stats/list)走此包装 ——
   异常路径也在 finally 释放(复阅"ephemeral 异常矩阵"要求)。
-- `_finalizeSync` 末尾追加 `clearOwner(dir, this._leaseId)`。
+- `_finalizeSync` 顺序固定为 optimize → `clearOwner(dir, this._leaseId)` →
+  `closeSync`(plan R1 P0-1:owner 清理必须发生在仍持锁期间;清理失败也必须
+  继续关锁 —— 最多留 stale owner,绝不为 owner 清理而泄漏 zvec 锁)。
 - 环境变量未设 → 现行一次性行为完全不变(exit-hook finalize 保留,
   且成为 ephemeral 模式下的幂等空转)。
 - `SqliteFtsIndex` 不改。
@@ -236,9 +245,10 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 - finalize 后文件被清除。
 - **lease CAS**:实例 A open→记 leaseA→模拟 A 晚到的 finalize 前,实例 B 已
   writeOwner(leaseB)→ A 的 `clearOwner(dir, leaseA)` 不删 B 的 owner.json。
-- **自愈后 CAS**(R1 P0-1):模拟"诊断记 observedLeaseId → 死者消失 → 新
-  持有者 writeOwner(leaseB)"时序 → `clearOwner(dir, observedLeaseId)` 不删
-  leaseB 的 owner.json。
+- **接管竞态(plan R1 P0-1 修订,替代原"自愈后 CAS"用例)**:dead-holder
+  接管的最终重试瞬间 B 抢先接管(writeOwner leaseB)且锁仍冲突 → A 抛富化
+  错误,**B 的 owner 幸存**(A 全程无 unlink);接管成功场景 → stale owner
+  被 A 的 writeOwner 原子覆盖,`readOwner().owner.pid === A.pid`。
 - 原子写契约(收窄为可观察断言):**目标路径只经 atomic rename 发布,
   绝不直接 truncate/write**(实现断言:writeOwner 对 owner.json 本体仅调用
   renameSync);临时文件名带 `owner.json.<pid>.<leaseId>.tmp` 后缀,
@@ -287,14 +297,22 @@ owner.json 与 LOCK 未被删改**。
 openFn 抛非锁错误(如 schema 错误/损坏集合)→ 原样 rethrow,
 不包装、不 backoff、不触发诊断、owner.json 不产生。
 
-### T-mcp-stdin-exit
+### T-mcp-stdin-exit(plan R1 P1-1:拆为两个契约)
 
-spawn `memory.js mcp` → 先经一次 evo_recall 类请求确保索引曾打开 →
-`stdin.end()` → 断言(超时清理进 finally,失败不产僵尸):
+**A. 真实 entrypoint 生命周期**:spawn `memory.js mcp` → 逐行解析 stdout
+JSON-RPC,**等到 initialize response**(不用固定 sleep)→ `stdin.end()` →
+进程 ≤5s 内自行 exit code 0(超时清理进 finally,失败不产僵尸)。
 
-1. 进程 ≤5s 内 exit code 0;
+**B. shutdown cleanup(主动持锁场景)**:测试 wrapper 在 `runMcpServer()`
+之前先以非 ephemeral 状态 `getMemoryIndex().initialize()`(真实持锁 + owner
+在场)再启动 server → 等 initialize response → `stdin.end()` → 断言:
+
+1. 进程自行 exit code 0(shutdown 关闭了活动索引);
 2. owner.json 已清除;
 3. **新 writer 实例立即 initialize 成功**(native 锁确实释放)。
+
+(ephemeral 路径下 recall 返回时锁本已释放,单一测试无法证明 shutdown 会
+收尾活动 collection —— B 场景补上这一空洞。)
 
 ### 回归
 
@@ -366,3 +384,24 @@ coordinator 是否需要同时管理 reader 与 writer。
 非阻断建议同步落实:原子写契约收窄为"目标路径只经 atomic rename 发布" +
 tmp 文件带 pid/leaseId 后缀;stdin shutdown 固定为"标志 → 停新请求 →
 await close → 关索引 → exitCode → 有界兜底 exit"(细化归实施计划)。
+
+**R2-plan(2026-07-23,实施计划复阅 CHANGES REQUIRED → 五项全部折入):**
+
+1. **P0-1 owner 变更的互斥边界 = zvec 独占锁**:`clearOwner` 的 read→unlink
+   即便带 lease 比对也非跨进程原子(TOCTOU)。修正:finalize 顺序 optimize →
+   clearOwner(仍持锁)→ closeSync;dead-holder / 自愈接管**不预删** stale
+   owner —— 打开成功即持锁,`writeOwner` 原子覆盖;失败绝不删除,重新诊断
+   一轮。自愈阶梯只负责杀进程与死亡确认,不再动 owner。
+2. **P0-2 publishOpened**:`openFn()` 成功但 `writeOwner` 抛错时立即
+   `closeSync()` 回收再原样抛出,绝不留"持锁但无 sidecar"的进程;测试经
+   `ctx.seams.writeOwnerFn` 注入发布失败。
+3. **P0-3 quote-aware argv 解析 + 精确等值**:tokenizer 支持双/单引号包裹的
+   含空格路径;entrypoint 匹配从双向 suffix 收紧为归一化精确等值;
+   路径别名/short-name 未来如需支持须走显式 realpath,不得放宽为 suffix。
+4. **P1-1 T-mcp-stdin-exit 拆 A/B**:A 验证真实 entrypoint 的 EOF→exit;
+   B 用 wrapper 预置非 ephemeral 持锁索引,验证 shutdown 真正关闭活动
+   collection、清 owner、释放 native 锁;两者都等 JSON-RPC response,
+   不用固定 sleep。
+5. **P1-2 孤儿自愈限定 win32**:unix detached 孤儿被 init 接管(ppid→1
+   存活),闸③不可靠 → unix 一律 report-only;orphan-selfheal 测试仅在
+   win32 执行并在输出中言明策略。
