@@ -7797,6 +7797,48 @@ async function runChildRuntimeTests() {
             fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
         }
         console.log('✅ T-ce-manifest-sync-4a mirror parity passed');
+
+        console.log('T-wiki-pagemap. Unified Windows-safe page mapping with collision rules ...');
+        {
+            const pmPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'page-map'));
+            delete require.cache[pmPath];
+            const { createPageMap, readableSegment } = require(pmPath);
+
+            // module:cli-entry → Windows 合法文件名(无冒号),形如 module/module-cli-entry--<hash8>.html
+            const pm = createPageMap();
+            const page = pm.modulePage('module:cli-entry');
+            assert.match(page, /^module\/module-cli-entry--[0-9a-f]{8}\.html$/, 'module page must be Windows-safe');
+            assert.ok(!page.includes(':'), 'no colon in page path');
+            assert.strictEqual(pm.modulePage('module:cli-entry'), page, 'mapping must be stable per id');
+
+            // 大小写折叠冲突(真实 sha1:hash8 不同)→ 各自成页,折叠后不同名
+            const clash = createPageMap();
+            const a = clash.sourcePage('src/A.js');
+            const b = clash.sourcePage('src/a.js'); // 可读段大小写折叠后同名,hash 不同 → 各自成页
+            assert.notStrictEqual(a.toLowerCase(), b.toLowerCase(), 'case-folded names must not collide');
+
+            // hash8 碰撞分支:注入 hashFn 制造「可读段折叠同名 + hash8 相同 + 全 hash 不同」
+            // → 第二个确定性扩展为全 hash,绝不覆盖第一个
+            const sameH8 = raw => raw === 'src/A.js' ? 'deadbeef' + 'f'.repeat(32) : 'deadbeef' + '0'.repeat(32);
+            const pmH = createPageMap({ hashFn: sameH8 });
+            assert.strictEqual(pmH.sourcePage('src/A.js'), 'source/src-a.js--deadbeef.html');
+            assert.strictEqual(pmH.sourcePage('src/a.js'), `source/src-a.js--deadbeef${'0'.repeat(32)}.html`,
+                'hash8 collision must extend to the FULL hash deterministically');
+            assert.strictEqual(pmH.sourcePage('src/A.js'), 'source/src-a.js--deadbeef.html', 'first assignment never overwritten');
+
+            // 同 id 重复申请不产生第二个页面
+            assert.strictEqual(Object.keys(clash.modulePages()).length, 0, 'source assignments must not appear in modulePages');
+            assert.match(readableSegment('module:planning'), /^module-planning$/);
+
+            // P0-2:wiki 自身文件必须归属正式 Architecture module,不落 unclassified
+            const imPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'architecture', 'infer-modules'));
+            delete require.cache[imPath];
+            const { inferModule } = require(imPath);
+            const wikiRule = inferModule('templates/cli/wiki/page-map.js');
+            assert.ok(wikiRule && wikiRule.id === 'module:architecture-wiki',
+                `templates/cli/wiki/* must map to module:architecture-wiki, got ${wikiRule && wikiRule.id}`);
+            console.log('✅ T-wiki-pagemap passed');
+        }
 }
 
 module.exports = { runGovernanceTests };

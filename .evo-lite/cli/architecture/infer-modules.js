@@ -72,6 +72,14 @@ const MODULE_RULES = [
         confidence: 1.0,
     },
     {
+        id: 'module:architecture-wiki',
+        name: 'Architecture Governance Wiki',
+        description: 'Static architecture and governance wiki: projection, rendering, source pages, and CLI build orchestration',
+        paths: ['templates/cli/wiki/'],
+        role: 'feature',
+        confidence: 1.0,
+    },
+    {
         id: 'module:runtime',
         name: 'Runtime',
         description: 'Infrastructure: path resolution, DB, models, safety, recall-rules, template-manifest',
