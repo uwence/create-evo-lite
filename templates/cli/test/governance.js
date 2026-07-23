@@ -7998,6 +7998,28 @@ async function runChildRuntimeTests() {
         assert.strictEqual(res2.project.focusResolved, false);
         console.log('✅ T-wiki-projection passed');
     }
+
+    console.log('T-wiki-dictionary. Chinese dictionary coverage: no bare Rxxx in generated narrative ...');
+    {
+        const dPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'dictionary'));
+        delete require.cache[dPath];
+        const { translateRule, healthLabel, progressLabel, moduleNarrative, listBareTerms } = require(dPath);
+
+        assert.strictEqual(translateRule('R008'), '任务缺少完成证据');
+        assert.strictEqual(translateRule('R999'), '发现一项尚未分类的治理检查');
+        assert.strictEqual(healthLabel('risk'), '存在风险');
+
+        const mp = { moduleId: 'module:a', name: 'A', description: 'service layer', role: 'service',
+            files: ['src/a/one.js'], tasks: [], taskCounts: { done: 2, open: 1, unknown: 0, shared: 0 },
+            progressState: 'in-progress', healthState: 'attention', healthReasons: ['R008', 'R999'],
+            focus: true, recentCommits: [] };
+        const text = moduleNarrative(mp);
+        assert.ok(text.includes('当前焦点'), 'focus module narrative must mention 当前焦点');
+        assert.deepStrictEqual(listBareTerms(text), [], 'no bare Rxxx in generated narrative');
+        assert.ok(progressLabel(mp).includes('2'), 'progress label carries done count');
+        assert.strictEqual(progressLabel({ ...mp, taskCounts: { done: 0, open: 0, unknown: 0, shared: 0 }, progressState: 'unplanned' }), '尚未纳入规划');
+        console.log('✅ T-wiki-dictionary passed');
+    }
 }
 
 module.exports = { runGovernanceTests };

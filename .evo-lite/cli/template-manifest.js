@@ -84,6 +84,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'wiki/page-map.js',
             'wiki/groups.js',
             'wiki/projection.js',
+            'wiki/dictionary.js',
             'code-perception/dogfood-validate.js',
             'code-perception/providers/codegraph-exec.js',
             'code-perception/providers/codegraph.js',
