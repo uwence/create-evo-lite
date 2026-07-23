@@ -7894,6 +7894,110 @@ async function runChildRuntimeTests() {
         } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
         console.log('✅ T-wiki-groups passed');
     }
+
+    console.log('T-wiki-projection. Deterministic ModuleProjection + ProjectHealth semantics ...');
+    {
+        const prPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'projection'));
+        delete require.cache[prPath];
+        const { buildProjection, taskCompletion, computeFreshness } = require(prPath);
+
+        const architectureIR = {
+            modules: [
+                { id: 'module:a', name: 'A', description: 'mod a', paths: ['src/a/'], fileCount: 2, role: 'service', confidence: 1 },
+                { id: 'module:b', name: 'B', description: 'mod b', paths: ['src/b/'], fileCount: 1, role: 'feature', confidence: 1 },
+                { id: 'module:empty', name: 'Empty', description: '', paths: ['src/e/'], fileCount: 1, role: 'mystery-role', confidence: 1 },
+                { id: 'module:exact', name: 'Exact', description: '', paths: ['src/exact.js'], fileCount: 1, role: 'service', confidence: 1 },
+            ],
+            files: [
+                { path: 'src/a/one.js', module: 'module:a', role: 'service', confidence: 1 },
+                { path: 'src/a/two.js', module: 'module:a', role: 'service', confidence: 1 },
+                { path: 'src/b/one.js', module: 'module:b', role: 'feature', confidence: 1 },
+                { path: 'src/e/one.js', module: 'module:empty', role: 'mystery-role', confidence: 1 },
+                { path: 'src/b/extra.js' },        // 无 module 字段 → 目录前缀 fallback 归属 module:b(降置信 + warning)
+                { path: 'src/exact.js.bak' },      // 无 module 字段;module:exact 的精确文件模式不得前缀匹配它
+            ],
+            edges: [],
+        };
+        const planIR = { tasks: [
+            { id: 'task:t1', title: 'T1', status: 'implemented', linkedFiles: ['src/a/one.js'] },
+            { id: 'task:t2', title: 'T2', status: 'todo', linkedFiles: ['src/a/two.js', 'src/b/one.js'] },  // 跨模块共享
+            { id: 'task:t3', title: 'T3', status: 'someday-maybe', linkedFiles: ['src/a/one.js'] },          // 未知状态
+        ] };
+        const driftReport = { findings: [
+            { id: 'R008:task:t2', rule: 'R008', level: 'warning', evidence: ['src/a/two.js'] },
+            { id: 'GLOBAL:verify', rule: 'V001', level: 'error', evidence: ['no/such/file.js'] },            // 不可归属 error
+            { id: 'INFO:x', rule: 'R009', level: 'info', evidence: ['src/b/one.js'] },                        // info 不参与健康
+        ], summary: { total: 3, warnings: 1, info: 1, errors: 1 } };
+
+        const res = buildProjection({
+            architectureIR, planIR, driftReport,
+            exploreResult: {
+                focus: { entityId: 'plan:x', taskId: 'task:t2', resolved: true },
+                providers: [{ id: 'provider:native-lite', role: 'fallback', ready: true, indexState: 'n/a', degraded: false }],
+                freshness: { stale: false, dirty: false },
+                governance: { linkSummary: { confirmed: 1, derived: 0, proposed: 2 } },
+            },
+            verifySummary: { drift: { errors: 1 } },
+            recentCommits: [{ sha: 'c1sha000', subject: 'feat: cross-module change', files: ['src/a/one.js', 'src/b/one.js'] }],
+        });
+        const byId = new Map(res.modules.map(m => [m.moduleId, m]));
+
+        // fallback 归属语义:目录模式(以 / 结尾)才做前缀匹配;精确文件模式必须全等
+        assert.ok(byId.get('module:b').files.includes('src/b/extra.js'), 'dir-pattern fallback attributes the module-less file');
+        assert.ok(res.warnings.some(w => w.includes('src/b/extra.js')), 'fallback attribution must warn (confidence downgraded)');
+        assert.ok(![...byId.values()].some(m => m.files.includes('src/exact.js.bak')),
+            'exact-file pattern must NOT prefix-match a longer path');
+
+        // 归属:files[].module 权威;t2 共享于 a、b 两模块并标 shared
+        assert.deepStrictEqual(byId.get('module:a').taskCounts, { done: 1, open: 1, unknown: 1, shared: 1 });
+        assert.deepStrictEqual(byId.get('module:b').taskCounts, { done: 0, open: 1, unknown: 0, shared: 1 });
+        // 未知状态:不计完成,单列 unknown,并产生 warning
+        assert.strictEqual(taskCompletion('someday-maybe'), 'unknown');
+        assert.ok(res.warnings.some(w => w.includes('task:t3')), 'unknown status must be warned');
+        // 无 task 模块 → unplanned(尚未纳入规划)
+        assert.strictEqual(byId.get('module:empty').progressState, 'unplanned');
+        // 未识别 role:保留原值 + 确定性 warning(进 manifest;AC6 的可断言载体)
+        assert.strictEqual(byId.get('module:empty').role, 'mystery-role', 'unrecognized role keeps its ORIGINAL value');
+        assert.ok(res.warnings.some(w => w.includes('mystery-role')), 'unrecognized role must produce a warning');
+        // 最近变更按模块过滤:跨模块 commit 在每个模块页只显示属于该模块的文件
+        assert.deepStrictEqual(byId.get('module:a').recentCommits[0].files, ['src/a/one.js'], 'module:a sees only its own files');
+        assert.deepStrictEqual(byId.get('module:b').recentCommits[0].files, ['src/b/one.js'], 'module:b sees only its own files');
+        // 首页总进度按 task id 去重:3 个 task,done=1 open=1 unknown=1(t2 不重复计)
+        assert.deepStrictEqual(res.totals, { taskDone: 1, taskOpen: 1, taskUnknown: 1 });
+        // 健康隔离:不可归属 error 只进 ProjectHealth,不把任何模块标 risk
+        assert.ok(res.project.unattributedFindings.some(f => f.id === 'GLOBAL:verify'));
+        assert.ok(res.modules.every(m => m.healthState !== 'risk'), 'unattributable error must not spread to modules');
+        // module:a 有 1 条可归属 warning → attention;info 不影响 module:b
+        assert.strictEqual(byId.get('module:a').healthState, 'attention');
+        assert.strictEqual(byId.get('module:b').healthState, 'normal');
+        // info 不参与健康,但计数不得静默消失
+        assert.strictEqual(res.project.driftInfo, 1, 'info findings are counted, not silently dropped');
+        // focus:canonical taskId 命中的模块标记 focus;ProjectHealth 携带人话素材
+        assert.strictEqual(byId.get('module:a').focus, true);
+        assert.strictEqual(byId.get('module:b').focus, true);
+        assert.deepStrictEqual(res.project.focus,
+            { resolved: true, taskId: 'task:t2', label: 'T2', moduleIds: ['module:a', 'module:b'] });
+        // providers / 结构索引 freshness / 待确认关联:原样投影为确定性字段
+        assert.strictEqual(res.project.codePerception.providers.length, 1);
+        assert.strictEqual(res.project.codePerception.freshness.stale, false);
+        assert.strictEqual(res.project.links.proposed, 2);
+        // freshness:仅 generatedAt 的 IR → unknown
+        assert.strictEqual(res.project.inputFreshness.architecture.state, 'unknown');
+        assert.strictEqual(res.project.inputFreshness.planning.state, 'unknown');
+        // computeFreshness:fresh/stale 只来自显式可比对快照对;其余一律 unknown
+        assert.strictEqual(computeFreshness({ sourceFingerprint: 'a', observedFingerprint: 'a' }).state, 'fresh');
+        assert.strictEqual(computeFreshness({ sourceFingerprint: 'a', observedFingerprint: 'b' }).state, 'stale');
+        assert.strictEqual(computeFreshness({ generatedAt: 'now' }).state, 'unknown');
+        assert.strictEqual(computeFreshness(null).state, 'unknown');
+
+        // focus unresolved → 不标记任何模块
+        const res2 = buildProjection({ architectureIR, planIR, driftReport,
+            exploreResult: { focus: { entityId: null, taskId: null, resolved: false } },
+            verifySummary: null, recentCommits: [] });
+        assert.ok(res2.modules.every(m => m.focus === false), 'unresolved focus must mark nothing');
+        assert.strictEqual(res2.project.focusResolved, false);
+        console.log('✅ T-wiki-projection passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
