@@ -331,10 +331,9 @@ function isLockError(err) {
     return isZ && /can't lock/i.test(String(err.message || ''));
 }
 
-// 自愈阶梯(设计 §4.4,仅 orphaned-own-mcp 或 dead-holder 语义进入):
-// 身份复核 → SIGTERM → 有界等待 → SIGKILL → 等消失 → CAS 清 stale owner。
-// win32 说明:SIGTERM/SIGKILL 底层同为 TerminateProcess,阶梯在 unix 生效,
-// win32 退化为单级;等待与复核两步在所有平台保留(防 native handle 未释放即重开)。
+// 自愈阶梯(设计 §4.4,仅 orphaned-own-mcp 验判进入):
+// 身份复核 → 首击(win32=SIGKILL / unix=SIGTERM)→ 有界等待 → SIGKILL →
+// 等消失 → settle。只杀进程与确认死亡,不动 owner(P0-1)。
 function attemptSelfHeal(dir, diag, ctx = {}) {
     // 防御性平台闸(plan R2 执行提示):生产路径已由 diagnoseLockConflict 阻断
     // unix 自愈,这里再守一次,防未来被直接调用时绕过平台策略。
@@ -347,7 +346,7 @@ function attemptSelfHeal(dir, diag, ctx = {}) {
         : (pid, sig) => process.kill(pid, sig);
     const recheck = getProcessSnapshot(owner.pid, ctx.seams);
     if (recheck && recheck.alive === false) {
-        // 诊断与自愈之间已自行退出 → 无进程可杀,仅清 stale owner
+        // 诊断与自愈之间已自行退出 → 无进程可杀;owner 留给接管覆盖(P0-1)
     } else if (!recheck || !isExpectedMcpProcess(recheck, owner)) {
         // 窗口期内 PID 被复用或身份不再可确认 → 中止,绝不杀
         return { healed: false, reason: `自愈中止:pid ${owner.pid} 的身份在复核时不再成立(可能 PID 复用),绝不自动终止` };
