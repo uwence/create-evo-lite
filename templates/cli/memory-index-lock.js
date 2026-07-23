@@ -9,6 +9,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const OWNER_FILE = 'owner.json';
 const SCHEMA_VERSION = 1;
@@ -111,13 +112,130 @@ function readOwner(dir) {
     return { state: 'valid', owner: raw, errors: [] };
 }
 
+const STARTED_AT_TOLERANCE_MS = 2000;
+
+function pidAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (err) {
+        return Boolean(err && err.code === 'EPERM'); // EPERM = 存在但无权限
+    }
+}
+
+// 一次系统查询取回四道闸 + 时间戳所需的全部字段;失败/权限不足 → null,
+// 调用方一律按"不可确认"处理(绝不因此进入自愈)。
+function getProcessSnapshot(pid, seams = {}) {
+    if (seams && typeof seams.snapshotFn === 'function') {
+        try {
+            return seams.snapshotFn(pid);
+        } catch (_) {
+            return null;
+        }
+    }
+    const alive = pidAlive(pid);
+    if (!alive) {
+        return { alive: false, isNode: null, commandLine: null, ppid: null, ppidAlive: null, startedAt: null };
+    }
+    try {
+        if (process.platform === 'win32') {
+            const script = `Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" | Select-Object Name,ProcessId,ParentProcessId,CommandLine,@{n='StartedAt';e={$_.CreationDate.ToUniversalTime().ToString('o')}} | ConvertTo-Json`;
+            const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', timeout: 10000 });
+            const row = JSON.parse(out);
+            if (!row || !row.ProcessId) return null;
+            const ppid = Number(row.ParentProcessId);
+            return {
+                alive: true,
+                isNode: /node(\.exe)?$/i.test(String(row.Name || '')),
+                commandLine: String(row.CommandLine || ''),
+                ppid: Number.isInteger(ppid) ? ppid : null,
+                ppidAlive: Number.isInteger(ppid) ? pidAlive(ppid) : null,
+                startedAt: row.StartedAt || null,
+            };
+        }
+        const out = execFileSync('ps', ['-o', 'ppid=,lstart=,args=', '-p', String(Number(pid))], { encoding: 'utf8', timeout: 10000 });
+        const line = out.trim();
+        if (!line) return null;
+        const tokens = line.split(/\s+/);
+        const ppid = Number(tokens[0]);
+        const startedDate = new Date(tokens.slice(1, 6).join(' ')); // lstart 固定 5 段
+        const commandLine = tokens.slice(6).join(' ');
+        const first = (commandLine.split(/\s+/)[0] || '');
+        return {
+            alive: true,
+            isNode: /node/i.test(path.basename(first)),
+            commandLine,
+            ppid: Number.isInteger(ppid) ? ppid : null,
+            ppidAlive: Number.isInteger(ppid) ? pidAlive(ppid) : null,
+            startedAt: Number.isNaN(startedDate.getTime()) ? null : startedDate.toISOString(),
+        };
+    } catch (_) {
+        return null;
+    }
+}
+
+function normalizePath(p) {
+    return String(p || '').replace(/\\/g, '/').toLowerCase();
+}
+
+// quote-aware argv tokenizer(plan R1 P0-3):支持双/单引号包裹的含空格路径。
+// 未闭合引号按"读到串尾"处理 —— 解析失败宁可产生不匹配的 token(→ unknown,
+// 拒杀),也不做任何宽松猜测。
+function commandTokens(commandLine) {
+    const s = String(commandLine || '');
+    const tokens = [];
+    let cur = '';
+    let quote = null;
+    for (const ch of s) {
+        if (quote) {
+            if (ch === quote) quote = null;
+            else cur += ch;
+        } else if (ch === '"' || ch === "'") {
+            quote = ch;
+        } else if (/\s/.test(ch)) {
+            if (cur) { tokens.push(cur); cur = ''; }
+        } else {
+            cur += ch;
+        }
+    }
+    if (cur) tokens.push(cur);
+    return tokens;
+}
+
+// R1 P1:live snapshot 独立确认身份 —— sidecar 自报的 mode 不构成杀进程依据。
+// 仅含 memory.js 不够(stats/rebuild 同样命中):entrypoint 后的 token 必须是 mcp。
+// R1 P0-2:processStartedAt 必须存在并吻合;缺失 = 闸不过,不是跳过。
+// plan R1 P0-3:entrypoint 匹配必须是归一化后的**精确等值** —— 杀进程闸不做
+// 任意 suffix 匹配;路径别名/short-name 未来如需支持须走显式 realpath。
+function isExpectedMcpProcess(snapshot, owner) {
+    if (!snapshot || !owner) return false;
+    if (snapshot.isNode !== true) return false;
+    if (!snapshot.commandLine || !snapshot.startedAt) return false;
+    const entry = normalizePath(owner.entrypoint);
+    if (!entry || !entry.endsWith('memory.js')) return false;
+    const tokens = commandTokens(snapshot.commandLine).map(normalizePath);
+    const entryIdx = tokens.findIndex(tok => tok === entry);
+    if (entryIdx === -1) return false;
+    if (tokens[entryIdx + 1] !== 'mcp') return false;
+    const ownerT = Date.parse(owner.processStartedAt || '');
+    const snapT = Date.parse(snapshot.startedAt || '');
+    if (Number.isNaN(ownerT) || Number.isNaN(snapT)) return false;
+    return Math.abs(ownerT - snapT) <= STARTED_AT_TOLERANCE_MS;
+}
+
 module.exports = {
     OWNER_FILE,
     SCHEMA_VERSION,
+    STARTED_AT_TOLERANCE_MS,
     ownerPath,
     selfStartedAt,
     processMode,
     writeOwner,
     clearOwner,
     readOwner,
+    pidAlive,
+    getProcessSnapshot,
+    normalizePath,
+    commandTokens,
+    isExpectedMcpProcess,
 };

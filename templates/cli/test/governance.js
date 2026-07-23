@@ -2225,6 +2225,60 @@ async function runGovernanceTests() {
             assert.strictEqual(lock.readOwner(lockDir).state, 'invalid', 'unknown mode must be invalid');
         }
         console.log('✅ T-lock-owner owner sidecar passed');
+        console.log('T-lock-ident. Testing process snapshot + isExpectedMcpProcess ...');
+        {
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+
+            // 自身快照:alive + isNode + commandLine + startedAt(win32 CIM / unix ps)
+            const self = lock.getProcessSnapshot(process.pid);
+            assert.ok(self && self.alive === true, 'self snapshot alive');
+            assert.strictEqual(self.isNode, true, 'self is a node process');
+            assert.ok(typeof self.commandLine === 'string' && self.commandLine.length > 0, 'commandLine captured');
+            assert.ok(self.startedAt && !Number.isNaN(Date.parse(self.startedAt)), 'startedAt is a valid time');
+            assert.ok(Number.isInteger(self.ppid), 'ppid captured');
+
+            // 自报 startedAt(uptime 推导)与系统实测在容差内一致
+            const drift = Math.abs(Date.parse(lock.selfStartedAt()) - Date.parse(self.startedAt));
+            assert.ok(drift <= 5000, `selfStartedAt drift ${drift}ms exceeds 5s`);
+
+            // 已死 pid → alive:false
+            const deadChild = childProcess.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+            const deadSnap = lock.getProcessSnapshot(deadChild.pid);
+            assert.ok(deadSnap && deadSnap.alive === false, 'dead pid reports alive:false');
+
+            // seam:注入失败 → null(调用方按不可确认处理)
+            assert.strictEqual(lock.getProcessSnapshot(1, { snapshotFn: () => { throw new Error('denied'); } }), null);
+
+            // quote-aware tokenizer(plan R1 P0-3):带空格路径不得被拆碎
+            assert.deepStrictEqual(
+                lock.commandTokens('node "C:\\tmp path\\x\\memory.js" mcp'),
+                ['node', 'C:\\tmp path\\x\\memory.js', 'mcp']);
+            assert.deepStrictEqual(
+                lock.commandTokens("node '/tmp/my dir/memory.js' mcp"),
+                ['node', '/tmp/my dir/memory.js', 'mcp']);
+            assert.deepStrictEqual(
+                lock.commandTokens('node C:/plain/memory.js stats'),
+                ['node', 'C:/plain/memory.js', 'stats']);
+
+            // isExpectedMcpProcess:entrypoint 归一化精确等值(禁止 suffix 匹配),
+            // 命令 token 必须是 mcp,startedAt 必须存在且吻合
+            const owner = { entrypoint: 'C:/tmp path/x/memory.js', processStartedAt: '2026-07-23T08:00:00.000Z' };
+            const snapOf = cmd => ({ alive: true, isNode: true, commandLine: cmd, ppid: 1, ppidAlive: false, startedAt: '2026-07-23T08:00:01.000Z' });
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\tmp path\\x\\memory.js" mcp'), owner), true, 'quoted spaced path, exact match, accepted');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\other path\\x\\memory.js" mcp'), owner), false, 'different path rejected');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\tmp path\\x\\memory.js" stats'), owner), false, 'stats must NOT pass');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\tmp path\\x\\memory.js" rebuild'), owner), false, 'rebuild must NOT pass');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\tmp path\\x\\memory.js" mcp-extra'), owner), false, 'mcp-extra is not the mcp token');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node "C:\\x\\memory.js" mcp'), owner), false, 'suffix-only overlap rejected (exact equality required)');
+            const plainOwner = { entrypoint: 'C:/tmp/x/memory.js', processStartedAt: '2026-07-23T08:00:00.000Z' };
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:\\tmp\\x\\memory.js mcp'), plainOwner), true, 'backslash path normalized to exact match');
+            assert.strictEqual(lock.isExpectedMcpProcess({ ...snapOf('node C:/tmp/x/memory.js mcp'), startedAt: '2026-07-23T09:00:00.000Z' }, plainOwner), false, 'startedAt mismatch = PID reuse, rejected');
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:/tmp/x/memory.js mcp'), { entrypoint: 'C:/tmp/x/memory.js' }), false, 'missing processStartedAt = gate fails, not skipped');
+            assert.strictEqual(lock.isExpectedMcpProcess({ ...snapOf('node C:/tmp/x/memory.js mcp'), isNode: false }, plainOwner), false, 'non-node rejected');
+            assert.strictEqual(lock.isExpectedMcpProcess(null, plainOwner), false);
+            assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:/tmp/x/memory.js mcp'), null), false);
+        }
+        console.log('✅ T-lock-ident passed');
 
         console.log('T-SPACE-ENGINE. Testing verify memory-space line reports the ACTIVE index engine (skips if @zvec/zvec absent) ...');
         {
