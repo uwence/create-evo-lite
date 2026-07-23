@@ -8296,6 +8296,14 @@ async function runChildRuntimeTests() {
             // 缺 Architecture/Planning IR → 1(生成失败)
             r = spawnWiki(tmpNoIr, ['build']);
             assert.strictEqual(r.status, 1, `missing IR must exit 1, got ${r.status}: ${r.stderr}`);
+            // 损坏的 IR → 1,并给出可操作的重扫提示
+            const tmpCorrupt = mkValidRoot();
+            try {
+                fs.writeFileSync(path.join(tmpCorrupt, '.evo-lite', 'generated', 'architecture', 'architecture-ir.json'), 'not json {');
+                r = spawnWiki(tmpCorrupt, ['build']);
+                assert.strictEqual(r.status, 1, `corrupt IR must exit 1, got ${r.status}: ${r.stderr}`);
+                assert.ok((r.stdout + r.stderr).includes('corrupt'), 'corrupt IR error must identify the problem');
+            } finally { fs.rmSync(tmpCorrupt, { recursive: true, force: true }); }
             // 未知参数 → 2
             r = spawnWiki(tmpOk, ['build', '--bogus']);
             assert.strictEqual(r.status, 2, `unknown option must exit 2, got ${r.status}: ${r.stderr}`);

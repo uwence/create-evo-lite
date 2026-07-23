@@ -12,9 +12,10 @@ const { buildProjection } = require('./projection');
 const { validateEdges, renderIndex, renderModulePage } = require('./render');
 const { generateSourcePages } = require('./source-pages');
 
-function readJson(file) {
-    if (!fs.existsSync(file)) return null;
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+function readJsonSafe(file) {
+    if (!fs.existsSync(file)) return { missing: true };
+    try { return { data: JSON.parse(fs.readFileSync(file, 'utf8')) }; }
+    catch (e) { return { corrupt: true, message: e.message }; }
 }
 
 function defaultGitLog(projectRoot) {
@@ -57,11 +58,17 @@ async function buildWiki({ projectRoot, now, deps }) {
     const warnings = [];
     const gen = path.join(projectRoot, '.evo-lite', 'generated');
 
-    const architectureIR = readJson(path.join(gen, 'architecture', 'architecture-ir.json'));
-    if (!architectureIR) return { ok: false, error: 'architecture IR missing — run: mem architecture scan' };
-    const planIR = readJson(path.join(gen, 'planning', 'plan-ir.json'));
-    if (!planIR) return { ok: false, error: 'planning IR missing — run: mem plan scan' };
-    const driftReport = readJson(path.join(gen, 'architecture', 'drift-report.json')) || { findings: [], summary: {} };
+    const archRes = readJsonSafe(path.join(gen, 'architecture', 'architecture-ir.json'));
+    if (archRes.missing) return { ok: false, error: 'architecture IR missing — run: mem architecture scan' };
+    if (archRes.corrupt) return { ok: false, error: `architecture-ir.json is corrupt (${archRes.message}) — re-run: mem architecture scan` };
+    const architectureIR = archRes.data;
+    const planRes = readJsonSafe(path.join(gen, 'planning', 'plan-ir.json'));
+    if (planRes.missing) return { ok: false, error: 'planning IR missing — run: mem plan scan' };
+    if (planRes.corrupt) return { ok: false, error: `plan-ir.json is corrupt (${planRes.message}) — re-run: mem plan scan` };
+    const planIR = planRes.data;
+    const driftRes = readJsonSafe(path.join(gen, 'architecture', 'drift-report.json'));
+    const driftReport = driftRes.data || { findings: [], summary: {} };
+    if (driftRes.corrupt) warnings.push('drift-report.json unreadable — treated as empty');
 
     let exploreResult;
     try { exploreResult = await d.explore(projectRoot); }

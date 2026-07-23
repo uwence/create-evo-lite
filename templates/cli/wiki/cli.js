@@ -27,7 +27,12 @@ function openInBrowser(indexPath, onDone) {
         : p === 'win32' ? ['explorer.exe', [indexPath]]
         : p === 'darwin' ? ['open', [indexPath]]
         : ['xdg-open', [indexPath]];
-    execFile(cmd, args, err => onDone(err || null));
+    execFile(cmd, args, err => {
+        // explorer.exe routinely exits non-zero even on success; only a spawn
+        // failure (string code like 'ENOENT') is a real launch error there.
+        if (err && cmd === 'explorer.exe' && typeof err.code === 'number') return onDone(null);
+        onDone(err || null);
+    });
 }
 
 function registerWikiCommands(program) {

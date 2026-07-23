@@ -1517,7 +1517,7 @@ git commit -m "feat(wiki): read-only source pages with containment, escaping, si
   registerWikiCommands(program)   // mem wiki build [--open];退出码 0/1/2 契约
   ```
 
-**build 流程(确定性顺序):** 读 architecture-ir.json + plan-ir.json(任一缺失 → `{ok:false, error:'run: mem architecture scan / mem plan scan'}`)→ 读 drift-report.json(缺失=零 findings)→ `deps.explore` 取 focus(异常 → `{resolved:false}` + warning)→ `deps.verifySummary`(异常 → null + warning)→ `deps.gitLog` 取最近 10 commit(非 git 环境 → `[]` + warning)→ `validateEdges` → `buildProjection` → `loadWikiGroups`(`ok:false` → 原样返回给 CLI 映射 exit 2)→ 按 moduleId 排序申请 module 页、按路径排序申请 source 页 → 渲染全部页面 → 写盘(先清空 outDir)→ 写 manifest(pages 排序)。
+**build 流程(确定性顺序):** 读 architecture-ir.json + plan-ir.json(任一缺失 → `{ok:false, error:'run: mem architecture scan / mem plan scan'}`)→ 读 drift-report.json(缺失=零 findings)→ `deps.explore` 取 focus(异常 → `{resolved:false}` + warning)→ `deps.verifySummary`(异常 → null + warning)→ `deps.gitLog` 取最近 10 commit(非 git 环境 → `[]` + warning)→ `loadWikiGroups`(`ok:false` → 原样返回给 CLI 映射 exit 2,fail-fast)→ `validateEdges` → `buildProjection` → 按 moduleId 排序申请 module 页、按路径排序申请 source 页 → 渲染全部页面 → 写盘(先清空 outDir)→ 写 manifest(pages 排序)。
 
 - [ ] **Step 1: 写失败测试**
 

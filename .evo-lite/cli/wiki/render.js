@@ -88,7 +88,7 @@ function renderSvgMap({ modules, groupsConfig, pageMap, validEdges }) {
             const total = m.taskCounts.done + m.taskCounts.open + m.taskCounts.unknown;
             const ratio = total ? m.taskCounts.done / total : 0;
             parts.push(`<a href="${escapeHtml(pageMap.modulePage(m.moduleId))}">`
-                + `<rect x="${x}" y="${y}" width="${CARD_W}" height="${CARD_H}" rx="8" fill="${HEALTH_FILL[m.healthState]}" stroke="#8a8a8a"/>`
+                + `<rect x="${x}" y="${y}" width="${CARD_W}" height="${CARD_H}" rx="8" fill="${HEALTH_FILL[m.healthState] || HEALTH_FILL.normal}" stroke="#8a8a8a"/>`
                 + `<text x="${x + 10}" y="${y + 22}" class="card-title">${escapeHtml(alias)}${m.focus ? ' ◎' : ''}</text>`
                 + `<text x="${x + 10}" y="${y + 40}" class="card-sub">${escapeHtml(total ? `${m.taskCounts.done}/${total}` : '尚未纳入规划')}</text>`
                 + `<rect x="${x + 10}" y="${y + 48}" width="${CARD_W - 20}" height="6" fill="#ddd"/>`
@@ -227,7 +227,7 @@ function renderModulePage({ mp, pageMap, meta, sourcePageFor, groupsConfig }) {
     const body = `<h1>${escapeHtml(alias)}</h1>`
         + `<p>${escapeHtml(moduleNarrative(mp))}</p>`
         + (mp.description ? `<p><em>${escapeHtml(mp.description)}</em></p>` : '')
-        + `<h2>任务(${progressLabel(mp)})</h2>` + progressBar
+        + `<h2>任务(${escapeHtml(progressLabel(mp))})</h2>` + progressBar
         + `<table>${taskRows || '<tr><td>尚未纳入规划</td></tr>'}</table>`
         + `<h2>文件</h2><table>${rows}</table>`
         + (commits ? `<h2>最近变更</h2><ul>${commits}</ul>` : '')
