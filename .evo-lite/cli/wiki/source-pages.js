@@ -40,7 +40,17 @@ function generateSourcePages({ projectRoot, files, pageMap, meta, limitBytes = D
         try { stat = fs.statSync(real); } catch { skipped.push({ path: f, reason: '文件不可读' }); continue; }
         if (!stat.isFile()) { skipped.push({ path: f, reason: '不是普通文件' }); continue; }
         if (stat.size > limitBytes) {
-            // Design §2.3: oversized files get an explanatory STUB page — never
+            // Binary detection applies regardless of size — sniff the first
+            // window only (never read the whole oversized file).
+            const fd = fs.openSync(real, 'r');
+            let head;
+            try {
+                const buf = Buffer.alloc(Math.min(8000, stat.size));
+                const n = fs.readSync(fd, buf, 0, buf.length, 0);
+                head = buf.subarray(0, n);
+            } finally { fs.closeSync(fd); }
+            if (looksBinary(head)) { skipped.push({ path: f, reason: '二进制文件不渲染' }); continue; }
+            // Design §2.3: oversized TEXT files get an explanatory STUB page — never
             // silently dropped, never embedding the content itself.
             const body = `<h1><code>${escapeHtml(f)}</code></h1>`
                 + `<p>该文件大小为 ${Math.round(stat.size / 1024)} KiB,超过 ${Math.round(limitBytes / 1024)} KiB 上限,未渲染正文。请在本地编辑器中查看。</p>`

@@ -8129,10 +8129,12 @@ async function runChildRuntimeTests() {
         const { createPageMap } = require(pmPath2);
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-src-'));
 
+        let outTmp;
         try {
             fs.writeFileSync(path.join(tmp, 'ok.js'), 'const a = 1;\nconst b = "<script>&\'";\n');
             fs.writeFileSync(path.join(tmp, 'bin.dat'), Buffer.from([0, 1, 2, 0, 3]));
             fs.writeFileSync(path.join(tmp, 'big.js'), 'x'.repeat(600 * 1024));
+            fs.writeFileSync(path.join(tmp, 'bigbin.dat'), Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.alloc(600 * 1024, 7)]));
 
             // containment:.. / 绝对路径 → null
             assert.strictEqual(resolveContained(tmp, '../outside.txt'), null);
@@ -8141,18 +8143,20 @@ async function runChildRuntimeTests() {
 
             // symlink 越界:项目内链接指向项目外 → null(AC5)。
             // Windows 上用 junction(目录联接,无需特权);创建失败的环境条件跳过。
+            outTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-out-'));
+            fs.writeFileSync(path.join(outTmp, 'secret.txt'), 'outside');
             let escapeLink = false;
             try {
-                fs.symlinkSync(os.tmpdir(), path.join(tmp, 'esc-link'), 'junction');
+                fs.symlinkSync(outTmp, path.join(tmp, 'esc-link'), 'junction');
                 escapeLink = true;
             } catch { console.log('  (symlink/junction unavailable — escape case skipped)'); }
             if (escapeLink) {
                 assert.strictEqual(resolveContained(tmp, 'esc-link'), null, 'symlink escaping the root must be rejected');
-                assert.strictEqual(resolveContained(tmp, 'esc-link/anything.txt'), null, 'paths under an escaping link must be rejected');
+                assert.strictEqual(resolveContained(tmp, 'esc-link/secret.txt'), null, 'existing file under an escaping link must be rejected by the realpath comparison');
             }
 
             const meta = { generatedAt: '2026-01-01T00:00:00.000Z', headSha: 'abc1234' };
-            const res = generateSourcePages({ projectRoot: tmp, files: ['ok.js', 'bin.dat', 'big.js', '../outside.txt'],
+            const res = generateSourcePages({ projectRoot: tmp, files: ['ok.js', 'bin.dat', 'big.js', 'bigbin.dat', '../outside.txt'],
                 pageMap: createPageMap(), meta });
 
             const okPage = res.pages.find(p => p.page.includes('ok.js') || p.page.includes('ok-js'));
@@ -8171,7 +8175,12 @@ async function runChildRuntimeTests() {
             assert.ok(reasons['bin.dat'], 'binary skipped with reason');
             assert.ok(!reasons['big.js'], 'oversized is a stub PAGE, not a skip entry');
             assert.ok(reasons['../outside.txt'], 'escaping path skipped with reason');
-        } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+            assert.ok(reasons['bigbin.dat'], 'oversized BINARY is skipped as binary, not stubbed');
+            assert.ok(!res.pages.some(p => p.page.includes('bigbin')), 'no stub page for oversized binary');
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+            if (outTmp) fs.rmSync(outTmp, { recursive: true, force: true });
+        }
         console.log('✅ T-wiki-source passed');
     }
 }
