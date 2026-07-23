@@ -8027,6 +8027,97 @@ async function runChildRuntimeTests() {
         assert.strictEqual(roleLabel('mystery-role'), '其他(mystery-role)');
         console.log('✅ T-wiki-dictionary passed');
     }
+
+    console.log('T-wiki-render. SVG map: lanes, no-edge honesty, edge contract, unknown role ...');
+    {
+        const rPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'render'));
+        delete require.cache[rPath];
+        const pmPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'page-map'));
+        delete require.cache[pmPath];
+        const { validateEdges, renderSvgMap, renderIndex, renderModulePage, escapeHtml } = require(rPath);
+        const { createPageMap } = require(pmPath);
+
+        const mkMp = (id, role) => ({ moduleId: id, name: id, description: '', role,
+            files: [], tasks: [], taskCounts: { done: 0, open: 0, unknown: 0, shared: 0 },
+            progressState: 'unplanned', healthState: 'normal', healthReasons: [], focus: false, recentCommits: [] });
+        const modules = [mkMp('module:a', 'service'), mkMp('module:b', 'feature'), mkMp('module:x', 'mystery-role')];
+        const known = modules.map(m => m.moduleId);
+
+        // edges 为空 → 无 dependency-edge、无 marker-end、无 synthetic edge
+        const svg0 = renderSvgMap({ modules, groupsConfig: null, pageMap: createPageMap(), validEdges: [] });
+        assert.ok(!svg0.includes('dependency-edge'), 'no dependency-edge element when edges empty');
+        assert.ok(!svg0.includes('marker-end'), 'no marker-end when edges empty');
+        // 未识别 role 不丢模块,且保留原 role 独立成道(不并入 unknown)
+        assert.ok(svg0.includes('module:x') || svg0.includes('module-x'), 'unknown-role module must render');
+        assert.ok(svg0.includes('mystery-role'), 'unrecognized role keeps its own lane label (其他(mystery-role))');
+
+        // 合法边 → dependency-edge 出现;无效端点/可选字段类型错误 → 拒绝 + warning
+        const { valid, warnings } = validateEdges([
+            { sourceModuleId: 'module:a', targetModuleId: 'module:b', kind: 'depends' },
+            { sourceModuleId: 'module:a', targetModuleId: 'module:ghost' },
+            { sourceModuleId: 'module:a', targetModuleId: 'module:b', kind: 'depends' },   // 重复 → 去重
+            { bogus: true },
+            { sourceModuleId: 'module:a', targetModuleId: 'module:b', kind: {} },          // kind 类型错误 → malformed
+            { sourceModuleId: 'module:a', targetModuleId: 'module:b', confidence: 'high' },// confidence 类型错误 → malformed
+        ], known);
+        assert.strictEqual(valid.length, 1, 'dedup by source+target+kind; invalid + type-broken rejected');
+        assert.ok(warnings.length >= 4, 'invalid edges (incl. optional-field type errors) must produce warnings');
+        const svg1 = renderSvgMap({ modules, groupsConfig: null, pageMap: createPageMap(), validEdges: valid });
+        assert.ok(svg1.includes('dependency-edge') && svg1.includes('marker-end'), 'valid edge renders arrow');
+
+        // escapeHtml:script/&/引号
+        assert.strictEqual(escapeHtml('<script>&"\''), '&lt;script&gt;&amp;&quot;&#39;');
+
+        // index:unresolved focus + unknown freshness + provider 未接入(信息性,非风险)
+        const meta = { generatedAt: '2026-01-01T00:00:00.000Z', headSha: 'abc1234', projectName: 'DemoProj' };
+        const baseProject = { driftErrors: 0, driftWarnings: 0, driftInfo: 0,
+            unattributedFindings: [], verify: null,
+            focus: { resolved: false, taskId: null, label: '', moduleIds: [] }, focusResolved: false,
+            codePerception: { providers: [], freshness: null }, links: null,
+            inputFreshness: { architecture: { state: 'unknown', reason: '' }, planning: { state: 'unknown', reason: '' } } };
+        const html = renderIndex({ projection: { modules, project: baseProject,
+            totals: { taskDone: 0, taskOpen: 0, taskUnknown: 0 }, warnings: [] },
+            groupsConfig: null, pageMap: createPageMap(), meta });
+        assert.ok(html.includes('当前焦点无法可靠定位'), 'unresolved focus fixed copy');
+        assert.ok(html.includes('数据新鲜度无法确认'), 'unknown freshness must not render as normal');
+        assert.ok(html.includes('abc1234'), 'provenance footer carries headSha');
+        assert.ok(html.includes('DemoProj'), 'positioning paragraph names the project');
+        assert.ok(html.includes('本页导航'), 'nav tree present');
+        assert.ok(html.includes('结构代码情报未接入'), 'absent structural provider renders informational copy');
+        assert.ok(html.includes('全局验证结果不可用'), 'verify=null renders the unavailable copy');
+
+        // index:resolved focus 人话 + 健康摘要 + 待确认关联;provider stale = 信息性文案
+        const html2 = renderIndex({ projection: { modules, project: { ...baseProject,
+            driftWarnings: 2, focusResolved: true,
+            focus: { resolved: true, taskId: 'task:t9', label: '让向导跑起来', moduleIds: ['module:a'] },
+            codePerception: { providers: [{ id: 'provider:codegraph', role: 'structural-primary', ready: true, indexState: 'ok', degraded: false }], freshness: { stale: true, dirty: false } },
+            links: { confirmed: 1, derived: 0, proposed: 3 },
+            verify: { planScan: { exists: true, taskCount: 7, implemented: 0 }, architectureScan: { exists: true, moduleCount: 12 }, drift: { total: 0, warnings: 0, info: 0, errors: 0 } } },
+            totals: { taskDone: 4, taskOpen: 2, taskUnknown: 0 }, warnings: [] },
+            groupsConfig: null, pageMap: createPageMap(), meta });
+        assert.ok(html2.includes('当前焦点') && html2.includes('让向导跑起来'), 'resolved focus renders its label');
+        assert.ok(!html2.includes('当前焦点无法可靠定位'), 'resolved focus must not show the unresolved copy');
+        assert.ok(html2.includes('2 项治理提醒'), 'health summary verbalizes drift warnings');
+        assert.ok(html2.includes('全局验证:未发现失败项'), 'clean verify renders its summary');
+        assert.ok(html2.includes('3 项代码关联待确认'), 'proposed links surfaced');
+        assert.ok(html2.includes('结构代码索引落后'), 'provider stale renders informational copy');
+        assert.ok(!html2.includes('存在风险'), 'provider stale must NOT render as risk');
+
+        // module page:别名标题 + 进度条 + commit 涉及文件
+        const mpFull = { moduleId: 'module:a', name: 'A', description: 'svc', role: 'service',
+            files: ['src/a/one.js'], tasks: [{ id: 'task:t1', title: 'T1', status: 'implemented', completion: 'done', shared: false }],
+            taskCounts: { done: 1, open: 1, unknown: 0, shared: 0 }, progressState: 'in-progress',
+            healthState: 'normal', healthReasons: [], focus: false,
+            recentCommits: [{ sha: 'abcdef1234567890', subject: 'feat: x', files: ['src/a/one.js'] }] };
+        const mpage = renderModulePage({ mp: mpFull, pageMap: createPageMap(), meta,
+            sourcePageFor: () => ({ page: 'source/src-a-one.js--00000000.html' }),
+            groupsConfig: { laneLabels: {}, moduleAliases: { 'module:a': '规划引擎' }, groups: [] } });
+        assert.ok(mpage.includes('规划引擎'), 'module page title uses the Chinese alias');
+        assert.ok(mpage.includes('module:a'), 'original module id stays available (tech details)');
+        assert.ok(mpage.includes('progress-fill'), 'module page renders a progress bar');
+        assert.ok(mpage.includes('涉及') && mpage.includes('abcdef1'), 'recent commit line lists sha + touched files');
+        console.log('✅ T-wiki-render passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
