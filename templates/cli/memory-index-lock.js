@@ -91,6 +91,9 @@ function readOwner(dir) {
     } catch (err) {
         return { state: 'corrupt', owner: null, errors: [`owner.json unparseable: ${err.message}`] };
     }
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+        return { state: 'corrupt', owner: null, errors: [`owner.json is not an object: ${raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw}`] };
+    }
     const errors = [];
     if (raw.schemaVersion !== SCHEMA_VERSION) errors.push(`schemaVersion ${raw.schemaVersion} !== ${SCHEMA_VERSION}`);
     if (typeof raw.leaseId !== 'string' || raw.leaseId.length === 0) errors.push('leaseId missing');

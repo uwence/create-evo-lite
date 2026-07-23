@@ -2193,6 +2193,13 @@ async function runGovernanceTests() {
             fs.writeFileSync(path.join(lockDir, 'owner.json'), '{ "schemaVersion": 1, "leaseId": "trunc', 'utf8');
             assert.strictEqual(lock.readOwner(lockDir).state, 'corrupt');
 
+            // corrupt:语法合法但结构非对象(null / 数组 / 标量)不得崩溃
+            for (const payload of ['null', '[]', '"str"', '42', 'true']) {
+                fs.writeFileSync(path.join(lockDir, 'owner.json'), payload, 'utf8');
+                const r = lock.readOwner(lockDir);
+                assert.strictEqual(r.state, 'corrupt', `non-object payload ${payload} must be corrupt, not crash`);
+            }
+
             // invalid:identity-critical 字段缺失 / schemaVersion 未知
             const fullOwner = () => ({
                 schemaVersion: 1, leaseId: 'lease-x', pid: 1234, ppid: 1,
