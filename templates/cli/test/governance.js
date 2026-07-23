@@ -2441,6 +2441,232 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-lock-orphan-refusal-matrix passed (11/11 refusals + dead-holder probe)');
 
+        console.log('T-lock-coordination. Testing passthrough / live-foreign / orphan self-heal (zvec cases skip if absent) ...');
+        {
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+            const HERE = WORKSPACE_ROOT;
+
+            // 非锁错误零干预:原样 rethrow,不 backoff、不诊断、不产 owner
+            {
+                const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-passthru-'));
+                const boom = new Error('schema mismatch: not a lock problem');
+                let threw = null;
+                try {
+                    lock.openWithCoordination(() => { throw boom; }, dir, { projectRoot: HERE });
+                } catch (err) {
+                    threw = err;
+                }
+                assert.strictEqual(threw, boom, 'non-lock error rethrown untouched (same object)');
+                assert.ok(!fs.existsSync(path.join(dir, 'owner.json')), 'no owner written on failure');
+            }
+
+            // P0-2:open 成功但 owner 发布失败 → 立即 closeSync 回收,不留无 sidecar 的锁
+            {
+                const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-publish-'));
+                let closed = 0;
+                const fakeCol = { closeSync() { closed++; } };
+                const boom = new Error('rename denied');
+                let threw = null;
+                try {
+                    lock.openWithCoordination(() => fakeCol, dir, {
+                        projectRoot: HERE,
+                        seams: { writeOwnerFn: () => { throw boom; } },
+                    });
+                } catch (err) { threw = err; }
+                assert.strictEqual(threw, boom, 'publish failure rethrown untouched');
+                assert.strictEqual(closed, 1, 'collection closed exactly once on publish failure');
+                assert.ok(!fs.existsSync(path.join(dir, 'owner.json')), 'no owner left behind');
+                const ok = lock.openWithCoordination(() => fakeCol, dir, { projectRoot: HERE });
+                assert.ok(ok.leaseId, 'second opener publishes normally');
+                lock.clearOwner(dir, ok.leaseId); // 测试清理
+            }
+
+            // P0-1(TOCTOU):dead-holder 接管不预删 stale owner;重试瞬间 B 抢先
+            // 接管 → A 失败后绝不删除 B 的 owner,重新诊断一轮后抛富化错误
+            {
+                const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-toctou-'));
+                const dead = childProcess.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+                const staleOwner = {
+                    schemaVersion: 1, leaseId: 'stale-dead-lease', pid: dead.pid, ppid: 1,
+                    processStartedAt: '2026-07-23T00:00:00.000Z',
+                    entrypoint: path.join(os.tmpdir(), 'fake-entry', 'memory.js'),
+                    mode: 'mcp', access: 'write', projectRoot: HERE,
+                    createdAt: '2026-07-23T00:00:00.000Z',
+                };
+                fs.writeFileSync(path.join(dir, 'owner.json'), JSON.stringify(staleOwner), 'utf8');
+                const lockErr = new Error("Can't lock read-write collection: LOCK");
+                let calls = 0;
+                let leaseB = null;
+                let threw = null;
+                try {
+                    lock.openWithCoordination(() => {
+                        calls++;
+                        if (calls === 5) {
+                            // dead-holder 分支的最终重试瞬间:B 抢先接管
+                            leaseB = lock.writeOwner(dir, { mode: 'cli', projectRoot: HERE });
+                        }
+                        throw lockErr;
+                    }, dir, { projectRoot: HERE, seams: { isLockErrorFn: () => true } });
+                } catch (err) { threw = err; }
+                assert.ok(threw && threw.code === 'EVO_ZVEC_LOCKED', 'still-locked takeover throws enriched error');
+                assert.ok(leaseB, 'race actually injected at the takeover retry');
+                assert.strictEqual(lock.readOwner(dir).owner.leaseId, leaseB, 'B owner survives — A never deletes on failure');
+                lock.clearOwner(dir, leaseB); // 测试清理
+            }
+
+            // P0-1:接管成功 = 持锁期间 writeOwner 原子覆盖 stale,全程无 unlink
+            {
+                const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-takeover-'));
+                const dead = childProcess.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+                const staleOwner = {
+                    schemaVersion: 1, leaseId: 'stale-dead-lease', pid: dead.pid, ppid: 1,
+                    processStartedAt: '2026-07-23T00:00:00.000Z',
+                    entrypoint: path.join(os.tmpdir(), 'fake-entry', 'memory.js'),
+                    mode: 'mcp', access: 'write', projectRoot: HERE,
+                    createdAt: '2026-07-23T00:00:00.000Z',
+                };
+                fs.writeFileSync(path.join(dir, 'owner.json'), JSON.stringify(staleOwner), 'utf8');
+                const lockErr = new Error("Can't lock read-write collection: LOCK");
+                let calls = 0;
+                const fakeCol = { closeSync() {} };
+                const opened = lock.openWithCoordination(() => {
+                    calls++;
+                    if (calls <= 4) throw lockErr; // backoff 期间全部失败
+                    return fakeCol;                // dead-holder 最终重试成功
+                }, dir, { projectRoot: HERE, seams: { isLockErrorFn: () => true } });
+                assert.strictEqual(opened.result, fakeCol);
+                const rec = lock.readOwner(dir);
+                assert.strictEqual(rec.state, 'valid');
+                assert.strictEqual(rec.owner.pid, process.pid, 'stale owner atomically replaced by takeover writeOwner');
+                lock.clearOwner(dir, opened.leaseId); // 测试清理
+            }
+
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ zvec-dependent coordination cases skipped — @zvec/zvec not installed');
+            } else {
+                const zvec = require('@zvec/zvec');
+                const lockModulePath = path.join(CLI_DIR, 'memory-index-lock.js');
+                const mkCollection = () => {
+                    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-coord-'));
+                    const colPath = path.join(dir, 'collection');
+                    const schema = new zvec.ZVecCollectionSchema({
+                        name: 'locktest',
+                        fields: [{ name: 'content', dataType: zvec.ZVecDataType.STRING }],
+                    });
+                    const col = zvec.ZVecCreateAndOpen(colPath, schema);
+                    col.closeSync();
+                    return { dir, colPath };
+                };
+                // holder:真实持锁 + 以 memory.js mcp 形态运行 + 写真 owner
+                const HOLDER_SRC = [
+                    "'use strict';",
+                    "const fs = require('fs');",
+                    "const path = require('path');",
+                    "const zvec = require('@zvec/zvec');",
+                    "const lock = require(process.argv[4]);",
+                    "const dir = process.argv[3];",
+                    "const col = zvec.ZVecOpen(path.join(dir, 'collection'));",
+                    "global.__evoLockHolderCollection = col; // 防 V8 GC 回收无引用局部量 → 原生 finalizer 提前释放锁(zombie-MCP gotcha 复现)",
+                    "lock.writeOwner(dir, { mode: 'mcp', projectRoot: process.argv[5] });",
+                    "fs.writeFileSync(path.join(dir, 'holder-ready.txt'), String(process.pid), 'utf8');",
+                    "setInterval(() => {}, 1000);",
+                ].join('\n');
+                const writeHolderScript = () => {
+                    const hd = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-hscript-'));
+                    const scriptPath = path.join(hd, 'memory.js'); // 文件名必须是 memory.js(闸②)
+                    fs.writeFileSync(scriptPath, HOLDER_SRC, 'utf8');
+                    return scriptPath;
+                };
+                const waitForFile = (file, timeoutMs) => {
+                    const deadline = Date.now() + timeoutMs;
+                    while (Date.now() < deadline) {
+                        if (fs.existsSync(file)) return true;
+                        lock.sleepSync(50);
+                    }
+                    return fs.existsSync(file);
+                };
+
+                // live-foreign:holder 由本测试进程 spawn(ppid 活)→ 富化错误,不杀
+                {
+                    const { dir, colPath } = mkCollection();
+                    const scriptPath = writeHolderScript();
+                    const holder = childProcess.spawn(process.execPath, [scriptPath, 'mcp', dir, lockModulePath, HERE], {
+                        stdio: 'ignore', cwd: WORKSPACE_ROOT, env: { ...process.env },
+                    });
+                    try {
+                        assert.ok(waitForFile(path.join(dir, 'holder-ready.txt'), 8000), 'holder acquired the lock');
+                        const holderOwnerBytes = fs.readFileSync(path.join(dir, 'owner.json'), 'utf8');
+                        const killSpy = [];
+                        let threw = null;
+                        try {
+                            lock.openWithCoordination(() => zvec.ZVecOpen(colPath), dir, {
+                                projectRoot: HERE,
+                                seams: { killFn: (pid, sig) => { killSpy.push([pid, sig]); } },
+                            });
+                        } catch (err) {
+                            threw = err;
+                        }
+                        assert.ok(threw, 'conflict must throw');
+                        assert.strictEqual(threw.code, 'EVO_ZVEC_LOCKED');
+                        assert.strictEqual(threw.verdict, 'live-foreign');
+                        assert.ok(threw.message.includes(String(holder.pid)), 'error names holder pid');
+                        assert.ok(threw.message.includes('不会自动终止'), 'error states no auto-kill');
+                        assert.ok(threw.message.includes('Get-CimInstance') || threw.message.includes('ps -eo'), 'error carries enumeration command');
+                        assert.ok(threw.cause, 'original zvec error preserved as cause');
+                        assert.strictEqual(killSpy.length, 0, 'killFn never invoked on live-foreign');
+                        assert.ok(lock.pidAlive(holder.pid), 'holder survives');
+                        assert.strictEqual(fs.readFileSync(path.join(dir, 'owner.json'), 'utf8'), holderOwnerBytes, 'holder owner not overwritten');
+                    } finally {
+                        try { holder.kill(); } catch (_) {}
+                    }
+                }
+
+                // orphan self-heal(原事故最小复刻):中间 spawner detached 拉起孙子后退出
+                // plan R1 P1-2:自愈限定 win32 —— unix 孤儿被 init 接管(ppid→1),仅诊断
+                if (process.platform !== 'win32') {
+                    console.log('   ⏭️ orphan self-heal case skipped — 自愈限定 win32,unix 为 report-only 策略');
+                } else {
+                    const { dir, colPath } = mkCollection();
+                    const scriptPath = writeHolderScript();
+                    const SPAWNER_SRC = [
+                        "'use strict';",
+                        "const { spawn } = require('child_process');",
+                        "const fs = require('fs');",
+                        "const path = require('path');",
+                        "const [holderScript, dir, lockPath, projectRoot] = process.argv.slice(2);",
+                        "const child = spawn(process.execPath, [holderScript, 'mcp', dir, lockPath, projectRoot], { detached: true, stdio: 'ignore', env: process.env, cwd: process.cwd() });",
+                        "child.unref();",
+                        "const ready = path.join(dir, 'holder-ready.txt');",
+                        "(function wait() { if (fs.existsSync(ready)) process.exit(0); setTimeout(wait, 50); })();",
+                    ].join('\n');
+                    const spawnerPath = path.join(path.dirname(scriptPath), 'spawner.js');
+                    fs.writeFileSync(spawnerPath, SPAWNER_SRC, 'utf8');
+                    childProcess.execFileSync(process.execPath, [spawnerPath, scriptPath, dir, lockModulePath, HERE], {
+                        cwd: WORKSPACE_ROOT, env: { ...process.env }, timeout: 15000,
+                    });
+                    const orphanPid = Number(fs.readFileSync(path.join(dir, 'holder-ready.txt'), 'utf8'));
+                    assert.ok(lock.pidAlive(orphanPid), 'orphan holder alive before coordination');
+                    let opened = null;
+                    try {
+                        opened = lock.openWithCoordination(() => zvec.ZVecOpen(colPath), dir, { projectRoot: HERE });
+                        assert.ok(opened && opened.result, 'self-heal recovered the lock');
+                        assert.ok(typeof opened.leaseId === 'string' && opened.leaseId.length > 0);
+                        assert.strictEqual(lock.pidAlive(orphanPid), false, 'orphan terminated');
+                        const rec = lock.readOwner(dir);
+                        assert.strictEqual(rec.state, 'valid');
+                        assert.strictEqual(rec.owner.pid, process.pid, 'owner now belongs to us');
+                    } finally {
+                        if (opened && opened.result) { try { opened.result.closeSync(); } catch (_) {} }
+                        if (opened) lock.clearOwner(dir, opened.leaseId);
+                        try { process.kill(orphanPid); } catch (_) {} // 自愈失败时兜底,不留僵尸
+                    }
+                }
+            }
+        }
+        console.log('✅ T-lock-coordination passed');
+
         console.log('T-SPACE-ENGINE. Testing verify memory-space line reports the ACTIVE index engine (skips if @zvec/zvec absent) ...');
         {
             let zvecAvailable = true;

@@ -296,6 +296,162 @@ function diagnoseLockConflict(dir, ctx = {}) {
     };
 }
 
+const BACKOFF_RETRIES = 3;
+const BACKOFF_MS = 100;
+const TERM_WAIT_MS = 1500;
+const KILL_WAIT_MS = 1000;
+const POLL_MS = 100;
+const POST_KILL_SETTLE_MS = 250;
+
+// 同步睡眠:Atomics.wait 在 Node 主线程可用,避免为等待拉子进程。
+function sleepSync(ms) {
+    const sab = new SharedArrayBuffer(4);
+    Atomics.wait(new Int32Array(sab), 0, 0, ms);
+}
+
+function waitForExit(pid, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (!pidAlive(pid)) return true;
+        sleepSync(POLL_MS);
+    }
+    return !pidAlive(pid);
+}
+
+// 锁错误识别:zvec.isZVecError + "Can't lock" message。识别失败宁可当非锁
+// 错误 rethrow(设计 §6:非锁错误零干预)。
+function isLockError(err) {
+    if (!err) return false;
+    let isZ = false;
+    try {
+        isZ = require('@zvec/zvec').isZVecError(err);
+    } catch (_) {
+        isZ = /zvec/i.test(String(err.name || ''));
+    }
+    return isZ && /can't lock/i.test(String(err.message || ''));
+}
+
+// 自愈阶梯(设计 §4.4,仅 orphaned-own-mcp 或 dead-holder 语义进入):
+// 身份复核 → SIGTERM → 有界等待 → SIGKILL → 等消失 → CAS 清 stale owner。
+// win32 说明:SIGTERM/SIGKILL 底层同为 TerminateProcess,阶梯在 unix 生效,
+// win32 退化为单级;等待与复核两步在所有平台保留(防 native handle 未释放即重开)。
+function attemptSelfHeal(dir, diag, ctx = {}) {
+    // 防御性平台闸(plan R2 执行提示):生产路径已由 diagnoseLockConflict 阻断
+    // unix 自愈,这里再守一次,防未来被直接调用时绕过平台策略。
+    if (process.platform !== 'win32') {
+        return { healed: false, reason: 'unix 平台孤儿自愈默认关闭(仅诊断不终止)' };
+    }
+    const owner = diag.owner;
+    const kill = (ctx.seams && typeof ctx.seams.killFn === 'function')
+        ? ctx.seams.killFn
+        : (pid, sig) => process.kill(pid, sig);
+    const recheck = getProcessSnapshot(owner.pid, ctx.seams);
+    if (recheck && recheck.alive === false) {
+        // 诊断与自愈之间已自行退出 → 无进程可杀,仅清 stale owner
+    } else if (!recheck || !isExpectedMcpProcess(recheck, owner)) {
+        // 窗口期内 PID 被复用或身份不再可确认 → 中止,绝不杀
+        return { healed: false, reason: `自愈中止:pid ${owner.pid} 的身份在复核时不再成立(可能 PID 复用),绝不自动终止` };
+    } else {
+        // win32 实测:SIGTERM 对 detached 孤儿进程为 no-op,而设计语义本就是
+        // "win32 退化为单级" —— 首击直接 SIGKILL;unix 保留 SIGTERM→SIGKILL 阶梯。
+        const firstSignal = process.platform === 'win32' ? 'SIGKILL' : 'SIGTERM';
+        try { kill(owner.pid, firstSignal); } catch (_) {}
+        if (!waitForExit(owner.pid, TERM_WAIT_MS)) {
+            try { kill(owner.pid, 'SIGKILL'); } catch (_) {}
+            if (!waitForExit(owner.pid, KILL_WAIT_MS)) {
+                return { healed: false, reason: `自愈失败:pid ${owner.pid} 未在限时内退出` };
+            }
+        }
+    }
+    // plan R1 P0-1:自愈阶梯到此为止,**不动 owner** —— read→unlink 即便带
+    // CAS 也非跨进程原子;zvec 独占锁才是 owner 变更的互斥边界。stale owner
+    // 留给接管成功后的 writeOwner 原子覆盖;接管失败则绝不删除。
+    // 进程已消失,但 zvec native LOCK 的清理在进程死亡后仍有 ~100ms 级尾巴
+    // (实测);设计 §4.4 的"等待"步骤 —— 防止立即重开偶发失败。
+    sleepSync(POST_KILL_SETTLE_MS);
+    return { healed: true };
+}
+
+function buildLockError(diag, cause) {
+    const ownerLine = diag.owner
+        ? `holder: pid=${diag.owner.pid} mode=${diag.owner.mode} started=${diag.owner.processStartedAt}\n`
+        : '';
+    const err = new Error(
+        `zvec collection 被锁定:${diag.report.reason}\n`
+        + `LOCK: ${diag.report.lockPath}\n`
+        + ownerLine
+        + `排查(可复制执行):${diag.report.enumerate}`);
+    err.code = 'EVO_ZVEC_LOCKED';
+    err.verdict = diag.verdict;
+    err.report = diag.report;
+    err.cause = cause;
+    return err;
+}
+
+// 成功发布(plan R1 P0-2):openFn 成功后 writeOwner 若抛错(权限/rename/
+// 磁盘),立即 closeSync 回收 collection 再原样抛出 —— 绝不留下"持锁但无
+// sidecar"的进程,那正是本议题要消灭的最差状态。
+function publishOpened(result, dir, ctx = {}) {
+    const write = (ctx.seams && typeof ctx.seams.writeOwnerFn === 'function')
+        ? ctx.seams.writeOwnerFn
+        : writeOwner;
+    try {
+        const leaseId = write(dir, { projectRoot: ctx.projectRoot });
+        return { result, leaseId };
+    } catch (err) {
+        try {
+            if (result && typeof result.closeSync === 'function') result.closeSync();
+        } catch (_) {}
+        throw err;
+    }
+}
+
+// 协调打开(设计 §4.3):backoff 吸收瞬时交错 → 诊断 → dead-holder / orphan
+// 自愈 → 各自最终重试一次;重试仍冲突则重新诊断一轮后抛富化错误。
+// plan R1 P0-1:接管路径**不预删** stale owner —— zvec 独占锁本身是 owner
+// 变更的互斥边界;打开成功即持锁,writeOwner 原子覆盖 stale;失败绝不删除。
+// 非锁错误在任何阶段都原样 rethrow。
+function openWithCoordination(openFn, dir, ctx = {}) {
+    const isLock = (ctx.seams && typeof ctx.seams.isLockErrorFn === 'function')
+        ? ctx.seams.isLockErrorFn
+        : isLockError;
+    let lastErr = null;
+    for (let attempt = 0; attempt <= BACKOFF_RETRIES; attempt++) {
+        if (attempt > 0) sleepSync(BACKOFF_MS);
+        try {
+            return publishOpened(openFn(), dir, ctx);
+        } catch (err) {
+            if (!isLock(err)) throw err;
+            lastErr = err;
+        }
+    }
+    let diag = diagnoseLockConflict(dir, ctx);
+    if (diag.verdict === 'dead-holder') {
+        try {
+            return publishOpened(openFn(), dir, ctx); // 成功 = 持锁,writeOwner 覆盖 stale
+        } catch (err) {
+            if (!isLock(err)) throw err;
+            lastErr = err;
+            diag = diagnoseLockConflict(dir, ctx); // 重新诊断,最多一轮(不变量 4)
+        }
+    }
+    if (diag.verdict === 'orphaned-own-mcp') {
+        const heal = attemptSelfHeal(dir, diag, ctx);
+        if (heal.healed) {
+            try {
+                return publishOpened(openFn(), dir, ctx); // 同上:覆盖而非预删
+            } catch (err) {
+                if (!isLock(err)) throw err;
+                lastErr = err;
+                diag = diagnoseLockConflict(dir, ctx); // 新持有者可能已接管;最多一轮
+            }
+        } else {
+            diag = { ...diag, verdict: 'unknown', report: { ...diag.report, reason: heal.reason } };
+        }
+    }
+    throw buildLockError(diag, lastErr);
+}
+
 module.exports = {
     OWNER_FILE,
     SCHEMA_VERSION,
@@ -313,4 +469,15 @@ module.exports = {
     isExpectedMcpProcess,
     enumerationCommand,
     diagnoseLockConflict,
+    BACKOFF_RETRIES,
+    BACKOFF_MS,
+    TERM_WAIT_MS,
+    KILL_WAIT_MS,
+    POLL_MS,
+    POST_KILL_SETTLE_MS,
+    sleepSync,
+    waitForExit,
+    isLockError,
+    attemptSelfHeal,
+    openWithCoordination,
 };
