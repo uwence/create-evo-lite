@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[a177] MCP zvec 锁协调 Implementation Plan: owner sidecar(writeOwner / clearOwner / readOwner)
+[a177] mcp-zvec-lock SHIPPED(母仓,main@459d713):三层锁协调全绿收口,终局复审 Ready-to-merge:Yes,实景 mem commit 双 MCP 在场未撞锁。剩余:hive nurture CodePLC + hungersnakegame4(分发 Layer 1-3 基因)。后续独立议题:[zvec-06-upgrade](升级时首验 isLockError 文案匹配)。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
