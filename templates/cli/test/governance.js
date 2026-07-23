@@ -8003,7 +8003,7 @@ async function runChildRuntimeTests() {
     {
         const dPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'dictionary'));
         delete require.cache[dPath];
-        const { translateRule, healthLabel, progressLabel, moduleNarrative, listBareTerms } = require(dPath);
+        const { translateRule, healthLabel, progressLabel, roleLabel, moduleNarrative, listBareTerms } = require(dPath);
 
         assert.strictEqual(translateRule('R008'), '任务缺少完成证据');
         assert.strictEqual(translateRule('R999'), '发现一项尚未分类的治理检查');
@@ -8018,6 +8018,13 @@ async function runChildRuntimeTests() {
         assert.deepStrictEqual(listBareTerms(text), [], 'no bare Rxxx in generated narrative');
         assert.ok(progressLabel(mp).includes('2'), 'progress label carries done count');
         assert.strictEqual(progressLabel({ ...mp, taskCounts: { done: 0, open: 0, unknown: 0, shared: 0 }, progressState: 'unplanned' }), '尚未纳入规划');
+        // 分支覆盖:unknown / shared 计数进入人话标签
+        const mpU = { ...mp, taskCounts: { done: 1, open: 0, unknown: 2, shared: 1 }, progressState: 'in-progress' };
+        const labelU = progressLabel(mpU);
+        assert.ok(labelU.includes('2 项状态未知'), 'unknown count must surface in the label');
+        assert.ok(labelU.includes('1 项与其他模块共享'), 'shared count must surface in the label');
+        // roleLabel 未识别 role fallback 直测
+        assert.strictEqual(roleLabel('mystery-role'), '其他(mystery-role)');
         console.log('✅ T-wiki-dictionary passed');
     }
 }
