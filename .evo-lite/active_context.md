@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-4b-1 Architecture-Governance Wiki SHIPPED & Q5-accepted — plan:architecture-governance-wiki-mvp + spec:architecture-governance-wiki closed (done). No active initiative. Backlog: [agent-code-routing] (4a.x debt). Inspector stays parked; SVG responsive scaling logged as UX debt.
+[a177] mcp-zvec-lock discovery/brainstorming: long-lived MCP servers hold the zvec collection write lock and stale session processes never exit — designing runtime lifecycle + single-writer coordination. 4b-1 stays closed; Inspector stays parked.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -22,6 +22,7 @@
 - [ ] [agent-code-routing] 4a.x debt (P2 final): agents never discover mem code under bare prompts, even with zero competing surface (S9b CodePLC). Fix direction: takeover aggregate command or explicit routing in .agents/rules. Independent of 4b-1 — the Wiki serves humans and cannot substitute agent routing.
 - [ ] [c482] [wiki-ux-debt] Wiki 三项体验债(实际产物复核确认,不重开 4b-1):1) SVG 超宽溢出 — 用 .map-scroll overflow-x:auto 容器包裹(最小修法),后续再考虑缩放/折叠/minimap;2) 首页治理提醒缺范围解释 — 拆「当前活动范围 / 项目历史治理债务 / 未归属」三行,降低 44 项提醒的认知冲突;3) 模块名称层中文化 — 默认 wiki-groups.json aliases 或 module-id 中文词典,只改展示别名,不动 Architecture IR canonical 名称。
 - [ ] [a177] [mcp-zvec-lock] 4a.x/hive 可靠性议题:长活 MCP server(memory.js mcp)持有 zvec collection 写锁,且旧会话进程不自清(实测 8 个僵尸进程跨 7/20-7/22),导致 mem commit/context track 在 track 阶段失败。需要运行时生命周期与单写者协调方案(空闲释放锁 / 写时让渡 / 进程自检退出 / lock 持有者诊断信息)。严重性高于 wiki UX debt。
+- [ ] [zvec-06-upgrade] 升级 @zvec/zvec 0.5.0→0.6:隔离分支 bump + 现有 memory 测试 + T-zvec06-readonly-matrix 实测(reader/writer 共存行为)+ 旧 collection 打开/重建基准 + Windows native 包 + hive 子仓分发;读路径 readOnly:true 与 coordinated writer 模式拆分随升级落地;规格见 docs/superpowers/specs/2026-07-23-mcp-zvec-lock-design.md 附录 A。索引为派生物,失败恢复=删派生 collection + 降级 + mem rebuild。前置:[a177] 锁协调已收口(0.5.0 baseline,不依赖 0.6)。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
