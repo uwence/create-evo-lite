@@ -7839,6 +7839,61 @@ async function runChildRuntimeTests() {
                 `templates/cli/wiki/* must map to module:architecture-wiki, got ${wikiRule && wikiRule.id}`);
             console.log('✅ T-wiki-pagemap passed');
         }
+
+    console.log('T-wiki-groups. wiki-groups.json validation: exit-2 matrix + defaults ...');
+    {
+        const gPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'groups'));
+        delete require.cache[gPath];
+        const { loadWikiGroups } = require(gPath);
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-groups-'));
+        fs.mkdirSync(path.join(tmp, '.evo-lite'), { recursive: true });
+        const KNOWN = ['module:a', 'module:b'];
+        const write = obj => fs.writeFileSync(path.join(tmp, '.evo-lite', 'wiki-groups.json'), JSON.stringify(obj));
+
+        try {
+            // 无配置文件 → ok + null(role 默认分组可用)
+            const absent = loadWikiGroups(fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-none-')), KNOWN);
+            assert.deepStrictEqual(absent, { ok: true, config: null });
+
+            // 合法配置 → groups 按 order 再按 id 排序
+            write({ version: 'evo-wiki-groups@1', groups: [
+                { id: 'group:z', name: 'Z', order: 20, moduleIds: ['module:b'] },
+                { id: 'group:a', name: 'A', order: 10, moduleIds: ['module:a'] } ] });
+            const okRes = loadWikiGroups(tmp, KNOWN);
+            assert.strictEqual(okRes.ok, true);
+            assert.deepStrictEqual(okRes.config.groups.map(g => g.id), ['group:a', 'group:z']);
+
+            // 跨组重复 module id → 无效
+            write({ version: 'evo-wiki-groups@1', groups: [
+                { id: 'group:1', name: '1', order: 1, moduleIds: ['module:a'] },
+                { id: 'group:2', name: '2', order: 2, moduleIds: ['module:a'] } ] });
+            assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'cross-group duplicate module id must fail');
+
+            // 同一组内重复 module id → 同样无效(不得渲染重复卡片)
+            write({ version: 'evo-wiki-groups@1', groups: [
+                { id: 'group:1', name: '1', order: 1, moduleIds: ['module:a', 'module:a'] } ] });
+            assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'same-group duplicate module id must fail');
+
+            // laneLabels / moduleAliases 的值必须是字符串
+            write({ version: 'evo-wiki-groups@1', laneLabels: { service: 42 }, groups: [] });
+            assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'non-string laneLabel value must fail');
+            write({ version: 'evo-wiki-groups@1', moduleAliases: { 'module:a': ['别名'] }, groups: [] });
+            assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'non-string moduleAlias value must fail');
+
+            // 未知 module id → 无效且报告具体 id
+            write({ version: 'evo-wiki-groups@1', groups: [ { id: 'group:1', name: '1', order: 1, moduleIds: ['module:ghost'] } ] });
+            const unk = loadWikiGroups(tmp, KNOWN);
+            assert.strictEqual(unk.ok, false);
+            assert.ok(unk.errors.some(e => e.includes('module:ghost')), 'error must name the unknown id');
+
+            // 未知 version → 无效;类型错误 → 无效
+            write({ version: 'evo-wiki-groups@2', groups: [] });
+            assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'unknown version must fail');
+            write({ version: 'evo-wiki-groups@1', groups: [{ id: 'group:1', name: '1', order: 'ten', moduleIds: [] }] });
+            assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'type error must fail');
+        } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+        console.log('✅ T-wiki-groups passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
