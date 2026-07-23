@@ -20,6 +20,7 @@ linkedSpec: spec:architecture-governance-wiki
 ## Global Constraints
 
 - 只改 `templates/cli/**`;经 `node ./.evo-lite/cli/sync-runtime-entry.js` 出镜像;二次 sync `copied: 0`;92+N/92+N byte-identical;绝不手改 `.evo-lite/cli/**`。
+- **manifest 登记随任务递增:**每个任务在自己的实现步骤里把新文件登记进 `templates/cli/template-manifest.js`,再 sync、再 `git add` 镜像 —— 未登记的文件 sync 不会复制,`git add .evo-lite/cli/wiki/...` 会因路径不存在而失败。W1-W6 各登记 1 条,W7 登记最后 2 条(`wiki/build.js`、`wiki/cli.js`)。
 - 输出目录 `.evo-lite/generated/wiki/`(替代旧 `code-wiki/` 契约);整目录可删除重建;manifest `version: "evo-architecture-wiki@1"`。
 - 确定性:`buildWiki({ projectRoot, now })` 注入时钟;相同输入快照 + 相同 headSha + 相同时钟 → 两次生成 byte-identical。
 - 不伪造:`edges` 缺失/空 = 无已知依赖,不画箭头,不从目录/文件名/role 猜测;仅 schema-valid 的 `ArchitectureModuleEdge` 参与绘制;focus 只投影 `exploreCode().focus`,unresolved → "当前焦点无法可靠定位"。
@@ -27,7 +28,7 @@ linkedSpec: spec:architecture-governance-wiki
 - 页面路径经统一映射 `<kind>/<readable>--<hash8>.html`;大小写折叠冲突检测;hash 冲突确定性扩展全 hash,绝不覆盖。
 - 源码页:path-containment(拒绝 `..`/绝对路径/符号链接越界)、全量 HTML escape、二进制不渲染、>512 KiB 出说明页、跳过文件保留条目并示原因;build 全程不访问网络。
 - 中文正文;词典未覆盖术语不得裸出现在生成器自写叙事(检查范围限 §4);原始 `Rxxx` 只出现在"技术详情"区。
-- 退出码:成功(含浏览器打开失败)= 0;生成失败 = 1;参数/wiki-groups.json 非法 = 2;`--open` 用 execFile 参数数组,无 `shell:true`。
+- 退出码:成功(含浏览器打开失败)= 0;生成失败 = 1;参数/wiki-groups.json 非法 = 2;`--open` 用 execFile 参数数组,无 `shell:true`;Windows 打开方式用 `explorer.exe <path>`(argv 形式),不用 `cmd /c start`;`EVO_WIKI_BROWSER` 环境变量是自动化测试用的启动器覆写缝。
 - Inspector(cw-inspector/cw-closure)保持 parked;Agent 补写层不做;无 chat。
 - 提交前跑 GitNexus `detect_changes` 核对改动范围(仓库 CLAUDE.md 约定)。
 
@@ -44,7 +45,12 @@ drift-report.json     { version, generatedAt, project, findings[], summary:{tota
   findings[]: { id, rule, scope, level, type, message, evidence[](路径字符串), suggestedAction }        // 无 filePath/dependsOn 字段 → 归属走 evidence[]
 exploreCode('') 结果   focus:{ entityId, taskId, resolved };governance:{ specs, plans, tasks, commits, evidence, links, linkSummary }
                       // links 只有 codeReferenceId(公共结果无 codeReferences 集合)→ task→file 归属用 plan-ir tasks[].linkedFiles(同源 declares_file producer)
+                      // 顶层还有 providers[]:{ id, role, ready, indexState, degraded } 与 freshness:{ stale, dirty, indexedCommit?, currentCommit? }
+                      //   (freshness 是结构 provider 的索引新鲜度,不是 IR freshness);linkSummary = { confirmed, derived, proposed }
+                      // options.projectRoot 受支持(code-perception.js:195);外部 projectRoot 且未注入 activeContext 时
+                      //   safeReadActiveContext 返回空 context + 'active-context-not-bound' 诊断(code-perception.js:52-68)—— 宿主焦点不会泄漏
 dashboard-data.js     buildDashboardData(projectRoot).verify = { planScan:{exists,taskCount,implemented}, architectureScan:{exists,moduleCount}, drift:{total,warnings,info,errors}, generatedDataFresh }
+                      // generatedDataFresh 是 R009 推断(dashboard-data.js:218)→ 按 canonical 三态规则禁止喂给 wiki 的 inputFreshness
 ```
 
 ## File Structure
@@ -59,7 +65,7 @@ templates/cli/wiki/source-pages.js  源码页生成(containment/escape/binary/51
 templates/cli/wiki/build.js         buildWiki({projectRoot, now}) 编排 + manifest + git 数据采集
 templates/cli/wiki/cli.js           registerWikiCommands(program):mem wiki build [--open],退出码契约
 templates/cli/memory.js             +1 行 safeRegister('wiki', ...)
-templates/cli/template-manifest.js  +8 个 wiki/* 条目
+templates/cli/template-manifest.js  +8 个 wiki/* 条目(W1-W6 各自登记 1 条,W7 登记 build.js + cli.js)
 templates/cli/test/governance.js    T-wiki 测试块(13 项合同,随任务递增)
 ```
 
@@ -75,10 +81,11 @@ node templates/cli/test.js governance
 
 **Files:**
 - Create: `templates/cli/wiki/page-map.js`
+- Modify: `templates/cli/template-manifest.js`(core-cli files 数组 +1 条)
 - Test: `templates/cli/test/governance.js`(追加 T-wiki-pagemap)
 
 **Interfaces:**
-- Produces: `createPageMap() -> { modulePage(moduleId:string):string, sourcePage(repoRelPath:string):string, modulePages():Record<string,string> }`;`readableSegment(raw)`;`normalizeRepoPath(p)`;`fullHash(raw)`。后续任务(render/build/source-pages)只经此模块生成页面链接,禁止手拼。
+- Produces: `createPageMap(opts?:{hashFn?:(raw:string)=>string}) -> { modulePage(moduleId:string):string, sourcePage(repoRelPath:string):string, modulePages():Record<string,string> }`;`readableSegment(raw)`;`normalizeRepoPath(p)`;`fullHash(raw)`。`hashFn` 默认 `fullHash`(sha1),注入缝仅供测试制造 hash8 碰撞。后续任务(render/build/source-pages)只经此模块生成页面链接,禁止手拼。
 
 - [ ] **Step 1: 写失败测试**(追加到 governance.js `runChildRuntimeTests()` 内、T-ce 系列块之后)
 
@@ -96,11 +103,20 @@ console.log('T-wiki-pagemap. Unified Windows-safe page mapping with collision ru
     assert.ok(!page.includes(':'), 'no colon in page path');
     assert.strictEqual(pm.modulePage('module:cli-entry'), page, 'mapping must be stable per id');
 
-    // 大小写折叠冲突:可读段相同 + 构造 hash8 相同 → 确定性扩展全 hash,不覆盖
+    // 大小写折叠冲突(真实 sha1:hash8 不同)→ 各自成页,折叠后不同名
     const clash = createPageMap();
     const a = clash.sourcePage('src/A.js');
     const b = clash.sourcePage('src/a.js'); // 可读段大小写折叠后同名,hash 不同 → 各自成页
     assert.notStrictEqual(a.toLowerCase(), b.toLowerCase(), 'case-folded names must not collide');
+
+    // hash8 碰撞分支:注入 hashFn 制造「可读段折叠同名 + hash8 相同 + 全 hash 不同」
+    // → 第二个确定性扩展为全 hash,绝不覆盖第一个
+    const sameH8 = raw => raw === 'src/A.js' ? 'deadbeef' + 'f'.repeat(32) : 'deadbeef' + '0'.repeat(32);
+    const pmH = createPageMap({ hashFn: sameH8 });
+    assert.strictEqual(pmH.sourcePage('src/A.js'), 'source/src-a.js--deadbeef.html');
+    assert.strictEqual(pmH.sourcePage('src/a.js'), `source/src-a.js--deadbeef${'0'.repeat(32)}.html`,
+        'hash8 collision must extend to the FULL hash deterministically');
+    assert.strictEqual(pmH.sourcePage('src/A.js'), 'source/src-a.js--deadbeef.html', 'first assignment never overwritten');
 
     // 同 id 重复申请不产生第二个页面
     assert.strictEqual(Object.keys(clash.modulePages()).length, 0, 'source assignments must not appear in modulePages');
@@ -142,14 +158,15 @@ function fullHash(raw) {
     return crypto.createHash('sha1').update(String(raw), 'utf8').digest('hex');
 }
 
-function createPageMap() {
+function createPageMap(opts) {
+    const hashFn = (opts && opts.hashFn) || fullHash;   // test seam: inject to force hash8 collisions
     const byKey = new Map();   // "<kind>\0<rawId>" -> page path
     const taken = new Map();   // case-folded page path -> owning key
 
     function assign(kind, rawId) {
-        const key = `${kind} ${rawId}`;
+        const key = `${kind}\x00${rawId}`;
         if (byKey.has(key)) return byKey.get(key);
-        const hash = fullHash(rawId);
+        const hash = hashFn(rawId);
         let page = `${kind}/${readableSegment(rawId)}--${hash.slice(0, 8)}.html`;
         const owner = taken.get(page.toLowerCase());
         if (owner && owner !== key) {
@@ -168,7 +185,7 @@ function createPageMap() {
         modulePages: () => {
             const out = {};
             for (const [key, page] of byKey) {
-                const idx = key.indexOf(' ');
+                const idx = key.indexOf('\x00');
                 if (key.slice(0, idx) === 'module') out[key.slice(idx + 1)] = page;
             }
             return out;
@@ -179,18 +196,26 @@ function createPageMap() {
 module.exports = { createPageMap, readableSegment, normalizeRepoPath, fullHash };
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [ ] **Step 4: 登记 template-manifest(sync 前置条件 —— 未登记的文件镜像不会生成)**
+
+`templates/cli/template-manifest.js` — core-cli `files` 数组 `'code-perception/cli.js',` 之后追加:
+
+```js
+            'wiki/page-map.js',
+```
+
+- [ ] **Step 5: 跑测试确认通过**
 
 ```bash
 node templates/cli/test.js governance
 ```
-预期:`✅ T-wiki-pagemap passed`,套件 EXIT 0。
+预期:`✅ T-wiki-pagemap passed`,套件 EXIT 0(含 manifest/mirror 相关既有测试)。
 
-- [ ] **Step 5: 同步镜像 + 提交**
+- [ ] **Step 6: 同步镜像 + 提交**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
-git add templates/cli/wiki/page-map.js templates/cli/test/governance.js .evo-lite/cli/wiki/page-map.js .evo-lite/cli/test/governance.js
+git add templates/cli/wiki/page-map.js templates/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/wiki/page-map.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
 git commit -m "feat(wiki): unified Windows-safe page mapping with deterministic collision extension (4b-1 W1)"
 ```
 
@@ -200,6 +225,7 @@ git commit -m "feat(wiki): unified Windows-safe page mapping with deterministic 
 
 **Files:**
 - Create: `templates/cli/wiki/groups.js`
+- Modify: `templates/cli/template-manifest.js`(core-cli files 数组 +1 条)
 - Test: `templates/cli/test/governance.js`(追加 T-wiki-groups)
 
 **Interfaces:**
@@ -232,11 +258,22 @@ console.log('T-wiki-groups. wiki-groups.json validation: exit-2 matrix + default
         assert.strictEqual(okRes.ok, true);
         assert.deepStrictEqual(okRes.config.groups.map(g => g.id), ['group:a', 'group:z']);
 
-        // 重复 module id → 无效
+        // 跨组重复 module id → 无效
         write({ version: 'evo-wiki-groups@1', groups: [
             { id: 'group:1', name: '1', order: 1, moduleIds: ['module:a'] },
             { id: 'group:2', name: '2', order: 2, moduleIds: ['module:a'] } ] });
-        assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'duplicate module id must fail');
+        assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'cross-group duplicate module id must fail');
+
+        // 同一组内重复 module id → 同样无效(不得渲染重复卡片)
+        write({ version: 'evo-wiki-groups@1', groups: [
+            { id: 'group:1', name: '1', order: 1, moduleIds: ['module:a', 'module:a'] } ] });
+        assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'same-group duplicate module id must fail');
+
+        // laneLabels / moduleAliases 的值必须是字符串
+        write({ version: 'evo-wiki-groups@1', laneLabels: { service: 42 }, groups: [] });
+        assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'non-string laneLabel value must fail');
+        write({ version: 'evo-wiki-groups@1', moduleAliases: { 'module:a': ['别名'] }, groups: [] });
+        assert.strictEqual(loadWikiGroups(tmp, KNOWN).ok, false, 'non-string moduleAlias value must fail');
 
         // 未知 module id → 无效且报告具体 id
         write({ version: 'evo-wiki-groups@1', groups: [ { id: 'group:1', name: '1', order: 1, moduleIds: ['module:ghost'] } ] });
@@ -302,13 +339,20 @@ function loadWikiGroups(projectRoot, knownModuleIds) {
             }
             for (const id of g.moduleIds) {
                 if (!known.has(id)) errors.push(`unknown module id in ${g.id}: ${id}`);
-                if (seen.has(id) && seen.get(id) !== g.id) errors.push(`duplicate module id across groups: ${id}`);
-                seen.set(id, g.id);
+                // duplicate = ANY second occurrence, same group or another group
+                if (seen.has(id)) errors.push(`duplicate module id: ${id} (${seen.get(id)}, ${g.id})`);
+                else seen.set(id, g.id);
             }
         }
     }
+    if (isPlainObject(laneLabels)) {
+        for (const [k, v] of Object.entries(laneLabels)) {
+            if (typeof v !== 'string') errors.push(`laneLabels.${k} must be a string`);
+        }
+    }
     if (isPlainObject(moduleAliases)) {
-        for (const id of Object.keys(moduleAliases)) {
+        for (const [id, v] of Object.entries(moduleAliases)) {
+            if (typeof v !== 'string') errors.push(`moduleAliases.${id} must be a string`);
             if (!known.has(id)) errors.push(`moduleAliases references unknown module id: ${id}`);
         }
     }
@@ -321,13 +365,21 @@ function loadWikiGroups(projectRoot, knownModuleIds) {
 module.exports = { loadWikiGroups, GROUPS_VERSION };
 ```
 
-- [ ] **Step 4: 跑测试确认通过**(`✅ T-wiki-groups passed`,EXIT 0)
+- [ ] **Step 4: 登记 template-manifest**
 
-- [ ] **Step 5: 同步镜像 + 提交**
+`templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/page-map.js',` 之后追加:
+
+```js
+            'wiki/groups.js',
+```
+
+- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-groups passed`,EXIT 0)
+
+- [ ] **Step 6: 同步镜像 + 提交**
 
 ```bash
-node ./.evo-lite/cli/sync-runtime-entry.js
-git add templates/cli/wiki/groups.js templates/cli/test/governance.js .evo-lite/cli/wiki/groups.js .evo-lite/cli/test/governance.js
+node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
+git add templates/cli/wiki/groups.js templates/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/wiki/groups.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
 git commit -m "feat(wiki): evo-wiki-groups@1 display-grouping validation with exit-2 matrix (4b-1 W2)"
 ```
 
@@ -337,6 +389,7 @@ git commit -m "feat(wiki): evo-wiki-groups@1 display-grouping validation with ex
 
 **Files:**
 - Create: `templates/cli/wiki/projection.js`
+- Modify: `templates/cli/template-manifest.js`(core-cli files 数组 +1 条)
 - Test: `templates/cli/test/governance.js`(追加 T-wiki-projection)
 
 **Interfaces:**
@@ -352,12 +405,21 @@ git commit -m "feat(wiki): evo-wiki-groups@1 display-grouping validation with ex
                        progressState:'unplanned'|'in-progress'|'done',
                        healthState:'normal'|'attention'|'risk', healthReasons:string[],
                        focus:boolean, recentCommits:[{sha,subject,files[]}] }
-  ProjectHealth = { driftErrors, driftWarnings, unattributedFindings:[{id,rule,level}],
-                    verify, inputFreshness:{architecture:{state,reason},planning:{state,reason}},
-                    focusResolved:boolean }
+  ProjectHealth = { driftErrors, driftWarnings, driftInfo,
+                    unattributedFindings:[{id,rule,level}],
+                    verify,
+                    inputFreshness:{architecture:{state,reason},planning:{state,reason}},
+                    focus:{ resolved:boolean, taskId:string|null, label:string, moduleIds:string[] },
+                    focusResolved:boolean,
+                    codePerception:{ providers:[{id,role,ready,indexState,degraded}],
+                                     freshness:{stale,dirty}|null } | null,
+                    links:{ confirmed, derived, proposed } | null }
   taskCompletion(status) -> 'done'|'open'|'unknown'
+  computeFreshness(ir) -> { state:'fresh'|'stale'|'unknown', reason:string }
   ```
   `recentCommits` 入参形状 `[{sha, subject, files:string[]}]`(由 W7 build.js 从 `git log` 采集,窗口 10 个 commit)。
+  freshness 规则(canonical 三态):`fresh`/`stale` **只**允许来自 producer 显式记录的可比对快照对(`ir.sourceFingerprint` vs `ir.observedFingerprint`,当前 IR 均无 → 恒 unknown,这是前向兼容缝而非现状承诺);禁止用 generatedAt / mtime / build 成功 / drift 无警告(含 `dashboard-data.generatedDataFresh`)推断。
+  数据不静默消失原则:info findings 计入 `driftInfo`(不参与健康分级);不可归属 findings 进 `unattributedFindings`;providers/结构索引 freshness、待确认关联(`linkSummary.proposed`)原样投影为确定性字段,由渲染层决定呈现。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -366,19 +428,22 @@ console.log('T-wiki-projection. Deterministic ModuleProjection + ProjectHealth s
 {
     const prPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'projection'));
     delete require.cache[prPath];
-    const { buildProjection, taskCompletion } = require(prPath);
+    const { buildProjection, taskCompletion, computeFreshness } = require(prPath);
 
     const architectureIR = {
         modules: [
             { id: 'module:a', name: 'A', description: 'mod a', paths: ['src/a/'], fileCount: 2, role: 'service', confidence: 1 },
             { id: 'module:b', name: 'B', description: 'mod b', paths: ['src/b/'], fileCount: 1, role: 'feature', confidence: 1 },
             { id: 'module:empty', name: 'Empty', description: '', paths: ['src/e/'], fileCount: 1, role: 'mystery-role', confidence: 1 },
+            { id: 'module:exact', name: 'Exact', description: '', paths: ['src/exact.js'], fileCount: 1, role: 'service', confidence: 1 },
         ],
         files: [
             { path: 'src/a/one.js', module: 'module:a', role: 'service', confidence: 1 },
             { path: 'src/a/two.js', module: 'module:a', role: 'service', confidence: 1 },
             { path: 'src/b/one.js', module: 'module:b', role: 'feature', confidence: 1 },
             { path: 'src/e/one.js', module: 'module:empty', role: 'mystery-role', confidence: 1 },
+            { path: 'src/b/extra.js' },        // 无 module 字段 → 目录前缀 fallback 归属 module:b(降置信 + warning)
+            { path: 'src/exact.js.bak' },      // 无 module 字段;module:exact 的精确文件模式不得前缀匹配它
         ],
         edges: [],
     };
@@ -395,10 +460,21 @@ console.log('T-wiki-projection. Deterministic ModuleProjection + ProjectHealth s
 
     const res = buildProjection({
         architectureIR, planIR, driftReport,
-        exploreResult: { focus: { entityId: 'plan:x', taskId: 'task:t2', resolved: true } },
+        exploreResult: {
+            focus: { entityId: 'plan:x', taskId: 'task:t2', resolved: true },
+            providers: [{ id: 'provider:native-lite', role: 'fallback', ready: true, indexState: 'n/a', degraded: false }],
+            freshness: { stale: false, dirty: false },
+            governance: { linkSummary: { confirmed: 1, derived: 0, proposed: 2 } },
+        },
         verifySummary: { drift: { errors: 1 } }, recentCommits: [],
     });
     const byId = new Map(res.modules.map(m => [m.moduleId, m]));
+
+    // fallback 归属语义:目录模式(以 / 结尾)才做前缀匹配;精确文件模式必须全等
+    assert.ok(byId.get('module:b').files.includes('src/b/extra.js'), 'dir-pattern fallback attributes the module-less file');
+    assert.ok(res.warnings.some(w => w.includes('src/b/extra.js')), 'fallback attribution must warn (confidence downgraded)');
+    assert.ok(![...byId.values()].some(m => m.files.includes('src/exact.js.bak')),
+        'exact-file pattern must NOT prefix-match a longer path');
 
     // 归属:files[].module 权威;t2 共享于 a、b 两模块并标 shared
     assert.deepStrictEqual(byId.get('module:a').taskCounts, { done: 1, open: 1, unknown: 1, shared: 1 });
@@ -416,12 +492,25 @@ console.log('T-wiki-projection. Deterministic ModuleProjection + ProjectHealth s
     // module:a 有 1 条可归属 warning → attention;info 不影响 module:b
     assert.strictEqual(byId.get('module:a').healthState, 'attention');
     assert.strictEqual(byId.get('module:b').healthState, 'normal');
-    // focus:canonical taskId 命中的模块标记 focus
+    // info 不参与健康,但计数不得静默消失
+    assert.strictEqual(res.project.driftInfo, 1, 'info findings are counted, not silently dropped');
+    // focus:canonical taskId 命中的模块标记 focus;ProjectHealth 携带人话素材
     assert.strictEqual(byId.get('module:a').focus, true);
     assert.strictEqual(byId.get('module:b').focus, true);
+    assert.deepStrictEqual(res.project.focus,
+        { resolved: true, taskId: 'task:t2', label: 'T2', moduleIds: ['module:a', 'module:b'] });
+    // providers / 结构索引 freshness / 待确认关联:原样投影为确定性字段
+    assert.strictEqual(res.project.codePerception.providers.length, 1);
+    assert.strictEqual(res.project.codePerception.freshness.stale, false);
+    assert.strictEqual(res.project.links.proposed, 2);
     // freshness:仅 generatedAt 的 IR → unknown
     assert.strictEqual(res.project.inputFreshness.architecture.state, 'unknown');
     assert.strictEqual(res.project.inputFreshness.planning.state, 'unknown');
+    // computeFreshness:fresh/stale 只来自显式可比对快照对;其余一律 unknown
+    assert.strictEqual(computeFreshness({ sourceFingerprint: 'a', observedFingerprint: 'a' }).state, 'fresh');
+    assert.strictEqual(computeFreshness({ sourceFingerprint: 'a', observedFingerprint: 'b' }).state, 'stale');
+    assert.strictEqual(computeFreshness({ generatedAt: 'now' }).state, 'unknown');
+    assert.strictEqual(computeFreshness(null).state, 'unknown');
 
     // focus unresolved → 不标记任何模块
     const res2 = buildProjection({ architectureIR, planIR, driftReport,
@@ -467,14 +556,35 @@ function buildFileIndex(architectureIR, warnings) {
     for (const f of files) {
         if (!f || !f.path || f.module) continue;
         const p = normalizePath(f.path);
+        // Architecture-scanner pattern semantics: a trailing '/' means directory
+        // prefix; anything else is an EXACT file path — never a prefix.
         const m = ((architectureIR && architectureIR.modules) || [])
-            .find(mod => (mod.paths || []).some(x => p === normalizePath(x) || p.startsWith(normalizePath(x))));
+            .find(mod => (mod.paths || []).some(x => {
+                const pat = normalizePath(x);
+                return pat.endsWith('/') ? p.startsWith(pat) : p === pat;
+            }));
         if (m) {
             index.set(p, { module: m.id, confidence: 0.5 });
             warnings.push(`file ${p} attributed via paths fallback (confidence downgraded)`);
         }
     }
     return index;
+}
+
+// Canonical tri-state freshness (design §1.1): 'fresh'/'stale' come ONLY from
+// an explicit comparable snapshot pair recorded by the producer. Today's IRs
+// carry generatedAt only, so this always returns 'unknown' — the fingerprint
+// branch is a forward-compat seam, not a claim about current producers.
+// FORBIDDEN inputs: generatedAt, file mtime, build success, drift silence
+// (dashboard-data.generatedDataFresh is R009-derived and must never feed this).
+function computeFreshness(ir) {
+    if (!ir) return { state: 'unknown', reason: 'IR 缺失' };
+    if (typeof ir.sourceFingerprint === 'string' && typeof ir.observedFingerprint === 'string') {
+        return ir.sourceFingerprint === ir.observedFingerprint
+            ? { state: 'fresh', reason: '快照指纹一致' }
+            : { state: 'stale', reason: '快照指纹不一致' };
+    }
+    return { state: 'unknown', reason: 'IR 仅有 generatedAt,无可比对快照' };
 }
 
 function buildProjection({ architectureIR, planIR, exploreResult, driftReport, verifySummary, recentCommits }) {
@@ -525,11 +635,15 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
         m.tasks.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     }
 
-    // ---- health: attributable findings only; dedup by finding id; info excluded ----
+    // ---- health: attributable findings only; dedup by finding id ----
+    // info findings are EXCLUDED from health grading (design §3.3) but are
+    // counted into ProjectHealth.driftInfo — data never silently disappears.
     const unattributed = [];
     const findingsByModule = new Map();
+    let infoCount = 0;
     for (const f of (((driftReport || {}).findings) || [])) {
-        if (!f || f.level === 'info') continue;
+        if (!f) continue;
+        if (f.level === 'info') { infoCount += 1; continue; }
         const hits = new Set();
         for (const ev of (f.evidence || [])) {
             const att = fileIndex.get(normalizePath(ev));
@@ -550,12 +664,18 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
         else if (warns.length >= 1) { m.healthState = 'attention'; m.healthReasons = warns.map(f => f.rule); }
     }
 
-    // ---- focus: 4a canonical only ----
+    // ---- focus: 4a canonical only; ProjectHealth carries the narrative facts ----
     const focus = (exploreResult && exploreResult.focus) || { resolved: false };
-    if (focus.resolved && focus.taskId && taskModuleHits.has(focus.taskId)) {
-        for (const id of taskModuleHits.get(focus.taskId)) {
-            const m = modules.get(id);
-            if (m) m.focus = true;
+    const focusInfo = { resolved: !!focus.resolved, taskId: focus.taskId || null, label: '', moduleIds: [] };
+    if (focus.resolved) {
+        const t = ((planIR && planIR.tasks) || []).find(x => x.id === focus.taskId);
+        focusInfo.label = t ? (t.title || t.id) : String(focus.taskId || focus.entityId || '');
+        if (focus.taskId && taskModuleHits.has(focus.taskId)) {
+            focusInfo.moduleIds = [...taskModuleHits.get(focus.taskId)].sort();
+            for (const id of focusInfo.moduleIds) {
+                const m = modules.get(id);
+                if (m) m.focus = true;
+            }
         }
     }
 
@@ -583,13 +703,19 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
     const project = {
         driftErrors: summary.errors ?? 0,
         driftWarnings: summary.warnings ?? 0,
+        driftInfo: summary.info ?? infoCount,
         unattributedFindings: unattributed.map(f => ({ id: f.id, rule: f.rule, level: f.level })),
         verify: verifySummary || null,
         inputFreshness: {
-            architecture: { state: 'unknown', reason: 'IR has no comparable source snapshot' },
-            planning: { state: 'unknown', reason: 'IR has no comparable source snapshot' },
+            architecture: computeFreshness(architectureIR),
+            planning: computeFreshness(planIR),
         },
+        focus: focusInfo,
         focusResolved: !!focus.resolved,
+        codePerception: exploreResult
+            ? { providers: exploreResult.providers || [], freshness: exploreResult.freshness || null }
+            : null,
+        links: (exploreResult && exploreResult.governance && exploreResult.governance.linkSummary) || null,
     };
 
     return {
@@ -600,16 +726,24 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
     };
 }
 
-module.exports = { buildProjection, taskCompletion, DONE_STATUSES, OPEN_STATUSES };
+module.exports = { buildProjection, taskCompletion, computeFreshness, DONE_STATUSES, OPEN_STATUSES };
 ```
 
-- [ ] **Step 4: 跑测试确认通过**(`✅ T-wiki-projection passed`,EXIT 0)
+- [ ] **Step 4: 登记 template-manifest**
 
-- [ ] **Step 5: 同步镜像 + 提交**
+`templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/groups.js',` 之后追加:
+
+```js
+            'wiki/projection.js',
+```
+
+- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-projection passed`,EXIT 0)
+
+- [ ] **Step 6: 同步镜像 + 提交**
 
 ```bash
-node ./.evo-lite/cli/sync-runtime-entry.js
-git add templates/cli/wiki/projection.js templates/cli/test/governance.js .evo-lite/cli/wiki/projection.js .evo-lite/cli/test/governance.js
+node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
+git add templates/cli/wiki/projection.js templates/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/wiki/projection.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
 git commit -m "feat(wiki): deterministic ModuleProjection + ProjectHealth fact model (4b-1 W3)"
 ```
 
@@ -619,6 +753,7 @@ git commit -m "feat(wiki): deterministic ModuleProjection + ProjectHealth fact m
 
 **Files:**
 - Create: `templates/cli/wiki/dictionary.js`
+- Modify: `templates/cli/template-manifest.js`(core-cli files 数组 +1 条)
 - Test: `templates/cli/test/governance.js`(追加 T-wiki-dictionary)
 
 **Interfaces:**
@@ -724,13 +859,21 @@ function listBareTerms(text) {
 module.exports = { RULE_LABELS, translateRule, healthLabel, roleLabel, progressLabel, moduleNarrative, listBareTerms };
 ```
 
-- [ ] **Step 4: 跑测试确认通过**(`✅ T-wiki-dictionary passed`,EXIT 0)
+- [ ] **Step 4: 登记 template-manifest**
 
-- [ ] **Step 5: 同步镜像 + 提交**
+`templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/projection.js',` 之后追加:
+
+```js
+            'wiki/dictionary.js',
+```
+
+- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-dictionary passed`,EXIT 0)
+
+- [ ] **Step 6: 同步镜像 + 提交**
 
 ```bash
-node ./.evo-lite/cli/sync-runtime-entry.js
-git add templates/cli/wiki/dictionary.js templates/cli/test/governance.js .evo-lite/cli/wiki/dictionary.js .evo-lite/cli/test/governance.js
+node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
+git add templates/cli/wiki/dictionary.js templates/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/wiki/dictionary.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
 git commit -m "feat(wiki): Chinese dictionary + deterministic narrative templates (4b-1 W4)"
 ```
 
@@ -740,6 +883,7 @@ git commit -m "feat(wiki): Chinese dictionary + deterministic narrative template
 
 **Files:**
 - Create: `templates/cli/wiki/render.js`
+- Modify: `templates/cli/template-manifest.js`(core-cli files 数组 +1 条)
 - Test: `templates/cli/test/governance.js`(追加 T-wiki-render)
 
 **Interfaces:**
@@ -748,12 +892,22 @@ git commit -m "feat(wiki): Chinese dictionary + deterministic narrative template
   ```
   escapeHtml(s) -> string
   validateEdges(edges, knownModuleIds) -> { valid:[{sourceModuleId,targetModuleId,kind}], warnings:string[] }
-  renderSvgMap({ modules, groupsConfig, pageMap, validEdges }) -> string      // <svg>…</svg>
-  renderIndex({ projection, groupsConfig, pageMap, meta }) -> string          // 完整 html
-  renderModulePage({ mp, pageMap, meta, sourcePageFor }) -> string            // 完整 html
-  pageChrome({ title, body, meta }) -> string                                 // 共享骨架 + 溯源脚注
+  renderSvgMap({ modules, groupsConfig, pageMap, validEdges }) -> string           // <svg>…</svg>
+  renderIndex({ projection, groupsConfig, pageMap, meta }) -> string               // 完整 html
+  renderModulePage({ mp, pageMap, meta, sourcePageFor, groupsConfig }) -> string   // 完整 html
+  pageChrome({ title, body, meta }) -> string                                      // 共享骨架 + 溯源脚注
   ```
-  `meta = { generatedAt, headSha }`。依赖边元素类名固定 `class="dependency-edge"`、箭头引用固定 `marker-end="url(#dep-arrow)"` —— 测试以这两个记号断言。
+  `meta = { generatedAt, headSha, projectName }`。依赖边元素类名固定 `class="dependency-edge"`、箭头引用固定 `marker-end="url(#dep-arrow)"` —— 测试以这两个记号断言。
+
+**首页内容契约(设计对 Q5 的承诺,不留给终局人工验收才发现):**
+1. 项目定位段(含 `meta.projectName`,说明本页是什么、从哪来);
+2. 当前 focus 人话:resolved → `当前焦点:<label>(链接到所在模块)`;unresolved → 固定文案「当前焦点无法可靠定位」;
+3. 总进度(任务数 / 已完成 / 状态未知);
+4. ProjectHealth 人话摘要:drift 错误/提醒计数、不可归属提醒、结构 provider 状态(未接入/索引落后 → 信息性文案,**不得**渲染成红色风险,遵守 "provider stale ≠ IR 不新鲜")、待确认关联(`links.proposed`);
+5. 「本页导航」树(泳道 → 模块链接,别名优先);
+6. SVG 模块地图。
+
+**模块页内容契约:** 标题用中文别名(`groupsConfig.moduleAliases` 命中时;原 id 在技术详情);任务表 + 进度条(`class="progress-fill"`);文件表;最近变更含 commit 涉及的文件列表;中文叙事(W4 `moduleNarrative`)。
 
 **布局规则(确定性,无布局引擎):** 泳道 = role(或 groups 配置);泳道按设计 §2.1 固定顺序 `entry, service, feature, ui, runtime, scanner, governance, docs, test, unknown, <其他按字典序>`;泳道内模块按 moduleId 字典序;卡片坐标 = 纯函数(泳道索引 × 列宽, 卡片索引 × 行高)。有合法边时在卡片中心间画折线。
 
@@ -766,7 +920,7 @@ console.log('T-wiki-render. SVG map: lanes, no-edge honesty, edge contract, unkn
     delete require.cache[rPath];
     const pmPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'page-map'));
     delete require.cache[pmPath];
-    const { validateEdges, renderSvgMap, renderIndex, escapeHtml } = require(rPath);
+    const { validateEdges, renderSvgMap, renderIndex, renderModulePage, escapeHtml } = require(rPath);
     const { createPageMap } = require(pmPath);
 
     const mkMp = (id, role) => ({ moduleId: id, name: id, description: '', role,
@@ -797,15 +951,51 @@ console.log('T-wiki-render. SVG map: lanes, no-edge honesty, edge contract, unkn
     // escapeHtml:script/&/引号
     assert.strictEqual(escapeHtml('<script>&"\''), '&lt;script&gt;&amp;&quot;&#39;');
 
-    // index:focus unresolved 呈现固定文案
-    const html = renderIndex({ projection: { modules, project: { driftErrors: 0, driftWarnings: 0,
-        unattributedFindings: [], verify: null, focusResolved: false,
-        inputFreshness: { architecture: { state: 'unknown', reason: '' }, planning: { state: 'unknown', reason: '' } } },
+    // index:unresolved focus + unknown freshness + provider 未接入(信息性,非风险)
+    const meta = { generatedAt: '2026-01-01T00:00:00.000Z', headSha: 'abc1234', projectName: 'DemoProj' };
+    const baseProject = { driftErrors: 0, driftWarnings: 0, driftInfo: 0,
+        unattributedFindings: [], verify: null,
+        focus: { resolved: false, taskId: null, label: '', moduleIds: [] }, focusResolved: false,
+        codePerception: { providers: [], freshness: null }, links: null,
+        inputFreshness: { architecture: { state: 'unknown', reason: '' }, planning: { state: 'unknown', reason: '' } } };
+    const html = renderIndex({ projection: { modules, project: baseProject,
         totals: { taskDone: 0, taskOpen: 0, taskUnknown: 0 }, warnings: [] },
-        groupsConfig: null, pageMap: createPageMap(), meta: { generatedAt: '2026-01-01T00:00:00.000Z', headSha: 'abc1234' } });
+        groupsConfig: null, pageMap: createPageMap(), meta });
     assert.ok(html.includes('当前焦点无法可靠定位'), 'unresolved focus fixed copy');
     assert.ok(html.includes('数据新鲜度无法确认'), 'unknown freshness must not render as normal');
     assert.ok(html.includes('abc1234'), 'provenance footer carries headSha');
+    assert.ok(html.includes('DemoProj'), 'positioning paragraph names the project');
+    assert.ok(html.includes('本页导航'), 'nav tree present');
+    assert.ok(html.includes('结构代码情报未接入'), 'absent structural provider renders informational copy');
+
+    // index:resolved focus 人话 + 健康摘要 + 待确认关联;provider stale = 信息性文案
+    const html2 = renderIndex({ projection: { modules, project: { ...baseProject,
+        driftWarnings: 2, focusResolved: true,
+        focus: { resolved: true, taskId: 'task:t9', label: '让向导跑起来', moduleIds: ['module:a'] },
+        codePerception: { providers: [{ id: 'provider:codegraph', role: 'structural-primary', ready: true, indexState: 'ok', degraded: false }], freshness: { stale: true, dirty: false } },
+        links: { confirmed: 1, derived: 0, proposed: 3 } },
+        totals: { taskDone: 4, taskOpen: 2, taskUnknown: 0 }, warnings: [] },
+        groupsConfig: null, pageMap: createPageMap(), meta });
+    assert.ok(html2.includes('当前焦点') && html2.includes('让向导跑起来'), 'resolved focus renders its label');
+    assert.ok(!html2.includes('当前焦点无法可靠定位'), 'resolved focus must not show the unresolved copy');
+    assert.ok(html2.includes('2 项治理提醒'), 'health summary verbalizes drift warnings');
+    assert.ok(html2.includes('3 项代码关联待确认'), 'proposed links surfaced');
+    assert.ok(html2.includes('结构代码索引落后'), 'provider stale renders informational copy');
+    assert.ok(!html2.includes('存在风险'), 'provider stale must NOT render as risk');
+
+    // module page:别名标题 + 进度条 + commit 涉及文件
+    const mpFull = { moduleId: 'module:a', name: 'A', description: 'svc', role: 'service',
+        files: ['src/a/one.js'], tasks: [{ id: 'task:t1', title: 'T1', status: 'implemented', completion: 'done', shared: false }],
+        taskCounts: { done: 1, open: 1, unknown: 0, shared: 0 }, progressState: 'in-progress',
+        healthState: 'normal', healthReasons: [], focus: false,
+        recentCommits: [{ sha: 'abcdef1234567890', subject: 'feat: x', files: ['src/a/one.js'] }] };
+    const mpage = renderModulePage({ mp: mpFull, pageMap: createPageMap(), meta,
+        sourcePageFor: () => ({ page: 'source/src-a-one.js--00000000.html' }),
+        groupsConfig: { laneLabels: {}, moduleAliases: { 'module:a': '规划引擎' }, groups: [] } });
+    assert.ok(mpage.includes('规划引擎'), 'module page title uses the Chinese alias');
+    assert.ok(mpage.includes('module:a'), 'original module id stays available (tech details)');
+    assert.ok(mpage.includes('progress-fill'), 'module page renders a progress bar');
+    assert.ok(mpage.includes('涉及') && mpage.includes('abcdef1'), 'recent commit line lists sha + touched files');
     console.log('✅ T-wiki-render passed');
 }
 ```
@@ -923,6 +1113,10 @@ const CSS = `body{font-family:system-ui,'Microsoft YaHei',sans-serif;margin:24px
 footer{margin-top:32px;color:#888;font-size:12px;border-top:1px solid #ddd;padding-top:8px}
 table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:4px 8px;font-size:13px}
 .health-risk{color:#b00}.health-attention{color:#a60}.health-normal{color:#282}
+.progress{height:8px;background:#ddd;border-radius:4px;max-width:420px;margin:8px 0}
+.progress-fill{height:8px;background:#5a9;border-radius:4px}
+nav ul{margin:4px 0 4px 18px;padding:0}nav li{font-size:13px;line-height:1.7}
+.note{color:#666;font-size:13px}
 details{margin-top:12px}summary{cursor:pointer;color:#666}`;
 
 function pageChrome({ title, body, meta }) {
@@ -931,23 +1125,75 @@ function pageChrome({ title, body, meta }) {
         + `<footer>生成于 ${escapeHtml(meta.generatedAt)} @ ${escapeHtml(meta.headSha)}</footer></body></html>`;
 }
 
+function aliasOf(groupsConfig, moduleId, fallback) {
+    return (groupsConfig && groupsConfig.moduleAliases && groupsConfig.moduleAliases[moduleId]) || fallback;
+}
+
 function renderIndex({ projection, groupsConfig, pageMap, meta }) {
     const p = projection.project;
-    const focusLine = p.focusResolved ? '' : '<p>当前焦点无法可靠定位。</p>';
-    const fresh = `<p>数据新鲜度:${p.inputFreshness.architecture.state === 'fresh' ? '已确认' : '数据新鲜度无法确认'}。</p>`;
     const totals = projection.totals;
     const totalAll = totals.taskDone + totals.taskOpen + totals.taskUnknown;
+
+    // 1. 项目定位
+    const positioning = `<p class="note">本页由 <code>mem wiki build</code> 从治理数据自动生成,`
+        + `展示「${escapeHtml(meta.projectName || '')}」的模块架构、任务进展与治理健康。</p>`;
+
+    // 2. 当前焦点(人话;unresolved → 固定文案)
+    const focus = p.focus || { resolved: !!p.focusResolved, label: '', moduleIds: [] };
+    const focusLine = focus.resolved
+        ? `<p>当前焦点:${escapeHtml(focus.label)}${(focus.moduleIds || []).length
+            ? '(位于 ' + focus.moduleIds.map(id =>
+                `<a href="${escapeHtml(pageMap.modulePage(id))}">${escapeHtml(aliasOf(groupsConfig, id, id))}</a>`).join('、') + ')'
+            : ''}。</p>`
+        : '<p>当前焦点无法可靠定位。</p>';
+
+    // 3. 总进度
+    const progressLine = `<p>共 ${projection.modules.length} 个模块;任务 ${totalAll} 项,已完成 ${totals.taskDone} 项`
+        + `${totals.taskUnknown ? `,${totals.taskUnknown} 项状态未知` : ''}。</p>`;
+
+    // freshness 三态:任一 stale → 过期提示;全 fresh → 已确认;否则固定文案「数据新鲜度无法确认」
+    const states = [p.inputFreshness.architecture.state, p.inputFreshness.planning.state];
+    const fresh = states.includes('stale')
+        ? '<p>数据已过期:建议重新运行 mem architecture scan / mem plan scan。</p>'
+        : states.every(s => s === 'fresh') ? '<p>数据新鲜度:已确认。</p>'
+        : '<p>数据新鲜度无法确认。</p>';
+
+    // 4. ProjectHealth 人话摘要
+    const healthBits = [];
+    if (p.driftErrors) healthBits.push(`${p.driftErrors} 项治理错误`);
+    if (p.driftWarnings) healthBits.push(`${p.driftWarnings} 项治理提醒`);
+    const healthLine = `<p>治理健康:${healthBits.length ? healthBits.join(',') : '未发现需要处理的问题'}。</p>`;
     const unattributed = p.unattributedFindings.length
         ? `<p>另有 ${p.unattributedFindings.length} 项无法定位到具体模块的治理提醒(详见技术详情)。</p>` : '';
-    const body = `<h1>项目全貌</h1>`
-        + `<p>共 ${projection.modules.length} 个模块;任务 ${totalAll} 项,已完成 ${totals.taskDone} 项${totals.taskUnknown ? `,${totals.taskUnknown} 项状态未知` : ''}。</p>`
-        + focusLine + fresh + unattributed
+    // provider 状态是信息性文案,绝不渲染为风险(provider stale ≠ IR 不新鲜)
+    let providerLine = '';
+    const cp = p.codePerception;
+    if (cp) {
+        const ready = (cp.providers || []).filter(x => x.ready);
+        if (!ready.length) providerLine = '<p class="note">结构代码情报未接入(不影响本页治理数据)。</p>';
+        else if (cp.freshness && cp.freshness.stale) providerLine = '<p class="note">结构代码索引落后于最新提交(仅影响代码检索,不影响本页数据)。</p>';
+    }
+    const linksLine = (p.links && p.links.proposed)
+        ? `<p class="note">另有 ${p.links.proposed} 项代码关联待确认。</p>` : '';
+
+    // 5. 本页导航树(泳道 → 模块,别名优先)
+    const lanes = computeLanes(projection.modules, groupsConfig);
+    const nav = '<nav><h2>本页导航</h2><ul>' + lanes.map(l =>
+        `<li>${escapeHtml(l.label)}<ul>` + l.modules.map(m =>
+            `<li><a href="${escapeHtml(pageMap.modulePage(m.moduleId))}">${escapeHtml(aliasOf(groupsConfig, m.moduleId, m.name))}</a></li>`).join('')
+        + '</ul></li>').join('') + '</ul></nav>';
+
+    const body = `<h1>${escapeHtml(meta.projectName || '')} 项目全貌</h1>`
+        + positioning + focusLine + progressLine + fresh
+        + healthLine + unattributed + providerLine + linksLine
+        + nav
         + renderSvgMap({ modules: projection.modules, groupsConfig, pageMap, validEdges: projection.validEdges || [] })
         + `<details><summary>技术详情</summary><pre>${escapeHtml(JSON.stringify(p, null, 2))}</pre></details>`;
     return pageChrome({ title: '项目全貌 — Evo-Lite Wiki', body, meta });
 }
 
-function renderModulePage({ mp, pageMap, meta, sourcePageFor }) {
+function renderModulePage({ mp, pageMap, meta, sourcePageFor, groupsConfig }) {
+    const alias = aliasOf(groupsConfig, mp.moduleId, mp.name);
     const rows = mp.files.map(f => {
         const target = sourcePageFor(f);
         const cell = target.page ? `<a href="../${escapeHtml(target.page)}">${escapeHtml(f)}</a>`
@@ -956,29 +1202,43 @@ function renderModulePage({ mp, pageMap, meta, sourcePageFor }) {
     }).join('');
     const taskRows = mp.tasks.map(t =>
         `<tr><td>${escapeHtml(t.title)}</td><td>${t.completion === 'done' ? '已完成' : t.completion === 'open' ? '进行中' : '状态未知'}${t.shared ? '(共享任务)' : ''}</td></tr>`).join('');
-    const commits = mp.recentCommits.map(c => `<li><code>${escapeHtml(c.sha.slice(0, 7))}</code> ${escapeHtml(c.subject)}</li>`).join('');
-    const body = `<h1>${escapeHtml(mp.name)}</h1>`
+    const total = mp.taskCounts.done + mp.taskCounts.open + mp.taskCounts.unknown;
+    const pct = total ? Math.round((mp.taskCounts.done / total) * 100) : 0;
+    const progressBar = `<div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>`;
+    const commits = mp.recentCommits.map(c =>
+        `<li><code>${escapeHtml(c.sha.slice(0, 7))}</code> ${escapeHtml(c.subject)}`
+        + `${(c.files && c.files.length) ? ' —— 涉及:' + c.files.map(f => escapeHtml(f)).join('、') : ''}</li>`).join('');
+    const body = `<h1>${escapeHtml(alias)}</h1>`
         + `<p>${escapeHtml(moduleNarrative(mp))}</p>`
         + (mp.description ? `<p><em>${escapeHtml(mp.description)}</em></p>` : '')
-        + `<h2>任务(${progressLabel(mp)})</h2><table>${taskRows || '<tr><td>尚未纳入规划</td></tr>'}</table>`
+        + `<h2>任务(${progressLabel(mp)})</h2>` + progressBar
+        + `<table>${taskRows || '<tr><td>尚未纳入规划</td></tr>'}</table>`
         + `<h2>文件</h2><table>${rows}</table>`
         + (commits ? `<h2>最近变更</h2><ul>${commits}</ul>` : '')
         + `<details><summary>技术详情</summary><pre>${escapeHtml(JSON.stringify({ moduleId: mp.moduleId, role: mp.role, healthReasons: mp.healthReasons }, null, 2))}</pre></details>`
         + `<p><a href="../index.html">← 返回项目全貌</a></p>`;
-    return pageChrome({ title: `${mp.name} — Evo-Lite Wiki`, body, meta });
+    return pageChrome({ title: `${alias} — Evo-Lite Wiki`, body, meta });
 }
 
 module.exports = { escapeHtml, validateEdges, computeLanes, renderSvgMap, renderIndex, renderModulePage, pageChrome };
 ```
 
-- [ ] **Step 4: 跑测试确认通过**(`✅ T-wiki-render passed`,EXIT 0)
+- [ ] **Step 4: 登记 template-manifest**
 
-- [ ] **Step 5: 同步镜像 + 提交**
+`templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/dictionary.js',` 之后追加:
+
+```js
+            'wiki/render.js',
+```
+
+- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-render passed`,EXIT 0)
+
+- [ ] **Step 6: 同步镜像 + 提交**
 
 ```bash
-node ./.evo-lite/cli/sync-runtime-entry.js
-git add templates/cli/wiki/render.js templates/cli/test/governance.js .evo-lite/cli/wiki/render.js .evo-lite/cli/test/governance.js
-git commit -m "feat(wiki): SVG module map + index/module pages, edge contract enforced (4b-1 W5)"
+node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
+git add templates/cli/wiki/render.js templates/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/wiki/render.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
+git commit -m "feat(wiki): SVG module map + index/module pages with Q5 page contract (4b-1 W5)"
 ```
 
 ---
@@ -987,6 +1247,7 @@ git commit -m "feat(wiki): SVG module map + index/module pages, edge contract en
 
 **Files:**
 - Create: `templates/cli/wiki/source-pages.js`
+- Modify: `templates/cli/template-manifest.js`(core-cli files 数组 +1 条)
 - Test: `templates/cli/test/governance.js`(追加 T-wiki-source)
 
 **Interfaces:**
@@ -994,10 +1255,11 @@ git commit -m "feat(wiki): SVG module map + index/module pages, edge contract en
 - Produces:
   ```
   generateSourcePages({ projectRoot, files:string[], pageMap, meta, limitBytes=524288 })
-    -> { pages: [{ page:string, html:string }], skipped: [{ path, reason }], warnings: string[] }
+    -> { pages: [{ page:string, html:string, stub?:true }], skipped: [{ path, reason }], warnings: string[] }
   resolveContained(projectRoot, repoRelPath) -> string|null   // 越界/非法返回 null
   ```
   W7 build 用返回的 `pages` 落盘;module 页经 `sourcePageFor(f)` 查询(命中 pages → {page},命中 skipped → {reason})。
+  **规模契约(设计 §2.3):**超过 `limitBytes` 的文本文件生成**说明页**(stub:解释未渲染正文的原因与实际大小,绝不嵌入内容),不是静默跳过;二进制/越界/不可读文件保持 skipped + 原因,由模块页展示。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -1032,9 +1294,15 @@ console.log('T-wiki-source. Source pages: containment, escaping, line anchors, b
         assert.ok(okPage.html.includes('&lt;script&gt;'), 'content is escaped');
         assert.ok(!okPage.html.includes('<script>&'), 'raw content must not leak');
 
+        // 超限文件 → 说明页(stub),不是静默跳过;绝不嵌入正文
+        const bigPage = res.pages.find(p => p.page.includes('big'));
+        assert.ok(bigPage && bigPage.stub, 'oversized file gets a stub page');
+        assert.ok(bigPage.html.includes('上限'), 'stub explains the size cap');
+        assert.ok(!bigPage.html.includes('x'.repeat(200)), 'stub must not embed file content');
+
         const reasons = Object.fromEntries(res.skipped.map(s => [s.path, s.reason]));
         assert.ok(reasons['bin.dat'], 'binary skipped with reason');
-        assert.ok(reasons['big.js'], 'oversized skipped with reason');
+        assert.ok(!reasons['big.js'], 'oversized is a stub PAGE, not a skip entry');
         assert.ok(reasons['../outside.txt'], 'escaping path skipped with reason');
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
     console.log('✅ T-wiki-source passed');
@@ -1087,7 +1355,15 @@ function generateSourcePages({ projectRoot, files, pageMap, meta, limitBytes = D
         let stat;
         try { stat = fs.statSync(real); } catch { skipped.push({ path: f, reason: '文件不可读' }); continue; }
         if (!stat.isFile()) { skipped.push({ path: f, reason: '不是普通文件' }); continue; }
-        if (stat.size > limitBytes) { skipped.push({ path: f, reason: `超过 ${Math.round(limitBytes / 1024)} KiB 上限` }); continue; }
+        if (stat.size > limitBytes) {
+            // Design §2.3: oversized files get an explanatory STUB page — never
+            // silently dropped, never embedding the content itself.
+            const body = `<h1><code>${escapeHtml(f)}</code></h1>`
+                + `<p>该文件大小为 ${Math.round(stat.size / 1024)} KiB,超过 ${Math.round(limitBytes / 1024)} KiB 上限,未渲染正文。请在本地编辑器中查看。</p>`
+                + `<p><a href="../index.html">← 返回项目全貌</a></p>`;
+            pages.push({ page: pageMap.sourcePage(f), html: pageChrome({ title: `${f} — 源码`, body, meta }), stub: true });
+            continue;
+        }
         const buf = fs.readFileSync(real);
         if (looksBinary(buf)) { skipped.push({ path: f, reason: '二进制文件不渲染' }); continue; }
         const lines = buf.toString('utf8').split(/\r?\n/);
@@ -1104,14 +1380,22 @@ function generateSourcePages({ projectRoot, files, pageMap, meta, limitBytes = D
 module.exports = { generateSourcePages, resolveContained, DEFAULT_LIMIT };
 ```
 
-- [ ] **Step 4: 跑测试确认通过**(`✅ T-wiki-source passed`,EXIT 0)
+- [ ] **Step 4: 登记 template-manifest**
 
-- [ ] **Step 5: 同步镜像 + 提交**
+`templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/render.js',` 之后追加:
+
+```js
+            'wiki/source-pages.js',
+```
+
+- [ ] **Step 5: 跑测试确认通过**(`✅ T-wiki-source passed`,EXIT 0)
+
+- [ ] **Step 6: 同步镜像 + 提交**
 
 ```bash
-node ./.evo-lite/cli/sync-runtime-entry.js
-git add templates/cli/wiki/source-pages.js templates/cli/test/governance.js .evo-lite/cli/wiki/source-pages.js .evo-lite/cli/test/governance.js
-git commit -m "feat(wiki): read-only source pages with containment, escaping and size caps (4b-1 W6)"
+node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
+git add templates/cli/wiki/source-pages.js templates/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/wiki/source-pages.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
+git commit -m "feat(wiki): read-only source pages with containment, escaping, size-cap stub pages (4b-1 W6)"
 ```
 
 ---
@@ -1119,9 +1403,11 @@ git commit -m "feat(wiki): read-only source pages with containment, escaping and
 ### Task 7: [W7] build.js + cli.js + 注册 + manifest + 镜像闭环
 
 **Files:**
-- Create: `templates/cli/wiki/build.js`, `templates/cli/wiki/cli.js`
-- Modify: `templates/cli/memory.js`(`safeRegister('code', ...)` 行之后 +1 行)、`templates/cli/template-manifest.js`(core-cli files 数组 `'code-perception/cli.js'` 之后 +8 条)
-- Test: `templates/cli/test/governance.js`(追加 T-wiki-build)
+- Create: `templates/cli/wiki/build.js`
+- Create: `templates/cli/wiki/cli.js`
+- Modify: `templates/cli/memory.js`(`safeRegister('code', ...)` 行之后 +1 行)
+- Modify: `templates/cli/template-manifest.js`(core-cli files 数组 `'wiki/source-pages.js'` 之后 +2 条)
+- Test: `templates/cli/test/governance.js`(追加 T-wiki-build + T-wiki-cli)
 
 **Interfaces:**
 - Consumes: W1-W6 全部导出(签名见各任务 Produces)。
@@ -1150,7 +1436,7 @@ console.log('T-wiki-build. Determinism (injected clock), manifest contract, rebu
         fs.mkdirSync(path.join(gen, 'planning'), { recursive: true });
         fs.writeFileSync(path.join(tmp, 'src.js'), 'hello();\n');
         fs.writeFileSync(path.join(gen, 'architecture', 'architecture-ir.json'), JSON.stringify({
-            version: 'x', generatedAt: 't0',
+            version: 'x', generatedAt: 't0', project: 'DemoProj',
             modules: [{ id: 'module:core', name: 'Core', description: 'd', paths: ['src.js'], fileCount: 1, role: 'service', confidence: 1 }],
             files: [{ path: 'src.js', module: 'module:core', role: 'service', confidence: 1 }],
             edges: [],
@@ -1196,27 +1482,66 @@ console.log('T-wiki-build. Determinism (injected clock), manifest contract, rebu
         assert.ok(manifest.modulePages['module:core'], 'modulePages maps original id');
         assert.ok(manifest.pages.includes('index.html'));
         void r2;
+
+        // P0-3 回归:默认 deps 的 explore 必须把 projectRoot 传给 exploreCode。
+        // 宿主仓有真实 focus;外部 projectRoot 且未注入 activeContext 时
+        // safeReadActiveContext 返回空 context(code-perception.js:52-68)——
+        // 因此这里 focus 必须不可解析。若实现忘传 projectRoot,exploreCode 会
+        // 回退宿主 workspace,宿主焦点泄漏进来,此断言失败。
+        const r4 = await buildWiki({ projectRoot: tmp, now: NOW, deps: { gitLog: () => [] } });
+        assert.strictEqual(r4.ok, true, 'default-deps build must succeed');
+        const idx4 = fs.readFileSync(path.join(r4.outDir, 'index.html'), 'utf8');
+        assert.ok(idx4.includes('当前焦点无法可靠定位'), 'host focus must not leak into a foreign projectRoot build');
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
     console.log('✅ T-wiki-build passed');
 }
 
-console.log('T-wiki-cli. mem wiki build exit codes: invalid groups => 2 ...');
+console.log('T-wiki-cli. mem wiki build exit-code matrix: 0 / 1 / 2 / --open-failure=0 ...');
 {
     // 沿用 T-ce-cli 的 NODE_PATH + 临时 workspace spawn 模式(harness.js:18)
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-cli-'));
-    try {
-        const gen = path.join(tmp, '.evo-lite', 'generated');
+    const spawnWiki = (cwd, args, extraEnv) => childProcess.spawnSync(
+        process.execPath, [path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'wiki', ...args], {
+            cwd, encoding: 'utf8',
+            env: { ...process.env, EVO_LITE_WORKSPACE_ROOT: cwd,
+                NODE_PATH: path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), ...(extraEnv || {}) },
+        });
+    const mkValidRoot = () => {
+        const t = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-cli-'));
+        const gen = path.join(t, '.evo-lite', 'generated');
         fs.mkdirSync(path.join(gen, 'architecture'), { recursive: true });
         fs.mkdirSync(path.join(gen, 'planning'), { recursive: true });
         fs.writeFileSync(path.join(gen, 'architecture', 'architecture-ir.json'), JSON.stringify({ modules: [], files: [], edges: [] }));
         fs.writeFileSync(path.join(gen, 'planning', 'plan-ir.json'), JSON.stringify({ tasks: [] }));
-        fs.writeFileSync(path.join(tmp, '.evo-lite', 'wiki-groups.json'), JSON.stringify({ version: 'bogus@9', groups: [] }));
-        const r = childProcess.spawnSync(process.execPath, [path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'wiki', 'build'], {
-            cwd: tmp, encoding: 'utf8',
-            env: { ...process.env, EVO_LITE_WORKSPACE_ROOT: tmp, NODE_PATH: path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules') },
-        });
+        return t;
+    };
+
+    const tmpOk = mkValidRoot();
+    const tmpBadGroups = mkValidRoot();
+    const tmpNoIr = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-cli-noir-'));
+    fs.mkdirSync(path.join(tmpNoIr, '.evo-lite'), { recursive: true });
+    try {
+        // 成功 → 0
+        let r = spawnWiki(tmpOk, ['build']);
+        assert.strictEqual(r.status, 0, `valid build must exit 0, got ${r.status}: ${r.stderr}`);
+        // 坏 wiki-groups.json → 2
+        fs.writeFileSync(path.join(tmpBadGroups, '.evo-lite', 'wiki-groups.json'), JSON.stringify({ version: 'bogus@9', groups: [] }));
+        r = spawnWiki(tmpBadGroups, ['build']);
         assert.strictEqual(r.status, 2, `invalid wiki-groups.json must exit 2, got ${r.status}: ${r.stderr}`);
-    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+        // 缺 Architecture/Planning IR → 1(生成失败)
+        r = spawnWiki(tmpNoIr, ['build']);
+        assert.strictEqual(r.status, 1, `missing IR must exit 1, got ${r.status}: ${r.stderr}`);
+        // 未知参数 → 2
+        r = spawnWiki(tmpOk, ['build', '--bogus']);
+        assert.strictEqual(r.status, 2, `unknown option must exit 2, got ${r.status}: ${r.stderr}`);
+        // --open 且浏览器启动失败 → 仍 0(EVO_WIKI_BROWSER 测试缝指向不存在的启动器)
+        r = spawnWiki(tmpOk, ['build', '--open'], { EVO_WIKI_BROWSER: 'evo-no-such-browser-xyz' });
+        assert.strictEqual(r.status, 0, `--open launch failure must still exit 0, got ${r.status}: ${r.stderr}`);
+        assert.ok((r.stdout + r.stderr).includes('could not open browser'), 'launch failure must be reported as a warning');
+    } finally {
+        fs.rmSync(tmpOk, { recursive: true, force: true });
+        fs.rmSync(tmpBadGroups, { recursive: true, force: true });
+        fs.rmSync(tmpNoIr, { recursive: true, force: true });
+    }
     console.log('✅ T-wiki-cli passed');
 }
 ```
@@ -1254,8 +1579,8 @@ function defaultGitLog(projectRoot) {
         const commits = [];
         let current = null;
         for (const line of out.split('\n')) {
-            if (line.includes(' ')) {
-                const [sha, subject] = line.split(' ');
+            if (line.includes('\x00')) {
+                const [sha, subject] = line.split('\x00');
                 current = { sha, subject, files: [] };
                 commits.push(current);
             } else if (line.trim() && current) current.files.push(line.trim());
@@ -1266,10 +1591,12 @@ function defaultGitLog(projectRoot) {
 
 function defaultDeps() {
     return {
+        // projectRoot MUST be forwarded: exploreCode falls back to the HOST
+        // workspace when options.projectRoot is unset, which would leak the
+        // mother repo's focus/IR into a child-project build (P0-3).
         explore: async projectRoot => {
             const svc = require('../code-perception');
-            void projectRoot;
-            return svc.exploreCode('', { includeSource: false, includeImpact: false });
+            return svc.exploreCode('', { projectRoot, includeSource: false, includeImpact: false });
         },
         verifySummary: projectRoot => {
             const d = require('../dashboard-data');
@@ -1314,7 +1641,11 @@ async function buildWiki({ projectRoot, now, deps }) {
     let headSha = 'unknown';
     try { headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf8' }).trim(); }
     catch { warnings.push('git HEAD unavailable'); }
-    const meta = { generatedAt: clock(), headSha };
+    const meta = {
+        generatedAt: clock(),
+        headSha,
+        projectName: architectureIR.project || path.basename(path.resolve(projectRoot)),
+    };
 
     // deterministic page assignment order: modules by id, then source files sorted
     const pageMap = createPageMap();
@@ -1340,7 +1671,7 @@ async function buildWiki({ projectRoot, now, deps }) {
 
     writePage('index.html', renderIndex({ projection, groupsConfig: groupsRes.config, pageMap, meta }));
     for (const mp of projection.modules) {
-        writePage(pageMap.modulePage(mp.moduleId), renderModulePage({ mp, pageMap, meta, sourcePageFor }));
+        writePage(pageMap.modulePage(mp.moduleId), renderModulePage({ mp, pageMap, meta, sourcePageFor, groupsConfig: groupsRes.config }));
     }
     for (const p of src.pages) writePage(p.page, p.html);
 
@@ -1389,9 +1720,15 @@ function invalidArgsExit(err) {
 }
 
 function openInBrowser(indexPath, onDone) {
+    // argv-form launchers only — never `cmd /c start` (shell-adjacent).
+    // EVO_WIKI_BROWSER overrides the launcher; it exists for the automated
+    // "--open failure still exits 0" test and for unusual desktop setups.
+    const override = process.env.EVO_WIKI_BROWSER;
     const p = process.platform;
-    const [cmd, args] = p === 'win32' ? ['cmd', ['/c', 'start', '', indexPath]]
-        : p === 'darwin' ? ['open', [indexPath]] : ['xdg-open', [indexPath]];
+    const [cmd, args] = override ? [override, [indexPath]]
+        : p === 'win32' ? ['explorer.exe', [indexPath]]
+        : p === 'darwin' ? ['open', [indexPath]]
+        : ['xdg-open', [indexPath]];
     execFile(cmd, args, err => onDone(err || null));
 }
 
@@ -1434,15 +1771,9 @@ module.exports = { registerWikiCommands };
     safeRegister('wiki', () => require('./wiki/cli').registerWikiCommands(program));
 ```
 
-`templates/cli/template-manifest.js` — core-cli `files` 数组 `'code-perception/cli.js',` 之后追加:
+`templates/cli/template-manifest.js` — core-cli `files` 数组 `'wiki/source-pages.js',`(W6 已登记)之后追加最后两条:
 
 ```js
-            'wiki/page-map.js',
-            'wiki/groups.js',
-            'wiki/projection.js',
-            'wiki/dictionary.js',
-            'wiki/render.js',
-            'wiki/source-pages.js',
             'wiki/build.js',
             'wiki/cli.js',
 ```
@@ -1484,11 +1815,25 @@ git commit -m "feat(wiki): mem wiki build orchestrator + CLI + manifest registra
 5. `mem plan scan` 识别本 plan(7 任务);`mem verify` last_run=healthy
 6. 主用户验收:打开 index.html,确认 §设计 的 Q5 诉求(架构图入口、模块进展、点击链路、中文人话)被满足 —— 这是 4b-1 的最终验收人
 
+## 复阅修订记录(2026-07-23 R2 —— 外部复阅「暂不通过」后的整改)
+
+- **P0-1:**正式 Spec 改为 parser 可读:frontmatter `linkedPlan:`、heading 恰为 `## Acceptance Criteria`、13 条改 `- ` 列表(数字列表/带后缀 heading 均不被 parse-markdown.js 提取);W7 Files 改一行一路径(parser 每条只取第一个反引号路径)。
+- **P0-2:**manifest 登记从 W7 一次性改为**随任务递增**(W1-W6 各 1 条、W7 最后 2 条),每任务新增 Step 4 登记 + git add 含 template-manifest.js 及其镜像 —— 否则 sync 不复制未登记文件,`git add .evo-lite/cli/wiki/*` 因路径不存在失败。
+- **P0-3:**`defaultDeps().explore` 把 `projectRoot` 传入 `exploreCode`(原 `void projectRoot` 丢弃 → 回退宿主 workspace,可能把母仓 focus 泄漏进子项目 build);新增回归断言(外部 projectRoot 下宿主焦点不得泄漏,依托 code-perception.js:52-68 的 active-context-not-bound seam)。
+- **P0-4:**W5 明确「首页内容契约」与「模块页内容契约」并落进代码+测试:项目定位段(projectName)、resolved focus 人话与模块链接、总进度、ProjectHealth 人话摘要(drift 计数/不可归属/provider 状态信息性文案/待确认关联)、本页导航树、SVG;模块页别名标题、进度条、commit 涉及文件。
+- **P1-1:**`createPageMap` 增加可注入 `hashFn`,测试真实覆盖「hash8 相同→扩展全 hash」分支。
+- **P1-2:**W2 重复 module id 判定改为「任何第二次出现」(同组也报错);laneLabels/moduleAliases 值必须为字符串。
+- **P1-3:**W3 fallback 归属复用 Architecture scanner 语义:`/` 结尾才做目录前缀,否则全等。
+- **P1-4:**ProjectHealth 补 `driftInfo`(info 计数不静默消失)、`focus{resolved,taskId,label,moduleIds}`、`codePerception{providers,freshness}`、`links(linkSummary)`;`computeFreshness(ir)` 显式三态(fresh/stale 仅来自可比对快照对前向缝;禁止 generatedAt/mtime/build 成功/drift 推断,含 `generatedDataFresh`)。
+- **P1-5:**W6 超限文件生成说明页(stub,不嵌正文),与全局约束「>512 KiB 出说明页」对齐;二进制保持 skipped+原因。
+- **P1-6:**T-wiki-cli 覆盖完整退出码矩阵:成功 0 / 缺 IR 1 / 坏 groups 2 / 未知参数 2 / `--open` 启动失败仍 0;Windows 打开改 `explorer.exe`(argv 形式,弃 `cmd /c start`),`EVO_WIKI_BROWSER` 为测试缝。
+- **附带:**修复计划文件中 4 处原始 NUL 字节(page-map 代码里的 Map 键分隔符,应为 `\x00` 字面转义;原样会把 .md 变成 binary 文件破坏 grep/diff)。
+
 ## Self-Review 记录(writing-plans 自查)
 
 - **Spec 覆盖:**设计 §1(形态/manifest)→W7;§2.0(映射)→W1;§2.1(SVG/边契约)→W5;§2.2(分组)→W2;§2.3(源码页)→W6;§3(投影语义)→W3;§4(词典)→W4;§5(退出码)→W7;§6(时钟)→W7 测试;§7 十三项测试 → T-wiki-pagemap(11)/groups(10)/projection(7,8,12)/dictionary(9)/render(3,6,13 + 转义 4 部分)/source(4,5)/build+cli(1,2 + 退出码);§8 红线进 Global Constraints。GitHub permalink(§2.3 可选项)MVP 显式**不实现**(保守策略允许;本地源码页已是主落点)——留待真实需求。
 - **占位符扫描:**无 TBD/TODO;所有代码步骤含完整代码。
-- **类型一致性:**`createPageMap()/modulePage/sourcePage/modulePages`、`loadWikiGroups -> {ok,config|errors}`、`buildProjection` 返回形状、`validateEdges -> {valid,warnings}`、`generateSourcePages -> {pages,skipped,warnings}`、`buildWiki -> {ok,outDir,manifest,warnings}` 在 W1-W7 的 Consumes/Produces 与代码中逐一核对一致;`invalidConfig: true` 仅由 groups 失败路径产生并映射 exit 2。
+- **类型一致性:**`createPageMap(opts?)/modulePage/sourcePage/modulePages`、`loadWikiGroups -> {ok,config|errors}`、`buildProjection`/`computeFreshness` 返回形状、`validateEdges -> {valid,warnings}`、`generateSourcePages -> {pages(含 stub),skipped,warnings}`、`renderModulePage({...,groupsConfig})`、`meta={generatedAt,headSha,projectName}`、`buildWiki -> {ok,outDir,manifest,warnings}` 在 W1-W7 的 Consumes/Produces 与代码中逐一核对一致;`invalidConfig: true` 仅由 groups 失败路径产生并映射 exit 2。
 
 
 

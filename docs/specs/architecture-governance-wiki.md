@@ -2,6 +2,7 @@
 id: spec:architecture-governance-wiki
 title: "Spec: Architecture-Governance Wiki (4b-1)"
 status: adopted
+linkedPlan: plan:architecture-governance-wiki-mvp
 ---
 
 # Spec: Architecture-Governance Wiki(4b-1)
@@ -16,21 +17,23 @@ status: adopted
 
 `mem wiki build [--open]`:Google Code Wiki 的呈现形态 × Evo-Lite 的治理数据 —— 架构图为骨、模块进展为肉的纯静态离线中文 wiki,按需重生成,输出 `.evo-lite/generated/wiki/`。
 
-## Acceptance Criteria(与设计 §7 十三项测试一一对应)
+## Acceptance Criteria
 
-1. 确定性:相同输入快照 + 相同 headSha + 相同注入时钟 → 两次生成 byte-identical;删目录重建一致。
-2. 纯派生:输出目录整体可删除重建,无 canonical 人工内容。
-3. 无边诚实:`edges` 缺失/空 → 无 dependency-edge、无 marker-end、无 synthetic edge;manifest `knownEdgeCount: 0`。
-4. 源码页:稳定行号锚点;内容/标题/描述/commit message 全量 HTML escape。
-5. 路径安全:`..`、绝对路径、符号链接越界被拒绝。
-6. role 开放枚举:`feature` 与未知 role 不丢模块,未知入"其他"泳道 + manifest warning。
-7. 无 task 模块显示"尚未纳入规划"。
-8. 健康隔离:不可归属 finding 只进 ProjectHealth,不扩散到模块。
-9. 词典:生成器自写中文叙事无裸 Rxxx;未知规则呈现"发现一项尚未分类的治理检查"。
-10. 分组:evo-wiki-groups@1 校验矩阵(重复 id / 未知 id 报告具体 id / 未知 version / 类型错误 → exit 2);无配置零依赖可用。
-11. 页面映射 Windows 合法;hash 冲突确定性扩展、绝不覆盖。
-12. freshness 三态:仅 generatedAt 的 IR → unknown;呈现"数据新鲜度无法确认"。
-13. 边契约:合法 `ArchitectureModuleEdge` 绘制;malformed 拒绝 + warning。
+与设计 §7 十三项测试一一对应:
+
+- 确定性:相同输入快照 + 相同 headSha + 相同注入时钟 → 两次生成 byte-identical;删目录重建一致。
+- 纯派生:输出目录整体可删除重建,无 canonical 人工内容。
+- 无边诚实:`edges` 缺失/空 → 无 dependency-edge、无 marker-end、无 synthetic edge;manifest `knownEdgeCount: 0`。
+- 源码页:稳定行号锚点;内容/标题/描述/commit message 全量 HTML escape。
+- 路径安全:`..`、绝对路径、符号链接越界被拒绝。
+- role 开放枚举:`feature` 与未知 role 不丢模块,未知入"其他"泳道 + manifest warning。
+- 无 task 模块显示"尚未纳入规划"。
+- 健康隔离:不可归属 finding 只进 ProjectHealth,不扩散到模块。
+- 词典:生成器自写中文叙事无裸 Rxxx;未知规则呈现"发现一项尚未分类的治理检查"。
+- 分组:evo-wiki-groups@1 校验矩阵(重复 id / 未知 id 报告具体 id / 未知 version / 类型错误 → exit 2);无配置零依赖可用。
+- 页面映射 Windows 合法;hash 冲突确定性扩展、绝不覆盖。
+- freshness 三态:仅 generatedAt 的 IR → unknown;呈现"数据新鲜度无法确认"。
+- 边契约:合法 `ArchitectureModuleEdge` 绘制;malformed 拒绝 + warning。
 
 收口条件:13 项测试全绿 + 双侧 all 套件全绿 + 镜像 double-run-zero + **主用户实测 index.html 确认 Q5 诉求被满足**(最终验收人)。
 
