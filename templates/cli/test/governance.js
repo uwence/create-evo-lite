@@ -2738,6 +2738,149 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-lock-ephemeral passed');
 
+        console.log('T-mcp-stdin-exit. Testing MCP stdin-EOF lifecycle (A) + shutdown cleanup of a held lock (B) (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
+            } else {
+                const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+                // 逐行解析 stdout JSON-RPC,等待指定 id 的 response(plan R1 P1-1:
+                // 不用固定 sleep 猜时序)
+                const attachRpcReader = child => {
+                    const seen = new Map();
+                    let buf = '';
+                    child.stdout.on('data', chunk => {
+                        buf += chunk.toString();
+                        const lines = buf.split('\n');
+                        buf = lines.pop();
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const parsed = JSON.parse(line);
+                                if (parsed.id != null) seen.set(parsed.id, parsed);
+                            } catch (_) {}
+                        }
+                    });
+                    return async (id, timeoutMs) => {
+                        const deadline = Date.now() + timeoutMs;
+                        while (Date.now() < deadline) {
+                            if (seen.has(id)) return seen.get(id);
+                            await new Promise(r => setTimeout(r, 50));
+                        }
+                        return seen.get(id) || null;
+                    };
+                };
+                const rpc = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n';
+
+                // A. 真实 entrypoint 生命周期:initialize 有响应后 stdin EOF → 自行 exit 0
+                {
+                    const runtime = createTempRuntimeRoot('mcp-stdin-a');
+                    await bootstrapRuntime(runtime.runtimeRoot);
+                    const memJs = path.join(CLI_DIR, 'memory.js');
+                    const child = childProcess.spawn(process.execPath, [memJs, 'mcp'], {
+                        cwd: runtime.workspaceRoot,
+                        env: {
+                            ...process.env,
+                            EVO_LITE_ROOT: runtime.runtimeRoot,
+                            EVO_LITE_SKIP_GIT_GUARD: '1',
+                            EVO_LITE_MEMORY_ENGINE: 'zvec', // 显式固定,防前序测试遗留 env 干扰
+                        },
+                        stdio: ['pipe', 'pipe', 'pipe'],
+                    });
+                    const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
+                    let killedByTimeout = false;
+                    const failsafe = setTimeout(() => { killedByTimeout = true; try { child.kill(); } catch (_) {} }, 20000);
+                    try {
+                        const waitFor = attachRpcReader(child);
+                        child.stdin.write(rpc(0, 'initialize', {
+                            protocolVersion: '2024-11-05', capabilities: {},
+                            clientInfo: { name: 't-lock-stdin-a', version: '1' },
+                        }));
+                        assert.ok(await waitFor(0, 10000), 'initialize response received before EOF');
+                        child.stdin.end(); // 宿主死亡的最小模拟:stdin EOF
+                        const code = await exited;
+                        clearTimeout(failsafe);
+                        assert.ok(!killedByTimeout, 'server exits on its own after stdin EOF (no zombie)');
+                        assert.strictEqual(code, 0, `exit code 0 expected, got ${code}`);
+                    } finally {
+                        clearTimeout(failsafe);
+                        try { child.kill(); } catch (_) {}
+                    }
+                }
+
+                // B. shutdown cleanup(plan R1 P1-1):server 启动前索引已以非
+                //    ephemeral 状态真实持锁 + owner 在场 → stdin EOF → shutdown
+                //    必须 close 活动索引、清 owner、释放 native 锁。
+                //    (ephemeral 路径下 recall 返回时锁本已释放,只有本场景能
+                //    证明 shutdown 会收尾活动 collection。)
+                {
+                    const runtime = createTempRuntimeRoot('mcp-stdin-b');
+                    await bootstrapRuntime(runtime.runtimeRoot);
+                    const wrapDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-mcpwrap-'));
+                    const readyFile = path.join(wrapDir, 'wrapper-ready.txt');
+                    const WRAPPER_SRC = [
+                        "'use strict';",
+                        `process.env.EVO_LITE_ROOT = ${JSON.stringify(runtime.runtimeRoot)};`,
+                        "process.env.EVO_LITE_SKIP_GIT_GUARD = '1';",
+                        "process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';",
+                        "delete process.env.EVO_LITE_INDEX_EPHEMERAL; // 防外部 shell 环境污染(plan R2 执行提示)",
+                        "delete process.env.EVO_LITE_PROCESS_MODE;",
+                        `const { getMemoryIndex } = require(${JSON.stringify(path.join(CLI_DIR, 'memory-index.js'))});`,
+                        "const idx = getMemoryIndex();",
+                        "idx.initialize(); // 此刻 EVO_LITE_INDEX_EPHEMERAL 未设 → 真实持锁 + owner 在场",
+                        `require('fs').writeFileSync(${JSON.stringify(readyFile)}, String(process.pid), 'utf8');`,
+                        `const { runMcpServer } = require(${JSON.stringify(path.join(CLI_DIR, 'mcp-server.js'))});`,
+                        "runMcpServer();",
+                    ].join('\n');
+                    const wrapperPath = path.join(wrapDir, 'mcp-wrapper.js');
+                    fs.writeFileSync(wrapperPath, WRAPPER_SRC, 'utf8');
+                    const child = childProcess.spawn(process.execPath, [wrapperPath], {
+                        cwd: runtime.workspaceRoot,
+                        env: { ...process.env },
+                        stdio: ['pipe', 'pipe', 'pipe'],
+                    });
+                    const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
+                    let killedByTimeout = false;
+                    const failsafe = setTimeout(() => { killedByTimeout = true; try { child.kill(); } catch (_) {} }, 20000);
+                    try {
+                        const waitFor = attachRpcReader(child);
+                        const deadline = Date.now() + 10000;
+                        while (!fs.existsSync(readyFile) && Date.now() < deadline) {
+                            await new Promise(r => setTimeout(r, 50));
+                        }
+                        assert.ok(fs.existsSync(readyFile), 'wrapper initialized a lock-holding index');
+                        const zvecDir = path.join(runtime.runtimeRoot, 'zvec');
+                        const held = lock.readOwner(zvecDir);
+                        assert.strictEqual(held.state, 'valid', 'owner present while index holds the lock');
+                        assert.strictEqual(held.owner.pid, Number(fs.readFileSync(readyFile, 'utf8')), 'owner is the wrapper process');
+                        child.stdin.write(rpc(0, 'initialize', {
+                            protocolVersion: '2024-11-05', capabilities: {},
+                            clientInfo: { name: 't-lock-stdin-b', version: '1' },
+                        }));
+                        assert.ok(await waitFor(0, 10000), 'server responsive before EOF');
+                        child.stdin.end();
+                        const code = await exited;
+                        clearTimeout(failsafe);
+                        assert.ok(!killedByTimeout, 'wrapper exits on its own (shutdown closed the active index)');
+                        assert.strictEqual(code, 0, `exit code 0 expected, got ${code}`);
+                        assert.strictEqual(lock.readOwner(zvecDir).state, 'missing', 'shutdown cleared the active owner');
+                        // 不变量 6:native 锁确实释放 —— 新 writer 立即 initialize 成功
+                        resetCliModuleCache();
+                        const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                        const writer = new ZvecMemoryIndex();
+                        writer.initialize(); // 死服务器若仍持锁,这里 Can't lock
+                        writer.close();
+                    } finally {
+                        clearTimeout(failsafe);
+                        try { child.kill(); } catch (_) {}
+                    }
+                }
+            }
+        }
+        console.log('✅ T-mcp-stdin-exit passed (A: lifecycle, B: shutdown cleanup)');
+
         console.log('T-SPACE-ENGINE. Testing verify memory-space line reports the ACTIVE index engine (skips if @zvec/zvec absent) ...');
         {
             let zvecAvailable = true;
