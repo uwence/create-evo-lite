@@ -3,17 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: b5803d36204e65fa000a73ca233e3c49f86847d5
-> upstreamSha: 2307a06beeb22adc7c9a9d992878214d26879b0f
+> headSha: 659984d10ce20558e2befd419939c933a0767e1b
+> upstreamSha: 28dcced14ae16d500089d73b0927e7069db616c9
 > ahead: 2
 > behind: 0
-> focusUpdatedAt: 2026-07-23T07:25:14.581Z
+> focusUpdatedAt: 2026-07-23T12:28:45.455Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[a177] mcp-zvec-lock discovery/brainstorming: long-lived MCP servers hold the zvec collection write lock and stale session processes never exit — designing runtime lifecycle + single-writer coordination. 4b-1 stays closed; Inspector stays parked.
+[a177] mcp-zvec-lock:设计 R2 外部复阅 APPROVED(7f0b5d4);plan:mcp-zvec-lock-mvp 已产出并 intake spec:mcp-zvec-lock(659984d,draft 0/7)。当前门:实施计划外部复阅 —— 通过并明示授权后走 SDD(Task 1-7,refusal matrix 先于自愈);实现代码在此之前不启动。终局门:存量僵尸清点 + 实景 mem commit + nurture CodePLC/hungersnakegame4。0.6 升级独立 [zvec-06-upgrade]。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -28,6 +28,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [659984d] 2026-07-23 governance-closure: [a177] mcp-zvec-lock 设计+计划阶段收口。设计文档 docs/superpowers/specs/2026-07-23-mcp-zvec-lock-design.md:三层锁协调(
 - [b5803d3] 2026-07-23 governance-closure: 4b-1 Architecture-Governance Wiki closure. Q5 user acceptance PASS (2026-07-23). Implementation main
 - [035afb0] 2026-07-22 backlog-closure: Close stale backlog [06fd][mcp-detect-missing]: templates/cli/mcp-detect.js now exists (6.1K) and te
 - [035afb0] 2026-07-22 backlog-closure: Close stale backlog [fresh-plan-progress]: fixed pre-2.3.0 in templates/cli/planning.js (plan progre
@@ -37,7 +38,6 @@
 - [366b66a] 2026-07-20 focus-fix: Post-commit hook auto-advanced focus onto plan:code-wiki-inspector-projection (parked, 0/3) since it
 - [5ebbc1b] 2026-07-20 focus-fix: Rewrote focus text to describe only the shipped Phase 4a plan (dropped the stray plan:code-wiki-insp
 - [f004e62] 2026-07-20 plan-closure: Retroactive closure of plan:unified-code-explore-agent-surface-mvp. All 6 tasks (M1/M2 seam, unified
-- [8645418] 2026-07-15 plan-progress-reflection: Sub-spec ② (codegraph-adapter-governance-linker) plan-progress reflection: 14/15 tasks implemented +
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
