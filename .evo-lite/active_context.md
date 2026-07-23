@@ -20,6 +20,8 @@
 
 <!-- BEGIN_BACKLOG -->
 - [ ] [agent-code-routing] 4a.x debt (P2 final): agents never discover mem code under bare prompts, even with zero competing surface (S9b CodePLC). Fix direction: takeover aggregate command or explicit routing in .agents/rules. Independent of 4b-1 — the Wiki serves humans and cannot substitute agent routing.
+- [ ] [c482] [wiki-ux-debt] Wiki 三项体验债(实际产物复核确认,不重开 4b-1):1) SVG 超宽溢出 — 用 .map-scroll overflow-x:auto 容器包裹(最小修法),后续再考虑缩放/折叠/minimap;2) 首页治理提醒缺范围解释 — 拆「当前活动范围 / 项目历史治理债务 / 未归属」三行,降低 44 项提醒的认知冲突;3) 模块名称层中文化 — 默认 wiki-groups.json aliases 或 module-id 中文词典,只改展示别名,不动 Architecture IR canonical 名称。
+- [ ] [a177] [mcp-zvec-lock] 4a.x/hive 可靠性议题:长活 MCP server(memory.js mcp)持有 zvec collection 写锁,且旧会话进程不自清(实测 8 个僵尸进程跨 7/20-7/22),导致 mem commit/context track 在 track 阶段失败。需要运行时生命周期与单写者协调方案(空闲释放锁 / 写时让渡 / 进程自检退出 / lock 持有者诊断信息)。严重性高于 wiki UX debt。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
