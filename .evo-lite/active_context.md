@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[a177] mcp-zvec-lock:设计 R2 外部复阅 APPROVED(7f0b5d4);plan:mcp-zvec-lock-mvp 已产出并 intake spec:mcp-zvec-lock(659984d,draft 0/7)。当前门:实施计划外部复阅 —— 通过并明示授权后走 SDD(Task 1-7,refusal matrix 先于自愈);实现代码在此之前不启动。终局门:存量僵尸清点 + 实景 mem commit + nurture CodePLC/hungersnakegame4。0.6 升级独立 [zvec-06-upgrade]。
+[a177] mcp-zvec-lock 实施中(plan:mcp-zvec-lock-mvp active 0/7):Plan R2 APPROVED + 实施授权 GRANTED(2026-07-23)。SDD 顺序执行 Task 1-7(Task 3 拒杀矩阵必须先于 Task 4 自愈);全绿后终局门:存量僵尸清点 → 实景 mem commit → nurture CodePLC/hungersnakegame4 → R008/状态/focus 收口。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)

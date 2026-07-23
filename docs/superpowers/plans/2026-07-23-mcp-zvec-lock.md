@@ -1,15 +1,16 @@
 ---
 id: plan:mcp-zvec-lock-mvp
 title: "Plan: MCP zvec lock coordination (a177)"
-status: draft
+status: active
 ---
 
 # [a177] MCP zvec 锁协调 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **AUTHORIZATION GATE:** 本计划在外部复阅通过并由主用户明示授权前,**不得开始实施**。
-> 复阅通过后先做治理切换(plan draft→active、focus 迁移、plan scan 确认 7 任务、提交),再进入 Task 1。
+> **AUTHORIZATION GATE: PASSED(2026-07-23)** — Plan R2 外部复阅 APPROVED,实施授权 GRANTED
+> (Subagent-Driven Development,Task 1→7 顺序执行;Task 3 必须先于 Task 4;终局门在全绿后执行)。
+> 两条非阻断执行提示已折入:attemptSelfHeal 防御性平台闸;wrapper B 显式 delete 环境变量。
 
 **Goal:** 三层最小组合(ephemeral 锁租期 / MCP stdin-EOF 生命周期 / owner sidecar + 四道闸孤儿自愈),让 zvec 写锁不再被死进程长期持有,治理写链路(`mem commit`/`context track`)恢复可用。
 
@@ -1096,6 +1097,11 @@ function isLockError(err) {
 // win32 说明:SIGTERM/SIGKILL 底层同为 TerminateProcess,阶梯在 unix 生效,
 // win32 退化为单级;等待与复核两步在所有平台保留(防 native handle 未释放即重开)。
 function attemptSelfHeal(dir, diag, ctx = {}) {
+    // 防御性平台闸(plan R2 执行提示):生产路径已由 diagnoseLockConflict 阻断
+    // unix 自愈,这里再守一次,防未来被直接调用时绕过平台策略。
+    if (process.platform !== 'win32') {
+        return { healed: false, reason: 'unix 平台孤儿自愈默认关闭(仅诊断不终止)' };
+    }
     const owner = diag.owner;
     const kill = (ctx.seams && typeof ctx.seams.killFn === 'function')
         ? ctx.seams.killFn
@@ -1634,6 +1640,8 @@ git commit -m "feat(lock): ephemeral lock tenure in ZvecMemoryIndex via reentran
                         `process.env.EVO_LITE_ROOT = ${JSON.stringify(runtime.runtimeRoot)};`,
                         "process.env.EVO_LITE_SKIP_GIT_GUARD = '1';",
                         "process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';",
+                        "delete process.env.EVO_LITE_INDEX_EPHEMERAL; // 防外部 shell 环境污染(plan R2 执行提示)",
+                        "delete process.env.EVO_LITE_PROCESS_MODE;",
                         `const { getMemoryIndex } = require(${JSON.stringify(path.join(CLI_DIR, 'memory-index.js'))});`,
                         "const idx = getMemoryIndex();",
                         "idx.initialize(); // 此刻 EVO_LITE_INDEX_EPHEMERAL 未设 → 真实持锁 + owner 在场",
