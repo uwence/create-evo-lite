@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Architecture-Governance Wiki (4b-1) Implementation Plan: [W1] wiki/page-map.js — 统一页面路径映射
+4b-1 Architecture-Governance Wiki SHIPPED & Q5-accepted — plan:architecture-governance-wiki-mvp + spec:architecture-governance-wiki closed (done). No active initiative. Backlog: [agent-code-routing] (4a.x debt). Inspector stays parked; SVG responsive scaling logged as UX debt.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)

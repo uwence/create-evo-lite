@@ -1,7 +1,7 @@
 ---
 id: plan:architecture-governance-wiki-mvp
 title: Architecture-Governance Wiki (4b-1) — MVP Plan
-status: active
+status: done
 linkedSpec: spec:architecture-governance-wiki
 ---
 

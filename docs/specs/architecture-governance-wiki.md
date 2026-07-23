@@ -1,7 +1,7 @@
 ---
 id: spec:architecture-governance-wiki
 title: "Spec: Architecture-Governance Wiki (4b-1)"
-status: adopted
+status: done
 linkedPlan: plan:architecture-governance-wiki-mvp
 ---
 
@@ -36,6 +36,8 @@ linkedPlan: plan:architecture-governance-wiki-mvp
 - 边契约:合法 `ArchitectureModuleEdge` 绘制;malformed 拒绝 + warning。
 
 收口条件:13 项测试全绿 + 双侧 all 套件全绿 + 镜像 double-run-zero + **主用户实测 index.html 确认 Q5 诉求被满足**(最终验收人)。
+
+**收口记录(2026-07-23):**W1-W7 实施于 `111674c..c6235fc`(SDD,逐任务独立复审 + opus 终局全分支复审 Ready-to-merge);双侧 `test.js all` EXIT 0;镜像 copied:0(113 unchanged);母仓实景 102 页 / modulePages === modules (12)。**主用户 Q5 验收:PASS**(架构图入口 / 点击模块看进展 / 中文人话 / 图文并茂 MVP 四项均满足)。非阻断 UX debt:SVG 宽度随泳道数固定扩展,未做响应式缩放/横向滚动容器 —— 模块数显著增长时再做缩放/折叠/minimap。Inspector(cw-inspector/cw-closure)保持 parked。
 
 ## Phases
 
