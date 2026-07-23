@@ -103,7 +103,11 @@ async function buildWiki({ projectRoot, now, deps }) {
     const src = generateSourcePages({ projectRoot, files: allFiles, pageMap, meta });
     warnings.push(...src.warnings);
     const skippedByPath = new Map(src.skipped.map(s => [s.path, s.reason]));
-    const pageByPath = new Map(src.pages.map(p => [allFiles.find(f => pageMap.sourcePage(f) === p.page), p.page]));
+    // Forward pass: every non-skipped file already owns a page slot
+    // (generateSourcePages assigned it); sourcePage() is an idempotent lookup
+    // here. Avoids the O(pages × files) reverse scan and never registers
+    // page-map entries for skipped files as a search byproduct.
+    const pageByPath = new Map(allFiles.filter(f => !skippedByPath.has(f)).map(f => [f, pageMap.sourcePage(f)]));
     const sourcePageFor = f => pageByPath.has(f) ? { page: pageByPath.get(f) }
         : { reason: skippedByPath.get(f) || '未生成' };
 
