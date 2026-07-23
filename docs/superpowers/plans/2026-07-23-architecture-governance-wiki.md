@@ -1,7 +1,7 @@
 ---
 id: plan:architecture-governance-wiki-mvp
 title: Architecture-Governance Wiki (4b-1) — MVP Plan
-status: draft
+status: active
 linkedSpec: spec:architecture-governance-wiki
 ---
 
@@ -9,7 +9,7 @@ linkedSpec: spec:architecture-governance-wiki
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **AUTHORIZATION GATE:** implementation may start ONLY after this plan passes external re-review. Until then this document is read-only.
+> **AUTHORIZATION GATE:** PASSED — 外部复阅 2026-07-23 APPROVED(R2+R3 整改后),授权 Subagent-Driven Development 自 W1 起连续执行。
 
 **Goal:** `mem wiki build [--open]` — 把 architecture IR + Planning IR + exploreCode 治理数据 + drift/verify 生成纯静态、离线、中文的 HTML wiki(架构图为骨、模块进展为肉)。
 

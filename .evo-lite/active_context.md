@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-Phase 4b-1: plan:architecture-governance-wiki-mvp authored (7 tasks, spec:architecture-governance-wiki adopted); awaiting external plan review — implementation NOT authorized until review passes. Old cw-wiki scope stays superseded; Inspector stays parked.
+Phase 4b-1 EXECUTING: plan:architecture-governance-wiki-mvp approved by external review (R3) — Subagent-Driven Development, current task W1 page-map + module:architecture-wiki rule. Inspector stays parked; old cw-wiki scope stays superseded.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
