@@ -424,6 +424,7 @@ async function runIntegrationTests() {
                 'planning/scan.js', 'planning/traceability.js',
                 'architecture/diff.js', 'architecture/infer-modules.js',
                 'architecture/provider-contract.js', 'architecture/scan-native.js',
+                'memory-index-lock.js',
             ];
 
             for (const f of required) {
