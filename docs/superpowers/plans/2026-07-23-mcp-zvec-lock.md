@@ -951,6 +951,7 @@ git commit -m "feat(lock): four-gate diagnoseLockConflict + 11-case refusal matr
                     "const lock = require(process.argv[4]);",
                     "const dir = process.argv[3];",
                     "const col = zvec.ZVecOpen(path.join(dir, 'collection'));",
+                    "global.__evoLockHolderCollection = col; // 防 GC 回收 native 句柄提前释放锁(执行期实测)",
                     "lock.writeOwner(dir, { mode: 'mcp', projectRoot: process.argv[5] });",
                     "fs.writeFileSync(path.join(dir, 'holder-ready.txt'), String(process.pid), 'utf8');",
                     "setInterval(() => {}, 1000);",
@@ -1063,6 +1064,7 @@ const BACKOFF_MS = 100;
 const TERM_WAIT_MS = 1500;
 const KILL_WAIT_MS = 1000;
 const POLL_MS = 100;
+const POST_KILL_SETTLE_MS = 250; // 死亡确认后等 native LOCK 清理尾巴(实测 ~100ms)
 
 // 同步睡眠:Atomics.wait 在 Node 主线程可用,避免为等待拉子进程。
 function sleepSync(ms) {
@@ -1092,8 +1094,9 @@ function isLockError(err) {
     return isZ && /can't lock/i.test(String(err.message || ''));
 }
 
-// 自愈阶梯(设计 §4.4,仅 orphaned-own-mcp 或 dead-holder 语义进入):
-// 身份复核 → SIGTERM → 有界等待 → SIGKILL → 等消失 → CAS 清 stale owner。
+// 自愈阶梯(设计 §4.4,仅 orphaned-own-mcp verdict 进入):
+// 身份复核 → 首击(win32=SIGKILL / unix=SIGTERM)→ 有界等待 → SIGKILL →
+// 等消失 → settle。只杀进程与确认死亡,不动 owner(P0-1)。
 // win32 说明:SIGTERM/SIGKILL 底层同为 TerminateProcess,阶梯在 unix 生效,
 // win32 退化为单级;等待与复核两步在所有平台保留(防 native handle 未释放即重开)。
 function attemptSelfHeal(dir, diag, ctx = {}) {
@@ -1108,12 +1111,15 @@ function attemptSelfHeal(dir, diag, ctx = {}) {
         : (pid, sig) => process.kill(pid, sig);
     const recheck = getProcessSnapshot(owner.pid, ctx.seams);
     if (recheck && recheck.alive === false) {
-        // 诊断与自愈之间已自行退出 → 无进程可杀,仅清 stale owner
+        // 诊断与自愈之间已自行退出 → 无进程可杀;owner 留给接管覆盖(P0-1)
     } else if (!recheck || !isExpectedMcpProcess(recheck, owner)) {
         // 窗口期内 PID 被复用或身份不再可确认 → 中止,绝不杀
         return { healed: false, reason: `自愈中止:pid ${owner.pid} 的身份在复核时不再成立(可能 PID 复用),绝不自动终止` };
     } else {
-        try { kill(owner.pid, 'SIGTERM'); } catch (_) {}
+        // win32 实测:SIGTERM 对 detached 孤儿进程为 no-op,而设计语义本就是
+        // "win32 退化为单级" —— 首击直接 SIGKILL;unix 保留 SIGTERM→SIGKILL 阶梯。
+        const firstSignal = process.platform === 'win32' ? 'SIGKILL' : 'SIGTERM';
+        try { kill(owner.pid, firstSignal); } catch (_) {}
         if (!waitForExit(owner.pid, TERM_WAIT_MS)) {
             try { kill(owner.pid, 'SIGKILL'); } catch (_) {}
             if (!waitForExit(owner.pid, KILL_WAIT_MS)) {
@@ -1121,6 +1127,9 @@ function attemptSelfHeal(dir, diag, ctx = {}) {
             }
         }
     }
+    // 进程已消失,但 zvec native LOCK 的清理在进程死亡后仍有 ~100ms 级尾巴
+    // (实测);设计 §4.4 的"等待"步骤 —— 防止立即重开偶发失败。
+    sleepSync(POST_KILL_SETTLE_MS);
     // plan R1 P0-1:自愈阶梯到此为止,**不动 owner** —— read→unlink 即便带
     // CAS 也非跨进程原子;zvec 独占锁才是 owner 变更的互斥边界。stale owner
     // 留给接管成功后的 writeOwner 原子覆盖;接管失败则绝不删除。
@@ -1208,7 +1217,7 @@ function openWithCoordination(openFn, dir, ctx = {}) {
 }
 ```
 
-`module.exports` 追加:`BACKOFF_RETRIES, BACKOFF_MS, TERM_WAIT_MS, KILL_WAIT_MS, POLL_MS, sleepSync, waitForExit, isLockError, attemptSelfHeal, openWithCoordination,`。
+`module.exports` 追加:`BACKOFF_RETRIES, BACKOFF_MS, TERM_WAIT_MS, KILL_WAIT_MS, POLL_MS, POST_KILL_SETTLE_MS, sleepSync, waitForExit, isLockError, attemptSelfHeal, openWithCoordination,`。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -1877,6 +1886,16 @@ git commit -m "feat(lock): register memory-index-lock in template manifest + mir
    orphan-selfheal 测试仅 win32 执行。
 
 同步回灌设计文档修订记录 R2-plan(canonical 契约一致)。
+
+**执行期修订(Task 4,2026-07-23,控制器裁决 —— 实测驱动,设计意图内):**
+实施者在 win32 实机上 5/5 复现两项计划代码与现实的偏差:(a) HOLDER_SRC 的
+`col` 无后续引用会被 GC 回收 native 句柄、锁提前释放 → fixture 加
+`global.__evoLockHolderCollection = col` 保引用;(b) SIGTERM 对 detached
+孤儿为 no-op(白烧 TERM_WAIT_MS)且进程死亡后 zvec native LOCK 清理有
+~100ms 尾巴,零缓冲重试必输 → 自愈首击在 win32 直接 SIGKILL(设计"win32
+退化为单级"语义)+ 新常量 `POST_KILL_SETTLE_MS = 250` 在死亡确认后、
+`healed:true` 返回前统一 settle(设计 §4.4"等待"步骤的落地)。
+TERM_WAIT_MS/KILL_WAIT_MS 数值、不动 owner 原则、重试/再诊断结构均未变。
 
 ## 计划外(终局门,复阅通过后由控制器随收口执行,不属于任务复审范围)
 
