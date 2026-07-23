@@ -8183,6 +8183,133 @@ async function runChildRuntimeTests() {
         }
         console.log('✅ T-wiki-source passed');
     }
+
+    console.log('T-wiki-build. Determinism (injected clock), manifest contract, rebuild identity ...');
+    {
+        const bPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'build'));
+        delete require.cache[bPath];
+        const { buildWiki } = require(bPath);
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-build-'));
+
+        try {
+            const gen = path.join(tmp, '.evo-lite', 'generated');
+            fs.mkdirSync(path.join(gen, 'architecture'), { recursive: true });
+            fs.mkdirSync(path.join(gen, 'planning'), { recursive: true });
+            fs.writeFileSync(path.join(tmp, 'src.js'), 'hello();\n');
+            fs.writeFileSync(path.join(gen, 'architecture', 'architecture-ir.json'), JSON.stringify({
+                version: 'x', generatedAt: 't0', project: { name: 'DemoProj', root: '.' },   // 真实 scanArchitecture 形状(scan-native.js:185)
+                modules: [{ id: 'module:core', name: 'Core', description: 'd', paths: ['src.js'], fileCount: 1, role: 'service', confidence: 1 }],
+                files: [{ path: 'src.js', module: 'module:core', role: 'service', confidence: 1 }],
+                edges: [],
+            }));
+            fs.writeFileSync(path.join(gen, 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'x', generatedAt: 't0',
+                tasks: [{ id: 'task:t1', title: 'T1', status: 'implemented', linkedFiles: ['src.js'] }],
+            }));
+
+            const deps = {
+                explore: async () => ({ focus: { entityId: null, taskId: null, resolved: false } }),
+                verifySummary: () => null,
+                gitLog: () => [],
+            };
+            const NOW = () => '2026-01-01T00:00:00.000Z';
+            const hashDir = dir => {
+                const acc = [];
+                const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : 1)) {
+                    const p = path.join(d, e.name);
+                    if (e.isDirectory()) walk(p);
+                    else acc.push(e.name + ':' + require('node:crypto').createHash('sha1').update(fs.readFileSync(p)).digest('hex'));
+                } };
+                walk(dir); return acc.join('|');
+            };
+
+            const r1 = await buildWiki({ projectRoot: tmp, now: NOW, deps });
+            assert.strictEqual(r1.ok, true, 'build must succeed');
+            const outDir = r1.outDir;
+            assert.ok(outDir.endsWith(path.join('.evo-lite', 'generated', 'wiki')), 'output dir contract');
+            const h1 = hashDir(outDir);
+
+            const r2 = await buildWiki({ projectRoot: tmp, now: NOW, deps });
+            assert.strictEqual(hashDir(outDir), h1, 'same input + same clock => byte-identical');
+
+            fs.rmSync(outDir, { recursive: true, force: true });
+            await buildWiki({ projectRoot: tmp, now: NOW, deps });
+            assert.strictEqual(hashDir(outDir), h1, 'delete + rebuild => identical (pure derivation)');
+
+            const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'manifest.json'), 'utf8'));
+            assert.strictEqual(manifest.version, 'evo-architecture-wiki@1');
+            assert.strictEqual(manifest.knownEdgeCount, 0);
+            assert.strictEqual(manifest.inputFreshness.architecture.state, 'unknown', 'generatedAt-only IR must be unknown');
+            assert.ok(manifest.modulePages['module:core'], 'modulePages maps original id');
+            assert.ok(manifest.pages.includes('index.html'));
+            // P0-1:project 是 { name, root } 对象 —— 必须取 .name,绝不能整个对象进模板
+            const idx1 = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+            assert.ok(idx1.includes('DemoProj'), 'real project.name shape must surface in the page');
+            assert.ok(!idx1.includes('[object Object]'), 'project object must never render raw');
+            void r2;
+
+            // P0-3 回归:默认 deps 的 explore 必须把 projectRoot 传给 exploreCode。
+            // 宿主仓有真实 focus;外部 projectRoot 且未注入 activeContext 时
+            // safeReadActiveContext 返回空 context(code-perception.js:52-68)——
+            // 因此这里 focus 必须不可解析。若实现忘传 projectRoot,exploreCode 会
+            // 回退宿主 workspace,宿主焦点泄漏进来,此断言失败。
+            const r4 = await buildWiki({ projectRoot: tmp, now: NOW, deps: { gitLog: () => [] } });
+            assert.strictEqual(r4.ok, true, 'default-deps build must succeed');
+            const idx4 = fs.readFileSync(path.join(r4.outDir, 'index.html'), 'utf8');
+            assert.ok(idx4.includes('当前焦点无法可靠定位'), 'host focus must not leak into a foreign projectRoot build');
+        } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+        console.log('✅ T-wiki-build passed');
+    }
+
+    console.log('T-wiki-cli. mem wiki build exit-code matrix: 0 / 1 / 2 / --open-failure=0 ...');
+    {
+        // 沿用 T-ce-cli 的 NODE_PATH + 临时 workspace spawn 模式(harness.js:18)
+        const childProcess = require('child_process');
+        const spawnWiki = (cwd, args, extraEnv) => childProcess.spawnSync(
+            process.execPath, [path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'wiki', ...args], {
+                cwd, encoding: 'utf8',
+                env: { ...process.env, EVO_LITE_WORKSPACE_ROOT: cwd,
+                    NODE_PATH: path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), ...(extraEnv || {}) },
+            });
+        const mkValidRoot = () => {
+            const t = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-cli-'));
+            const gen = path.join(t, '.evo-lite', 'generated');
+            fs.mkdirSync(path.join(gen, 'architecture'), { recursive: true });
+            fs.mkdirSync(path.join(gen, 'planning'), { recursive: true });
+            fs.writeFileSync(path.join(gen, 'architecture', 'architecture-ir.json'), JSON.stringify({ modules: [], files: [], edges: [] }));
+            fs.writeFileSync(path.join(gen, 'planning', 'plan-ir.json'), JSON.stringify({ tasks: [] }));
+            return t;
+        };
+
+        const tmpOk = mkValidRoot();
+        const tmpBadGroups = mkValidRoot();
+        const tmpNoIr = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-wiki-cli-noir-'));
+        fs.mkdirSync(path.join(tmpNoIr, '.evo-lite'), { recursive: true });
+        try {
+            // 成功 → 0
+            let r = spawnWiki(tmpOk, ['build']);
+            assert.strictEqual(r.status, 0, `valid build must exit 0, got ${r.status}: ${r.stderr}`);
+            // 坏 wiki-groups.json → 2
+            fs.writeFileSync(path.join(tmpBadGroups, '.evo-lite', 'wiki-groups.json'), JSON.stringify({ version: 'bogus@9', groups: [] }));
+            r = spawnWiki(tmpBadGroups, ['build']);
+            assert.strictEqual(r.status, 2, `invalid wiki-groups.json must exit 2, got ${r.status}: ${r.stderr}`);
+            // 缺 Architecture/Planning IR → 1(生成失败)
+            r = spawnWiki(tmpNoIr, ['build']);
+            assert.strictEqual(r.status, 1, `missing IR must exit 1, got ${r.status}: ${r.stderr}`);
+            // 未知参数 → 2
+            r = spawnWiki(tmpOk, ['build', '--bogus']);
+            assert.strictEqual(r.status, 2, `unknown option must exit 2, got ${r.status}: ${r.stderr}`);
+            // --open 且浏览器启动失败 → 仍 0(EVO_WIKI_BROWSER 测试缝指向不存在的启动器)
+            r = spawnWiki(tmpOk, ['build', '--open'], { EVO_WIKI_BROWSER: 'evo-no-such-browser-xyz' });
+            assert.strictEqual(r.status, 0, `--open launch failure must still exit 0, got ${r.status}: ${r.stderr}`);
+            assert.ok((r.stdout + r.stderr).includes('could not open browser'), 'launch failure must be reported as a warning');
+        } finally {
+            fs.rmSync(tmpOk, { recursive: true, force: true });
+            fs.rmSync(tmpBadGroups, { recursive: true, force: true });
+            fs.rmSync(tmpNoIr, { recursive: true, force: true });
+        }
+        console.log('✅ T-wiki-cli passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
