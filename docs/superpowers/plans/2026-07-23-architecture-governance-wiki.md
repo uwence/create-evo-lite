@@ -36,7 +36,9 @@ linkedSpec: spec:architecture-governance-wiki
 
 ```text
 architecture-ir.json  top: version, generatedAt, project, provider, modules, files, warnings, edges(=[]), (无 flows 时缺省)
-  modules[]: { id:"module:planning", name, description(英文), paths[], fileCount, role, confidence }   // 11 个;role 实测含 feature
+  modules[]: { id:"module:planning", name, description(英文), paths[], fileCount, role, confidence }   // 母仓实测 11 个;role 实测含 feature
+                      // project 是对象 { name: basename(projectRoot), root: '.' }(scan-native.js:185),不是字符串
+                      // W1 增加 module:architecture-wiki 规则后母仓重扫预期 12 个 —— 一切验收用「模块页数 === modules.length / 键集合相等」,不绑定固定数字
   files[]:   { path, module, role, confidence }                                                        // 143 个;module 字段齐全 → 权威归属
 plan-ir.json          tasks[]: { id, title, status, phase, sourcePath, linkedSpec, linkedPlan,
                                  planR008Exempt, linkedFiles[], verify, evidence, readOnly, confidence }
@@ -82,6 +84,7 @@ node templates/cli/test.js governance
 **Files:**
 - Create: `templates/cli/wiki/page-map.js`
 - Modify: `templates/cli/template-manifest.js`(core-cli files 数组 +1 条)
+- Modify: `templates/cli/architecture/infer-modules.js`(MODULE_RULES +1 规则 —— wiki 文件从第一个出现起就要有正式架构身份,否则整段实施期间落 `{module:null, role:'unknown', confidence:0}`,最终 dogfood 架构图失真)
 - Test: `templates/cli/test/governance.js`(追加 T-wiki-pagemap)
 
 **Interfaces:**
@@ -121,6 +124,14 @@ console.log('T-wiki-pagemap. Unified Windows-safe page mapping with collision ru
     // 同 id 重复申请不产生第二个页面
     assert.strictEqual(Object.keys(clash.modulePages()).length, 0, 'source assignments must not appear in modulePages');
     assert.match(readableSegment('module:planning'), /^module-planning$/);
+
+    // P0-2:wiki 自身文件必须归属正式 Architecture module,不落 unclassified
+    const imPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'architecture', 'infer-modules'));
+    delete require.cache[imPath];
+    const { inferModule } = require(imPath);
+    const wikiRule = inferModule('templates/cli/wiki/page-map.js');
+    assert.ok(wikiRule && wikiRule.id === 'module:architecture-wiki',
+        `templates/cli/wiki/* must map to module:architecture-wiki, got ${wikiRule && wikiRule.id}`);
     console.log('✅ T-wiki-pagemap passed');
 }
 ```
@@ -196,7 +207,24 @@ function createPageMap(opts) {
 module.exports = { createPageMap, readableSegment, normalizeRepoPath, fullHash };
 ```
 
-- [ ] **Step 4: 登记 template-manifest(sync 前置条件 —— 未登记的文件镜像不会生成)**
+- [ ] **Step 4: 建立 Architecture module 规则**
+
+`templates/cli/architecture/infer-modules.js` — MODULE_RULES 数组 `module:dashboard` 规则之后(`module:runtime` 之前)插入:
+
+```js
+    {
+        id: 'module:architecture-wiki',
+        name: 'Architecture Governance Wiki',
+        description: 'Static architecture and governance wiki: projection, rendering, source pages, and CLI build orchestration',
+        paths: ['templates/cli/wiki/'],
+        role: 'feature',
+        confidence: 1.0,
+    },
+```
+
+(first-match-wins;`templates/cli/wiki/` 不与任何既有规则重叠,插入点仅为可读性。)
+
+- [ ] **Step 5: 登记 template-manifest(sync 前置条件 —— 未登记的文件镜像不会生成)**
 
 `templates/cli/template-manifest.js` — core-cli `files` 数组 `'code-perception/cli.js',` 之后追加:
 
@@ -204,19 +232,19 @@ module.exports = { createPageMap, readableSegment, normalizeRepoPath, fullHash }
             'wiki/page-map.js',
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [ ] **Step 6: 跑测试确认通过**
 
 ```bash
 node templates/cli/test.js governance
 ```
 预期:`✅ T-wiki-pagemap passed`,套件 EXIT 0(含 manifest/mirror 相关既有测试)。
 
-- [ ] **Step 6: 同步镜像 + 提交**
+- [ ] **Step 7: 同步镜像 + 提交**
 
 ```bash
 node ./.evo-lite/cli/sync-runtime-entry.js   # 第二次运行必须 copied: 0
-git add templates/cli/wiki/page-map.js templates/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/wiki/page-map.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
-git commit -m "feat(wiki): unified Windows-safe page mapping with deterministic collision extension (4b-1 W1)"
+git add templates/cli/wiki/page-map.js templates/cli/architecture/infer-modules.js templates/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/wiki/page-map.js .evo-lite/cli/architecture/infer-modules.js .evo-lite/cli/template-manifest.js .evo-lite/cli/test/governance.js
+git commit -m "feat(wiki): unified Windows-safe page mapping + module:architecture-wiki rule (4b-1 W1)"
 ```
 
 ---
@@ -416,6 +444,9 @@ git commit -m "feat(wiki): evo-wiki-groups@1 display-grouping validation with ex
                     links:{ confirmed, derived, proposed } | null }
   taskCompletion(status) -> 'done'|'open'|'unknown'
   computeFreshness(ir) -> { state:'fresh'|'stale'|'unknown', reason:string }
+  CANONICAL_ROLES: string[]   // ['entry','service','feature','ui','runtime','scanner','governance','docs','test','unknown']
+                              // 泳道顺序的单一来源(W5 render 从这里 import,不自建副本);
+                              // 未识别 role 保留原值,buildProjection 为其产生确定性 warning(进 manifest)
   ```
   `recentCommits` 入参形状 `[{sha, subject, files:string[]}]`(由 W7 build.js 从 `git log` 采集,窗口 10 个 commit)。
   freshness 规则(canonical 三态):`fresh`/`stale` **只**允许来自 producer 显式记录的可比对快照对(`ir.sourceFingerprint` vs `ir.observedFingerprint`,当前 IR 均无 → 恒 unknown,这是前向兼容缝而非现状承诺);禁止用 generatedAt / mtime / build 成功 / drift 无警告(含 `dashboard-data.generatedDataFresh`)推断。
@@ -466,7 +497,8 @@ console.log('T-wiki-projection. Deterministic ModuleProjection + ProjectHealth s
             freshness: { stale: false, dirty: false },
             governance: { linkSummary: { confirmed: 1, derived: 0, proposed: 2 } },
         },
-        verifySummary: { drift: { errors: 1 } }, recentCommits: [],
+        verifySummary: { drift: { errors: 1 } },
+        recentCommits: [{ sha: 'c1sha000', subject: 'feat: cross-module change', files: ['src/a/one.js', 'src/b/one.js'] }],
     });
     const byId = new Map(res.modules.map(m => [m.moduleId, m]));
 
@@ -484,6 +516,12 @@ console.log('T-wiki-projection. Deterministic ModuleProjection + ProjectHealth s
     assert.ok(res.warnings.some(w => w.includes('task:t3')), 'unknown status must be warned');
     // 无 task 模块 → unplanned(尚未纳入规划)
     assert.strictEqual(byId.get('module:empty').progressState, 'unplanned');
+    // 未识别 role:保留原值 + 确定性 warning(进 manifest;AC6 的可断言载体)
+    assert.strictEqual(byId.get('module:empty').role, 'mystery-role', 'unrecognized role keeps its ORIGINAL value');
+    assert.ok(res.warnings.some(w => w.includes('mystery-role')), 'unrecognized role must produce a warning');
+    // 最近变更按模块过滤:跨模块 commit 在每个模块页只显示属于该模块的文件
+    assert.deepStrictEqual(byId.get('module:a').recentCommits[0].files, ['src/a/one.js'], 'module:a sees only its own files');
+    assert.deepStrictEqual(byId.get('module:b').recentCommits[0].files, ['src/b/one.js'], 'module:b sees only its own files');
     // 首页总进度按 task id 去重:3 个 task,done=1 open=1 unknown=1(t2 不重复计)
     assert.deepStrictEqual(res.totals, { taskDone: 1, taskOpen: 1, taskUnknown: 1 });
     // 健康隔离:不可归属 error 只进 ProjectHealth,不把任何模块标 risk
@@ -538,6 +576,11 @@ console.log('T-wiki-projection. Deterministic ModuleProjection + ProjectHealth s
 
 const DONE_STATUSES = new Set(['implemented', 'verified', 'done']);
 const OPEN_STATUSES = new Set(['todo', 'active']);
+
+// Single source of the canonical lane order (design §2.1). W5's render layer
+// imports this — an unrecognized role keeps its ORIGINAL value, gets its own
+// lane after the canonical ones (lexicographic), and produces a warning here.
+const CANONICAL_ROLES = ['entry', 'service', 'feature', 'ui', 'runtime', 'scanner', 'governance', 'docs', 'test', 'unknown'];
 
 function normalizePath(p) { return String(p).replace(/\\/g, '/').replace(/^\.\//, ''); }
 
@@ -602,7 +645,12 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
         });
     }
     for (const [p, att] of fileIndex) { const m = modules.get(att.module); if (m) m.files.push(p); }
-    for (const m of modules.values()) m.files.sort();
+    for (const m of modules.values()) {
+        m.files.sort();
+        if (!CANONICAL_ROLES.includes(m.role)) {
+            warnings.push(`module ${m.moduleId} has unrecognized role "${m.role}" — rendered in its own lane after canonical lanes`);
+        }
+    }
 
     // ---- task attribution (declares_file source: tasks[].linkedFiles) ----
     const taskModuleHits = new Map();
@@ -680,6 +728,8 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
     }
 
     // ---- recent commits per module ----
+    // A cross-module commit appears on every touched module's page, but each
+    // page lists ONLY the files belonging to THAT module — never the full set.
     for (const c of (recentCommits || [])) {
         const touched = new Set();
         for (const f of (c.files || [])) {
@@ -688,7 +738,15 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
         }
         for (const id of touched) {
             const m = modules.get(id);
-            if (m && m.recentCommits.length < 10) m.recentCommits.push({ sha: c.sha, subject: c.subject, files: c.files });
+            if (m && m.recentCommits.length < 10) {
+                m.recentCommits.push({
+                    sha: c.sha, subject: c.subject,
+                    files: (c.files || []).filter(f => {
+                        const att = fileIndex.get(normalizePath(f));
+                        return att && att.module === id;
+                    }),
+                });
+            }
         }
     }
 
@@ -726,7 +784,7 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
     };
 }
 
-module.exports = { buildProjection, taskCompletion, computeFreshness, DONE_STATUSES, OPEN_STATUSES };
+module.exports = { buildProjection, taskCompletion, computeFreshness, CANONICAL_ROLES, DONE_STATUSES, OPEN_STATUSES };
 ```
 
 - [ ] **Step 4: 登记 template-manifest**
@@ -933,18 +991,21 @@ console.log('T-wiki-render. SVG map: lanes, no-edge honesty, edge contract, unkn
     const svg0 = renderSvgMap({ modules, groupsConfig: null, pageMap: createPageMap(), validEdges: [] });
     assert.ok(!svg0.includes('dependency-edge'), 'no dependency-edge element when edges empty');
     assert.ok(!svg0.includes('marker-end'), 'no marker-end when edges empty');
-    // 未知 role 不丢模块:进"其他"泳道
+    // 未识别 role 不丢模块,且保留原 role 独立成道(不并入 unknown)
     assert.ok(svg0.includes('module:x') || svg0.includes('module-x'), 'unknown-role module must render');
+    assert.ok(svg0.includes('mystery-role'), 'unrecognized role keeps its own lane label (其他(mystery-role))');
 
-    // 合法边 → dependency-edge 出现;无效端点 → 拒绝 + warning
+    // 合法边 → dependency-edge 出现;无效端点/可选字段类型错误 → 拒绝 + warning
     const { valid, warnings } = validateEdges([
         { sourceModuleId: 'module:a', targetModuleId: 'module:b', kind: 'depends' },
         { sourceModuleId: 'module:a', targetModuleId: 'module:ghost' },
         { sourceModuleId: 'module:a', targetModuleId: 'module:b', kind: 'depends' },   // 重复 → 去重
         { bogus: true },
+        { sourceModuleId: 'module:a', targetModuleId: 'module:b', kind: {} },          // kind 类型错误 → malformed
+        { sourceModuleId: 'module:a', targetModuleId: 'module:b', confidence: 'high' },// confidence 类型错误 → malformed
     ], known);
-    assert.strictEqual(valid.length, 1, 'dedup by source+target+kind; invalid rejected');
-    assert.ok(warnings.length >= 2, 'invalid edges must produce warnings');
+    assert.strictEqual(valid.length, 1, 'dedup by source+target+kind; invalid + type-broken rejected');
+    assert.ok(warnings.length >= 4, 'invalid edges (incl. optional-field type errors) must produce warnings');
     const svg1 = renderSvgMap({ modules, groupsConfig: null, pageMap: createPageMap(), validEdges: valid });
     assert.ok(svg1.includes('dependency-edge') && svg1.includes('marker-end'), 'valid edge renders arrow');
 
@@ -967,18 +1028,21 @@ console.log('T-wiki-render. SVG map: lanes, no-edge honesty, edge contract, unkn
     assert.ok(html.includes('DemoProj'), 'positioning paragraph names the project');
     assert.ok(html.includes('本页导航'), 'nav tree present');
     assert.ok(html.includes('结构代码情报未接入'), 'absent structural provider renders informational copy');
+    assert.ok(html.includes('全局验证结果不可用'), 'verify=null renders the unavailable copy');
 
     // index:resolved focus 人话 + 健康摘要 + 待确认关联;provider stale = 信息性文案
     const html2 = renderIndex({ projection: { modules, project: { ...baseProject,
         driftWarnings: 2, focusResolved: true,
         focus: { resolved: true, taskId: 'task:t9', label: '让向导跑起来', moduleIds: ['module:a'] },
         codePerception: { providers: [{ id: 'provider:codegraph', role: 'structural-primary', ready: true, indexState: 'ok', degraded: false }], freshness: { stale: true, dirty: false } },
-        links: { confirmed: 1, derived: 0, proposed: 3 } },
+        links: { confirmed: 1, derived: 0, proposed: 3 },
+        verify: { planScan: { exists: true, taskCount: 7, implemented: 0 }, architectureScan: { exists: true, moduleCount: 12 }, drift: { total: 0, warnings: 0, info: 0, errors: 0 } } },
         totals: { taskDone: 4, taskOpen: 2, taskUnknown: 0 }, warnings: [] },
         groupsConfig: null, pageMap: createPageMap(), meta });
     assert.ok(html2.includes('当前焦点') && html2.includes('让向导跑起来'), 'resolved focus renders its label');
     assert.ok(!html2.includes('当前焦点无法可靠定位'), 'resolved focus must not show the unresolved copy');
     assert.ok(html2.includes('2 项治理提醒'), 'health summary verbalizes drift warnings');
+    assert.ok(html2.includes('全局验证:未发现失败项'), 'clean verify renders its summary');
     assert.ok(html2.includes('3 项代码关联待确认'), 'proposed links surfaced');
     assert.ok(html2.includes('结构代码索引落后'), 'provider stale renders informational copy');
     assert.ok(!html2.includes('存在风险'), 'provider stale must NOT render as risk');
@@ -1012,8 +1076,9 @@ console.log('T-wiki-render. SVG map: lanes, no-edge honesty, edge contract, unkn
 // verbalization (via dictionary) and geometry (deterministic lane layout).
 
 const { healthLabel, roleLabel, progressLabel, moduleNarrative, translateRule } = require('./dictionary');
+const { CANONICAL_ROLES } = require('./projection');   // single source of the lane order — no local copy
 
-const LANE_ORDER = ['entry', 'service', 'feature', 'ui', 'runtime', 'scanner', 'governance', 'docs', 'test', 'unknown'];
+const LANE_ORDER = CANONICAL_ROLES;
 const CARD_W = 190, CARD_H = 64, LANE_GAP = 24, CARD_GAP = 14, LANE_HEADER = 40, PAD = 20;
 
 function escapeHtml(s) {
@@ -1028,6 +1093,13 @@ function validateEdges(edges, knownModuleIds) {
         if (!e || typeof e.sourceModuleId !== 'string' || typeof e.targetModuleId !== 'string') {
             warnings.push(`malformed edge ignored: ${JSON.stringify(e).slice(0, 60)}`); continue;
         }
+        // optional fields are part of the schema: wrong TYPE = malformed edge
+        if (e.kind !== undefined && typeof e.kind !== 'string') {
+            warnings.push(`malformed edge ignored (kind must be a string): ${e.sourceModuleId} -> ${e.targetModuleId}`); continue;
+        }
+        if (e.confidence !== undefined && typeof e.confidence !== 'number') {
+            warnings.push(`malformed edge ignored (confidence must be a number): ${e.sourceModuleId} -> ${e.targetModuleId}`); continue;
+        }
         if (!known.has(e.sourceModuleId) || !known.has(e.targetModuleId)) {
             warnings.push(`edge endpoint not a known module: ${e.sourceModuleId} -> ${e.targetModuleId}`); continue;
         }
@@ -1039,8 +1111,10 @@ function validateEdges(edges, knownModuleIds) {
     return { valid, warnings };
 }
 
-// Deterministic lanes: groups config first (its order), remaining modules by
-// role in LANE_ORDER, unrecognized roles appended alphabetically into 其他.
+// Deterministic lanes: groups config first (its order), then canonical roles
+// in LANE_ORDER. An unrecognized role KEEPS its original value and gets its
+// OWN lane after the canonical ones (lexicographic) — it is never folded into
+// 'unknown' (AC 6; the warning is produced by W3's buildProjection).
 function computeLanes(modules, groupsConfig) {
     const lanes = []; const placed = new Set();
     if (groupsConfig && groupsConfig.groups.length) {
@@ -1053,12 +1127,13 @@ function computeLanes(modules, groupsConfig) {
     const rest = modules.filter(m => !placed.has(m.moduleId));
     const byRole = new Map();
     for (const m of rest) {
-        const role = LANE_ORDER.includes(m.role) ? m.role : 'unknown';
+        const role = m.role || 'unknown';
         if (!byRole.has(role)) byRole.set(role, []);
         byRole.get(role).push(m);
     }
     const laneLabels = (groupsConfig && groupsConfig.laneLabels) || {};
-    for (const role of LANE_ORDER) {
+    const extraRoles = [...byRole.keys()].filter(r => !LANE_ORDER.includes(r)).sort();
+    for (const role of [...LANE_ORDER, ...extraRoles]) {
         const ms = (byRole.get(role) || []).sort((a, b) => (a.moduleId < b.moduleId ? -1 : 1));
         if (ms.length) lanes.push({ key: role, label: laneLabels[role] || roleLabel(role), modules: ms });
     }
@@ -1163,6 +1238,18 @@ function renderIndex({ projection, groupsConfig, pageMap, meta }) {
     if (p.driftErrors) healthBits.push(`${p.driftErrors} 项治理错误`);
     if (p.driftWarnings) healthBits.push(`${p.driftWarnings} 项治理提醒`);
     const healthLine = `<p>治理健康:${healthBits.length ? healthBits.join(',') : '未发现需要处理的问题'}。</p>`;
+    // 全局 verify 摘要(确定性;绝不用 generatedDataFresh 反推 IR freshness)
+    let verifyLine = '';
+    const v = p.verify;
+    if (!v) verifyLine = '<p class="note">全局验证结果不可用。</p>';
+    else {
+        const missing = [];
+        if (v.planScan && v.planScan.exists === false) missing.push('plan scan');
+        if (v.architectureScan && v.architectureScan.exists === false) missing.push('architecture scan');
+        if (missing.length) verifyLine = `<p>全局验证:缺少 ${missing.join(' / ')} 数据,建议先运行对应扫描。</p>`;
+        else if (v.drift && v.drift.errors > 0) verifyLine = `<p>全局验证:存在 ${v.drift.errors} 项验证失败。</p>`;
+        else verifyLine = '<p>全局验证:未发现失败项。</p>';
+    }
     const unattributed = p.unattributedFindings.length
         ? `<p>另有 ${p.unattributedFindings.length} 项无法定位到具体模块的治理提醒(详见技术详情)。</p>` : '';
     // provider 状态是信息性文案,绝不渲染为风险(provider stale ≠ IR 不新鲜)
@@ -1185,7 +1272,7 @@ function renderIndex({ projection, groupsConfig, pageMap, meta }) {
 
     const body = `<h1>${escapeHtml(meta.projectName || '')} 项目全貌</h1>`
         + positioning + focusLine + progressLine + fresh
-        + healthLine + unattributed + providerLine + linksLine
+        + healthLine + verifyLine + unattributed + providerLine + linksLine
         + nav
         + renderSvgMap({ modules: projection.modules, groupsConfig, pageMap, validEdges: projection.validEdges || [] })
         + `<details><summary>技术详情</summary><pre>${escapeHtml(JSON.stringify(p, null, 2))}</pre></details>`;
@@ -1283,6 +1370,18 @@ console.log('T-wiki-source. Source pages: containment, escaping, line anchors, b
         assert.strictEqual(resolveContained(tmp, '../outside.txt'), null);
         assert.strictEqual(resolveContained(tmp, 'C:/Windows/system32/x'), null);
         assert.ok(resolveContained(tmp, 'ok.js'), 'legal relative path resolves');
+
+        // symlink 越界:项目内链接指向项目外 → null(AC5)。
+        // Windows 上用 junction(目录联接,无需特权);创建失败的环境条件跳过。
+        let escapeLink = false;
+        try {
+            fs.symlinkSync(os.tmpdir(), path.join(tmp, 'esc-link'), 'junction');
+            escapeLink = true;
+        } catch { console.log('  (symlink/junction unavailable — escape case skipped)'); }
+        if (escapeLink) {
+            assert.strictEqual(resolveContained(tmp, 'esc-link'), null, 'symlink escaping the root must be rejected');
+            assert.strictEqual(resolveContained(tmp, 'esc-link/anything.txt'), null, 'paths under an escaping link must be rejected');
+        }
 
         const meta = { generatedAt: '2026-01-01T00:00:00.000Z', headSha: 'abc1234' };
         const res = generateSourcePages({ projectRoot: tmp, files: ['ok.js', 'bin.dat', 'big.js', '../outside.txt'],
@@ -1436,7 +1535,7 @@ console.log('T-wiki-build. Determinism (injected clock), manifest contract, rebu
         fs.mkdirSync(path.join(gen, 'planning'), { recursive: true });
         fs.writeFileSync(path.join(tmp, 'src.js'), 'hello();\n');
         fs.writeFileSync(path.join(gen, 'architecture', 'architecture-ir.json'), JSON.stringify({
-            version: 'x', generatedAt: 't0', project: 'DemoProj',
+            version: 'x', generatedAt: 't0', project: { name: 'DemoProj', root: '.' },   // 真实 scanArchitecture 形状(scan-native.js:185)
             modules: [{ id: 'module:core', name: 'Core', description: 'd', paths: ['src.js'], fileCount: 1, role: 'service', confidence: 1 }],
             files: [{ path: 'src.js', module: 'module:core', role: 'service', confidence: 1 }],
             edges: [],
@@ -1481,6 +1580,10 @@ console.log('T-wiki-build. Determinism (injected clock), manifest contract, rebu
         assert.strictEqual(manifest.inputFreshness.architecture.state, 'unknown', 'generatedAt-only IR must be unknown');
         assert.ok(manifest.modulePages['module:core'], 'modulePages maps original id');
         assert.ok(manifest.pages.includes('index.html'));
+        // P0-1:project 是 { name, root } 对象 —— 必须取 .name,绝不能整个对象进模板
+        const idx1 = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+        assert.ok(idx1.includes('DemoProj'), 'real project.name shape must surface in the page');
+        assert.ok(!idx1.includes('[object Object]'), 'project object must never render raw');
         void r2;
 
         // P0-3 回归:默认 deps 的 explore 必须把 projectRoot 传给 exploreCode。
@@ -1644,7 +1747,11 @@ async function buildWiki({ projectRoot, now, deps }) {
     const meta = {
         generatedAt: clock(),
         headSha,
-        projectName: architectureIR.project || path.basename(path.resolve(projectRoot)),
+        // scanArchitecture writes project as { name, root } (scan-native.js:185) —
+        // guard the shape so a raw object can never reach the templates.
+        projectName: architectureIR.project && typeof architectureIR.project.name === 'string'
+            ? architectureIR.project.name
+            : path.basename(path.resolve(projectRoot)),
     };
 
     // deterministic page assignment order: modules by id, then source files sorted
@@ -1788,10 +1895,27 @@ node templates/cli/test.js governance
 - [ ] **Step 6: 母仓实景冒烟(不入库,产物是 git-ignored 生成物)**
 
 ```bash
-node ./.evo-lite/cli/sync-runtime-entry.js       # 先同步,使镜像含 wiki/*
+node ./.evo-lite/cli/sync-runtime-entry.js       # 镜像含全部 wiki/*(W1-W6 已逐任务登记)
+./.evo-lite/mem plan scan                        # P0-3:重生成 Planning IR(W1-W7 最新任务状态)
+./.evo-lite/mem architecture scan                # P0-3:重生成 Architecture IR(含 module:architecture-wiki 与 8 个 wiki 文件)
+./.evo-lite/mem architecture diff
 ./.evo-lite/mem wiki build
 ```
-预期:exit 0;输出 `.evo-lite/generated/wiki/index.html` 绝对路径;11 个模块页 + 源码页;manifest `knownEdgeCount: 0`。人工打开 index.html 检查中文叙事与点击链路。
+
+预期:exit 0;输出 `.evo-lite/generated/wiki/index.html` 绝对路径;manifest `knownEdgeCount: 0`。核心验收用**集合相等**而非固定数字:
+
+```bash
+node -e "
+const m = require('./.evo-lite/generated/wiki/manifest.json');
+const ir = require('./.evo-lite/generated/architecture/architecture-ir.json');
+const a = Object.keys(m.modulePages).sort().join(',');
+const b = ir.modules.map(x => x.id).sort().join(',');
+if (a !== b) { console.error('MISMATCH\n manifest: ' + a + '\n ir:       ' + b); process.exit(1); }
+console.log('modulePages === architecture modules (' + ir.modules.length + ')');   // 母仓当前预期 12,含 module:architecture-wiki
+"
+```
+
+人工打开 index.html:确认架构图含「Architecture Governance Wiki」模块卡片、其模块页列出 8 个 wiki 源文件、中文叙事与点击链路完整。
 
 - [ ] **Step 7: 全量闭环 + 提交**
 
@@ -1829,11 +1953,22 @@ git commit -m "feat(wiki): mem wiki build orchestrator + CLI + manifest registra
 - **P1-6:**T-wiki-cli 覆盖完整退出码矩阵:成功 0 / 缺 IR 1 / 坏 groups 2 / 未知参数 2 / `--open` 启动失败仍 0;Windows 打开改 `explorer.exe`(argv 形式,弃 `cmd /c start`),`EVO_WIKI_BROWSER` 为测试缝。
 - **附带:**修复计划文件中 4 处原始 NUL 字节(page-map 代码里的 Map 键分隔符,应为 `\x00` 字面转义;原样会把 .md 变成 binary 文件破坏 grep/diff)。
 
+## 复阅修订记录(2026-07-23 R3 —— 第三轮外部复阅整改)
+
+- **P0-1:**`scanArchitecture` 的 `project` 是对象 `{ name, root }`(scan-native.js:185),原 `architectureIR.project || basename` 会把对象直接进模板渲染成 `[object Object]`。改为守卫 `project.name` 是字符串才取;W7 夹具换真实形状;新增断言(页面含 DemoProj、不含 `[object Object]`)。
+- **P0-2:**`MODULE_RULES` 无 `templates/cli/wiki/` 规则,8 个核心文件会落 `{module:null, role:'unknown', confidence:0}`(scan-native.js:160),Wiki 自己进不了架构图。W1 新增 Step 4 在 infer-modules.js 建 `module:architecture-wiki` 规则(feature,confidence 1.0)+ `inferModule()` 断言;Grounded Reality 与所有验收改「集合相等/长度相等」,不再绑定 11/12 固定数字。
+- **P0-3:**W7 实景冒烟在 `mem wiki build` 前先 `mem plan scan` + `mem architecture scan` + `mem architecture diff`(否则消费实施前的陈旧 IR);验收改为 `manifest.modulePages 键集合 === architecture-ir modules[].id 集合` 的脚本化比对。
+- **P1-1:**未识别 role 不再折叠进 unknown:`CANONICAL_ROLES` 移至 W3 projection 作单一来源(W5 import,不建副本),原 role 保留、canonical 泳道后按字典序独立成道,buildProjection 产生确定性 warning(进 manifest);W3/W5 测试分别断言 warning 与 `其他(mystery-role)` 泳道。
+- **P1-2:**跨模块 commit 的 `files` 按模块过滤(`att.module === id`),模块页只显示属于本模块的文件;W3 新增双模块断言。
+- **P1-3:**首页 ProjectHealth 增加全局 verify 确定性摘要(scan 缺失→建议扫描 / drift errors>0→验证失败 / 正常→无失败项 / null→不可用;不用 `generatedDataFresh`);W5 两分支断言。
+- **P1-4:**W6 新增 symlink 越界实测(Windows 用 junction 免特权;创建失败环境条件跳过),含链接本体与链接下路径两个断言。
+- **P1-5:**`validateEdges` 把可选字段类型错误(`kind` 非 string、`confidence` 非 number)归为 malformed edge + warning;测试矩阵扩到 6 输入 1 合法 ≥4 warnings。
+
 ## Self-Review 记录(writing-plans 自查)
 
 - **Spec 覆盖:**设计 §1(形态/manifest)→W7;§2.0(映射)→W1;§2.1(SVG/边契约)→W5;§2.2(分组)→W2;§2.3(源码页)→W6;§3(投影语义)→W3;§4(词典)→W4;§5(退出码)→W7;§6(时钟)→W7 测试;§7 十三项测试 → T-wiki-pagemap(11)/groups(10)/projection(7,8,12)/dictionary(9)/render(3,6,13 + 转义 4 部分)/source(4,5)/build+cli(1,2 + 退出码);§8 红线进 Global Constraints。GitHub permalink(§2.3 可选项)MVP 显式**不实现**(保守策略允许;本地源码页已是主落点)——留待真实需求。
 - **占位符扫描:**无 TBD/TODO;所有代码步骤含完整代码。
-- **类型一致性:**`createPageMap(opts?)/modulePage/sourcePage/modulePages`、`loadWikiGroups -> {ok,config|errors}`、`buildProjection`/`computeFreshness` 返回形状、`validateEdges -> {valid,warnings}`、`generateSourcePages -> {pages(含 stub),skipped,warnings}`、`renderModulePage({...,groupsConfig})`、`meta={generatedAt,headSha,projectName}`、`buildWiki -> {ok,outDir,manifest,warnings}` 在 W1-W7 的 Consumes/Produces 与代码中逐一核对一致;`invalidConfig: true` 仅由 groups 失败路径产生并映射 exit 2。
+- **类型一致性:**`createPageMap(opts?)/modulePage/sourcePage/modulePages`、`loadWikiGroups -> {ok,config|errors}`、`buildProjection`/`computeFreshness`/`CANONICAL_ROLES` 返回形状与来源(W5 从 W3 import 泳道顺序,无副本)、`validateEdges -> {valid,warnings}`(可选字段类型校验)、`generateSourcePages -> {pages(含 stub),skipped,warnings}`、`renderModulePage({...,groupsConfig})`、`meta={generatedAt,headSha,projectName(字符串守卫)}`、`buildWiki -> {ok,outDir,manifest,warnings}` 在 W1-W7 的 Consumes/Produces 与代码中逐一核对一致;`invalidConfig: true` 仅由 groups 失败路径产生并映射 exit 2。
 
 
 
