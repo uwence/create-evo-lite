@@ -1,5 +1,6 @@
 'use strict';
 const assert = require('assert');
+const childProcess = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -2154,6 +2155,69 @@ async function runGovernanceTests() {
             }
         }
         console.log('✅ T-ZV ZvecMemoryIndex passed');
+        console.log('T-lock-owner. Testing owner sidecar write/clear/CAS/schema states ...');
+        {
+            const lockDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-owner-'));
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+
+            // 写入 → schema v1 全字段有效
+            const leaseA = lock.writeOwner(lockDir, { mode: 'cli', projectRoot: WORKSPACE_ROOT });
+            assert.strictEqual(typeof leaseA, 'string');
+            assert.ok(leaseA.length > 0);
+            const recA = lock.readOwner(lockDir);
+            assert.strictEqual(recA.state, 'valid', `expected valid, errors: ${recA.errors.join('; ')}`);
+            assert.strictEqual(recA.owner.schemaVersion, 1);
+            assert.strictEqual(recA.owner.leaseId, leaseA);
+            assert.strictEqual(recA.owner.pid, process.pid);
+            assert.strictEqual(recA.owner.mode, 'cli');
+            assert.strictEqual(recA.owner.access, 'write');
+            assert.ok(!Number.isNaN(Date.parse(recA.owner.processStartedAt)), 'processStartedAt is a valid time');
+            assert.ok(recA.owner.entrypoint.length > 0, 'entrypoint recorded');
+            assert.strictEqual(recA.owner.projectRoot, WORKSPACE_ROOT);
+
+            // 发布只经 atomic rename:目录内不残留 .tmp
+            assert.ok(!fs.readdirSync(lockDir).some(f => f.endsWith('.tmp')), 'no stray tmp files after publish');
+
+            // lease CAS:B 接管后,A 晚到的 clear 不删 B 的 owner
+            const leaseB = lock.writeOwner(lockDir, { mode: 'cli', projectRoot: WORKSPACE_ROOT });
+            assert.strictEqual(lock.clearOwner(lockDir, leaseA), false, 'stale lease must not clear');
+            assert.strictEqual(lock.readOwner(lockDir).owner.leaseId, leaseB, 'new holder owner survives');
+            assert.strictEqual(lock.clearOwner(lockDir, leaseB), true, 'current lease clears');
+            assert.strictEqual(lock.readOwner(lockDir).state, 'missing');
+
+            // clearOwner 无 leaseId / owner 缺失 → 静默 false
+            assert.strictEqual(lock.clearOwner(lockDir, null), false);
+            assert.strictEqual(lock.clearOwner(lockDir, 'anything'), false);
+
+            // readOwner 状态模型:corrupt(半截 JSON)
+            fs.writeFileSync(path.join(lockDir, 'owner.json'), '{ "schemaVersion": 1, "leaseId": "trunc', 'utf8');
+            assert.strictEqual(lock.readOwner(lockDir).state, 'corrupt');
+
+            // invalid:identity-critical 字段缺失 / schemaVersion 未知
+            const fullOwner = () => ({
+                schemaVersion: 1, leaseId: 'lease-x', pid: 1234, ppid: 1,
+                processStartedAt: '2026-07-23T00:00:00.000Z',
+                entrypoint: 'C:/x/memory.js', mode: 'mcp', access: 'write',
+                projectRoot: 'C:/x', createdAt: '2026-07-23T00:00:00.000Z',
+            });
+            for (const field of ['processStartedAt', 'leaseId', 'pid', 'entrypoint', 'projectRoot']) {
+                const o = fullOwner();
+                delete o[field];
+                fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify(o), 'utf8');
+                const r = lock.readOwner(lockDir);
+                assert.strictEqual(r.state, 'invalid', `missing ${field} must be invalid`);
+                assert.ok(r.errors.length > 0, `errors listed for missing ${field}`);
+            }
+            const badVersion = fullOwner();
+            badVersion.schemaVersion = 99;
+            fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify(badVersion), 'utf8');
+            assert.strictEqual(lock.readOwner(lockDir).state, 'invalid', 'unknown schemaVersion must be invalid');
+            const badMode = fullOwner();
+            badMode.mode = 'daemon';
+            fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify(badMode), 'utf8');
+            assert.strictEqual(lock.readOwner(lockDir).state, 'invalid', 'unknown mode must be invalid');
+        }
+        console.log('✅ T-lock-owner owner sidecar passed');
 
         console.log('T-SPACE-ENGINE. Testing verify memory-space line reports the ACTIVE index engine (skips if @zvec/zvec absent) ...');
         {
