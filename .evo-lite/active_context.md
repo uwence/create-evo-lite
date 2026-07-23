@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 035afb0b6879e7ce5ccb79df4c33b6425abde3da
-> upstreamSha: 035afb0b6879e7ce5ccb79df4c33b6425abde3da
-> ahead: 0
+> headSha: b5803d36204e65fa000a73ca233e3c49f86847d5
+> upstreamSha: 2307a06beeb22adc7c9a9d992878214d26879b0f
+> ahead: 2
 > behind: 0
-> focusUpdatedAt: 2026-07-22T08:59:06.029Z
+> focusUpdatedAt: 2026-07-23T07:25:14.581Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -25,6 +25,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [b5803d3] 2026-07-23 governance-closure: 4b-1 Architecture-Governance Wiki closure. Q5 user acceptance PASS (2026-07-23). Implementation main
 - [035afb0] 2026-07-22 backlog-closure: Close stale backlog [06fd][mcp-detect-missing]: templates/cli/mcp-detect.js now exists (6.1K) and te
 - [035afb0] 2026-07-22 backlog-closure: Close stale backlog [fresh-plan-progress]: fixed pre-2.3.0 in templates/cli/planning.js (plan progre
 - [404343f] 2026-07-20 bug-fix: Follow-up to da53d3d. CodePLC re-dogfooded the nurtured fix and found a second, adjacent gap: templa
@@ -34,7 +35,6 @@
 - [5ebbc1b] 2026-07-20 focus-fix: Rewrote focus text to describe only the shipped Phase 4a plan (dropped the stray plan:code-wiki-insp
 - [f004e62] 2026-07-20 plan-closure: Retroactive closure of plan:unified-code-explore-agent-surface-mvp. All 6 tasks (M1/M2 seam, unified
 - [8645418] 2026-07-15 plan-progress-reflection: Sub-spec ② (codegraph-adapter-governance-linker) plan-progress reflection: 14/15 tasks implemented +
-- [3818745] 2026-07-11 spec-portfolio-governance re-closed after 3 independent review rounds: P0 adopt path containment BOTH sides: source (a92c7e7 realpath/symlink/isFile/.md) + target-dir/pare
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
