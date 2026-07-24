@@ -1,9 +1,9 @@
-# Agent Takeover Trigger Protocol — 设计文档(R4)
+# Agent Takeover Trigger Protocol — 设计文档(R5)
 
 - 议题:backlog `[agent-code-routing]`(4a.x P2 final debt)。谱系:S9b CodePLC dogfood
   实证 —— 干净子仓、零竞争、裸 prompt 下 Agent 自发触发治理面 = **失败**;裁定 P1b
   将"Agent 裸指令路由"定为独立债,Wiki(4b-1)服务人、不能替代 Agent routing。
-- 状态:R4(design R3 外部复审 CHANGES REQUIRED 已折入,2×P0 + 陈旧表述清理)。待 R4 复审。
+- 状态:R5(design R4 外部复审 CHANGES REQUIRED 已折入,1×P0 + 1×P1 + 术语清理)。待 R5 复审。
 - 宿主范围:**仅 Claude Code**(MVP);协议本身 host-agnostic。
 - 前置证据:`docs/validation/attp-cc-capability-probe.md`(装机 2.1.218,PROTOCOL-SUPPORTED)。
 - 关联:`[zvec-06-upgrade]`(无关);a177 lock 协调(receipt 授权边界/发布时序/失效事务
@@ -48,6 +48,14 @@
 | P0-1 | 恢复命令仍隐含 cwd==项目根 | §7 改 **canonical-root-bound 绝对路径** `node '<canonicalProjectRoot>/.evo-lite/cli/memory.js' ...`;root/CLI/sessionId 按 Bash 引用;项目根/子目录/含空格三 cwd 测试 |
 | P0-2 | 同 session 再注入失败仍信旧 receipt | §4 定 **session-scoped 授权世代**:初始 startup 建 receipt(失败→fail-closed);same-session resume/clear/compact = 刷新(失败→旧 receipt 保留 + 显式报告 + capsule 再播种);§5 表述限定"仅首次接管失败⇒无 receipt" |
 | P1 清理 | R2 陈旧表述 | 标题 R4;§2 签名 `buildTakeoverPayload(context, budget)`;§2/§6 PostCompact 标"不能注入";§9/§12 恢复命令改 root-bound shell-neutral |
+
+### R4 复审裁定的落点(逐条)
+
+| 编号 | R4 问题 | R5 落点 |
+|---|---|---|
+| P0 | establishment/refresh 仅由 SessionStart.source 判定(SessionEnd 清理/缺失/跨机 resume 会永不重建) | §4 改为**由"当前是否已有有效 committed receipt"判定**:无 → establishment(任一 source);有 → refresh;`sourceEvent` 仅诊断。仍 session-scoped(一世代,允许缺失时重建=recovery 语义) |
+| P1 | 刷新失败被无条件判 Edit/Write allow,可能绕过 health gate | §11 改为:full refresh 失败 → 旧 receipt 不自动撤销 → **终局 Edit/Write 由 health gate 决定**(session-only 失败过则 allow;治理健康失败则 deny),测试不得硬写 allow |
+| 术语 | 阶段1/最终边界仍写"提交事务" | 统一为 **ordered publication**;establishment/refresh 由 receipt 存在性判定 |
 
 ---
 
@@ -186,7 +194,7 @@ rules、risks/warnings、recommended next action、payload freshness/version。
 ## 4. session-bound receipt schema
 
 receipt 证明:**adapter 已成功构建、校验,并向经 capability probe 验证的 hook 输出通道提交
-takeover response(注入已写出)**(§5 提交事务)。它**不**证明模型"理解"上下文,也不证明宿主
+takeover response(注入已写出)**(§5 ordered publication)。它**不**证明模型"理解"上下文,也不证明宿主
 绝对未丢弃输出(后者属 Claude Code 宿主契约,由 probe + S9b 验证)。receipt 非安全凭证,而是防
 协作型 Agent 在无接管上下文时误操作的治理证明。
 
@@ -234,25 +242,36 @@ canonicalProjectRoot() = discover workspace root → path.resolve → realpath/n
 - 属生成状态,**gitignore,不入模板真相源,不提交**。
 - `SessionEnd` best-effort 清理;历史 receipt TTL 仅 GC,**不作当前 receipt 的硬有效性条件**。
 
-### 授权世代:session-scoped(P0-2)
+### 授权世代:session-scoped(P0-2 / R4-P0)
 
 receipt 语义是 **session-scoped**:证明"**本 session 曾成功完成过一次 takeover**",而非"最近一次
-完整注入成功"。同一 sessionId 的 `resume`/`clear`/`compact` 是**上下文刷新**,不建立新授权世代:
+完整注入成功"。**establishment 还是 refresh,由"当前是否已有有效 committed receipt"决定,
+不由 `SessionStart.source` 决定** —— source 不是授权世代的可靠判据:SessionEnd 清理、receipt 目录
+被清 / 损坏、上次进程注入成功但发布前退出、跨机 resume,都会让 `source=resume` 却无 receipt。
 
-- **建立**:仅初始 `SessionStart(startup)` 是建立 committed receipt 的 P0 路径;
-  其注入失败 → 无 committed receipt → 守卫 fail-closed(此 session 从未接管)。
-- **刷新**:后续 same-session `SessionStart(resume/clear/compact)` 是刷新,**不重新定义 receipt
-  授权**;刷新注入失败必须**显式报告**(systemMessage / 非零退出),但**旧 committed receipt 继续有效**。
+**任何 `SessionStart(startup/resume/clear/compact/fork)` 的判定(sourceEvent 仅作诊断字段):**
+
+```text
+当前 host/sessionId/projectRoot 下【不存在有效 committed receipt】
+  → establishment path:ordered publication 成功后发布 committed receipt;失败 → fail-closed
+
+当前【已存在有效 committed receipt】
+  → refresh path:不建立新 generation;刷新失败【不自动撤销】旧 receipt,但必须显式报告
+    (systemMessage / 非零退出);终局 Edit/Write 由守卫 health gate 决定(§5),非无条件 allow
+```
+
+- 仍是 **session-scoped**:同一 session 只有一个授权世代;只是在授权文件缺失时**允许重新建立该世代**
+  —— 这也正是显式 recovery 的语义(同 session 内重建缺失 receipt)。
 - **再播种**:clear/compact 后的最低确定性再播种由**每轮 UserPromptSubmit capsule**承担(§6),
-  与 SessionStart 刷新是否成功无关 —— 即便 compact 刷新失败,下一轮 capsule 仍无条件注入。
-- 因此"发布前失败 ⇒ 不存在 committed receipt"这一表述**仅对首次接管成立**(§5 已限定);
-  同 session 刷新失败时旧 receipt 保留,由 health gate(active_context 可读性)继续兜底安全。
+  与 SessionStart 刷新是否成功无关。
+- "发布前失败 ⇒ 不存在 committed receipt" **仅对 establishment(无既有有效 receipt)成立**(§5 限定);
+  refresh 失败时旧 receipt 保留,安全由 health gate 兜底。
 - **不采用 generation-scoped**:要求每次 clear/compact 重新授权需宿主可观测的 epoch,仅靠 sessionId
   无法实现,显著扩范围,MVP 不做(留 backlog)。
 
 ---
 
-## 5. 注入 — receipt — 守卫状态机(含提交事务与失效事务)
+## 5. 注入 — receipt — 守卫状态机(含 ordered publication 与失效事务)
 
 ### SessionStart / 显式恢复:ordered publication protocol(P0-3 / P1-4)
 
@@ -453,14 +472,14 @@ node '<bash-escaped canonicalProjectRoot>/.evo-lite/cli/memory.js' bootstrap --r
   (context 为 Session/Refresh discriminated union,§3)+ capsule 投影 + 1 KiB 预算/裁剪。
   **无 IO、无 env、无 hook input**;session-only 依赖由 adapter lazy 读后经 context 传入。
 - **Create `templates/cli/takeover-receipt.js`** —— receipt IO、schema 校验、硬/软有效性、
-  `reconcile(...)`、提交事务发布、tombstone/unlink 失效事务、`canonicalProjectRoot()`。
+  `reconcile(...)`、ordered publication 发布、tombstone/unlink 失效事务、`canonicalProjectRoot()`。
 - **Create `templates/cli/takeover-adapter.js`** —— Claude Code 生命周期 hook 处理器
   (SessionStart / UserPromptSubmit / PreToolUse 入口)+ capability probe 助手;把 hook input
   (stdin JSON:`session_id`/`cwd`/`tool_name`/`tool_input`)**归一化为 discriminated context**;
   调 receipt(IO)+ payload(纯);**不重拼治理语义**;按 **Claude Bash 语义生成、绑定 canonical root**
   的恢复命令(§7);target-path 绑定校验(§5)。
 - **Modify `templates/cli/memory.js`** —— `mem bootstrap` 增 `--receipt --host --session-id
-  --source` 恢复标志(经提交事务:emit payload 同时写 committed receipt);`bootstrap` 仍是人类展示器。
+  --source` 恢复标志(经 CLI recovery transport 的 ordered publication:emit payload 同时写 committed receipt);`bootstrap` 仍是人类展示器。
 - **Claude Code hook 配置(P1-4:managed fragment + 幂等 deep-merge)** —— canonical =
   **Evo-Lite 托管 hook fragment**;独立于 hooks.js(git)的 lifecycle-adapter installer 做
   **结构化幂等 deep-merge** 进项目 `.claude/settings.json`:保留所有未知 settings 字段与第三方
@@ -490,7 +509,7 @@ a177 教训:子仓分批落盘期间引擎优雅降级、再 sync 收敛;refused
 
 ```text
 裸 prompt(无 /evo)下,首次模型推理前已存在有效 takeover payload(经 SessionStart 注入)
-SessionStart 经提交事务写入 committed receipt
+首次 establishment(无既有有效 receipt)经 ordered publication 发布 committed receipt
 UserPromptSubmit 每轮注入 routing capsule
 cwd/project 变化不复用旧 receipt
 显式 CLI 能恢复 receipt
@@ -503,7 +522,7 @@ S9b:从"普通仓库探索"转为"按治理 focus 接管"
 
 ```text
 无 committed receipt:  Read/Glob/Grep allow;Edit/Write deny;Bash allow;deny reason 含可执行恢复命令
-坏 hook / 坏 payload:  提交事务不产生 committed receipt;Agent 可自行恢复;恢复后 Edit/Write 放行
+坏 hook / 坏 payload:  ordered publication 不产生 committed receipt;Agent 可自行恢复;恢复后 Edit/Write 放行
 degraded(active_context 不可读): 已存在 committed receipt 被 tombstone/unlink 失效;Edit/Write deny
 focus 变化:            不阻断;下一 prompt 自动刷新(仍 committed)
 projectRoot 变化:      旧 receipt 立即视为 invalid
@@ -516,13 +535,16 @@ projectRoot 变化:      旧 receipt 立即视为 invalid
 ## 11. 验收契约
 
 - **P0 确定性**(阶段 1):干净子仓、裸 prompt、无 `/evo`,首次模型推理前已注入有效 payload。
-- **P0 不可静默降级**(阶段 2):故障注入 —— 破坏 bootstrap / payload:提交事务不产生 committed
+- **P0 不可静默降级**(阶段 2):故障注入 —— 破坏 bootstrap / payload:ordered publication 不产生 committed
   receipt;模型看到明确错误;只读探索继续;生产修改被 deny 且 reason 可执行。
 - **P0 degraded 真失效**:active_context 不可读 → 已存在 committed receipt 被 tombstone/unlink,
   Edit/Write deny(不得因硬身份仍匹配而放行)。
-- **P0 session-scoped 授权世代**(P0-2):分别测**首次接管失败**(startup 注入失败 → 无 committed
-  receipt → Edit/Write deny)与**同 session 刷新失败**(startup 已成功 → resume/clear/compact 注入
-  失败 → 旧 receipt 保留 + 显式报告 + 下一轮 capsule 仍注入 → Edit/Write 仍 allow)。
+- **P0 session-scoped 授权世代**(P0-2 / R4-P0):判定由 **receipt 是否存在**驱动,非 source。测:
+  (a) 无既有有效 receipt 的 establishment 失败(任何 source)→ 无 committed receipt → Edit/Write deny;
+  (b) resume/clear 但 **receipt 已被清理/缺失** → 走 establishment(不因 source=resume 就跳过);
+  (c) 已有有效 receipt 时 full refresh 失败 → 旧 receipt **不自动撤销** + 显式报告 + capsule 仍注入 →
+  终局 Edit/Write **由 health gate 决定**(session-only 失败但 health gate 过 → allow;active_context
+  不可读 / 轻量 refresh 构建失败 → deny),**非无条件 allow**。
 - **P1 语义正确**:注入内容来自纯函数 builder,含 §3 全字段。
 - **P2 行为效果**(S9b 重跑):Agent 不再把项目当普通仓库;首轮明确使用 injected focus/routing。
   **效果验证,不作唯一确定性来源。**
@@ -535,7 +557,7 @@ projectRoot 变化:      旧 receipt 立即视为 invalid
 
 - `T-takeover-payload`:纯 builder 完整字段(无 IO)+ capsule ≤1 KiB + 超限按 code-point 截断带
   focusHash/truncated + 裁剪优先级。
-- `T-takeover-receipt`:提交事务(注入序列化失败 → 无 committed receipt);硬有效性
+- `T-takeover-receipt`:ordered publication(注入序列化失败 → 无 committed receipt);硬有效性
   (state≠committed / schemaVersion / host / sessionId / projectRoot 任一不符 / 缺失 / 损坏 → invalid);
   文件名 = sha256(host\0sessionId);`canonicalProjectRoot()` 跨平台(盘符大小写 / 分隔符 / realpath)。
 - `T-takeover-reconcile`:focusHash 漂移 → 仍 committed + 静默刷新、不阻断;projectRoot 不符 → invalid。
@@ -554,8 +576,11 @@ projectRoot 变化:      旧 receipt 立即视为 invalid
 - `T-takeover-recovery`:canonical-root-bound `node '<root>/.evo-lite/cli/memory.js' bootstrap
   --receipt ...` 经 CLI recovery transport 写匹配 committed receipt → 解锁;恢复命令串在 **项目根 /
   项目子目录 / 路径含空格**三种 cwd 下逐字合法可执行(Bash 语义,win32 + posix);不依赖裸相对路径。
-- `T-takeover-session-scope`(P0-2):首次接管失败 → 无 committed receipt → deny;same-session 刷新
-  失败 → 旧 committed receipt 保留 + capsule 仍注入 + Edit/Write allow。
+- `T-takeover-session-scope`(P0-2 / R4-P0):判定由 receipt 存在性驱动,非 source。
+  establishment 失败(无既有 receipt,任一 source)→ deny;receipt 缺失下的 resume/clear → 走
+  establishment(不被 source=resume 归为刷新而跳过);已有 receipt 时 full refresh 失败 → 旧 receipt
+  不撤销 + capsule 仍注入,**终局由 health gate 决定**(health gate 过→allow;active_context 不可读→deny),
+  不得为满足测试而绕过 health gate 硬写 allow。
 - `T-takeover-refresh-isolation`(不变量 6):memory.service/db/memory-index/zvec 加载即抛错时,
   refresh capsule 仍能生成。
 - `T-takeover-installer`(P1-4):deep-merge 保留未知字段 + 第三方 hooks;幂等(二次 install 无新增);
@@ -569,7 +594,7 @@ projectRoot 变化:      旧 receipt 立即视为 invalid
 Agent Takeover Trigger Protocol MVP
   宿主:      Claude Code only(装机 2.1.218,PROTOCOL-SUPPORTED)
   结构:      同一项目,两阶段、两个独立复审门
-  主触发:    SessionStart 完整 payload 注入(提交事务)+ 可选事件优化(probe-gated)
+  主触发:    SessionStart 完整 payload 注入(ordered publication;establishment/refresh 由 receipt 存在性判定)+ 可选事件优化(probe-gated)
   兜底触发:  UserPromptSubmit 每轮无条件极小 capsule(≤1 KiB additionalContext,状态反射)
   真相源:    纯函数 builder buildTakeoverPayload(context, budget)(Session/Refresh discriminated context)
   receipt:   硬字段 state/host/sessionId/projectRoot;committed 才放行;degraded 真失效
