@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[a177] mcp-zvec-lock SHIPPED(母仓,main@459d713):三层锁协调全绿收口,终局复审 Ready-to-merge:Yes,实景 mem commit 双 MCP 在场未撞锁。剩余:hive nurture CodePLC + hungersnakegame4(分发 Layer 1-3 基因)。后续独立议题:[zvec-06-upgrade](升级时首验 isLockError 文案匹配)。
+[a177] mcp-zvec-lock SHIPPED & CLOSED(main@79032cb)。三层锁协调分发完成:母仓镜像 + CodePLC + hungersnakegame4(2.3.0,套件 EXIT 0),终局门全过(枚举命令/0 孤儿/legacy-zombie 演练/实景 mem commit 双 MCP 未撞锁)。重开:否。后续独立议题:[zvec-06-upgrade](升级时首验 isLockError 文案匹配)。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)

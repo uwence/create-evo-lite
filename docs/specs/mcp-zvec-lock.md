@@ -25,7 +25,7 @@ linkedPlan: plan:mcp-zvec-lock-mvp
 与设计 §5 测试契约一一对应:
 
 - owner sidecar:schema v1 十字段 identity-critical 强制验证;`readOwner.state !== 'valid'` 只能 report-only。
-- CAS 唯一删除入口:finalize / 自愈 / 死持有者清理均经 `clearOwner(dir, leaseId)`,晚到的 clear 绝不删新持有者。
+- owner 变更的互斥边界 = zvec 独占锁:`clearOwner(dir, leaseId)` 仅由**持锁中的 finalize** 调用;dead-holder / 自愈接管路径**不预删** owner —— 接管成功(已持锁)由 `writeOwner` 原子覆盖 stale owner,失败则保留并重新诊断。
 - ephemeral 五行矩阵:success/throw/nested-success/nested-throw 后锁释放且第二实例可立即打开;默认模式行为不变。
 - refusal matrix 11 例全部拒杀:open 失败带诊断 / 目标进程存活 / owner 与 LOCK 未被删改。
 - live-foreign 富化错误:含 holder pid、verdict、明示不自动终止、argv 形式枚举命令;holder 与其 owner 不受影响。
