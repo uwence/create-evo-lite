@@ -1,9 +1,9 @@
-# Agent Takeover Trigger Protocol — 设计文档(R2)
+# Agent Takeover Trigger Protocol — 设计文档(R4)
 
 - 议题:backlog `[agent-code-routing]`(4a.x P2 final debt)。谱系:S9b CodePLC dogfood
   实证 —— 干净子仓、零竞争、裸 prompt 下 Agent 自发触发治理面 = **失败**;裁定 P1b
   将"Agent 裸指令路由"定为独立债,Wiki(4b-1)服务人、不能替代 Agent routing。
-- 状态:R3(design R2 外部复审 CHANGES REQUIRED 已折入,4×P0 + 4×P1)。待 R3 复审。
+- 状态:R4(design R3 外部复审 CHANGES REQUIRED 已折入,2×P0 + 陈旧表述清理)。待 R4 复审。
 - 宿主范围:**仅 Claude Code**(MVP);协议本身 host-agnostic。
 - 前置证据:`docs/validation/attp-cc-capability-probe.md`(装机 2.1.218,PROTOCOL-SUPPORTED)。
 - 关联:`[zvec-06-upgrade]`(无关);a177 lock 协调(receipt 授权边界/发布时序/失效事务
@@ -41,6 +41,14 @@
 | P1-3 | probe "经验确认"证据不完整 | probe 判词降 **SUPPORTED-BY-CONTRACT + PARTIALLY-OBSERVED**;基线三事件 echo-harness 证据(见 probe 文档 §D)为 plan 前置门 |
 | P1-4 | stdout+FS 非真原子 | §5 更名 **ordered publication protocol**,如实列宿主残留窗口,不称原子事务 |
 
+### R3 复审裁定的落点(逐条)
+
+| 编号 | R3 问题 | R4 落点 |
+|---|---|---|
+| P0-1 | 恢复命令仍隐含 cwd==项目根 | §7 改 **canonical-root-bound 绝对路径** `node '<canonicalProjectRoot>/.evo-lite/cli/memory.js' ...`;root/CLI/sessionId 按 Bash 引用;项目根/子目录/含空格三 cwd 测试 |
+| P0-2 | 同 session 再注入失败仍信旧 receipt | §4 定 **session-scoped 授权世代**:初始 startup 建 receipt(失败→fail-closed);same-session resume/clear/compact = 刷新(失败→旧 receipt 保留 + 显式报告 + capsule 再播种);§5 表述限定"仅首次接管失败⇒无 receipt" |
+| P1 清理 | R2 陈旧表述 | 标题 R4;§2 签名 `buildTakeoverPayload(context, budget)`;§2/§6 PostCompact 标"不能注入";§9/§12 恢复命令改 root-bound shell-neutral |
+
 ---
 
 ## 1. 问题诊断:工具已在,缺的是确定性触发
@@ -76,14 +84,15 @@ Agent 主动识别 takeover 框架),裸开发指令两者都不满足。CLAUDE.m
 
 ```text
 第一层  host-agnostic canonical payload(纯函数 builder)
-        buildTakeoverPayload({ mode, context, budget }) —— 单一真相
+        buildTakeoverPayload(context, budget) —— 单一真相(context = Session/Refresh discriminated union)
         mem bootstrap 是人类展示器 / adapter 是宿主适配器 / 二者消费同一 payload
         payload builder 不做 IO、不读环境、不读 hook input;禁止 adapter 重拼治理语义
 
 第二层  生命周期感知的确定性注入(Claude Code adapter)
-        SessionStart      → 完整 payload additionalContext 注入 + 提交事务写 committed receipt
+        SessionStart      → 完整 payload additionalContext 注入 + ordered publication 写 committed receipt
         UserPromptSubmit  → 无条件注入极小 capsule(additionalContext)+ reconcile receipt
-        可选优化(probe-gated)→ CwdChanged / PostCompact / SessionStart(compact)
+        可选优化(probe-gated,§6)→ SessionStart(compact) 可重注入;CwdChanged 待验;
+                                    PostCompact 仅遥测【不能注入】
 
 第三层  变更前 fail-closed / 只读 fail-open 守卫(PreToolUse)
         Edit/Write 无 committed receipt → permissionDecision:"deny" + 平台恢复命令
@@ -166,10 +175,10 @@ rules、risks/warnings、recommended next action、payload freshness/version。
 { "evoLite":"takeover-refreshed", "project":"create-evo-lite",
   "focus":"<新 focus>", "focusHash":"<sha>", "receipt":"valid" }
 
-// stale / degraded:升格,带可执行 action(平台正确,§7)
+// stale / degraded:升格,带可执行 action(canonical-root-bound,§7)
 { "evoLite":"takeover-stale", "project":"create-evo-lite",
   "focus":"<focus 或 unknown>", "focusHash":"<sha 或 null>", "receipt":"invalid",
-  "action":"node .evo-lite/cli/memory.js bootstrap --receipt --host claude-code --session-id <id> --source manual-recovery --json" }
+  "action":"node '<canonicalProjectRoot>/.evo-lite/cli/memory.js' bootstrap --receipt --host claude-code --session-id <id> --source manual-recovery --json" }
 ```
 
 ---
@@ -225,6 +234,22 @@ canonicalProjectRoot() = discover workspace root → path.resolve → realpath/n
 - 属生成状态,**gitignore,不入模板真相源,不提交**。
 - `SessionEnd` best-effort 清理;历史 receipt TTL 仅 GC,**不作当前 receipt 的硬有效性条件**。
 
+### 授权世代:session-scoped(P0-2)
+
+receipt 语义是 **session-scoped**:证明"**本 session 曾成功完成过一次 takeover**",而非"最近一次
+完整注入成功"。同一 sessionId 的 `resume`/`clear`/`compact` 是**上下文刷新**,不建立新授权世代:
+
+- **建立**:仅初始 `SessionStart(startup)` 是建立 committed receipt 的 P0 路径;
+  其注入失败 → 无 committed receipt → 守卫 fail-closed(此 session 从未接管)。
+- **刷新**:后续 same-session `SessionStart(resume/clear/compact)` 是刷新,**不重新定义 receipt
+  授权**;刷新注入失败必须**显式报告**(systemMessage / 非零退出),但**旧 committed receipt 继续有效**。
+- **再播种**:clear/compact 后的最低确定性再播种由**每轮 UserPromptSubmit capsule**承担(§6),
+  与 SessionStart 刷新是否成功无关 —— 即便 compact 刷新失败,下一轮 capsule 仍无条件注入。
+- 因此"发布前失败 ⇒ 不存在 committed receipt"这一表述**仅对首次接管成立**(§5 已限定);
+  同 session 刷新失败时旧 receipt 保留,由 health gate(active_context 可读性)继续兜底安全。
+- **不采用 generation-scoped**:要求每次 clear/compact 重新授权需宿主可观测的 epoch,仅靠 sessionId
+  无法实现,显著扩范围,MVP 不做(留 backlog)。
+
 ---
 
 ## 5. 注入 — receipt — 守卫状态机(含提交事务与失效事务)
@@ -247,7 +272,7 @@ Hook transport(SessionStart 等 hook 事件):
   6. 【原子发布】committed receipt(rename)
   7. 无其他可失败操作 → exit 0
 
-CLI recovery transport(显式 `node .evo-lite/cli/memory.js bootstrap --receipt ...`,§7):
+CLI recovery transport(显式 canonical-root-bound `node '<root>/.evo-lite/cli/memory.js' bootstrap --receipt ...`,§7):
   1. 归一化为 SessionTakeoverContext(sourceEvent="manual-recovery")
   2. buildTakeoverPayload(context) → schema 校验
   3. 【普通 JSON/text CLI 输出】到 stdout —— 作为 Bash tool result 返回(【非】hook envelope,
@@ -255,8 +280,10 @@ CLI recovery transport(显式 `node .evo-lite/cli/memory.js bootstrap --receipt 
   4. 【原子发布】committed receipt(rename)
   5. exit 0
 
-任一步在"发布 receipt"之前失败:不存在 committed receipt;非零退出;最坏 = 模型或收到或未收到
-上下文,但 Edit/Write 被守卫 health gate 挡住 —— 安全失败。
+任一步在"发布 receipt"之前失败(按 session-scoped 语义,§4):
+  · 首次接管(无既有 receipt):不存在 committed receipt → 守卫 fail-closed —— 安全失败。
+  · 同 session 刷新(已有 committed receipt):旧 receipt 保留 + 显式报告刷新失败;守卫仍由
+    health gate(active_context 可读 + refresh 构建)兜底;capsule 每轮再播种。
 ```
 
 残留边界(如实命名,不称原子):receipt 发布成功后进程若在 exit 前被外部终止、或宿主丢弃 hook
@@ -379,15 +406,20 @@ receipt 仍 committed、projectRoot 未变、focus 未变 —— 条件注入的
   CMD 路径语法)不等于 Bash 可执行语法。因此默认采用 **shell-neutral 的 node 入口**,在
   Windows/POSIX 的 Bash 下均一致可跑:
 
+**命令必须 canonical-root-bound,不得依赖 cwd(P0-1)** —— 裸相对 `node .evo-lite/cli/memory.js`
+假设 Bash cwd == 项目根,但协议本身就处理 cwd 变化/子目录/跨项目,该假设不成立(cwd 在子目录时
+`.evo-lite/...` 解析到错误位置)。恢复命令由 adapter 用绝对 canonical root 生成:
+
 ```text
-node .evo-lite/cli/memory.js bootstrap --receipt --host claude-code --session-id '<escaped>' --source manual-recovery --json
+node '<bash-escaped canonicalProjectRoot>/.evo-lite/cli/memory.js' bootstrap --receipt --host claude-code --session-id '<bash-escaped sessionId>' --source manual-recovery --json
 ```
 
-  - `.evo-lite/cli/memory.js` 是运行时镜像(子仓中即此路径);sessionId 按 **Bash** 引用规则转义(非 OS);
-  - PreToolUse deny 时 adapter 掌握 hook input 的 `session_id`/`cwd` → 填入真实值,reason 内逐字可跑;
-  - 若坚持用 wrapper,必须先 probe:Claude Code Bash 在 Windows 用何 shell、`.cmd` 以何路径语法执行、
-    sessionId 按该 shell(非 OS)引用 —— echo-harness 提供恢复命令**实际经 Bash 工具执行成功**的证据;
-  - 测试断言恢复命令字符串在 Bash 语义下合法且可逐字执行(win32 + posix)。
+  - CLI 路径由 `canonicalProjectRoot()`(§4)派生为**绝对路径**,转为 Claude Bash 实际可接受的形式
+    (win32 git-bash 用正斜杠);**project root、CLI 路径、sessionId 三者均按 Bash(非 OS)安全引用**;
+  - PreToolUse deny 时 adapter 掌握 hook input 的 `session_id`,projectRoot 取自 receipt/canonical →
+    填入真实绝对值,reason 内逐字可跑,**不依赖全局 `mem` 或当前 cwd**;
+  - (可选)经实测的 `"$(git rev-parse --show-toplevel)"/.evo-lite/cli/memory.js` 亦可,但不得保留裸相对路径;
+  - 测试:恢复命令在**项目根 / 项目子目录 / 路径含空格**三种 cwd 下均逐字执行成功(Bash 语义,win32 + posix)。
   - 流程:Edit 被 deny → reason 给精确恢复命令 → Agent 经 Bash 执行 → CLI recovery transport 生成
     payload + ordered publication 写匹配 sessionId/projectRoot 的 committed receipt → 再次 Edit 放行。
 
@@ -424,8 +456,9 @@ node .evo-lite/cli/memory.js bootstrap --receipt --host claude-code --session-id
   `reconcile(...)`、提交事务发布、tombstone/unlink 失效事务、`canonicalProjectRoot()`。
 - **Create `templates/cli/takeover-adapter.js`** —— Claude Code 生命周期 hook 处理器
   (SessionStart / UserPromptSubmit / PreToolUse 入口)+ capability probe 助手;把 hook input
-  (stdin JSON:`session_id`/`cwd`/`tool_name`)**归一化为 context**;调 receipt(IO)+ payload(纯);
-  **不重拼治理语义**;按平台生成恢复命令。
+  (stdin JSON:`session_id`/`cwd`/`tool_name`/`tool_input`)**归一化为 discriminated context**;
+  调 receipt(IO)+ payload(纯);**不重拼治理语义**;按 **Claude Bash 语义生成、绑定 canonical root**
+  的恢复命令(§7);target-path 绑定校验(§5)。
 - **Modify `templates/cli/memory.js`** —— `mem bootstrap` 增 `--receipt --host --session-id
   --source` 恢复标志(经提交事务:emit payload 同时写 committed receipt);`bootstrap` 仍是人类展示器。
 - **Claude Code hook 配置(P1-4:managed fragment + 幂等 deep-merge)** —— canonical =
@@ -487,6 +520,9 @@ projectRoot 变化:      旧 receipt 立即视为 invalid
   receipt;模型看到明确错误;只读探索继续;生产修改被 deny 且 reason 可执行。
 - **P0 degraded 真失效**:active_context 不可读 → 已存在 committed receipt 被 tombstone/unlink,
   Edit/Write deny(不得因硬身份仍匹配而放行)。
+- **P0 session-scoped 授权世代**(P0-2):分别测**首次接管失败**(startup 注入失败 → 无 committed
+  receipt → Edit/Write deny)与**同 session 刷新失败**(startup 已成功 → resume/clear/compact 注入
+  失败 → 旧 receipt 保留 + 显式报告 + 下一轮 capsule 仍注入 → Edit/Write 仍 allow)。
 - **P1 语义正确**:注入内容来自纯函数 builder,含 §3 全字段。
 - **P2 行为效果**(S9b 重跑):Agent 不再把项目当普通仓库;首轮明确使用 injected focus/routing。
   **效果验证,不作唯一确定性来源。**
@@ -515,8 +551,11 @@ projectRoot 变化:      旧 receipt 立即视为 invalid
 - `T-takeover-transport`(P1-2):Hook transport 产出合法 hook envelope(hookSpecificOutput.
   additionalContext);CLI recovery transport 产出普通 JSON/text(**非** hook envelope);二者均
   "先写出 → 后发布 committed receipt",序列化失败 → 无 committed receipt。
-- `T-takeover-recovery`:`node .evo-lite/cli/memory.js bootstrap --receipt ...` 经 CLI recovery
-  transport 写匹配 committed receipt → 解锁;恢复命令串在 Bash 语义下合法(win32 + posix)。
+- `T-takeover-recovery`:canonical-root-bound `node '<root>/.evo-lite/cli/memory.js' bootstrap
+  --receipt ...` 经 CLI recovery transport 写匹配 committed receipt → 解锁;恢复命令串在 **项目根 /
+  项目子目录 / 路径含空格**三种 cwd 下逐字合法可执行(Bash 语义,win32 + posix);不依赖裸相对路径。
+- `T-takeover-session-scope`(P0-2):首次接管失败 → 无 committed receipt → deny;same-session 刷新
+  失败 → 旧 committed receipt 保留 + capsule 仍注入 + Edit/Write allow。
 - `T-takeover-refresh-isolation`(不变量 6):memory.service/db/memory-index/zvec 加载即抛错时,
   refresh capsule 仍能生成。
 - `T-takeover-installer`(P1-4):deep-merge 保留未知字段 + 第三方 hooks;幂等(二次 install 无新增);
@@ -535,7 +574,7 @@ Agent Takeover Trigger Protocol MVP
   真相源:    纯函数 builder buildTakeoverPayload(context, budget)(Session/Refresh discriminated context)
   receipt:   硬字段 state/host/sessionId/projectRoot;committed 才放行;degraded 真失效
   守卫:      Edit/Write deny-on-invalid;Read/Glob/Grep allow;Bash 排除
-  恢复:      平台正确 mem 命令写 session-bound committed receipt(Bash 放行保证可自助)
+  恢复:      canonical-root-bound shell-neutral node 命令写 session-scoped committed receipt(Bash 放行保证可自助)
   无 Hook 宿主: 静态规则 fallback,尽力而为
   验收:      P0 确定性 + P0 不可静默绕过 + P0 degraded 真失效 + P1 语义 + P2 行为(S9b)+ 故障注入
 ```
