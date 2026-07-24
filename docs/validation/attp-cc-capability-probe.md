@@ -3,8 +3,12 @@
 - 议题:`[agent-code-routing]` / ATTP 设计 R2 前置(spec review R1 要求:probe 先于 plan 完成并附证据)。
 - 日期:2026-07-24
 - 装机版本:**Claude Code 2.1.218**(`claude --version`)。
-- 判决:**PROTOCOL-SUPPORTED** —— 三个承重事件在装机版经验确认存在;注入与 deny 机制确认;
-  可选优化事件为"文档存在、装机版待实测",设计已降级到 UserPromptSubmit 基线,不依赖它们。
+- 判决(R2 复审 P1-3 更正,如实分级):
+  - **基线三事件 = SUPPORTED-BY-CONTRACT + FULLY-OBSERVED** —— SessionStart / UserPromptSubmit /
+    PreToolUse 均由 echo-harness 在装机 2.1.218 上**可重复实测**(§D):additionalContext 注入摄入、
+    deny 生效 + reason 展示、tool_input 可读,全部亲验。
+  - **可选优化事件 = SUPPORTED-BY-CONTRACT + UNOBSERVED** —— SessionStart(compact) / CwdChanged /
+    PostCompact 仅文档存在,装机版实际触发未测;设计不依赖(基线兜底),留实现阶段落实。
 
 ## 证据分级
 
@@ -46,7 +50,22 @@
 已经验确认,协议最小可运行集满足;压缩后重注入由 **UserPromptSubmit 每轮无条件 capsule** 兜底
 (§设计 P1-1),不依赖 compact 事件。这两项在实现阶段用 echo-hook harness 落实即可,不改设计结论。
 
-## 对设计的直接影响(已折入 R2)
+### D. echo-harness 实测(基线三事件,可重复)
+
+harness:`$CLAUDE_JOB_DIR/tmp/echo-harness/`(scratch 项目 `.claude/settings.json` 挂 node echo-hook,
+`claude -p --model haiku --permission-mode bypassPermissions`)。两次运行,session id 各异,结果一致:
+
+| 事件 | 观测 | 证据 |
+|---|---|---|
+| SessionStart | additionalContext **摄入** | hook 产 `ECHO_SS_TOKEN_7A` → 模型回显该 token |
+| UserPromptSubmit | additionalContext **摄入** | hook 产 `ECHO_UPS_TOKEN_7B` → 模型回显该 token |
+| PreToolUse(Write) | deny **生效** + reason 展示给模型 | hook 产 `permissionDecision:"deny"` → `proj.txt` **未创建**,模型见 `ECHO_DENY_TOKEN_7C`("出现在 Write 工具错误响应中") |
+| PreToolUse tool_input | **可读** | marker 记 `tin={"file_path":"...proj.txt","content":"hello"}` → P0-4 target-path 绑定可实现 |
+
+结论:基线三事件在装机 2.1.218 上 FULLY-OBSERVED。node hook 命令在 Claude 执行环境下正常运行
+(佐证 §7 shell-neutral `node .evo-lite/cli/memory.js` 恢复入口可行)。
+
+## 对设计的直接影响(已折入 R3)
 
 1. 注入用 `additionalContext`;守卫 deny 用 `permissionDecision:"deny"` + `permissionDecisionReason`
    携带平台正确恢复命令(deny reason 展示给 Claude,Bash 放行 → 可自助)。

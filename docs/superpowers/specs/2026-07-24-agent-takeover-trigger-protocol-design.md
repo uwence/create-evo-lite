@@ -3,7 +3,7 @@
 - 议题:backlog `[agent-code-routing]`(4a.x P2 final debt)。谱系:S9b CodePLC dogfood
   实证 —— 干净子仓、零竞争、裸 prompt 下 Agent 自发触发治理面 = **失败**;裁定 P1b
   将"Agent 裸指令路由"定为独立债,Wiki(4b-1)服务人、不能替代 Agent routing。
-- 状态:R2(design R1 外部复审 CHANGES REQUIRED 已折入,4×P0 + 5×P1 + 2 清理)。待 R2 复审。
+- 状态:R3(design R2 外部复审 CHANGES REQUIRED 已折入,4×P0 + 4×P1)。待 R3 复审。
 - 宿主范围:**仅 Claude Code**(MVP);协议本身 host-agnostic。
 - 前置证据:`docs/validation/attp-cc-capability-probe.md`(装机 2.1.218,PROTOCOL-SUPPORTED)。
 - 关联:`[zvec-06-upgrade]`(无关);a177 lock 协调(receipt 授权边界/发布时序/失效事务
@@ -27,6 +27,19 @@
 | 清理1 | 健康 capsule 的 `refresh` 与"只反射"冲突 | §3 健康态删 `refresh`;仅 stale/degraded 带 `action` |
 | 清理2 | probe 应先于 plan | 已完成:`docs/validation/attp-cc-capability-probe.md` |
 | R1自纠 | R1 曾断言"CwdChanged 非原生事件" | 更正:CwdChanged/PostCompact 文档存在,按"版本能力探测"处理(§6) |
+
+### R2 复审裁定的落点(逐条)
+
+| 编号 | R2 问题 | R3 落点 |
+|---|---|---|
+| P0-1 | 失效双失败后守卫仍信旧 committed receipt | §5 守卫增**轻量 health gate**:allow 需 receipt committed **且** active_context 可读 **且** refresh 构建成功 **且** target 属本项目;tombstone/unlink 降为持久化诊断,非唯一屏障 |
+| P0-2 | 显式 context 仍不足以生成声明输出 | §3 改 **discriminated context**(Session/Refresh 两类);receipt 层产 `receiptVerdict{state,transition,reason}`,builder 只映射 |
+| P0-3 | 恢复命令按 OS 选,非按执行 shell | §7 默认 **shell-neutral `node .evo-lite/cli/memory.js`**;win32 的 Bash 工具非 CMD,`.cmd` 反斜杠路径喂不进;echo-harness 提供实际经 Bash 执行证据 |
+| P0-4 | receipt 绑 cwd 不绑 Edit/Write target | §5 守卫 **target-path 绑定**:读 tool_input 目标 → 规范化 → 必须落 receipt.projectRoot 内;`..`/symlink/junction 逃逸或跨项目 → deny |
+| P1-1 | PostCompact 不能注入却被用于重注入 | §6 更正:仅 `SessionStart(compact)` 重注入;PostCompact 仅遥测/升格下轮 refresh;CwdChanged 语义待 echo-harness 证明 |
+| P1-2 | Hook/CLI recovery 共用错误 transport | §5 拆 **Hook transport vs CLI recovery transport**:共用"先交付后发布"原则,envelope 不同(Bash stdout 非 additionalContext) |
+| P1-3 | probe "经验确认"证据不完整 | probe 判词降 **SUPPORTED-BY-CONTRACT + PARTIALLY-OBSERVED**;基线三事件 echo-harness 证据(见 probe 文档 §D)为 plan 前置门 |
+| P1-4 | stdout+FS 非真原子 | §5 更名 **ordered publication protocol**,如实列宿主残留窗口,不称原子事务 |
 
 ---
 
@@ -88,25 +101,35 @@ Agent 主动识别 takeover 框架),裸开发指令两者都不满足。CLAUDE.m
 **builder 是纯函数**:只接受已归一化的 `context`,返回 payload / capsule;不做 IO、不读
 `process.env`、不读 hook input(P0-2)。所有 IO 与 hook 输入归一化由 adapter/receipt 层承担。
 
-```
-buildTakeoverPayload({ mode, context, budget }) -> TakeoverPayload | Capsule
+builder 接受 **discriminated context**(P0-2):receipt 层已把所有 IO 状态归一化,builder 只做
+**映射**,不自行推断 receipt/focus 的 IO 状态。context 的 `kind` 决定输出与所需字段:
 
-  mode:    "session"  完整 payload(SessionStart / 显式恢复;跑 verify/recall)
-           "refresh"  轻量投影(仅由已归一化 context 生成,不跑 verify/recall/DB;
-                      capsule 即由此模式产出 —— 保证 capsule 亦经单一 builder)
-  context: {
-    host,          // "claude-code"
-    sessionId,     // 来自 hook input.session_id
-    projectRoot,   // canonicalProjectRoot()(§4)
-    sourceEvent,   // "SessionStart:startup" | "UserPromptSubmit" | "manual-recovery" ...
-    focus,         // 已读出的 focus 文本(receipt/adapter 层读,builder 不读文件)
-    receiptState   // "committed" | "invalid" | "missing"(receipt 层判定后传入)
+```
+buildTakeoverPayload(context, budget) -> TakeoverPayload | Capsule
+
+SessionTakeoverContext {           // kind:"session" → 完整 TakeoverPayload
+  kind: "session"
+  host, sessionId, projectRoot, projectName, sourceEvent
+  focus, activePlan, activeSpec, rules, risks, nextAction, freshness
+  verify, recall                   // adapter 已 lazy 读取后传入(§8 不变量 6),builder 不触 DB
+}
+
+RefreshTakeoverContext {           // kind:"refresh" → ≤1 KiB Capsule
+  kind: "refresh"
+  host, sessionId, projectRoot, projectName, sourceEvent
+  focus, focusHash
+  receiptVerdict: {                // 由 receipt 层产生,builder 不自行推断
+    state: "committed" | "invalid" | "missing"
+    transition: "active" | "refreshed" | "stale" | "degraded"
+    reason: string | null          // 仅 invalid/degraded
   }
-  budget:  additionalContext UTF-8 字节预算(capsule 强制 ≤ 1 KiB,§8 不变量 1)
+  recoveryAction: string | null    // adapter 按执行 shell 生成的恢复命令(§7),仅 stale/degraded
+}
 
-  // mode:"session" 额外由 adapter 传入已读取的 verify/recall 结果(lazy,见 §8 不变量 6)
+budget: additionalContext UTF-8 字节预算(capsule 强制 ≤ 1 KiB,§8 不变量 1)
 ```
 
+builder 是纯映射:`transition` → capsule `evoLite` 值一一对应,不由 builder 从 IO 反推。
 `prompt` 在 MVP **删除**(未使用);若未来重引入,必须明确不进 receipt、不写日志、不持久化。
 
 ### TakeoverPayload schema(完整,`mode:"session"`)
@@ -146,7 +169,7 @@ rules、risks/warnings、recommended next action、payload freshness/version。
 // stale / degraded:升格,带可执行 action(平台正确,§7)
 { "evoLite":"takeover-stale", "project":"create-evo-lite",
   "focus":"<focus 或 unknown>", "focusHash":"<sha 或 null>", "receipt":"invalid",
-  "action":"<平台 wrapper> bootstrap --receipt --host claude-code --session-id <id> --source manual-recovery --json" }
+  "action":"node .evo-lite/cli/memory.js bootstrap --receipt --host claude-code --session-id <id> --source manual-recovery --json" }
 ```
 
 ---
@@ -206,34 +229,48 @@ canonicalProjectRoot() = discover workspace root → path.resolve → realpath/n
 
 ## 5. 注入 — receipt — 守卫状态机(含提交事务与失效事务)
 
-### SessionStart / 显式恢复:提交事务(P0-3)
+### SessionStart / 显式恢复:ordered publication protocol(P0-3 / P1-4)
 
-**注入必须先于 receipt 发布**,否则 receipt 存在但内容从未送达宿主 = 假授权:
+**交付必须先于 receipt 发布**,否则 receipt 存在但内容从未送达 = 假授权。这**不是严格原子事务**
+(stdout 与 filesystem 非同一事务资源,P1-4):通过"交付先于授权发布 + 发布后不执行业务逻辑"把
+窗口压到最小,故命名为 **ordered publication protocol**,而非"原子事务"。
+
+**两条路径共用"先交付、后发布 receipt"原则,但 transport 不同(P1-2)** —— 实现者不得混用 envelope:
 
 ```text
-1. 归一化 context(host/sessionId/projectRoot/sourceEvent/focus/receiptState)
-2. buildTakeoverPayload({ mode:"session", context })
-3. schema 校验 payload
-4. 构建并【完整序列化】Claude hook response(hookSpecificOutput.additionalContext)
-5. 准备 committed receipt 临时文件(写 temp,【不 rename】)
-6. 【同步写出】hook response 到 stdout —— 真正的注入
-7. 【原子发布】committed receipt(rename temp → 最终)
-8. 无其他可失败操作 → exit 0
+Hook transport(SessionStart 等 hook 事件):
+  1. adapter 把 hook input 归一化为 SessionTakeoverContext
+  2. buildTakeoverPayload(context) → schema 校验
+  3. 构建并【完整序列化】Claude hook response envelope(hookSpecificOutput.additionalContext)
+  4. 准备 committed receipt temp(写 temp,不 rename)
+  5. 【同步写出】hook envelope 到 stdout —— 经宿主解析为 additionalContext 的注入
+  6. 【原子发布】committed receipt(rename)
+  7. 无其他可失败操作 → exit 0
 
-任一步在 7 之前失败:
-  - 不存在 committed receipt;hook 非零退出;
-  - 最坏 = 模型或收到或未收到上下文,但 Edit/Write 暂被守卫挡住 —— 安全失败。
+CLI recovery transport(显式 `node .evo-lite/cli/memory.js bootstrap --receipt ...`,§7):
+  1. 归一化为 SessionTakeoverContext(sourceEvent="manual-recovery")
+  2. buildTakeoverPayload(context) → schema 校验
+  3. 【普通 JSON/text CLI 输出】到 stdout —— 作为 Bash tool result 返回(【非】hook envelope,
+     Bash stdout 不会被解释为 additionalContext)
+  4. 【原子发布】committed receipt(rename)
+  5. exit 0
+
+任一步在"发布 receipt"之前失败:不存在 committed receipt;非零退出;最坏 = 模型或收到或未收到
+上下文,但 Edit/Write 被守卫 health gate 挡住 —— 安全失败。
 ```
 
-宿主健壮性(probe):v2.1.202+ 类型错字段被静默丢弃 → step 4 自校验保证类型正确;step 6
-成功写出仍不保证宿主"摄入"(宿主契约边界,receipt 只证"已提交发出",由 probe + S9b 验)。
+残留边界(如实命名,不称原子):receipt 发布成功后进程若在 exit 前被外部终止、或宿主丢弃 hook
+输出,receipt 仍 committed 而注入未达 —— 无法用双资源原子提交消除;receipt 只证"已构建校验并
+写出",不证宿主摄入(probe + S9b 验)。宿主健壮性(probe):v2.1.202+ 类型错字段被静默丢弃 →
+Hook transport step 3 自校验保证类型正确。
 
 ### 每次 UserPromptSubmit:emit + reconcile
 
 ```text
 职责一 emit capsule(无条件):
-  buildTakeoverPayload({ mode:"refresh", context }) —— 只读 receipt + focus anchor(§8 不变量 6)
-  → 投影为 ≤1 KiB capsule → additionalContext 无条件注入(capsule 经单一 builder)
+  adapter 归一化为 RefreshTakeoverContext(receipt 层产 receiptVerdict) → buildTakeoverPayload(ctx)
+  —— 只读 receipt + focus anchor,不载 DB(§8 不变量 6)
+  → ≤1 KiB capsule → additionalContext 无条件注入(capsule 经单一 builder)
 
 职责二 reconcile receipt(条件):
   projectRoot 不匹配 → committed receipt 视为 invalid(禁跨项目继承;身份不符即失效,无需写)
@@ -257,15 +294,30 @@ committed receipt**(否则硬字段仍匹配、守卫仍放行):
 
 `bad-payload` 与 `active-context-unreadable` **共用**此失效规则。
 
-### PreToolUse 守卫(阶段 2)
+### PreToolUse 守卫(阶段 2):轻量 health gate + target-path 绑定
+
+守卫**不只信持久化的 committed receipt**(P0-1:失效事务双失败时旧 receipt 仍在)。它自跑一个
+**轻量 health gate**(纯 refresh 路径,不载 DB/memory-index/zvec,§8 不变量 6):
 
 ```text
-Read / Glob / Grep           → permissionDecision:"allow"(恒放行)
-Edit / Write                 → committed receipt 有效则 allow;无效则
-                               permissionDecision:"deny" + permissionDecisionReason=<平台恢复命令>
-NotebookEdit / 其他写工具     → 仅当 capability probe 证明该工具名存在时纳入 matcher
-Bash                         → MVP 全 allow(含恢复命令执行路径)
+Read / Glob / Grep   → permissionDecision:"allow"(恒放行)
+
+Edit / Write         → allow 当且仅当【全部成立】:
+  (a) receipt state==="committed" 且硬身份匹配当前 host/sessionId/projectRoot
+  (b) 当前 active_context 可读 且 refresh payload 能成功构建 + schema 校验
+  (c) target-path 绑定(P0-4):从 probe 确认的 tool_input 读目标路径 → 规范化
+      (新文件用最近存在父目录 realpath)→ 必须落在 receipt.projectRoot 内;
+      遇 `..`/symlink/junction 逃逸 或 目标属其他项目 → deny(要求在该项目完成 takeover)
+  否则 → permissionDecision:"deny" + permissionDecisionReason=<按执行 shell 生成的恢复命令,§7>
+
+NotebookEdit / 其他写工具 → 仅当 capability probe 证明该工具名存在时纳入 matcher(同 Edit/Write 规则)
+Bash                     → MVP 全 allow(含恢复命令执行路径)
 ```
+
+(b) 使 tombstone/unlink 成为**持久化诊断**而非唯一屏障:即便失效文件写失败,下一次写工具因
+active_context 不可读 / refresh 构建失败而**仍 fail-closed**。(c) 封住"cwd=项目A、receipt=A、
+Edit 目标在项目B"的跨项目 receipt 复用 —— 这是对已知结构化 tool_input 的确定性路径约束,不是
+Bash 分类器,属 MVP。
 
 **闭环保证:守卫放行 Bash + deny reason 展示给 Claude → 恢复命令(一条 Bash 调用)永远可执行
 → 坏 hook 永不硬砖化会话。**
@@ -297,8 +349,11 @@ probe 已完成:`docs/validation/attp-cc-capability-probe.md`(装机 2.1.218,PRO
 阶段 1 最小必需:  SessionStart + UserPromptSubmit
 阶段 2 最小必需:  SessionStart + UserPromptSubmit + PreToolUse
 可选优化(probe-gated):
-  CwdChanged                 → 存在则:立即失效旧 project receipt + 注入新项目 capsule
-  PostCompact / SessionStart(compact) → 存在则:压缩后重注入完整 payload
+  SessionStart(source=compact) → echo-harness 证明装机版触发后:压缩后重注入完整 payload
+  PostCompact                  → 【不能注入】(probe:无 decision control、不在 additionalContext
+                                 清单)→ 仅遥测/记录/使下一轮 refresh 升格,不承担 additionalContext
+  CwdChanged                   → 仅当 echo-harness 证明其输出支持 additionalContext 后,才赋予
+                                 "立即注入 capsule"语义;在此之前只列为待验证能力,不预写死语义
 
 capability probe 证明装机版无基础 SessionStart → 判 UNSUPPORTED / PARK
 （不宣称 UserPromptSubmit 单独可从零建立 takeover:完整 payload 与 committed receipt 仅由
@@ -319,18 +374,22 @@ receipt 仍 committed、projectRoot 未变、focus 未变 —— 条件注入的
 - **条件纳入**:NotebookEdit / 其他 Notebook 写工具 —— 仅 probe 证明该工具名在装机版暴露才纳入。
 - **完全排除**:Bash mutation。Bash command 分类会重引入整套信任边界(a177 command-verifier
   之战),不进第一版关键路径。MVP 不追求虚假的"完全禁止变更",只可靠封住主编辑路径。
-- **恢复命令按平台生成(P0-4)**:adapter 依当前平台产出**完整可复制执行**命令:
+- **恢复命令按执行 shell 生成,非按 OS(P0-3 更正)**:恢复命令由 Claude 的 **Bash 工具**执行,
+  而 win32 上 Claude Code 的 Bash 工具**不是** CMD/PowerShell —— `.\.evo-lite\mem.cmd`(反斜杠
+  CMD 路径语法)不等于 Bash 可执行语法。因此默认采用 **shell-neutral 的 node 入口**,在
+  Windows/POSIX 的 Bash 下均一致可跑:
 
 ```text
-win32:  .\.evo-lite\mem.cmd bootstrap --receipt --host claude-code --session-id <id> --source manual-recovery --json
-posix:  ./.evo-lite/mem     bootstrap --receipt --host claude-code --session-id <id> --source manual-recovery --json
+node .evo-lite/cli/memory.js bootstrap --receipt --host claude-code --session-id '<escaped>' --source manual-recovery --json
 ```
 
-  - sessionId 安全引用;deny reason 内命令逐字可跑;
-  - PreToolUse deny 时 adapter 掌握 hook input 的 `session_id`/`cwd` → 填入真实值;
-  - 测试同覆盖 win32 与 POSIX 命令串。
-  - 流程:Edit 被 deny → reason 给精确恢复命令 → Agent 经 Bash 执行 → canonical builder 生成
-    payload + 提交事务写匹配 sessionId/projectRoot 的 committed receipt → 再次 Edit 放行。
+  - `.evo-lite/cli/memory.js` 是运行时镜像(子仓中即此路径);sessionId 按 **Bash** 引用规则转义(非 OS);
+  - PreToolUse deny 时 adapter 掌握 hook input 的 `session_id`/`cwd` → 填入真实值,reason 内逐字可跑;
+  - 若坚持用 wrapper,必须先 probe:Claude Code Bash 在 Windows 用何 shell、`.cmd` 以何路径语法执行、
+    sessionId 按该 shell(非 OS)引用 —— echo-harness 提供恢复命令**实际经 Bash 工具执行成功**的证据;
+  - 测试断言恢复命令字符串在 Bash 语义下合法且可逐字执行(win32 + posix)。
+  - 流程:Edit 被 deny → reason 给精确恢复命令 → Agent 经 Bash 执行 → CLI recovery transport 生成
+    payload + ordered publication 写匹配 sessionId/projectRoot 的 committed receipt → 再次 Edit 放行。
 
 ---
 
@@ -358,8 +417,9 @@ posix:  ./.evo-lite/mem     bootstrap --receipt --host claude-code --session-id 
 
 ## 9. 组件与文件结构(严格模块边界,P0-2 / P1-3 / P1-4)
 
-- **Create `templates/cli/takeover-payload.js`** —— **纯函数** `buildTakeoverPayload({mode,context,budget})`
-  + capsule 投影 + 1 KiB 预算/裁剪。**无 IO、无 env、无 hook input**;session-only 依赖 lazy require。
+- **Create `templates/cli/takeover-payload.js`** —— **纯函数** `buildTakeoverPayload(context, budget)`
+  (context 为 Session/Refresh discriminated union,§3)+ capsule 投影 + 1 KiB 预算/裁剪。
+  **无 IO、无 env、无 hook input**;session-only 依赖由 adapter lazy 读后经 context 传入。
 - **Create `templates/cli/takeover-receipt.js`** —— receipt IO、schema 校验、硬/软有效性、
   `reconcile(...)`、提交事务发布、tombstone/unlink 失效事务、`canonicalProjectRoot()`。
 - **Create `templates/cli/takeover-adapter.js`** —— Claude Code 生命周期 hook 处理器
@@ -447,8 +507,16 @@ projectRoot 变化:      旧 receipt 立即视为 invalid
   覆盖失败回退 unlink。
 - `T-takeover-capsule-states`:四态映射;健康态无 action/refresh。
 - `T-takeover-guard`(阶段 2):Edit/Write deny on invalid;Read/Glob/Grep allow;Bash allow;
-  deny reason 含真实 session-id 的平台正确恢复命令(win32 + posix 双测)。
-- `T-takeover-recovery`:恢复命令经提交事务写匹配 committed receipt → 解锁。
+  deny reason 含真实 session-id 的 shell-neutral node 恢复命令。
+- `T-takeover-health-gate`(P0-1):committed receipt 在位但 active_context 不可读 / refresh 构建
+  失败 → Edit/Write 仍 deny(证明不只信持久化 receipt);失效文件写失败也 fail-closed。
+- `T-takeover-target-path`(P0-4):cwd=项目A、receipt=A committed,Edit 目标在项目B / `..` 逃逸 /
+  symlink/junction 逃逸 → deny;目标在 receipt.projectRoot 内(含新文件最近父目录 realpath)→ allow。
+- `T-takeover-transport`(P1-2):Hook transport 产出合法 hook envelope(hookSpecificOutput.
+  additionalContext);CLI recovery transport 产出普通 JSON/text(**非** hook envelope);二者均
+  "先写出 → 后发布 committed receipt",序列化失败 → 无 committed receipt。
+- `T-takeover-recovery`:`node .evo-lite/cli/memory.js bootstrap --receipt ...` 经 CLI recovery
+  transport 写匹配 committed receipt → 解锁;恢复命令串在 Bash 语义下合法(win32 + posix)。
 - `T-takeover-refresh-isolation`(不变量 6):memory.service/db/memory-index/zvec 加载即抛错时,
   refresh capsule 仍能生成。
 - `T-takeover-installer`(P1-4):deep-merge 保留未知字段 + 第三方 hooks;幂等(二次 install 无新增);
@@ -464,7 +532,7 @@ Agent Takeover Trigger Protocol MVP
   结构:      同一项目,两阶段、两个独立复审门
   主触发:    SessionStart 完整 payload 注入(提交事务)+ 可选事件优化(probe-gated)
   兜底触发:  UserPromptSubmit 每轮无条件极小 capsule(≤1 KiB additionalContext,状态反射)
-  真相源:    纯函数 builder buildTakeoverPayload({mode,context,budget})
+  真相源:    纯函数 builder buildTakeoverPayload(context, budget)(Session/Refresh discriminated context)
   receipt:   硬字段 state/host/sessionId/projectRoot;committed 才放行;degraded 真失效
   守卫:      Edit/Write deny-on-invalid;Read/Glob/Grep allow;Bash 排除
   恢复:      平台正确 mem 命令写 session-bound committed receipt(Bash 放行保证可自助)
