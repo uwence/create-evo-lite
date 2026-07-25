@@ -1,4 +1,4 @@
-# Agent Takeover Trigger Protocol Implementation Plan (R7)
+# Agent Takeover Trigger Protocol Implementation Plan (R8)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R6:R5 APPROVED 基线 + §0.1 宿主契约勘误)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218)。
 
-**计划 R1/R2/R3/R4/R5/R6 外部复审(5+5+4+4+3+2 个 P0)已折入**,逐条见文末《复审落点》。
+**计划 R1→R7 外部复审(5+5+4+4+3+2+2 个 P0)已折入**,逐条见文末《复审落点》。
 
 ## 已核实的代码事实(实现须以此为准,勿再猜测)
 
@@ -46,6 +46,8 @@
 - **宿主 transport 语义:结构化 hook JSON 必须 `exit 0`(R5 复审 P0-1,官方契约):** 文档明确 —— *"Exit 0 means success. Claude Code parses stdout for JSON output fields. **JSON output is only processed on exit 0.** Exit 2 … ignores stdout and any JSON in it"*,且 **exit 1 属非阻断错误,动作继续**。因此**凡是已成功序列化 hook envelope 的处理结果一律 `exitCode: 0`** —— 否则 degraded capsule / 恢复说明 / `systemMessage` 全被宿主丢弃,失败反而变成静默。失败状态改由**四个宿主可见的通道**表达:① `takeover-degraded` capsule;② `systemMessage`;③ **不发布 committed receipt**;④ PreToolUse 的 `permissionDecision:"deny"`。**仅**以下情形返回非零:JSON 序列化失败、stdout 写出失败、receipt ordered publication 失败、CLI recovery 失败(CLI 不是 hook,非零是正确信号)。handler 另返回 `failure:string|null` 供测试与 stderr 断言,**失败可观测性不依赖退出码**。
 - **hook 输出字符上限(官方):** `additionalContext`/`systemMessage`/裸 stdout 上限 **10,000 字符**,超出会被转存文件 + 预览替换。本设计 1 KiB capsule 预算远在其下,故无冲突;但**不得**据此放宽 1 KiB。
 - **emergency capsule 恒为合法预算内 JSON(不得退回裸文本):** `UserPromptSubmit` 任何失败(builder 抛错 / capsule 非法 / 根解析失败)都走 `buildEmergencyCapsule(input, budget)` —— **不依赖可能已失败的正常 builder**,复用同一套 UTF-8 裁剪,按固定阶梯降级(全量 → 去 `action` → 去 `focusHash` → 裁 `project` → 常量地板),**恒 ≤ 预算且恒过 `validateCapsule`**;恢复命令**只整条带上或整条省略,绝不截断**,省略时完整命令改由 hook 的 `systemMessage` 承载。adapter **禁止**任何"校验不过就发普通文本"的分支。
+- **守卫路径解析用 `lstat`,不用 `exists`:** `existsSync` 跟随链接,**断链 symlink/junction 会返回 false**,与"文件尚未创建"无法区分;若按后者退到父目录就会放行,而 Write 仍会沿链接写到项目外。向上查找必须用 `rc.pathEntryInfo`(lstat),**条目存在(含链接)即停并物理解析**,realpath 失败 → deny。
+- **受管 settings 唯一:** 本工具只写/删 `<canonicalProjectRoot>/.claude/settings.json` 及其**同目录、精确命名**的备份 `settings.json.attp-backup-<pid>-<12hex>`。`--settings` 可传但解析结果必须精确等于该受管文件;manifest 增 `kind`+`schemaVersion`,`sha256` 须 64 位十六进制。**"项目内 + 名字含 marker" 不构成授权** —— 否则被篡改的 manifest 能让 restore 覆盖、让 discard 删除项目内任意文件。
 - **守卫(阶段2):** Edit/Write allow ⟺ committed receipt + reconcile 非 degraded + **`buildTakeoverPayload(refresh)` → `validateCapsule` → 字节预算** 全过 + target-path 落 receipt.projectRoot 内;**target 缺失/非字符串/解析失败 → deny**。Read/Glob/Grep/Bash → allow;**MVP 守卫工具集仅 `Edit`/`Write`**。
 - **hook 启动命令与 probe 分层(本机 shell ≠ 宿主 shell):** 命令固定为 `node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"`。**安装闸只用与 shell 无关的两项**:`probeAdapterBinary`(直接 `process.execPath` 跑 adapter,产出 hook envelope)+ `verifyHookCommandShape`(静态断言命令引用受管 adapter 路径且 `$CLAUDE_PROJECT_DIR` 处于双引号内)。`probeHookCommand(projectRoot, {shell})` **降级为诊断,不作安装闸**,且**必须显式指定 shell**(`resolveHostShell()`:`CLAUDE_CODE_GIT_BASH_PATH` / `EVO_LITE_HOOK_SHELL` → win32 上的 Git Bash → 非 win32 的 `/bin/sh`);shell 不可发现时返回 `{ok:true, skipped:true}` —— **绝不因本机 OS shell 与 Claude 宿主 shell 不同而误拒装**。**宿主 transport 的权威证据只有 Step 9 的真实 `claude -p` dogfood**(宿主自己执行那条命令并观测 marker),不是本地 spawn。
 - **installer:** 幂等 deep-merge,保留未知字段/第三方 hooks;`install` 与 `status` 遇损坏 JSON **均 fail loudly、不覆盖、不静默降级**;probe 通过才 temp+rename 原子替换,失败保留原文件;正式 CLI `mem takeover install|status|rollback`。
@@ -451,6 +453,7 @@ EOF
   - `discoverProjectRoot(startDir)` → string(向上找最近含 `.evo-lite/` 的祖先;**找不到抛错**)
   - `canonicalProjectRoot(startDir?)` → string(**严格**:discover → realpath → win 规范化;discover 失败**或** realpath 失败**均抛错**,无任何 fail-open 兜底)
   - `evoLiteDir(projectRoot)`、`receiptPathFor(projectRoot, host, sessionId)`
+  - `pathEntryInfo(target)` → `{ exists, symbolicLink }`(**用 `lstat`**:断链 symlink 报 `exists:true`,与"尚不存在"严格区分;非 ENOENT 异常抛出)
   - `readFocusAnchor(projectRoot)` → `{ text, hash } | null`
   - `readMetaAnchor(projectRoot)` → `{ ok, reason, meta }`(**永不返回 `null`**;`meta` = `{headSha, upstreamSha, ahead, behind}`,非法数值归一为 `null`;`ok:false` 时 `reason` ∈ `active-context-unreadable|meta-anchor-missing|meta-anchor-malformed|meta-fields-invalid`,由 collector 记入 `degraded[]`)
   - `publishReceipt(projectRoot, receiptObj)`、`readReceipt(projectRoot, host, sessionId)`、`invalidateReceipt(...)`、`reconcile({projectRoot, host, sessionId})`
@@ -553,6 +556,19 @@ function canonicalProjectRoot(startDir) {
 // 守卫解析 target 时复用同一 fs seam(单一注入点,故障注入可分别覆盖 root 与 target)。
 function realpathStrict(p) { return fsOps.realpathSync(p); }   // 失败即抛,调用方 fail-closed
 function pathExists(p) { return fsOps.existsSync(p); }
+
+// existsSync 跟随链接:断链 symlink/junction 会返回 false,看起来跟"文件还没建"一模一样。
+// 守卫若按后者处理就会退到父目录并放行,而 Write 仍会沿链接写到项目外(R7 复审 P0-1)。
+// 这里用 lstat 区分二者:条目本身在不在,以及它是不是链接。
+function pathEntryInfo(target) {
+    try {
+        const st = fsOps.lstatSync(target);
+        return { exists: true, symbolicLink: st.isSymbolicLink() };
+    } catch (e) {
+        if (e && e.code === 'ENOENT') return { exists: false, symbolicLink: false };
+        throw e;   // 权限等异常不得当成"不存在"
+    }
+}
 
 function evoLiteDir(projectRoot) { return path.join(projectRoot, '.evo-lite'); }
 function receiptDir(projectRoot, host) { return path.join(evoLiteDir(projectRoot), 'generated', 'takeover', 'receipts', host); }
@@ -669,7 +685,7 @@ function reconcile({ projectRoot, host, sessionId }) {
 module.exports = {
     RECEIPT_SCHEMA_VERSION, discoverProjectRoot, canonicalProjectRoot, evoLiteDir, receiptPathFor,
     readFocusAnchor, readMetaAnchor, publishReceipt, readReceipt, invalidateReceipt, reconcile,
-    realpathStrict, pathExists, __setFsOps, __resetFsOps,
+    realpathStrict, pathExists, pathEntryInfo, __setFsOps, __resetFsOps,
 };
 ```
 
@@ -1658,8 +1674,9 @@ EOF
   - `resolveHostShell(env?)` → `{ ok, shell } | { ok:false, reason }`(`EVO_LITE_HOOK_SHELL` / `CLAUDE_CODE_GIT_BASH_PATH` → win32 Git Bash → 非 win32 `/bin/sh`)
   - `probeHookCommand(projectRoot, { shell?, resolveShell? })` → `{ ok, skipped, reason }`(在**显式指定的 POSIX shell** 下跑 `HOOK_COMMAND` 原文;shell 不可发现 → `{ok:true, skipped:true}`)
 - **事务化 settings**
-  - `resolveManagedSettingsPath(projectRoot, settingsPath, fsOps?)` → **验证过的绝对物理路径**(realpath 项目根;settings 存在则 realpath 自身,不存在则解析最近存在祖先再拼尾部;**损坏链接 / realpath 失败 / 物理落点在项目外一律抛错** —— 用户级 settings 超出 MVP 范围)
-  - `readBackupManifest(projectRoot, fsOps?)` → `manifest | null`(**读取即再验证**:schema + `settingsPath`/`backupPath` 物理归属 + 备份命名规则;任何一项不过即抛,不写不删)
+  - `resolveManagedSettingsPath(projectRoot, settingsPath, fsOps?)` → **验证过的绝对物理路径**(realpath 项目根;settings 存在则 realpath 自身,不存在则解析最近存在祖先再拼尾部;**损坏链接 / realpath 失败 / 物理落点在项目外 / 不是 `<root>/.claude/settings.json` 本身 → 一律抛错**。`--settings` 仍可传,但解析结果必须精确等于该受管文件;用户级 settings 超出 MVP 范围)
+  - `resolveManagedBackupPath(managedSettings, backupPath, fsOps?)` → 绝对路径(必须是受管 settings 的**同目录兄弟**、文件名精确匹配 `settings.json.attp-backup-<pid>-<12hex>`、且自身不是链接)
+  - `readBackupManifest(projectRoot, fsOps?)` → `manifest | null`(**读取即再验证**:`kind`+`schemaVersion`+`sha256` 为 64 位十六进制 + `settingsPath` **恒等于受管文件** + `backupPath` 过兄弟/命名/非链接三关;任何一项不过即抛,**不写不删**)
   - `backupSettings(settingsPath, { projectRoot, fsOps? })` → `{ existed, backupPath, sha256, manifestPath }`(**备份失败即抛**;manifest 已存在即抛)
   - `restoreSettings({ projectRoot, fsOps? })` → `{ restored }`(`existed` → 按 sha256 校验后恢复**原始字节**;否则仅删除新建文件)
   - `discardBackup({ projectRoot, fsOps? })` → `{ discarded }`(阶段门通过后清理备份文件 + manifest,**不触碰当前 settings**)
@@ -1731,24 +1748,30 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     const skipped = ti.probeHookCommand(fakeProject, { resolveShell: () => ({ ok: false, reason: 'none found' }) });
     assert.strictEqual(skipped.ok, true); assert.strictEqual(skipped.skipped, true, 'undiscoverable shell → skipped, not failed');
 
-    // settings 必须落在项目内(相对路径绑 canonical root;项目外路径明确拒绝)
-    assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'),
-        path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json'), 'relative settings bind to the physical project root');
+    // 受管对象唯一:<canonicalProjectRoot>/.claude/settings.json —— 项目内的其他文件也不许被本工具触碰
+    const managed = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
+    assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'), managed,
+        'relative settings bind to the physical project root');
+    assert.strictEqual(ti.managedSettingsPath(fakeProject), managed, 'managed path is derived, not supplied');
     assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, path.join(dir, 'outside.json')),
         /outside the project root/i, 'settings outside the project are rejected, not silently accepted');
+    assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, '.claude/other.json'),
+        /only .* is managed/i, 'another in-project file is not the managed settings file');
+    assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, 'src/victim.js'),
+        /only .* is managed/i, 'arbitrary in-project paths are rejected too');
 
     fs.mkdirSync(path.join(fakeProject, '.claude'), { recursive: true });
-    const corrupt = path.join(fakeProject, '.claude', 'corrupt.json');
-    fs.writeFileSync(corrupt, '{ not json', 'utf8');
-    assert.throws(() => ti.installTakeoverHooks(corrupt, { events: ['SessionStart'], projectRoot: fakeProject }), /corrupt|JSON/i, 'install throws on corrupt');
-    assert.strictEqual(fs.readFileSync(corrupt, 'utf8'), '{ not json', 'corrupt file unchanged');
-    assert.throws(() => ti.statusTakeoverHooks(corrupt, ['SessionStart']), /corrupt|JSON/i, 'status throws on corrupt (no silent all-missing)');
+    fs.writeFileSync(managed, '{ not json', 'utf8');
+    assert.throws(() => ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart'], projectRoot: fakeProject }), /corrupt|JSON/i, 'install throws on corrupt');
+    assert.strictEqual(fs.readFileSync(managed, 'utf8'), '{ not json', 'corrupt file unchanged');
+    assert.throws(() => ti.statusTakeoverHooks(managed, ['SessionStart']), /corrupt|JSON/i, 'status throws on corrupt (no silent all-missing)');
+    fs.rmSync(managed, { force: true });
 
     // 正常安装(假项目)→ 写入且幂等
-    const good = path.join(fakeProject, '.claude', 'good.json');
-    assert.strictEqual(ti.installTakeoverHooks(good, { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, true);
-    assert.strictEqual(ti.installTakeoverHooks(good, { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, false, 'second install is a no-op');
-    assert.deepStrictEqual(ti.statusTakeoverHooks(good, ['SessionStart', 'UserPromptSubmit', 'PreToolUse']).missing, ['PreToolUse']);
+    assert.strictEqual(ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, true);
+    assert.strictEqual(ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, false, 'second install is a no-op');
+    assert.deepStrictEqual(ti.statusTakeoverHooks(managed, ['SessionStart', 'UserPromptSubmit', 'PreToolUse']).missing, ['PreToolUse']);
+    fs.rmSync(managed, { force: true });
 
     // 闸不过 → 不写 settings(用一个没有 adapter 的项目,settings 仍落在该项目内)
     const badProject = path.join(dir, 'no adapter project');
@@ -1771,6 +1794,18 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: brokenFs }),
         /backup does not match|unreadable/i, 'backup verification failure stops the transaction');
     assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched when backup fails');
+    // 半成品备份必须清掉:否则用户仓库里会留下一份含 settings 原文的孤儿副本(R7 复审 P1-2)
+    const orphans = () => fs.readdirSync(path.dirname(txSettings))
+        .filter(name => name.startsWith(`${path.basename(txSettings)}.attp-backup-`));
+    assert.deepStrictEqual(orphans(), [], 'no orphaned backup left after a failed verification');
+    // manifest 写入失败同样要清掉已写的备份
+    const manifestFail = { ...fs,
+        writeFileSync: (target, ...rest) => {
+            if (path.resolve(String(target)) === path.resolve(ti.backupManifestPath(txProject))) throw new Error('manifest write fail');
+            return fs.writeFileSync(target, ...rest);
+        } };
+    assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: manifestFail }), /manifest write fail/);
+    assert.deepStrictEqual(orphans(), [], 'no orphaned backup left when the manifest write fails');
 
     // 正常:备份 → 安装 → 回滚恢复原始字节
     const bk = ti.backupSettings(txSettings, { projectRoot: txProject });
@@ -1857,7 +1892,10 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
             /outside the project root/i, 'install refuses to write through the link');
         assert.strictEqual(fs.readFileSync(outsideSettings, 'utf8'), '{"user":"level"}\n', 'the out-of-project file is untouched');
         assert.strictEqual(fs.existsSync(ti.backupManifestPath(linkProject)), false, 'no manifest created when the path is rejected');
-        assert.strictEqual(fs.existsSync(`${outsideSettings}.attp-backup`), false, 'no backup created outside the project');
+        // 备份名带 pid+随机后缀,固定串断言查不出泄漏 —— 必须扫目录(R7 复审 P1-1)
+        const leaked = fs.readdirSync(path.dirname(outsideSettings))
+            .filter(name => name.startsWith(`${path.basename(outsideSettings)}.attp-backup-`));
+        assert.deepStrictEqual(leaked, [], 'no backup file leaked outside the project');
     } else {
         assert.strictEqual(process.platform, 'win32', 'symlink creation may only be skipped on win32 without privilege');
         console.log('   ⏭️ settings symlink-escape case skipped (win32 without symlink privilege)');
@@ -1871,9 +1909,31 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     rewrite({ settingsPath: outsideSettings });
     assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /outside the project root/i, 'tampered settingsPath is rejected');
     rewrite({ settingsPath: txSettings, backupPath: outsideSettings });
-    assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /outside the project root/i, 'tampered backupPath is rejected');
+    assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /sibling|managed naming rule/i, 'tampered backupPath is rejected');
     rewrite({ backupPath: path.join(txProject, '.claude', 'not-a-managed-backup') });
     assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /managed naming rule/i, 'in-project but unmanaged backup path is rejected');
+
+    // ── 项目【内】任意文件同样不得被破坏(R7 复审 P0-2 的两个反例)──
+    const victimDir = path.join(txProject, 'src'); fs.mkdirSync(victimDir, { recursive: true });
+    const victim = path.join(victimDir, 'important.js');
+    fs.writeFileSync(victim, 'const keep = 1;\n', 'utf8');
+    rewrite({ settingsPath: victim, existed: false, backupPath: null, sha256: null });
+    assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /only .* is managed/i,
+        'a manifest pointing at an in-project source file cannot make restore delete it');
+    assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'const keep = 1;\n', 'victim file untouched');
+    // 伪装成受管备份的项目内文件:名字"含 marker"不够,必须是 settings 的同目录兄弟且精确命名
+    const fakeBackup = path.join(victimDir, 'important.attp-backup-data');
+    fs.writeFileSync(fakeBackup, 'disguised\n', 'utf8');
+    rewrite({ settingsPath: txSettings, existed: true, backupPath: fakeBackup, sha256: 'a'.repeat(64) });
+    assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /sibling|managed naming rule/i,
+        'a disguised in-project backup path is rejected');
+    assert.strictEqual(fs.existsSync(fakeBackup), true, 'disguised file still exists');
+    // sha256 必须是 64 位十六进制
+    rewrite({ settingsPath: txSettings, existed: true, backupPath: tampered.backupPath, sha256: 'nope' });
+    assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /schema validation/i, 'sha256 shape is enforced');
+    // kind / schemaVersion 必须存在
+    fs.writeFileSync(tampered.manifestPath, JSON.stringify({ settingsPath: txSettings, existed: false, backupPath: null, sha256: null }), 'utf8');
+    assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /schema validation/i, 'kind/schemaVersion are required');
     fs.writeFileSync(tampered.manifestPath, '{ not json', 'utf8');
     assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /manifest is corrupt/i, 'corrupt manifest fails loud');
     fs.writeFileSync(tampered.manifestPath, JSON.stringify({ settingsPath: txSettings }), 'utf8');
@@ -2022,8 +2082,37 @@ function realpathOrThrow(fsOps, target) {
     catch (e) { throw new Error(`takeover: cannot resolve ${target} (${e.message}); refusing to touch settings`); }
 }
 
+// 受管对象【唯一】:<canonicalProjectRoot>/.claude/settings.json。
+// 只做"项目内 + 名字含 marker"的校验不够 —— 被篡改的 manifest 仍能指向项目内任意文件,
+// 让 restore 覆盖、让 discard 删除它(R7 复审 P0-2)。所以身份必须精确到单个文件。
+const MANAGED_SETTINGS_RELATIVE = path.join('.claude', 'settings.json');
+const MANIFEST_KIND = 'attp-settings-backup';
+const MANIFEST_SCHEMA_VERSION = 1;
+const BACKUP_NAME_RE = /^settings\.json\.attp-backup-\d+-[0-9a-f]{12}$/;
+const SHA256_RE = /^[0-9a-f]{64}$/;
+
+function managedSettingsPath(projectRoot, fsOps = fs) {
+    return path.join(realpathOrThrow(fsOps, projectRoot), MANAGED_SETTINGS_RELATIVE);
+}
+
+// backup 必须是受管 settings 的【同目录兄弟】,且文件名精确匹配生成规则;
+// 若该路径已存在且是链接,同样拒绝(否则 discard 会顺链删掉别的文件)。
+function resolveManagedBackupPath(managedSettings, backupPathInput, fsOps = fs) {
+    const abs = path.resolve(String(backupPathInput));
+    if (normPath(path.dirname(abs)) !== normPath(path.dirname(managedSettings))) {
+        throw new Error(`takeover: backup must be a sibling of the managed settings file; got ${abs}`);
+    }
+    if (!BACKUP_NAME_RE.test(path.basename(abs))) {
+        throw new Error(`takeover: backup path does not follow the managed naming rule: ${abs}`);
+    }
+    if (fsOps.existsSync(abs) && normPath(realpathOrThrow(fsOps, abs)) !== normPath(abs)) {
+        throw new Error(`takeover: backup path is a link; refusing to touch it: ${abs}`);
+    }
+    return abs;
+}
+
 // 返回【验证过的绝对物理路径】。存在则直接 realpath;不存在则解析最近存在祖先再拼回尾部。
-// 损坏 symlink / realpath 失败 / 物理落点在项目外 → 一律抛错,绝不写也绝不删。
+// 损坏 symlink / realpath 失败 / 物理落点在项目外 / 不是那个受管文件 → 一律抛错,绝不写也绝不删。
 function resolveManagedSettingsPath(projectRoot, settingsPath, fsOps = fs) {
     const canonRoot = normPath(realpathOrThrow(fsOps, projectRoot));
     const abs = path.isAbsolute(settingsPath) ? path.resolve(settingsPath) : path.resolve(projectRoot, settingsPath);
@@ -2046,7 +2135,12 @@ function resolveManagedSettingsPath(projectRoot, settingsPath, fsOps = fs) {
     if (!(target === canonRoot || target.startsWith(canonRoot + '/'))) {
         throw new Error(`takeover: --settings resolves outside the project root (${canonRoot}); got ${physical}. User-level settings are out of MVP scope.`);
     }
-    return physical;
+    // 身份精确到单个受管文件:项目内的其他文件同样不得被本工具写入或删除。
+    const managed = path.join(canonRoot, MANAGED_SETTINGS_RELATIVE);
+    if (normPath(physical) !== normPath(managed)) {
+        throw new Error(`takeover: only ${managed} is managed; got ${physical}`);
+    }
+    return managed;
 }
 
 // manifest 读取即再验证:损坏或被篡改的 manifest 不得让 rollback/discard 触碰项目外文件。
@@ -2057,17 +2151,15 @@ function readBackupManifest(projectRoot, fsOps = fs) {
     try { raw = JSON.parse(fsOps.readFileSync(manifestPath, 'utf8')); }
     catch (e) { throw new Error(`takeover: settings backup manifest is corrupt (${e.message}); refusing to touch settings`); }
     const okShape = raw && typeof raw === 'object' && !Array.isArray(raw)
+        && raw.kind === MANIFEST_KIND && raw.schemaVersion === MANIFEST_SCHEMA_VERSION
         && typeof raw.settingsPath === 'string' && typeof raw.existed === 'boolean'
-        && (!raw.existed || (typeof raw.backupPath === 'string' && typeof raw.sha256 === 'string'));
+        && (raw.existed
+            ? (typeof raw.backupPath === 'string' && typeof raw.sha256 === 'string' && SHA256_RE.test(raw.sha256))
+            : (raw.backupPath === null && raw.sha256 === null));
     if (!okShape) throw new Error('takeover: settings backup manifest failed schema validation; refusing to touch settings');
+    // settingsPath 必须【就是】那个受管文件 —— 项目内任意其他文件也不许被 restore 覆盖或被 discard 删除
     const settingsPath = resolveManagedSettingsPath(projectRoot, raw.settingsPath, fsOps);
-    let backupPath = null;
-    if (raw.existed) {
-        backupPath = resolveManagedSettingsPath(projectRoot, raw.backupPath, fsOps);
-        if (!path.basename(backupPath).includes('.attp-backup-')) {
-            throw new Error(`takeover: backup path does not follow the managed naming rule: ${backupPath}`);
-        }
-    }
+    const backupPath = raw.existed ? resolveManagedBackupPath(settingsPath, raw.backupPath, fsOps) : null;
     return { ...raw, settingsPath, backupPath, manifestPath };
 }
 
@@ -2087,18 +2179,33 @@ function backupSettings(settingsPathInput, { projectRoot, fsOps = fs } = {}) {
     fsOps.mkdirSync(path.dirname(manifestPath), { recursive: true });
     let manifest;
     if (!fsOps.existsSync(settingsPath)) {
-        manifest = { settingsPath, existed: false, backupPath: null, sha256: null };
+        manifest = { kind: MANIFEST_KIND, schemaVersion: MANIFEST_SCHEMA_VERSION,
+            settingsPath, existed: false, backupPath: null, sha256: null };
     } else {
         const original = fsOps.readFileSync(settingsPath);                       // Buffer:按字节,不经编码转换
         const backupPath = `${settingsPath}.attp-backup-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
-        fsOps.writeFileSync(backupPath, original);
-        let readback;
-        try { readback = fsOps.readFileSync(backupPath); }
-        catch (e) { throw new Error(`takeover: settings backup unreadable after write (${e.message}); refusing to install`); }
-        if (!Buffer.isBuffer(readback) || !readback.equals(original)) {
-            throw new Error('takeover: settings backup does not match the original bytes; refusing to install');
-        }
-        manifest = { settingsPath, existed: true, backupPath, sha256: sha256(original) };
+        // 备份未提交(manifest 未写成)前的任何失败都要清掉半成品 —— 否则会在用户仓库里
+        // 遗留一份含 settings 原始内容的孤儿副本(R7 复审 P1-2)。
+        const abortBackup = (err) => {
+            let cleanup = '';
+            try { if (fsOps.existsSync(backupPath)) fsOps.unlinkSync(backupPath); }
+            catch (e2) { cleanup = ` (orphaned backup left at ${backupPath}: ${e2.message})`; }
+            throw new Error(`${err.message}${cleanup}`);
+        };
+        try {
+            fsOps.writeFileSync(backupPath, original);
+            let readback;
+            try { readback = fsOps.readFileSync(backupPath); }
+            catch (e) { throw new Error(`takeover: settings backup unreadable after write (${e.message}); refusing to install`); }
+            if (!Buffer.isBuffer(readback) || !readback.equals(original)) {
+                throw new Error('takeover: settings backup does not match the original bytes; refusing to install');
+            }
+        } catch (e) { abortBackup(e); }
+        manifest = { kind: MANIFEST_KIND, schemaVersion: MANIFEST_SCHEMA_VERSION,
+            settingsPath, existed: true, backupPath, sha256: sha256(original) };
+        try { fsOps.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8'); }
+        catch (e) { abortBackup(e); }                                            // manifest 写失败 → 备份也不留
+        return { ...manifest, manifestPath };
     }
     fsOps.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
     return { ...manifest, manifestPath };
@@ -2173,7 +2280,8 @@ function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
 
 module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedGroup,
     mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
-    resolveManagedSettingsPath, backupManifestPath, readBackupManifest, backupSettings, restoreSettings,
+    MANAGED_SETTINGS_RELATIVE, managedSettingsPath, resolveManagedSettingsPath, resolveManagedBackupPath,
+    backupManifestPath, readBackupManifest, backupSettings, restoreSettings,
     discardBackup, installWithBackup, installTakeoverHooks, statusTakeoverHooks };
 ```
 
@@ -2463,9 +2571,19 @@ function guardWrite(input, deps) {
         return ptu('deny', `[evo-lite] cannot determine target path; refusing write. ${recovery}`);
     }
     const abs = path.isAbsolute(target) ? target : path.resolve(projectRoot, target);
+    // 向上找最近【条目存在】的一层。注意用 lstat 而非 exists:断链 symlink 的 exists 为 false,
+    // 若按"还没建的文件"跳过它退到父目录,守卫就会放行,而 Write 会沿链接写到项目外(R7 复审 P0-1)。
     let probe = abs;
-    while (!rc.pathExists(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
-    // 最近存在祖先的 realpath 失败(权限/损坏 symlink/不可解析 junction)→ deny。
+    for (;;) {
+        let info;
+        try { info = rc.pathEntryInfo(probe); }
+        catch (e) { return ptu('deny', `[evo-lite] cannot stat '${probe}' (${e.message}); refusing write.`); }
+        if (info.exists) break;                      // 含"存在的链接",下面必须物理解析它
+        const parent = path.dirname(probe);
+        if (parent === probe) return ptu('deny', `[evo-lite] no existing ancestor for '${target}'; refusing write.`);
+        probe = parent;
+    }
+    // 最近存在条目的 realpath 失败(权限/断链/不可解析 junction)→ deny。
     // 未经解析的字符串做 containment 判断,正是 symlink 逃逸能绕过守卫的原因(R4 复审 P0-2 ③)。
     try { probe = rc.realpathStrict(probe); }
     catch (e) { return ptu('deny', `[evo-lite] cannot resolve target '${target}' (${e.message}); refusing write.`); }
@@ -2505,6 +2623,26 @@ console.log('T-takeover-target-path. cross-project / .. escape / symlink escape 
     catch (_) { try { fs.symlinkSync(other, link, 'dir'); linked = true; } catch (_) { linked = false; } }
     if (linked) {
         assert.strictEqual(await dec({ file_path: path.join(link, 'x.js') }), 'deny', 'symlink/junction escape deny');
+
+        // 断链逃逸(R7 复审 P0-1):目标【尚不存在】的链接,existsSync 为 false,
+        // 但 Write 仍会沿链接在项目外创建文件 —— 必须 deny,且不得真的产生该文件。
+        const missingOutside = path.join(other, 'new-file.js');
+        const broken = path.join(root, 'broken-link.js');
+        let brokenMade = false;
+        try { fs.symlinkSync(missingOutside, broken, 'file'); brokenMade = true; } catch (_) { brokenMade = false; }
+        if (brokenMade) {
+            assert.strictEqual(fs.existsSync(broken), false, 'a dangling link reads as "does not exist" — the exact trap');
+            assert.strictEqual(await dec({ file_path: broken }), 'deny', 'dangling symlink target → deny (not treated as a new file)');
+            assert.strictEqual(fs.existsSync(missingOutside), false, 'nothing was created outside the project');
+        }
+        // 中间目录断链:project/link-dir → other/missing-dir
+        const brokenDir = path.join(root, 'link-dir');
+        let brokenDirMade = false;
+        try { fs.symlinkSync(path.join(other, 'missing-dir'), brokenDir, 'junction'); brokenDirMade = true; }
+        catch (_) { try { fs.symlinkSync(path.join(other, 'missing-dir'), brokenDir, 'dir'); brokenDirMade = true; } catch (_) { brokenDirMade = false; } }
+        if (brokenDirMade) {
+            assert.strictEqual(await dec({ file_path: path.join(brokenDir, 'a.js') }), 'deny', 'dangling directory link → deny');
+        }
     } else {
         assert.strictEqual(process.platform, 'win32', 'symlink creation may only be skipped on win32 without privilege');
         console.log('   ⏭️ symlink escape case skipped (win32 without symlink privilege)');
@@ -2698,7 +2836,7 @@ EOF
 
 ---
 
-## 复审落点(计划 R1 → R6)
+## 复审落点(计划 R1 → R7)
 
 | 编号 | 问题 | 落点 |
 |---|---|---|
@@ -2741,6 +2879,11 @@ EOF
 | R6 P1-2 | stderr 诊断未统一覆盖所有 handler | 诊断出口收敛到 `main()`:`if (out.failure) reportError(...)`;`emergencyResult` 内的 `reportError` 删除以免重复。`reconcile` 判 degraded/stale 属**治理状态而非 handler 故障** → `failure` 保持 `null`,但 UPS 为其补 `systemMessage`,并在代码注释中把这条规则写死 |
 | R6 P1-3 | probe 未真正校验 capsule schema | `takeover-install.js` 直接 `require('./takeover-payload')` 并调 **`validateCapsule(capsule, CAPSULE_BUDGET_BYTES)`**;安装闸 = envelope 合法 ∧ capsule 合法 ∧ ≤1 KiB ∧ 非 degraded。新增用例:`{evoLite:"takeover-stale"}` 这种残缺 capsule 必须以 `capsule invalid` 拒装 |
 | R6 P1-4 | AggregateError 分支无测试 | `installTakeoverHooks` 增 `fsOps` 注入并贯穿 `readSettingsStrict`/`mkdir`/`write`/`rename`;测试注入「rename 必失败 + 写回 settings 本体必失败」制造双失败,断言 `AggregateError`、`errors.length===2`、错误顺序(install 在前、rollback 在后)、message 含 manifest 绝对路径、manifest 与 backup **保留**供人工恢复 |
+
+| R7 P0-1 | 守卫可被**断链 symlink** 绕过:`existsSync` 对断链返回 false,守卫当成"文件还没建"退到项目根后 allow,Write 却沿链接写到项目外 | `takeover-receipt.js` 增 `pathEntryInfo(target)`(**lstat**:`{exists, symbolicLink}`;ENOENT → 不存在,其他异常抛出)。守卫向上查找改为逐级 `pathEntryInfo`,**条目存在(含链接)即停**并 `realpathStrict`,realpath 失败 / 无存在祖先 / stat 异常 → 一律 deny。新增两例:`project/broken-link.js → outside/new-file.js`(先断言 `existsSync` 为 false 以固化该陷阱)→ deny 且**项目外文件未被创建**;中间目录断链 `project/link-dir → outside/missing-dir` 写 `link-dir/a.js` → deny |
+| R7 P0-2 | 篡改 manifest 仍可覆盖/删除**项目内任意文件**("项目内 + 名字含 marker"不构成授权) | 受管对象锁死为**唯一**文件 `<canonicalProjectRoot>/.claude/settings.json`:`resolveManagedSettingsPath` 末尾追加**恒等判定**,项目内其他路径(`src/victim.js`、`.claude/other.json`)一律拒。备份改由 `resolveManagedBackupPath` 判定:必须是受管 settings 的**同目录兄弟** ∧ 文件名精确匹配 `settings\.json\.attp-backup-\d+-[0-9a-f]{12}` ∧ **自身不是链接**。manifest 增 `kind`/`schemaVersion`,`sha256` 须 `[0-9a-f]{64}`,`existed:false` 时 `backupPath`/`sha256` 必须为 `null`。新增破坏性回归:manifest 指向 `src/important.js` → restore 抛 `only … is managed` 且文件字节不变;伪装文件 `src/important.attp-backup-data` → discard 抛且文件仍在;另加 sha256 形状、缺 `kind`/`schemaVersion` 两例 |
+| R7 P1-1 | symlink 用例用固定串断言备份泄漏,查不出真实随机名 | 改为**扫描目录**:`readdirSync(dirname).filter(n => n.startsWith(basename + '.attp-backup-'))` 必须为空 |
+| R7 P1-2 | 备份中途失败遗留孤儿备份文件(含用户 settings 原文) | `backupSettings` 内 `abortBackup(err)`:manifest **提交前**的任何失败(写入、回读不一致、manifest 写失败)都先删掉半成品备份;清理也失败时把孤儿路径写进错误信息供人工处理。新增两例:校验失败与 manifest 写失败后目录中均无 `*.attp-backup-*` |
 
 ## 附:实现期须复核的开放点(非阻断)
 
