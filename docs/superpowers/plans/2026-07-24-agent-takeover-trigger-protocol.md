@@ -1,4 +1,4 @@
-# Agent Takeover Trigger Protocol Implementation Plan (R10)
+# Agent Takeover Trigger Protocol Implementation Plan (R11)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R6:R5 APPROVED 基线 + §0.1 宿主契约勘误)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218)。
 
-**计划 R1→R9 外部复审(5+5+4+4+3+2+2+1+2 个 P0)已折入**,逐条见文末《复审落点》。
+**计划 R1→R10 外部复审(累计 28 个 P0)已折入**,逐条见文末《复审落点》。
 
 ## 已核实的代码事实(实现须以此为准,勿再猜测)
 
@@ -1826,6 +1826,8 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     // 半成品备份必须清掉:否则用户仓库里会留下一份含 settings 原文的孤儿副本(R7 复审 P1-2)
     const orphans = () => fs.readdirSync(path.dirname(txSettings))
         .filter(name => name.startsWith(`${path.basename(txSettings)}.attp-backup-`));
+    const installerTemps = () => fs.readdirSync(path.dirname(txSettings))
+        .filter(name => name.startsWith(`${path.basename(txSettings)}.evo-tmp-`));
     assert.deepStrictEqual(orphans(), [], 'no orphaned backup left after a failed verification');
     // manifest 写入失败同样要清掉已写的备份(注意 manifest 现在先写 .tmp-,故按前缀注入)
     const manifestPathFor = ti.backupManifestPath(txProject);
@@ -1966,7 +1968,68 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'original settings still intact on disk');
     const stranded = ti.readBackupManifest(txProject);
     assert.ok(stranded && fs.existsSync(stranded.backupPath), 'manifest and backup kept for manual recovery');
+    // 备份与 manifest 是【故意】保留供人工恢复的;installer 的临时 settings 则不得残留
+    assert.deepStrictEqual(installerTemps(), [], 'no orphaned installer temp settings after the double failure');
     ti.discardBackup({ projectRoot: txProject });   // 测试自清理
+
+    // ── installer 临时 settings 的清理(R10 复审 P1-2)──
+    // 临时文件含合并后的完整 settings(可能带用户敏感字段),rename 失败必须清掉
+    fs.writeFileSync(txSettings, originalBytes, 'utf8');
+    const settingsRenameFail = { ...fs,
+        renameSync: (src, dst) => {
+            if (path.resolve(String(dst)) === path.resolve(txSettings)) throw new Error('settings rename fail');
+            return fs.renameSync(src, dst);
+        } };
+    assert.throws(() => ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: settingsRenameFail }),
+        /settings rename fail/, 'install surfaces the rename failure');
+    assert.deepStrictEqual(installerTemps(), [], 'the temp settings file is cleaned up on rename failure');
+    assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'original settings unchanged');
+    // rename 失败【且】清理也失败 → 两个错误都保留 + 报告孤儿路径
+    const tempStuck = { ...fs,
+        renameSync: (src, dst) => {
+            if (path.resolve(String(dst)) === path.resolve(txSettings)) throw new Error('settings rename fail');
+            return fs.renameSync(src, dst);
+        },
+        unlinkSync: (target) => {
+            if (path.basename(String(target)).includes('.evo-tmp-')) throw new Error('temp unlink fail');
+            return fs.unlinkSync(target);
+        } };
+    let installAgg = null;
+    try { ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: tempStuck }); }
+    catch (e) { installAgg = e; }
+    assert.ok(installAgg instanceof AggregateError, 'both failures preserved');
+    assert.strictEqual(installAgg.errors.length, 2);
+    assert.ok(/settings rename fail/.test(installAgg.errors[0].message));
+    assert.ok(/temp unlink fail/.test(installAgg.errors[1].message));
+    assert.ok(/evo-tmp-/.test(installAgg.message), 'message names the orphaned temp path');
+    for (const leftover of installerTemps()) fs.rmSync(path.join(path.dirname(txSettings), leftover), { force: true });
+
+    // backupSettings 的【公开边界】也必须保留错误结构:
+    // commitManifest 抛 AggregateError 时,abortBackup 不得把它压成普通 Error(R10 复审 P1-1)
+    const commitAndCleanupFail = { ...fs,
+        writeFileSync: (target, data, ...rest) => {
+            if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) {
+                return fs.writeFileSync(target, String(data).slice(0, 12), ...rest);   // 回读解析失败
+            }
+            return fs.writeFileSync(target, data, ...rest);
+        },
+        unlinkSync: (target) => {
+            if (path.basename(String(target)).startsWith(`${path.basename(manifestPathFor)}.tmp-`)) {
+                throw new Error('temp manifest unlink fail');
+            }
+            return fs.unlinkSync(target);
+        } };
+    let backupAgg = null;
+    try { ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: commitAndCleanupFail }); }
+    catch (e) { backupAgg = e; }
+    assert.ok(backupAgg instanceof AggregateError, 'backupSettings must not flatten the AggregateError');
+    assert.strictEqual(backupAgg.errors.length, 2, 'commit error and temp-cleanup error both preserved');
+    assert.ok(/read-back|not committed|JSON/i.test(backupAgg.errors[0].message), 'first error is the commit failure');
+    assert.ok(/temp manifest unlink fail/.test(backupAgg.errors[1].message), 'second error is the cleanup failure');
+    assert.ok(/\.tmp-/.test(backupAgg.message), 'message names the orphaned temp manifest path');
+    assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched');
+    for (const leftover of manifestArtifacts()) fs.rmSync(path.join(path.dirname(manifestPathFor), leftover), { force: true });
+    assert.deepStrictEqual(orphans(), [], 'the backup itself was still cleaned up');
 
     // ── 物理边界:.claude 是指向项目外的 symlink/junction 时必须拒装(R6 复审 P0-2)──
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-outside-'));
@@ -2333,13 +2396,20 @@ function backupSettings(settingsPathInput, { projectRoot, fsOps = fs } = {}) {
         const backupPath = `${settingsPath}.attp-backup-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
         // 备份未提交(manifest 未写成)前的任何失败都要清掉半成品 —— 否则会在用户仓库里
         // 遗留一份含 settings 原始内容的孤儿副本(R7 复审 P1-2)。
+        // 保留传入错误的【结构】:commitManifest 可能已抛 AggregateError([commitError, tempCleanupError]),
+        // 若在这里统一压成 new Error(message),公开 API backupSettings 的调用者就拿不到 errors[](R10 复审 P1-1)。
         const abortBackup = (err) => {
-            let cleanup = '';
+            const errors = err instanceof AggregateError ? [...err.errors] : [err];
+            let orphan = '';
             try { if (fsOps.existsSync(backupPath)) fsOps.unlinkSync(backupPath); }
-            catch (e2) { cleanup = ` (orphaned backup left at ${backupPath}: ${e2.message})`; }
+            catch (e2) { errors.push(e2); orphan += `; orphaned backup may remain at ${backupPath}`; }
             // rename 提交前 manifest 不该出现;万一出现也如实报告路径供人工处理
-            try { if (fsOps.existsSync(manifestPath)) cleanup += ` (stray manifest at ${manifestPath})`; } catch (_) { /* ignore */ }
-            throw new Error(`${err.message}${cleanup}`);
+            try { if (fsOps.existsSync(manifestPath)) orphan += `; stray manifest may remain at ${manifestPath}`; }
+            catch (_) { /* ignore */ }
+            if (err instanceof AggregateError || errors.length > 1) {
+                throw new AggregateError(errors, `${err.message}${orphan}`);
+            }
+            throw new Error(`${err.message}${orphan}`, { cause: err });
         };
         try {
             fsOps.writeFileSync(backupPath, original);
@@ -2409,9 +2479,22 @@ function installTakeoverHooks(settingsPathInput, { events, projectRoot, fsOps = 
     const merged = mergeHookConfig(existing, managedFragment(events));
     const serialized = JSON.stringify(merged, null, 2) + '\n';
     fsOps.mkdirSync(path.dirname(settingsPath), { recursive: true });
-    const tmp = `${settingsPath}.evo-tmp-${process.pid}`;
-    fsOps.writeFileSync(tmp, serialized, 'utf8');
-    fsOps.renameSync(tmp, settingsPath);                           // 原子替换
+    // 临时文件含【合并后的完整 settings】(可能带用户原有敏感字段),rename 失败必须清理,
+    // 否则会永久残留在仓库里,且不在 .gitignore 覆盖范围内(R10 复审 P1-2)。
+    const tmp = `${settingsPath}.evo-tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+    try {
+        fsOps.writeFileSync(tmp, serialized, 'utf8');
+        fsOps.renameSync(tmp, settingsPath);                       // 原子替换;此后不得再有可失败的业务操作
+    } catch (installError) {
+        let cleanupError = null;
+        try { if (fsOps.existsSync(tmp)) fsOps.unlinkSync(tmp); }
+        catch (e) { cleanupError = e; }
+        if (cleanupError) {
+            throw new AggregateError([installError, cleanupError],
+                `takeover install failed; orphaned temporary settings may remain at ${tmp}`);
+        }
+        throw installError;
+    }
     return { changed: JSON.stringify(merged) !== before };
 }
 
@@ -2523,6 +2606,7 @@ module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, is
 # ATTP — transactional settings backup (machine-local, never committed)
 .evo-lite/generated/takeover/settings-backup.json
 .claude/settings.json.attp-backup-*
+.claude/settings.json.evo-tmp-*
 ```
 
 - [ ] **Step 8: 语法自检 + 同步镜像 + 双运行零 + 全套件**
@@ -2991,7 +3075,7 @@ EOF
 
 ---
 
-## 复审落点(计划 R1 → R9)
+## 复审落点(计划 R1 → R10)
 
 | 编号 | 问题 | 落点 |
 |---|---|---|
@@ -3049,6 +3133,9 @@ EOF
 | R9 P0-2 | `commitManifest` 回读只比四字段,漏 `kind`/`schemaVersion` → 可能"提交成功"却发布出恢复路径拒收的 manifest | 抽出**共享** `validateBackupManifestShape(raw)`,写入侧(`commitManifest` 回读后)与消费侧(`readBackupManifest`)**共用同一判定**;另加 `manifestFingerprint()` 对**六个**承重字段做规范化投影比较,不再手写字段清单。新增两例:合法 JSON 但 `kind`/`schemaVersion` 被改写时必须**不提交**、不留 final/temp manifest、不留备份 |
 | R9 P1-1 | 临时 manifest 清理失败被静默吞掉 | 清理失败时抛 `AggregateError([commitError, cleanupError])`,message 明确给出孤儿临时 manifest 路径 |
 | R9 P1-2 | 缺 ordered publication 最后一步(rename)的独立回归 | 新增 destination-scoped 注入:temp 写成功 + 回读通过 + **rename 失败** → 无 final manifest、无 temp manifest、无备份、settings 字节不变,且随后一次干净备份仍成功 |
+
+| R10 P1-1 | `abortBackup` 把 `commitManifest` 的 `AggregateError` 压成普通 Error,公开 API `backupSettings` 丢失 `errors[]` | `abortBackup` 改为**保留错误结构**:入参是 `AggregateError` 则展开其 `errors`,备份清理失败再追加一条;`errors.length > 1` 或入参本身是 `AggregateError` → 抛 `AggregateError`,否则 `new Error(msg, { cause: err })`。孤儿路径改为"may remain at …"如实措辞。新增公开边界回归:manifest 回读失败 + temp unlink 失败 → `backupSettings` 抛 `AggregateError`、`errors[0]` 是 commit 失败、`errors[1]` 是清理失败、message 含 temp manifest 路径、settings 字节不变、备份本身仍被清掉 |
+| R10 P1-2 | installer 的临时 settings 在 rename 失败后永久残留(含合并后完整配置,且不在 gitignore 覆盖内) | `installTakeoverHooks` 的写入改为**带清理的有序提交**:temp 名加随机后缀,`try { write; rename } catch { 清理 temp }`;清理也失败 → 抛 `AggregateError([installError, cleanupError])` 并报告孤儿路径;**rename 成功后不再有可失败的业务操作**。`.gitignore` 另加 `.claude/settings.json.evo-tmp-*` 作纵深防御。新增两例(rename 失败 → temp 不存在、原字节不变;rename + unlink 双失败 → `AggregateError` 且 message 含 temp 路径),并在既有 install+rollback 双失败用例中补断言:除**故意保留**的 backup/manifest 外,不得残留 `.evo-tmp-*` |
 
 ## 附:实现期须复核的开放点(非阻断)
 
