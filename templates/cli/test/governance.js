@@ -7048,6 +7048,200 @@ async function runGovernanceTests() {
             console.log('✅ T-takeover-collector passed');
         }
 
+        console.log('T-takeover-adapter-session. establishment/refresh by receipt presence; validate before publish ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-ad-'));
+            const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+            fs.writeFileSync(path.join(ac, 'active_context.md'),
+                '<!-- BEGIN_META -->\n> headSha: abc\n> ahead: 0\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nFOCUS-A\n<!-- END_FOCUS -->\n', 'utf8');
+            const sid = 'sess-1';
+            const ts = require(path.join(TEMPLATE_CLI_DIR, 'takeover-session.js'));
+            const deps = { projectRoot: root, collect: (base) => ts.assembleSessionContext(base, {
+                summary: {}, sessionstart: { contextStatus: 'configured', architectureStatus: 'configured', activeTaskCount: 0, reminders: ['r'], warnings: [] },
+                verify: { hasAlerts: false, nextSteps: [] }, recall: { status: 'no-match' },
+                planSpec: { plan: null, spec: null }, freshness: { headSha: 'abc', ahead: 0, behind: 0 }, degraded: [] }) };
+
+            const r1 = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: sid, source: 'startup' }, deps);
+            assert.strictEqual(r1.exitCode, 0);
+            assert.ok(r1.json.hookSpecificOutput.additionalContext.includes('FOCUS-A'), 'establishment injects payload');
+            assert.strictEqual(typeof r1.publish, 'function', 'publish deferred (ordered publication)');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'missing', 'no receipt before transport');
+            assert.strictEqual(ad.executeHookTransport(r1.json, r1.publish, { write: () => {} }).exitCode, 0);
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'committed', 'committed after delivery');
+
+            // 已有 receipt → resume 仍走 refresh(不因 source 判定)
+            const r2 = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: sid, source: 'resume' }, deps);
+            ad.executeHookTransport(r2.json, r2.publish, { write: () => {} });
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'committed');
+
+            // payload 校验不过 → 不发布;但【exit 0】:非零会让宿主丢弃这段 degraded 上下文(R5 复审 P0-1)
+            const bad = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'bad', source: 'startup' },
+                { ...deps, buildPayload: () => ({ schemaVersion: 1 }) });
+            assert.strictEqual(bad.exitCode, 0, 'structured hook JSON must exit 0 or the host discards it');
+            assert.ok(bad.failure && /invalid/.test(bad.failure), 'failure is reported through the failure field, not the exit code');
+            assert.ok(bad.json.systemMessage, 'failure also surfaces via systemMessage');
+            assert.strictEqual(bad.publish, null, 'invalid payload → no publish');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 'bad').state, 'missing', 'invalid payload never yields committed receipt');
+
+            const up = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid }, deps);
+            assert.strictEqual(up.exitCode, 0);
+            assert.strictEqual(JSON.parse(up.json.hookSpecificOutput.additionalContext).evoLite, 'takeover-active');
+
+            // 坏 capsule(builder 被注入返回垃圾)→ validateCapsule 拦截 → emergency capsule,且【exit 0】
+            const badUp = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid },
+                { ...deps, buildPayload: () => ({ unexpected: true }) });
+            assert.strictEqual(badUp.exitCode, 0, 'emergency capsule must exit 0 or it is never ingested');
+            assert.ok(badUp.failure, 'failure still reported explicitly (failure field + systemMessage + stderr)');
+            const emergency = JSON.parse(badUp.json.hookSpecificOutput.additionalContext);
+            assert.strictEqual(emergency.evoLite, 'takeover-degraded', 'emergency capsule emitted');
+            assert.ok(/bootstrap --receipt/.test(emergency.action), 'emergency capsule carries recovery command');
+            assert.ok(emergency.action.includes(`--session-id '${sid}'`), 'recovery command carries the current session id');
+            const tp2 = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            assert.strictEqual(tp2.validateCapsule(emergency, tp2.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule itself is valid');
+
+            // 根不可 canonicalize(realpath 抛)→ UPS 仍必须产出【合法 JSON capsule】,绝不退回普通文本;
+            // SessionStart 则必须 fail-closed(**exit 0 + 不发布 receipt + failure 标记**),不得抛到 main 的通用错误路径。
+            rc.__setFsOps({ realpathSync: () => { throw new Error('EACCES'); } });
+            let rootFailUp, rootFailSs;
+            try {
+                rootFailUp = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid }, deps);
+                rootFailSs = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'rootfail', source: 'startup' }, deps);
+            } finally { rc.__resetFsOps(); }
+            assert.strictEqual(rootFailUp.exitCode, 0, 'root failure still exits 0 (host only parses JSON on exit 0)');
+            assert.ok(rootFailUp.failure, 'root failure reported via the failure field');
+            const rfCap = JSON.parse(rootFailUp.json.hookSpecificOutput.additionalContext); // 非 JSON 会在此抛
+            assert.strictEqual(tp2.validateCapsule(rfCap, tp2.CAPSULE_BUDGET_BYTES).ok, true, 'still a valid capsule, never plain text');
+            assert.ok(rfCap.action && rfCap.action.includes(`--session-id '${sid}'`), 'generic recovery command carries the session id');
+            assert.strictEqual(rootFailSs.exitCode, 0, 'SessionStart root failure exits 0 so the recovery text is ingested');
+            assert.ok(rootFailSs.failure, 'SessionStart root failure reported via the failure field');
+            assert.ok(/--session-id 'rootfail'/.test(rootFailSs.json.hookSpecificOutput.additionalContext),
+                'SessionStart recovery text carries the session id (runReceiptRecovery requires it)');
+            assert.strictEqual(rootFailSs.publish, null, 'no receipt when the root cannot be canonicalized');
+
+            // 无 session_id → 不得谎称可自动恢复
+            assert.strictEqual(ad.buildGenericRecoveryCommand(undefined), null, 'no session id → no recovery command');
+            assert.ok(/'sid'\\''q'/.test(ad.buildGenericRecoveryCommand("sid'q")), 'session id is bash-escaped');
+            const noSid = await ad.handleHookInput({ hook_event_name: 'SessionStart', source: 'startup' }, deps);
+            assert.ok(/Cannot auto-recover/i.test(JSON.stringify(noSid.json)), 'missing session id is stated, not papered over');
+
+            // 所有 UPS 失败模式的 additionalContext 都必须是预算内的合法 capsule(统一断言,防止新增分支漏网)
+            const failureModes = [
+                { label: 'builder-junk', d: { ...deps, buildPayload: () => ({ unexpected: true }) } },
+                { label: 'builder-throw', d: { ...deps, buildPayload: () => { throw new Error('boom'); } } },
+                { label: 'validator-reject', d: { ...deps, validateCapsule: () => ({ ok: false, errors: ['forced'] }) } },
+            ];
+            for (const mode of failureModes) {
+                const r = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid }, mode.d);
+                assert.strictEqual(r.exitCode, 0, `${mode.label} → exit 0 (host parses JSON only on exit 0)`);
+                assert.ok(r.failure, `${mode.label} → failure reported without relying on the exit code`);
+                const cap = JSON.parse(r.json.hookSpecificOutput.additionalContext);
+                assert.strictEqual(tp2.validateCapsule(cap, tp2.CAPSULE_BUDGET_BYTES).ok, true, `${mode.label} → valid capsule`);
+                assert.ok(Buffer.byteLength(r.json.hookSpecificOutput.additionalContext, 'utf8') <= tp2.CAPSULE_BUDGET_BYTES,
+                    `${mode.label} → within budget`);
+                assert.ok(typeof r.json.systemMessage === 'string' && r.json.systemMessage, `${mode.label} → systemMessage explains it`);
+            }
+            fs.rmSync(root, { recursive: true, force: true });
+            console.log('✅ T-takeover-adapter-session passed');
+        }
+
+        // 真实子进程:证明失败路径在【进程边界】上也满足宿主契约 —— exit 0 + stdout 只有合法 JSON。
+        // 官方契约:JSON only processed on exit 0;非零时这段 capsule 与 systemMessage 会被整体丢弃。
+        console.log('T-takeover-hook-exit-contract. failure paths exit 0 with JSON-only stdout ...');
+        {
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            const MODULES = ['takeover-adapter.js', 'takeover-payload.js', 'takeover-receipt.js', 'runtime.js'];
+            const runHook = (cliDir, runtimeRoot, input) => childProcess.spawnSync(process.execPath,
+                [path.join(cliDir, 'takeover-adapter.js')],
+                { input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, EVO_LITE_ROOT: runtimeRoot } });
+
+            // ① emergency 路径:向上找不到 .evo-lite → 根 canonicalization 失败
+            { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-exit-em-'));
+              const cli = path.join(dir, 'cli'); fs.mkdirSync(cli, { recursive: true });
+              for (const f of MODULES) fs.copyFileSync(path.join(TEMPLATE_CLI_DIR, f), path.join(cli, f));
+              const sub = runHook(cli, path.join(dir, 'runtime'), { hook_event_name: 'UserPromptSubmit', session_id: 'x1' });
+              assert.strictEqual(sub.status, 0, `emergency path must exit 0 (stderr: ${sub.stderr})`);
+              const cap = JSON.parse(JSON.parse(sub.stdout.trim()).hookSpecificOutput.additionalContext); // stdout 必须只有 JSON
+              assert.strictEqual(cap.evoLite, 'takeover-degraded', 'emergency capsule emitted across the process boundary');
+              assert.strictEqual(tp.validateCapsule(cap, tp.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule valid and <= 1 KiB');
+              assert.ok(cap.action && cap.action.includes(`--session-id 'x1'`), 'recovery command is executable');
+              assert.ok(/evo-lite takeover/.test(sub.stderr), 'diagnosis still reaches stderr (exit code no longer carries it)');
+              assert.strictEqual(fs.existsSync(path.join(dir, '.evo-lite')), false, 'no receipt tree fabricated');
+              fs.rmSync(dir, { recursive: true, force: true }); }
+
+            // ② degraded 路径:active_context 结构损坏 → 仍 exit 0,且不产生 committed receipt
+            { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-exit-dg-'));
+              const rt = path.join(root, '.evo-lite'); const cli = path.join(rt, 'cli');
+              fs.mkdirSync(cli, { recursive: true });
+              fs.writeFileSync(path.join(rt, 'active_context.md'), '# broken: no anchors at all\n', 'utf8');
+              for (const f of MODULES) fs.copyFileSync(path.join(TEMPLATE_CLI_DIR, f), path.join(cli, f));
+              const sub = runHook(cli, rt, { hook_event_name: 'UserPromptSubmit', session_id: 'x2' });
+              assert.strictEqual(sub.status, 0, `degraded path must exit 0 (stderr: ${sub.stderr})`);
+              const cap = JSON.parse(JSON.parse(sub.stdout.trim()).hookSpecificOutput.additionalContext);
+              assert.strictEqual(cap.evoLite, 'takeover-degraded', 'broken active_context yields a degraded capsule');
+              assert.strictEqual(tp.validateCapsule(cap, tp.CAPSULE_BUDGET_BYTES).ok, true, 'degraded capsule valid');
+              assert.strictEqual(rc.readReceipt(root, 'claude-code', 'x2').state, 'missing', 'no committed receipt on the degraded path');
+              fs.rmSync(root, { recursive: true, force: true }); }
+            console.log('✅ T-takeover-hook-exit-contract passed');
+        }
+
+        console.log('T-takeover-refresh-isolation. UserPromptSubmit must not load heavy deps ...');
+        {
+            const heavy = ['memory.service', 'db', 'memory-index', 'memory-index-zvec', 'takeover-session'];
+            const saved = {};
+            for (const m of heavy) {
+                const rp = require.resolve(path.join(TEMPLATE_CLI_DIR, m));
+                saved[rp] = require.cache[rp]; delete require.cache[rp];
+                require.cache[rp] = { id: rp, filename: rp, loaded: true, get exports() { throw new Error(`refresh loaded ${m}`); } };
+            }
+            try {
+                const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+                const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-iso-'));
+                const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+                fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+                const up = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: 's' }, { projectRoot: root });
+                assert.ok(up.json.hookSpecificOutput.additionalContext, 'refresh capsule without heavy deps');
+                fs.rmSync(root, { recursive: true, force: true });
+            } finally { for (const rp of Object.keys(saved)) { delete require.cache[rp]; if (saved[rp]) require.cache[rp] = saved[rp]; } }
+            console.log('✅ T-takeover-refresh-isolation passed');
+        }
+
+        console.log('T-takeover-transport-order. writeAllSync completeness; deliver-before-publish; failures not swallowed ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            // writeAllSync 完整写出(经真实 fd:临时文件)
+            const tmpFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-w-')), 'out.txt');
+            const fd = fs.openSync(tmpFile, 'w');
+            const big = '漢'.repeat(20000);
+            ad.writeAllSync(fd, big); fs.closeSync(fd);
+            assert.strictEqual(fs.readFileSync(tmpFile, 'utf8'), big, 'writeAllSync writes every byte');
+
+            // partial write:每次只写 3 字节也必须完整写出
+            { let sink = Buffer.alloc(0);
+              const partial = (_fd, buf, off, len) => { const n = Math.min(3, len); sink = Buffer.concat([sink, buf.slice(off, off + n)]); return n; };
+              ad.writeAllSync(1, 'hello-partial-write', partial);
+              assert.strictEqual(sink.toString('utf8'), 'hello-partial-write', 'partial writes are looped to completion'); }
+            // zero progress:返回 0 必须抛错,不得死循环
+            assert.throws(() => ad.writeAllSync(1, 'x', () => 0), /no progress/i, 'zero-progress write throws');
+
+            let published = false, written = '';
+            const ok = ad.executeHookTransport({ a: 1 }, () => { assert.ok(written, 'write happened before publish'); published = true; }, { write: (s) => { written = s; } });
+            assert.strictEqual(ok.exitCode, 0); assert.strictEqual(published, true);
+            published = false;
+            const wf = ad.executeHookTransport({ a: 1 }, () => { published = true; }, { write: () => { throw new Error('stdout fail'); } });
+            assert.strictEqual(wf.exitCode, 1); assert.strictEqual(published, false, 'delivery failure → no publish');
+            const pf = ad.executeHookTransport({ a: 1 }, () => { throw new Error('rename fail'); }, { write: () => {} });
+            assert.strictEqual(pf.exitCode, 1, 'publish failure → nonzero, not swallowed');
+            // CLI transport 同规则,且 envelope 不同(纯文本,非 hookSpecificOutput)
+            let cliOut = '';
+            const cli = ad.executeCliRecoveryTransport('PAYLOAD_TEXT', () => {}, { write: (s) => { cliOut = s; } });
+            assert.strictEqual(cli.exitCode, 0);
+            assert.ok(cliOut.includes('PAYLOAD_TEXT') && !cliOut.includes('hookSpecificOutput'), 'CLI transport is not a hook envelope');
+            console.log('✅ T-takeover-transport-order passed');
+        }
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
