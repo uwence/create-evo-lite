@@ -63,7 +63,7 @@
 
 # 阶段 1 —— 确定性接管(复审门 1:P0 determinism)
 
-## Task 1: 纯函数 builder + 两个 discriminated validator(`takeover-payload.js`)
+### Task 1: 纯函数 builder + 两个 discriminated validator(`takeover-payload.js`)
 
 **Files:**
 - Create: `templates/cli/takeover-payload.js`
@@ -441,7 +441,7 @@ EOF
 
 ---
 
-## Task 2: receipt 层(`takeover-receipt.js`)—— 严格根发现 / project-bound 路径 / 有效性 / reconcile / 失效事务 / fs seam
+### Task 2: receipt 层(`takeover-receipt.js`)—— 严格根发现 / project-bound 路径 / 有效性 / reconcile / 失效事务 / fs seam
 
 **Files:**
 - Create: `templates/cli/takeover-receipt.js`
@@ -813,7 +813,7 @@ EOF
 
 ---
 
-## Task 3: 单一 collector(`takeover-session.js`)—— 现有 bootstrap 四件套 + plan/spec/freshness 派生 + 结构化降级
+### Task 3: 单一 collector(`takeover-session.js`)—— 现有 bootstrap 四件套 + plan/spec/freshness 派生 + 结构化降级
 
 **Files:**
 - Create: `templates/cli/takeover-session.js`
@@ -1049,7 +1049,7 @@ EOF
 
 ---
 
-## Task 4: 生命周期 adapter + 两条 transport(`takeover-adapter.js`)
+### Task 4: 生命周期 adapter + 两条 transport(`takeover-adapter.js`)
 
 **Files:**
 - Create: `templates/cli/takeover-adapter.js`
@@ -1513,7 +1513,7 @@ EOF
 
 ---
 
-## Task 5: 三入口收口 —— `mem bootstrap` 经 builder + `--receipt` CLI recovery
+### Task 5: 三入口收口 —— `mem bootstrap` 经 builder + `--receipt` CLI recovery
 
 **Files:**
 - Modify: `templates/cli/memory.js`(`runBootstrapCommand` 改经 collector+builder+validate;`formatBootstrapReport` 改消费新 payload;新增 `runReceiptRecovery`;bootstrap 命令增四个选项)
@@ -1683,7 +1683,7 @@ EOF
 
 ---
 
-## Task 6: installer(事务化 capability-gate)+ manifest + gitignore + 镜像 + 阶段 1 dogfood/复审门
+### Task 6: installer(事务化 capability-gate)+ manifest + gitignore + 镜像 + 阶段 1 dogfood/复审门
 
 **Files:**
 - Create: `templates/cli/takeover-install.js`
@@ -2678,7 +2678,7 @@ EOF
 
 > **前置:阶段 1 复审门已通过。**
 
-## Task 7: PreToolUse fail-closed 守卫(完整 health gate + target-path 绑定)
+### Task 7: PreToolUse fail-closed 守卫(完整 health gate + target-path 绑定)
 
 **Files:**
 - Modify: `templates/cli/takeover-adapter.js`
@@ -2927,7 +2927,7 @@ EOF
 
 ---
 
-## Task 8: 故障注入验收(逐条对应复审门)+ 复审门 2
+### Task 8: 故障注入验收(逐条对应复审门)+ 复审门 2
 
 **Files:**
 - Test: `templates/cli/test/governance.js`(`T-takeover-fault-suite`)
