@@ -7311,6 +7311,41 @@ async function runGovernanceTests() {
             const skipped = ti.probeHookCommand(fakeProject, { resolveShell: () => ({ ok: false, reason: 'none found' }) });
             assert.strictEqual(skipped.ok, true); assert.strictEqual(skipped.skipped, true, 'undiscoverable shell → skipped, not failed');
 
+            // ── 安装闸的 shell 独立性回归锚点(R4 P0-3 的护栏,此前无测试保护)──
+            // installTakeoverHooks 只能靠 verifyHookCommandShape + probeAdapterBinary 放行,绝不能再去问
+            // probeHookCommand/resolveHostShell —— 否则本机 shell 与 Claude 宿主 shell 不同就会误拒装。
+            // 用 cmd.exe 冒充"被 resolveHostShell 发现的 shell":它真实存在(existsSync 通过,不会被判 skipped),
+            // 但不是 POSIX shell,$CLAUDE_PROJECT_DIR 展不开 —— 这会让 probeHookCommand 【真的】跑失败,而不是
+            // 摆设式地假装失败。这就是这条断言的区分力来源:若 installTakeoverHooks 被改成再 consult
+            // probeHookCommand(projectRoot)(不传 opts,和现有另外两道闸同款直接本地调用的写法),它会在这里
+            // 立刻炸掉;当前实现完全不看它,所以照样成功。
+            if (process.platform === 'win32') {
+                // `managed` (受管 settings 绝对路径) is declared further below — compute the same
+                // path locally rather than forward-referencing that const.
+                const managedForShellGuard = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
+                const comspec = process.env.ComSpec || process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe';
+                assert.ok(fs.existsSync(comspec), `sanity: ${comspec} must exist to run this guard`);
+                const savedHookShell = process.env.EVO_LITE_HOOK_SHELL;
+                const savedGitBash = process.env.CLAUDE_CODE_GIT_BASH_PATH;
+                process.env.EVO_LITE_HOOK_SHELL = comspec;
+                delete process.env.CLAUDE_CODE_GIT_BASH_PATH;
+                try {
+                    // 先证明:强制 resolveHostShell 命中 cmd.exe 后,诊断 probe 确实会失败(不是空摆设)
+                    const forcedBad = ti.probeHookCommand(fakeProject);
+                    assert.strictEqual(forcedBad.ok, false,
+                        'sanity: cmd.exe masquerading as the resolved shell must actually break probeHookCommand, else this guard proves nothing');
+                    // 再证明:即便诊断 probe 会失败,安装仍然成功 —— 因为 install 根本不咨询它
+                    fs.rmSync(managedForShellGuard, { force: true });
+                    assert.strictEqual(
+                        ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart'], projectRoot: fakeProject }).changed,
+                        true, 'install must succeed even though the (unconsulted) shell probe would fail under this shell — shell-independence guard');
+                    fs.rmSync(managedForShellGuard, { force: true });
+                } finally {
+                    if (savedHookShell === undefined) delete process.env.EVO_LITE_HOOK_SHELL; else process.env.EVO_LITE_HOOK_SHELL = savedHookShell;
+                    if (savedGitBash === undefined) delete process.env.CLAUDE_CODE_GIT_BASH_PATH; else process.env.CLAUDE_CODE_GIT_BASH_PATH = savedGitBash;
+                }
+            }
+
             // 受管对象唯一:<canonicalProjectRoot>/.claude/settings.json —— 项目内的其他文件也不许被本工具触碰
             const managed = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
             assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'), managed,
@@ -7328,6 +7363,18 @@ async function runGovernanceTests() {
             assert.throws(() => ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart'], projectRoot: fakeProject }), /corrupt|JSON/i, 'install throws on corrupt');
             assert.strictEqual(fs.readFileSync(managed, 'utf8'), '{ not json', 'corrupt file unchanged');
             assert.throws(() => ti.statusTakeoverHooks(managed, ['SessionStart']), /corrupt|JSON/i, 'status throws on corrupt (no silent all-missing)');
+            fs.rmSync(managed, { force: true });
+
+            // 语法合法但不是对象(数组/标量/null)同样必须 fail-loud:否则 install 会把它当空对象
+            // 悄悄丢弃原内容(changed:true 却无声吞掉用户配置),status 会误报全部事件缺失(R11 复审)
+            for (const raw of ['[1,2,3]', '42', '"hi"', 'null']) {
+                fs.writeFileSync(managed, raw, 'utf8');
+                assert.throws(() => ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart'], projectRoot: fakeProject }),
+                    /not a JSON object/i, `install throws on non-object settings (${raw})`);
+                assert.strictEqual(fs.readFileSync(managed, 'utf8'), raw, `non-object settings unchanged after refused install (${raw})`);
+                assert.throws(() => ti.statusTakeoverHooks(managed, ['SessionStart']),
+                    /not a JSON object/i, `status throws on non-object settings (${raw})`);
+            }
             fs.rmSync(managed, { force: true });
 
             // 正常安装(假项目)→ 写入且幂等

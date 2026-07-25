@@ -1798,6 +1798,41 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     const skipped = ti.probeHookCommand(fakeProject, { resolveShell: () => ({ ok: false, reason: 'none found' }) });
     assert.strictEqual(skipped.ok, true); assert.strictEqual(skipped.skipped, true, 'undiscoverable shell → skipped, not failed');
 
+    // ── 安装闸的 shell 独立性回归锚点(R4 P0-3 的护栏,此前无测试保护)──
+    // installTakeoverHooks 只能靠 verifyHookCommandShape + probeAdapterBinary 放行,绝不能再去问
+    // probeHookCommand/resolveHostShell —— 否则本机 shell 与 Claude 宿主 shell 不同就会误拒装。
+    // 用 cmd.exe 冒充"被 resolveHostShell 发现的 shell":它真实存在(existsSync 通过,不会被判 skipped),
+    // 但不是 POSIX shell,$CLAUDE_PROJECT_DIR 展不开 —— 这会让 probeHookCommand 【真的】跑失败,而不是
+    // 摆设式地假装失败。这就是这条断言的区分力来源:若 installTakeoverHooks 被改成再 consult
+    // probeHookCommand(projectRoot)(不传 opts,和现有另外两道闸同款直接本地调用的写法),它会在这里
+    // 立刻炸掉;当前实现完全不看它,所以照样成功。
+    if (process.platform === 'win32') {
+        // `managed` (受管 settings 绝对路径) is declared further below — compute the same
+        // path locally rather than forward-referencing that const.
+        const managedForShellGuard = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
+        const comspec = process.env.ComSpec || process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe';
+        assert.ok(fs.existsSync(comspec), `sanity: ${comspec} must exist to run this guard`);
+        const savedHookShell = process.env.EVO_LITE_HOOK_SHELL;
+        const savedGitBash = process.env.CLAUDE_CODE_GIT_BASH_PATH;
+        process.env.EVO_LITE_HOOK_SHELL = comspec;
+        delete process.env.CLAUDE_CODE_GIT_BASH_PATH;
+        try {
+            // 先证明:强制 resolveHostShell 命中 cmd.exe 后,诊断 probe 确实会失败(不是空摆设)
+            const forcedBad = ti.probeHookCommand(fakeProject);
+            assert.strictEqual(forcedBad.ok, false,
+                'sanity: cmd.exe masquerading as the resolved shell must actually break probeHookCommand, else this guard proves nothing');
+            // 再证明:即便诊断 probe 会失败,安装仍然成功 —— 因为 install 根本不咨询它
+            fs.rmSync(managedForShellGuard, { force: true });
+            assert.strictEqual(
+                ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart'], projectRoot: fakeProject }).changed,
+                true, 'install must succeed even though the (unconsulted) shell probe would fail under this shell — shell-independence guard');
+            fs.rmSync(managedForShellGuard, { force: true });
+        } finally {
+            if (savedHookShell === undefined) delete process.env.EVO_LITE_HOOK_SHELL; else process.env.EVO_LITE_HOOK_SHELL = savedHookShell;
+            if (savedGitBash === undefined) delete process.env.CLAUDE_CODE_GIT_BASH_PATH; else process.env.CLAUDE_CODE_GIT_BASH_PATH = savedGitBash;
+        }
+    }
+
     // 受管对象唯一:<canonicalProjectRoot>/.claude/settings.json —— 项目内的其他文件也不许被本工具触碰
     const managed = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
     assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'), managed,
@@ -1815,6 +1850,18 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.throws(() => ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart'], projectRoot: fakeProject }), /corrupt|JSON/i, 'install throws on corrupt');
     assert.strictEqual(fs.readFileSync(managed, 'utf8'), '{ not json', 'corrupt file unchanged');
     assert.throws(() => ti.statusTakeoverHooks(managed, ['SessionStart']), /corrupt|JSON/i, 'status throws on corrupt (no silent all-missing)');
+    fs.rmSync(managed, { force: true });
+
+    // 语法合法但不是对象(数组/标量/null)同样必须 fail-loud:否则 install 会把它当空对象
+    // 悄悄丢弃原内容(changed:true 却无声吞掉用户配置),status 会误报全部事件缺失(R11 复审)
+    for (const raw of ['[1,2,3]', '42', '"hi"', 'null']) {
+        fs.writeFileSync(managed, raw, 'utf8');
+        assert.throws(() => ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart'], projectRoot: fakeProject }),
+            /not a JSON object/i, `install throws on non-object settings (${raw})`);
+        assert.strictEqual(fs.readFileSync(managed, 'utf8'), raw, `non-object settings unchanged after refused install (${raw})`);
+        assert.throws(() => ti.statusTakeoverHooks(managed, ['SessionStart']),
+            /not a JSON object/i, `status throws on non-object settings (${raw})`);
+    }
     fs.rmSync(managed, { force: true });
 
     // 正常安装(假项目)→ 写入且幂等
@@ -2180,8 +2227,15 @@ function mergeHookConfig(existing, fragment) {
 function readSettingsStrict(settingsPath, fsOps = fs) {
     if (!fsOps.existsSync(settingsPath)) return {};
     const raw = fsOps.readFileSync(settingsPath, 'utf8');
-    try { return JSON.parse(raw); }
+    let parsed;
+    try { parsed = JSON.parse(raw); }
     catch (e) { throw new Error(`takeover: ${settingsPath} is corrupt JSON (${e.message}); leaving it unchanged`); }
+    // 合法 JSON 但不是对象(数组/标量/null)同样不得静默通过:install 会把它当空对象展开、
+    // 悄悄丢弃原内容;status 则会误报"全部缺失"。两者都是这个模块 fail-loud 契约下的数据丢失(R11 复审)。
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`takeover: ${settingsPath} is not a JSON object; leaving it unchanged`);
+    }
+    return parsed;
 }
 
 const PROBE_INPUT = (projectRoot) => JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'probe', cwd: projectRoot });
@@ -2649,21 +2703,25 @@ Expected: 五个 `node --check` 全部无输出(通过);首次复制五文件;�
 镜像已在 Step 8 生成。**注意:本地 spawn 出来的 shell 不是 Claude Code 执行 hook 的 shell** —— 命令级 probe 只作诊断,
 **宿主 transport 的权威证据是下面的 `claude -p` dogfood**(由宿主自己执行那条命令并观测 marker)。
 
+**命令入口纠正:** 下面全部使用 `node .evo-lite/cli/memory.js takeover …`,而不是 `node templates/cli/memory.js takeover …`。
+`better-sqlite3` 只能从 `.evo-lite/node_modules/` 解析,`templates/cli/memory.js` 在 require 阶段就会直接炸,
+走不到任何 takeover 代码;运行时镜像(`.evo-lite/cli/memory.js`,Step 8 已同步)才是真正可执行的入口。
+
 ```bash
 # ① 诊断(信息用途,失败也不阻止安装,但必须记录到 dogfood 文档)
-node templates/cli/memory.js takeover probe || echo "command probe not conclusive on this machine (recorded)"
+node .evo-lite/cli/memory.js takeover probe || echo "command probe not conclusive on this machine (recorded)"
 
 # ② 事务化备份 + 安装(备份失败 → 命令直接非零退出,不会安装)
-node templates/cli/memory.js takeover install --backup --events SessionStart,UserPromptSubmit --settings .claude/settings.json
-node templates/cli/memory.js takeover status --settings .claude/settings.json
+node .evo-lite/cli/memory.js takeover install --backup --events SessionStart,UserPromptSubmit --settings .claude/settings.json
+node .evo-lite/cli/memory.js takeover status --settings .claude/settings.json
 ```
 
 **回滚契约:** 下面任一 dogfood 断言失败 → 立即回滚,再回报,**不得把失效配置留在仓库里**。回滚按 manifest 恢复**原始字节**;
 仅当原本没有 settings 文件时才会删除文件:
 
 ```bash
-node templates/cli/memory.js takeover rollback
-node templates/cli/memory.js takeover status --settings .claude/settings.json   # 应显示 missing
+node .evo-lite/cli/memory.js takeover rollback
+node .evo-lite/cli/memory.js takeover status --settings .claude/settings.json   # 应显示 missing
 git diff --stat .claude/settings.json                                          # 应无差异(原始字节已恢复)
 ```
 
@@ -2678,10 +2736,10 @@ git diff --stat .claude/settings.json                                          #
 - [ ] **Step 10: 提交 + 阶段 1 复审门**
 
 ```bash
-node templates/cli/memory.js takeover status --settings .claude/settings.json   # dogfood 全绿后确认事件在位
+node .evo-lite/cli/memory.js takeover status --settings .claude/settings.json   # dogfood 全绿后确认事件在位
 # 备份保留到【阶段 1 复审门通过后】才丢弃(未通过则 takeover rollback)。
 # manifest 不清理会挡住下一次 backupSettings,所以这是复审门后的必做收口动作:
-#   node templates/cli/memory.js takeover backup-discard
+#   node .evo-lite/cli/memory.js takeover backup-discard
 git add templates/cli/takeover-install.js templates/cli/memory.js templates/cli/template-manifest.js templates/cli/test/ .gitignore .evo-lite/cli/ .claude/settings.json docs/validation/attp-phase1-dogfood.md
 git commit -m "$(cat <<'EOF'
 feat(takeover): transactional capability-gated installer + manifest/gitignore/mirror + phase-1 dogfood

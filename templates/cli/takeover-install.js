@@ -30,8 +30,15 @@ function mergeHookConfig(existing, fragment) {
 function readSettingsStrict(settingsPath, fsOps = fs) {
     if (!fsOps.existsSync(settingsPath)) return {};
     const raw = fsOps.readFileSync(settingsPath, 'utf8');
-    try { return JSON.parse(raw); }
+    let parsed;
+    try { parsed = JSON.parse(raw); }
     catch (e) { throw new Error(`takeover: ${settingsPath} is corrupt JSON (${e.message}); leaving it unchanged`); }
+    // 合法 JSON 但不是对象(数组/标量/null)同样不得静默通过:install 会把它当空对象展开、
+    // 悄悄丢弃原内容;status 则会误报"全部缺失"。两者都是这个模块 fail-loud 契约下的数据丢失(R11 复审)。
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`takeover: ${settingsPath} is not a JSON object; leaving it unchanged`);
+    }
+    return parsed;
 }
 
 const PROBE_INPUT = (projectRoot) => JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'probe', cwd: projectRoot });
