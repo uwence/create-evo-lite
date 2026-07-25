@@ -1,4 +1,4 @@
-# Agent Takeover Trigger Protocol Implementation Plan (R9)
+# Agent Takeover Trigger Protocol Implementation Plan (R10)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R6:R5 APPROVED 基线 + §0.1 宿主契约勘误)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218)。
 
-**计划 R1→R8 外部复审(5+5+4+4+3+2+2+1 个 P0)已折入**,逐条见文末《复审落点》。
+**计划 R1→R9 外部复审(5+5+4+4+3+2+2+1+2 个 P0)已折入**,逐条见文末《复审落点》。
 
 ## 已核实的代码事实(实现须以此为准,勿再猜测)
 
@@ -1704,6 +1704,7 @@ EOF
 - **事务化 settings**
   - `resolveManagedSettingsPath(projectRoot, settingsPath, fsOps?)` → **验证过的绝对物理路径**(realpath 项目根;settings 存在则 realpath 自身,不存在则解析最近存在祖先再拼尾部;**损坏链接 / realpath 失败 / 物理落点在项目外 / 不是 `<root>/.claude/settings.json` 本身 → 一律抛错**。`--settings` 仍可传,但解析结果必须精确等于该受管文件;用户级 settings 超出 MVP 范围)
   - `resolveManagedBackupPath(managedSettings, backupPath, fsOps?)` → 绝对路径(必须是受管 settings 的**同目录兄弟**、文件名精确匹配 `settings.json.attp-backup-<pid>-<12hex>`、且自身不是链接)
+  - `validateBackupManifestShape(raw)` → boolean(**写入侧与消费侧共用的唯一形状判定**;`commitManifest` 回读后与 `readBackupManifest` 读取时都调用它)
   - `readBackupManifest(projectRoot, fsOps?)` → `manifest | null`(**读取即再验证**:`kind`+`schemaVersion`+`sha256` 为 64 位十六进制 + `settingsPath` **恒等于受管文件** + `backupPath` 过兄弟/命名/非链接三关;任何一项不过即抛,**不写不删**)
   - `backupSettings(settingsPath, { projectRoot, fsOps? })` → `{ existed, backupPath, sha256, manifestPath }`(**备份失败即抛**;manifest 已存在即抛)
   - `restoreSettings({ projectRoot, fsOps? })` → `{ restored }`(`existed` → 按 sha256 校验后恢复**原始字节**;否则仅删除新建文件)
@@ -1853,10 +1854,45 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.deepStrictEqual(manifestArtifacts(), [], 'the temp manifest is cleaned up, so the next backup is not blocked');
     assert.deepStrictEqual(orphans(), [], 'and the half-finished backup is cleaned up too');
     assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched throughout');
+    // manifest rename 失败(ordered publication 的最后一步)→ 全清理 + 可重试
+    const manifestRenameFail = { ...fs,
+        renameSync: (src, dst) => {
+            if (path.resolve(String(dst)) === path.resolve(manifestPathFor)) throw new Error('manifest rename fail');
+            return fs.renameSync(src, dst);
+        } };
+    assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: manifestRenameFail }),
+        /not committed/i, 'a manifest that cannot be renamed is never committed');
+    assert.strictEqual(fs.existsSync(manifestPathFor), false, 'no final manifest after a failed rename');
+    assert.deepStrictEqual(manifestArtifacts(), [], 'no temp manifest left behind');
+    assert.deepStrictEqual(orphans(), [], 'no orphaned backup left behind');
+    assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched');
+
+    // 写入侧与消费侧必须共用同一 schema 判定:合法 JSON 但 kind/schemaVersion 被改写时
+    // 【不得】提交成功 —— 否则 manifest 发布成功而 rollback 拒收(R9 复审 P0-2)
+    const mutateManifest = (patch) => ({ ...fs,
+        writeFileSync: (target, data, ...rest) => {
+            if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) {
+                return fs.writeFileSync(target, JSON.stringify({ ...JSON.parse(String(data)), ...patch }), ...rest);
+            }
+            return fs.writeFileSync(target, data, ...rest);
+        } });
+    for (const patch of [{ kind: 'wrong-kind' }, { schemaVersion: 99 }]) {
+        assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: mutateManifest(patch) }),
+            /not committed/i, `a manifest with ${JSON.stringify(patch)} must not be published`);
+        assert.strictEqual(fs.existsSync(manifestPathFor), false, 'no final manifest for a mutated shape');
+        assert.deepStrictEqual(manifestArtifacts(), [], 'no temp manifest for a mutated shape');
+        assert.deepStrictEqual(orphans(), [], 'no orphaned backup for a mutated shape');
+    }
+    // 写入侧与消费侧确实是同一个判定
+    assert.strictEqual(ti.validateBackupManifestShape({ kind: 'attp-settings-backup', schemaVersion: 1,
+        settingsPath: txSettings, existed: false, backupPath: null, sha256: null }), true);
+    assert.strictEqual(ti.validateBackupManifestShape({ kind: 'wrong-kind', schemaVersion: 1,
+        settingsPath: txSettings, existed: false, backupPath: null, sha256: null }), false);
+
     // 证明下一次备份确实没被挡住
     const proof = ti.backupSettings(txSettings, { projectRoot: txProject });
     ti.discardBackup({ projectRoot: txProject });
-    assert.ok(proof.manifestPath, 'a clean backup still works after the aborted attempts');
+    assert.ok(proof.manifestPath, 'a clean backup still works after every aborted attempt');
 
     // 正常:备份 → 安装 → 回滚恢复原始字节
     const bk = ti.backupSettings(txSettings, { projectRoot: txProject });
@@ -1904,13 +1940,20 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
 
     // 回滚【也】失败 → AggregateError 保住两个错误 + manifest 路径(R6 复审 P1-4)
     fs.writeFileSync(txSettings, originalBytes, 'utf8');
+    // 注意:两个 seam 都必须【按目的地限定】。manifest 提交同样走 fsOps.renameSync,
+    // 若在这里让 renameSync 全局抛,backupSettings 就先失败了,installer 根本进不去,
+    // AggregateError 分支永远测不到(R9 复审 P0-1)。
     const doubleFail = { ...fs,
         // 备份文件与 manifest 照写;唯独写回 settings 本体时失败 → 制造 restore 失败
         writeFileSync: (target, ...rest) => {
             if (path.resolve(String(target)) === path.resolve(txSettings)) throw new Error('restore write fail');
             return fs.writeFileSync(target, ...rest);
         },
-        renameSync: () => { throw new Error('install rename fail'); },   // install 原子替换失败
+        // 只让 installer 的 temp → settings 提交失败;manifest 的 rename 必须放行
+        renameSync: (src, dst) => {
+            if (path.resolve(String(dst)) === path.resolve(txSettings)) throw new Error('install rename fail');
+            return fs.renameSync(src, dst);
+        },
     };
     let agg = null;
     try { ti.installWithBackup(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: doubleFail }); }
@@ -2222,13 +2265,10 @@ function readBackupManifest(projectRoot, fsOps = fs) {
     let raw;
     try { raw = JSON.parse(fsOps.readFileSync(manifestPath, 'utf8')); }
     catch (e) { throw new Error(`takeover: settings backup manifest is corrupt (${e.message}); refusing to touch settings`); }
-    const okShape = raw && typeof raw === 'object' && !Array.isArray(raw)
-        && raw.kind === MANIFEST_KIND && raw.schemaVersion === MANIFEST_SCHEMA_VERSION
-        && typeof raw.settingsPath === 'string' && typeof raw.existed === 'boolean'
-        && (raw.existed
-            ? (typeof raw.backupPath === 'string' && typeof raw.sha256 === 'string' && SHA256_RE.test(raw.sha256))
-            : (raw.backupPath === null && raw.sha256 === null));
-    if (!okShape) throw new Error('takeover: settings backup manifest failed schema validation; refusing to touch settings');
+    // 与写入侧同一个 validator:两边判定不一致就会出现"提交成功但恢复路径拒收"的 manifest
+    if (!validateBackupManifestShape(raw)) {
+        throw new Error('takeover: settings backup manifest failed schema validation; refusing to touch settings');
+    }
     // settingsPath 必须【就是】那个受管文件 —— 项目内任意其他文件也不许被 restore 覆盖或被 discard 删除
     const settingsPath = resolveManagedSettingsPath(projectRoot, raw.settingsPath, fsOps);
     const backupPath = raw.existed ? resolveManagedBackupPath(settingsPath, raw.backupPath, fsOps) : null;
@@ -2241,6 +2281,19 @@ function backupManifestPath(projectRoot) {
 }
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
+// manifest 形状的【唯一】判定:写入侧(commitManifest)与消费侧(readBackupManifest)必须共用,
+// 否则可能"提交成功"却发布出一份恢复路径拒收的 manifest —— 事务化备份就名存实亡(R9 复审 P0-2)。
+function validateBackupManifestShape(raw) {
+    return Boolean(raw && typeof raw === 'object' && !Array.isArray(raw)
+        && raw.kind === MANIFEST_KIND && raw.schemaVersion === MANIFEST_SCHEMA_VERSION
+        && typeof raw.settingsPath === 'string' && typeof raw.existed === 'boolean'
+        && (raw.existed
+            ? (typeof raw.backupPath === 'string' && typeof raw.sha256 === 'string' && SHA256_RE.test(raw.sha256))
+            : (raw.backupPath === null && raw.sha256 === null)));
+}
+// 六个承重字段的规范化投影:回读比较用它,避免再手写字段清单而漏项
+const manifestFingerprint = (m) => JSON.stringify([m.kind, m.schemaVersion, m.settingsPath, m.existed, m.backupPath, m.sha256]);
+
 // manifest 也走"先写临时、回读校验、再 rename 提交":半写的 manifest 会同时挡住下一次 backup
 // 和 rollback/discard(前者见 manifest 即拒,后者解析失败即拒),必须不留半成品(R8 复审 P1-3)。
 function commitManifest(fsOps, manifestPath, manifest) {
@@ -2248,13 +2301,17 @@ function commitManifest(fsOps, manifestPath, manifest) {
     try {
         fsOps.writeFileSync(tmp, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
         const back = JSON.parse(fsOps.readFileSync(tmp, 'utf8'));            // 回读 + 解析验证
-        if (back.settingsPath !== manifest.settingsPath || back.backupPath !== manifest.backupPath
-            || back.sha256 !== manifest.sha256 || back.existed !== manifest.existed) {
-            throw new Error('manifest read-back mismatch');
-        }
+        if (!validateBackupManifestShape(back)) throw new Error('manifest read-back failed schema validation');
+        if (manifestFingerprint(back) !== manifestFingerprint(manifest)) throw new Error('manifest read-back mismatch');
         fsOps.renameSync(tmp, manifestPath);                                  // 原子提交
     } catch (e) {
-        try { if (fsOps.existsSync(tmp)) fsOps.unlinkSync(tmp); } catch (_) { /* 尽力清理 */ }
+        let cleanupError = null;
+        try { if (fsOps.existsSync(tmp)) fsOps.unlinkSync(tmp); }
+        catch (e2) { cleanupError = e2; }                                     // 清理失败不得静默(R9 复审 P1-1)
+        if (cleanupError) {
+            throw new AggregateError([e, cleanupError],
+                `takeover: settings backup manifest not committed; orphaned temp manifest may remain at ${tmp}`);
+        }
         throw new Error(`takeover: settings backup manifest not committed (${e.message})`);
     }
 }
@@ -2373,7 +2430,7 @@ function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
 module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedGroup,
     mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
     MANAGED_SETTINGS_RELATIVE, managedSettingsPath, resolveManagedSettingsPath, resolveManagedBackupPath,
-    backupManifestPath, readBackupManifest, backupSettings, restoreSettings,
+    backupManifestPath, validateBackupManifestShape, readBackupManifest, backupSettings, restoreSettings,
     discardBackup, installWithBackup, installTakeoverHooks, statusTakeoverHooks };
 ```
 
@@ -2934,7 +2991,7 @@ EOF
 
 ---
 
-## 复审落点(计划 R1 → R8)
+## 复审落点(计划 R1 → R9)
 
 | 编号 | 问题 | 落点 |
 |---|---|---|
@@ -2987,6 +3044,11 @@ EOF
 | R8 P1-1 | 两个断链回归用例可能在 POSIX 上无声跳过 | 改为 `if (!made) { assert.strictEqual(process.platform, 'win32', ...); console.log('⏭️ …') } else { … }` —— POSIX 必跑,仅 win32 无权限时允许显式跳过(与既有 symlink 用例同一范式) |
 | R8 P1-2 | backup 的"自身不是链接"判定仍用 `existsSync`,漏断链 | 改用 `lstatSync`(ENOENT 以外异常抛出)先判 `isSymbolicLink()`,再对真实存在项做 realpath 自反校验;新增用例:**精确命名但断链**的 backup(`existsSync` 为 false)仍被 `is a link` 拒绝 |
 | R8 P1-3 | manifest 半写残留会同时挡住下次 backup 与 rollback/discard | 新增 `commitManifest()`:写唯一临时文件 → **回读并解析校验**四个承重字段 → `rename` 原子提交;任何失败清理临时文件并抛 `not committed`;`abortBackup` 另清理未提交备份,并在意外出现最终 manifest 时把路径写进错误信息。新增用例:manifest 写失败与**半写(截断)**两种情况下,备份与 manifest 产物**均为空**、settings 字节不变,且随后一次干净备份确实不再被挡 |
+
+| R9 P0-1 | 双失败测试的 `renameSync` 全局抛,把 `commitManifest` 也打断 → `backupSettings` 先失败,installer 根本没跑,`AggregateError` 分支测不到 | 两个 seam 均改为**按目的地限定**:`renameSync(src,dst)` 只在 `dst === txSettings` 时抛,manifest 的 rename 放行;`writeFileSync` 只在写回 settings 本体时抛。并在注释里写死"必须按目的地限定",避免执行者再写成全局故障 |
+| R9 P0-2 | `commitManifest` 回读只比四字段,漏 `kind`/`schemaVersion` → 可能"提交成功"却发布出恢复路径拒收的 manifest | 抽出**共享** `validateBackupManifestShape(raw)`,写入侧(`commitManifest` 回读后)与消费侧(`readBackupManifest`)**共用同一判定**;另加 `manifestFingerprint()` 对**六个**承重字段做规范化投影比较,不再手写字段清单。新增两例:合法 JSON 但 `kind`/`schemaVersion` 被改写时必须**不提交**、不留 final/temp manifest、不留备份 |
+| R9 P1-1 | 临时 manifest 清理失败被静默吞掉 | 清理失败时抛 `AggregateError([commitError, cleanupError])`,message 明确给出孤儿临时 manifest 路径 |
+| R9 P1-2 | 缺 ordered publication 最后一步(rename)的独立回归 | 新增 destination-scoped 注入:temp 写成功 + 回读通过 + **rename 失败** → 无 final manifest、无 temp manifest、无备份、settings 字节不变,且随后一次干净备份仍成功 |
 
 ## 附:实现期须复核的开放点(非阻断)
 
