@@ -1,4 +1,4 @@
-# Agent Takeover Trigger Protocol Implementation Plan (R8)
+# Agent Takeover Trigger Protocol Implementation Plan (R9)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R6:R5 APPROVED 基线 + §0.1 宿主契约勘误)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218)。
 
-**计划 R1→R7 外部复审(5+5+4+4+3+2+2 个 P0)已折入**,逐条见文末《复审落点》。
+**计划 R1→R8 外部复审(5+5+4+4+3+2+2+1 个 P0)已折入**,逐条见文末《复审落点》。
 
 ## 已核实的代码事实(实现须以此为准,勿再猜测)
 
@@ -523,7 +523,7 @@ const HARD_FIELDS = ['schemaVersion', 'host', 'sessionId', 'projectRoot', 'state
 const DEFAULT_FS_OPS = {
     existsSync: fs.existsSync, readFileSync: fs.readFileSync, writeFileSync: fs.writeFileSync,
     renameSync: fs.renameSync, unlinkSync: fs.unlinkSync, mkdirSync: fs.mkdirSync,
-    realpathSync: fs.realpathSync,
+    realpathSync: fs.realpathSync, lstatSync: fs.lstatSync,   // lstatSync 供 pathEntryInfo:漏注册会让守卫对健康路径也抛错 → 全 deny
 };
 let fsOps = { ...DEFAULT_FS_OPS };
 function __setFsOps(overrides) { fsOps = { ...DEFAULT_FS_OPS, ...overrides }; }
@@ -753,6 +753,34 @@ console.log('T-takeover-reconcile / T-takeover-degraded. drift refreshes; unread
         assert.strictEqual(dbl.invalidation.ok, false, 'double failure reported');
     } finally { rc.__resetFsOps(); }
     assert.strictEqual(rc.readReceipt(root, 'claude-code', 's2').state, 'committed', 'stale committed receipt survives on disk (guard must not rely on it)');
+
+    // pathEntryInfo:守卫的路径判定基元,必须直接测(否则 seam 漏键要等 Task 7 才间接暴露)
+    const existingFile = path.join(ac, 'active_context.md');
+    assert.deepStrictEqual(rc.pathEntryInfo(existingFile), { exists: true, symbolicLink: false },
+        'a real file exists and is not a link');
+    assert.deepStrictEqual(rc.pathEntryInfo(path.join(root, 'nope.txt')), { exists: false, symbolicLink: false },
+        'ENOENT means absent, not an error');
+    const dangling = path.join(root, 'dangling-link');
+    let danglingMade = false;
+    try { fs.symlinkSync(path.join(root, 'no-such-target'), dangling, 'file'); danglingMade = true; }
+    catch (_) { danglingMade = false; }
+    if (!danglingMade) {
+        assert.strictEqual(process.platform, 'win32', 'dangling symlink is mandatory on POSIX');
+        console.log('   ⏭️ pathEntryInfo dangling case skipped (win32 without symlink privilege)');
+    } else {
+        assert.strictEqual(fs.existsSync(dangling), false, 'existsSync follows the link and reports absent');
+        assert.deepStrictEqual(rc.pathEntryInfo(dangling), { exists: true, symbolicLink: true },
+            'lstat sees the link entry itself — this is the distinction the guard depends on');
+        fs.rmSync(dangling, { force: true });
+    }
+    // 非 ENOENT 异常不得被吞成"不存在"
+    rc.__setFsOps({ lstatSync: () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; } });
+    try { assert.throws(() => rc.pathEntryInfo(existingFile), /EACCES/, 'permission errors propagate'); }
+    finally { rc.__resetFsOps(); }
+    // 生产默认值完整:__setFsOps 合并后所有键仍是函数
+    rc.__setFsOps({});
+    try { assert.strictEqual(typeof rc.pathEntryInfo(existingFile).exists, 'boolean', 'defaults survive a partial override'); }
+    finally { rc.__resetFsOps(); }
 
     // canonicalization 失败时的失效:绝不写带假身份的 tombstone,只能用不写入身份的 unlink
     wf('FOCUS-D');
@@ -1798,14 +1826,37 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     const orphans = () => fs.readdirSync(path.dirname(txSettings))
         .filter(name => name.startsWith(`${path.basename(txSettings)}.attp-backup-`));
     assert.deepStrictEqual(orphans(), [], 'no orphaned backup left after a failed verification');
-    // manifest 写入失败同样要清掉已写的备份
+    // manifest 写入失败同样要清掉已写的备份(注意 manifest 现在先写 .tmp-,故按前缀注入)
+    const manifestPathFor = ti.backupManifestPath(txProject);
+    const manifestArtifacts = () => fs.existsSync(path.dirname(manifestPathFor))
+        ? fs.readdirSync(path.dirname(manifestPathFor)).filter(n => n.startsWith(path.basename(manifestPathFor)))
+        : [];
     const manifestFail = { ...fs,
         writeFileSync: (target, ...rest) => {
-            if (path.resolve(String(target)) === path.resolve(ti.backupManifestPath(txProject))) throw new Error('manifest write fail');
+            if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) throw new Error('manifest write fail');
             return fs.writeFileSync(target, ...rest);
         } };
-    assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: manifestFail }), /manifest write fail/);
+    assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: manifestFail }), /not committed|manifest write fail/);
     assert.deepStrictEqual(orphans(), [], 'no orphaned backup left when the manifest write fails');
+    assert.deepStrictEqual(manifestArtifacts(), [], 'no manifest artifact left when the write fails');
+
+    // 半写 manifest(写入成功但内容被截断)→ 回读解析失败 → 不提交、不留任何产物
+    const halfWrite = { ...fs,
+        writeFileSync: (target, data, ...rest) => {
+            if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) {
+                return fs.writeFileSync(target, String(data).slice(0, 12), ...rest);   // 截断 → 非法 JSON
+            }
+            return fs.writeFileSync(target, data, ...rest);
+        } };
+    assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: halfWrite }), /not committed/i,
+        'a half-written manifest is never committed');
+    assert.deepStrictEqual(manifestArtifacts(), [], 'the temp manifest is cleaned up, so the next backup is not blocked');
+    assert.deepStrictEqual(orphans(), [], 'and the half-finished backup is cleaned up too');
+    assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched throughout');
+    // 证明下一次备份确实没被挡住
+    const proof = ti.backupSettings(txSettings, { projectRoot: txProject });
+    ti.discardBackup({ projectRoot: txProject });
+    assert.ok(proof.manifestPath, 'a clean backup still works after the aborted attempts');
 
     // 正常:备份 → 安装 → 回滚恢复原始字节
     const bk = ti.backupSettings(txSettings, { projectRoot: txProject });
@@ -1928,6 +1979,20 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /sibling|managed naming rule/i,
         'a disguised in-project backup path is rejected');
     assert.strictEqual(fs.existsSync(fakeBackup), true, 'disguised file still exists');
+    // 精确命名但【自身是断链】的 backup:existsSync 为 false,必须靠 lstat 拦下(R8 复审 P1-2)
+    const linkBackup = `${txSettings}.attp-backup-${process.pid}-abcdef123456`;
+    let backupLinkMade = false;
+    try { fs.symlinkSync(path.join(txProject, 'src', 'no-such-target'), linkBackup, 'file'); backupLinkMade = true; }
+    catch (_) { backupLinkMade = false; }
+    if (!backupLinkMade) {
+        assert.strictEqual(process.platform, 'win32', 'dangling backup link case is mandatory on POSIX');
+        console.log('   ⏭️ dangling backup link case skipped (win32 without symlink privilege)');
+    } else {
+        assert.strictEqual(fs.existsSync(linkBackup), false, 'a dangling backup link reads as absent');
+        assert.throws(() => ti.resolveManagedBackupPath(txSettings, linkBackup),
+            /is a link/i, 'a correctly named but dangling backup link is still rejected');
+        fs.rmSync(linkBackup, { force: true });
+    }
     // sha256 必须是 64 位十六进制
     rewrite({ settingsPath: txSettings, existed: true, backupPath: tampered.backupPath, sha256: 'nope' });
     assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /schema validation/i, 'sha256 shape is enforced');
@@ -2105,8 +2170,15 @@ function resolveManagedBackupPath(managedSettings, backupPathInput, fsOps = fs) 
     if (!BACKUP_NAME_RE.test(path.basename(abs))) {
         throw new Error(`takeover: backup path does not follow the managed naming rule: ${abs}`);
     }
-    if (fsOps.existsSync(abs) && normPath(realpathOrThrow(fsOps, abs)) !== normPath(abs)) {
+    // 链接判定用 lstat:断链 symlink 的 existsSync 为 false,用 exists 判会漏掉(与守卫同一规则)
+    let st = null;
+    try { st = fsOps.lstatSync(abs); }
+    catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+    if (st && st.isSymbolicLink()) {
         throw new Error(`takeover: backup path is a link; refusing to touch it: ${abs}`);
+    }
+    if (st && normPath(realpathOrThrow(fsOps, abs)) !== normPath(abs)) {
+        throw new Error(`takeover: backup path does not resolve to itself; refusing to touch it: ${abs}`);
     }
     return abs;
 }
@@ -2169,6 +2241,24 @@ function backupManifestPath(projectRoot) {
 }
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
+// manifest 也走"先写临时、回读校验、再 rename 提交":半写的 manifest 会同时挡住下一次 backup
+// 和 rollback/discard(前者见 manifest 即拒,后者解析失败即拒),必须不留半成品(R8 复审 P1-3)。
+function commitManifest(fsOps, manifestPath, manifest) {
+    const tmp = `${manifestPath}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+    try {
+        fsOps.writeFileSync(tmp, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+        const back = JSON.parse(fsOps.readFileSync(tmp, 'utf8'));            // 回读 + 解析验证
+        if (back.settingsPath !== manifest.settingsPath || back.backupPath !== manifest.backupPath
+            || back.sha256 !== manifest.sha256 || back.existed !== manifest.existed) {
+            throw new Error('manifest read-back mismatch');
+        }
+        fsOps.renameSync(tmp, manifestPath);                                  // 原子提交
+    } catch (e) {
+        try { if (fsOps.existsSync(tmp)) fsOps.unlinkSync(tmp); } catch (_) { /* 尽力清理 */ }
+        throw new Error(`takeover: settings backup manifest not committed (${e.message})`);
+    }
+}
+
 // 原文件存在却备份失败(写失败/回读不一致)→ 抛。绝不"以为有备份"就继续安装。
 function backupSettings(settingsPathInput, { projectRoot, fsOps = fs } = {}) {
     const settingsPath = resolveManagedSettingsPath(projectRoot, settingsPathInput, fsOps); // 物理验证后的绝对路径
@@ -2190,6 +2280,8 @@ function backupSettings(settingsPathInput, { projectRoot, fsOps = fs } = {}) {
             let cleanup = '';
             try { if (fsOps.existsSync(backupPath)) fsOps.unlinkSync(backupPath); }
             catch (e2) { cleanup = ` (orphaned backup left at ${backupPath}: ${e2.message})`; }
+            // rename 提交前 manifest 不该出现;万一出现也如实报告路径供人工处理
+            try { if (fsOps.existsSync(manifestPath)) cleanup += ` (stray manifest at ${manifestPath})`; } catch (_) { /* ignore */ }
             throw new Error(`${err.message}${cleanup}`);
         };
         try {
@@ -2203,11 +2295,11 @@ function backupSettings(settingsPathInput, { projectRoot, fsOps = fs } = {}) {
         } catch (e) { abortBackup(e); }
         manifest = { kind: MANIFEST_KIND, schemaVersion: MANIFEST_SCHEMA_VERSION,
             settingsPath, existed: true, backupPath, sha256: sha256(original) };
-        try { fsOps.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8'); }
-        catch (e) { abortBackup(e); }                                            // manifest 写失败 → 备份也不留
+        try { commitManifest(fsOps, manifestPath, manifest); }
+        catch (e) { abortBackup(e); }                                            // manifest 未提交 → 备份也不留
         return { ...manifest, manifestPath };
     }
-    fsOps.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    commitManifest(fsOps, manifestPath, manifest);                               // 无原文件:仍走同一提交路径
     return { ...manifest, manifestPath };
 }
 
@@ -2630,7 +2722,10 @@ console.log('T-takeover-target-path. cross-project / .. escape / symlink escape 
         const broken = path.join(root, 'broken-link.js');
         let brokenMade = false;
         try { fs.symlinkSync(missingOutside, broken, 'file'); brokenMade = true; } catch (_) { brokenMade = false; }
-        if (brokenMade) {
+        if (!brokenMade) {
+            assert.strictEqual(process.platform, 'win32', 'dangling file symlink case is mandatory on POSIX');
+            console.log('   ⏭️ dangling file symlink case skipped (win32 without symlink privilege)');
+        } else {
             assert.strictEqual(fs.existsSync(broken), false, 'a dangling link reads as "does not exist" — the exact trap');
             assert.strictEqual(await dec({ file_path: broken }), 'deny', 'dangling symlink target → deny (not treated as a new file)');
             assert.strictEqual(fs.existsSync(missingOutside), false, 'nothing was created outside the project');
@@ -2640,7 +2735,10 @@ console.log('T-takeover-target-path. cross-project / .. escape / symlink escape 
         let brokenDirMade = false;
         try { fs.symlinkSync(path.join(other, 'missing-dir'), brokenDir, 'junction'); brokenDirMade = true; }
         catch (_) { try { fs.symlinkSync(path.join(other, 'missing-dir'), brokenDir, 'dir'); brokenDirMade = true; } catch (_) { brokenDirMade = false; } }
-        if (brokenDirMade) {
+        if (!brokenDirMade) {
+            assert.strictEqual(process.platform, 'win32', 'dangling directory link case is mandatory on POSIX');
+            console.log('   ⏭️ dangling directory link case skipped (win32 without symlink privilege)');
+        } else {
             assert.strictEqual(await dec({ file_path: path.join(brokenDir, 'a.js') }), 'deny', 'dangling directory link → deny');
         }
     } else {
@@ -2836,7 +2934,7 @@ EOF
 
 ---
 
-## 复审落点(计划 R1 → R7)
+## 复审落点(计划 R1 → R8)
 
 | 编号 | 问题 | 落点 |
 |---|---|---|
@@ -2884,6 +2982,11 @@ EOF
 | R7 P0-2 | 篡改 manifest 仍可覆盖/删除**项目内任意文件**("项目内 + 名字含 marker"不构成授权) | 受管对象锁死为**唯一**文件 `<canonicalProjectRoot>/.claude/settings.json`:`resolveManagedSettingsPath` 末尾追加**恒等判定**,项目内其他路径(`src/victim.js`、`.claude/other.json`)一律拒。备份改由 `resolveManagedBackupPath` 判定:必须是受管 settings 的**同目录兄弟** ∧ 文件名精确匹配 `settings\.json\.attp-backup-\d+-[0-9a-f]{12}` ∧ **自身不是链接**。manifest 增 `kind`/`schemaVersion`,`sha256` 须 `[0-9a-f]{64}`,`existed:false` 时 `backupPath`/`sha256` 必须为 `null`。新增破坏性回归:manifest 指向 `src/important.js` → restore 抛 `only … is managed` 且文件字节不变;伪装文件 `src/important.attp-backup-data` → discard 抛且文件仍在;另加 sha256 形状、缺 `kind`/`schemaVersion` 两例 |
 | R7 P1-1 | symlink 用例用固定串断言备份泄漏,查不出真实随机名 | 改为**扫描目录**:`readdirSync(dirname).filter(n => n.startsWith(basename + '.attp-backup-'))` 必须为空 |
 | R7 P1-2 | 备份中途失败遗留孤儿备份文件(含用户 settings 原文) | `backupSettings` 内 `abortBackup(err)`:manifest **提交前**的任何失败(写入、回读不一致、manifest 写失败)都先删掉半成品备份;清理也失败时把孤儿路径写进错误信息供人工处理。新增两例:校验失败与 manifest 写失败后目录中均无 `*.attp-backup-*` |
+
+| R8 P0-1 | `pathEntryInfo` 调用了未注册的 `fsOps.lstatSync` → 守卫对**健康路径**也抛 `TypeError`,被外层 catch 成 deny(断链堵住了,正常写入也全堵住) | `DEFAULT_FS_OPS` 补 `lstatSync: fs.lstatSync`;Task 2 增 `pathEntryInfo` **直接单测**(真实文件 → `{exists:true,symbolicLink:false}`;缺失 → `{exists:false,...}`;断链 → `symbolicLink:true` 且先断言 `existsSync` 为 false;注入 `EACCES` → 必须抛;`__setFsOps({})` 后默认值仍完整),不再等 Task 7 间接暴露。**本轮已实跑验证**:抽出计划中的 `takeover-receipt.js` 模块块 + 真实 `runtime.js` 跑上述全部断言,含断链用例,全部通过 |
+| R8 P1-1 | 两个断链回归用例可能在 POSIX 上无声跳过 | 改为 `if (!made) { assert.strictEqual(process.platform, 'win32', ...); console.log('⏭️ …') } else { … }` —— POSIX 必跑,仅 win32 无权限时允许显式跳过(与既有 symlink 用例同一范式) |
+| R8 P1-2 | backup 的"自身不是链接"判定仍用 `existsSync`,漏断链 | 改用 `lstatSync`(ENOENT 以外异常抛出)先判 `isSymbolicLink()`,再对真实存在项做 realpath 自反校验;新增用例:**精确命名但断链**的 backup(`existsSync` 为 false)仍被 `is a link` 拒绝 |
+| R8 P1-3 | manifest 半写残留会同时挡住下次 backup 与 rollback/discard | 新增 `commitManifest()`:写唯一临时文件 → **回读并解析校验**四个承重字段 → `rename` 原子提交;任何失败清理临时文件并抛 `not committed`;`abortBackup` 另清理未提交备份,并在意外出现最终 manifest 时把路径写进错误信息。新增用例:manifest 写失败与**半写(截断)**两种情况下,备份与 manifest 产物**均为空**、settings 字节不变,且随后一次干净备份确实不再被挡 |
 
 ## 附:实现期须复核的开放点(非阻断)
 
