@@ -1,4 +1,4 @@
-# Agent Takeover Trigger Protocol Implementation Plan (R6)
+# Agent Takeover Trigger Protocol Implementation Plan (R7)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R6:R5 APPROVED 基线 + §0.1 宿主契约勘误)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218)。
 
-**计划 R1/R2/R3/R4/R5 外部复审(5+5+4+4+3 个 P0)已折入**,逐条见文末《复审落点》。
+**计划 R1/R2/R3/R4/R5/R6 外部复审(5+5+4+4+3+2 个 P0)已折入**,逐条见文末《复审落点》。
 
 ## 已核实的代码事实(实现须以此为准,勿再猜测)
 
@@ -31,7 +31,7 @@
 ## Global Constraints
 
 - **宿主范围:** 仅 Claude Code(MVP);非 Claude 宿主只静态 fallback。
-- **单一 collector + 单一 builder + 强制校验:** 三条入口全部 `collectSessionTakeoverContextFull(...)` → `buildTakeoverPayload(...)` → **`validateSessionPayload(...)` 通过后才 transport**;禁止任何入口自拼语义或硬编码 `verify:null`/`recall:[]`。**`UserPromptSubmit` 每轮 capsule 同样强制 `validateCapsule`**(probe 已确认宿主静默丢弃类型错字段,无效 capsule = 静默失去再播种能力);校验不过 → emergency degraded capsule + 非零。
+- **单一 collector + 单一 builder + 强制校验:** 三条入口全部 `collectSessionTakeoverContextFull(...)` → `buildTakeoverPayload(...)` → **`validateSessionPayload(...)` 通过后才 transport**;禁止任何入口自拼语义或硬编码 `verify:null`/`recall:[]`。**`UserPromptSubmit` 每轮 capsule 同样强制 `validateCapsule`**(probe 已确认宿主静默丢弃类型错字段,无效 capsule = 静默失去再播种能力);校验不过 → emergency degraded capsule + `failure`/`systemMessage`/stderr,**且 `exit 0`**(非零会让宿主丢弃该 capsule)。
 - **锚点解析 fail-closed:** `readFocusAnchor` 在 `BEGIN_FOCUS/END_FOCUS` 非严格一对时返回 `null`(文件存在但结构损坏**不得**当作"空 focus 的健康态");`readMetaAnchor` 返回 `{ok, reason, meta}`,锚点缺失/`ahead|behind` 非整数 → `ok:false` 并入 `degraded[]`,**`NaN` 绝不进入 freshness**。
 - **schema 深校验:** `validateSessionPayload` 校验 `active.plan/spec`(null 或含非空 `id` 的对象)、`freshness` 三键齐全且数值有限或 null、`health.takeover` 枚举、`verify.hasAlerts` 布尔、`recall.status` 字符串、`degraded[]` 每项 `{part:string, reason:string}`。可恢复降级由 collector 归一化为**保守但合法**的值(`hasAlerts:true` / `recall.status:'unavailable'`),事实由 `degraded[]` + `attention-needed` 承载。
 - **失败不可静默:** 承重字段获取失败**禁止空 catch 变 null**。**可恢复**失败(verify/recall/plan-ir/meta)→ 记入 `payload.degraded[]` 结构化状态并 `health.takeover='attention-needed'`,仍交付;**不可恢复**失败(focus 不可读、initDB/memory.service 加载失败、payload 校验不过)→ establishment 失败、**不发布 receipt**、`failure` 字段 + `systemMessage` + stderr 显式报告(**hook 路径仍 exit 0**,见宿主 transport 语义)。
@@ -49,6 +49,8 @@
 - **守卫(阶段2):** Edit/Write allow ⟺ committed receipt + reconcile 非 degraded + **`buildTakeoverPayload(refresh)` → `validateCapsule` → 字节预算** 全过 + target-path 落 receipt.projectRoot 内;**target 缺失/非字符串/解析失败 → deny**。Read/Glob/Grep/Bash → allow;**MVP 守卫工具集仅 `Edit`/`Write`**。
 - **hook 启动命令与 probe 分层(本机 shell ≠ 宿主 shell):** 命令固定为 `node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"`。**安装闸只用与 shell 无关的两项**:`probeAdapterBinary`(直接 `process.execPath` 跑 adapter,产出 hook envelope)+ `verifyHookCommandShape`(静态断言命令引用受管 adapter 路径且 `$CLAUDE_PROJECT_DIR` 处于双引号内)。`probeHookCommand(projectRoot, {shell})` **降级为诊断,不作安装闸**,且**必须显式指定 shell**(`resolveHostShell()`:`CLAUDE_CODE_GIT_BASH_PATH` / `EVO_LITE_HOOK_SHELL` → win32 上的 Git Bash → 非 win32 的 `/bin/sh`);shell 不可发现时返回 `{ok:true, skipped:true}` —— **绝不因本机 OS shell 与 Claude 宿主 shell 不同而误拒装**。**宿主 transport 的权威证据只有 Step 9 的真实 `claude -p` dogfood**(宿主自己执行那条命令并观测 marker),不是本地 spawn。
 - **installer:** 幂等 deep-merge,保留未知字段/第三方 hooks;`install` 与 `status` 遇损坏 JSON **均 fail loudly、不覆盖、不静默降级**;probe 通过才 temp+rename 原子替换,失败保留原文件;正式 CLI `mem takeover install|status|rollback`。
+- **settings 物理边界(字符串前缀不算边界):** settings 路径一律经 `resolveManagedSettingsPath` —— realpath 项目根、realpath settings 自身(不存在则解析最近存在祖先再拼尾部),**物理落点必须在项目内**;损坏链接 / realpath 失败 / 越界一律抛错。`.claude` 若是指向项目外的 symlink/junction,字面路径仍在项目内但**必须拒绝**。`restoreSettings`/`discardBackup` 读 manifest 后**再验证**(schema + 两路径物理归属 + `.attp-backup-` 命名),不过即抛,**不写不删**。
+- **代码落地前先过语法闸:** 五个新模块在 sync 前逐个 `node --check`,任一不过即停 —— 语法错要到 `require` 阶段才暴露,会同时废掉 installer、CLI 与 dogfood。
 - **settings 事务化(备份失败即停,回滚恢复原始字节):** dogfood 前必须 `backupSettings` —— 原文件存在却备份失败(写失败/回读不一致)**立即抛错、绝不继续安装**;备份走**唯一临时路径 + 确定性 manifest**(`.evo-lite/generated/takeover/settings-backup.json`,含 `existed/backupPath/sha256`),manifest 已存在即 fail loud(不覆盖旧备份);`restoreSettings` 按 manifest **恢复原始字节**,仅当 `existed:false` 时才允许"删除新建文件";install 自身失败**自动回滚**。此契约由自动化测试覆盖,不只是手册步骤。
 - **可注入 seam(测试用,前缀 `__`):** `takeover-receipt.__setFsOps/__resetFsOps`;transport `{ write }`;adapter `deps.{collect,buildPayload,validate}`。生产路径默认真实实现。
 - **镜像:** 新文件落 `templates/cli/**`;不手改 `.evo-lite/cli/**`;`node templates/cli/sync-runtime-entry.js` 后 `git add` 镜像;二次运行 `copied: 0`。
@@ -1080,7 +1082,7 @@ console.log('T-takeover-adapter-session. establishment/refresh by receipt presen
     assert.strictEqual(tp2.validateCapsule(emergency, tp2.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule itself is valid');
 
     // 根不可 canonicalize(realpath 抛)→ UPS 仍必须产出【合法 JSON capsule】,绝不退回普通文本;
-    // SessionStart 则必须 fail-closed(非零 + 不发布),不得抛到 main 的通用错误路径。
+    // SessionStart 则必须 fail-closed(**exit 0 + 不发布 receipt + failure 标记**),不得抛到 main 的通用错误路径。
     rc.__setFsOps({ realpathSync: () => { throw new Error('EACCES'); } });
     let rootFailUp, rootFailSs;
     try {
@@ -1317,8 +1319,7 @@ function emergencyResult(parts) {
         additionalContext: JSON.stringify(em.capsule) } };
     // action 装不下时,完整恢复命令走 systemMessage(不计入 capsule 预算)
     json.systemMessage = em.systemMessage || `evo-lite takeover capsule degraded: ${reason}`;
-    reportError(`evo-lite takeover: ${reason}`);   // 诊断仍显式落 stderr(退出码已不能承载失败)
-    return { json, exitCode: 0, publish: null, failure: reason };
+    return { json, exitCode: 0, publish: null, failure: reason };   // stderr 由 main 统一报告,避免重复写
 }
 
 function handleUserPromptSubmit(input, deps) {
@@ -1337,6 +1338,8 @@ function handleUserPromptSubmit(input, deps) {
     let verdict = null, focus = null, capsule = null, failure = null;
     try {
         ({ verdict, focus } = rc.reconcile({ projectRoot, host: HOST, sessionId }));
+        // 说明:reconcile 判 degraded 属【治理状态】而非 handler 故障 —— failure 保持 null,
+        // 诊断由 degraded capsule + 下面的 systemMessage 承担,守卫另行 fail-closed。
     } catch (e) {
         return emergencyResult({ projectName, focusHash: null, recoveryAction: recoveryCmd, reason: `reconcile: ${e.message}` });
     }
@@ -1353,8 +1356,11 @@ function handleUserPromptSubmit(input, deps) {
         return emergencyResult({ projectName, focusHash: focus ? focus.hash : null,
             recoveryAction: recoveryCmd, reason: failure });
     }
-    return { json: { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: JSON.stringify(capsule) } },
-        exitCode: 0, publish: null, failure: null };
+    const json = { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: JSON.stringify(capsule) } };
+    if (verdict.transition === 'degraded' || verdict.transition === 'stale') {
+        json.systemMessage = `evo-lite takeover ${verdict.transition}${verdict.reason ? `: ${verdict.reason}` : ''}`;
+    }
+    return { json, exitCode: 0, publish: null, failure: null };
 }
 
 async function handleHookInput(input, deps = {}) {
@@ -1372,9 +1378,10 @@ function main() {
         let out;
         try { out = await handleHookInput(input, {}); }
         catch (e) { // handler 兜底:仍输出 envelope 并 exit 0(非零会让 systemMessage 也失效)
-            reportError(`evo-lite takeover error: ${e.message}`);
             out = { json: { systemMessage: `evo-lite takeover error: ${e.message}` }, exitCode: 0, publish: null, failure: e.message };
         }
+        // 单一诊断出口:所有 handler 的 failure 在此统一落 stderr(handler 内不重复写)
+        if (out.failure) reportError(`evo-lite takeover: ${out.failure}`);
         // 退出码只反映 transport 结果:序列化/写出/发布失败才非零(此时 JSON 本就没送达或不可信)
         const res = executeHookTransport(out.json, out.publish);
         process.exit(res.exitCode || out.exitCode || 0);
@@ -1646,12 +1653,13 @@ EOF
 - `managedFragment(events)`、`mergeHookConfig(existing, fragment)`、`isManagedGroup(g)`
 - **安装闸(与 shell 无关的两项)**
   - `verifyHookCommandShape(command?)` → `{ ok, reason }`(静态:`node ` 开头、引用受管 adapter、`$CLAUDE_PROJECT_DIR` 处于双引号内)
-  - `probeAdapterBinary(projectRoot)` → `{ ok, reason }`(直接 `process.execPath` 跑 adapter,喂最小 UserPromptSubmit JSON;**解析 envelope 与 capsule**,`takeover-degraded` 视为运行时故障拒装 —— 失败路径现在也 exit 0,退出码不再能判定健康)
+  - `probeAdapterBinary(projectRoot)` → `{ ok, reason }`(直接 `process.execPath` 跑 adapter,喂最小 UserPromptSubmit JSON;解析 envelope → **`validateCapsule` + 1 KiB 预算** → 拒绝 `takeover-degraded`。安装闸 = envelope 合法 ∧ capsule 合法 ∧ ≤1 KiB ∧ 非 degraded;退出码已不能判定健康)
 - **诊断(非安装闸)**
   - `resolveHostShell(env?)` → `{ ok, shell } | { ok:false, reason }`(`EVO_LITE_HOOK_SHELL` / `CLAUDE_CODE_GIT_BASH_PATH` → win32 Git Bash → 非 win32 `/bin/sh`)
   - `probeHookCommand(projectRoot, { shell?, resolveShell? })` → `{ ok, skipped, reason }`(在**显式指定的 POSIX shell** 下跑 `HOOK_COMMAND` 原文;shell 不可发现 → `{ok:true, skipped:true}`)
 - **事务化 settings**
-  - `resolveSettingsPath(projectRoot, settingsPath)` → 绝对路径(相对路径绑 canonical project root;**项目外路径直接抛错** —— 用户级 settings 超出 MVP 范围)
+  - `resolveManagedSettingsPath(projectRoot, settingsPath, fsOps?)` → **验证过的绝对物理路径**(realpath 项目根;settings 存在则 realpath 自身,不存在则解析最近存在祖先再拼尾部;**损坏链接 / realpath 失败 / 物理落点在项目外一律抛错** —— 用户级 settings 超出 MVP 范围)
+  - `readBackupManifest(projectRoot, fsOps?)` → `manifest | null`(**读取即再验证**:schema + `settingsPath`/`backupPath` 物理归属 + 备份命名规则;任何一项不过即抛,不写不删)
   - `backupSettings(settingsPath, { projectRoot, fsOps? })` → `{ existed, backupPath, sha256, manifestPath }`(**备份失败即抛**;manifest 已存在即抛)
   - `restoreSettings({ projectRoot, fsOps? })` → `{ restored }`(`existed` → 按 sha256 校验后恢复**原始字节**;否则仅删除新建文件)
   - `discardBackup({ projectRoot, fsOps? })` → `{ discarded }`(阶段门通过后清理备份文件 + manifest,**不触碰当前 settings**)
@@ -1694,6 +1702,14 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.ok(/degraded runtime/.test(degradedProbe.reason));
     fs.writeFileSync(adapterStub, 'process.stdout.write("not json");process.exit(0);', 'utf8');
     assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'non-JSON stdout blocks installation');
+    // 残缺 capsule(只有 evoLite)必须拒装:宿主会静默丢弃类型错字段,probe 必须跑真正的 validateCapsule
+    fs.writeFileSync(adapterStub, 'process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write('
+        + 'JSON.stringify({hookSpecificOutput:{hookEventName:"UserPromptSubmit",'
+        + 'additionalContext:JSON.stringify({evoLite:"takeover-stale"})}})'
+        + ');process.exit(0);});', 'utf8');
+    const thin = ti.probeAdapterBinary(fakeProject);
+    assert.strictEqual(thin.ok, false, 'a capsule missing fixed keys must not pass the install gate');
+    assert.ok(/capsule invalid/.test(thin.reason), `expected schema rejection, got: ${thin.reason}`);
     fs.writeFileSync(adapterStub, stubCapsule('takeover-stale'), 'utf8');   // 复位为健康 stub
 
     // 安装闸①:命令形状静态可验证(与本机 shell 无关)
@@ -1716,10 +1732,10 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.strictEqual(skipped.ok, true); assert.strictEqual(skipped.skipped, true, 'undiscoverable shell → skipped, not failed');
 
     // settings 必须落在项目内(相对路径绑 canonical root;项目外路径明确拒绝)
-    assert.strictEqual(ti.resolveSettingsPath(fakeProject, '.claude/settings.json'),
-        path.join(fakeProject, '.claude', 'settings.json'), 'relative settings bind to the project root');
-    assert.throws(() => ti.resolveSettingsPath(fakeProject, path.join(dir, 'outside.json')),
-        /inside the project root/i, 'settings outside the project are rejected, not silently accepted');
+    assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'),
+        path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json'), 'relative settings bind to the physical project root');
+    assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, path.join(dir, 'outside.json')),
+        /outside the project root/i, 'settings outside the project are rejected, not silently accepted');
 
     fs.mkdirSync(path.join(fakeProject, '.claude'), { recursive: true });
     const corrupt = path.join(fakeProject, '.claude', 'corrupt.json');
@@ -1800,6 +1816,72 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), '{ not json', 'failed install rolled back automatically');
     assert.strictEqual(fs.existsSync(bk.manifestPath), false, 'no stale manifest after auto-rollback');
 
+    // 回滚【也】失败 → AggregateError 保住两个错误 + manifest 路径(R6 复审 P1-4)
+    fs.writeFileSync(txSettings, originalBytes, 'utf8');
+    const doubleFail = { ...fs,
+        // 备份文件与 manifest 照写;唯独写回 settings 本体时失败 → 制造 restore 失败
+        writeFileSync: (target, ...rest) => {
+            if (path.resolve(String(target)) === path.resolve(txSettings)) throw new Error('restore write fail');
+            return fs.writeFileSync(target, ...rest);
+        },
+        renameSync: () => { throw new Error('install rename fail'); },   // install 原子替换失败
+    };
+    let agg = null;
+    try { ti.installWithBackup(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: doubleFail }); }
+    catch (e) { agg = e; }
+    assert.ok(agg instanceof AggregateError, 'double failure surfaces as AggregateError');
+    assert.strictEqual(agg.errors.length, 2, 'both errors preserved');
+    assert.ok(/install rename fail/.test(agg.errors[0].message), 'first error is the install failure');
+    assert.ok(/restore write fail/.test(agg.errors[1].message), 'second error is the rollback failure');
+    assert.ok(agg.message.includes(bk.manifestPath), 'message names the manifest path for manual recovery');
+    assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'original settings still intact on disk');
+    const stranded = ti.readBackupManifest(txProject);
+    assert.ok(stranded && fs.existsSync(stranded.backupPath), 'manifest and backup kept for manual recovery');
+    ti.discardBackup({ projectRoot: txProject });   // 测试自清理
+
+    // ── 物理边界:.claude 是指向项目外的 symlink/junction 时必须拒装(R6 复审 P0-2)──
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-outside-'));
+    fs.mkdirSync(path.join(outside, '.claude'), { recursive: true });
+    const outsideSettings = path.join(outside, '.claude', 'settings.json');
+    fs.writeFileSync(outsideSettings, '{"user":"level"}\n', 'utf8');
+    const linkProject = path.join(dir, 'link project');
+    fs.mkdirSync(path.join(linkProject, '.evo-lite', 'cli'), { recursive: true });
+    fs.copyFileSync(adapterStub, path.join(linkProject, '.evo-lite', 'cli', 'takeover-adapter.js'));
+    let linked = false;
+    try { fs.symlinkSync(path.join(outside, '.claude'), path.join(linkProject, '.claude'), 'junction'); linked = true; }
+    catch (_) { try { fs.symlinkSync(path.join(outside, '.claude'), path.join(linkProject, '.claude'), 'dir'); linked = true; } catch (_) { linked = false; } }
+    if (linked) {
+        assert.throws(() => ti.resolveManagedSettingsPath(linkProject, '.claude/settings.json'),
+            /outside the project root/i, 'a symlinked .claude escapes the string prefix but not the physical boundary');
+        assert.throws(() => ti.installWithBackup('.claude/settings.json', { events: ['SessionStart'], projectRoot: linkProject }),
+            /outside the project root/i, 'install refuses to write through the link');
+        assert.strictEqual(fs.readFileSync(outsideSettings, 'utf8'), '{"user":"level"}\n', 'the out-of-project file is untouched');
+        assert.strictEqual(fs.existsSync(ti.backupManifestPath(linkProject)), false, 'no manifest created when the path is rejected');
+        assert.strictEqual(fs.existsSync(`${outsideSettings}.attp-backup`), false, 'no backup created outside the project');
+    } else {
+        assert.strictEqual(process.platform, 'win32', 'symlink creation may only be skipped on win32 without privilege');
+        console.log('   ⏭️ settings symlink-escape case skipped (win32 without symlink privilege)');
+    }
+
+    // ── 篡改 manifest:rollback / discard 必须 fail loud,且不碰项目外文件 ──
+    fs.writeFileSync(txSettings, originalBytes, 'utf8');
+    const tampered = ti.backupSettings(txSettings, { projectRoot: txProject });
+    const rewrite = (patch) => fs.writeFileSync(tampered.manifestPath,
+        JSON.stringify({ ...JSON.parse(fs.readFileSync(tampered.manifestPath, 'utf8')), ...patch }), 'utf8');
+    rewrite({ settingsPath: outsideSettings });
+    assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /outside the project root/i, 'tampered settingsPath is rejected');
+    rewrite({ settingsPath: txSettings, backupPath: outsideSettings });
+    assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /outside the project root/i, 'tampered backupPath is rejected');
+    rewrite({ backupPath: path.join(txProject, '.claude', 'not-a-managed-backup') });
+    assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /managed naming rule/i, 'in-project but unmanaged backup path is rejected');
+    fs.writeFileSync(tampered.manifestPath, '{ not json', 'utf8');
+    assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /manifest is corrupt/i, 'corrupt manifest fails loud');
+    fs.writeFileSync(tampered.manifestPath, JSON.stringify({ settingsPath: txSettings }), 'utf8');
+    assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /schema validation/i, 'manifest schema is enforced');
+    assert.strictEqual(fs.readFileSync(outsideSettings, 'utf8'), '{"user":"level"}\n', 'no out-of-project file was written or deleted');
+    fs.rmSync(tampered.manifestPath, { force: true }); fs.rmSync(tampered.backupPath, { force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+
     // adapter 存在但退出非零 → 安装闸与诊断 probe 均须拦截
     fs.writeFileSync(adapterStub, 'process.exit(9);', 'utf8');
     assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'broken adapter fails the install gate');
@@ -1820,6 +1902,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const { validateCapsule, CAPSULE_BUDGET_BYTES } = require('./takeover-payload');
 
 const MANAGED_MARK = 'takeover-adapter.js';
 const HOOK_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"';
@@ -1842,9 +1925,9 @@ function mergeHookConfig(existing, fragment) {
     return out;
 }
 
-function readSettingsStrict(settingsPath) {
-    if (!fs.existsSync(settingsPath)) return {};
-    const raw = fs.readFileSync(settingsPath, 'utf8');
+function readSettingsStrict(settingsPath, fsOps = fs) {
+    if (!fsOps.existsSync(settingsPath)) return {};
+    const raw = fsOps.readFileSync(settingsPath, 'utf8');
     try { return JSON.parse(raw); }
     catch (e) { throw new Error(`takeover: ${settingsPath} is corrupt JSON (${e.message}); leaving it unchanged`); }
 }
@@ -1869,9 +1952,10 @@ function probeAdapterBinary(projectRoot) {
     let capsule;
     try { capsule = JSON.parse(hso.additionalContext); }
     catch (e) { return { ok: false, reason: `adapter additionalContext is not a capsule (${e.message})` }; }
-    if (typeof capsule.evoLite !== 'string' || !capsule.evoLite.startsWith('takeover-')) {
-        return { ok: false, reason: 'adapter capsule is not an ATTP capsule' };
-    }
+    // capsule 必须过【真正的 schema + 预算校验】—— 宿主会静默丢弃类型错字段,
+    // `{evoLite:"takeover-stale"}` 这种残缺 capsule 不能算安装通过(R6 复审 P1-3)。
+    const capVerdict = validateCapsule(capsule, CAPSULE_BUDGET_BYTES);
+    if (!capVerdict.ok) return { ok: false, reason: `adapter capsule invalid (${capVerdict.errors.join(',')})` };
     if (capsule.evoLite === 'takeover-degraded') {
         return { ok: false, reason: `adapter reports a degraded runtime (${capsule.reason || 'unknown'}); fix the runtime before installing hooks` };
     }
@@ -1925,21 +2009,66 @@ function probeHookCommand(projectRoot, opts = {}) {
     return { ok: true, skipped: false, reason: null };
 }
 
-// ── settings 路径解析:必须绝对且绑定 canonical project root ──
-// manifest 里存相对路径会让子目录下执行的 rollback 解析到错误位置,甚至删错文件(R5 复审 P0-3)。
+// ── settings 路径解析:必须绝对、且经【物理路径】绑定 canonical project root ──
+// 字符串前缀只能挡字面逃逸。若 `project/.claude` 本身是指向项目外的 symlink/junction,
+// 字面路径仍在项目内、实际写入却在项目外 —— 必须按 realpath 判定归属(R6 复审 P0-2)。
 const normPath = (p) => {
-    let r = String(p).replace(/\/g, '/');
+    let r = String(p).replace(/\\/g, '/');
     if (process.platform === 'win32' && /^[a-z]:/.test(r)) r = r[0].toUpperCase() + r.slice(1);
     return r;
 };
-function resolveSettingsPath(projectRoot, settingsPath) {
+function realpathOrThrow(fsOps, target) {
+    try { return fsOps.realpathSync(target); }
+    catch (e) { throw new Error(`takeover: cannot resolve ${target} (${e.message}); refusing to touch settings`); }
+}
+
+// 返回【验证过的绝对物理路径】。存在则直接 realpath;不存在则解析最近存在祖先再拼回尾部。
+// 损坏 symlink / realpath 失败 / 物理落点在项目外 → 一律抛错,绝不写也绝不删。
+function resolveManagedSettingsPath(projectRoot, settingsPath, fsOps = fs) {
+    const canonRoot = normPath(realpathOrThrow(fsOps, projectRoot));
     const abs = path.isAbsolute(settingsPath) ? path.resolve(settingsPath) : path.resolve(projectRoot, settingsPath);
-    const root = normPath(path.resolve(projectRoot)), target = normPath(abs);
-    // 明确决定:MVP 只管项目内 settings。用户级(~/.claude/settings.json)超出范围,拒绝而非隐式处理。
-    if (!(target === root || target.startsWith(root + '/'))) {
-        throw new Error(`takeover: --settings must live inside the project root (${projectRoot}); got ${abs}. User-level settings are out of MVP scope.`);
+    let existing = abs;
+    const tail = [];
+    for (;;) {
+        if (fsOps.existsSync(existing)) break;                 // existsSync 跟随链接
+        let dangling = false;
+        try { fsOps.lstatSync(existing); dangling = true; }    // 链接本身在、目标不在 = 损坏链接
+        catch (_) { dangling = false; }
+        if (dangling) throw new Error(`takeover: ${existing} is a broken link; refusing to touch settings`);
+        const parent = path.dirname(existing);
+        if (parent === existing) throw new Error(`takeover: no existing ancestor for ${abs}`);
+        tail.unshift(path.basename(existing));
+        existing = parent;
     }
-    return abs;
+    const physical = path.join(realpathOrThrow(fsOps, existing), ...tail);
+    const target = normPath(physical);
+    // 明确决定:MVP 只管项目内 settings。用户级(~/.claude/settings.json)超出范围,拒绝而非隐式处理。
+    if (!(target === canonRoot || target.startsWith(canonRoot + '/'))) {
+        throw new Error(`takeover: --settings resolves outside the project root (${canonRoot}); got ${physical}. User-level settings are out of MVP scope.`);
+    }
+    return physical;
+}
+
+// manifest 读取即再验证:损坏或被篡改的 manifest 不得让 rollback/discard 触碰项目外文件。
+function readBackupManifest(projectRoot, fsOps = fs) {
+    const manifestPath = backupManifestPath(projectRoot);
+    if (!fsOps.existsSync(manifestPath)) return null;
+    let raw;
+    try { raw = JSON.parse(fsOps.readFileSync(manifestPath, 'utf8')); }
+    catch (e) { throw new Error(`takeover: settings backup manifest is corrupt (${e.message}); refusing to touch settings`); }
+    const okShape = raw && typeof raw === 'object' && !Array.isArray(raw)
+        && typeof raw.settingsPath === 'string' && typeof raw.existed === 'boolean'
+        && (!raw.existed || (typeof raw.backupPath === 'string' && typeof raw.sha256 === 'string'));
+    if (!okShape) throw new Error('takeover: settings backup manifest failed schema validation; refusing to touch settings');
+    const settingsPath = resolveManagedSettingsPath(projectRoot, raw.settingsPath, fsOps);
+    let backupPath = null;
+    if (raw.existed) {
+        backupPath = resolveManagedSettingsPath(projectRoot, raw.backupPath, fsOps);
+        if (!path.basename(backupPath).includes('.attp-backup-')) {
+            throw new Error(`takeover: backup path does not follow the managed naming rule: ${backupPath}`);
+        }
+    }
+    return { ...raw, settingsPath, backupPath, manifestPath };
 }
 
 // ── settings 事务化备份/回滚 ──
@@ -1950,7 +2079,7 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
 // 原文件存在却备份失败(写失败/回读不一致)→ 抛。绝不"以为有备份"就继续安装。
 function backupSettings(settingsPathInput, { projectRoot, fsOps = fs } = {}) {
-    const settingsPath = resolveSettingsPath(projectRoot, settingsPathInput);   // manifest 只存绝对路径
+    const settingsPath = resolveManagedSettingsPath(projectRoot, settingsPathInput, fsOps); // 物理验证后的绝对路径
     const manifestPath = backupManifestPath(projectRoot);
     if (fsOps.existsSync(manifestPath)) {
         throw new Error(`takeover: a settings backup manifest already exists (${manifestPath}); resolve it before installing`);
@@ -1976,9 +2105,8 @@ function backupSettings(settingsPathInput, { projectRoot, fsOps = fs } = {}) {
 }
 
 function restoreSettings({ projectRoot, fsOps = fs } = {}) {
-    const manifestPath = backupManifestPath(projectRoot);
-    if (!fsOps.existsSync(manifestPath)) throw new Error(`takeover: no settings backup manifest at ${manifestPath}`);
-    const manifest = JSON.parse(fsOps.readFileSync(manifestPath, 'utf8'));
+    const manifest = readBackupManifest(projectRoot, fsOps);   // schema + 物理归属再验证,失败即抛
+    if (manifest === null) throw new Error(`takeover: no settings backup manifest at ${backupManifestPath(projectRoot)}`);
     if (manifest.existed) {
         const bytes = fsOps.readFileSync(manifest.backupPath);
         if (sha256(bytes) !== manifest.sha256) throw new Error('takeover: backup bytes do not match the recorded digest; not restoring');
@@ -1987,23 +2115,22 @@ function restoreSettings({ projectRoot, fsOps = fs } = {}) {
     } else if (fsOps.existsSync(manifest.settingsPath)) {
         fsOps.unlinkSync(manifest.settingsPath);                                 // 原本不存在 → 才允许删除
     }
-    fsOps.unlinkSync(manifestPath);
+    fsOps.unlinkSync(manifest.manifestPath);
     return { restored: manifest.existed ? 'original-bytes' : 'removed-new-file' };
 }
 
 // backup 清理:阶段门通过后调用。只删已验证存在的备份文件与 manifest,不触碰当前 settings。
 function discardBackup({ projectRoot, fsOps = fs } = {}) {
-    const manifestPath = backupManifestPath(projectRoot);
-    if (!fsOps.existsSync(manifestPath)) return { discarded: false };
-    const manifest = JSON.parse(fsOps.readFileSync(manifestPath, 'utf8'));
+    const manifest = readBackupManifest(projectRoot, fsOps);   // 同样再验证:篡改的 manifest 不得删项目外文件
+    if (manifest === null) return { discarded: false };
     if (manifest.existed && fsOps.existsSync(manifest.backupPath)) fsOps.unlinkSync(manifest.backupPath);
-    fsOps.unlinkSync(manifestPath);
+    fsOps.unlinkSync(manifest.manifestPath);
     return { discarded: true };
 }
 
 function installWithBackup(settingsPath, { events, projectRoot, fsOps = fs }) {
     const backup = backupSettings(settingsPath, { projectRoot, fsOps });          // 失败即抛,install 根本不会跑
-    try { return { ...installTakeoverHooks(settingsPath, { events, projectRoot }), backup }; }
+    try { return { ...installTakeoverHooks(settingsPath, { events, projectRoot, fsOps }), backup }; }
     catch (e) {
         try { restoreSettings({ projectRoot, fsOps }); }
         catch (restoreError) {   // 回滚也失败:两个错误都要留下,否则原始安装错误被覆盖(R5 复审 P1-2)
@@ -2014,9 +2141,9 @@ function installWithBackup(settingsPath, { events, projectRoot, fsOps = fs }) {
     }
 }
 
-function installTakeoverHooks(settingsPathInput, { events, projectRoot }) {
-    const settingsPath = resolveSettingsPath(projectRoot, settingsPathInput);   // 绝对化 + project-bound
-    const existing = readSettingsStrict(settingsPath);            // 损坏 → 抛,原文件不动
+function installTakeoverHooks(settingsPathInput, { events, projectRoot, fsOps = fs }) {
+    const settingsPath = resolveManagedSettingsPath(projectRoot, settingsPathInput, fsOps); // 物理边界内的绝对路径
+    const existing = readSettingsStrict(settingsPath, fsOps);     // 损坏 → 抛,原文件不动
     // 安装闸只用与 shell 无关的两项:命令形状 + adapter 可执行。命令级 probe 是诊断,不参与放行判定。
     const shape = verifyHookCommandShape(HOOK_COMMAND);
     if (!shape.ok) throw new Error(`takeover install: hook command shape invalid (${shape.reason}); settings unchanged`);
@@ -2025,16 +2152,16 @@ function installTakeoverHooks(settingsPathInput, { events, projectRoot }) {
     const before = JSON.stringify(existing);
     const merged = mergeHookConfig(existing, managedFragment(events));
     const serialized = JSON.stringify(merged, null, 2) + '\n';
-    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fsOps.mkdirSync(path.dirname(settingsPath), { recursive: true });
     const tmp = `${settingsPath}.evo-tmp-${process.pid}`;
-    fs.writeFileSync(tmp, serialized, 'utf8');
-    fs.renameSync(tmp, settingsPath);                              // 原子替换
+    fsOps.writeFileSync(tmp, serialized, 'utf8');
+    fsOps.renameSync(tmp, settingsPath);                           // 原子替换
     return { changed: JSON.stringify(merged) !== before };
 }
 
 function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
-    // projectRoot 给出时同样绝对化(子目录下 status 才不会读错文件);测试可省略
-    const settingsPath = projectRoot ? resolveSettingsPath(projectRoot, settingsPathInput) : settingsPathInput;
+    // projectRoot 给出时同样做物理解析(子目录下 status 才不会读错文件);测试可省略
+    const settingsPath = projectRoot ? resolveManagedSettingsPath(projectRoot, settingsPathInput) : settingsPathInput;
     const cfg = readSettingsStrict(settingsPath);                  // 损坏 → 抛(不误报 all-missing)
     const hooks = cfg.hooks || {};
     const installed = [], missing = [];
@@ -2046,8 +2173,8 @@ function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
 
 module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedGroup,
     mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
-    resolveSettingsPath, backupManifestPath, backupSettings, restoreSettings, discardBackup,
-    installWithBackup, installTakeoverHooks, statusTakeoverHooks };
+    resolveManagedSettingsPath, backupManifestPath, readBackupManifest, backupSettings, restoreSettings,
+    discardBackup, installWithBackup, installTakeoverHooks, statusTakeoverHooks };
 ```
 
 - [ ] **Step 4: 运行验证通过** — `✅ T-takeover-installer passed`。
@@ -2141,14 +2268,19 @@ module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, is
 .claude/settings.json.attp-backup-*
 ```
 
-- [ ] **Step 8: 同步镜像 + 双运行零 + 全套件**
+- [ ] **Step 8: 语法自检 + 同步镜像 + 双运行零 + 全套件**
 
 ```bash
+# 五个新模块先过语法闸:长文计划里的代码块最易死在转义上,
+# 而语法错在 require 阶段才炸,会把 installer/CLI/dogfood 一起拖死(R6 复审 P0-1)
+for f in takeover-payload takeover-receipt takeover-session takeover-adapter takeover-install; do
+  node --check "templates/cli/$f.js" || exit 1
+done
 node templates/cli/sync-runtime-entry.js
 node templates/cli/sync-runtime-entry.js
 node templates/cli/test.js all
 ```
-Expected: 首次复制五文件;二次 `copied: 0`;`test.js all` 全绿。
+Expected: 五个 `node --check` 全部无输出(通过);首次复制五文件;二次 `copied: 0`;`test.js all` 全绿。
 
 - [ ] **Step 9: 母仓事务化安装 → dogfood(宿主自证 transport;失败必须回滚)**
 
@@ -2566,7 +2698,7 @@ EOF
 
 ---
 
-## 复审落点(计划 R1 → R5)
+## 复审落点(计划 R1 → R6)
 
 | 编号 | 问题 | 落点 |
 |---|---|---|
@@ -2597,11 +2729,18 @@ EOF
 | R4 P1-2 | freshness 计数允许负数/小数 | `numOrNull` → `countOrNull`(`null` 或 `Number.isInteger(v) && v >= 0`);META reader 的 `toInt` 同步加 `n >= 0`;新增 `-1` / `1.5` / META `ahead: -3` 三例 |
 | R5 P0-1 | 结构化 hook JSON 配非零退出 → 宿主根本不解析,degraded capsule / 恢复说明 / systemMessage 全被丢弃 | **宿主契约勘误**(官方:*JSON output is only processed on exit 0*;exit 1 = 非阻断错误、动作继续)。Task 4 所有已成功序列化 envelope 的返回一律 `exitCode: 0`,新增 `failure:string\|null` 字段承载失败;失败改由 degraded capsule + `systemMessage` + 不发布 receipt + stderr(`reportError`)+ PreToolUse `deny` 表达;非零仅保留给序列化/写出/发布失败与 CLI recovery。`main` 的兜底分支同样 exit 0。Task 6 `probeAdapterBinary` 相应升级为**解析 envelope 与 capsule**并把 `takeover-degraded` 视为拒装理由(退出码已不能判定健康)。新增 `T-takeover-hook-exit-contract`:**真实子进程**证明 emergency 与 degraded 两条路径都 exit 0、stdout 只有 JSON、capsule 合法且 ≤1 KiB、无 committed receipt。Task 8 三条相关断言同步改写。**设计文档同步出勘误**(§0 R6) |
 | R5 P0-2 | 通用恢复命令缺 `--session-id`,Agent 执行必失败 | `buildRecoveryCommand` / `buildGenericRecoveryCommand` **均带 `--session-id`(bash 转义)**,且 sessionId 非法时**返回 `null`**;`recoveryText(cmd)` 在无命令时明确输出 *"Cannot auto-recover: no session id … Restart the session"*,不再谎称可恢复。SessionStart / UserPromptSubmit / 守卫三处 deny/degraded 文案全部改用它;测试断言三处文案均含 `--session-id '<sid>'`,并覆盖单引号 sessionId 的转义与"无 sessionId 不谎称可恢复" |
-| R5 P0-3 | manifest 存相对 settings 路径,子目录 rollback 会解析错位置 | 新增 `resolveSettingsPath(projectRoot, settingsPath)`:相对路径绑 canonical project root、一律存**绝对路径**;**项目外路径明确抛错**(用户级 settings 明示超出 MVP 范围,不隐式处理)。`installTakeoverHooks`/`backupSettings`/`installWithBackup` 内部统一调用,`statusTakeoverHooks` 增可选 `projectRoot`,CLI `status` 传入。新增测试:项目根 `install --backup`(相对路径)→ **chdir 到嵌套子目录** → `restoreSettings` 恢复**根目录**原始字节,且子目录内不新建/删除任何文件 |
+| R5 P0-3 | manifest 存相对 settings 路径,子目录 rollback 会解析错位置 | 新增 `resolveSettingsPath(projectRoot, settingsPath)`:相对路径绑 canonical project root、一律存**绝对路径**;**项目外路径明确抛错**(用户级 settings 明示超出 MVP 范围,不隐式处理)。`installTakeoverHooks`/`backupSettings`/`installWithBackup` 内部统一调用,`statusTakeoverHooks` 增可选 `projectRoot`,CLI `status` 传入。新增测试:项目根 `install --backup`(相对路径)→ **chdir 到嵌套子目录** → `restoreSettings` 恢复**根目录**原始字节,且子目录内不新建/删除任何文件。**R7 升级为物理边界**(见 R6 P0-2) |
 | R5 P1-1 | 缺复审门通过后的 backup 清理动作 | 新增 `discardBackup()` 与 `mem takeover backup-discard`:只删已验证存在的备份文件与 manifest,**不触碰当前 settings**;Step 10 与阶段 2 收口写明"通过则 discard、未通过则 rollback";测试断言幂等且 settings 不变 |
 | R5 P1-2 | 自动回滚失败会覆盖原始安装错误 | `installWithBackup` 的 catch 中若 `restoreSettings` 也抛,则抛 `AggregateError([installError, restoreError])` 并在 message 中给出 manifest 路径供人工恢复 |
 | R5 P1-3 | 计划文本未同步 | Task 6 Files 改为 `install\|status\|rollback\|probe\|backup-discard`;Task 8 Step 1 标题"七条断言"改为"八条断言" |
 | R4 P1-3 | 错误输出用异步 `process.stderr.write`,`process.exit` 前可能未写完 | 新增 `reportError(msg)`:走 `writeAllSync(2, ...)`(与业务输出同一完整写入语义),stderr 不可写时不再抛,由退出码承载;`runTransport` 三处失败路径改用它 |
+
+| R6 P0-1 | `normPath` 的正则漏转义(`/\/g`),`takeover-install.js` 直接语法错 | 修正为 `String(p).replace(/\\/g, '/')`。并加**语法闸**:Task 6 Step 8 先对五个新模块跑 `node --check`,任一不过即停(语法错在 `require` 阶段才炸,会把 installer/CLI/dogfood 一起拖死)。**本轮已实跑**:抽出计划中全部 24 个 ```javascript 代码块逐块 `node --check`,22 个真实代码块全部通过(另 2 个是 manifest 数组插入片段,裸元素非完整语句,属预期不适用) |
+| R6 P0-2 | settings containment 仍是字符串前缀,`.claude` symlink/junction 可物理逃逸 | `resolveSettingsPath` → **`resolveManagedSettingsPath(projectRoot, settingsPath, fsOps)`**:realpath 项目根;settings 存在则 realpath 自身,不存在则**逐级找最近存在祖先** realpath 后再拼回尾部;**损坏链接**(lstat 成功但 exists 失败)、realpath 失败、物理落点越界一律抛错。manifest 只存验证后的物理路径。新增 **`readBackupManifest`**:`restoreSettings`/`discardBackup` 读取即**再验证**(schema + 两个路径的物理归属 + `.attp-backup-` 命名规则),不过即抛且不写不删。测试:`project/.claude → symlink → outside/.claude` 时 `resolveManagedSettingsPath` 与 `installWithBackup` 均拒绝、项目外文件字节不变、不产生 backup/manifest;篡改 `settingsPath`/`backupPath`/命名/损坏 JSON/缺字段五种 manifest 均 fail loud 且不碰项目外文件 |
+| R6 P1-1 | 两处陈旧「非零退出」表述 | Global Constraints「校验不过 → emergency capsule + 非零」改为「+ `failure`/`systemMessage`/stderr,**且 exit 0**」;Task 4 测试注释「SessionStart 必须 fail-closed(非零 + 不发布)」改为「**exit 0 + 不发布 receipt + failure 标记**」 |
+| R6 P1-2 | stderr 诊断未统一覆盖所有 handler | 诊断出口收敛到 `main()`:`if (out.failure) reportError(...)`;`emergencyResult` 内的 `reportError` 删除以免重复。`reconcile` 判 degraded/stale 属**治理状态而非 handler 故障** → `failure` 保持 `null`,但 UPS 为其补 `systemMessage`,并在代码注释中把这条规则写死 |
+| R6 P1-3 | probe 未真正校验 capsule schema | `takeover-install.js` 直接 `require('./takeover-payload')` 并调 **`validateCapsule(capsule, CAPSULE_BUDGET_BYTES)`**;安装闸 = envelope 合法 ∧ capsule 合法 ∧ ≤1 KiB ∧ 非 degraded。新增用例:`{evoLite:"takeover-stale"}` 这种残缺 capsule 必须以 `capsule invalid` 拒装 |
+| R6 P1-4 | AggregateError 分支无测试 | `installTakeoverHooks` 增 `fsOps` 注入并贯穿 `readSettingsStrict`/`mkdir`/`write`/`rename`;测试注入「rename 必失败 + 写回 settings 本体必失败」制造双失败,断言 `AggregateError`、`errors.length===2`、错误顺序(install 在前、rollback 在后)、message 含 manifest 绝对路径、manifest 与 backup **保留**供人工恢复 |
 
 ## 附:实现期须复核的开放点(非阻断)
 
