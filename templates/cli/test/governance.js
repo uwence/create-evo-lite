@@ -6974,6 +6974,80 @@ async function runGovernanceTests() {
             console.log('✅ T-takeover-degraded passed');
         }
 
+        console.log('T-takeover-collector. plan/spec derivation + structured degradation + real four-part collection ...');
+        {
+            const ts = require(path.join(TEMPLATE_CLI_DIR, 'takeover-session.js'));
+            // 纯派生:按 focus 文本匹配 plan/spec(plan.status 只有 done|parked|draft,不能按 'active' 过滤)
+            const ir = {
+                plans: [{ id: 'plan:alpha', title: 'Alpha', status: 'draft', sourcePath: 'docs/superpowers/plans/2026-07-24-alpha.md', linkedSpec: 'spec:alpha', taskIds: ['t1', 't2'] }],
+                specs: [{ id: 'spec:alpha', title: 'Alpha spec', status: 'draft', sourcePath: 'docs/specs/alpha.md', linkedPlans: ['plan:alpha'] }],
+                tasks: [{ id: 't1', status: 'done' }, { id: 't2', status: 'todo' }],
+            };
+            const byId = ts.derivePlanSpec(ir, 'now working on plan:alpha stage 1');
+            assert.strictEqual(byId.plan.id, 'plan:alpha');
+            assert.strictEqual(byId.plan.progress, '1/2', 'progress from taskIds x tasks[].status');
+            assert.strictEqual(byId.spec.id, 'spec:alpha', 'spec resolved via linkedSpec');
+            const byPath = ts.derivePlanSpec(ir, 'see 2026-07-24-alpha.md for detail');
+            assert.strictEqual(byPath.plan.id, 'plan:alpha', 'matches by sourcePath basename');
+            const none = ts.derivePlanSpec(ir, 'unrelated focus text');
+            assert.strictEqual(none.plan, null); assert.strictEqual(none.spec, null);
+
+            // 装配:承重字段直通,degraded 结构化
+            const ctx = ts.assembleSessionContext(
+                { host: 'claude-code', sessionId: 's', projectRoot: '/p', sourceEvent: 'x', focus: 'F', focusHash: 'h' },
+                { summary: { activeTasks: [{ line: '- [ ] task A' }], validation: { warnings: ['w1'] } },
+                  sessionstart: { contextStatus: 'configured', architectureStatus: 'configured', activeTaskCount: 1, reminders: ['r1'], warnings: ['w2'] },
+                  verify: { hasAlerts: false, nextSteps: ['ns1'] }, recall: { status: 'hit' },
+                  planSpec: { plan: null, spec: null }, freshness: { headSha: 'abc', ahead: 0, behind: 0 },
+                  degraded: [{ part: 'recall', reason: 'boom' }] });
+            assert.strictEqual(ctx.kind, 'session');
+            assert.deepStrictEqual(ctx.degraded, [{ part: 'recall', reason: 'boom' }]);
+            assert.strictEqual(ctx.health.takeover, 'attention-needed', 'degraded entries force attention-needed');
+            assert.ok(ctx.risks.includes('w1') && ctx.risks.includes('w2'), 'risks merge validation + sessionstart warnings');
+            assert.strictEqual(ctx.nextAction, 'r1', 'nextAction from reminders/nextSteps');
+            assert.strictEqual(ctx.verify.hasAlerts, false, 'verify passed through verbatim');
+            assert.strictEqual(ctx.recall.status, 'hit', 'recall object passed through (not array)');
+
+            // 可恢复降级仍须产出【通过 schema 校验】的 payload(保守值 + degraded 承载事实)
+            const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            const degradedCtx = ts.assembleSessionContext(
+                { host: 'claude-code', sessionId: 's', projectRoot: '/p', sourceEvent: 'x', focus: 'F', focusHash: 'h' },
+                { summary: {}, sessionstart: {}, verify: null, recall: null, planSpec: { plan: null, spec: null },
+                  freshness: { headSha: null, ahead: NaN, behind: null },
+                  degraded: [{ part: 'verify', reason: 'boom' }, { part: 'recall', reason: 'boom' }] });
+            assert.strictEqual(degradedCtx.verify.hasAlerts, true, 'missing verify → conservative hasAlerts=true');
+            assert.strictEqual(degradedCtx.recall.status, 'unavailable', 'missing recall → status=unavailable');
+            assert.strictEqual(degradedCtx.freshness.ahead, null, 'NaN normalized to null');
+            assert.strictEqual(degradedCtx.health.takeover, 'attention-needed');
+            assert.strictEqual(tp.validateSessionPayload(tp.buildTakeoverPayload(degradedCtx)).ok, true,
+                'recoverable degradation still yields a schema-valid payload');
+
+            // 真实 collector(全新进程内自 initDB,得到真实 verify/recall,不依赖预跑 mem bootstrap)
+            const probeScript = `
+        const ts = require(${JSON.stringify(path.join(TEMPLATE_CLI_DIR, 'takeover-session.js'))});
+        const rc = require(${JSON.stringify(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'))});
+        (async () => {
+            const root = rc.canonicalProjectRoot();
+            const focus = rc.readFocusAnchor(root);
+            const c = await ts.collectSessionTakeoverContextFull({ host: 'claude-code', sessionId: 'p',
+                projectRoot: root, sourceEvent: 'probe', focus: focus.text, focusHash: focus.hash });
+            console.log(JSON.stringify({ verifyHasAlerts: typeof c.verify.hasAlerts, verifyGit: c.verify.git,
+                recallStatus: c.recall.status, degraded: c.degraded.map(d => d.part) }));
+        })().catch(e => { console.error(e.message); process.exit(3); });`;
+            const runtimeRoot = path.join(WORKSPACE_ROOT, '.evo-lite');
+            const sub = childProcess.spawnSync(process.execPath, ['-e', probeScript],
+                { env: { ...process.env, EVO_LITE_ROOT: runtimeRoot, EVO_LITE_SKIP_GIT_STATUS: '1' }, encoding: 'utf8' });
+            assert.strictEqual(sub.status, 0, `collector runs in a fresh process (stderr: ${sub.stderr})`);
+            const out = JSON.parse(sub.stdout.trim().split('\n').pop());
+            // 真实字段断言:verify/recall 双双失败被归一化成保守值时不得误通过(R3 复审 P1-1)
+            assert.strictEqual(out.verifyHasAlerts, 'boolean', 'fresh process yields a real verify report');
+            assert.ok(typeof out.verifyGit === 'string' && out.verifyGit, 'verify.git present');
+            assert.strictEqual(typeof out.recallStatus, 'string', 'recall.status present');
+            assert.ok(!out.degraded.includes('verify') && !out.degraded.includes('recall'),
+                `verify/recall must not be degraded in a healthy repo (got: ${out.degraded.join(',')})`);
+            console.log('✅ T-takeover-collector passed');
+        }
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
