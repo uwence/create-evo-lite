@@ -757,6 +757,7 @@ console.log('T-takeover-reconcile / T-takeover-degraded. drift refreshes; unread
     assert.strictEqual(rc.readReceipt(root, 'claude-code', 's2').state, 'committed', 'stale committed receipt survives on disk (guard must not rely on it)');
 
     // pathEntryInfo:守卫的路径判定基元,必须直接测(否则 seam 漏键要等 Task 7 才间接暴露)
+    wf('FOCUS-PROBE');   // 前面的 degraded 用例删过 active_context —— 本段自备 fixture,不依赖上游状态
     const existingFile = path.join(ac, 'active_context.md');
     assert.deepStrictEqual(rc.pathEntryInfo(existingFile), { exists: true, symbolicLink: false },
         'a real file exists and is not a link');
