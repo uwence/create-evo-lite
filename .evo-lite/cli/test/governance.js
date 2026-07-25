@@ -6708,6 +6708,953 @@ async function runGovernanceTests() {
             console.log('✅ T-sr-guard registration guard passed');
         }
 
+        console.log('T-takeover-payload. Pure builder + discriminated validators ...');
+        {
+            const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            const sessionCtx = {
+                kind: 'session', host: 'claude-code', sessionId: 's1', projectRoot: '/p', projectName: 'proj',
+                sourceEvent: 'SessionStart:startup', generatedAt: '2026-07-24T00:00:00.000Z',
+                focus: 'FOCUS-LINE', focusHash: 'h',
+                activePlan: { id: 'plan:x', status: 'draft', progress: '1/3' }, activeSpec: { id: 'spec:x', status: 'draft' },
+                rules: { dir: '.agents/rules/', required: ['evo-lite'] }, risks: ['r1'], nextAction: 'do x',
+                freshness: { ahead: 0, behind: 0, headSha: 'abc' },
+                health: { takeover: 'ready', contextStatus: 'configured', architectureStatus: 'configured', activeTaskCount: 3 },
+                verify: { hasAlerts: false, git: 'clean' }, recall: { status: 'hit', hits: [] }, degraded: [],
+            };
+            const payload = tp.buildTakeoverPayload(sessionCtx);
+            assert.strictEqual(payload.schemaVersion, 1);
+            assert.strictEqual(payload.project.name, 'proj');
+            assert.strictEqual(payload.focus.text, 'FOCUS-LINE');
+            assert.strictEqual(payload.active.plan.id, 'plan:x');
+            assert.strictEqual(payload.active.spec.id, 'spec:x');
+            assert.strictEqual(payload.freshness.headSha, 'abc');
+            assert.strictEqual(payload.health.takeover, 'ready');
+            assert.strictEqual(payload.verify.git, 'clean');
+            assert.strictEqual(payload.recall.status, 'hit');
+            assert.strictEqual(tp.validateSessionPayload(payload).ok, true, 'full payload passes');
+
+            // 完整 schema:缺字段必失败
+            for (const drop of ['active', 'verify', 'health', 'freshness', 'recall', 'degraded']) {
+                const bad = JSON.parse(JSON.stringify(payload)); delete bad[drop];
+                assert.strictEqual(tp.validateSessionPayload(bad).ok, false, `missing ${drop} must fail`);
+            }
+            // 深校验:形似但内容非法的 payload 必须被拒(R3 复审 P0-1 的反例)
+            const mutate = (fn) => { const p = JSON.parse(JSON.stringify(payload)); fn(p); return tp.validateSessionPayload(p); };
+            assert.strictEqual(mutate(p => { p.risks = 'not-array'; }).ok, false, 'risks must be array');
+            assert.strictEqual(mutate(p => { p.risks = [1]; }).ok, false, 'risks entries must be strings');
+            assert.strictEqual(mutate(p => { p.project = { name: 'x' }; }).ok, false, 'project.root required');
+            assert.strictEqual(mutate(p => { p.active = { plan: 'broken', spec: [] }; }).ok, false, 'active.plan/spec must be null or object with id');
+            assert.strictEqual(mutate(p => { p.active.plan = { status: 'draft' }; }).ok, false, 'active.plan.id required');
+            assert.strictEqual(mutate(p => { p.freshness = {}; }).ok, false, 'freshness keys required');
+            assert.strictEqual(mutate(p => { p.freshness.ahead = NaN; }).ok, false, 'NaN must not pass freshness');
+            assert.strictEqual(mutate(p => { p.freshness.ahead = -1; }).ok, false, 'commit counts cannot be negative');
+            assert.strictEqual(mutate(p => { p.freshness.behind = 1.5; }).ok, false, 'commit counts must be integers');
+            assert.strictEqual(mutate(p => { p.freshness.ahead = null; p.freshness.behind = null; }).ok, true, 'null counts are legal');
+            assert.strictEqual(mutate(p => { p.health.takeover = 'anything'; }).ok, false, 'health.takeover is an enum');
+            assert.strictEqual(mutate(p => { p.verify = {}; }).ok, false, 'verify.hasAlerts required');
+            assert.strictEqual(mutate(p => { p.recall = {}; }).ok, false, 'recall.status required');
+            assert.strictEqual(mutate(p => { p.degraded = [42]; }).ok, false, 'degraded entries must be {part,reason}');
+            assert.strictEqual(mutate(p => { p.active.plan = null; p.active.spec = null; }).ok, true, 'null plan/spec is legal');
+
+            // capsule validator 是 capsule 专用,session validator 不可复用
+            const capsule = tp.buildTakeoverPayload({
+                kind: 'refresh', host: 'claude-code', sessionId: 's1', projectRoot: '/p', projectName: 'proj',
+                sourceEvent: 'UserPromptSubmit', focus: 'FOCUS-LINE', focusHash: 'h1',
+                receiptVerdict: { state: 'committed', transition: 'active', reason: null }, recoveryAction: null,
+            }, tp.CAPSULE_BUDGET_BYTES);
+            assert.strictEqual(capsule.evoLite, 'takeover-active');
+            assert.strictEqual(capsule.receipt, 'valid');
+            assert.ok(!('action' in capsule) && !('refresh' in capsule), 'healthy capsule reflective only');
+            assert.strictEqual(tp.validateCapsule(capsule, tp.CAPSULE_BUDGET_BYTES).ok, true);
+            assert.strictEqual(tp.validateCapsule({ unexpected: true }, tp.CAPSULE_BUDGET_BYTES).ok, false, 'junk object rejected');
+            assert.strictEqual(tp.validateCapsule({ evoLite: 'nope', project: 'p', receipt: 'valid', focusHash: null }, 1024).ok, false, 'bad evoLite enum rejected');
+            assert.strictEqual(tp.validateCapsule(capsule, 5).ok, false, 'over-budget rejected');
+            console.log('✅ T-takeover-payload passed');
+        }
+
+        console.log('T-takeover-capsule-states. transitions + budget always <= 1 KiB + emergency capsule always valid ...');
+        {
+            const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            const mk = (transition, state, reason, action, focus) => tp.buildTakeoverPayload({
+                kind: 'refresh', host: 'claude-code', sessionId: 's', projectRoot: '/p', projectName: 'proj',
+                sourceEvent: 'UserPromptSubmit', focus, focusHash: 'h',
+                receiptVerdict: { state, transition, reason }, recoveryAction: action,
+            }, tp.CAPSULE_BUDGET_BYTES);
+            assert.strictEqual(mk('active', 'committed', null, null, 'F').evoLite, 'takeover-active');
+            assert.strictEqual(mk('refreshed', 'committed', null, null, 'F').evoLite, 'takeover-refreshed');
+            const stale = mk('stale', 'invalid', null, 'RC', 'F');
+            assert.strictEqual(stale.receipt, 'invalid');
+            assert.strictEqual(stale.action, 'RC');
+            const trimmed = mk('active', 'committed', null, null, '焦'.repeat(5000));
+            assert.ok(Buffer.byteLength(JSON.stringify(trimmed), 'utf8') <= 1024);
+            assert.strictEqual(trimmed.truncated, true);
+            assert.ok(trimmed.focus.length > 0, 'rung 2 actually trims instead of dropping focus entirely');
+            assert.ok('焦'.repeat(5000).startsWith(trimmed.focus), 'the trimmed focus is a real prefix of the original');
+            assert.strictEqual(trimmed.focusHash, 'h', 'focusHash preserved when focus trimmed');
+            assert.doesNotThrow(() => JSON.parse(JSON.stringify(trimmed)));
+            // 超长 action + 超长 focus → 仍 ≤ budget,且固定键(含 focusHash)齐全
+            const hard = mk('stale', 'invalid', 'r', 'node ' + 'x'.repeat(4000), 'F'.repeat(4000));
+            assert.ok(Buffer.byteLength(JSON.stringify(hard), 'utf8') <= 1024, 'oversized action stays within budget');
+            for (const k of ['evoLite', 'project', 'receipt', 'focusHash']) {
+                assert.ok(k in hard, `fixed key ${k} never dropped`);
+            }
+            assert.strictEqual(hard.focusHash, 'h', 'real focusHash retained when action is dropped');
+            assert.strictEqual(tp.validateCapsule(hard, 1024).ok, true, 'trimmed capsule still valid');
+            // 极端回退分支(固定字段本身就超预算)仍保真实 focusHash + 通过校验
+            const fallback = tp.buildTakeoverPayload({ kind: 'refresh', host: 'claude-code', sessionId: 's',
+                projectRoot: '/p', projectName: 'P'.repeat(3000), sourceEvent: 'UserPromptSubmit',
+                focus: 'F', focusHash: 'realhash', receiptVerdict: { state: 'invalid', transition: 'stale', reason: 'r' },
+                recoveryAction: 'RC' }, tp.CAPSULE_BUDGET_BYTES);
+            assert.ok(Buffer.byteLength(JSON.stringify(fallback), 'utf8') <= 1024, 'fallback within budget');
+            assert.strictEqual(fallback.focusHash, 'realhash', 'fallback keeps the real focusHash (P1-3)');
+            assert.strictEqual(tp.validateCapsule(fallback, 1024).ok, true, 'fallback capsule valid');
+
+            // emergency capsule(R4 复审 P0-1):极端超长输入仍必须是【预算内、经校验】的 JSON capsule
+            assert.ok(tp.EMERGENCY_FLOOR_BYTES <= tp.CAPSULE_BUDGET_BYTES, 'constant floor fits the standard budget');
+            const longRoot = '/' + 'r'.repeat(3000);
+            const longSid = 's'.repeat(2000);
+            const longAction = `node '${longRoot}/.evo-lite/cli/memory.js' bootstrap --receipt --session-id '${longSid}'`;
+            const em = tp.buildEmergencyCapsule({ projectName: 'P'.repeat(4000), focusHash: 'realhash',
+                recoveryAction: longAction, reason: 'capsule-invalid' }, tp.CAPSULE_BUDGET_BYTES);
+            assert.ok(Buffer.byteLength(JSON.stringify(em.capsule), 'utf8') <= 1024, 'emergency capsule within budget');
+            assert.strictEqual(tp.validateCapsule(em.capsule, tp.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule always valid');
+            assert.ok(!('action' in em.capsule), 'oversized recovery command omitted entirely, never truncated');
+            assert.ok(em.systemMessage.includes(longAction), 'full recovery command moved to systemMessage');
+            assert.strictEqual(em.capsule.focusHash, 'realhash', 'project name is trimmed before focusHash is dropped');
+            // 正常尺寸:action 内联,systemMessage 为 null
+            const emSmall = tp.buildEmergencyCapsule({ projectName: 'proj', focusHash: 'h',
+                recoveryAction: 'node mem.js bootstrap --receipt', reason: 'capsule-invalid' }, tp.CAPSULE_BUDGET_BYTES);
+            assert.strictEqual(emSmall.capsule.action, 'node mem.js bootstrap --receipt', 'action inlined when it fits');
+            assert.strictEqual(emSmall.systemMessage, null, 'no systemMessage needed when action is inlined');
+            // 垃圾/缺失输入也必须产出合法 capsule(emergency 路径不得再失败一次)
+            for (const junk of [null, undefined, {}, 42, { projectName: 123, focusHash: [], recoveryAction: {} }]) {
+                const r = tp.buildEmergencyCapsule(junk, tp.CAPSULE_BUDGET_BYTES);
+                assert.strictEqual(tp.validateCapsule(r.capsule, tp.CAPSULE_BUDGET_BYTES).ok, true,
+                    `emergency capsule valid for junk input ${JSON.stringify(junk)}`);
+            }
+            console.log('✅ T-takeover-capsule-states passed');
+        }
+
+        console.log('T-takeover-receipt / T-takeover-projectroot. strict root discovery + project-bound receipts ...');
+        {
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const crypto = require('crypto');
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-rc-'));
+            fs.mkdirSync(path.join(root, '.evo-lite'), { recursive: true });
+            const host = 'claude-code', sid = 's/1:weird';
+
+            // 严格根发现:嵌套子目录向上找到 root;无 .evo-lite 的目录必须抛错(不 fail-open)
+            const deep = path.join(root, 'src', 'a'); fs.mkdirSync(deep, { recursive: true });
+            assert.strictEqual(rc.discoverProjectRoot(deep), path.resolve(root), 'walks up to .evo-lite');
+            assert.strictEqual(rc.canonicalProjectRoot(deep), rc.canonicalProjectRoot(root), 'canonical stable across nested cwd');
+            const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-bare-'));
+            assert.throws(() => rc.discoverProjectRoot(bare), /no .evo-lite|not an evo-lite/i, 'non-project dir throws');
+            assert.throws(() => rc.canonicalProjectRoot(bare), /no .evo-lite|not an evo-lite/i, 'canonicalProjectRoot fail-closed');
+            assert.strictEqual(fs.existsSync(path.join(bare, '.evo-lite')), false, 'never creates .evo-lite in a bare dir');
+            fs.rmSync(bare, { recursive: true, force: true });
+            // realpath 故障注入:canonicalization 失败必须【抛】,不得退回未解析的原路径(R4 复审 P0-2)
+            rc.__setFsOps({ realpathSync: () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; } });
+            try { assert.throws(() => rc.canonicalProjectRoot(root), /cannot canonicalize/i, 'realpath failure is fail-closed'); }
+            finally { rc.__resetFsOps(); }
+            console.log('✅ T-takeover-projectroot passed');
+
+            const canon = rc.canonicalProjectRoot(root);
+            const expect = crypto.createHash('sha256').update(`${host}\0${sid}`).digest('hex');
+            const rp = rc.receiptPathFor(root, host, sid);
+            assert.ok(rp.includes(`${expect}.json`), 'filename = sha256(host\\0sid)');
+            assert.ok(rp.replace(/\\/g, '/').includes('/.evo-lite/generated/takeover/receipts/claude-code/'), 'project-bound path');
+
+            rc.publishReceipt(root, { schemaVersion: 1, host, sessionId: sid, projectRoot: canon, state: 'committed', focusHash: 'h', sourceEvent: 'x' });
+            assert.strictEqual(rc.readReceipt(root, host, sid).state, 'committed');
+            rc.publishReceipt(root, { schemaVersion: 1, host, sessionId: sid, projectRoot: '/wrong', state: 'committed', focusHash: 'h' });
+            assert.strictEqual(rc.readReceipt(root, host, sid).state, 'invalid', 'projectRoot mismatch → invalid');
+            assert.strictEqual(rc.readReceipt(root, host, 'nope').state, 'missing');
+            fs.writeFileSync(rc.receiptPathFor(root, host, sid), 'x', 'utf8');
+            assert.strictEqual(rc.readReceipt(root, host, sid).state, 'invalid', 'corrupt → invalid');
+            fs.rmSync(root, { recursive: true, force: true });
+            console.log('✅ T-takeover-receipt passed');
+        }
+
+        console.log('T-takeover-reconcile / T-takeover-degraded. drift refreshes; unreadable degrades even if invalidation fails ...');
+        {
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-rec-'));
+            const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+            const wf = (t) => fs.writeFileSync(path.join(ac, 'active_context.md'),
+                `<!-- BEGIN_META -->\n> headSha: abc123\n> ahead: 2\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\n${t}\n<!-- END_FOCUS -->\n`, 'utf8');
+            wf('FOCUS-A');
+            const canon = rc.canonicalProjectRoot(root);
+            // meta 锚点供 freshness
+            const meta = rc.readMetaAnchor(root);
+            assert.strictEqual(meta.ok, true);
+            assert.strictEqual(meta.meta.headSha, 'abc123'); assert.strictEqual(meta.meta.ahead, 2); assert.strictEqual(meta.meta.behind, 0);
+
+            // 锚点 fail-closed:文件存在但结构损坏 → focus null / meta not-ok(不得当健康处理)
+            const acFile = path.join(ac, 'active_context.md');
+            const saved = fs.readFileSync(acFile, 'utf8');
+            fs.writeFileSync(acFile, '# active_context.md\n这不是合法的 Evo-Lite active context\n', 'utf8');
+            assert.strictEqual(rc.readFocusAnchor(root), null, 'missing FOCUS anchor → null (not empty-but-healthy)');
+            assert.strictEqual(rc.readMetaAnchor(root).ok, false, 'missing META anchor → not ok');
+            assert.strictEqual(rc.readMetaAnchor(root).reason, 'meta-anchor-missing');
+            fs.writeFileSync(acFile, '<!-- BEGIN_FOCUS -->\nA\n<!-- END_FOCUS -->\n<!-- BEGIN_FOCUS -->\nB\n<!-- END_FOCUS -->\n', 'utf8');
+            assert.strictEqual(rc.readFocusAnchor(root), null, 'duplicated FOCUS anchors → null');
+            fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha: abc\n> ahead: many\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const badMeta = rc.readMetaAnchor(root);
+            assert.strictEqual(badMeta.ok, false, 'non-integer ahead → not ok');
+            assert.strictEqual(badMeta.reason, 'meta-fields-invalid');
+            assert.strictEqual(badMeta.meta.ahead, null, 'NaN never leaks into freshness');
+            fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha: abc\n> ahead: -3\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            assert.strictEqual(rc.readMetaAnchor(root).ok, false, 'negative commit count → not ok');
+            assert.strictEqual(rc.readMetaAnchor(root).meta.ahead, null, 'negative count normalized to null');
+            fs.writeFileSync(acFile, saved, 'utf8');
+
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's', projectRoot: canon, state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+            assert.strictEqual(rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' }).verdict.transition, 'active');
+            wf('FOCUS-B');
+            assert.strictEqual(rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' }).verdict.transition, 'refreshed');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's').state, 'committed', 'drift keeps committed');
+            console.log('✅ T-takeover-reconcile passed');
+
+            fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
+            const rd = rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' });
+            assert.strictEqual(rd.verdict.transition, 'degraded');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's').state, 'invalid', 'degraded revokes committed');
+
+            // 失效双失败(tombstone + unlink 均抛)→ verdict 仍 degraded、invalidation.ok=false
+            wf('FOCUS-C');
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's2', projectRoot: canon, state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+            fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
+            rc.__setFsOps({ writeFileSync: () => { throw new Error('tombstone fail'); }, unlinkSync: () => { throw new Error('unlink fail'); } });
+            try {
+                const dbl = rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's2' });
+                assert.strictEqual(dbl.verdict.transition, 'degraded', 'degraded verdict independent of invalidation success');
+                assert.strictEqual(dbl.invalidation.ok, false, 'double failure reported');
+            } finally { rc.__resetFsOps(); }
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's2').state, 'committed', 'stale committed receipt survives on disk (guard must not rely on it)');
+
+            // pathEntryInfo:守卫的路径判定基元,必须直接测(否则 seam 漏键要等 Task 7 才间接暴露)
+            wf('FOCUS-PROBE');   // 前面的 degraded 用例删过 active_context —— 本段自备 fixture,不依赖上游状态
+            const existingFile = path.join(ac, 'active_context.md');
+            assert.deepStrictEqual(rc.pathEntryInfo(existingFile), { exists: true, symbolicLink: false },
+                'a real file exists and is not a link');
+            assert.deepStrictEqual(rc.pathEntryInfo(path.join(root, 'nope.txt')), { exists: false, symbolicLink: false },
+                'ENOENT means absent, not an error');
+            const dangling = path.join(root, 'dangling-link');
+            let danglingMade = false;
+            try { fs.symlinkSync(path.join(root, 'no-such-target'), dangling, 'file'); danglingMade = true; }
+            catch (_) { danglingMade = false; }
+            if (!danglingMade) {
+                assert.strictEqual(process.platform, 'win32', 'dangling symlink is mandatory on POSIX');
+                console.log('   ⏭️ pathEntryInfo dangling case skipped (win32 without symlink privilege)');
+            } else {
+                assert.strictEqual(fs.existsSync(dangling), false, 'existsSync follows the link and reports absent');
+                assert.deepStrictEqual(rc.pathEntryInfo(dangling), { exists: true, symbolicLink: true },
+                    'lstat sees the link entry itself — this is the distinction the guard depends on');
+                fs.rmSync(dangling, { force: true });
+            }
+            // 非 ENOENT 异常不得被吞成"不存在"
+            rc.__setFsOps({ lstatSync: () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; } });
+            try { assert.throws(() => rc.pathEntryInfo(existingFile), /EACCES/, 'permission errors propagate'); }
+            finally { rc.__resetFsOps(); }
+            // 生产默认值完整:__setFsOps 合并后所有键仍是函数
+            rc.__setFsOps({});
+            try { assert.strictEqual(typeof rc.pathEntryInfo(existingFile).exists, 'boolean', 'defaults survive a partial override'); }
+            finally { rc.__resetFsOps(); }
+
+            // canonicalization 失败时的失效:绝不写带假身份的 tombstone,只能用不写入身份的 unlink
+            wf('FOCUS-D');
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's3', projectRoot: canon,
+                state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+            rc.__setFsOps({ realpathSync: () => { throw new Error('EACCES'); } });
+            let inv; try { inv = rc.invalidateReceipt(root, 'claude-code', 's3', 'active-context-unreadable'); }
+            finally { rc.__resetFsOps(); }
+            assert.notStrictEqual(inv.method, 'tombstone', 'no tombstone written without a canonical root');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's3').state, 'missing', 'receipt revoked by unlink instead');
+            fs.rmSync(root, { recursive: true, force: true });
+            console.log('✅ T-takeover-degraded passed');
+        }
+
+        console.log('T-takeover-collector. plan/spec derivation + structured degradation + real four-part collection ...');
+        {
+            const ts = require(path.join(TEMPLATE_CLI_DIR, 'takeover-session.js'));
+            // 纯派生:按 focus 文本匹配 plan/spec(plan.status 只有 done|parked|draft,不能按 'active' 过滤)
+            const ir = {
+                plans: [{ id: 'plan:alpha', title: 'Alpha', status: 'draft', sourcePath: 'docs/superpowers/plans/2026-07-24-alpha.md', linkedSpec: 'spec:alpha', taskIds: ['t1', 't2'] }],
+                specs: [{ id: 'spec:alpha', title: 'Alpha spec', status: 'draft', sourcePath: 'docs/specs/alpha.md', linkedPlans: ['plan:alpha'] }],
+                tasks: [{ id: 't1', status: 'done' }, { id: 't2', status: 'todo' }],
+            };
+            const byId = ts.derivePlanSpec(ir, 'now working on plan:alpha stage 1');
+            assert.strictEqual(byId.plan.id, 'plan:alpha');
+            assert.strictEqual(byId.plan.progress, '1/2', 'progress from taskIds x tasks[].status');
+            assert.strictEqual(byId.spec.id, 'spec:alpha', 'spec resolved via linkedSpec');
+            const byPath = ts.derivePlanSpec(ir, 'see 2026-07-24-alpha.md for detail');
+            assert.strictEqual(byPath.plan.id, 'plan:alpha', 'matches by sourcePath basename');
+            const none = ts.derivePlanSpec(ir, 'unrelated focus text');
+            assert.strictEqual(none.plan, null); assert.strictEqual(none.spec, null);
+
+            // 装配:承重字段直通,degraded 结构化
+            const ctx = ts.assembleSessionContext(
+                { host: 'claude-code', sessionId: 's', projectRoot: '/p', sourceEvent: 'x', focus: 'F', focusHash: 'h' },
+                { summary: { activeTasks: [{ line: '- [ ] task A' }], validation: { warnings: ['w1'] } },
+                  sessionstart: { contextStatus: 'configured', architectureStatus: 'configured', activeTaskCount: 1, reminders: ['r1'], warnings: ['w2'] },
+                  verify: { hasAlerts: false, nextSteps: ['ns1'] }, recall: { status: 'hit' },
+                  planSpec: { plan: null, spec: null }, freshness: { headSha: 'abc', ahead: 0, behind: 0 },
+                  degraded: [{ part: 'recall', reason: 'boom' }] });
+            assert.strictEqual(ctx.kind, 'session');
+            assert.deepStrictEqual(ctx.degraded, [{ part: 'recall', reason: 'boom' }]);
+            assert.strictEqual(ctx.health.takeover, 'attention-needed', 'degraded entries force attention-needed');
+            assert.ok(ctx.risks.includes('w1') && ctx.risks.includes('w2'), 'risks merge validation + sessionstart warnings');
+            assert.strictEqual(ctx.nextAction, 'r1', 'nextAction from reminders/nextSteps');
+            assert.strictEqual(ctx.verify.hasAlerts, false, 'verify passed through verbatim');
+            assert.strictEqual(ctx.recall.status, 'hit', 'recall object passed through (not array)');
+
+            // 可恢复降级仍须产出【通过 schema 校验】的 payload(保守值 + degraded 承载事实)
+            const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            const degradedCtx = ts.assembleSessionContext(
+                { host: 'claude-code', sessionId: 's', projectRoot: '/p', sourceEvent: 'x', focus: 'F', focusHash: 'h' },
+                { summary: {}, sessionstart: {}, verify: null, recall: null, planSpec: { plan: null, spec: null },
+                  freshness: { headSha: null, ahead: NaN, behind: null },
+                  degraded: [{ part: 'verify', reason: 'boom' }, { part: 'recall', reason: 'boom' }] });
+            assert.strictEqual(degradedCtx.verify.hasAlerts, true, 'missing verify → conservative hasAlerts=true');
+            assert.strictEqual(degradedCtx.recall.status, 'unavailable', 'missing recall → status=unavailable');
+            assert.strictEqual(degradedCtx.freshness.ahead, null, 'NaN normalized to null');
+            assert.strictEqual(degradedCtx.health.takeover, 'attention-needed');
+            assert.strictEqual(tp.validateSessionPayload(tp.buildTakeoverPayload(degradedCtx)).ok, true,
+                'recoverable degradation still yields a schema-valid payload');
+
+            // 真实 collector(全新进程内自 initDB,得到真实 verify/recall,不依赖预跑 mem bootstrap)
+            const probeScript = `
+        const ts = require(${JSON.stringify(path.join(TEMPLATE_CLI_DIR, 'takeover-session.js'))});
+        const rc = require(${JSON.stringify(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'))});
+        (async () => {
+            const root = rc.canonicalProjectRoot();
+            const focus = rc.readFocusAnchor(root);
+            const c = await ts.collectSessionTakeoverContextFull({ host: 'claude-code', sessionId: 'p',
+                projectRoot: root, sourceEvent: 'probe', focus: focus.text, focusHash: focus.hash });
+            console.log(JSON.stringify({ verifyHasAlerts: typeof c.verify.hasAlerts, verifyGit: c.verify.git,
+                recallStatus: c.recall.status, degraded: c.degraded.map(d => d.part) }));
+        })().catch(e => { console.error(e.message); process.exit(3); });`;
+            const runtimeRoot = path.join(WORKSPACE_ROOT, '.evo-lite');
+            const sub = childProcess.spawnSync(process.execPath, ['-e', probeScript],
+                { env: { ...process.env, EVO_LITE_ROOT: runtimeRoot, EVO_LITE_SKIP_GIT_STATUS: '1' }, encoding: 'utf8' });
+            assert.strictEqual(sub.status, 0, `collector runs in a fresh process (stderr: ${sub.stderr})`);
+            const out = JSON.parse(sub.stdout.trim().split('\n').pop());
+            // 真实字段断言:verify/recall 双双失败被归一化成保守值时不得误通过(R3 复审 P1-1)
+            assert.strictEqual(out.verifyHasAlerts, 'boolean', 'fresh process yields a real verify report');
+            assert.ok(typeof out.verifyGit === 'string' && out.verifyGit, 'verify.git present');
+            assert.strictEqual(typeof out.recallStatus, 'string', 'recall.status present');
+            assert.ok(!out.degraded.includes('verify') && !out.degraded.includes('recall'),
+                `verify/recall must not be degraded in a healthy repo (got: ${out.degraded.join(',')})`);
+            console.log('✅ T-takeover-collector passed');
+        }
+
+        console.log('T-takeover-adapter-session. establishment/refresh by receipt presence; validate before publish ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-ad-'));
+            const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+            fs.writeFileSync(path.join(ac, 'active_context.md'),
+                '<!-- BEGIN_META -->\n> headSha: abc\n> ahead: 0\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nFOCUS-A\n<!-- END_FOCUS -->\n', 'utf8');
+            const sid = 'sess-1';
+            const ts = require(path.join(TEMPLATE_CLI_DIR, 'takeover-session.js'));
+            const deps = { projectRoot: root, collect: (base) => ts.assembleSessionContext(base, {
+                summary: {}, sessionstart: { contextStatus: 'configured', architectureStatus: 'configured', activeTaskCount: 0, reminders: ['r'], warnings: [] },
+                verify: { hasAlerts: false, nextSteps: [] }, recall: { status: 'no-match' },
+                planSpec: { plan: null, spec: null }, freshness: { headSha: 'abc', ahead: 0, behind: 0 }, degraded: [] }) };
+
+            const r1 = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: sid, source: 'startup' }, deps);
+            assert.strictEqual(r1.exitCode, 0);
+            assert.ok(r1.json.hookSpecificOutput.additionalContext.includes('FOCUS-A'), 'establishment injects payload');
+            assert.strictEqual(typeof r1.publish, 'function', 'publish deferred (ordered publication)');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'missing', 'no receipt before transport');
+            assert.strictEqual(ad.executeHookTransport(r1.json, r1.publish, { write: () => {} }).exitCode, 0);
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'committed', 'committed after delivery');
+
+            // 已有 receipt → resume 仍走 refresh(不因 source 判定)
+            const r2 = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: sid, source: 'resume' }, deps);
+            ad.executeHookTransport(r2.json, r2.publish, { write: () => {} });
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'committed');
+
+            // payload 校验不过 → 不发布;但【exit 0】:非零会让宿主丢弃这段 degraded 上下文(R5 复审 P0-1)
+            const bad = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'bad', source: 'startup' },
+                { ...deps, buildPayload: () => ({ schemaVersion: 1 }) });
+            assert.strictEqual(bad.exitCode, 0, 'structured hook JSON must exit 0 or the host discards it');
+            assert.ok(bad.failure && /invalid/.test(bad.failure), 'failure is reported through the failure field, not the exit code');
+            assert.ok(bad.json.systemMessage, 'failure also surfaces via systemMessage');
+            assert.strictEqual(bad.publish, null, 'invalid payload → no publish');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 'bad').state, 'missing', 'invalid payload never yields committed receipt');
+
+            const up = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid }, deps);
+            assert.strictEqual(up.exitCode, 0);
+            assert.strictEqual(JSON.parse(up.json.hookSpecificOutput.additionalContext).evoLite, 'takeover-active');
+
+            // 坏 capsule(builder 被注入返回垃圾)→ validateCapsule 拦截 → emergency capsule,且【exit 0】
+            const badUp = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid },
+                { ...deps, buildPayload: () => ({ unexpected: true }) });
+            assert.strictEqual(badUp.exitCode, 0, 'emergency capsule must exit 0 or it is never ingested');
+            assert.ok(badUp.failure, 'failure still reported explicitly (failure field + systemMessage + stderr)');
+            const emergency = JSON.parse(badUp.json.hookSpecificOutput.additionalContext);
+            assert.strictEqual(emergency.evoLite, 'takeover-degraded', 'emergency capsule emitted');
+            assert.ok(/bootstrap --receipt/.test(emergency.action), 'emergency capsule carries recovery command');
+            assert.ok(emergency.action.includes(`--session-id '${sid}'`), 'recovery command carries the current session id');
+            const tp2 = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            assert.strictEqual(tp2.validateCapsule(emergency, tp2.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule itself is valid');
+
+            // 根不可 canonicalize(realpath 抛)→ UPS 仍必须产出【合法 JSON capsule】,绝不退回普通文本;
+            // SessionStart 则必须 fail-closed(**exit 0 + 不发布 receipt + failure 标记**),不得抛到 main 的通用错误路径。
+            rc.__setFsOps({ realpathSync: () => { throw new Error('EACCES'); } });
+            let rootFailUp, rootFailSs;
+            try {
+                rootFailUp = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid }, deps);
+                rootFailSs = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'rootfail', source: 'startup' }, deps);
+            } finally { rc.__resetFsOps(); }
+            assert.strictEqual(rootFailUp.exitCode, 0, 'root failure still exits 0 (host only parses JSON on exit 0)');
+            assert.ok(rootFailUp.failure, 'root failure reported via the failure field');
+            const rfCap = JSON.parse(rootFailUp.json.hookSpecificOutput.additionalContext); // 非 JSON 会在此抛
+            assert.strictEqual(tp2.validateCapsule(rfCap, tp2.CAPSULE_BUDGET_BYTES).ok, true, 'still a valid capsule, never plain text');
+            assert.ok(rfCap.action && rfCap.action.includes(`--session-id '${sid}'`), 'generic recovery command carries the session id');
+            assert.strictEqual(rootFailSs.exitCode, 0, 'SessionStart root failure exits 0 so the recovery text is ingested');
+            assert.ok(rootFailSs.failure, 'SessionStart root failure reported via the failure field');
+            assert.ok(/--session-id 'rootfail'/.test(rootFailSs.json.hookSpecificOutput.additionalContext),
+                'SessionStart recovery text carries the session id (runReceiptRecovery requires it)');
+            assert.strictEqual(rootFailSs.publish, null, 'no receipt when the root cannot be canonicalized');
+
+            // 无 session_id → 不得谎称可自动恢复
+            assert.strictEqual(ad.buildGenericRecoveryCommand(undefined), null, 'no session id → no recovery command');
+            assert.ok(/'sid'\\''q'/.test(ad.buildGenericRecoveryCommand("sid'q")), 'session id is bash-escaped');
+            const noSid = await ad.handleHookInput({ hook_event_name: 'SessionStart', source: 'startup' }, deps);
+            assert.ok(/Cannot auto-recover/i.test(JSON.stringify(noSid.json)), 'missing session id is stated, not papered over');
+
+            // 所有 UPS 失败模式的 additionalContext 都必须是预算内的合法 capsule(统一断言,防止新增分支漏网)
+            const failureModes = [
+                { label: 'builder-junk', d: { ...deps, buildPayload: () => ({ unexpected: true }) } },
+                { label: 'builder-throw', d: { ...deps, buildPayload: () => { throw new Error('boom'); } } },
+                { label: 'validator-reject', d: { ...deps, validateCapsule: () => ({ ok: false, errors: ['forced'] }) } },
+            ];
+            for (const mode of failureModes) {
+                const r = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid }, mode.d);
+                assert.strictEqual(r.exitCode, 0, `${mode.label} → exit 0 (host parses JSON only on exit 0)`);
+                assert.ok(r.failure, `${mode.label} → failure reported without relying on the exit code`);
+                const cap = JSON.parse(r.json.hookSpecificOutput.additionalContext);
+                assert.strictEqual(tp2.validateCapsule(cap, tp2.CAPSULE_BUDGET_BYTES).ok, true, `${mode.label} → valid capsule`);
+                assert.ok(Buffer.byteLength(r.json.hookSpecificOutput.additionalContext, 'utf8') <= tp2.CAPSULE_BUDGET_BYTES,
+                    `${mode.label} → within budget`);
+                assert.ok(typeof r.json.systemMessage === 'string' && r.json.systemMessage, `${mode.label} → systemMessage explains it`);
+            }
+            fs.rmSync(root, { recursive: true, force: true });
+            console.log('✅ T-takeover-adapter-session passed');
+        }
+
+        // 真实子进程:证明失败路径在【进程边界】上也满足宿主契约 —— exit 0 + stdout 只有合法 JSON。
+        // 官方契约:JSON only processed on exit 0;非零时这段 capsule 与 systemMessage 会被整体丢弃。
+        console.log('T-takeover-hook-exit-contract. failure paths exit 0 with JSON-only stdout ...');
+        {
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            const MODULES = ['takeover-adapter.js', 'takeover-payload.js', 'takeover-receipt.js', 'runtime.js'];
+            const runHook = (cliDir, runtimeRoot, input) => childProcess.spawnSync(process.execPath,
+                [path.join(cliDir, 'takeover-adapter.js')],
+                { input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, EVO_LITE_ROOT: runtimeRoot } });
+
+            // ① emergency 路径:向上找不到 .evo-lite → 根 canonicalization 失败
+            { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-exit-em-'));
+              const cli = path.join(dir, 'cli'); fs.mkdirSync(cli, { recursive: true });
+              for (const f of MODULES) fs.copyFileSync(path.join(TEMPLATE_CLI_DIR, f), path.join(cli, f));
+              const sub = runHook(cli, path.join(dir, 'runtime'), { hook_event_name: 'UserPromptSubmit', session_id: 'x1' });
+              assert.strictEqual(sub.status, 0, `emergency path must exit 0 (stderr: ${sub.stderr})`);
+              const cap = JSON.parse(JSON.parse(sub.stdout.trim()).hookSpecificOutput.additionalContext); // stdout 必须只有 JSON
+              assert.strictEqual(cap.evoLite, 'takeover-degraded', 'emergency capsule emitted across the process boundary');
+              assert.strictEqual(tp.validateCapsule(cap, tp.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule valid and <= 1 KiB');
+              assert.ok(cap.action && cap.action.includes(`--session-id 'x1'`), 'recovery command is executable');
+              assert.ok(/evo-lite takeover/.test(sub.stderr), 'diagnosis still reaches stderr (exit code no longer carries it)');
+              assert.strictEqual(fs.existsSync(path.join(dir, '.evo-lite')), false, 'no receipt tree fabricated');
+              fs.rmSync(dir, { recursive: true, force: true }); }
+
+            // ② degraded 路径:active_context 结构损坏 → 仍 exit 0,且不产生 committed receipt
+            { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-exit-dg-'));
+              const rt = path.join(root, '.evo-lite'); const cli = path.join(rt, 'cli');
+              fs.mkdirSync(cli, { recursive: true });
+              fs.writeFileSync(path.join(rt, 'active_context.md'), '# broken: no anchors at all\n', 'utf8');
+              for (const f of MODULES) fs.copyFileSync(path.join(TEMPLATE_CLI_DIR, f), path.join(cli, f));
+              const sub = runHook(cli, rt, { hook_event_name: 'UserPromptSubmit', session_id: 'x2' });
+              assert.strictEqual(sub.status, 0, `degraded path must exit 0 (stderr: ${sub.stderr})`);
+              const cap = JSON.parse(JSON.parse(sub.stdout.trim()).hookSpecificOutput.additionalContext);
+              assert.strictEqual(cap.evoLite, 'takeover-degraded', 'broken active_context yields a degraded capsule');
+              assert.strictEqual(tp.validateCapsule(cap, tp.CAPSULE_BUDGET_BYTES).ok, true, 'degraded capsule valid');
+              assert.strictEqual(rc.readReceipt(root, 'claude-code', 'x2').state, 'missing', 'no committed receipt on the degraded path');
+              fs.rmSync(root, { recursive: true, force: true }); }
+            console.log('✅ T-takeover-hook-exit-contract passed');
+        }
+
+        console.log('T-takeover-refresh-isolation. UserPromptSubmit must not load heavy deps ...');
+        {
+            const heavy = ['memory.service', 'db', 'memory-index', 'memory-index-zvec', 'takeover-session'];
+            const saved = {};
+            for (const m of heavy) {
+                const rp = require.resolve(path.join(TEMPLATE_CLI_DIR, m));
+                saved[rp] = require.cache[rp]; delete require.cache[rp];
+                require.cache[rp] = { id: rp, filename: rp, loaded: true, get exports() { throw new Error(`refresh loaded ${m}`); } };
+            }
+            const adapterRp = require.resolve(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const savedAdapter = require.cache[adapterRp];
+            try {
+                delete require.cache[require.resolve(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'))];
+                const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+                const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-iso-'));
+                const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+                fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+                const up = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: 's' }, { projectRoot: root });
+                const cap = JSON.parse(up.json.hookSpecificOutput.additionalContext);
+                assert.ok(cap.evoLite === 'takeover-active' || cap.evoLite === 'takeover-stale',
+                    `refresh capsule must be a real capsule, got ${cap.evoLite}`);
+                fs.rmSync(root, { recursive: true, force: true });
+            } finally {
+                for (const rp of Object.keys(saved)) { delete require.cache[rp]; if (saved[rp]) require.cache[rp] = saved[rp]; }
+                delete require.cache[adapterRp]; if (savedAdapter) require.cache[adapterRp] = savedAdapter;
+            }
+            console.log('✅ T-takeover-refresh-isolation passed');
+        }
+
+        console.log('T-takeover-transport-order. writeAllSync completeness; deliver-before-publish; failures not swallowed ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            // writeAllSync 完整写出(经真实 fd:临时文件)
+            const tmpFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-w-')), 'out.txt');
+            const fd = fs.openSync(tmpFile, 'w');
+            const big = '漢'.repeat(20000);
+            ad.writeAllSync(fd, big); fs.closeSync(fd);
+            assert.strictEqual(fs.readFileSync(tmpFile, 'utf8'), big, 'writeAllSync writes every byte');
+
+            // partial write:每次只写 3 字节也必须完整写出
+            { let sink = Buffer.alloc(0);
+              const partial = (_fd, buf, off, len) => { const n = Math.min(3, len); sink = Buffer.concat([sink, buf.slice(off, off + n)]); return n; };
+              ad.writeAllSync(1, 'hello-partial-write', partial);
+              assert.strictEqual(sink.toString('utf8'), 'hello-partial-write', 'partial writes are looped to completion'); }
+            // zero progress:返回 0 必须抛错,不得死循环
+            assert.throws(() => ad.writeAllSync(1, 'x', () => 0), /no progress/i, 'zero-progress write throws');
+
+            let published = false, written = '';
+            const ok = ad.executeHookTransport({ a: 1 }, () => { assert.ok(written, 'write happened before publish'); published = true; }, { write: (s) => { written = s; } });
+            assert.strictEqual(ok.exitCode, 0); assert.strictEqual(published, true);
+            published = false;
+            const wf = ad.executeHookTransport({ a: 1 }, () => { published = true; }, { write: () => { throw new Error('stdout fail'); } });
+            assert.strictEqual(wf.exitCode, 1); assert.strictEqual(published, false, 'delivery failure → no publish');
+            const pf = ad.executeHookTransport({ a: 1 }, () => { throw new Error('rename fail'); }, { write: () => {} });
+            assert.strictEqual(pf.exitCode, 1, 'publish failure → nonzero, not swallowed');
+            // CLI transport 同规则,且 envelope 不同(纯文本,非 hookSpecificOutput)
+            let cliOut = '';
+            const cli = ad.executeCliRecoveryTransport('PAYLOAD_TEXT', () => {}, { write: (s) => { cliOut = s; } });
+            assert.strictEqual(cli.exitCode, 0);
+            assert.ok(cliOut.includes('PAYLOAD_TEXT') && !cliOut.includes('hookSpecificOutput'), 'CLI transport is not a hook envelope');
+            console.log('✅ T-takeover-transport-order passed');
+        }
+
+        console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (install & status); probe gate ...');
+        {
+            const ti = require(path.join(TEMPLATE_CLI_DIR, 'takeover-install.js'));
+            const existing = { model: 'sonnet', hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'rtk hook claude' }] }] } };
+            const frag = ti.managedFragment(['SessionStart', 'UserPromptSubmit']);
+            const m1 = ti.mergeHookConfig(existing, frag);
+            assert.strictEqual(m1.model, 'sonnet', 'unknown field preserved');
+            assert.ok(m1.hooks.PreToolUse.some(g => g.hooks.some(h => h.command === 'rtk hook claude')), 'third-party preserved');
+            assert.ok(m1.hooks.SessionStart.some(g => g.hooks.some(h => /CLAUDE_PROJECT_DIR/.test(h.command))), 'uses CLAUDE_PROJECT_DIR');
+            assert.strictEqual(ti.mergeHookConfig(m1, frag).hooks.SessionStart.filter(ti.isManagedGroup).length, 1, 'idempotent');
+
+            // 用【临时假项目】做 probe,不依赖尚未 sync 的 runtime mirror(路径含空格,顺带验引用)
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-inst-'));
+            const fakeProject = path.join(dir, 'my project');           // 故意含空格
+            const fakeCli = path.join(fakeProject, '.evo-lite', 'cli');
+            fs.mkdirSync(fakeCli, { recursive: true });
+            // stub 必须产出【真实形状】的 capsule:probe 现在解析 envelope + capsule,不再只看退出码与子串
+            const stubCapsule = (evoLite, reason) => 'process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write('
+                + `JSON.stringify({hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:JSON.stringify(`
+                + `{evoLite:${JSON.stringify(evoLite)},project:"p",receipt:"invalid",focusHash:null`
+                + (reason ? `,reason:${JSON.stringify(reason)}` : '') + '})}})'
+                + ');process.exit(0);});';
+            const adapterStub = path.join(fakeCli, 'takeover-adapter.js');
+            fs.writeFileSync(adapterStub, stubCapsule('takeover-stale'), 'utf8');
+            assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, true, 'adapter binary probe passes');
+            // 运行时故障(degraded capsule)必须拒装 —— 退出码已不能承载失败
+            fs.writeFileSync(adapterStub, stubCapsule('takeover-degraded', 'active-context-unreadable'), 'utf8');
+            const degradedProbe = ti.probeAdapterBinary(fakeProject);
+            assert.strictEqual(degradedProbe.ok, false, 'a degraded runtime blocks installation even though the hook exits 0');
+            assert.ok(/degraded runtime/.test(degradedProbe.reason));
+            fs.writeFileSync(adapterStub, 'process.stdout.write("not json");process.exit(0);', 'utf8');
+            assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'non-JSON stdout blocks installation');
+            // 残缺 capsule(只有 evoLite)必须拒装:宿主会静默丢弃类型错字段,probe 必须跑真正的 validateCapsule
+            fs.writeFileSync(adapterStub, 'process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write('
+                + 'JSON.stringify({hookSpecificOutput:{hookEventName:"UserPromptSubmit",'
+                + 'additionalContext:JSON.stringify({evoLite:"takeover-stale"})}})'
+                + ');process.exit(0);});', 'utf8');
+            const thin = ti.probeAdapterBinary(fakeProject);
+            assert.strictEqual(thin.ok, false, 'a capsule missing fixed keys must not pass the install gate');
+            assert.ok(/capsule invalid/.test(thin.reason), `expected schema rejection, got: ${thin.reason}`);
+            fs.writeFileSync(adapterStub, stubCapsule('takeover-stale'), 'utf8');   // 复位为健康 stub
+
+            // 安装闸①:命令形状静态可验证(与本机 shell 无关)
+            assert.strictEqual(ti.verifyHookCommandShape(ti.HOOK_COMMAND).ok, true, 'shipped HOOK_COMMAND shape is valid');
+            assert.strictEqual(ti.verifyHookCommandShape('node $CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js').ok, false,
+                'unquoted $CLAUDE_PROJECT_DIR rejected (breaks on paths with spaces)');
+            assert.strictEqual(ti.verifyHookCommandShape('node "$CLAUDE_PROJECT_DIR/other.js"').ok, false, 'must reference the managed adapter');
+
+            // 诊断 probe:在显式 POSIX shell 下跑命令原文(ok 即证明 $CLAUDE_PROJECT_DIR 展开且含空格路径被正确引用)
+            const cmdProbe = ti.probeHookCommand(fakeProject);
+            assert.ok(cmdProbe.ok, `hook command probe: ${cmdProbe.reason}`);
+            if (!cmdProbe.skipped) {
+                assert.strictEqual(cmdProbe.skipped, false, 'a discoverable POSIX shell actually ran the command verbatim');
+            }
+            // 指定一个不存在的 shell → 如实报失败(不得静默当成通过)
+            assert.strictEqual(ti.probeHookCommand(fakeProject, { shell: path.join(dir, 'no-such-shell') }).ok, false,
+                'a broken shell is reported, not silently passed');
+            // shell 不可发现 → skipped,且【不影响安装】—— 本机 shell 差异不得导致误拒装
+            const skipped = ti.probeHookCommand(fakeProject, { resolveShell: () => ({ ok: false, reason: 'none found' }) });
+            assert.strictEqual(skipped.ok, true); assert.strictEqual(skipped.skipped, true, 'undiscoverable shell → skipped, not failed');
+
+            // 受管对象唯一:<canonicalProjectRoot>/.claude/settings.json —— 项目内的其他文件也不许被本工具触碰
+            const managed = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
+            assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'), managed,
+                'relative settings bind to the physical project root');
+            assert.strictEqual(ti.managedSettingsPath(fakeProject), managed, 'managed path is derived, not supplied');
+            assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, path.join(dir, 'outside.json')),
+                /outside the project root/i, 'settings outside the project are rejected, not silently accepted');
+            assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, '.claude/other.json'),
+                /only .* is managed/i, 'another in-project file is not the managed settings file');
+            assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, 'src/victim.js'),
+                /only .* is managed/i, 'arbitrary in-project paths are rejected too');
+
+            fs.mkdirSync(path.join(fakeProject, '.claude'), { recursive: true });
+            fs.writeFileSync(managed, '{ not json', 'utf8');
+            assert.throws(() => ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart'], projectRoot: fakeProject }), /corrupt|JSON/i, 'install throws on corrupt');
+            assert.strictEqual(fs.readFileSync(managed, 'utf8'), '{ not json', 'corrupt file unchanged');
+            assert.throws(() => ti.statusTakeoverHooks(managed, ['SessionStart']), /corrupt|JSON/i, 'status throws on corrupt (no silent all-missing)');
+            fs.rmSync(managed, { force: true });
+
+            // 正常安装(假项目)→ 写入且幂等
+            assert.strictEqual(ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, true);
+            assert.strictEqual(ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, false, 'second install is a no-op');
+            assert.deepStrictEqual(ti.statusTakeoverHooks(managed, ['SessionStart', 'UserPromptSubmit', 'PreToolUse']).missing, ['PreToolUse']);
+            fs.rmSync(managed, { force: true });
+
+            // 闸不过 → 不写 settings(用一个没有 adapter 的项目,settings 仍落在该项目内)
+            const badProject = path.join(dir, 'no adapter project');
+            fs.mkdirSync(path.join(badProject, '.evo-lite', 'cli'), { recursive: true });
+            const fresh = path.join(badProject, '.claude', 'settings.json');
+            assert.throws(() => ti.installTakeoverHooks(fresh, { events: ['SessionStart'], projectRoot: badProject }), /probe|adapter/i, 'adapter probe failure blocks install');
+            assert.strictEqual(fs.existsSync(fresh), false, 'no settings written when the gate fails');
+
+            // ── settings 事务化:备份失败必须停;回滚必须恢复原始字节(R4 复审 P0-4)──
+            const txProject = path.join(dir, 'tx project');
+            fs.mkdirSync(path.join(txProject, '.evo-lite', 'cli'), { recursive: true });
+            fs.copyFileSync(path.join(fakeCli, 'takeover-adapter.js'), path.join(txProject, '.evo-lite', 'cli', 'takeover-adapter.js'));
+            const txSettings = path.join(txProject, '.claude', 'settings.json');
+            fs.mkdirSync(path.dirname(txSettings), { recursive: true });
+            const originalBytes = '{\n  "model": "sonnet"\n}\n';
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+
+            // 备份写入损坏 → 抛;绝不带着"以为有备份"继续安装
+            const brokenFs = { ...fs, writeFileSync: (p) => fs.writeFileSync(p, Buffer.from('corrupted')) };
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: brokenFs }),
+                /backup does not match|unreadable/i, 'backup verification failure stops the transaction');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched when backup fails');
+            // 半成品备份必须清掉:否则用户仓库里会留下一份含 settings 原文的孤儿副本(R7 复审 P1-2)
+            const orphans = () => fs.readdirSync(path.dirname(txSettings))
+                .filter(name => name.startsWith(`${path.basename(txSettings)}.attp-backup-`));
+            const installerTemps = () => fs.readdirSync(path.dirname(txSettings))
+                .filter(name => name.startsWith(`${path.basename(txSettings)}.evo-tmp-`));
+            assert.deepStrictEqual(orphans(), [], 'no orphaned backup left after a failed verification');
+            // manifest 写入失败同样要清掉已写的备份(注意 manifest 现在先写 .tmp-,故按前缀注入)
+            const manifestPathFor = ti.backupManifestPath(txProject);
+            const manifestArtifacts = () => fs.existsSync(path.dirname(manifestPathFor))
+                ? fs.readdirSync(path.dirname(manifestPathFor)).filter(n => n.startsWith(path.basename(manifestPathFor)))
+                : [];
+            const manifestFail = { ...fs,
+                writeFileSync: (target, ...rest) => {
+                    if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) throw new Error('manifest write fail');
+                    return fs.writeFileSync(target, ...rest);
+                } };
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: manifestFail }), /not committed|manifest write fail/);
+            assert.deepStrictEqual(orphans(), [], 'no orphaned backup left when the manifest write fails');
+            assert.deepStrictEqual(manifestArtifacts(), [], 'no manifest artifact left when the write fails');
+
+            // 半写 manifest(写入成功但内容被截断)→ 回读解析失败 → 不提交、不留任何产物
+            const halfWrite = { ...fs,
+                writeFileSync: (target, data, ...rest) => {
+                    if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) {
+                        return fs.writeFileSync(target, String(data).slice(0, 12), ...rest);   // 截断 → 非法 JSON
+                    }
+                    return fs.writeFileSync(target, data, ...rest);
+                } };
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: halfWrite }), /not committed/i,
+                'a half-written manifest is never committed');
+            assert.deepStrictEqual(manifestArtifacts(), [], 'the temp manifest is cleaned up, so the next backup is not blocked');
+            assert.deepStrictEqual(orphans(), [], 'and the half-finished backup is cleaned up too');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched throughout');
+            // manifest rename 失败(ordered publication 的最后一步)→ 全清理 + 可重试
+            const manifestRenameFail = { ...fs,
+                renameSync: (src, dst) => {
+                    if (path.resolve(String(dst)) === path.resolve(manifestPathFor)) throw new Error('manifest rename fail');
+                    return fs.renameSync(src, dst);
+                } };
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: manifestRenameFail }),
+                /not committed/i, 'a manifest that cannot be renamed is never committed');
+            assert.strictEqual(fs.existsSync(manifestPathFor), false, 'no final manifest after a failed rename');
+            assert.deepStrictEqual(manifestArtifacts(), [], 'no temp manifest left behind');
+            assert.deepStrictEqual(orphans(), [], 'no orphaned backup left behind');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched');
+
+            // 写入侧与消费侧必须共用同一 schema 判定:合法 JSON 但 kind/schemaVersion 被改写时
+            // 【不得】提交成功 —— 否则 manifest 发布成功而 rollback 拒收(R9 复审 P0-2)
+            const mutateManifest = (patch) => ({ ...fs,
+                writeFileSync: (target, data, ...rest) => {
+                    if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) {
+                        return fs.writeFileSync(target, JSON.stringify({ ...JSON.parse(String(data)), ...patch }), ...rest);
+                    }
+                    return fs.writeFileSync(target, data, ...rest);
+                } });
+            for (const patch of [{ kind: 'wrong-kind' }, { schemaVersion: 99 }]) {
+                assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: mutateManifest(patch) }),
+                    /not committed/i, `a manifest with ${JSON.stringify(patch)} must not be published`);
+                assert.strictEqual(fs.existsSync(manifestPathFor), false, 'no final manifest for a mutated shape');
+                assert.deepStrictEqual(manifestArtifacts(), [], 'no temp manifest for a mutated shape');
+                assert.deepStrictEqual(orphans(), [], 'no orphaned backup for a mutated shape');
+            }
+            // 写入侧与消费侧确实是同一个判定
+            assert.strictEqual(ti.validateBackupManifestShape({ kind: 'attp-settings-backup', schemaVersion: 1,
+                settingsPath: txSettings, existed: false, backupPath: null, sha256: null }), true);
+            assert.strictEqual(ti.validateBackupManifestShape({ kind: 'wrong-kind', schemaVersion: 1,
+                settingsPath: txSettings, existed: false, backupPath: null, sha256: null }), false);
+
+            // 证明下一次备份确实没被挡住
+            const proof = ti.backupSettings(txSettings, { projectRoot: txProject });
+            ti.discardBackup({ projectRoot: txProject });
+            assert.ok(proof.manifestPath, 'a clean backup still works after every aborted attempt');
+
+            // 正常:备份 → 安装 → 回滚恢复原始字节
+            const bk = ti.backupSettings(txSettings, { projectRoot: txProject });
+            assert.strictEqual(bk.existed, true);
+            assert.ok(bk.backupPath.includes('attp-backup'), 'backup goes to a unique path');
+            assert.strictEqual(fs.readFileSync(bk.backupPath, 'utf8'), originalBytes, 'backup holds the original bytes');
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject }), /already exists/i, 'never clobbers an existing backup manifest');
+            ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject });
+            assert.notStrictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'install did change settings');
+            ti.restoreSettings({ projectRoot: txProject });
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'rollback restored the original bytes');
+            assert.strictEqual(fs.existsSync(bk.manifestPath), false, 'manifest cleared after restore');
+
+            // 原本不存在 settings:只有这种情况才允许"回滚 = 删除文件"
+            fs.rmSync(txSettings, { force: true });
+            assert.strictEqual(ti.backupSettings(txSettings, { projectRoot: txProject }).existed, false);
+            ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject });
+            assert.strictEqual(fs.existsSync(txSettings), true);
+            ti.restoreSettings({ projectRoot: txProject });
+            assert.strictEqual(fs.existsSync(txSettings), false, 'only a file we created is removed on rollback');
+
+            // 嵌套子目录下用【相对路径】回滚:必须恢复项目根的 settings,且不在子目录制造/删除任何文件
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+            const nested = path.join(txProject, 'src', 'deep'); fs.mkdirSync(nested, { recursive: true });
+            ti.installWithBackup('.claude/settings.json', { events: ['SessionStart'], projectRoot: txProject });
+            assert.notStrictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'installed via a relative path');
+            const prevCwd = process.cwd();
+            try { process.chdir(nested); ti.restoreSettings({ projectRoot: txProject }); }
+            finally { process.chdir(prevCwd); }
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'rollback from a nested cwd restored the ROOT settings');
+            assert.strictEqual(fs.existsSync(path.join(nested, '.claude')), false, 'nothing created or deleted in the nested cwd');
+
+            // backup-discard:阶段门通过后清理备份,但不触碰当前 settings
+            ti.installWithBackup('.claude/settings.json', { events: ['SessionStart'], projectRoot: txProject });
+            const installed = fs.readFileSync(txSettings, 'utf8');
+            assert.strictEqual(ti.discardBackup({ projectRoot: txProject }).discarded, true);
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), installed, 'discard leaves current settings untouched');
+            assert.strictEqual(ti.discardBackup({ projectRoot: txProject }).discarded, false, 'discard is idempotent');
+
+            // installWithBackup:install 自身失败 → 自动回滚 + 不留残余 manifest
+            fs.writeFileSync(txSettings, '{ not json', 'utf8');
+            assert.throws(() => ti.installWithBackup(txSettings, { events: ['SessionStart'], projectRoot: txProject }), /corrupt|JSON/i);
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), '{ not json', 'failed install rolled back automatically');
+            assert.strictEqual(fs.existsSync(bk.manifestPath), false, 'no stale manifest after auto-rollback');
+
+            // 回滚【也】失败 → AggregateError 保住两个错误 + manifest 路径(R6 复审 P1-4)
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+            // 注意:两个 seam 都必须【按目的地限定】。manifest 提交同样走 fsOps.renameSync,
+            // 若在这里让 renameSync 全局抛,backupSettings 就先失败了,installer 根本进不去,
+            // AggregateError 分支永远测不到(R9 复审 P0-1)。
+            const doubleFail = { ...fs,
+                // 备份文件与 manifest 照写;唯独写回 settings 本体时失败 → 制造 restore 失败
+                writeFileSync: (target, ...rest) => {
+                    if (path.resolve(String(target)) === path.resolve(txSettings)) throw new Error('restore write fail');
+                    return fs.writeFileSync(target, ...rest);
+                },
+                // 只让 installer 的 temp → settings 提交失败;manifest 的 rename 必须放行
+                renameSync: (src, dst) => {
+                    if (path.resolve(String(dst)) === path.resolve(txSettings)) throw new Error('install rename fail');
+                    return fs.renameSync(src, dst);
+                },
+            };
+            let agg = null;
+            try { ti.installWithBackup(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: doubleFail }); }
+            catch (e) { agg = e; }
+            assert.ok(agg instanceof AggregateError, 'double failure surfaces as AggregateError');
+            assert.strictEqual(agg.errors.length, 2, 'both errors preserved');
+            assert.ok(/install rename fail/.test(agg.errors[0].message), 'first error is the install failure');
+            assert.ok(/restore write fail/.test(agg.errors[1].message), 'second error is the rollback failure');
+            assert.ok(agg.message.includes(bk.manifestPath), 'message names the manifest path for manual recovery');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'original settings still intact on disk');
+            const stranded = ti.readBackupManifest(txProject);
+            assert.ok(stranded && fs.existsSync(stranded.backupPath), 'manifest and backup kept for manual recovery');
+            // 备份与 manifest 是【故意】保留供人工恢复的;installer 的临时 settings 则不得残留
+            assert.deepStrictEqual(installerTemps(), [], 'no orphaned installer temp settings after the double failure');
+            ti.discardBackup({ projectRoot: txProject });   // 测试自清理
+
+            // ── installer 临时 settings 的清理(R10 复审 P1-2)──
+            // 临时文件含合并后的完整 settings(可能带用户敏感字段),rename 失败必须清掉
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+            const settingsRenameFail = { ...fs,
+                renameSync: (src, dst) => {
+                    if (path.resolve(String(dst)) === path.resolve(txSettings)) throw new Error('settings rename fail');
+                    return fs.renameSync(src, dst);
+                } };
+            assert.throws(() => ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: settingsRenameFail }),
+                /settings rename fail/, 'install surfaces the rename failure');
+            assert.deepStrictEqual(installerTemps(), [], 'the temp settings file is cleaned up on rename failure');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'original settings unchanged');
+            // rename 失败【且】清理也失败 → 两个错误都保留 + 报告孤儿路径
+            const tempStuck = { ...fs,
+                renameSync: (src, dst) => {
+                    if (path.resolve(String(dst)) === path.resolve(txSettings)) throw new Error('settings rename fail');
+                    return fs.renameSync(src, dst);
+                },
+                unlinkSync: (target) => {
+                    if (path.basename(String(target)).includes('.evo-tmp-')) throw new Error('temp unlink fail');
+                    return fs.unlinkSync(target);
+                } };
+            let installAgg = null;
+            try { ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: tempStuck }); }
+            catch (e) { installAgg = e; }
+            assert.ok(installAgg instanceof AggregateError, 'both failures preserved');
+            assert.strictEqual(installAgg.errors.length, 2);
+            assert.ok(/settings rename fail/.test(installAgg.errors[0].message));
+            assert.ok(/temp unlink fail/.test(installAgg.errors[1].message));
+            assert.ok(/evo-tmp-/.test(installAgg.message), 'message names the orphaned temp path');
+            for (const leftover of installerTemps()) fs.rmSync(path.join(path.dirname(txSettings), leftover), { force: true });
+
+            // backupSettings 的【公开边界】也必须保留错误结构:
+            // commitManifest 抛 AggregateError 时,abortBackup 不得把它压成普通 Error(R10 复审 P1-1)
+            const commitAndCleanupFail = { ...fs,
+                writeFileSync: (target, data, ...rest) => {
+                    if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) {
+                        return fs.writeFileSync(target, String(data).slice(0, 12), ...rest);   // 回读解析失败
+                    }
+                    return fs.writeFileSync(target, data, ...rest);
+                },
+                unlinkSync: (target) => {
+                    if (path.basename(String(target)).startsWith(`${path.basename(manifestPathFor)}.tmp-`)) {
+                        throw new Error('temp manifest unlink fail');
+                    }
+                    return fs.unlinkSync(target);
+                } };
+            let backupAgg = null;
+            try { ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: commitAndCleanupFail }); }
+            catch (e) { backupAgg = e; }
+            assert.ok(backupAgg instanceof AggregateError, 'backupSettings must not flatten the AggregateError');
+            assert.strictEqual(backupAgg.errors.length, 2, 'commit error and temp-cleanup error both preserved');
+            assert.ok(/read-back|not committed|JSON/i.test(backupAgg.errors[0].message), 'first error is the commit failure');
+            assert.ok(/temp manifest unlink fail/.test(backupAgg.errors[1].message), 'second error is the cleanup failure');
+            assert.ok(/\.tmp-/.test(backupAgg.message), 'message names the orphaned temp manifest path');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched');
+            for (const leftover of manifestArtifacts()) fs.rmSync(path.join(path.dirname(manifestPathFor), leftover), { force: true });
+            assert.deepStrictEqual(orphans(), [], 'the backup itself was still cleaned up');
+
+            // ── 物理边界:.claude 是指向项目外的 symlink/junction 时必须拒装(R6 复审 P0-2)──
+            const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-outside-'));
+            fs.mkdirSync(path.join(outside, '.claude'), { recursive: true });
+            const outsideSettings = path.join(outside, '.claude', 'settings.json');
+            fs.writeFileSync(outsideSettings, '{"user":"level"}\n', 'utf8');
+            const linkProject = path.join(dir, 'link project');
+            fs.mkdirSync(path.join(linkProject, '.evo-lite', 'cli'), { recursive: true });
+            fs.copyFileSync(adapterStub, path.join(linkProject, '.evo-lite', 'cli', 'takeover-adapter.js'));
+            let linked = false;
+            try { fs.symlinkSync(path.join(outside, '.claude'), path.join(linkProject, '.claude'), 'junction'); linked = true; }
+            catch (_) { try { fs.symlinkSync(path.join(outside, '.claude'), path.join(linkProject, '.claude'), 'dir'); linked = true; } catch (_) { linked = false; } }
+            if (linked) {
+                assert.throws(() => ti.resolveManagedSettingsPath(linkProject, '.claude/settings.json'),
+                    /outside the project root/i, 'a symlinked .claude escapes the string prefix but not the physical boundary');
+                assert.throws(() => ti.installWithBackup('.claude/settings.json', { events: ['SessionStart'], projectRoot: linkProject }),
+                    /outside the project root/i, 'install refuses to write through the link');
+                assert.strictEqual(fs.readFileSync(outsideSettings, 'utf8'), '{"user":"level"}\n', 'the out-of-project file is untouched');
+                assert.strictEqual(fs.existsSync(ti.backupManifestPath(linkProject)), false, 'no manifest created when the path is rejected');
+                // 备份名带 pid+随机后缀,固定串断言查不出泄漏 —— 必须扫目录(R7 复审 P1-1)
+                const leaked = fs.readdirSync(path.dirname(outsideSettings))
+                    .filter(name => name.startsWith(`${path.basename(outsideSettings)}.attp-backup-`));
+                assert.deepStrictEqual(leaked, [], 'no backup file leaked outside the project');
+            } else {
+                assert.strictEqual(process.platform, 'win32', 'symlink creation may only be skipped on win32 without privilege');
+                console.log('   ⏭️ settings symlink-escape case skipped (win32 without symlink privilege)');
+            }
+
+            // ── 篡改 manifest:rollback / discard 必须 fail loud,且不碰项目外文件 ──
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+            const tampered = ti.backupSettings(txSettings, { projectRoot: txProject });
+            const rewrite = (patch) => fs.writeFileSync(tampered.manifestPath,
+                JSON.stringify({ ...JSON.parse(fs.readFileSync(tampered.manifestPath, 'utf8')), ...patch }), 'utf8');
+            rewrite({ settingsPath: outsideSettings });
+            assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /outside the project root/i, 'tampered settingsPath is rejected');
+            rewrite({ settingsPath: txSettings, backupPath: outsideSettings });
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /sibling|managed naming rule/i, 'tampered backupPath is rejected');
+            rewrite({ backupPath: path.join(txProject, '.claude', 'not-a-managed-backup') });
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /managed naming rule/i, 'in-project but unmanaged backup path is rejected');
+
+            // ── 项目【内】任意文件同样不得被破坏(R7 复审 P0-2 的两个反例)──
+            const victimDir = path.join(txProject, 'src'); fs.mkdirSync(victimDir, { recursive: true });
+            const victim = path.join(victimDir, 'important.js');
+            fs.writeFileSync(victim, 'const keep = 1;\n', 'utf8');
+            rewrite({ settingsPath: victim, existed: false, backupPath: null, sha256: null });
+            assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /only .* is managed/i,
+                'a manifest pointing at an in-project source file cannot make restore delete it');
+            assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'const keep = 1;\n', 'victim file untouched');
+            // 伪装成受管备份的项目内文件:名字"含 marker"不够,必须是 settings 的同目录兄弟且精确命名
+            const fakeBackup = path.join(victimDir, 'important.attp-backup-data');
+            fs.writeFileSync(fakeBackup, 'disguised\n', 'utf8');
+            rewrite({ settingsPath: txSettings, existed: true, backupPath: fakeBackup, sha256: 'a'.repeat(64) });
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /sibling|managed naming rule/i,
+                'a disguised in-project backup path is rejected');
+            assert.strictEqual(fs.existsSync(fakeBackup), true, 'disguised file still exists');
+            // 精确命名但【自身是断链】的 backup:existsSync 为 false,必须靠 lstat 拦下(R8 复审 P1-2)
+            const linkBackup = `${txSettings}.attp-backup-${process.pid}-abcdef123456`;
+            let backupLinkMade = false;
+            try { fs.symlinkSync(path.join(txProject, 'src', 'no-such-target'), linkBackup, 'file'); backupLinkMade = true; }
+            catch (_) { backupLinkMade = false; }
+            if (!backupLinkMade) {
+                assert.strictEqual(process.platform, 'win32', 'dangling backup link case is mandatory on POSIX');
+                console.log('   ⏭️ dangling backup link case skipped (win32 without symlink privilege)');
+            } else {
+                assert.strictEqual(fs.existsSync(linkBackup), false, 'a dangling backup link reads as absent');
+                assert.throws(() => ti.resolveManagedBackupPath(txSettings, linkBackup),
+                    /is a link/i, 'a correctly named but dangling backup link is still rejected');
+                fs.rmSync(linkBackup, { force: true });
+            }
+            // sha256 必须是 64 位十六进制
+            rewrite({ settingsPath: txSettings, existed: true, backupPath: tampered.backupPath, sha256: 'nope' });
+            assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /schema validation/i, 'sha256 shape is enforced');
+            // kind / schemaVersion 必须存在
+            fs.writeFileSync(tampered.manifestPath, JSON.stringify({ settingsPath: txSettings, existed: false, backupPath: null, sha256: null }), 'utf8');
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /schema validation/i, 'kind/schemaVersion are required');
+            fs.writeFileSync(tampered.manifestPath, '{ not json', 'utf8');
+            assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /manifest is corrupt/i, 'corrupt manifest fails loud');
+            fs.writeFileSync(tampered.manifestPath, JSON.stringify({ settingsPath: txSettings }), 'utf8');
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /schema validation/i, 'manifest schema is enforced');
+            assert.strictEqual(fs.readFileSync(outsideSettings, 'utf8'), '{"user":"level"}\n', 'no out-of-project file was written or deleted');
+            fs.rmSync(tampered.manifestPath, { force: true }); fs.rmSync(tampered.backupPath, { force: true });
+            fs.rmSync(outside, { recursive: true, force: true });
+
+            // adapter 存在但退出非零 → 安装闸与诊断 probe 均须拦截
+            fs.writeFileSync(adapterStub, 'process.exit(9);', 'utf8');
+            assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'broken adapter fails the install gate');
+            assert.strictEqual(ti.probeHookCommand(fakeProject).ok, false, 'broken adapter fails the command probe too');
+            fs.rmSync(dir, { recursive: true, force: true });
+            console.log('✅ T-takeover-installer passed');
+        }
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
@@ -9054,6 +10001,31 @@ async function runChildRuntimeTests() {
             fs.rmSync(tmpNoIr, { recursive: true, force: true });
         }
         console.log('✅ T-wiki-cli passed');
+    }
+
+    console.log('T-takeover-recovery. CLI recovery: payload before authorization; committed receipt; root-bound command ...');
+    {
+        const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+        const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+        const canonRepo = rc.canonicalProjectRoot(WORKSPACE_ROOT);
+        const cmd = ad.buildRecoveryCommand(canonRepo, "sid'q");
+        assert.ok(cmd.startsWith(`node '${canonRepo}/.evo-lite/cli/memory.js'`), 'canonical-root-bound absolute path');
+        assert.ok(!/(^| )node \.evo-lite\//.test(cmd), 'no bare relative path');
+        assert.ok(/'sid'\\''q'/.test(cmd), 'sessionId bash-escaped');
+
+        // 子进程在【子目录】cwd 下执行 recovery:EVO_LITE_ROOT 指向真实 .evo-lite
+        const memJs = path.join(TEMPLATE_CLI_DIR, 'memory.js');
+        const runtimeRoot = path.join(WORKSPACE_ROOT, '.evo-lite');
+        const sub = childProcess.spawnSync(process.execPath, [memJs, 'bootstrap', '--receipt',
+            '--host', 'claude-code', '--session-id', 'rec-test', '--source', 'manual-recovery', '--json'],
+            { cwd: path.join(WORKSPACE_ROOT, 'templates'), env: { ...process.env, EVO_LITE_ROOT: runtimeRoot, EVO_LITE_SKIP_GIT_STATUS: '1' }, encoding: 'utf8' });
+        assert.strictEqual(sub.status, 0, `recovery exit 0 (stderr: ${sub.stderr})`);
+        const printed = JSON.parse(sub.stdout.slice(sub.stdout.indexOf('{')));
+        assert.strictEqual(printed.schemaVersion, 1, 'recovery prints the takeover payload (not a "committed" banner)');
+        assert.ok(!/hookSpecificOutput/.test(sub.stdout), 'CLI output is not a hook envelope');
+        assert.strictEqual(rc.readReceipt(WORKSPACE_ROOT, 'claude-code', 'rec-test').state, 'committed', 'receipt committed');
+        fs.rmSync(rc.receiptPathFor(WORKSPACE_ROOT, 'claude-code', 'rec-test'), { force: true });
+        console.log('✅ T-takeover-recovery passed');
     }
 }
 

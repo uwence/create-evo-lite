@@ -29,3 +29,10 @@ test-scaffold-v2/
 
 .playwright-mcp/
 inspector-planning-tab.png
+
+# Agent Takeover Trigger Protocol — session-bound receipts (generated, never committed)
+.evo-lite/generated/takeover/receipts/
+# ATTP — transactional settings backup (machine-local, never committed)
+.evo-lite/generated/takeover/settings-backup.json
+.claude/settings.json.attp-backup-*
+.claude/settings.json.evo-tmp-*

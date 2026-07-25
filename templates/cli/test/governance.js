@@ -7250,6 +7250,411 @@ async function runGovernanceTests() {
             console.log('✅ T-takeover-transport-order passed');
         }
 
+        console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (install & status); probe gate ...');
+        {
+            const ti = require(path.join(TEMPLATE_CLI_DIR, 'takeover-install.js'));
+            const existing = { model: 'sonnet', hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'rtk hook claude' }] }] } };
+            const frag = ti.managedFragment(['SessionStart', 'UserPromptSubmit']);
+            const m1 = ti.mergeHookConfig(existing, frag);
+            assert.strictEqual(m1.model, 'sonnet', 'unknown field preserved');
+            assert.ok(m1.hooks.PreToolUse.some(g => g.hooks.some(h => h.command === 'rtk hook claude')), 'third-party preserved');
+            assert.ok(m1.hooks.SessionStart.some(g => g.hooks.some(h => /CLAUDE_PROJECT_DIR/.test(h.command))), 'uses CLAUDE_PROJECT_DIR');
+            assert.strictEqual(ti.mergeHookConfig(m1, frag).hooks.SessionStart.filter(ti.isManagedGroup).length, 1, 'idempotent');
+
+            // 用【临时假项目】做 probe,不依赖尚未 sync 的 runtime mirror(路径含空格,顺带验引用)
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-inst-'));
+            const fakeProject = path.join(dir, 'my project');           // 故意含空格
+            const fakeCli = path.join(fakeProject, '.evo-lite', 'cli');
+            fs.mkdirSync(fakeCli, { recursive: true });
+            // stub 必须产出【真实形状】的 capsule:probe 现在解析 envelope + capsule,不再只看退出码与子串
+            const stubCapsule = (evoLite, reason) => 'process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write('
+                + `JSON.stringify({hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:JSON.stringify(`
+                + `{evoLite:${JSON.stringify(evoLite)},project:"p",receipt:"invalid",focusHash:null`
+                + (reason ? `,reason:${JSON.stringify(reason)}` : '') + '})}})'
+                + ');process.exit(0);});';
+            const adapterStub = path.join(fakeCli, 'takeover-adapter.js');
+            fs.writeFileSync(adapterStub, stubCapsule('takeover-stale'), 'utf8');
+            assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, true, 'adapter binary probe passes');
+            // 运行时故障(degraded capsule)必须拒装 —— 退出码已不能承载失败
+            fs.writeFileSync(adapterStub, stubCapsule('takeover-degraded', 'active-context-unreadable'), 'utf8');
+            const degradedProbe = ti.probeAdapterBinary(fakeProject);
+            assert.strictEqual(degradedProbe.ok, false, 'a degraded runtime blocks installation even though the hook exits 0');
+            assert.ok(/degraded runtime/.test(degradedProbe.reason));
+            fs.writeFileSync(adapterStub, 'process.stdout.write("not json");process.exit(0);', 'utf8');
+            assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'non-JSON stdout blocks installation');
+            // 残缺 capsule(只有 evoLite)必须拒装:宿主会静默丢弃类型错字段,probe 必须跑真正的 validateCapsule
+            fs.writeFileSync(adapterStub, 'process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write('
+                + 'JSON.stringify({hookSpecificOutput:{hookEventName:"UserPromptSubmit",'
+                + 'additionalContext:JSON.stringify({evoLite:"takeover-stale"})}})'
+                + ');process.exit(0);});', 'utf8');
+            const thin = ti.probeAdapterBinary(fakeProject);
+            assert.strictEqual(thin.ok, false, 'a capsule missing fixed keys must not pass the install gate');
+            assert.ok(/capsule invalid/.test(thin.reason), `expected schema rejection, got: ${thin.reason}`);
+            fs.writeFileSync(adapterStub, stubCapsule('takeover-stale'), 'utf8');   // 复位为健康 stub
+
+            // 安装闸①:命令形状静态可验证(与本机 shell 无关)
+            assert.strictEqual(ti.verifyHookCommandShape(ti.HOOK_COMMAND).ok, true, 'shipped HOOK_COMMAND shape is valid');
+            assert.strictEqual(ti.verifyHookCommandShape('node $CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js').ok, false,
+                'unquoted $CLAUDE_PROJECT_DIR rejected (breaks on paths with spaces)');
+            assert.strictEqual(ti.verifyHookCommandShape('node "$CLAUDE_PROJECT_DIR/other.js"').ok, false, 'must reference the managed adapter');
+
+            // 诊断 probe:在显式 POSIX shell 下跑命令原文(ok 即证明 $CLAUDE_PROJECT_DIR 展开且含空格路径被正确引用)
+            const cmdProbe = ti.probeHookCommand(fakeProject);
+            assert.ok(cmdProbe.ok, `hook command probe: ${cmdProbe.reason}`);
+            if (!cmdProbe.skipped) {
+                assert.strictEqual(cmdProbe.skipped, false, 'a discoverable POSIX shell actually ran the command verbatim');
+            }
+            // 指定一个不存在的 shell → 如实报失败(不得静默当成通过)
+            assert.strictEqual(ti.probeHookCommand(fakeProject, { shell: path.join(dir, 'no-such-shell') }).ok, false,
+                'a broken shell is reported, not silently passed');
+            // shell 不可发现 → skipped,且【不影响安装】—— 本机 shell 差异不得导致误拒装
+            const skipped = ti.probeHookCommand(fakeProject, { resolveShell: () => ({ ok: false, reason: 'none found' }) });
+            assert.strictEqual(skipped.ok, true); assert.strictEqual(skipped.skipped, true, 'undiscoverable shell → skipped, not failed');
+
+            // 受管对象唯一:<canonicalProjectRoot>/.claude/settings.json —— 项目内的其他文件也不许被本工具触碰
+            const managed = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
+            assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'), managed,
+                'relative settings bind to the physical project root');
+            assert.strictEqual(ti.managedSettingsPath(fakeProject), managed, 'managed path is derived, not supplied');
+            assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, path.join(dir, 'outside.json')),
+                /outside the project root/i, 'settings outside the project are rejected, not silently accepted');
+            assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, '.claude/other.json'),
+                /only .* is managed/i, 'another in-project file is not the managed settings file');
+            assert.throws(() => ti.resolveManagedSettingsPath(fakeProject, 'src/victim.js'),
+                /only .* is managed/i, 'arbitrary in-project paths are rejected too');
+
+            fs.mkdirSync(path.join(fakeProject, '.claude'), { recursive: true });
+            fs.writeFileSync(managed, '{ not json', 'utf8');
+            assert.throws(() => ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart'], projectRoot: fakeProject }), /corrupt|JSON/i, 'install throws on corrupt');
+            assert.strictEqual(fs.readFileSync(managed, 'utf8'), '{ not json', 'corrupt file unchanged');
+            assert.throws(() => ti.statusTakeoverHooks(managed, ['SessionStart']), /corrupt|JSON/i, 'status throws on corrupt (no silent all-missing)');
+            fs.rmSync(managed, { force: true });
+
+            // 正常安装(假项目)→ 写入且幂等
+            assert.strictEqual(ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, true);
+            assert.strictEqual(ti.installTakeoverHooks('.claude/settings.json', { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, false, 'second install is a no-op');
+            assert.deepStrictEqual(ti.statusTakeoverHooks(managed, ['SessionStart', 'UserPromptSubmit', 'PreToolUse']).missing, ['PreToolUse']);
+            fs.rmSync(managed, { force: true });
+
+            // 闸不过 → 不写 settings(用一个没有 adapter 的项目,settings 仍落在该项目内)
+            const badProject = path.join(dir, 'no adapter project');
+            fs.mkdirSync(path.join(badProject, '.evo-lite', 'cli'), { recursive: true });
+            const fresh = path.join(badProject, '.claude', 'settings.json');
+            assert.throws(() => ti.installTakeoverHooks(fresh, { events: ['SessionStart'], projectRoot: badProject }), /probe|adapter/i, 'adapter probe failure blocks install');
+            assert.strictEqual(fs.existsSync(fresh), false, 'no settings written when the gate fails');
+
+            // ── settings 事务化:备份失败必须停;回滚必须恢复原始字节(R4 复审 P0-4)──
+            const txProject = path.join(dir, 'tx project');
+            fs.mkdirSync(path.join(txProject, '.evo-lite', 'cli'), { recursive: true });
+            fs.copyFileSync(path.join(fakeCli, 'takeover-adapter.js'), path.join(txProject, '.evo-lite', 'cli', 'takeover-adapter.js'));
+            const txSettings = path.join(txProject, '.claude', 'settings.json');
+            fs.mkdirSync(path.dirname(txSettings), { recursive: true });
+            const originalBytes = '{\n  "model": "sonnet"\n}\n';
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+
+            // 备份写入损坏 → 抛;绝不带着"以为有备份"继续安装
+            const brokenFs = { ...fs, writeFileSync: (p) => fs.writeFileSync(p, Buffer.from('corrupted')) };
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: brokenFs }),
+                /backup does not match|unreadable/i, 'backup verification failure stops the transaction');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched when backup fails');
+            // 半成品备份必须清掉:否则用户仓库里会留下一份含 settings 原文的孤儿副本(R7 复审 P1-2)
+            const orphans = () => fs.readdirSync(path.dirname(txSettings))
+                .filter(name => name.startsWith(`${path.basename(txSettings)}.attp-backup-`));
+            const installerTemps = () => fs.readdirSync(path.dirname(txSettings))
+                .filter(name => name.startsWith(`${path.basename(txSettings)}.evo-tmp-`));
+            assert.deepStrictEqual(orphans(), [], 'no orphaned backup left after a failed verification');
+            // manifest 写入失败同样要清掉已写的备份(注意 manifest 现在先写 .tmp-,故按前缀注入)
+            const manifestPathFor = ti.backupManifestPath(txProject);
+            const manifestArtifacts = () => fs.existsSync(path.dirname(manifestPathFor))
+                ? fs.readdirSync(path.dirname(manifestPathFor)).filter(n => n.startsWith(path.basename(manifestPathFor)))
+                : [];
+            const manifestFail = { ...fs,
+                writeFileSync: (target, ...rest) => {
+                    if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) throw new Error('manifest write fail');
+                    return fs.writeFileSync(target, ...rest);
+                } };
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: manifestFail }), /not committed|manifest write fail/);
+            assert.deepStrictEqual(orphans(), [], 'no orphaned backup left when the manifest write fails');
+            assert.deepStrictEqual(manifestArtifacts(), [], 'no manifest artifact left when the write fails');
+
+            // 半写 manifest(写入成功但内容被截断)→ 回读解析失败 → 不提交、不留任何产物
+            const halfWrite = { ...fs,
+                writeFileSync: (target, data, ...rest) => {
+                    if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) {
+                        return fs.writeFileSync(target, String(data).slice(0, 12), ...rest);   // 截断 → 非法 JSON
+                    }
+                    return fs.writeFileSync(target, data, ...rest);
+                } };
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: halfWrite }), /not committed/i,
+                'a half-written manifest is never committed');
+            assert.deepStrictEqual(manifestArtifacts(), [], 'the temp manifest is cleaned up, so the next backup is not blocked');
+            assert.deepStrictEqual(orphans(), [], 'and the half-finished backup is cleaned up too');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched throughout');
+            // manifest rename 失败(ordered publication 的最后一步)→ 全清理 + 可重试
+            const manifestRenameFail = { ...fs,
+                renameSync: (src, dst) => {
+                    if (path.resolve(String(dst)) === path.resolve(manifestPathFor)) throw new Error('manifest rename fail');
+                    return fs.renameSync(src, dst);
+                } };
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: manifestRenameFail }),
+                /not committed/i, 'a manifest that cannot be renamed is never committed');
+            assert.strictEqual(fs.existsSync(manifestPathFor), false, 'no final manifest after a failed rename');
+            assert.deepStrictEqual(manifestArtifacts(), [], 'no temp manifest left behind');
+            assert.deepStrictEqual(orphans(), [], 'no orphaned backup left behind');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched');
+
+            // 写入侧与消费侧必须共用同一 schema 判定:合法 JSON 但 kind/schemaVersion 被改写时
+            // 【不得】提交成功 —— 否则 manifest 发布成功而 rollback 拒收(R9 复审 P0-2)
+            const mutateManifest = (patch) => ({ ...fs,
+                writeFileSync: (target, data, ...rest) => {
+                    if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) {
+                        return fs.writeFileSync(target, JSON.stringify({ ...JSON.parse(String(data)), ...patch }), ...rest);
+                    }
+                    return fs.writeFileSync(target, data, ...rest);
+                } });
+            for (const patch of [{ kind: 'wrong-kind' }, { schemaVersion: 99 }]) {
+                assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: mutateManifest(patch) }),
+                    /not committed/i, `a manifest with ${JSON.stringify(patch)} must not be published`);
+                assert.strictEqual(fs.existsSync(manifestPathFor), false, 'no final manifest for a mutated shape');
+                assert.deepStrictEqual(manifestArtifacts(), [], 'no temp manifest for a mutated shape');
+                assert.deepStrictEqual(orphans(), [], 'no orphaned backup for a mutated shape');
+            }
+            // 写入侧与消费侧确实是同一个判定
+            assert.strictEqual(ti.validateBackupManifestShape({ kind: 'attp-settings-backup', schemaVersion: 1,
+                settingsPath: txSettings, existed: false, backupPath: null, sha256: null }), true);
+            assert.strictEqual(ti.validateBackupManifestShape({ kind: 'wrong-kind', schemaVersion: 1,
+                settingsPath: txSettings, existed: false, backupPath: null, sha256: null }), false);
+
+            // 证明下一次备份确实没被挡住
+            const proof = ti.backupSettings(txSettings, { projectRoot: txProject });
+            ti.discardBackup({ projectRoot: txProject });
+            assert.ok(proof.manifestPath, 'a clean backup still works after every aborted attempt');
+
+            // 正常:备份 → 安装 → 回滚恢复原始字节
+            const bk = ti.backupSettings(txSettings, { projectRoot: txProject });
+            assert.strictEqual(bk.existed, true);
+            assert.ok(bk.backupPath.includes('attp-backup'), 'backup goes to a unique path');
+            assert.strictEqual(fs.readFileSync(bk.backupPath, 'utf8'), originalBytes, 'backup holds the original bytes');
+            assert.throws(() => ti.backupSettings(txSettings, { projectRoot: txProject }), /already exists/i, 'never clobbers an existing backup manifest');
+            ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject });
+            assert.notStrictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'install did change settings');
+            ti.restoreSettings({ projectRoot: txProject });
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'rollback restored the original bytes');
+            assert.strictEqual(fs.existsSync(bk.manifestPath), false, 'manifest cleared after restore');
+
+            // 原本不存在 settings:只有这种情况才允许"回滚 = 删除文件"
+            fs.rmSync(txSettings, { force: true });
+            assert.strictEqual(ti.backupSettings(txSettings, { projectRoot: txProject }).existed, false);
+            ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject });
+            assert.strictEqual(fs.existsSync(txSettings), true);
+            ti.restoreSettings({ projectRoot: txProject });
+            assert.strictEqual(fs.existsSync(txSettings), false, 'only a file we created is removed on rollback');
+
+            // 嵌套子目录下用【相对路径】回滚:必须恢复项目根的 settings,且不在子目录制造/删除任何文件
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+            const nested = path.join(txProject, 'src', 'deep'); fs.mkdirSync(nested, { recursive: true });
+            ti.installWithBackup('.claude/settings.json', { events: ['SessionStart'], projectRoot: txProject });
+            assert.notStrictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'installed via a relative path');
+            const prevCwd = process.cwd();
+            try { process.chdir(nested); ti.restoreSettings({ projectRoot: txProject }); }
+            finally { process.chdir(prevCwd); }
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'rollback from a nested cwd restored the ROOT settings');
+            assert.strictEqual(fs.existsSync(path.join(nested, '.claude')), false, 'nothing created or deleted in the nested cwd');
+
+            // backup-discard:阶段门通过后清理备份,但不触碰当前 settings
+            ti.installWithBackup('.claude/settings.json', { events: ['SessionStart'], projectRoot: txProject });
+            const installed = fs.readFileSync(txSettings, 'utf8');
+            assert.strictEqual(ti.discardBackup({ projectRoot: txProject }).discarded, true);
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), installed, 'discard leaves current settings untouched');
+            assert.strictEqual(ti.discardBackup({ projectRoot: txProject }).discarded, false, 'discard is idempotent');
+
+            // installWithBackup:install 自身失败 → 自动回滚 + 不留残余 manifest
+            fs.writeFileSync(txSettings, '{ not json', 'utf8');
+            assert.throws(() => ti.installWithBackup(txSettings, { events: ['SessionStart'], projectRoot: txProject }), /corrupt|JSON/i);
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), '{ not json', 'failed install rolled back automatically');
+            assert.strictEqual(fs.existsSync(bk.manifestPath), false, 'no stale manifest after auto-rollback');
+
+            // 回滚【也】失败 → AggregateError 保住两个错误 + manifest 路径(R6 复审 P1-4)
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+            // 注意:两个 seam 都必须【按目的地限定】。manifest 提交同样走 fsOps.renameSync,
+            // 若在这里让 renameSync 全局抛,backupSettings 就先失败了,installer 根本进不去,
+            // AggregateError 分支永远测不到(R9 复审 P0-1)。
+            const doubleFail = { ...fs,
+                // 备份文件与 manifest 照写;唯独写回 settings 本体时失败 → 制造 restore 失败
+                writeFileSync: (target, ...rest) => {
+                    if (path.resolve(String(target)) === path.resolve(txSettings)) throw new Error('restore write fail');
+                    return fs.writeFileSync(target, ...rest);
+                },
+                // 只让 installer 的 temp → settings 提交失败;manifest 的 rename 必须放行
+                renameSync: (src, dst) => {
+                    if (path.resolve(String(dst)) === path.resolve(txSettings)) throw new Error('install rename fail');
+                    return fs.renameSync(src, dst);
+                },
+            };
+            let agg = null;
+            try { ti.installWithBackup(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: doubleFail }); }
+            catch (e) { agg = e; }
+            assert.ok(agg instanceof AggregateError, 'double failure surfaces as AggregateError');
+            assert.strictEqual(agg.errors.length, 2, 'both errors preserved');
+            assert.ok(/install rename fail/.test(agg.errors[0].message), 'first error is the install failure');
+            assert.ok(/restore write fail/.test(agg.errors[1].message), 'second error is the rollback failure');
+            assert.ok(agg.message.includes(bk.manifestPath), 'message names the manifest path for manual recovery');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'original settings still intact on disk');
+            const stranded = ti.readBackupManifest(txProject);
+            assert.ok(stranded && fs.existsSync(stranded.backupPath), 'manifest and backup kept for manual recovery');
+            // 备份与 manifest 是【故意】保留供人工恢复的;installer 的临时 settings 则不得残留
+            assert.deepStrictEqual(installerTemps(), [], 'no orphaned installer temp settings after the double failure');
+            ti.discardBackup({ projectRoot: txProject });   // 测试自清理
+
+            // ── installer 临时 settings 的清理(R10 复审 P1-2)──
+            // 临时文件含合并后的完整 settings(可能带用户敏感字段),rename 失败必须清掉
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+            const settingsRenameFail = { ...fs,
+                renameSync: (src, dst) => {
+                    if (path.resolve(String(dst)) === path.resolve(txSettings)) throw new Error('settings rename fail');
+                    return fs.renameSync(src, dst);
+                } };
+            assert.throws(() => ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: settingsRenameFail }),
+                /settings rename fail/, 'install surfaces the rename failure');
+            assert.deepStrictEqual(installerTemps(), [], 'the temp settings file is cleaned up on rename failure');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'original settings unchanged');
+            // rename 失败【且】清理也失败 → 两个错误都保留 + 报告孤儿路径
+            const tempStuck = { ...fs,
+                renameSync: (src, dst) => {
+                    if (path.resolve(String(dst)) === path.resolve(txSettings)) throw new Error('settings rename fail');
+                    return fs.renameSync(src, dst);
+                },
+                unlinkSync: (target) => {
+                    if (path.basename(String(target)).includes('.evo-tmp-')) throw new Error('temp unlink fail');
+                    return fs.unlinkSync(target);
+                } };
+            let installAgg = null;
+            try { ti.installTakeoverHooks(txSettings, { events: ['SessionStart'], projectRoot: txProject, fsOps: tempStuck }); }
+            catch (e) { installAgg = e; }
+            assert.ok(installAgg instanceof AggregateError, 'both failures preserved');
+            assert.strictEqual(installAgg.errors.length, 2);
+            assert.ok(/settings rename fail/.test(installAgg.errors[0].message));
+            assert.ok(/temp unlink fail/.test(installAgg.errors[1].message));
+            assert.ok(/evo-tmp-/.test(installAgg.message), 'message names the orphaned temp path');
+            for (const leftover of installerTemps()) fs.rmSync(path.join(path.dirname(txSettings), leftover), { force: true });
+
+            // backupSettings 的【公开边界】也必须保留错误结构:
+            // commitManifest 抛 AggregateError 时,abortBackup 不得把它压成普通 Error(R10 复审 P1-1)
+            const commitAndCleanupFail = { ...fs,
+                writeFileSync: (target, data, ...rest) => {
+                    if (path.resolve(String(target)).startsWith(path.resolve(manifestPathFor))) {
+                        return fs.writeFileSync(target, String(data).slice(0, 12), ...rest);   // 回读解析失败
+                    }
+                    return fs.writeFileSync(target, data, ...rest);
+                },
+                unlinkSync: (target) => {
+                    if (path.basename(String(target)).startsWith(`${path.basename(manifestPathFor)}.tmp-`)) {
+                        throw new Error('temp manifest unlink fail');
+                    }
+                    return fs.unlinkSync(target);
+                } };
+            let backupAgg = null;
+            try { ti.backupSettings(txSettings, { projectRoot: txProject, fsOps: commitAndCleanupFail }); }
+            catch (e) { backupAgg = e; }
+            assert.ok(backupAgg instanceof AggregateError, 'backupSettings must not flatten the AggregateError');
+            assert.strictEqual(backupAgg.errors.length, 2, 'commit error and temp-cleanup error both preserved');
+            assert.ok(/read-back|not committed|JSON/i.test(backupAgg.errors[0].message), 'first error is the commit failure');
+            assert.ok(/temp manifest unlink fail/.test(backupAgg.errors[1].message), 'second error is the cleanup failure');
+            assert.ok(/\.tmp-/.test(backupAgg.message), 'message names the orphaned temp manifest path');
+            assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'settings untouched');
+            for (const leftover of manifestArtifacts()) fs.rmSync(path.join(path.dirname(manifestPathFor), leftover), { force: true });
+            assert.deepStrictEqual(orphans(), [], 'the backup itself was still cleaned up');
+
+            // ── 物理边界:.claude 是指向项目外的 symlink/junction 时必须拒装(R6 复审 P0-2)──
+            const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-outside-'));
+            fs.mkdirSync(path.join(outside, '.claude'), { recursive: true });
+            const outsideSettings = path.join(outside, '.claude', 'settings.json');
+            fs.writeFileSync(outsideSettings, '{"user":"level"}\n', 'utf8');
+            const linkProject = path.join(dir, 'link project');
+            fs.mkdirSync(path.join(linkProject, '.evo-lite', 'cli'), { recursive: true });
+            fs.copyFileSync(adapterStub, path.join(linkProject, '.evo-lite', 'cli', 'takeover-adapter.js'));
+            let linked = false;
+            try { fs.symlinkSync(path.join(outside, '.claude'), path.join(linkProject, '.claude'), 'junction'); linked = true; }
+            catch (_) { try { fs.symlinkSync(path.join(outside, '.claude'), path.join(linkProject, '.claude'), 'dir'); linked = true; } catch (_) { linked = false; } }
+            if (linked) {
+                assert.throws(() => ti.resolveManagedSettingsPath(linkProject, '.claude/settings.json'),
+                    /outside the project root/i, 'a symlinked .claude escapes the string prefix but not the physical boundary');
+                assert.throws(() => ti.installWithBackup('.claude/settings.json', { events: ['SessionStart'], projectRoot: linkProject }),
+                    /outside the project root/i, 'install refuses to write through the link');
+                assert.strictEqual(fs.readFileSync(outsideSettings, 'utf8'), '{"user":"level"}\n', 'the out-of-project file is untouched');
+                assert.strictEqual(fs.existsSync(ti.backupManifestPath(linkProject)), false, 'no manifest created when the path is rejected');
+                // 备份名带 pid+随机后缀,固定串断言查不出泄漏 —— 必须扫目录(R7 复审 P1-1)
+                const leaked = fs.readdirSync(path.dirname(outsideSettings))
+                    .filter(name => name.startsWith(`${path.basename(outsideSettings)}.attp-backup-`));
+                assert.deepStrictEqual(leaked, [], 'no backup file leaked outside the project');
+            } else {
+                assert.strictEqual(process.platform, 'win32', 'symlink creation may only be skipped on win32 without privilege');
+                console.log('   ⏭️ settings symlink-escape case skipped (win32 without symlink privilege)');
+            }
+
+            // ── 篡改 manifest:rollback / discard 必须 fail loud,且不碰项目外文件 ──
+            fs.writeFileSync(txSettings, originalBytes, 'utf8');
+            const tampered = ti.backupSettings(txSettings, { projectRoot: txProject });
+            const rewrite = (patch) => fs.writeFileSync(tampered.manifestPath,
+                JSON.stringify({ ...JSON.parse(fs.readFileSync(tampered.manifestPath, 'utf8')), ...patch }), 'utf8');
+            rewrite({ settingsPath: outsideSettings });
+            assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /outside the project root/i, 'tampered settingsPath is rejected');
+            rewrite({ settingsPath: txSettings, backupPath: outsideSettings });
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /sibling|managed naming rule/i, 'tampered backupPath is rejected');
+            rewrite({ backupPath: path.join(txProject, '.claude', 'not-a-managed-backup') });
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /managed naming rule/i, 'in-project but unmanaged backup path is rejected');
+
+            // ── 项目【内】任意文件同样不得被破坏(R7 复审 P0-2 的两个反例)──
+            const victimDir = path.join(txProject, 'src'); fs.mkdirSync(victimDir, { recursive: true });
+            const victim = path.join(victimDir, 'important.js');
+            fs.writeFileSync(victim, 'const keep = 1;\n', 'utf8');
+            rewrite({ settingsPath: victim, existed: false, backupPath: null, sha256: null });
+            assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /only .* is managed/i,
+                'a manifest pointing at an in-project source file cannot make restore delete it');
+            assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'const keep = 1;\n', 'victim file untouched');
+            // 伪装成受管备份的项目内文件:名字"含 marker"不够,必须是 settings 的同目录兄弟且精确命名
+            const fakeBackup = path.join(victimDir, 'important.attp-backup-data');
+            fs.writeFileSync(fakeBackup, 'disguised\n', 'utf8');
+            rewrite({ settingsPath: txSettings, existed: true, backupPath: fakeBackup, sha256: 'a'.repeat(64) });
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /sibling|managed naming rule/i,
+                'a disguised in-project backup path is rejected');
+            assert.strictEqual(fs.existsSync(fakeBackup), true, 'disguised file still exists');
+            // 精确命名但【自身是断链】的 backup:existsSync 为 false,必须靠 lstat 拦下(R8 复审 P1-2)
+            const linkBackup = `${txSettings}.attp-backup-${process.pid}-abcdef123456`;
+            let backupLinkMade = false;
+            try { fs.symlinkSync(path.join(txProject, 'src', 'no-such-target'), linkBackup, 'file'); backupLinkMade = true; }
+            catch (_) { backupLinkMade = false; }
+            if (!backupLinkMade) {
+                assert.strictEqual(process.platform, 'win32', 'dangling backup link case is mandatory on POSIX');
+                console.log('   ⏭️ dangling backup link case skipped (win32 without symlink privilege)');
+            } else {
+                assert.strictEqual(fs.existsSync(linkBackup), false, 'a dangling backup link reads as absent');
+                assert.throws(() => ti.resolveManagedBackupPath(txSettings, linkBackup),
+                    /is a link/i, 'a correctly named but dangling backup link is still rejected');
+                fs.rmSync(linkBackup, { force: true });
+            }
+            // sha256 必须是 64 位十六进制
+            rewrite({ settingsPath: txSettings, existed: true, backupPath: tampered.backupPath, sha256: 'nope' });
+            assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /schema validation/i, 'sha256 shape is enforced');
+            // kind / schemaVersion 必须存在
+            fs.writeFileSync(tampered.manifestPath, JSON.stringify({ settingsPath: txSettings, existed: false, backupPath: null, sha256: null }), 'utf8');
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /schema validation/i, 'kind/schemaVersion are required');
+            fs.writeFileSync(tampered.manifestPath, '{ not json', 'utf8');
+            assert.throws(() => ti.restoreSettings({ projectRoot: txProject }), /manifest is corrupt/i, 'corrupt manifest fails loud');
+            fs.writeFileSync(tampered.manifestPath, JSON.stringify({ settingsPath: txSettings }), 'utf8');
+            assert.throws(() => ti.discardBackup({ projectRoot: txProject }), /schema validation/i, 'manifest schema is enforced');
+            assert.strictEqual(fs.readFileSync(outsideSettings, 'utf8'), '{"user":"level"}\n', 'no out-of-project file was written or deleted');
+            fs.rmSync(tampered.manifestPath, { force: true }); fs.rmSync(tampered.backupPath, { force: true });
+            fs.rmSync(outside, { recursive: true, force: true });
+
+            // adapter 存在但退出非零 → 安装闸与诊断 probe 均须拦截
+            fs.writeFileSync(adapterStub, 'process.exit(9);', 'utf8');
+            assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'broken adapter fails the install gate');
+            assert.strictEqual(ti.probeHookCommand(fakeProject).ok, false, 'broken adapter fails the command probe too');
+            fs.rmSync(dir, { recursive: true, force: true });
+            console.log('✅ T-takeover-installer passed');
+        }
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

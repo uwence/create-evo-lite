@@ -508,6 +508,58 @@ function buildProgram() {
             await runBootstrapCommand(options);
         });
 
+    const takeoverCmd = program.command('takeover').description('Agent Takeover Trigger Protocol host-adapter management.');
+    takeoverCmd.command('install')
+        .option('--events <list>', 'Comma-separated events', 'SessionStart,UserPromptSubmit')
+        .option('--settings <path>', 'Path to settings.json', '.claude/settings.json')
+        .option('--backup', 'Back up settings transactionally first (required before dogfood)', false)
+        .action(options => {
+            const ti = require('./takeover-install');
+            const rc = require('./takeover-receipt');
+            const events = options.events.split(',').map(s => s.trim()).filter(Boolean);
+            const projectRoot = rc.canonicalProjectRoot();
+            const res = options.backup
+                ? ti.installWithBackup(options.settings, { events, projectRoot })
+                : ti.installTakeoverHooks(options.settings, { events, projectRoot });
+            if (res.backup) console.log(`🗄️  settings backed up: ${res.backup.existed ? res.backup.backupPath : '(no prior settings file)'}`);
+            console.log(res.changed ? `✅ takeover hooks installed (${events.join(', ')})` : '✅ takeover hooks already in sync');
+        });
+    takeoverCmd.command('rollback')
+        .description('Restore settings.json from the transactional backup manifest.')
+        .action(() => {
+            const ti = require('./takeover-install');
+            const rc = require('./takeover-receipt');
+            const res = ti.restoreSettings({ projectRoot: rc.canonicalProjectRoot() });
+            console.log(`↩️  settings rolled back (${res.restored})`);
+        });
+    takeoverCmd.command('probe')
+        .description('Diagnostic: run the hook command verbatim under the host-equivalent POSIX shell.')
+        .action(() => {
+            const ti = require('./takeover-install');
+            const rc = require('./takeover-receipt');
+            const r = ti.probeHookCommand(rc.canonicalProjectRoot());
+            console.log(JSON.stringify(r));
+            if (!r.ok) process.exitCode = 1;
+        });
+    takeoverCmd.command('backup-discard')
+        .description('Drop the settings backup after a review gate passes (leaves current settings untouched).')
+        .action(() => {
+            const ti = require('./takeover-install');
+            const rc = require('./takeover-receipt');
+            const res = ti.discardBackup({ projectRoot: rc.canonicalProjectRoot() });
+            console.log(res.discarded ? '🧹 settings backup discarded' : 'ℹ️  no settings backup to discard');
+        });
+    takeoverCmd.command('status')
+        .option('--events <list>', 'Comma-separated events', 'SessionStart,UserPromptSubmit,PreToolUse')
+        .option('--settings <path>', 'Path to settings.json', '.claude/settings.json')
+        .action(options => {
+            const ti = require('./takeover-install');
+            const rc = require('./takeover-receipt');
+            const events = options.events.split(',').map(s => s.trim()).filter(Boolean);
+            const s = ti.statusTakeoverHooks(options.settings, events, rc.canonicalProjectRoot());
+            console.log(`installed: ${s.installed.join(', ') || '(none)'} | missing: ${s.missing.join(', ') || '(none)'}`);
+        });
+
     withTextSourceOptions(
         program.command('commit [details]').description('Create code commit, context track, and runtime state snapshot in one flow.')
     )

@@ -425,6 +425,8 @@ async function runIntegrationTests() {
                 'architecture/diff.js', 'architecture/infer-modules.js',
                 'architecture/provider-contract.js', 'architecture/scan-native.js',
                 'memory-index-lock.js',
+                'takeover-payload.js', 'takeover-receipt.js', 'takeover-session.js',
+                'takeover-adapter.js', 'takeover-install.js',
             ];
 
             for (const f of required) {
