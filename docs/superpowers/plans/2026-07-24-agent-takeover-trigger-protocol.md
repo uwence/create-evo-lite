@@ -1011,12 +1011,12 @@ async function collectSessionTakeoverContextFull(base) {
     let summary;
     try { summary = memoryService.summarizeActiveContext(); }
     catch (e) { throw new Error(`takeover collector: active context unreadable: ${e.message}`); } // 不可恢复
-    let sessionstart = {};
-    try { sessionstart = memoryService.inspectLocalState('sessionstart'); }
-    catch (e) { degraded.push({ part: 'sessionstart', reason: e.message }); }
     let verify = {};
     try { verify = await memoryService.verify({ silent: true }); }
     catch (e) { degraded.push({ part: 'verify', reason: e.message }); }
+    let sessionstart = {};
+    try { sessionstart = memoryService.inspectLocalState('sessionstart'); }
+    catch (e) { degraded.push({ part: 'sessionstart', reason: e.message }); }
     let recall = {};
     try { recall = await memoryService.buildTakeoverRecall(summary, verify) || {}; }
     catch (e) { degraded.push({ part: 'recall', reason: e.message }); }
@@ -1667,6 +1667,7 @@ function formatBootstrapReport(payload) {
     ];
     for (const hit of (Array.isArray(recall.hits) ? recall.hits : [])) {
         if (hit && hit.label) lines.push(`memory_hit: ${hit.label}`);
+        if (hit && hit.effect) lines.push(`memory_effect: ${hit.effect}`);
     }
     for (const risk of payload.risks) lines.push(`warning: ${risk}`);
     for (const d of payload.degraded) lines.push(`degraded: ${d.part} (${d.reason})`);

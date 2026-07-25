@@ -303,6 +303,7 @@ function formatBootstrapReport(payload) {
     ];
     for (const hit of (Array.isArray(recall.hits) ? recall.hits : [])) {
         if (hit && hit.label) lines.push(`memory_hit: ${hit.label}`);
+        if (hit && hit.effect) lines.push(`memory_effect: ${hit.effect}`);
     }
     for (const risk of payload.risks) lines.push(`warning: ${risk}`);
     for (const d of payload.degraded) lines.push(`degraded: ${d.part} (${d.reason})`);
