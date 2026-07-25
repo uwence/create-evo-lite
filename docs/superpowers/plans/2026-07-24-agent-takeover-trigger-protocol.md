@@ -975,9 +975,9 @@ function assembleSessionContext(base, parts) {
         || '读取 .agents/rules 与 active_context 后继续当前 focus';
     const needsBootstrap = ['placeholder', 'missing'].includes(ss.contextStatus)
         || ['placeholder', 'missing'].includes(ss.architectureStatus);
-    const takeover = (verify.hasAlerts || degraded.length > 0)
-        ? 'attention-needed'
-        : (needsBootstrap ? 'bootstrap-pending' : 'ready');
+    const takeover = needsBootstrap
+        ? 'bootstrap-pending'
+        : ((verify.hasAlerts || degraded.length > 0) ? 'attention-needed' : 'ready');
     const planSpec = parts.planSpec || { plan: null, spec: null };
     return {
         ...base, kind: 'session',
