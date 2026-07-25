@@ -1,4 +1,4 @@
-# Agent Takeover Trigger Protocol Implementation Plan (R3)
+# Agent Takeover Trigger Protocol Implementation Plan (R4)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R5 APPROVED)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218)。
 
-**计划 R1/R2 外部复审(各 5 P0 + 5 P1)已折入**,逐条见文末《复审落点》。
+**计划 R1/R2/R3 外部复审(5+5+4 个 P0)已折入**,逐条见文末《复审落点》。
 
 ## 已核实的代码事实(实现须以此为准,勿再猜测)
 
@@ -28,7 +28,9 @@
 ## Global Constraints
 
 - **宿主范围:** 仅 Claude Code(MVP);非 Claude 宿主只静态 fallback。
-- **单一 collector + 单一 builder + 强制校验:** 三条入口全部 `collectSessionTakeoverContextFull(...)` → `buildTakeoverPayload(...)` → **`validateSessionPayload(...)` 通过后才 transport**;禁止任何入口自拼语义或硬编码 `verify:null`/`recall:[]`。
+- **单一 collector + 单一 builder + 强制校验:** 三条入口全部 `collectSessionTakeoverContextFull(...)` → `buildTakeoverPayload(...)` → **`validateSessionPayload(...)` 通过后才 transport**;禁止任何入口自拼语义或硬编码 `verify:null`/`recall:[]`。**`UserPromptSubmit` 每轮 capsule 同样强制 `validateCapsule`**(probe 已确认宿主静默丢弃类型错字段,无效 capsule = 静默失去再播种能力);校验不过 → emergency degraded capsule + 非零。
+- **锚点解析 fail-closed:** `readFocusAnchor` 在 `BEGIN_FOCUS/END_FOCUS` 非严格一对时返回 `null`(文件存在但结构损坏**不得**当作"空 focus 的健康态");`readMetaAnchor` 返回 `{ok, reason, meta}`,锚点缺失/`ahead|behind` 非整数 → `ok:false` 并入 `degraded[]`,**`NaN` 绝不进入 freshness**。
+- **schema 深校验:** `validateSessionPayload` 校验 `active.plan/spec`(null 或含非空 `id` 的对象)、`freshness` 三键齐全且数值有限或 null、`health.takeover` 枚举、`verify.hasAlerts` 布尔、`recall.status` 字符串、`degraded[]` 每项 `{part:string, reason:string}`。可恢复降级由 collector 归一化为**保守但合法**的值(`hasAlerts:true` / `recall.status:'unavailable'`),事实由 `degraded[]` + `attention-needed` 承载。
 - **失败不可静默:** 承重字段获取失败**禁止空 catch 变 null**。**可恢复**失败(verify/recall/plan-ir/meta)→ 记入 `payload.degraded[]` 结构化状态并 `health.takeover='attention-needed'`,仍交付;**不可恢复**失败(focus 不可读、initDB/memory.service 加载失败、payload 校验不过)→ establishment 失败、**不发布 receipt**、非零退出。
 - **项目根严格 fail-closed:** `discoverProjectRoot(startDir)` 向上找最近含 `.evo-lite/` 的祖先,**找不到即抛错**;`canonicalProjectRoot` **不得**退回 `path.resolve(base)`。scaffold 场景不复用此函数。
 - **receipt 路径 project-bound:** 所有 receipt API 取 canonical `projectRoot`,内部计算 `<projectRoot>/.evo-lite/generated/takeover/receipts/<host>/<sha256(host\0sessionId)>.json`;`readFocusAnchor`/`readMetaAnchor` 直接读 `<projectRoot>/.evo-lite/active_context.md`(**不**用 `getActiveContextPath()`)。gitignore、不入模板真相源、不提交;temp+rename 原子。
@@ -36,9 +38,9 @@
 - **硬有效性:** `state==="committed"` 且 `schemaVersion`+`host`+`sessionId`+`projectRoot` 全匹配且文件可解析;否则 invalid。软字段不参与 fail-closed。
 - **establishment vs refresh 由 receipt 存在性判定,非 `SessionStart.source`。**
 - **不变量 6(refresh 隔离):** refresh call graph(UserPromptSubmit / reconcile / readReceipt / readFocusAnchor / 守卫 health gate)**禁载** `memory.service`/`db`/memory-index/zvec/`takeover-session`;collector 仅在 session 路径 lazy require。
-- **capsule 预算:** 量最终注入的 additionalContext UTF-8 字节,硬上限 **1 KiB**;序列化后循环裁剪 + 最终硬断言;固定字段 `evoLite`/`project`/`receipt`/**`focusHash`(可为 null 但键必存)**永不删除;先裁 `focus`,再缩减/省略 `action`,最后回退固定短 degraded capsule(仍含 `focusHash:null`);Unicode code point 边界截断。健康 capsule 不含 `action`/`refresh`。
+- **capsule 预算:** 量最终注入的 additionalContext UTF-8 字节,硬上限 **1 KiB**;序列化后循环裁剪 + 最终硬断言;固定字段 `evoLite`/`project`/`receipt`/**`focusHash`(可为 null 但键必存)**永不删除;先裁 `focus`,再缩减/省略 `action`,最后回退固定短 degraded capsule(**仍尽量携带真实 `focusHash`**,输入无 hash 时才为 `null`);Unicode code point 边界截断。健康 capsule 不含 `action`/`refresh`。
 - **守卫(阶段2):** Edit/Write allow ⟺ committed receipt + reconcile 非 degraded + **`buildTakeoverPayload(refresh)` → `validateCapsule` → 字节预算** 全过 + target-path 落 receipt.projectRoot 内;**target 缺失/非字符串/解析失败 → deny**。Read/Glob/Grep/Bash → allow;**MVP 守卫工具集仅 `Edit`/`Write`**。
-- **hook 启动命令:** `node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"`;**installer 事务化:先 probe 候选配置可用,通过才原子替换 settings,失败保留原文件**。
+- **hook 启动命令:** `node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"`;**两级 probe**:`probeAdapterBinary`(adapter 文件可跑)+ `probeHookCommand`(**执行将被写入 settings 的那条命令原文**,经 shell + `CLAUDE_PROJECT_DIR`,验证变量展开与含空格路径的引用);**installer 事务化:probe 通过才原子替换 settings,失败保留原文件**;母仓 dogfood 失败**必须回滚 settings**,不得留下失效配置。
 - **installer:** 幂等 deep-merge,保留未知字段/第三方 hooks;`install` 与 `status` 遇损坏 JSON **均 fail loudly、不覆盖、不静默降级**;正式 CLI `mem takeover install|status`。
 - **可注入 seam(测试用,前缀 `__`):** `takeover-receipt.__setFsOps/__resetFsOps`;transport `{ write }`;adapter `deps.{collect,buildPayload,validate}`。生产路径默认真实实现。
 - **镜像:** 新文件落 `templates/cli/**`;不手改 `.evo-lite/cli/**`;`node templates/cli/sync-runtime-entry.js` 后 `git add` 镜像;二次运行 `copied: 0`。
@@ -93,15 +95,25 @@ console.log('T-takeover-payload. Pure builder + discriminated validators ...');
     assert.strictEqual(payload.recall.status, 'hit');
     assert.strictEqual(tp.validateSessionPayload(payload).ok, true, 'full payload passes');
 
-    // 完整 schema:缺 active / verify / health / freshness 均须失败(不只查六个顶层字段)
+    // 完整 schema:缺字段必失败
     for (const drop of ['active', 'verify', 'health', 'freshness', 'recall', 'degraded']) {
         const bad = JSON.parse(JSON.stringify(payload)); delete bad[drop];
         assert.strictEqual(tp.validateSessionPayload(bad).ok, false, `missing ${drop} must fail`);
     }
-    const badType = JSON.parse(JSON.stringify(payload)); badType.risks = 'not-array';
-    assert.strictEqual(tp.validateSessionPayload(badType).ok, false, 'risks must be array');
-    const badProject = JSON.parse(JSON.stringify(payload)); badProject.project = { name: 'x' }; // 缺 root
-    assert.strictEqual(tp.validateSessionPayload(badProject).ok, false, 'project.root required');
+    // 深校验:形似但内容非法的 payload 必须被拒(R3 复审 P0-1 的反例)
+    const mutate = (fn) => { const p = JSON.parse(JSON.stringify(payload)); fn(p); return tp.validateSessionPayload(p); };
+    assert.strictEqual(mutate(p => { p.risks = 'not-array'; }).ok, false, 'risks must be array');
+    assert.strictEqual(mutate(p => { p.risks = [1]; }).ok, false, 'risks entries must be strings');
+    assert.strictEqual(mutate(p => { p.project = { name: 'x' }; }).ok, false, 'project.root required');
+    assert.strictEqual(mutate(p => { p.active = { plan: 'broken', spec: [] }; }).ok, false, 'active.plan/spec must be null or object with id');
+    assert.strictEqual(mutate(p => { p.active.plan = { status: 'draft' }; }).ok, false, 'active.plan.id required');
+    assert.strictEqual(mutate(p => { p.freshness = {}; }).ok, false, 'freshness keys required');
+    assert.strictEqual(mutate(p => { p.freshness.ahead = NaN; }).ok, false, 'NaN must not pass freshness');
+    assert.strictEqual(mutate(p => { p.health.takeover = 'anything'; }).ok, false, 'health.takeover is an enum');
+    assert.strictEqual(mutate(p => { p.verify = {}; }).ok, false, 'verify.hasAlerts required');
+    assert.strictEqual(mutate(p => { p.recall = {}; }).ok, false, 'recall.status required');
+    assert.strictEqual(mutate(p => { p.degraded = [42]; }).ok, false, 'degraded entries must be {part,reason}');
+    assert.strictEqual(mutate(p => { p.active.plan = null; p.active.spec = null; }).ok, true, 'null plan/spec is legal');
 
     // capsule validator 是 capsule 专用,session validator 不可复用
     const capsule = tp.buildTakeoverPayload({
@@ -161,6 +173,18 @@ function buildSessionPayload(ctx) {
     };
 }
 
+const TAKEOVER_HEALTH = new Set(['ready', 'bootstrap-pending', 'attention-needed']);
+const numOrNull = (v) => v === null || (typeof v === 'number' && Number.isFinite(v));
+
+// active.plan / active.spec:只能是 null 或约定对象(id 必须是非空字符串)
+function badActiveEntry(entry, extraKeys) {
+    if (entry === null) return false;
+    if (!isObj(entry)) return true;
+    if (typeof entry.id !== 'string' || !entry.id) return true;
+    for (const k of extraKeys) if (k in entry && entry[k] !== null && typeof entry[k] !== 'string') return true;
+    return false;
+}
+
 function validateSessionPayload(payload) {
     const errors = [];
     if (!isObj(payload)) return { ok: false, errors: ['not-object'] };
@@ -168,16 +192,35 @@ function validateSessionPayload(payload) {
     for (const f of ['host', 'sourceEvent', 'nextAction']) {
         if (typeof payload[f] !== 'string' || !payload[f]) errors.push(`missing-${f}`);
     }
-    if (!isObj(payload.project) || typeof payload.project.name !== 'string' || typeof payload.project.root !== 'string') errors.push('bad-project');
-    if (!isObj(payload.focus) || typeof payload.focus.text !== 'string') errors.push('bad-focus');
-    if (!isObj(payload.active) || !('plan' in payload.active) || !('spec' in payload.active)) errors.push('bad-active');
-    if (!isObj(payload.rules) || typeof payload.rules.dir !== 'string' || !Array.isArray(payload.rules.required)) errors.push('bad-rules');
-    if (!Array.isArray(payload.risks)) errors.push('bad-risks');
+    if (!isObj(payload.project) || typeof payload.project.name !== 'string' || !payload.project.name
+        || typeof payload.project.root !== 'string' || !payload.project.root) errors.push('bad-project');
+    if (!isObj(payload.focus) || typeof payload.focus.text !== 'string'
+        || !(payload.focus.hash === null || typeof payload.focus.hash === 'string')) errors.push('bad-focus');
+    // active:深校验,不只查键存在
+    if (!isObj(payload.active)) errors.push('bad-active');
+    else {
+        if (badActiveEntry(payload.active.plan, ['title', 'status', 'progress'])) errors.push('bad-active-plan');
+        if (badActiveEntry(payload.active.spec, ['title', 'status'])) errors.push('bad-active-spec');
+    }
+    if (!isObj(payload.rules) || typeof payload.rules.dir !== 'string' || !Array.isArray(payload.rules.required)
+        || payload.rules.required.some(r => typeof r !== 'string')) errors.push('bad-rules');
+    if (!Array.isArray(payload.risks) || payload.risks.some(r => typeof r !== 'string')) errors.push('bad-risks');
+    // freshness:规定键齐全,数值必须有限或 null(NaN 不得穿过)
     if (!isObj(payload.freshness)) errors.push('bad-freshness');
-    if (!isObj(payload.health) || typeof payload.health.takeover !== 'string') errors.push('bad-health');
-    if (!isObj(payload.verify)) errors.push('bad-verify');
-    if (!isObj(payload.recall)) errors.push('bad-recall');
+    else {
+        for (const k of ['headSha', 'ahead', 'behind']) if (!(k in payload.freshness)) errors.push(`bad-freshness-${k}`);
+        if (!(payload.freshness.headSha === null || typeof payload.freshness.headSha === 'string')) errors.push('bad-freshness-headSha');
+        if (!numOrNull(payload.freshness.ahead) || !numOrNull(payload.freshness.behind)) errors.push('bad-freshness-counts');
+    }
+    // health.takeover:枚举
+    if (!isObj(payload.health) || !TAKEOVER_HEALTH.has(payload.health.takeover)) errors.push('bad-health');
+    else if (typeof payload.health.contextStatus !== 'string' || typeof payload.health.architectureStatus !== 'string') errors.push('bad-health-status');
+    // verify / recall:承重字段
+    if (!isObj(payload.verify) || typeof payload.verify.hasAlerts !== 'boolean') errors.push('bad-verify');
+    if (!isObj(payload.recall) || typeof payload.recall.status !== 'string') errors.push('bad-recall');
+    // degraded[]:每项 {part,reason} 均为字符串
     if (!Array.isArray(payload.degraded)) errors.push('bad-degraded');
+    else if (payload.degraded.some(d => !isObj(d) || typeof d.part !== 'string' || typeof d.reason !== 'string')) errors.push('bad-degraded-entry');
     return { ok: errors.length === 0, errors };
 }
 
@@ -228,8 +271,9 @@ function buildCapsule(ctx, budget) {
     // 3) 省略 action,仅保 focus 截断
     const noAction = { ...fixed, focus: '', truncated: true };
     if (bytes(noAction) <= budget) return noAction;
-    // 4) 最终回退:固定短 degraded capsule(固定字段齐全,focusHash 键保留)
-    return { evoLite: 'takeover-degraded', project: 'unknown', receipt: 'invalid', focusHash: null, reason: 'capsule-budget-exceeded' };
+    // 4) 最终回退:固定短 degraded capsule(固定字段齐全,尽量保留真实 focusHash —— 16 字符成本极低)
+    return { evoLite: 'takeover-degraded', project: 'unknown', receipt: 'invalid',
+        focusHash: ctx.focusHash || null, reason: 'capsule-budget-exceeded' };
 }
 
 function buildTakeoverPayload(context, budget = CAPSULE_BUDGET_BYTES) {
@@ -279,9 +323,18 @@ console.log('T-takeover-capsule-states. transitions + budget always <= 1 KiB wit
     const hard = mk('stale', 'invalid', 'r', 'node ' + 'x'.repeat(4000), 'F'.repeat(4000));
     assert.ok(Buffer.byteLength(JSON.stringify(hard), 'utf8') <= 1024, 'oversized action stays within budget');
     for (const k of ['evoLite', 'project', 'receipt', 'focusHash']) {
-        assert.ok(k in hard, `fixed key ${k} never dropped (even in fallback)`);
+        assert.ok(k in hard, `fixed key ${k} never dropped`);
     }
-    assert.strictEqual(tp.validateCapsule(hard, 1024).ok, true, 'fallback capsule still valid');
+    assert.strictEqual(hard.focusHash, 'h', 'real focusHash retained when action is dropped');
+    assert.strictEqual(tp.validateCapsule(hard, 1024).ok, true, 'trimmed capsule still valid');
+    // 极端回退分支(固定字段本身就超预算)仍保真实 focusHash + 通过校验
+    const fallback = tp.buildTakeoverPayload({ kind: 'refresh', host: 'claude-code', sessionId: 's',
+        projectRoot: '/p', projectName: 'P'.repeat(3000), sourceEvent: 'UserPromptSubmit',
+        focus: 'F', focusHash: 'realhash', receiptVerdict: { state: 'invalid', transition: 'stale', reason: 'r' },
+        recoveryAction: 'RC' }, tp.CAPSULE_BUDGET_BYTES);
+    assert.ok(Buffer.byteLength(JSON.stringify(fallback), 'utf8') <= 1024, 'fallback within budget');
+    assert.strictEqual(fallback.focusHash, 'realhash', 'fallback keeps the real focusHash (P1-3)');
+    assert.strictEqual(tp.validateCapsule(fallback, 1024).ok, true, 'fallback capsule valid');
     console.log('✅ T-takeover-capsule-states passed');
 }
 ```
@@ -420,21 +473,44 @@ function readActiveContextMarkdown(projectRoot) {
     try { return fsOps.readFileSync(path.join(evoLiteDir(projectRoot), 'active_context.md'), 'utf8'); }
     catch (_) { return null; }
 }
+function countMatches(md, re) { const m = md.match(re); return m ? m.length : 0; }
+
+// 锚点解析 fail-closed:BEGIN/END 不是严格一对 → null(视同 active_context 不可用)。
+// 文件存在但结构损坏时,绝不返回"空 focus 的健康结果"。
 function readFocusAnchor(projectRoot) {
     const md = readActiveContextMarkdown(projectRoot);
     if (md === null) return null;
+    if (countMatches(md, /<!--\s*BEGIN_FOCUS\s*-->/g) !== 1 || countMatches(md, /<!--\s*END_FOCUS\s*-->/g) !== 1) return null;
     const m = md.match(/<!--\s*BEGIN_FOCUS\s*-->([\s\S]*?)<!--\s*END_FOCUS\s*-->/);
-    const text = (m ? m[1] : '').trim();
+    if (!m) return null; // END 在 BEGIN 之前等错序结构
+    const text = m[1].trim();
     return { text, hash: crypto.createHash('sha256').update(text).digest('hex').slice(0, 16) };
 }
+
+// META 缺失/字段非法 → { ok:false, reason } 供 collector 记入 degraded;绝不让 NaN 穿到 freshness。
 function readMetaAnchor(projectRoot) {
     const md = readActiveContextMarkdown(projectRoot);
-    if (md === null) return null;
+    if (md === null) return { ok: false, reason: 'active-context-unreadable', meta: null };
+    if (countMatches(md, /<!--\s*BEGIN_META\s*-->/g) !== 1 || countMatches(md, /<!--\s*END_META\s*-->/g) !== 1) {
+        return { ok: false, reason: 'meta-anchor-missing', meta: null };
+    }
     const m = md.match(/<!--\s*BEGIN_META\s*-->([\s\S]*?)<!--\s*END_META\s*-->/);
-    const block = m ? m[1] : '';
+    if (!m) return { ok: false, reason: 'meta-anchor-malformed', meta: null };
+    const block = m[1];
     const pick = (key) => { const r = block.match(new RegExp(`${key}:\\s*([^\\s]+)`)); return r ? r[1] : null; };
-    const num = (key) => { const v = pick(key); return v === null ? null : Number(v); };
-    return { headSha: pick('headSha'), upstreamSha: pick('upstreamSha'), ahead: num('ahead'), behind: num('behind') };
+    const rawAhead = pick('ahead'), rawBehind = pick('behind');
+    const toInt = (raw) => {
+        if (raw === null) return { ok: false, value: null };
+        const n = Number(raw);
+        return Number.isInteger(n) ? { ok: true, value: n } : { ok: false, value: null };
+    };
+    const ahead = toInt(rawAhead), behind = toInt(rawBehind);
+    const headSha = pick('headSha');
+    const meta = { headSha, upstreamSha: pick('upstreamSha'), ahead: ahead.value, behind: behind.value };
+    if (!headSha || !ahead.ok || !behind.ok) {
+        return { ok: false, reason: 'meta-fields-invalid', meta }; // meta 仍返回(键齐全、数值为 null)
+    }
+    return { ok: true, reason: null, meta };
 }
 
 function publishReceipt(projectRoot, receiptObj) {
@@ -519,7 +595,24 @@ console.log('T-takeover-reconcile / T-takeover-degraded. drift refreshes; unread
     const canon = rc.canonicalProjectRoot(root);
     // meta 锚点供 freshness
     const meta = rc.readMetaAnchor(root);
-    assert.strictEqual(meta.headSha, 'abc123'); assert.strictEqual(meta.ahead, 2); assert.strictEqual(meta.behind, 0);
+    assert.strictEqual(meta.ok, true);
+    assert.strictEqual(meta.meta.headSha, 'abc123'); assert.strictEqual(meta.meta.ahead, 2); assert.strictEqual(meta.meta.behind, 0);
+
+    // 锚点 fail-closed:文件存在但结构损坏 → focus null / meta not-ok(不得当健康处理)
+    const acFile = path.join(ac, 'active_context.md');
+    const saved = fs.readFileSync(acFile, 'utf8');
+    fs.writeFileSync(acFile, '# active_context.md\n这不是合法的 Evo-Lite active context\n', 'utf8');
+    assert.strictEqual(rc.readFocusAnchor(root), null, 'missing FOCUS anchor → null (not empty-but-healthy)');
+    assert.strictEqual(rc.readMetaAnchor(root).ok, false, 'missing META anchor → not ok');
+    assert.strictEqual(rc.readMetaAnchor(root).reason, 'meta-anchor-missing');
+    fs.writeFileSync(acFile, '<!-- BEGIN_FOCUS -->\nA\n<!-- END_FOCUS -->\n<!-- BEGIN_FOCUS -->\nB\n<!-- END_FOCUS -->\n', 'utf8');
+    assert.strictEqual(rc.readFocusAnchor(root), null, 'duplicated FOCUS anchors → null');
+    fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha: abc\n> ahead: many\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+    const badMeta = rc.readMetaAnchor(root);
+    assert.strictEqual(badMeta.ok, false, 'non-integer ahead → not ok');
+    assert.strictEqual(badMeta.reason, 'meta-fields-invalid');
+    assert.strictEqual(badMeta.meta.ahead, null, 'NaN never leaks into freshness');
+    fs.writeFileSync(acFile, saved, 'utf8');
 
     rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's', projectRoot: canon, state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
     assert.strictEqual(rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' }).verdict.transition, 'active');
@@ -616,6 +709,20 @@ console.log('T-takeover-collector. plan/spec derivation + structured degradation
     assert.strictEqual(ctx.verify.hasAlerts, false, 'verify passed through verbatim');
     assert.strictEqual(ctx.recall.status, 'hit', 'recall object passed through (not array)');
 
+    // 可恢复降级仍须产出【通过 schema 校验】的 payload(保守值 + degraded 承载事实)
+    const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+    const degradedCtx = ts.assembleSessionContext(
+        { host: 'claude-code', sessionId: 's', projectRoot: '/p', sourceEvent: 'x', focus: 'F', focusHash: 'h' },
+        { summary: {}, sessionstart: {}, verify: null, recall: null, planSpec: { plan: null, spec: null },
+          freshness: { headSha: null, ahead: NaN, behind: null },
+          degraded: [{ part: 'verify', reason: 'boom' }, { part: 'recall', reason: 'boom' }] });
+    assert.strictEqual(degradedCtx.verify.hasAlerts, true, 'missing verify → conservative hasAlerts=true');
+    assert.strictEqual(degradedCtx.recall.status, 'unavailable', 'missing recall → status=unavailable');
+    assert.strictEqual(degradedCtx.freshness.ahead, null, 'NaN normalized to null');
+    assert.strictEqual(degradedCtx.health.takeover, 'attention-needed');
+    assert.strictEqual(tp.validateSessionPayload(tp.buildTakeoverPayload(degradedCtx)).ok, true,
+        'recoverable degradation still yields a schema-valid payload');
+
     // 真实 collector(全新进程内自 initDB,得到真实 verify/recall,不依赖预跑 mem bootstrap)
     const probeScript = `
         const ts = require(${JSON.stringify(path.join(TEMPLATE_CLI_DIR, 'takeover-session.js'))});
@@ -625,16 +732,20 @@ console.log('T-takeover-collector. plan/spec derivation + structured degradation
             const focus = rc.readFocusAnchor(root);
             const c = await ts.collectSessionTakeoverContextFull({ host: 'claude-code', sessionId: 'p',
                 projectRoot: root, sourceEvent: 'probe', focus: focus.text, focusHash: focus.hash });
-            console.log(JSON.stringify({ hasVerify: c.verify && typeof c.verify === 'object',
-                hasRecall: c.recall && typeof c.recall === 'object', degraded: c.degraded.map(d => d.part) }));
+            console.log(JSON.stringify({ verifyHasAlerts: typeof c.verify.hasAlerts, verifyGit: c.verify.git,
+                recallStatus: c.recall.status, degraded: c.degraded.map(d => d.part) }));
         })().catch(e => { console.error(e.message); process.exit(3); });`;
     const runtimeRoot = path.join(WORKSPACE_ROOT, '.evo-lite');
     const sub = childProcess.spawnSync(process.execPath, ['-e', probeScript],
         { env: { ...process.env, EVO_LITE_ROOT: runtimeRoot, EVO_LITE_SKIP_GIT_STATUS: '1' }, encoding: 'utf8' });
     assert.strictEqual(sub.status, 0, `collector runs in a fresh process (stderr: ${sub.stderr})`);
     const out = JSON.parse(sub.stdout.trim().split('\n').pop());
-    assert.strictEqual(out.hasVerify, true, 'fresh process yields a real verify object');
-    assert.strictEqual(out.hasRecall, true, 'fresh process yields a real recall object');
+    // 真实字段断言:verify/recall 双双失败被归一化成保守值时不得误通过(R3 复审 P1-1)
+    assert.strictEqual(out.verifyHasAlerts, 'boolean', 'fresh process yields a real verify report');
+    assert.ok(typeof out.verifyGit === 'string' && out.verifyGit, 'verify.git present');
+    assert.strictEqual(typeof out.recallStatus, 'string', 'recall.status present');
+    assert.ok(!out.degraded.includes('verify') && !out.degraded.includes('recall'),
+        `verify/recall must not be degraded in a healthy repo (got: ${out.degraded.join(',')})`);
     console.log('✅ T-takeover-collector passed');
 }
 ```
@@ -685,8 +796,19 @@ function derivePlanSpec(planIr, focusText) {
 function assembleSessionContext(base, parts) {
     const summary = parts.summary || {};
     const ss = parts.sessionstart || {};
-    const verify = parts.verify || {};
     const degraded = Array.isArray(parts.degraded) ? parts.degraded : [];
+    // 可恢复降级(verify/recall 取不到)仍须产出【通过 schema 校验】的 payload:
+    // 归一化承重字段并取保守值,降级事实由 degraded[] + attention-needed 承载。
+    const verifyRaw = parts.verify && typeof parts.verify === 'object' ? parts.verify : {};
+    const verify = { ...verifyRaw, hasAlerts: typeof verifyRaw.hasAlerts === 'boolean' ? verifyRaw.hasAlerts : true };
+    const recallRaw = parts.recall && typeof parts.recall === 'object' ? parts.recall : {};
+    const recall = { ...recallRaw, status: typeof recallRaw.status === 'string' ? recallRaw.status : 'unavailable' };
+    const freshnessRaw = parts.freshness && typeof parts.freshness === 'object' ? parts.freshness : {};
+    const freshness = {
+        headSha: typeof freshnessRaw.headSha === 'string' ? freshnessRaw.headSha : null,
+        ahead: Number.isFinite(freshnessRaw.ahead) ? freshnessRaw.ahead : null,
+        behind: Number.isFinite(freshnessRaw.behind) ? freshnessRaw.behind : null,
+    };
     const risks = [...new Set([
         ...((summary.validation && summary.validation.warnings) || []),
         ...(ss.warnings || []),
@@ -705,11 +827,10 @@ function assembleSessionContext(base, parts) {
         projectName: path.basename(base.projectRoot),
         generatedAt: base.generatedAt || null,
         activePlan: planSpec.plan, activeSpec: planSpec.spec,
-        rules: RULES, risks, nextAction,
-        freshness: parts.freshness || { headSha: null, ahead: null, behind: null },
+        rules: RULES, risks, nextAction, freshness,
         health: { takeover, contextStatus: ss.contextStatus || 'unknown',
             architectureStatus: ss.architectureStatus || 'unknown', activeTaskCount: ss.activeTaskCount || 0 },
-        verify, recall: parts.recall || {}, degraded,
+        verify, recall, degraded,
     };
 }
 
@@ -745,12 +866,12 @@ async function collectSessionTakeoverContextFull(base) {
 
     const rc = require('./takeover-receipt');
     const planSpec = derivePlanSpec(readPlanIr(base.projectRoot, degraded), base.focus);
-    const meta = rc.readMetaAnchor(base.projectRoot);
-    if (meta === null) degraded.push({ part: 'meta', reason: 'active-context-unreadable' });
+    const metaResult = rc.readMetaAnchor(base.projectRoot);
+    if (!metaResult.ok) degraded.push({ part: 'meta', reason: metaResult.reason });
 
     return assembleSessionContext(base, {
         summary, sessionstart, verify, recall, planSpec,
-        freshness: meta || { headSha: null, ahead: null, behind: null }, degraded,
+        freshness: metaResult.meta || { headSha: null, ahead: null, behind: null }, degraded,
     });
 }
 
@@ -829,7 +950,18 @@ console.log('T-takeover-adapter-session. establishment/refresh by receipt presen
     assert.strictEqual(rc.readReceipt(root, 'claude-code', 'bad').state, 'missing', 'invalid payload never yields committed receipt');
 
     const up = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid }, deps);
+    assert.strictEqual(up.exitCode, 0);
     assert.strictEqual(JSON.parse(up.json.hookSpecificOutput.additionalContext).evoLite, 'takeover-active');
+
+    // 坏 capsule(builder 被注入返回垃圾)→ validateCapsule 拦截 → emergency capsule + 非零
+    const badUp = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid },
+        { ...deps, buildPayload: () => ({ unexpected: true }) });
+    assert.strictEqual(badUp.exitCode, 1, 'invalid capsule → nonzero (no silent degradation)');
+    const emergency = JSON.parse(badUp.json.hookSpecificOutput.additionalContext);
+    assert.strictEqual(emergency.evoLite, 'takeover-degraded', 'emergency capsule emitted');
+    assert.ok(/bootstrap --receipt/.test(emergency.action), 'emergency capsule carries recovery command');
+    const tp2 = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+    assert.strictEqual(tp2.validateCapsule(emergency, tp2.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule itself is valid');
     fs.rmSync(root, { recursive: true, force: true });
     console.log('✅ T-takeover-adapter-session passed');
 }
@@ -854,12 +986,14 @@ function buildRecoveryCommand(projectRoot, sessionId) {
     return `node ${cli} bootstrap --receipt --host claude-code --session-id ${bashSingleQuote(sessionId)} --source manual-recovery --json`;
 }
 
-// ── 同步完整写入:循环处理 partial write,确认全部 UTF-8 字节送出 ──
-function writeAllSync(fd, text) {
+// ── 同步完整写入:循环处理 partial write,确认全部 UTF-8 字节送出;零进展即抛(不死循环)──
+function writeAllSync(fd, text, writeSync = fs.writeSync) {
     const buf = Buffer.from(String(text), 'utf8');
     let off = 0;
     while (off < buf.length) {
-        off += fs.writeSync(fd, buf, off, buf.length - off);
+        const written = writeSync(fd, buf, off, buf.length - off);
+        if (!Number.isInteger(written) || written <= 0) throw new Error('stdout write made no progress');
+        off += written;
     }
 }
 
@@ -913,7 +1047,13 @@ async function handleSessionStart(input, deps) {
     }
     const build = deps.buildPayload || buildTakeoverPayload;
     const validate = deps.validate || validateSessionPayload;
-    const payload = build(context);
+    let payload;
+    try { payload = build(context); }
+    catch (e) { // builder 抛错也须给出可执行恢复命令(不落到 main 的通用错误)
+        return { json: { hookSpecificOutput: { hookEventName: 'SessionStart',
+            additionalContext: `[evo-lite] takeover payload build failed: ${e.message}. Recover: ${recovery}` },
+            systemMessage: `evo-lite takeover build failed: ${e.message}` }, exitCode: 1, publish: null };
+    }
     const verdict = validate(payload);
     if (!verdict.ok) { // 校验不过 → 不发布 receipt
         return { json: { hookSpecificOutput: { hookEventName: 'SessionStart',
@@ -928,14 +1068,40 @@ async function handleSessionStart(input, deps) {
         additionalContext: `[evo-lite takeover] ${JSON.stringify(payload)}` } }, exitCode: 0, publish };
 }
 
+// 每轮 capsule 也必须经 validateCapsule —— probe 已确认宿主会【静默丢弃】类型错的字段,
+// 无效 capsule 等于静默失去再播种能力。校验不过 → 输出独立构造的 emergency capsule + 非零。
+function emergencyCapsule(projectName, focusHash, recovery) {
+    return { evoLite: 'takeover-degraded', project: projectName || 'unknown', receipt: 'invalid',
+        focusHash: focusHash || null, reason: 'capsule-invalid', action: recovery };
+}
+
 function handleUserPromptSubmit(input, deps) {
     const projectRoot = rc.canonicalProjectRoot(deps.projectRoot);
     const sessionId = input.session_id;
+    const projectName = path.basename(projectRoot);
+    const recovery = buildRecoveryCommand(projectRoot, sessionId);
     const { verdict, focus } = rc.reconcile({ projectRoot, host: HOST, sessionId });
-    const capsule = buildTakeoverPayload({ kind: 'refresh', host: HOST, sessionId, projectRoot,
-        projectName: path.basename(projectRoot), sourceEvent: 'UserPromptSubmit',
-        focus: focus ? focus.text : null, focusHash: focus ? focus.hash : null,
-        receiptVerdict: verdict, recoveryAction: buildRecoveryCommand(projectRoot, sessionId) }, CAPSULE_BUDGET_BYTES);
+    const build = deps.buildPayload || buildTakeoverPayload;
+    const validate = deps.validateCapsule || validateCapsule;
+
+    let capsule = null, failure = null;
+    try {
+        capsule = build({ kind: 'refresh', host: HOST, sessionId, projectRoot, projectName,
+            sourceEvent: 'UserPromptSubmit', focus: focus ? focus.text : null,
+            focusHash: focus ? focus.hash : null, receiptVerdict: verdict, recoveryAction: recovery }, CAPSULE_BUDGET_BYTES);
+    } catch (e) { failure = `build: ${e.message}`; }
+    if (!failure) {
+        const capVerdict = validate(capsule, CAPSULE_BUDGET_BYTES);
+        if (!capVerdict.ok) failure = `invalid: ${capVerdict.errors.join(',')}`;
+    }
+    if (failure) {
+        const fallback = emergencyCapsule(projectName, focus ? focus.hash : null, recovery);
+        const fbVerdict = validateCapsule(fallback, CAPSULE_BUDGET_BYTES); // emergency capsule 自身也须过校验
+        const additionalContext = fbVerdict.ok ? JSON.stringify(fallback)
+            : `[evo-lite] takeover capsule unavailable (${failure}). Recover: ${recovery}`;
+        return { json: { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
+            systemMessage: `evo-lite takeover capsule ${failure}` }, exitCode: 1, publish: null };
+    }
     return { json: { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: JSON.stringify(capsule) } },
         exitCode: 0, publish: null };
 }
@@ -999,6 +1165,14 @@ console.log('T-takeover-transport-order. writeAllSync completeness; deliver-befo
     const big = '漢'.repeat(20000);
     ad.writeAllSync(fd, big); fs.closeSync(fd);
     assert.strictEqual(fs.readFileSync(tmpFile, 'utf8'), big, 'writeAllSync writes every byte');
+
+    // partial write:每次只写 3 字节也必须完整写出
+    { let sink = Buffer.alloc(0);
+      const partial = (_fd, buf, off, len) => { const n = Math.min(3, len); sink = Buffer.concat([sink, buf.slice(off, off + n)]); return n; };
+      ad.writeAllSync(1, 'hello-partial-write', partial);
+      assert.strictEqual(sink.toString('utf8'), 'hello-partial-write', 'partial writes are looped to completion'); }
+    // zero progress:返回 0 必须抛错,不得死循环
+    assert.throws(() => ad.writeAllSync(1, 'x', () => 0), /no progress/i, 'zero-progress write throws');
 
     let published = false, written = '';
     const ok = ad.executeHookTransport({ a: 1 }, () => { assert.ok(written, 'write happened before publish'); published = true; }, { write: (s) => { written = s; } });
@@ -1214,7 +1388,8 @@ EOF
 **Interfaces:**
 - `HOOK_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"'`
 - `managedFragment(events)`、`mergeHookConfig(existing, fragment)`、`isManagedGroup(g)`
-- `probeAdapter(projectRoot)` → `{ ok, reason }`(**安装前**验证 adapter 可被 node 执行:喂一条最小 UserPromptSubmit JSON,期望 stdout 含 `hookSpecificOutput`)
+- `probeAdapterBinary(projectRoot)` → `{ ok, reason }`(adapter 文件可被 node 执行,喂最小 UserPromptSubmit JSON,期望 stdout 含 `hookSpecificOutput`)
+- `probeHookCommand(projectRoot)` → `{ ok, reason }`(**安装前**执行 `HOOK_COMMAND` **原文**:`shell:true` + `CLAUDE_PROJECT_DIR=<root>`,验证变量展开与引用)
 - `installTakeoverHooks(settingsPath, { events, projectRoot })` → `{ changed }`(**损坏 JSON 抛错不覆盖;probe 不过则抛错、原文件不变**)
 - `statusTakeoverHooks(settingsPath, events)` → `{ installed[], missing[] }`(**损坏 JSON 抛错**)
 
@@ -1232,19 +1407,36 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.ok(m1.hooks.SessionStart.some(g => g.hooks.some(h => /CLAUDE_PROJECT_DIR/.test(h.command))), 'uses CLAUDE_PROJECT_DIR');
     assert.strictEqual(ti.mergeHookConfig(m1, frag).hooks.SessionStart.filter(ti.isManagedGroup).length, 1, 'idempotent');
 
+    // 用【临时假项目】做 probe,不依赖尚未 sync 的 runtime mirror(路径含空格,顺带验引用)
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-inst-'));
+    const fakeProject = path.join(dir, 'my project');           // 故意含空格
+    const fakeCli = path.join(fakeProject, '.evo-lite', 'cli');
+    fs.mkdirSync(fakeCli, { recursive: true });
+    fs.writeFileSync(path.join(fakeCli, 'takeover-adapter.js'),
+        'process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:"stub"}}));process.exit(0);});',
+        'utf8');
+    assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, true, 'adapter binary probe passes');
+    assert.strictEqual(ti.probeHookCommand(fakeProject).ok, true, 'HOOK_COMMAND runs via shell with CLAUDE_PROJECT_DIR (spaces quoted)');
+
     const corrupt = path.join(dir, 'settings.json');
     fs.writeFileSync(corrupt, '{ not json', 'utf8');
-    assert.throws(() => ti.installTakeoverHooks(corrupt, { events: ['SessionStart'], projectRoot: WORKSPACE_ROOT }), /corrupt|JSON/i, 'install throws on corrupt');
+    assert.throws(() => ti.installTakeoverHooks(corrupt, { events: ['SessionStart'], projectRoot: fakeProject }), /corrupt|JSON/i, 'install throws on corrupt');
     assert.strictEqual(fs.readFileSync(corrupt, 'utf8'), '{ not json', 'corrupt file unchanged');
     assert.throws(() => ti.statusTakeoverHooks(corrupt, ['SessionStart']), /corrupt|JSON/i, 'status throws on corrupt (no silent all-missing)');
 
-    // probe gate:真实仓库 adapter 可跑
-    assert.strictEqual(ti.probeAdapter(WORKSPACE_ROOT).ok, true, 'adapter probe passes in this repo');
+    // 正常安装(假项目)→ 写入且幂等
+    const good = path.join(dir, 'good.json');
+    assert.strictEqual(ti.installTakeoverHooks(good, { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, true);
+    assert.strictEqual(ti.installTakeoverHooks(good, { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, false, 'second install is a no-op');
+    assert.deepStrictEqual(ti.statusTakeoverHooks(good, ['SessionStart', 'UserPromptSubmit', 'PreToolUse']).missing, ['PreToolUse']);
+
     // probe 失败 → 不写 settings
     const fresh = path.join(dir, 'fresh.json');
     assert.throws(() => ti.installTakeoverHooks(fresh, { events: ['SessionStart'], projectRoot: path.join(dir, 'nonexistent') }), /probe/i, 'probe failure blocks install');
     assert.strictEqual(fs.existsSync(fresh), false, 'no settings written when probe fails');
+    // adapter 存在但退出非零 → 命令级 probe 亦须拦截
+    fs.writeFileSync(path.join(fakeCli, 'takeover-adapter.js'), 'process.exit(9);', 'utf8');
+    assert.strictEqual(ti.probeHookCommand(fakeProject).ok, false, 'broken adapter fails the command probe');
     fs.rmSync(dir, { recursive: true, force: true });
     console.log('✅ T-takeover-installer passed');
 }
@@ -1289,21 +1481,37 @@ function readSettingsStrict(settingsPath) {
     catch (e) { throw new Error(`takeover: ${settingsPath} is corrupt JSON (${e.message}); leaving it unchanged`); }
 }
 
-// 安装前 probe:adapter 必须能被 node 执行并产出 hook envelope。
-function probeAdapter(projectRoot) {
+const PROBE_INPUT = (projectRoot) => JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'probe', cwd: projectRoot });
+
+// ① 二进制级:adapter 文件本身能被 node 执行并产出 hook envelope。
+function probeAdapterBinary(projectRoot) {
     const adapter = path.join(projectRoot, '.evo-lite', 'cli', 'takeover-adapter.js');
     if (!fs.existsSync(adapter)) return { ok: false, reason: `adapter not found: ${adapter}` };
-    const input = JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'probe', cwd: projectRoot });
-    const res = spawnSync(process.execPath, [adapter], { input, encoding: 'utf8', timeout: 20000 });
+    const res = spawnSync(process.execPath, [adapter], { input: PROBE_INPUT(projectRoot), encoding: 'utf8', timeout: 20000 });
     if (res.status !== 0) return { ok: false, reason: `adapter exited ${res.status}: ${String(res.stderr || '').trim()}` };
     if (!String(res.stdout || '').includes('hookSpecificOutput')) return { ok: false, reason: 'adapter produced no hook envelope' };
     return { ok: true, reason: null };
 }
 
+// ② 命令级:执行【将被写入 settings 的那条 HOOK_COMMAND 原文】,经 shell + CLAUDE_PROJECT_DIR,
+//    验证变量展开与引用(含带空格路径)确实可跑 —— 绝对路径能跑不等于该命令能跑。
+function probeHookCommand(projectRoot) {
+    const binary = probeAdapterBinary(projectRoot);
+    if (!binary.ok) return binary;
+    const res = spawnSync(HOOK_COMMAND, {
+        shell: true, input: PROBE_INPUT(projectRoot), encoding: 'utf8', timeout: 20000,
+        env: { ...process.env, CLAUDE_PROJECT_DIR: projectRoot },
+    });
+    if (res.error) return { ok: false, reason: `hook command failed to spawn: ${res.error.message}` };
+    if (res.status !== 0) return { ok: false, reason: `hook command exited ${res.status}: ${String(res.stderr || '').trim()}` };
+    if (!String(res.stdout || '').includes('hookSpecificOutput')) return { ok: false, reason: 'hook command produced no hook envelope' };
+    return { ok: true, reason: null };
+}
+
 function installTakeoverHooks(settingsPath, { events, projectRoot }) {
     const existing = readSettingsStrict(settingsPath);            // 损坏 → 抛,原文件不动
-    const probe = probeAdapter(projectRoot);                       // probe 先行
-    if (!probe.ok) throw new Error(`takeover install: adapter probe failed (${probe.reason}); settings unchanged`);
+    const probe = probeHookCommand(projectRoot);                   // probe 先行:验的是将被写入的那条命令
+    if (!probe.ok) throw new Error(`takeover install: hook command probe failed (${probe.reason}); settings unchanged`);
     const before = JSON.stringify(existing);
     const merged = mergeHookConfig(existing, managedFragment(events));
     const serialized = JSON.stringify(merged, null, 2) + '\n';
@@ -1325,7 +1533,7 @@ function statusTakeoverHooks(settingsPath, events) {
 }
 
 module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedGroup,
-    mergeHookConfig, probeAdapter, installTakeoverHooks, statusTakeoverHooks };
+    mergeHookConfig, probeAdapterBinary, probeHookCommand, installTakeoverHooks, statusTakeoverHooks };
 ```
 
 - [ ] **Step 4: 运行验证通过** — `✅ T-takeover-installer passed`。
@@ -1394,12 +1602,29 @@ node templates/cli/test.js all
 ```
 Expected: 首次复制五文件;二次 `copied: 0`;`test.js all` 全绿。
 
-- [ ] **Step 9: 母仓安装 + dogfood**
+- [ ] **Step 9: 母仓真实 probe → 备份 → 安装 → dogfood(失败必须回滚)**
+
+镜像已在 Step 8 生成,此时才对**真实仓库**跑命令级 probe;安装前备份 settings,dogfood 失败即回滚:
 
 ```bash
+# ① 真实仓库的 HOOK_COMMAND 级 probe(不过则不要安装)
+node -e "const ti=require('./templates/cli/takeover-install.js');const r=ti.probeHookCommand(process.cwd());console.log(JSON.stringify(r));process.exit(r.ok?0:1)"
+
+# ② 备份现有 settings(存在才备份)
+[ -f .claude/settings.json ] && cp .claude/settings.json .claude/settings.json.attp-backup || true
+
+# ③ 安装 + 自检
 node templates/cli/memory.js takeover install --events SessionStart,UserPromptSubmit --settings .claude/settings.json
 node templates/cli/memory.js takeover status --settings .claude/settings.json
 ```
+
+**回滚契约:** 下面任一 dogfood 断言失败 → 立即执行回滚,再回报,**不得把失效配置留在仓库里**:
+
+```bash
+[ -f .claude/settings.json.attp-backup ] && mv .claude/settings.json.attp-backup .claude/settings.json || rm -f .claude/settings.json
+node templates/cli/memory.js takeover status --settings .claude/settings.json   # 应显示 missing
+```
+
 用 `claude -p` 跑裸 prompt("分析当前项目正在做什么,下一步该做什么"),记录到 `docs/validation/attp-phase1-dogfood.md`:
 - 首次推理前上下文含 `[evo-lite takeover]` payload;每轮 capsule `takeover-active`;
 - receipt 落 `.evo-lite/generated/takeover/receipts/claude-code/` 为 committed;
@@ -1409,6 +1634,7 @@ node templates/cli/memory.js takeover status --settings .claude/settings.json
 - [ ] **Step 10: 提交 + 阶段 1 复审门**
 
 ```bash
+rm -f .claude/settings.json.attp-backup   # dogfood 全绿后才清理备份
 git add templates/cli/takeover-install.js templates/cli/memory.js templates/cli/template-manifest.js templates/cli/test/ .gitignore .evo-lite/cli/ .claude/settings.json docs/validation/attp-phase1-dogfood.md
 git commit -m "$(cat <<'EOF'
 feat(takeover): transactional capability-gated installer + manifest/gitignore/mirror + phase-1 dogfood
@@ -1684,14 +1910,36 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
       const bad = ad.executeCliRecoveryTransport('X', () => { published = true; }, { write: () => { throw new Error('cli stdout fail'); } });
       assert.strictEqual(bad.exitCode, 1); assert.strictEqual(published, false, 'CLI delivery failure → no publish'); }
 
-    // 7) recovery 执行后 Write 解锁(端到端子进程)
+    // 7) same-session refresh 失败分流(R5 承重语义):旧 receipt 不撤销,终局由 health gate 决定
+    { const { root, ac } = mkRoot();
+      // 先建立 committed receipt
+      const est = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f7', source: 'startup' }, { projectRoot: root, collect: goodCollect });
+      ad.executeHookTransport(est.json, est.publish, { write: () => {} });
+      assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f7').state, 'committed');
+      // 同 session resume,但 full refresh 失败(collector 抛错)
+      const refreshFail = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f7', source: 'resume' },
+          { projectRoot: root, collect: () => { throw new Error('verify exploded'); } });
+      assert.strictEqual(refreshFail.exitCode, 1, 'refresh failure reported explicitly');
+      assert.strictEqual(refreshFail.publish, null, 'refresh failure publishes nothing');
+      assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f7').state, 'committed', 'old receipt NOT auto-revoked on refresh failure');
+      // governance health 正常 → Write 仍 allow(session-only 失败不阻断)
+      assert.strictEqual(await writeDec(root, 'f7'), 'allow', 'session-only refresh failure → health gate allows');
+      // capsule 仍每轮注入
+      const cap = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: 'f7' }, { projectRoot: root });
+      assert.strictEqual(JSON.parse(cap.json.hookSpecificOutput.additionalContext).receipt, 'valid', 'capsule still re-seeds after refresh failure');
+      // 反向:governance health 失败(active_context 删除)→ Write deny
+      fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
+      assert.strictEqual(await writeDec(root, 'f7'), 'deny', 'governance-health failure → health gate denies');
+      fs.rmSync(root, { recursive: true, force: true }); }
+
+    // 8) recovery 执行后 Write 解锁(端到端子进程)
     { const { root, ac } = mkRoot();
       const memJs = path.join(TEMPLATE_CLI_DIR, 'memory.js');
       const sub = childProcess.spawnSync(process.execPath, [memJs, 'bootstrap', '--receipt', '--host', 'claude-code',
-          '--session-id', 'f7', '--source', 'manual-recovery', '--json'],
+          '--session-id', 'f8', '--source', 'manual-recovery', '--json'],
           { cwd: root, env: { ...process.env, EVO_LITE_ROOT: ac, EVO_LITE_SKIP_GIT_STATUS: '1' }, encoding: 'utf8' });
       assert.strictEqual(sub.status, 0, `recovery ok (stderr: ${sub.stderr})`);
-      assert.strictEqual(await writeDec(root, 'f7'), 'allow', 'Write unlocked after explicit recovery');
+      assert.strictEqual(await writeDec(root, 'f8'), 'allow', 'Write unlocked after explicit recovery');
       fs.rmSync(root, { recursive: true, force: true }); }
 
     console.log('✅ T-takeover-fault-suite passed');
@@ -1740,10 +1988,18 @@ EOF
 | R2 P1-3 | capability gate 在安装之后 | Task 6 `probeAdapter` **安装前**执行,失败抛错且不写 settings;写入用 temp+rename 原子替换 |
 | R2 P1-4 | 占位式步骤 | R3 给出 `formatBootstrapReport` 完整替换代码、`integration.js:427` 精确插入位置、`sync-runtime-entry.js` 确认存在 |
 | R2 P1-5 | collector 缺初始化契约 | Task 3 collector 自调 `require('./db').initDB()`(失败即不可恢复抛错);`T-takeover-collector` 用**全新子进程**证明真实 verify/recall 可得 |
+| R3 P0-1 | session 校验太浅;UserPromptSubmit 完全绕过 validator | Task 1 `validateSessionPayload` 深校验(active 条目 / freshness 三键与有限数值 / health 枚举 / verify.hasAlerts / recall.status / degraded 条目);Task 4 UPS 走可注入 builder + **强制 `validateCapsule`**,失败输出**经自校验的 emergency capsule** + 非零;SessionStart 的 `build()` 纳入 try/catch 并附恢复命令 |
+| R3 P0-2 | 损坏 FOCUS/META 锚点被当健康 | Task 2 `readFocusAnchor` 锚点非严格一对 → `null`;`readMetaAnchor` → `{ok,reason,meta}`,缺失/非整数 → `ok:false` 入 `degraded[]`,`NaN` 归一为 `null`;新增损坏锚点 / 重复锚点 / 非法数值三例 |
+| R3 P0-3 | probe 未验真实 Hook 命令;Task 6 顺序跑不通 | Task 6 拆 `probeAdapterBinary` + `probeHookCommand`(shell + `CLAUDE_PROJECT_DIR`,**含空格路径**);installer 用后者;测试改用**临时假项目 + stub adapter**(不依赖尚未 sync 的镜像);真实仓库 probe 移到 Step 9(sync 之后),并加 **settings 备份/回滚契约** |
+| R3 P0-4 | 缺 same-session refresh-failure 分流验收 | Task 8 新增用例 7:建立 committed → 同 session `resume` 且 collector 抛错 → 显式非零 + **旧 receipt 不撤销** → health 正常时 Write **allow** + capsule 仍注入 → 删 active_context 后 Write **deny** |
+| R3 P1-1 | fresh-process collector 测试可能误通过 | 断言 `verify.hasAlerts` 为 boolean、`verify.git` 非空、`recall.status` 为 string,且 `degraded` 不含 `verify/recall` |
+| R3 P1-2 | `writeAllSync` 零进展死循环 | 返回值非正整数即抛 `no progress`;新增 partial-write(每次 3 字节)与 zero-write 两例 |
+| R3 P1-3 | fallback capsule 丢真实 focusHash | fallback 改 `focusHash: ctx.focusHash || null` |
+| R3 P1-4 | 残留实施期占位判断 | 已实测:`formatBootstrapReport`/`runBootstrapCommand`/`buildTakeoverRecall` **仅 `memory.js` 内部调用**(282/469/474/475/513),无其他调用点;MCP `evo_active_context` 走独立 `handleActiveContext()`,不受影响 |
 
 ## 附:实现期须复核的开放点(非阻断)
 
-- `formatBootstrapReport` 替换后,若仓库内还有其他调用点依赖旧 `{context,sessionstart,verify,takeoverRecall}` 结构,一并适配(实现前 `grep -rn "formatBootstrapReport" templates/cli/`)。
+- ~~`formatBootstrapReport` 其他调用点~~ **已实测确认无**:`formatBootstrapReport`(定义 282、调用 475)、`runBootstrapCommand`(469、513)、`buildTakeoverRecall`(474)全部只在 `templates/cli/memory.js` 内部;MCP 的 `evo_active_context` 走 `handleActiveContext()` 独立路径。替换是**单点改动**,无需额外适配。
 - `collectSessionTakeoverContextFull` 每次 SessionStart 跑 `verify({silent:true})`;若 dogfood 实测拖慢会话启动,可在 session 路径加缓存(不影响 refresh —— 后者不调 collector)。
 - `SessionStart(compact)` / `CwdChanged`:probe 列为待实测优化器,阶段 2 后以 echo-harness 验证再决定纳管。
 - nurture 分发:子仓获取 hook 需在 nurture 侧调 `mem takeover install`;本 MVP 只保证 installer 幂等可用。
