@@ -280,84 +280,36 @@ function formatContextEvents(events) {
 }
 
 function formatBootstrapReport(payload) {
-    const context = payload.context;
-    const sessionstart = payload.sessionstart;
-    const verify = payload.verify;
-    const takeoverRecall = payload.takeoverRecall || { status: 'no-match', effect: 'fresh-takeover', queries: [], hits: [] };
-    const nextSteps = [...new Set([...(sessionstart.reminders || []), ...(verify.nextSteps || [])])].slice(0, 4);
-    const warnings = [...new Set([...(sessionstart.warnings || []), ...((context.validation && context.validation.warnings) || [])])].slice(0, 3);
-    const needsBootstrap = ['placeholder', 'missing'].includes(sessionstart.contextStatus)
-        || ['placeholder', 'missing'].includes(sessionstart.architectureStatus);
-    const takeover = verify.hasAlerts
-        ? 'attention-needed'
-        : needsBootstrap
-            ? 'bootstrap-pending'
-            : 'ready';
-
+    const health = payload.health || {};
+    const verify = payload.verify || {};
+    const recall = payload.recall || {};
     const lines = [
-        `takeover: ${takeover}`,
-        `focus: ${sessionstart.focus || '(empty)'}`,
-        `active_tasks: ${sessionstart.activeTaskCount}`,
-        `trajectory_entries: ${context.trajectoryCount}`,
-        `context_status: ${sessionstart.contextStatus || 'unknown'}`,
-        `architecture_status: ${sessionstart.architectureStatus || 'unknown'}`,
-        `git_status: ${verify.git}`,
-        `template_sync: ${verify.templateSync}`,
-        `local_engine: ${verify.localEngine}`,
-        `entity_store: ${verify.entityStore}`,
-        `memory_status: ${takeoverRecall.status || 'no-match'}`,
+        `takeover: ${health.takeover || 'unknown'}`,
+        `project: ${payload.project.name}`,
+        `focus: ${payload.focus.text || '(empty)'}`,
+        `active_plan: ${payload.active.plan ? `${payload.active.plan.id} (${payload.active.plan.status}, ${payload.active.plan.progress})` : '(none)'}`,
+        `active_spec: ${payload.active.spec ? `${payload.active.spec.id} (${payload.active.spec.status})` : '(none)'}`,
+        `active_tasks: ${health.activeTaskCount || 0}`,
+        `context_status: ${health.contextStatus || 'unknown'}`,
+        `architecture_status: ${health.architectureStatus || 'unknown'}`,
+        `git_status: ${verify.git || 'unknown'}`,
+        `template_sync: ${verify.templateSync || 'unknown'}`,
+        `local_engine: ${verify.localEngine || 'unknown'}`,
+        `entity_store: ${verify.entityStore || 'unknown'}`,
+        `freshness: head=${payload.freshness.headSha || 'unknown'} ahead=${payload.freshness.ahead} behind=${payload.freshness.behind}`,
+        `rules: ${payload.rules.dir} (${payload.rules.required.join(', ')})`,
+        `memory_status: ${recall.status || 'no-match'}`,
+        `memory_effect: ${recall.effect || 'fresh-takeover'}`,
     ];
-
-    if (Array.isArray(takeoverRecall.queries)) {
-        for (const query of takeoverRecall.queries) {
-            if (query && query.source && query.text) {
-                lines.push(`memory_query: ${query.source}:${query.text}`);
-            }
-        }
+    for (const hit of (Array.isArray(recall.hits) ? recall.hits : [])) {
+        if (hit && hit.label) lines.push(`memory_hit: ${hit.label}`);
     }
-
-    if (Array.isArray(takeoverRecall.hits) && takeoverRecall.hits.length > 0) {
-        for (const hit of takeoverRecall.hits) {
-            if (hit.label) {
-                lines.push(`memory_hit: ${hit.label}`);
-            }
-            if (hit.effect) {
-                lines.push(`memory_effect: ${hit.effect}`);
-            }
-        }
-    } else {
-        lines.push(`memory_effect: ${takeoverRecall.effect || 'fresh-takeover'}`);
+    for (const risk of payload.risks) lines.push(`warning: ${risk}`);
+    for (const d of payload.degraded) lines.push(`degraded: ${d.part} (${d.reason})`);
+    lines.push(`next_step: ${payload.nextAction}`);
+    for (const item of (Array.isArray(recall.reflections) ? recall.reflections : [])) {
+        lines.push(`reflection: [${item.keyword}] memory:${item.memoryId}`);
     }
-
-    if (context.latestTrajectory) {
-        lines.push(`latest: ${context.latestTrajectory.line}`);
-    }
-
-    for (const warning of warnings) {
-        lines.push(`warning: ${warning}`);
-    }
-    for (const step of nextSteps) {
-        lines.push(`next_step: ${step}`);
-    }
-
-    if (Array.isArray(takeoverRecall.reflections) && takeoverRecall.reflections.length > 0) {
-        lines.push('');
-        lines.push('================================================================================');
-        lines.push('💡 Evo-Lite 历史避坑与决策联想 (Technical Avoidance & Architecture Reflections)');
-        lines.push('--------------------------------------------------------------------------------');
-        for (const item of takeoverRecall.reflections) {
-            lines.push(`🔍 召回技术词: [${item.keyword}] | Memory ID: ${item.memoryId} | Namespace: ${item.namespace}`);
-            lines.push('');
-            const indentedReflection = item.reflection
-                .split('\n')
-                .map(line => '   ' + line)
-                .join('\n');
-            lines.push(indentedReflection);
-            lines.push('--------------------------------------------------------------------------------');
-        }
-        lines.push('================================================================================');
-    }
-
     return lines.join('\n');
 }
 
@@ -466,13 +418,48 @@ function formatAutoRefreshResult(result) {
     return lines.join('\n');
 }
 
+async function buildCanonicalTakeoverPayload(options = {}) {
+    const rc = require('./takeover-receipt');
+    const { collectSessionTakeoverContextFull } = require('./takeover-session');
+    const { buildTakeoverPayload, validateSessionPayload } = require('./takeover-payload');
+    const projectRoot = rc.canonicalProjectRoot();
+    const focus = rc.readFocusAnchor(projectRoot);
+    if (focus === null) throw new Error('active_context unreadable; cannot build takeover payload');
+    const context = await collectSessionTakeoverContextFull({
+        host: options.host || 'claude-code', sessionId: options.sessionId || 'cli',
+        projectRoot, sourceEvent: options.source || 'bootstrap',
+        focus: focus.text, focusHash: focus.hash, generatedAt: new Date().toISOString(),
+    });
+    const payload = buildTakeoverPayload(context);
+    const verdict = validateSessionPayload(payload);
+    if (!verdict.ok) throw new Error(`takeover payload invalid: ${verdict.errors.join(',')}`);
+    return { payload, projectRoot, focus };
+}
+
 async function runBootstrapCommand(options = {}) {
     await bootstrap();
-    const context = memoryService.summarizeActiveContext();
-    const verify = await memoryService.verify({ silent: true });
-    const sessionstart = memoryService.inspectLocalState('sessionstart');
-    const takeoverRecall = await memoryService.buildTakeoverRecall(context, verify);
-    printPayload({ context, sessionstart, verify, takeoverRecall }, formatBootstrapReport, options);
+    const { payload } = await buildCanonicalTakeoverPayload({ ...options, source: 'bootstrap' });
+    if (options.json === true) { console.log(JSON.stringify(payload, null, 2)); return; }
+    console.log(formatBootstrapReport(payload));
+}
+
+async function runReceiptRecovery(options = {}) {
+    await bootstrap();
+    if (!options.sessionId) {
+        throw new Error('Usage: bootstrap --receipt --host <host> --session-id <id> --source <source> [--json]');
+    }
+    const rc = require('./takeover-receipt');
+    const { executeCliRecoveryTransport } = require('./takeover-adapter');
+    const { payload, projectRoot, focus } = await buildCanonicalTakeoverPayload(options);
+    const publish = () => rc.publishReceipt(projectRoot, {
+        schemaVersion: rc.RECEIPT_SCHEMA_VERSION, host: options.host, sessionId: options.sessionId,
+        projectRoot, state: 'committed', focusHash: focus.hash, payloadHash: null,
+        generatedAt: payload.generatedAt, sourceEvent: options.source || 'manual-recovery',
+    });
+    // 先交付 payload,后发布授权(不在发布前打印完成态文案)
+    const text = options.json ? JSON.stringify(payload, null, 2) : formatBootstrapReport(payload);
+    const res = executeCliRecoveryTransport(text, publish);
+    if (res.exitCode) { process.exitCode = res.exitCode; }
 }
 
 async function runCommitCommand(details, options = {}) {
@@ -507,9 +494,14 @@ function buildProgram() {
 
     program.command('bootstrap')
         .alias('evo-start')
-        .description('Read active_context, inspect architecture bootstrap state, and print a compact takeover report.')
+        .description('Print the canonical takeover payload; with --receipt also publish a session-bound committed receipt.')
         .option('--json', 'Print JSON output')
+        .option('--receipt', 'CLI recovery transport: publish a session-bound committed takeover receipt')
+        .option('--host <host>', 'Host label', 'claude-code')
+        .option('--session-id <id>', 'Session id to bind the receipt to')
+        .option('--source <source>', 'Receipt sourceEvent label', 'manual-recovery')
         .action(async options => {
+            if (options.receipt) { await runReceiptRecovery(options); return; }
             await runBootstrapCommand(options);
         });
 

@@ -9597,6 +9597,31 @@ async function runChildRuntimeTests() {
         }
         console.log('✅ T-wiki-cli passed');
     }
+
+    console.log('T-takeover-recovery. CLI recovery: payload before authorization; committed receipt; root-bound command ...');
+    {
+        const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+        const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+        const canonRepo = rc.canonicalProjectRoot(WORKSPACE_ROOT);
+        const cmd = ad.buildRecoveryCommand(canonRepo, "sid'q");
+        assert.ok(cmd.startsWith(`node '${canonRepo}/.evo-lite/cli/memory.js'`), 'canonical-root-bound absolute path');
+        assert.ok(!/(^| )node \.evo-lite\//.test(cmd), 'no bare relative path');
+        assert.ok(/'sid'\\''q'/.test(cmd), 'sessionId bash-escaped');
+
+        // 子进程在【子目录】cwd 下执行 recovery:EVO_LITE_ROOT 指向真实 .evo-lite
+        const memJs = path.join(TEMPLATE_CLI_DIR, 'memory.js');
+        const runtimeRoot = path.join(WORKSPACE_ROOT, '.evo-lite');
+        const sub = childProcess.spawnSync(process.execPath, [memJs, 'bootstrap', '--receipt',
+            '--host', 'claude-code', '--session-id', 'rec-test', '--source', 'manual-recovery', '--json'],
+            { cwd: path.join(WORKSPACE_ROOT, 'templates'), env: { ...process.env, EVO_LITE_ROOT: runtimeRoot, EVO_LITE_SKIP_GIT_STATUS: '1' }, encoding: 'utf8' });
+        assert.strictEqual(sub.status, 0, `recovery exit 0 (stderr: ${sub.stderr})`);
+        const printed = JSON.parse(sub.stdout.slice(sub.stdout.indexOf('{')));
+        assert.strictEqual(printed.schemaVersion, 1, 'recovery prints the takeover payload (not a "committed" banner)');
+        assert.ok(!/hookSpecificOutput/.test(sub.stdout), 'CLI output is not a hook envelope');
+        assert.strictEqual(rc.readReceipt(WORKSPACE_ROOT, 'claude-code', 'rec-test').state, 'committed', 'receipt committed');
+        fs.rmSync(rc.receiptPathFor(WORKSPACE_ROOT, 'claude-code', 'rec-test'), { force: true });
+        console.log('✅ T-takeover-recovery passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
