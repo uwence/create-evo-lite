@@ -299,11 +299,14 @@ function formatBootstrapReport(payload) {
         `freshness: head=${payload.freshness.headSha || 'unknown'} ahead=${payload.freshness.ahead} behind=${payload.freshness.behind}`,
         `rules: ${payload.rules.dir} (${payload.rules.required.join(', ')})`,
         `memory_status: ${recall.status || 'no-match'}`,
-        `memory_effect: ${recall.effect || 'fresh-takeover'}`,
     ];
+    let hitEffects = 0;
     for (const hit of (Array.isArray(recall.hits) ? recall.hits : [])) {
         if (hit && hit.label) lines.push(`memory_hit: ${hit.label}`);
-        if (hit && hit.effect) lines.push(`memory_effect: ${hit.effect}`);
+        if (hit && hit.effect) { lines.push(`memory_effect: ${hit.effect}`); hitEffects++; }
+    }
+    if (hitEffects === 0) {
+        lines.push(`memory_effect: ${recall.effect || 'fresh-takeover'}`);
     }
     for (const risk of payload.risks) lines.push(`warning: ${risk}`);
     for (const d of payload.degraded) lines.push(`degraded: ${d.part} (${d.reason})`);
