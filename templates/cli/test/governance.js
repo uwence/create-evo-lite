@@ -6708,6 +6708,131 @@ async function runGovernanceTests() {
             console.log('✅ T-sr-guard registration guard passed');
         }
 
+        console.log('T-takeover-payload. Pure builder + discriminated validators ...');
+        {
+            const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            const sessionCtx = {
+                kind: 'session', host: 'claude-code', sessionId: 's1', projectRoot: '/p', projectName: 'proj',
+                sourceEvent: 'SessionStart:startup', generatedAt: '2026-07-24T00:00:00.000Z',
+                focus: 'FOCUS-LINE', focusHash: 'h',
+                activePlan: { id: 'plan:x', status: 'draft', progress: '1/3' }, activeSpec: { id: 'spec:x', status: 'draft' },
+                rules: { dir: '.agents/rules/', required: ['evo-lite'] }, risks: ['r1'], nextAction: 'do x',
+                freshness: { ahead: 0, behind: 0, headSha: 'abc' },
+                health: { takeover: 'ready', contextStatus: 'configured', architectureStatus: 'configured', activeTaskCount: 3 },
+                verify: { hasAlerts: false, git: 'clean' }, recall: { status: 'hit', hits: [] }, degraded: [],
+            };
+            const payload = tp.buildTakeoverPayload(sessionCtx);
+            assert.strictEqual(payload.schemaVersion, 1);
+            assert.strictEqual(payload.project.name, 'proj');
+            assert.strictEqual(payload.focus.text, 'FOCUS-LINE');
+            assert.strictEqual(payload.active.plan.id, 'plan:x');
+            assert.strictEqual(payload.active.spec.id, 'spec:x');
+            assert.strictEqual(payload.freshness.headSha, 'abc');
+            assert.strictEqual(payload.health.takeover, 'ready');
+            assert.strictEqual(payload.verify.git, 'clean');
+            assert.strictEqual(payload.recall.status, 'hit');
+            assert.strictEqual(tp.validateSessionPayload(payload).ok, true, 'full payload passes');
+
+            // 完整 schema:缺字段必失败
+            for (const drop of ['active', 'verify', 'health', 'freshness', 'recall', 'degraded']) {
+                const bad = JSON.parse(JSON.stringify(payload)); delete bad[drop];
+                assert.strictEqual(tp.validateSessionPayload(bad).ok, false, `missing ${drop} must fail`);
+            }
+            // 深校验:形似但内容非法的 payload 必须被拒(R3 复审 P0-1 的反例)
+            const mutate = (fn) => { const p = JSON.parse(JSON.stringify(payload)); fn(p); return tp.validateSessionPayload(p); };
+            assert.strictEqual(mutate(p => { p.risks = 'not-array'; }).ok, false, 'risks must be array');
+            assert.strictEqual(mutate(p => { p.risks = [1]; }).ok, false, 'risks entries must be strings');
+            assert.strictEqual(mutate(p => { p.project = { name: 'x' }; }).ok, false, 'project.root required');
+            assert.strictEqual(mutate(p => { p.active = { plan: 'broken', spec: [] }; }).ok, false, 'active.plan/spec must be null or object with id');
+            assert.strictEqual(mutate(p => { p.active.plan = { status: 'draft' }; }).ok, false, 'active.plan.id required');
+            assert.strictEqual(mutate(p => { p.freshness = {}; }).ok, false, 'freshness keys required');
+            assert.strictEqual(mutate(p => { p.freshness.ahead = NaN; }).ok, false, 'NaN must not pass freshness');
+            assert.strictEqual(mutate(p => { p.freshness.ahead = -1; }).ok, false, 'commit counts cannot be negative');
+            assert.strictEqual(mutate(p => { p.freshness.behind = 1.5; }).ok, false, 'commit counts must be integers');
+            assert.strictEqual(mutate(p => { p.freshness.ahead = null; p.freshness.behind = null; }).ok, true, 'null counts are legal');
+            assert.strictEqual(mutate(p => { p.health.takeover = 'anything'; }).ok, false, 'health.takeover is an enum');
+            assert.strictEqual(mutate(p => { p.verify = {}; }).ok, false, 'verify.hasAlerts required');
+            assert.strictEqual(mutate(p => { p.recall = {}; }).ok, false, 'recall.status required');
+            assert.strictEqual(mutate(p => { p.degraded = [42]; }).ok, false, 'degraded entries must be {part,reason}');
+            assert.strictEqual(mutate(p => { p.active.plan = null; p.active.spec = null; }).ok, true, 'null plan/spec is legal');
+
+            // capsule validator 是 capsule 专用,session validator 不可复用
+            const capsule = tp.buildTakeoverPayload({
+                kind: 'refresh', host: 'claude-code', sessionId: 's1', projectRoot: '/p', projectName: 'proj',
+                sourceEvent: 'UserPromptSubmit', focus: 'FOCUS-LINE', focusHash: 'h1',
+                receiptVerdict: { state: 'committed', transition: 'active', reason: null }, recoveryAction: null,
+            }, tp.CAPSULE_BUDGET_BYTES);
+            assert.strictEqual(capsule.evoLite, 'takeover-active');
+            assert.strictEqual(capsule.receipt, 'valid');
+            assert.ok(!('action' in capsule) && !('refresh' in capsule), 'healthy capsule reflective only');
+            assert.strictEqual(tp.validateCapsule(capsule, tp.CAPSULE_BUDGET_BYTES).ok, true);
+            assert.strictEqual(tp.validateCapsule({ unexpected: true }, tp.CAPSULE_BUDGET_BYTES).ok, false, 'junk object rejected');
+            assert.strictEqual(tp.validateCapsule({ evoLite: 'nope', project: 'p', receipt: 'valid', focusHash: null }, 1024).ok, false, 'bad evoLite enum rejected');
+            assert.strictEqual(tp.validateCapsule(capsule, 5).ok, false, 'over-budget rejected');
+            console.log('✅ T-takeover-payload passed');
+        }
+
+        console.log('T-takeover-capsule-states. transitions + budget always <= 1 KiB + emergency capsule always valid ...');
+        {
+            const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            const mk = (transition, state, reason, action, focus) => tp.buildTakeoverPayload({
+                kind: 'refresh', host: 'claude-code', sessionId: 's', projectRoot: '/p', projectName: 'proj',
+                sourceEvent: 'UserPromptSubmit', focus, focusHash: 'h',
+                receiptVerdict: { state, transition, reason }, recoveryAction: action,
+            }, tp.CAPSULE_BUDGET_BYTES);
+            assert.strictEqual(mk('active', 'committed', null, null, 'F').evoLite, 'takeover-active');
+            assert.strictEqual(mk('refreshed', 'committed', null, null, 'F').evoLite, 'takeover-refreshed');
+            const stale = mk('stale', 'invalid', null, 'RC', 'F');
+            assert.strictEqual(stale.receipt, 'invalid');
+            assert.strictEqual(stale.action, 'RC');
+            const trimmed = mk('active', 'committed', null, null, '焦'.repeat(5000));
+            assert.ok(Buffer.byteLength(JSON.stringify(trimmed), 'utf8') <= 1024);
+            assert.strictEqual(trimmed.truncated, true);
+            assert.strictEqual(trimmed.focusHash, 'h', 'focusHash preserved when focus trimmed');
+            assert.doesNotThrow(() => JSON.parse(JSON.stringify(trimmed)));
+            // 超长 action + 超长 focus → 仍 ≤ budget,且固定键(含 focusHash)齐全
+            const hard = mk('stale', 'invalid', 'r', 'node ' + 'x'.repeat(4000), 'F'.repeat(4000));
+            assert.ok(Buffer.byteLength(JSON.stringify(hard), 'utf8') <= 1024, 'oversized action stays within budget');
+            for (const k of ['evoLite', 'project', 'receipt', 'focusHash']) {
+                assert.ok(k in hard, `fixed key ${k} never dropped`);
+            }
+            assert.strictEqual(hard.focusHash, 'h', 'real focusHash retained when action is dropped');
+            assert.strictEqual(tp.validateCapsule(hard, 1024).ok, true, 'trimmed capsule still valid');
+            // 极端回退分支(固定字段本身就超预算)仍保真实 focusHash + 通过校验
+            const fallback = tp.buildTakeoverPayload({ kind: 'refresh', host: 'claude-code', sessionId: 's',
+                projectRoot: '/p', projectName: 'P'.repeat(3000), sourceEvent: 'UserPromptSubmit',
+                focus: 'F', focusHash: 'realhash', receiptVerdict: { state: 'invalid', transition: 'stale', reason: 'r' },
+                recoveryAction: 'RC' }, tp.CAPSULE_BUDGET_BYTES);
+            assert.ok(Buffer.byteLength(JSON.stringify(fallback), 'utf8') <= 1024, 'fallback within budget');
+            assert.strictEqual(fallback.focusHash, 'realhash', 'fallback keeps the real focusHash (P1-3)');
+            assert.strictEqual(tp.validateCapsule(fallback, 1024).ok, true, 'fallback capsule valid');
+
+            // emergency capsule(R4 复审 P0-1):极端超长输入仍必须是【预算内、经校验】的 JSON capsule
+            assert.ok(tp.EMERGENCY_FLOOR_BYTES <= tp.CAPSULE_BUDGET_BYTES, 'constant floor fits the standard budget');
+            const longRoot = '/' + 'r'.repeat(3000);
+            const longSid = 's'.repeat(2000);
+            const longAction = `node '${longRoot}/.evo-lite/cli/memory.js' bootstrap --receipt --session-id '${longSid}'`;
+            const em = tp.buildEmergencyCapsule({ projectName: 'P'.repeat(4000), focusHash: 'realhash',
+                recoveryAction: longAction, reason: 'capsule-invalid' }, tp.CAPSULE_BUDGET_BYTES);
+            assert.ok(Buffer.byteLength(JSON.stringify(em.capsule), 'utf8') <= 1024, 'emergency capsule within budget');
+            assert.strictEqual(tp.validateCapsule(em.capsule, tp.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule always valid');
+            assert.ok(!('action' in em.capsule), 'oversized recovery command omitted entirely, never truncated');
+            assert.ok(em.systemMessage.includes(longAction), 'full recovery command moved to systemMessage');
+            assert.strictEqual(em.capsule.focusHash, 'realhash', 'project name is trimmed before focusHash is dropped');
+            // 正常尺寸:action 内联,systemMessage 为 null
+            const emSmall = tp.buildEmergencyCapsule({ projectName: 'proj', focusHash: 'h',
+                recoveryAction: 'node mem.js bootstrap --receipt', reason: 'capsule-invalid' }, tp.CAPSULE_BUDGET_BYTES);
+            assert.strictEqual(emSmall.capsule.action, 'node mem.js bootstrap --receipt', 'action inlined when it fits');
+            assert.strictEqual(emSmall.systemMessage, null, 'no systemMessage needed when action is inlined');
+            // 垃圾/缺失输入也必须产出合法 capsule(emergency 路径不得再失败一次)
+            for (const junk of [null, undefined, {}, 42, { projectName: 123, focusHash: [], recoveryAction: {} }]) {
+                const r = tp.buildEmergencyCapsule(junk, tp.CAPSULE_BUDGET_BYTES);
+                assert.strictEqual(tp.validateCapsule(r.capsule, tp.CAPSULE_BUDGET_BYTES).ok, true,
+                    `emergency capsule valid for junk input ${JSON.stringify(junk)}`);
+            }
+            console.log('✅ T-takeover-capsule-states passed');
+        }
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
