@@ -1361,6 +1361,35 @@ async function runIntegrationTests() {
             !bootstrapNoiseOutput.includes('memory_hit:'),
             'bootstrap command surfaced a non-actionable recall result as a primary hit'
         );
+
+        console.log('3e. Testing bootstrap recall surfaces a reflections-only match without the fresh-takeover fallback ...');
+        const bootstrapReflectionRuntime = createTempRuntimeRoot('bootstrap-recall-reflection-only');
+        const bootstrapReflectionLoaded = await bootstrapRuntime(bootstrapReflectionRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        await bootstrapReflectionLoaded.service.memorize(
+            'ReflectionOnlyProbe 避坑与教训：必须先运行完整回归测试，防止连锁故障扩散到其他模块，这是团队反复踩坑后的核心决策。This note is deliberately long enough to satisfy the quality guard.'
+        );
+        console.log(bootstrapReflectionLoaded.service.setFocus('收口 ReflectionOnlyProbe 经验总结，避免同类问题重复出现'));
+        loadCli(bootstrapReflectionRuntime.runtimeRoot, {
+            EVO_LITE_GIT_STATUS: '',
+        });
+        const bootstrapReflectionCliModule = require(path.join(CLI_DIR, 'memory.js'));
+        const bootstrapReflectionOutput = await captureConsole(async () => {
+            await bootstrapReflectionCliModule.run(['node', 'memory.js', 'bootstrap']);
+        });
+        assert.ok(
+            bootstrapReflectionOutput.includes('memory_status: matched'),
+            'bootstrap command did not surface matched status for a reflections-only recall'
+        );
+        assert.ok(
+            !bootstrapReflectionOutput.includes('memory_effect: fresh-takeover'),
+            'bootstrap command printed the self-contradictory fresh-takeover fallback alongside a reflections-only match'
+        );
+        assert.ok(
+            bootstrapReflectionOutput.includes('reflection:'),
+            'bootstrap command did not surface the reflections-only recall hit'
+        );
         primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
 
         console.log('4. Testing archive / sync ...');

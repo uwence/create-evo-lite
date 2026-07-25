@@ -300,12 +300,11 @@ function formatBootstrapReport(payload) {
         `rules: ${payload.rules.dir} (${payload.rules.required.join(', ')})`,
         `memory_status: ${recall.status || 'no-match'}`,
     ];
-    let hitEffects = 0;
     for (const hit of (Array.isArray(recall.hits) ? recall.hits : [])) {
         if (hit && hit.label) lines.push(`memory_hit: ${hit.label}`);
-        if (hit && hit.effect) { lines.push(`memory_effect: ${hit.effect}`); hitEffects++; }
+        if (hit && hit.effect) lines.push(`memory_effect: ${hit.effect}`);
     }
-    if (hitEffects === 0) {
+    if (recall.effect !== null) {
         lines.push(`memory_effect: ${recall.effect || 'fresh-takeover'}`);
     }
     for (const risk of payload.risks) lines.push(`warning: ${risk}`);
