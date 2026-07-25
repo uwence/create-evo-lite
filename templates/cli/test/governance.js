@@ -7196,15 +7196,23 @@ async function runGovernanceTests() {
                 saved[rp] = require.cache[rp]; delete require.cache[rp];
                 require.cache[rp] = { id: rp, filename: rp, loaded: true, get exports() { throw new Error(`refresh loaded ${m}`); } };
             }
+            const adapterRp = require.resolve(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const savedAdapter = require.cache[adapterRp];
             try {
+                delete require.cache[require.resolve(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'))];
                 const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
                 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-iso-'));
                 const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
                 fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
                 const up = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: 's' }, { projectRoot: root });
-                assert.ok(up.json.hookSpecificOutput.additionalContext, 'refresh capsule without heavy deps');
+                const cap = JSON.parse(up.json.hookSpecificOutput.additionalContext);
+                assert.ok(cap.evoLite === 'takeover-active' || cap.evoLite === 'takeover-stale',
+                    `refresh capsule must be a real capsule, got ${cap.evoLite}`);
                 fs.rmSync(root, { recursive: true, force: true });
-            } finally { for (const rp of Object.keys(saved)) { delete require.cache[rp]; if (saved[rp]) require.cache[rp] = saved[rp]; } }
+            } finally {
+                for (const rp of Object.keys(saved)) { delete require.cache[rp]; if (saved[rp]) require.cache[rp] = saved[rp]; }
+                delete require.cache[adapterRp]; if (savedAdapter) require.cache[adapterRp] = savedAdapter;
+            }
             console.log('✅ T-takeover-refresh-isolation passed');
         }
 
