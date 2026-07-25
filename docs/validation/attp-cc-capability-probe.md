@@ -38,8 +38,20 @@
 | PreToolUse 额外输入 | `tool_name` / `tool_input` |
 | CwdChanged | 文档存在;无 matcher,目录每次变更即触发 |
 | PostCompact | 文档存在;输入含 `trigger`(manual/auto)+ `compact_summary`;**无 decision control**;**不在 additionalContext 注入清单** → 不能靠它重注入 |
-| 输出字节上限 | 文档**未**规定 additionalContext 硬上限 → 1 KiB 为本设计自设预算 |
+| 输出字符上限 | **更正(2026-07-25 复核)**:官方规定 `additionalContext` / `systemMessage` / 裸 stdout 上限 **10,000 字符**,超出转存文件 + 预览替换。先前本表记「文档未规定硬上限」**有误**。本设计 1 KiB 自设预算远在其下,**不据此放宽** |
+| **退出码与 JSON 的关系** | **exit 0** = 成功,**stdout JSON 只在 exit 0 时被解析**;**exit 2** = 阻断且**忽略 stdout/JSON**;**exit 1 = 非阻断错误,动作继续**(JSON 同样不生效)。→ 失败路径若配非零退出,degraded capsule / 恢复命令 / `systemMessage` 会被**整体丢弃**;因此 ATTP 的所有 hook 失败路径一律 `exit 0`(见设计 §0.1 勘误) |
+| stdout 洁净度 | hook 的 stdout 必须**只有**那个 JSON 对象;shell profile 的额外输出会破坏解析 |
 | JSON 健壮性 | v2.1.202+ malformed JSON 不再崩会话;**类型错字段被静默丢弃**(→ capsule 格式错 = 静默不注入) |
+
+### B.1 2026-07-25 官方文档复核(来源:`code.claude.com/docs/en/hooks`)
+
+本次复核只改两处**契约事实**,不改协议结论:
+
+1. **退出码语义**(新增,见上表)—— 直接导致设计文档 §0.1 勘误与实施计划 R6 的 exit-0 改造。
+2. **10,000 字符上限**(更正上表旧结论)。
+
+两项均为 **SUPPORTED-BY-CONTRACT(官方文档)**;`exit 0` 行为在阶段 1 dogfood 中另行实测记录
+(观测 hook 进程退出码与 stdout 洁净度)。
 
 ### C. 装机版待实测残留(不阻断:属可选优化器,基线已满足)
 

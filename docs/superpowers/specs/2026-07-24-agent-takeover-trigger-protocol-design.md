@@ -1,13 +1,42 @@
-# Agent Takeover Trigger Protocol — 设计文档(R5)
+# Agent Takeover Trigger Protocol — 设计文档(R6)
 
 - 议题:backlog `[agent-code-routing]`(4a.x P2 final debt)。谱系:S9b CodePLC dogfood
   实证 —— 干净子仓、零竞争、裸 prompt 下 Agent 自发触发治理面 = **失败**;裁定 P1b
   将"Agent 裸指令路由"定为独立债,Wiki(4b-1)服务人、不能替代 Agent routing。
-- 状态:R5(design R4 外部复审 CHANGES REQUIRED 已折入,1×P0 + 1×P1 + 术语清理)。待 R5 复审。
+- 状态:**R6 = R5 APPROVED 基线 + 宿主契约勘误一处**(见 §0.1)。架构、验收层级、两阶段两复审门**均未变更**;
+  勘误来源:实施计划 R5 外部复审 P0-1 —— 官方 hooks 契约与本文档「非零退出」表述冲突。
 - 宿主范围:**仅 Claude Code**(MVP);协议本身 host-agnostic。
 - 前置证据:`docs/validation/attp-cc-capability-probe.md`(装机 2.1.218,PROTOCOL-SUPPORTED)。
 - 关联:`[zvec-06-upgrade]`(无关);a177 lock 协调(receipt 授权边界/发布时序/失效事务
   按 a177 同级契约要求书写)。
+
+---
+
+## 0.1 宿主契约勘误(R6,唯一变更)
+
+**问题**:本文档多处把失败表述为「degraded capsule + `systemMessage` + **非零退出**」。经复核 Claude Code
+官方 hooks 参考(`code.claude.com/docs/en/hooks`),这在宿主上不成立:
+
+> **Exit 0** means success. Claude Code parses stdout for JSON output fields. **JSON output is only
+> processed on exit 0.** … **Exit 2** means a blocking error. Claude Code ignores stdout and any JSON in it.
+> … Claude Code treats **exit code 1 as a non-blocking error and proceeds** with the action.
+
+即:**非零退出时,精心构造的 degraded capsule、恢复命令与 `systemMessage` 会被宿主整体丢弃** —— 失败
+不但没有变响,反而变成静默。这与本设计「注入失败不可静默绕过」的主路径验收标准直接矛盾。
+
+**勘误(全文适用,覆盖 §5 失效事务第 3 条、§6 事件策略,以及任何出现「非零退出」的失败表述)**:
+
+| 情形 | 勘误前 | 勘误后 |
+|---|---|---|
+| envelope 已成功序列化的**任何** hook 失败路径 | 非零退出 | **`exit 0`**;失败由 ① `takeover-degraded` capsule ② `systemMessage` ③ **不发布 committed receipt** ④ PreToolUse `permissionDecision:"deny"` ⑤ stderr 诊断 共同承载 |
+| 序列化失败 / stdout 写出失败 / receipt ordered publication 失败 | 非零退出 | **保持非零**(此时 JSON 本就未送达或不可信) |
+| CLI recovery(非 hook) | 非零退出 | **保持非零**(CLI 的退出码是正确信号) |
+
+**不变的部分**:ordered publication 时序、硬有效性字段、health gate、target-path 绑定、六条不变量、
+两阶段两复审门 —— 均不受影响。勘误只改「失败如何被宿主看见」,不改「何时算失败」。
+
+**连带事实**(同一官方页,补记):`additionalContext` / `systemMessage` / 裸 stdout 上限
+**10,000 字符**(超出转存文件 + 预览替换)。本设计 1 KiB capsule 预算远在其下,**不据此放宽**。
 
 ---
 
@@ -257,7 +286,8 @@ receipt 语义是 **session-scoped**:证明"**本 session 曾成功完成过一�
 
 当前【已存在有效 committed receipt】
   → refresh path:不建立新 generation;刷新失败【不自动撤销】旧 receipt,但必须显式报告
-    (systemMessage / 非零退出);终局 Edit/Write 由守卫 health gate 决定(§5),非无条件 allow
+    (systemMessage + degraded capsule + 不发布 receipt;**exit 0** —— 见 §0.1 勘误);
+    终局 Edit/Write 由守卫 health gate 决定(§5),非无条件 allow
 ```
 
 - 仍是 **session-scoped**:同一 session 只有一个授权世代;只是在授权文件缺失时**允许重新建立该世代**
@@ -333,7 +363,8 @@ committed receipt**(否则硬字段仍匹配、守卫仍放行):
 ```text
 1. 尝试【原子覆盖】receipt 为 tombstone { ...硬身份, state:"invalid", reason }
 2. 覆盖失败 → 回退【unlink】receipt(missing 亦被守卫判 invalid)
-3. 覆盖与 unlink 双失败 → 输出 degraded capsule + systemMessage 大声报错 + 非零退出
+3. 覆盖与 unlink 双失败 → 输出 degraded capsule + systemMessage 大声报错(**exit 0**,见 §0.1 勘误:
+     非零会让宿主丢弃这段 capsule 与 systemMessage;守卫的 fail-closed 不依赖退出码)
      (此为已记录残留:同一 FS 条件本会令初始 committed 发布也失败;不静默假装正常)
 4. emit degraded capsule(带平台恢复 action)
 ```

@@ -1,4 +1,4 @@
-# Agent Takeover Trigger Protocol Implementation Plan (R5)
+# Agent Takeover Trigger Protocol Implementation Plan (R6)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,9 +8,9 @@
 
 **Tech Stack:** Node.js (CommonJS), commander, Claude Code hooks(`hookSpecificOutput.additionalContext` / `permissionDecision` / `${CLAUDE_PROJECT_DIR}`), 现有 `test/harness.js` + assert 骨架。
 
-**契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R5 APPROVED)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218)。
+**契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R6:R5 APPROVED 基线 + §0.1 宿主契约勘误)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218)。
 
-**计划 R1/R2/R3/R4 外部复审(5+5+4+4 个 P0)已折入**,逐条见文末《复审落点》。
+**计划 R1/R2/R3/R4/R5 外部复审(5+5+4+4+3 个 P0)已折入**,逐条见文末《复审落点》。
 
 ## 已核实的代码事实(实现须以此为准,勿再猜测)
 
@@ -24,6 +24,8 @@
 - `templates/cli/test/integration.js:420-428` 有 manifest 覆盖守卫 `required` 数组(末项 `'memory-index-lock.js',`)。
 - `templates/cli/sync-runtime-entry.js` 存在(sync 入口)。
 - `active_context.md` 锚点:`BEGIN_META/END_META`(含 `headSha/upstreamSha/ahead/behind`)、`BEGIN_FOCUS/END_FOCUS`。
+- Claude Code hooks 官方契约(`code.claude.com/docs/en/hooks`,R6 复核):**JSON 只在 exit 0 时被解析**;exit 2 = 阻断且忽略 stdout/JSON;**exit 1 = 非阻断错误,动作继续**(JSON 同样不生效);`UserPromptSubmit`/`UserPromptExpansion`/`SessionStart` 的 stdout 才会成为 Claude 可见上下文;`additionalContext`/`systemMessage`/stdout **上限 10,000 字符**。
+- `memory.js` 的 `runReceiptRecovery(options)` **强制要求 `--session-id`**(缺失即抛 Usage 错误)→ 任何"恢复命令"文案都必须带当前 `session_id`,否则 Agent 执行即失败。
 - Node `child_process` 的 `shell` 选项:`shell:true` 在 win32 上取 `process.env.comspec`(通常 `cmd.exe`),**与 Claude Code 执行 hook command 的 shell 不是一回事**;`shell:'<path>'` 时 Node 仅在 basename 为 `cmd.exe` 时用 `/d /s /c`,否则用 `-c`。因此 POSIX 语义命令必须显式传 shell 路径,且**本机 shell 差异不得成为拒装理由**(见 Task 6)。
 
 ## Global Constraints
@@ -32,7 +34,7 @@
 - **单一 collector + 单一 builder + 强制校验:** 三条入口全部 `collectSessionTakeoverContextFull(...)` → `buildTakeoverPayload(...)` → **`validateSessionPayload(...)` 通过后才 transport**;禁止任何入口自拼语义或硬编码 `verify:null`/`recall:[]`。**`UserPromptSubmit` 每轮 capsule 同样强制 `validateCapsule`**(probe 已确认宿主静默丢弃类型错字段,无效 capsule = 静默失去再播种能力);校验不过 → emergency degraded capsule + 非零。
 - **锚点解析 fail-closed:** `readFocusAnchor` 在 `BEGIN_FOCUS/END_FOCUS` 非严格一对时返回 `null`(文件存在但结构损坏**不得**当作"空 focus 的健康态");`readMetaAnchor` 返回 `{ok, reason, meta}`,锚点缺失/`ahead|behind` 非整数 → `ok:false` 并入 `degraded[]`,**`NaN` 绝不进入 freshness**。
 - **schema 深校验:** `validateSessionPayload` 校验 `active.plan/spec`(null 或含非空 `id` 的对象)、`freshness` 三键齐全且数值有限或 null、`health.takeover` 枚举、`verify.hasAlerts` 布尔、`recall.status` 字符串、`degraded[]` 每项 `{part:string, reason:string}`。可恢复降级由 collector 归一化为**保守但合法**的值(`hasAlerts:true` / `recall.status:'unavailable'`),事实由 `degraded[]` + `attention-needed` 承载。
-- **失败不可静默:** 承重字段获取失败**禁止空 catch 变 null**。**可恢复**失败(verify/recall/plan-ir/meta)→ 记入 `payload.degraded[]` 结构化状态并 `health.takeover='attention-needed'`,仍交付;**不可恢复**失败(focus 不可读、initDB/memory.service 加载失败、payload 校验不过)→ establishment 失败、**不发布 receipt**、非零退出。
+- **失败不可静默:** 承重字段获取失败**禁止空 catch 变 null**。**可恢复**失败(verify/recall/plan-ir/meta)→ 记入 `payload.degraded[]` 结构化状态并 `health.takeover='attention-needed'`,仍交付;**不可恢复**失败(focus 不可读、initDB/memory.service 加载失败、payload 校验不过)→ establishment 失败、**不发布 receipt**、`failure` 字段 + `systemMessage` + stderr 显式报告(**hook 路径仍 exit 0**,见宿主 transport 语义)。
 - **项目根严格 fail-closed:** `discoverProjectRoot(startDir)` 向上找最近含 `.evo-lite/` 的祖先,**找不到即抛错**;`canonicalProjectRoot` **不得**退回 `path.resolve(base)`。scaffold 场景不复用此函数。
 - **canonicalization / realpath 全链 fail-closed(无一处 fail-open):** ①`canonicalProjectRoot` 的 `realpathSync` 失败**即抛**(未经物理解析的字符串不是 canonical root);②`invalidateReceipt` canonicalization 失败**不得**用 `path.resolve` 造替代 identity —— 跳过 tombstone,只允许"不写入任何身份"的 unlink 撤销,再失败则报 `ok:false`;③守卫解析 target 时,目标或其**最近存在祖先**的 `realpathSync` 失败**即 deny**;④守卫任何一步抛错(含根解析)**一律 deny**,绝不落到 `main` 的通用错误路径(PreToolUse 无 `permissionDecision` = 放行)。
 - **receipt 路径 project-bound:** 所有 receipt API 取 canonical `projectRoot`,内部计算 `<projectRoot>/.evo-lite/generated/takeover/receipts/<host>/<sha256(host\0sessionId)>.json`;`readFocusAnchor`/`readMetaAnchor` 直接读 `<projectRoot>/.evo-lite/active_context.md`(**不**用 `getActiveContextPath()`)。gitignore、不入模板真相源、不提交;temp+rename 原子。
@@ -41,6 +43,8 @@
 - **establishment vs refresh 由 receipt 存在性判定,非 `SessionStart.source`。**
 - **不变量 6(refresh 隔离):** refresh call graph(UserPromptSubmit / reconcile / readReceipt / readFocusAnchor / 守卫 health gate)**禁载** `memory.service`/`db`/memory-index/zvec/`takeover-session`;collector 仅在 session 路径 lazy require。
 - **capsule 预算:** 量最终注入的 additionalContext UTF-8 字节,硬上限 **1 KiB**;序列化后循环裁剪 + 最终硬断言;固定字段 `evoLite`/`project`/`receipt`/**`focusHash`(可为 null 但键必存)**永不删除;先裁 `focus`,再缩减/省略 `action`,最后回退固定短 degraded capsule(**仍尽量携带真实 `focusHash`**,输入无 hash 时才为 `null`);Unicode code point 边界截断。健康 capsule 不含 `action`/`refresh`。
+- **宿主 transport 语义:结构化 hook JSON 必须 `exit 0`(R5 复审 P0-1,官方契约):** 文档明确 —— *"Exit 0 means success. Claude Code parses stdout for JSON output fields. **JSON output is only processed on exit 0.** Exit 2 … ignores stdout and any JSON in it"*,且 **exit 1 属非阻断错误,动作继续**。因此**凡是已成功序列化 hook envelope 的处理结果一律 `exitCode: 0`** —— 否则 degraded capsule / 恢复说明 / `systemMessage` 全被宿主丢弃,失败反而变成静默。失败状态改由**四个宿主可见的通道**表达:① `takeover-degraded` capsule;② `systemMessage`;③ **不发布 committed receipt**;④ PreToolUse 的 `permissionDecision:"deny"`。**仅**以下情形返回非零:JSON 序列化失败、stdout 写出失败、receipt ordered publication 失败、CLI recovery 失败(CLI 不是 hook,非零是正确信号)。handler 另返回 `failure:string|null` 供测试与 stderr 断言,**失败可观测性不依赖退出码**。
+- **hook 输出字符上限(官方):** `additionalContext`/`systemMessage`/裸 stdout 上限 **10,000 字符**,超出会被转存文件 + 预览替换。本设计 1 KiB capsule 预算远在其下,故无冲突;但**不得**据此放宽 1 KiB。
 - **emergency capsule 恒为合法预算内 JSON(不得退回裸文本):** `UserPromptSubmit` 任何失败(builder 抛错 / capsule 非法 / 根解析失败)都走 `buildEmergencyCapsule(input, budget)` —— **不依赖可能已失败的正常 builder**,复用同一套 UTF-8 裁剪,按固定阶梯降级(全量 → 去 `action` → 去 `focusHash` → 裁 `project` → 常量地板),**恒 ≤ 预算且恒过 `validateCapsule`**;恢复命令**只整条带上或整条省略,绝不截断**,省略时完整命令改由 hook 的 `systemMessage` 承载。adapter **禁止**任何"校验不过就发普通文本"的分支。
 - **守卫(阶段2):** Edit/Write allow ⟺ committed receipt + reconcile 非 degraded + **`buildTakeoverPayload(refresh)` → `validateCapsule` → 字节预算** 全过 + target-path 落 receipt.projectRoot 内;**target 缺失/非字符串/解析失败 → deny**。Read/Glob/Grep/Bash → allow;**MVP 守卫工具集仅 `Edit`/`Write`**。
 - **hook 启动命令与 probe 分层(本机 shell ≠ 宿主 shell):** 命令固定为 `node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"`。**安装闸只用与 shell 无关的两项**:`probeAdapterBinary`(直接 `process.execPath` 跑 adapter,产出 hook envelope)+ `verifyHookCommandShape`(静态断言命令引用受管 adapter 路径且 `$CLAUDE_PROJECT_DIR` 处于双引号内)。`probeHookCommand(projectRoot, {shell})` **降级为诊断,不作安装闸**,且**必须显式指定 shell**(`resolveHostShell()`:`CLAUDE_CODE_GIT_BASH_PATH` / `EVO_LITE_HOOK_SHELL` → win32 上的 Git Bash → 非 win32 的 `/bin/sh`);shell 不可发现时返回 `{ok:true, skipped:true}` —— **绝不因本机 OS shell 与 Claude 宿主 shell 不同而误拒装**。**宿主 transport 的权威证据只有 Step 9 的真实 `claude -p` dogfood**(宿主自己执行那条命令并观测 marker),不是本地 spawn。
@@ -1003,7 +1007,7 @@ EOF
 
 **Files:**
 - Create: `templates/cli/takeover-adapter.js`
-- Test: `templates/cli/test/governance.js`(`T-takeover-adapter-session`、`T-takeover-refresh-isolation`、`T-takeover-transport-order`)
+- Test: `templates/cli/test/governance.js`(`T-takeover-adapter-session`、`T-takeover-hook-exit-contract`、`T-takeover-refresh-isolation`、`T-takeover-transport-order`)
 
 **Interfaces:**
 - Produces:
@@ -1012,8 +1016,10 @@ EOF
   - `resolveRoot(deps)` → `{ ok, root } | { ok:false, error }`(canonicalization 失败不抛出到 `main`)
   - `executeHookTransport(json, publish, { write }?)` → `{ exitCode, error? }`
   - `executeCliRecoveryTransport(text, publish, { write }?)` → `{ exitCode, error? }`
-  - `buildRecoveryCommand(projectRoot, sessionId)` → string
-  - `handleHookInput(input, deps?)` → `Promise<{ json, exitCode, publish|null }>`(deps 可注入 `{projectRoot, collect, buildPayload, validate}`)
+  - `buildRecoveryCommand(projectRoot, sessionId)` → string(canonical-root-bound 绝对路径)
+  - `buildGenericRecoveryCommand(sessionId)` → `string | null`(根不可知时的相对路径版;**必带 `--session-id`**;无合法 sessionId 返回 `null`)
+  - `handleHookInput(input, deps?)` → `Promise<{ json, exitCode, publish|null, failure:string|null }>`(deps 可注入 `{projectRoot, collect, buildPayload, validate, validateCapsule}`)
+    - **`exitCode` 恒为 0**(只要 envelope 构造成功);失败由 `failure` + `systemMessage` + degraded capsule + 不发布 receipt 表达
   - `main()`
 - 顶部只 require `takeover-receipt` + `takeover-payload`;collector lazy(不变量 6)。
 
@@ -1048,10 +1054,12 @@ console.log('T-takeover-adapter-session. establishment/refresh by receipt presen
     ad.executeHookTransport(r2.json, r2.publish, { write: () => {} });
     assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'committed');
 
-    // payload 校验不过 → 不发布、非零(注入坏 payload)
+    // payload 校验不过 → 不发布;但【exit 0】:非零会让宿主丢弃这段 degraded 上下文(R5 复审 P0-1)
     const bad = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'bad', source: 'startup' },
         { ...deps, buildPayload: () => ({ schemaVersion: 1 }) });
-    assert.strictEqual(bad.exitCode, 1, 'invalid payload → nonzero');
+    assert.strictEqual(bad.exitCode, 0, 'structured hook JSON must exit 0 or the host discards it');
+    assert.ok(bad.failure && /invalid/.test(bad.failure), 'failure is reported through the failure field, not the exit code');
+    assert.ok(bad.json.systemMessage, 'failure also surfaces via systemMessage');
     assert.strictEqual(bad.publish, null, 'invalid payload → no publish');
     assert.strictEqual(rc.readReceipt(root, 'claude-code', 'bad').state, 'missing', 'invalid payload never yields committed receipt');
 
@@ -1059,13 +1067,15 @@ console.log('T-takeover-adapter-session. establishment/refresh by receipt presen
     assert.strictEqual(up.exitCode, 0);
     assert.strictEqual(JSON.parse(up.json.hookSpecificOutput.additionalContext).evoLite, 'takeover-active');
 
-    // 坏 capsule(builder 被注入返回垃圾)→ validateCapsule 拦截 → emergency capsule + 非零
+    // 坏 capsule(builder 被注入返回垃圾)→ validateCapsule 拦截 → emergency capsule,且【exit 0】
     const badUp = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid },
         { ...deps, buildPayload: () => ({ unexpected: true }) });
-    assert.strictEqual(badUp.exitCode, 1, 'invalid capsule → nonzero (no silent degradation)');
+    assert.strictEqual(badUp.exitCode, 0, 'emergency capsule must exit 0 or it is never ingested');
+    assert.ok(badUp.failure, 'failure still reported explicitly (failure field + systemMessage + stderr)');
     const emergency = JSON.parse(badUp.json.hookSpecificOutput.additionalContext);
     assert.strictEqual(emergency.evoLite, 'takeover-degraded', 'emergency capsule emitted');
     assert.ok(/bootstrap --receipt/.test(emergency.action), 'emergency capsule carries recovery command');
+    assert.ok(emergency.action.includes(`--session-id '${sid}'`), 'recovery command carries the current session id');
     const tp2 = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
     assert.strictEqual(tp2.validateCapsule(emergency, tp2.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule itself is valid');
 
@@ -1077,11 +1087,22 @@ console.log('T-takeover-adapter-session. establishment/refresh by receipt presen
         rootFailUp = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid }, deps);
         rootFailSs = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'rootfail', source: 'startup' }, deps);
     } finally { rc.__resetFsOps(); }
-    assert.strictEqual(rootFailUp.exitCode, 1, 'root canonicalization failure → nonzero');
+    assert.strictEqual(rootFailUp.exitCode, 0, 'root failure still exits 0 (host only parses JSON on exit 0)');
+    assert.ok(rootFailUp.failure, 'root failure reported via the failure field');
     const rfCap = JSON.parse(rootFailUp.json.hookSpecificOutput.additionalContext); // 非 JSON 会在此抛
     assert.strictEqual(tp2.validateCapsule(rfCap, tp2.CAPSULE_BUDGET_BYTES).ok, true, 'still a valid capsule, never plain text');
-    assert.strictEqual(rootFailSs.exitCode, 1, 'SessionStart root failure → nonzero');
+    assert.ok(rfCap.action && rfCap.action.includes(`--session-id '${sid}'`), 'generic recovery command carries the session id');
+    assert.strictEqual(rootFailSs.exitCode, 0, 'SessionStart root failure exits 0 so the recovery text is ingested');
+    assert.ok(rootFailSs.failure, 'SessionStart root failure reported via the failure field');
+    assert.ok(/--session-id 'rootfail'/.test(rootFailSs.json.hookSpecificOutput.additionalContext),
+        'SessionStart recovery text carries the session id (runReceiptRecovery requires it)');
     assert.strictEqual(rootFailSs.publish, null, 'no receipt when the root cannot be canonicalized');
+
+    // 无 session_id → 不得谎称可自动恢复
+    assert.strictEqual(ad.buildGenericRecoveryCommand(undefined), null, 'no session id → no recovery command');
+    assert.ok(/'sid'\\''q'/.test(ad.buildGenericRecoveryCommand("sid'q")), 'session id is bash-escaped');
+    const noSid = await ad.handleHookInput({ hook_event_name: 'SessionStart', source: 'startup' }, deps);
+    assert.ok(/Cannot auto-recover/i.test(JSON.stringify(noSid.json)), 'missing session id is stated, not papered over');
 
     // 所有 UPS 失败模式的 additionalContext 都必须是预算内的合法 capsule(统一断言,防止新增分支漏网)
     const failureModes = [
@@ -1091,7 +1112,8 @@ console.log('T-takeover-adapter-session. establishment/refresh by receipt presen
     ];
     for (const mode of failureModes) {
         const r = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: sid }, mode.d);
-        assert.strictEqual(r.exitCode, 1, `${mode.label} → nonzero`);
+        assert.strictEqual(r.exitCode, 0, `${mode.label} → exit 0 (host parses JSON only on exit 0)`);
+        assert.ok(r.failure, `${mode.label} → failure reported without relying on the exit code`);
         const cap = JSON.parse(r.json.hookSpecificOutput.additionalContext);
         assert.strictEqual(tp2.validateCapsule(cap, tp2.CAPSULE_BUDGET_BYTES).ok, true, `${mode.label} → valid capsule`);
         assert.ok(Buffer.byteLength(r.json.hookSpecificOutput.additionalContext, 'utf8') <= tp2.CAPSULE_BUDGET_BYTES,
@@ -1100,6 +1122,47 @@ console.log('T-takeover-adapter-session. establishment/refresh by receipt presen
     }
     fs.rmSync(root, { recursive: true, force: true });
     console.log('✅ T-takeover-adapter-session passed');
+}
+
+// 真实子进程:证明失败路径在【进程边界】上也满足宿主契约 —— exit 0 + stdout 只有合法 JSON。
+// 官方契约:JSON only processed on exit 0;非零时这段 capsule 与 systemMessage 会被整体丢弃。
+console.log('T-takeover-hook-exit-contract. failure paths exit 0 with JSON-only stdout ...');
+{
+    const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+    const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+    const MODULES = ['takeover-adapter.js', 'takeover-payload.js', 'takeover-receipt.js', 'runtime.js'];
+    const runHook = (cliDir, runtimeRoot, input) => childProcess.spawnSync(process.execPath,
+        [path.join(cliDir, 'takeover-adapter.js')],
+        { input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, EVO_LITE_ROOT: runtimeRoot } });
+
+    // ① emergency 路径:向上找不到 .evo-lite → 根 canonicalization 失败
+    { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-exit-em-'));
+      const cli = path.join(dir, 'cli'); fs.mkdirSync(cli, { recursive: true });
+      for (const f of MODULES) fs.copyFileSync(path.join(TEMPLATE_CLI_DIR, f), path.join(cli, f));
+      const sub = runHook(cli, path.join(dir, 'runtime'), { hook_event_name: 'UserPromptSubmit', session_id: 'x1' });
+      assert.strictEqual(sub.status, 0, `emergency path must exit 0 (stderr: ${sub.stderr})`);
+      const cap = JSON.parse(JSON.parse(sub.stdout.trim()).hookSpecificOutput.additionalContext); // stdout 必须只有 JSON
+      assert.strictEqual(cap.evoLite, 'takeover-degraded', 'emergency capsule emitted across the process boundary');
+      assert.strictEqual(tp.validateCapsule(cap, tp.CAPSULE_BUDGET_BYTES).ok, true, 'emergency capsule valid and <= 1 KiB');
+      assert.ok(cap.action && cap.action.includes(`--session-id 'x1'`), 'recovery command is executable');
+      assert.ok(/evo-lite takeover/.test(sub.stderr), 'diagnosis still reaches stderr (exit code no longer carries it)');
+      assert.strictEqual(fs.existsSync(path.join(dir, '.evo-lite')), false, 'no receipt tree fabricated');
+      fs.rmSync(dir, { recursive: true, force: true }); }
+
+    // ② degraded 路径:active_context 结构损坏 → 仍 exit 0,且不产生 committed receipt
+    { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-exit-dg-'));
+      const rt = path.join(root, '.evo-lite'); const cli = path.join(rt, 'cli');
+      fs.mkdirSync(cli, { recursive: true });
+      fs.writeFileSync(path.join(rt, 'active_context.md'), '# broken: no anchors at all\n', 'utf8');
+      for (const f of MODULES) fs.copyFileSync(path.join(TEMPLATE_CLI_DIR, f), path.join(cli, f));
+      const sub = runHook(cli, rt, { hook_event_name: 'UserPromptSubmit', session_id: 'x2' });
+      assert.strictEqual(sub.status, 0, `degraded path must exit 0 (stderr: ${sub.stderr})`);
+      const cap = JSON.parse(JSON.parse(sub.stdout.trim()).hookSpecificOutput.additionalContext);
+      assert.strictEqual(cap.evoLite, 'takeover-degraded', 'broken active_context yields a degraded capsule');
+      assert.strictEqual(tp.validateCapsule(cap, tp.CAPSULE_BUDGET_BYTES).ok, true, 'degraded capsule valid');
+      assert.strictEqual(rc.readReceipt(root, 'claude-code', 'x2').state, 'missing', 'no committed receipt on the degraded path');
+      fs.rmSync(root, { recursive: true, force: true }); }
+    console.log('✅ T-takeover-hook-exit-contract passed');
 }
 ```
 
@@ -1118,9 +1181,22 @@ const { buildTakeoverPayload, buildEmergencyCapsule, validateSessionPayload, val
 const HOST = 'claude-code';
 
 function bashSingleQuote(s) { return `'${String(s).replace(/'/g, `'\\''`)}'`; }
+
+// 恢复命令必须带当前 sessionId —— runReceiptRecovery 缺 --session-id 会直接抛 Usage 错误,
+// 一条跑不通的命令等于没有恢复路径。拿不到合法 sessionId → 返回 null,由 recoveryText 如实说明(R5 复审 P0-2)。
 function buildRecoveryCommand(projectRoot, sessionId) {
+    if (typeof sessionId !== 'string' || !sessionId) return null;
     const cli = bashSingleQuote(`${projectRoot}/.evo-lite/cli/memory.js`);
-    return `node ${cli} bootstrap --receipt --host claude-code --session-id ${bashSingleQuote(sessionId)} --source manual-recovery --json`;
+    return `node ${cli} bootstrap --receipt --host ${HOST} --session-id ${bashSingleQuote(sessionId)} --source manual-recovery --json`;
+}
+// 项目根不可知时的相对路径版(同样必带 sessionId)
+function buildGenericRecoveryCommand(sessionId) {
+    if (typeof sessionId !== 'string' || !sessionId) return null;
+    return `node .evo-lite/cli/memory.js bootstrap --receipt --host ${HOST} --session-id ${bashSingleQuote(sessionId)} --source manual-recovery --json`;
+}
+function recoveryText(cmd) {
+    return cmd ? `Recover: ${cmd}`
+        : 'Cannot auto-recover: no session id in the hook input. Restart the Claude Code session.';
 }
 
 // ── 同步完整写入:循环处理 partial write,确认全部 UTF-8 字节送出;零进展即抛(不死循环)──
@@ -1168,27 +1244,34 @@ function executeCliRecoveryTransport(text, publish, opts = {}) {
     return runTransport(() => String(text), publish, write);
 }
 
-const GENERIC_RECOVERY = "node .evo-lite/cli/memory.js bootstrap --receipt --host claude-code --json";
-
 async function handleSessionStart(input, deps) {
     const rootRes = resolveRoot(deps);
-    if (!rootRes.ok) { // 根不可 canonicalize:不发布、显式非零、给出通用恢复入口
+    if (!rootRes.ok) { // 根不可 canonicalize:不发布、注入 degraded 说明 —— 但【exit 0】,否则宿主会丢弃这段上下文
         return { json: { hookSpecificOutput: { hookEventName: 'SessionStart',
-            additionalContext: `[evo-lite] takeover FAILED: ${rootRes.error}. Recover from the project root: ${GENERIC_RECOVERY}` },
-            systemMessage: `evo-lite takeover root canonicalization failed: ${rootRes.error}` }, exitCode: 1, publish: null };
+            additionalContext: `[evo-lite] takeover FAILED: ${rootRes.error}. Run from the project root — ${recoveryText(buildGenericRecoveryCommand(input.session_id))}` },
+            systemMessage: `evo-lite takeover root canonicalization failed: ${rootRes.error}` },
+            exitCode: 0, publish: null, failure: `root: ${rootRes.error}` };
     }
     const projectRoot = rootRes.root;
     const sessionId = input.session_id;
     const sourceEvent = `SessionStart:${input.source || 'startup'}`;
     const existing = rc.readReceipt(projectRoot, HOST, sessionId);
     const focus = rc.readFocusAnchor(projectRoot);
-    const recovery = buildRecoveryCommand(projectRoot, sessionId);
+    const recoveryCmd = buildRecoveryCommand(projectRoot, sessionId);
+    const recovery = recoveryText(recoveryCmd);
+
+    // 所有 SessionStart 失败共用:注入 degraded 说明 + systemMessage + 不发布 receipt + failure 标记,
+    // 但【exitCode 恒 0】—— 非零会让宿主直接丢弃这段 additionalContext,失败反而变静默(R5 复审 P0-1)。
+    const ssFailure = (contextText, sysMsg, failure) => ({
+        json: { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: contextText },
+            systemMessage: sysMsg },
+        exitCode: 0, publish: null, failure,
+    });
 
     if (focus === null) { // 不可恢复:degraded,失效已有 committed,不发布
         if (existing.state === 'committed') rc.invalidateReceipt(projectRoot, HOST, sessionId, 'active-context-unreadable');
-        return { json: { hookSpecificOutput: { hookEventName: 'SessionStart',
-            additionalContext: `[evo-lite] takeover DEGRADED (active_context unreadable). Recover: ${recovery}` },
-            systemMessage: 'evo-lite takeover degraded' }, exitCode: 1, publish: null };
+        return ssFailure(`[evo-lite] takeover DEGRADED (active_context unreadable). ${recovery}`,
+            'evo-lite takeover degraded: active_context unreadable', 'active-context-unreadable');
     }
 
     const base = { host: HOST, sessionId, projectRoot, sourceEvent, focus: focus.text, focusHash: focus.hash,
@@ -1198,36 +1281,35 @@ async function handleSessionStart(input, deps) {
         context = deps.collect ? await deps.collect(base)
             : await require('./takeover-session').collectSessionTakeoverContextFull(base);
     } catch (e) {
-        return { json: { hookSpecificOutput: { hookEventName: 'SessionStart',
-            additionalContext: `[evo-lite] takeover FAILED: ${e.message}. Recover: ${recovery}` },
-            systemMessage: `evo-lite takeover collector failed: ${e.message}` }, exitCode: 1, publish: null };
+        return ssFailure(`[evo-lite] takeover FAILED: ${e.message}. ${recovery}`,
+            `evo-lite takeover collector failed: ${e.message}`, `collect: ${e.message}`);
     }
     const build = deps.buildPayload || buildTakeoverPayload;
     const validate = deps.validate || validateSessionPayload;
     let payload;
     try { payload = build(context); }
     catch (e) { // builder 抛错也须给出可执行恢复命令(不落到 main 的通用错误)
-        return { json: { hookSpecificOutput: { hookEventName: 'SessionStart',
-            additionalContext: `[evo-lite] takeover payload build failed: ${e.message}. Recover: ${recovery}` },
-            systemMessage: `evo-lite takeover build failed: ${e.message}` }, exitCode: 1, publish: null };
+        return ssFailure(`[evo-lite] takeover payload build failed: ${e.message}. ${recovery}`,
+            `evo-lite takeover build failed: ${e.message}`, `build: ${e.message}`);
     }
     const verdict = validate(payload);
     if (!verdict.ok) { // 校验不过 → 不发布 receipt
-        return { json: { hookSpecificOutput: { hookEventName: 'SessionStart',
-            additionalContext: `[evo-lite] takeover payload invalid (${verdict.errors.join(',')}). Recover: ${recovery}` },
-            systemMessage: 'evo-lite takeover payload validation failed' }, exitCode: 1, publish: null };
+        return ssFailure(`[evo-lite] takeover payload invalid (${verdict.errors.join(',')}). ${recovery}`,
+            'evo-lite takeover payload validation failed', `invalid: ${verdict.errors.join(',')}`);
     }
     const publish = () => rc.publishReceipt(projectRoot, { schemaVersion: rc.RECEIPT_SCHEMA_VERSION, host: HOST,
         sessionId, projectRoot: rc.canonicalProjectRoot(projectRoot), state: 'committed', focusHash: focus.hash,
         payloadHash: null, generatedAt: base.generatedAt, sourceEvent });
     void existing; // establishment 与 refresh 都刷新 receipt;差异仅诊断
     return { json: { hookSpecificOutput: { hookEventName: 'SessionStart',
-        additionalContext: `[evo-lite takeover] ${JSON.stringify(payload)}` } }, exitCode: 0, publish };
+        additionalContext: `[evo-lite takeover] ${JSON.stringify(payload)}` } }, exitCode: 0, publish, failure: null };
 }
 
 // 每轮 capsule 也必须经 validateCapsule —— probe 已确认宿主会【静默丢弃】类型错的字段,
 // 无效 capsule 等于静默失去再播种能力。任何失败路径都输出 buildEmergencyCapsule 的结果:
 // 恒是预算内、经校验的 JSON capsule。【禁止】退回未预算的普通文本(R4 复审 P0-1)。
+// 【exitCode 恒 0】:非零时宿主根本不解析这段 JSON,精心构造的 emergency capsule 会被整体丢弃(R5 复审 P0-1)。
+// 失败由 capsule 的 takeover-degraded + systemMessage + failure 标记 + stderr 承载,不由退出码承载。
 function emergencyResult(parts) {
     const { projectName, focusHash, recoveryAction, reason } = parts;
     const em = buildEmergencyCapsule({ projectName, focusHash, recoveryAction, reason }, CAPSULE_BUDGET_BYTES);
@@ -1235,7 +1317,8 @@ function emergencyResult(parts) {
         additionalContext: JSON.stringify(em.capsule) } };
     // action 装不下时,完整恢复命令走 systemMessage(不计入 capsule 预算)
     json.systemMessage = em.systemMessage || `evo-lite takeover capsule degraded: ${reason}`;
-    return { json, exitCode: 1, publish: null };
+    reportError(`evo-lite takeover: ${reason}`);   // 诊断仍显式落 stderr(退出码已不能承载失败)
+    return { json, exitCode: 0, publish: null, failure: reason };
 }
 
 function handleUserPromptSubmit(input, deps) {
@@ -1243,11 +1326,11 @@ function handleUserPromptSubmit(input, deps) {
     const rootRes = resolveRoot(deps);
     if (!rootRes.ok) {
         return emergencyResult({ projectName: null, focusHash: null,
-            recoveryAction: GENERIC_RECOVERY, reason: `root-canonicalization-failed: ${rootRes.error}` });
+            recoveryAction: buildGenericRecoveryCommand(sessionId), reason: `root-canonicalization-failed: ${rootRes.error}` });
     }
     const projectRoot = rootRes.root;
     const projectName = path.basename(projectRoot);
-    const recovery = buildRecoveryCommand(projectRoot, sessionId);
+    const recoveryCmd = buildRecoveryCommand(projectRoot, sessionId);   // 原始命令(进 capsule.action),非文案
     const build = deps.buildPayload || buildTakeoverPayload;
     const validate = deps.validateCapsule || validateCapsule;
 
@@ -1255,12 +1338,12 @@ function handleUserPromptSubmit(input, deps) {
     try {
         ({ verdict, focus } = rc.reconcile({ projectRoot, host: HOST, sessionId }));
     } catch (e) {
-        return emergencyResult({ projectName, focusHash: null, recoveryAction: recovery, reason: `reconcile: ${e.message}` });
+        return emergencyResult({ projectName, focusHash: null, recoveryAction: recoveryCmd, reason: `reconcile: ${e.message}` });
     }
     try {
         capsule = build({ kind: 'refresh', host: HOST, sessionId, projectRoot, projectName,
             sourceEvent: 'UserPromptSubmit', focus: focus ? focus.text : null,
-            focusHash: focus ? focus.hash : null, receiptVerdict: verdict, recoveryAction: recovery }, CAPSULE_BUDGET_BYTES);
+            focusHash: focus ? focus.hash : null, receiptVerdict: verdict, recoveryAction: recoveryCmd }, CAPSULE_BUDGET_BYTES);
     } catch (e) { failure = `build: ${e.message}`; }
     if (!failure) {
         const capVerdict = validate(capsule, CAPSULE_BUDGET_BYTES);
@@ -1268,17 +1351,17 @@ function handleUserPromptSubmit(input, deps) {
     }
     if (failure) {
         return emergencyResult({ projectName, focusHash: focus ? focus.hash : null,
-            recoveryAction: recovery, reason: failure });
+            recoveryAction: recoveryCmd, reason: failure });
     }
     return { json: { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: JSON.stringify(capsule) } },
-        exitCode: 0, publish: null };
+        exitCode: 0, publish: null, failure: null };
 }
 
 async function handleHookInput(input, deps = {}) {
     switch (input && input.hook_event_name) {
         case 'SessionStart': return handleSessionStart(input, deps);
         case 'UserPromptSubmit': return handleUserPromptSubmit(input, deps);
-        default: return { json: {}, exitCode: 0, publish: null }; // 阶段2 增 PreToolUse
+        default: return { json: {}, exitCode: 0, publish: null, failure: null }; // 阶段2 增 PreToolUse
     }
 }
 
@@ -1288,7 +1371,11 @@ function main() {
         let input = {}; try { input = JSON.parse(raw); } catch (_) {}
         let out;
         try { out = await handleHookInput(input, {}); }
-        catch (e) { out = { json: { systemMessage: `evo-lite takeover error: ${e.message}` }, exitCode: 1, publish: null }; }
+        catch (e) { // handler 兜底:仍输出 envelope 并 exit 0(非零会让 systemMessage 也失效)
+            reportError(`evo-lite takeover error: ${e.message}`);
+            out = { json: { systemMessage: `evo-lite takeover error: ${e.message}` }, exitCode: 0, publish: null, failure: e.message };
+        }
+        // 退出码只反映 transport 结果:序列化/写出/发布失败才非零(此时 JSON 本就没送达或不可信)
         const res = executeHookTransport(out.json, out.publish);
         process.exit(res.exitCode || out.exitCode || 0);
     });
@@ -1296,10 +1383,10 @@ function main() {
 
 if (require.main === module) main();
 module.exports = { handleHookInput, executeHookTransport, executeCliRecoveryTransport, writeAllSync,
-    reportError, resolveRoot, buildRecoveryCommand };
+    reportError, resolveRoot, buildRecoveryCommand, buildGenericRecoveryCommand };
 ```
 
-- [ ] **Step 4: 运行验证通过** — `✅ T-takeover-adapter-session passed`。
+- [ ] **Step 4: 运行验证通过** — `✅ T-takeover-adapter-session passed`、`✅ T-takeover-hook-exit-contract passed`。
 
 - [ ] **Step 5: 写 refresh 隔离 + transport 顺序测试**
 
@@ -1549,7 +1636,7 @@ EOF
 
 **Files:**
 - Create: `templates/cli/takeover-install.js`
-- Modify: `templates/cli/memory.js`(`mem takeover install|status`)
+- Modify: `templates/cli/memory.js`(`mem takeover install|status|rollback|probe|backup-discard`)
 - Modify: `templates/cli/template-manifest.js`、`templates/cli/test/integration.js`、`.gitignore`
 - Test: `templates/cli/test/governance.js`(`T-takeover-installer`)
 - Create: `docs/validation/attp-phase1-dogfood.md`
@@ -1559,16 +1646,18 @@ EOF
 - `managedFragment(events)`、`mergeHookConfig(existing, fragment)`、`isManagedGroup(g)`
 - **安装闸(与 shell 无关的两项)**
   - `verifyHookCommandShape(command?)` → `{ ok, reason }`(静态:`node ` 开头、引用受管 adapter、`$CLAUDE_PROJECT_DIR` 处于双引号内)
-  - `probeAdapterBinary(projectRoot)` → `{ ok, reason }`(直接 `process.execPath` 跑 adapter,喂最小 UserPromptSubmit JSON,期望 stdout 含 `hookSpecificOutput`)
+  - `probeAdapterBinary(projectRoot)` → `{ ok, reason }`(直接 `process.execPath` 跑 adapter,喂最小 UserPromptSubmit JSON;**解析 envelope 与 capsule**,`takeover-degraded` 视为运行时故障拒装 —— 失败路径现在也 exit 0,退出码不再能判定健康)
 - **诊断(非安装闸)**
   - `resolveHostShell(env?)` → `{ ok, shell } | { ok:false, reason }`(`EVO_LITE_HOOK_SHELL` / `CLAUDE_CODE_GIT_BASH_PATH` → win32 Git Bash → 非 win32 `/bin/sh`)
   - `probeHookCommand(projectRoot, { shell?, resolveShell? })` → `{ ok, skipped, reason }`(在**显式指定的 POSIX shell** 下跑 `HOOK_COMMAND` 原文;shell 不可发现 → `{ok:true, skipped:true}`)
 - **事务化 settings**
+  - `resolveSettingsPath(projectRoot, settingsPath)` → 绝对路径(相对路径绑 canonical project root;**项目外路径直接抛错** —— 用户级 settings 超出 MVP 范围)
   - `backupSettings(settingsPath, { projectRoot, fsOps? })` → `{ existed, backupPath, sha256, manifestPath }`(**备份失败即抛**;manifest 已存在即抛)
   - `restoreSettings({ projectRoot, fsOps? })` → `{ restored }`(`existed` → 按 sha256 校验后恢复**原始字节**;否则仅删除新建文件)
-  - `installWithBackup(settingsPath, { events, projectRoot, fsOps? })` → `{ changed, backup }`(install 失败自动回滚)
+  - `discardBackup({ projectRoot, fsOps? })` → `{ discarded }`(阶段门通过后清理备份文件 + manifest,**不触碰当前 settings**)
+  - `installWithBackup(settingsPath, { events, projectRoot, fsOps? })` → `{ changed, backup }`(install 失败自动回滚;**回滚也失败时抛 `AggregateError` 保留两个错误 + manifest 路径**)
 - `installTakeoverHooks(settingsPath, { events, projectRoot })` → `{ changed }`(**损坏 JSON 抛错不覆盖;闸不过则抛错、原文件不变**)
-- `statusTakeoverHooks(settingsPath, events)` → `{ installed[], missing[] }`(**损坏 JSON 抛错**)
+- `statusTakeoverHooks(settingsPath, events, projectRoot?)` → `{ installed[], missing[] }`(**损坏 JSON 抛错**;给出 `projectRoot` 时同样绝对化)
 
 - [ ] **Step 1: 写失败测试**
 
@@ -1589,10 +1678,23 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     const fakeProject = path.join(dir, 'my project');           // 故意含空格
     const fakeCli = path.join(fakeProject, '.evo-lite', 'cli');
     fs.mkdirSync(fakeCli, { recursive: true });
-    fs.writeFileSync(path.join(fakeCli, 'takeover-adapter.js'),
-        'process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:"stub"}}));process.exit(0);});',
-        'utf8');
+    // stub 必须产出【真实形状】的 capsule:probe 现在解析 envelope + capsule,不再只看退出码与子串
+    const stubCapsule = (evoLite, reason) => 'process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write('
+        + `JSON.stringify({hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:JSON.stringify(`
+        + `{evoLite:${JSON.stringify(evoLite)},project:"p",receipt:"invalid",focusHash:null`
+        + (reason ? `,reason:${JSON.stringify(reason)}` : '') + '})}})'
+        + ');process.exit(0);});';
+    const adapterStub = path.join(fakeCli, 'takeover-adapter.js');
+    fs.writeFileSync(adapterStub, stubCapsule('takeover-stale'), 'utf8');
     assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, true, 'adapter binary probe passes');
+    // 运行时故障(degraded capsule)必须拒装 —— 退出码已不能承载失败
+    fs.writeFileSync(adapterStub, stubCapsule('takeover-degraded', 'active-context-unreadable'), 'utf8');
+    const degradedProbe = ti.probeAdapterBinary(fakeProject);
+    assert.strictEqual(degradedProbe.ok, false, 'a degraded runtime blocks installation even though the hook exits 0');
+    assert.ok(/degraded runtime/.test(degradedProbe.reason));
+    fs.writeFileSync(adapterStub, 'process.stdout.write("not json");process.exit(0);', 'utf8');
+    assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'non-JSON stdout blocks installation');
+    fs.writeFileSync(adapterStub, stubCapsule('takeover-stale'), 'utf8');   // 复位为健康 stub
 
     // 安装闸①:命令形状静态可验证(与本机 shell 无关)
     assert.strictEqual(ti.verifyHookCommandShape(ti.HOOK_COMMAND).ok, true, 'shipped HOOK_COMMAND shape is valid');
@@ -1613,21 +1715,30 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     const skipped = ti.probeHookCommand(fakeProject, { resolveShell: () => ({ ok: false, reason: 'none found' }) });
     assert.strictEqual(skipped.ok, true); assert.strictEqual(skipped.skipped, true, 'undiscoverable shell → skipped, not failed');
 
-    const corrupt = path.join(dir, 'settings.json');
+    // settings 必须落在项目内(相对路径绑 canonical root;项目外路径明确拒绝)
+    assert.strictEqual(ti.resolveSettingsPath(fakeProject, '.claude/settings.json'),
+        path.join(fakeProject, '.claude', 'settings.json'), 'relative settings bind to the project root');
+    assert.throws(() => ti.resolveSettingsPath(fakeProject, path.join(dir, 'outside.json')),
+        /inside the project root/i, 'settings outside the project are rejected, not silently accepted');
+
+    fs.mkdirSync(path.join(fakeProject, '.claude'), { recursive: true });
+    const corrupt = path.join(fakeProject, '.claude', 'corrupt.json');
     fs.writeFileSync(corrupt, '{ not json', 'utf8');
     assert.throws(() => ti.installTakeoverHooks(corrupt, { events: ['SessionStart'], projectRoot: fakeProject }), /corrupt|JSON/i, 'install throws on corrupt');
     assert.strictEqual(fs.readFileSync(corrupt, 'utf8'), '{ not json', 'corrupt file unchanged');
     assert.throws(() => ti.statusTakeoverHooks(corrupt, ['SessionStart']), /corrupt|JSON/i, 'status throws on corrupt (no silent all-missing)');
 
     // 正常安装(假项目)→ 写入且幂等
-    const good = path.join(dir, 'good.json');
+    const good = path.join(fakeProject, '.claude', 'good.json');
     assert.strictEqual(ti.installTakeoverHooks(good, { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, true);
     assert.strictEqual(ti.installTakeoverHooks(good, { events: ['SessionStart', 'UserPromptSubmit'], projectRoot: fakeProject }).changed, false, 'second install is a no-op');
     assert.deepStrictEqual(ti.statusTakeoverHooks(good, ['SessionStart', 'UserPromptSubmit', 'PreToolUse']).missing, ['PreToolUse']);
 
-    // 闸不过 → 不写 settings
-    const fresh = path.join(dir, 'fresh.json');
-    assert.throws(() => ti.installTakeoverHooks(fresh, { events: ['SessionStart'], projectRoot: path.join(dir, 'nonexistent') }), /probe|adapter/i, 'adapter probe failure blocks install');
+    // 闸不过 → 不写 settings(用一个没有 adapter 的项目,settings 仍落在该项目内)
+    const badProject = path.join(dir, 'no adapter project');
+    fs.mkdirSync(path.join(badProject, '.evo-lite', 'cli'), { recursive: true });
+    const fresh = path.join(badProject, '.claude', 'settings.json');
+    assert.throws(() => ti.installTakeoverHooks(fresh, { events: ['SessionStart'], projectRoot: badProject }), /probe|adapter/i, 'adapter probe failure blocks install');
     assert.strictEqual(fs.existsSync(fresh), false, 'no settings written when the gate fails');
 
     // ── settings 事务化:备份失败必须停;回滚必须恢复原始字节(R4 复审 P0-4)──
@@ -1665,6 +1776,24 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     ti.restoreSettings({ projectRoot: txProject });
     assert.strictEqual(fs.existsSync(txSettings), false, 'only a file we created is removed on rollback');
 
+    // 嵌套子目录下用【相对路径】回滚:必须恢复项目根的 settings,且不在子目录制造/删除任何文件
+    fs.writeFileSync(txSettings, originalBytes, 'utf8');
+    const nested = path.join(txProject, 'src', 'deep'); fs.mkdirSync(nested, { recursive: true });
+    ti.installWithBackup('.claude/settings.json', { events: ['SessionStart'], projectRoot: txProject });
+    assert.notStrictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'installed via a relative path');
+    const prevCwd = process.cwd();
+    try { process.chdir(nested); ti.restoreSettings({ projectRoot: txProject }); }
+    finally { process.chdir(prevCwd); }
+    assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), originalBytes, 'rollback from a nested cwd restored the ROOT settings');
+    assert.strictEqual(fs.existsSync(path.join(nested, '.claude')), false, 'nothing created or deleted in the nested cwd');
+
+    // backup-discard:阶段门通过后清理备份,但不触碰当前 settings
+    ti.installWithBackup('.claude/settings.json', { events: ['SessionStart'], projectRoot: txProject });
+    const installed = fs.readFileSync(txSettings, 'utf8');
+    assert.strictEqual(ti.discardBackup({ projectRoot: txProject }).discarded, true);
+    assert.strictEqual(fs.readFileSync(txSettings, 'utf8'), installed, 'discard leaves current settings untouched');
+    assert.strictEqual(ti.discardBackup({ projectRoot: txProject }).discarded, false, 'discard is idempotent');
+
     // installWithBackup:install 自身失败 → 自动回滚 + 不留残余 manifest
     fs.writeFileSync(txSettings, '{ not json', 'utf8');
     assert.throws(() => ti.installWithBackup(txSettings, { events: ['SessionStart'], projectRoot: txProject }), /corrupt|JSON/i);
@@ -1672,7 +1801,7 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.strictEqual(fs.existsSync(bk.manifestPath), false, 'no stale manifest after auto-rollback');
 
     // adapter 存在但退出非零 → 安装闸与诊断 probe 均须拦截
-    fs.writeFileSync(path.join(fakeCli, 'takeover-adapter.js'), 'process.exit(9);', 'utf8');
+    fs.writeFileSync(adapterStub, 'process.exit(9);', 'utf8');
     assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'broken adapter fails the install gate');
     assert.strictEqual(ti.probeHookCommand(fakeProject).ok, false, 'broken adapter fails the command probe too');
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1722,13 +1851,30 @@ function readSettingsStrict(settingsPath) {
 
 const PROBE_INPUT = (projectRoot) => JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'probe', cwd: projectRoot });
 
-// ① 二进制级:adapter 文件本身能被 node 执行并产出 hook envelope。
+// ① 二进制级:adapter 能被 node 执行,且产出【可被宿主摄入的】UserPromptSubmit envelope。
+// 退出码 + 字符串包含已不足以判定 —— 失败路径现在也 exit 0(宿主契约),必须解析 envelope 与 capsule,
+// 并把 takeover-degraded 视为运行时故障拒装(R5 复审 P0-1 配套)。
 function probeAdapterBinary(projectRoot) {
     const adapter = path.join(projectRoot, '.evo-lite', 'cli', 'takeover-adapter.js');
     if (!fs.existsSync(adapter)) return { ok: false, reason: `adapter not found: ${adapter}` };
     const res = spawnSync(process.execPath, [adapter], { input: PROBE_INPUT(projectRoot), encoding: 'utf8', timeout: 20000 });
     if (res.status !== 0) return { ok: false, reason: `adapter exited ${res.status}: ${String(res.stderr || '').trim()}` };
-    if (!String(res.stdout || '').includes('hookSpecificOutput')) return { ok: false, reason: 'adapter produced no hook envelope' };
+    let envelope;
+    try { envelope = JSON.parse(String(res.stdout || '').trim()); }
+    catch (e) { return { ok: false, reason: `adapter stdout is not a single JSON object (${e.message})` }; }
+    const hso = envelope && envelope.hookSpecificOutput;
+    if (!hso || hso.hookEventName !== 'UserPromptSubmit' || typeof hso.additionalContext !== 'string') {
+        return { ok: false, reason: 'adapter produced no UserPromptSubmit hook envelope' };
+    }
+    let capsule;
+    try { capsule = JSON.parse(hso.additionalContext); }
+    catch (e) { return { ok: false, reason: `adapter additionalContext is not a capsule (${e.message})` }; }
+    if (typeof capsule.evoLite !== 'string' || !capsule.evoLite.startsWith('takeover-')) {
+        return { ok: false, reason: 'adapter capsule is not an ATTP capsule' };
+    }
+    if (capsule.evoLite === 'takeover-degraded') {
+        return { ok: false, reason: `adapter reports a degraded runtime (${capsule.reason || 'unknown'}); fix the runtime before installing hooks` };
+    }
     return { ok: true, reason: null };
 }
 
@@ -1779,6 +1925,23 @@ function probeHookCommand(projectRoot, opts = {}) {
     return { ok: true, skipped: false, reason: null };
 }
 
+// ── settings 路径解析:必须绝对且绑定 canonical project root ──
+// manifest 里存相对路径会让子目录下执行的 rollback 解析到错误位置,甚至删错文件(R5 复审 P0-3)。
+const normPath = (p) => {
+    let r = String(p).replace(/\/g, '/');
+    if (process.platform === 'win32' && /^[a-z]:/.test(r)) r = r[0].toUpperCase() + r.slice(1);
+    return r;
+};
+function resolveSettingsPath(projectRoot, settingsPath) {
+    const abs = path.isAbsolute(settingsPath) ? path.resolve(settingsPath) : path.resolve(projectRoot, settingsPath);
+    const root = normPath(path.resolve(projectRoot)), target = normPath(abs);
+    // 明确决定:MVP 只管项目内 settings。用户级(~/.claude/settings.json)超出范围,拒绝而非隐式处理。
+    if (!(target === root || target.startsWith(root + '/'))) {
+        throw new Error(`takeover: --settings must live inside the project root (${projectRoot}); got ${abs}. User-level settings are out of MVP scope.`);
+    }
+    return abs;
+}
+
 // ── settings 事务化备份/回滚 ──
 function backupManifestPath(projectRoot) {
     return path.join(projectRoot, '.evo-lite', 'generated', 'takeover', 'settings-backup.json');
@@ -1786,7 +1949,8 @@ function backupManifestPath(projectRoot) {
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
 // 原文件存在却备份失败(写失败/回读不一致)→ 抛。绝不"以为有备份"就继续安装。
-function backupSettings(settingsPath, { projectRoot, fsOps = fs } = {}) {
+function backupSettings(settingsPathInput, { projectRoot, fsOps = fs } = {}) {
+    const settingsPath = resolveSettingsPath(projectRoot, settingsPathInput);   // manifest 只存绝对路径
     const manifestPath = backupManifestPath(projectRoot);
     if (fsOps.existsSync(manifestPath)) {
         throw new Error(`takeover: a settings backup manifest already exists (${manifestPath}); resolve it before installing`);
@@ -1827,13 +1991,31 @@ function restoreSettings({ projectRoot, fsOps = fs } = {}) {
     return { restored: manifest.existed ? 'original-bytes' : 'removed-new-file' };
 }
 
+// backup 清理:阶段门通过后调用。只删已验证存在的备份文件与 manifest,不触碰当前 settings。
+function discardBackup({ projectRoot, fsOps = fs } = {}) {
+    const manifestPath = backupManifestPath(projectRoot);
+    if (!fsOps.existsSync(manifestPath)) return { discarded: false };
+    const manifest = JSON.parse(fsOps.readFileSync(manifestPath, 'utf8'));
+    if (manifest.existed && fsOps.existsSync(manifest.backupPath)) fsOps.unlinkSync(manifest.backupPath);
+    fsOps.unlinkSync(manifestPath);
+    return { discarded: true };
+}
+
 function installWithBackup(settingsPath, { events, projectRoot, fsOps = fs }) {
     const backup = backupSettings(settingsPath, { projectRoot, fsOps });          // 失败即抛,install 根本不会跑
     try { return { ...installTakeoverHooks(settingsPath, { events, projectRoot }), backup }; }
-    catch (e) { restoreSettings({ projectRoot, fsOps }); throw e; }
+    catch (e) {
+        try { restoreSettings({ projectRoot, fsOps }); }
+        catch (restoreError) {   // 回滚也失败:两个错误都要留下,否则原始安装错误被覆盖(R5 复审 P1-2)
+            throw new AggregateError([e, restoreError],
+                `takeover install failed AND rollback failed; restore manually from ${backup.manifestPath}`);
+        }
+        throw e;
+    }
 }
 
-function installTakeoverHooks(settingsPath, { events, projectRoot }) {
+function installTakeoverHooks(settingsPathInput, { events, projectRoot }) {
+    const settingsPath = resolveSettingsPath(projectRoot, settingsPathInput);   // 绝对化 + project-bound
     const existing = readSettingsStrict(settingsPath);            // 损坏 → 抛,原文件不动
     // 安装闸只用与 shell 无关的两项:命令形状 + adapter 可执行。命令级 probe 是诊断,不参与放行判定。
     const shape = verifyHookCommandShape(HOOK_COMMAND);
@@ -1850,7 +2032,9 @@ function installTakeoverHooks(settingsPath, { events, projectRoot }) {
     return { changed: JSON.stringify(merged) !== before };
 }
 
-function statusTakeoverHooks(settingsPath, events) {
+function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
+    // projectRoot 给出时同样绝对化(子目录下 status 才不会读错文件);测试可省略
+    const settingsPath = projectRoot ? resolveSettingsPath(projectRoot, settingsPathInput) : settingsPathInput;
     const cfg = readSettingsStrict(settingsPath);                  // 损坏 → 抛(不误报 all-missing)
     const hooks = cfg.hooks || {};
     const installed = [], missing = [];
@@ -1862,8 +2046,8 @@ function statusTakeoverHooks(settingsPath, events) {
 
 module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedGroup,
     mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
-    backupManifestPath, backupSettings, restoreSettings, installWithBackup,
-    installTakeoverHooks, statusTakeoverHooks };
+    resolveSettingsPath, backupManifestPath, backupSettings, restoreSettings, discardBackup,
+    installWithBackup, installTakeoverHooks, statusTakeoverHooks };
 ```
 
 - [ ] **Step 4: 运行验证通过** — `✅ T-takeover-installer passed`。
@@ -1906,13 +2090,22 @@ module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, is
             console.log(JSON.stringify(r));
             if (!r.ok) process.exitCode = 1;
         });
+    takeoverCmd.command('backup-discard')
+        .description('Drop the settings backup after a review gate passes (leaves current settings untouched).')
+        .action(() => {
+            const ti = require('./takeover-install');
+            const rc = require('./takeover-receipt');
+            const res = ti.discardBackup({ projectRoot: rc.canonicalProjectRoot() });
+            console.log(res.discarded ? '🧹 settings backup discarded' : 'ℹ️  no settings backup to discard');
+        });
     takeoverCmd.command('status')
         .option('--events <list>', 'Comma-separated events', 'SessionStart,UserPromptSubmit,PreToolUse')
         .option('--settings <path>', 'Path to settings.json', '.claude/settings.json')
         .action(options => {
             const ti = require('./takeover-install');
+            const rc = require('./takeover-receipt');
             const events = options.events.split(',').map(s => s.trim()).filter(Boolean);
-            const s = ti.statusTakeoverHooks(options.settings, events);
+            const s = ti.statusTakeoverHooks(options.settings, events, rc.canonicalProjectRoot());
             console.log(`installed: ${s.installed.join(', ') || '(none)'} | missing: ${s.missing.join(', ') || '(none)'}`);
         });
 ```
@@ -1985,14 +2178,16 @@ git diff --stat .claude/settings.json                                          #
 - receipt 落 `.evo-lite/generated/takeover/receipts/claude-code/` 为 committed;
 - **在子目录 cwd 下**仍生效(证明宿主确实展开了 `$CLAUDE_PROJECT_DIR`,这是命令级 transport 的**权威证据**);
 - 命令级 probe 的本机结果(ok / skipped / 失败原因)与宿主实际行为是否一致 —— **不一致本身就是要记录的发现**;
+- **hook 进程退出码实测为 0**,stdout 只有 JSON —— 与官方"JSON only processed on exit 0"契约一致(若观察到宿主在非零退出时仍摄入 JSON,记为契约偏差,但**不据此放宽**本设计);
 - Agent 首轮明确引用 injected focus(S9b,P2 效果证据)。
 
 - [ ] **Step 10: 提交 + 阶段 1 复审门**
 
 ```bash
-node templates/cli/memory.js takeover status --settings .claude/settings.json   # dogfood 全绿后确认三事件在位
-ls .evo-lite/generated/takeover/settings-backup.json 2>/dev/null && \
-  echo "backup manifest still present — 保留到复审门通过后再清理"
+node templates/cli/memory.js takeover status --settings .claude/settings.json   # dogfood 全绿后确认事件在位
+# 备份保留到【阶段 1 复审门通过后】才丢弃(未通过则 takeover rollback)。
+# manifest 不清理会挡住下一次 backupSettings,所以这是复审门后的必做收口动作:
+#   node templates/cli/memory.js takeover backup-discard
 git add templates/cli/takeover-install.js templates/cli/memory.js templates/cli/template-manifest.js templates/cli/test/ .gitignore .evo-lite/cli/ .claude/settings.json docs/validation/attp-phase1-dogfood.md
 git commit -m "$(cat <<'EOF'
 feat(takeover): transactional capability-gated installer + manifest/gitignore/mirror + phase-1 dogfood
@@ -2037,6 +2232,8 @@ console.log('T-takeover-guard. Edit/Write fail-closed incl unknown target and in
     const noRcpt = await call('Write', { file_path: path.join(root, 'a.txt') });
     assert.strictEqual(noRcpt.permissionDecision, 'deny', 'no receipt → deny');
     assert.ok(/memory\.js' bootstrap --receipt/.test(noRcpt.permissionDecisionReason), 'deny reason carries recovery command');
+    assert.ok(noRcpt.permissionDecisionReason.includes(`--session-id '${sid}'`),
+        'deny reason command is actually executable (runReceiptRecovery requires --session-id)');
 
     rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: sid, projectRoot: canon,
         state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
@@ -2051,6 +2248,8 @@ console.log('T-takeover-guard. Edit/Write fail-closed incl unknown target and in
     rc.__setFsOps({ realpathSync: () => { throw new Error('EACCES'); } });
     let rootFail; try { rootFail = await call('Write', { file_path: path.join(root, 'a.txt') }); } finally { rc.__resetFsOps(); }
     assert.strictEqual(rootFail.permissionDecision, 'deny', 'root realpath failure → deny');
+    assert.ok(/--session-id 'g'/.test(rootFail.permissionDecisionReason),
+        'root-failure deny still hands back an executable recovery command');
 
     // realpath 故障注入 ②:仅 target 侧不可解析(根仍正常)→ deny
     fs.mkdirSync(path.join(root, 'locked'), { recursive: true });
@@ -2090,26 +2289,29 @@ function handlePreToolUse(input, deps) {
     if (READONLY_TOOLS.has(tool) || tool === 'Bash') return ptu('allow');
     if (!GUARDED_WRITE_TOOLS.has(tool)) return ptu('allow');
     try { return guardWrite(input, deps); }
-    catch (e) { return ptu('deny', `[evo-lite] takeover guard failed (${e.message}); refusing write. Run from the project root: ${GENERIC_RECOVERY}`); }
+    catch (e) {
+        const hint = recoveryText(buildGenericRecoveryCommand(input && input.session_id));
+        return ptu('deny', `[evo-lite] takeover guard failed (${e.message}); refusing write. Run from the project root — ${hint}`);
+    }
 }
 
 function guardWrite(input, deps) {
     const rootRes = resolveRoot(deps);   // canonicalization(含 realpath)失败 → deny
     if (!rootRes.ok) {
-        return ptu('deny', `[evo-lite] cannot canonicalize the project root (${rootRes.error}); refusing write. Run from the project root: ${GENERIC_RECOVERY}`);
+        return ptu('deny', `[evo-lite] cannot canonicalize the project root (${rootRes.error}); refusing write. Run from the project root — ${recoveryText(buildGenericRecoveryCommand(input.session_id))}`);
     }
     const projectRoot = rootRes.root;
     const sessionId = input.session_id;
-    const recovery = buildRecoveryCommand(projectRoot, sessionId);
+    const recovery = recoveryText(buildRecoveryCommand(projectRoot, sessionId));
 
     // (a) committed receipt
     if (rc.readReceipt(projectRoot, HOST, sessionId).state !== 'committed') {
-        return ptu('deny', `[evo-lite] takeover required before writing. Run: ${recovery}`);
+        return ptu('deny', `[evo-lite] takeover required before writing. ${recovery}`);
     }
     // (b) active_context 可读 + reconcile 非 degraded
     const { verdict, focus } = rc.reconcile({ projectRoot, host: HOST, sessionId });
     if (verdict.transition === 'degraded' || verdict.state !== 'committed') {
-        return ptu('deny', `[evo-lite] takeover unhealthy (${verdict.reason || verdict.transition}). Run: ${recovery}`);
+        return ptu('deny', `[evo-lite] takeover unhealthy (${verdict.reason || verdict.transition}). ${recovery}`);
     }
     // (b2) 构建 refresh capsule → validateCapsule → 字节预算
     const build = deps.buildPayload || buildTakeoverPayload;
@@ -2118,15 +2320,15 @@ function guardWrite(input, deps) {
         capsule = build({ kind: 'refresh', host: HOST, sessionId, projectRoot, projectName: path.basename(projectRoot),
             sourceEvent: 'PreToolUse', focus: focus.text, focusHash: focus.hash,
             receiptVerdict: verdict, recoveryAction: recovery }, CAPSULE_BUDGET_BYTES);
-    } catch (e) { return ptu('deny', `[evo-lite] takeover payload build failed (${e.message}). Run: ${recovery}`); }
+    } catch (e) { return ptu('deny', `[evo-lite] takeover payload build failed (${e.message}). ${recovery}`); }
     const capVerdict = validateCapsule(capsule, CAPSULE_BUDGET_BYTES);
-    if (!capVerdict.ok) return ptu('deny', `[evo-lite] takeover payload invalid (${capVerdict.errors.join(',')}). Run: ${recovery}`);
+    if (!capVerdict.ok) return ptu('deny', `[evo-lite] takeover payload invalid (${capVerdict.errors.join(',')}). ${recovery}`);
 
     // (c) target-path fail-closed
     const ti = input.tool_input;
     const target = ti && typeof ti === 'object' ? ti.file_path : null;
     if (!target || typeof target !== 'string') {
-        return ptu('deny', `[evo-lite] cannot determine target path; refusing write. Run: ${recovery}`);
+        return ptu('deny', `[evo-lite] cannot determine target path; refusing write. ${recovery}`);
     }
     const abs = path.isAbsolute(target) ? target : path.resolve(projectRoot, target);
     let probe = abs;
@@ -2223,7 +2425,7 @@ EOF
 - Modify: `.claude/settings.json`(installer events 增 `PreToolUse`)
 - Create: `docs/validation/attp-phase2-fault-injection.md`
 
-- [ ] **Step 1: 写故障注入测试(七条断言,均用注入 seam 真实制造失败)**
+- [ ] **Step 1: 写故障注入测试(八条断言,均用注入 seam 真实制造失败)**
 
 ```javascript
 console.log('T-takeover-fault-suite. injected failures per review-gate assertion ...');
@@ -2257,7 +2459,8 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
     { const { root } = mkRoot();
       const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f2', source: 'startup' },
           { projectRoot: root, collect: (b) => ({ ...b, kind: 'session', projectName: 'p' }) }); // 缺 rules/health/verify...
-      assert.strictEqual(r.exitCode, 1, 'invalid payload → nonzero');
+      assert.strictEqual(r.exitCode, 0, 'structured envelope exits 0 (host ignores JSON on nonzero)');
+      assert.ok(r.failure, 'invalid payload reported via failure field + systemMessage');
       assert.strictEqual(r.publish, null, 'invalid payload → no publish');
       assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f2').state, 'missing');
       fs.rmSync(root, { recursive: true, force: true }); }
@@ -2266,8 +2469,10 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
     { const { root } = mkRoot();
       const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f3', source: 'startup' },
           { projectRoot: root, collect: () => { throw new Error('initDB boom'); } });
-      assert.strictEqual(r.exitCode, 1); assert.strictEqual(r.publish, null);
+      assert.strictEqual(r.exitCode, 0, 'degraded context must be ingestible → exit 0');
+      assert.ok(r.failure && r.publish === null, 'collector failure reported, nothing published');
       assert.ok(/bootstrap --receipt/.test(r.json.hookSpecificOutput.additionalContext), 'degraded context carries recovery command');
+      assert.ok(/--session-id 'f3'/.test(r.json.hookSpecificOutput.additionalContext), 'and that command is executable');
       fs.rmSync(root, { recursive: true, force: true }); }
 
     // 4) 失效双失败(tombstone + unlink 均抛)后:旧 committed 仍在盘上,但 Write 仍被 health gate deny
@@ -2306,7 +2511,8 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
       // 同 session resume,但 full refresh 失败(collector 抛错)
       const refreshFail = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f7', source: 'resume' },
           { projectRoot: root, collect: () => { throw new Error('verify exploded'); } });
-      assert.strictEqual(refreshFail.exitCode, 1, 'refresh failure reported explicitly');
+      assert.strictEqual(refreshFail.exitCode, 0, 'refresh failure still exits 0 so its context is ingested');
+      assert.ok(refreshFail.failure, 'refresh failure reported explicitly via the failure field');
       assert.strictEqual(refreshFail.publish, null, 'refresh failure publishes nothing');
       assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f7').state, 'committed', 'old receipt NOT auto-revoked on refresh failure');
       // governance health 正常 → Write 仍 allow(session-only 失败不阻断)
@@ -2356,11 +2562,11 @@ EOF
 )"
 ```
 
-- [ ] **Step 5: 复审门 2 + 阶段收口** — 停止请求复审门(P0 no-silent-bypass)。两 P0 均达成后,进入治理闭环(`mem` intake spec + plan closure)与 hive nurture 分发。
+- [ ] **Step 5: 复审门 2 + 阶段收口** — 停止请求复审门(P0 no-silent-bypass)。通过后 `node templates/cli/memory.js takeover backup-discard` 清理备份;未通过则 `takeover rollback`。两 P0 均达成后,进入治理闭环(`mem` intake spec + plan closure)与 hive nurture 分发。
 
 ---
 
-## 复审落点(计划 R1 → R4)
+## 复审落点(计划 R1 → R5)
 
 | 编号 | 问题 | 落点 |
 |---|---|---|
@@ -2389,6 +2595,12 @@ EOF
 | R4 P0-4 | settings 备份失败被 `\|\| true` 吞掉,回滚可能 `rm` 掉用户原配置 | Task 6 新增事务式三件套:`backupSettings`(原文件存在却写失败/回读不一致 → **立即抛**;唯一备份路径 + 确定性 manifest `.evo-lite/generated/takeover/settings-backup.json` 存 `existed/backupPath/sha256`;manifest 已存在即抛,不覆盖旧备份)、`restoreSettings`(按 sha256 校验后**恢复原始字节**;仅 `existed:false` 才允许删文件)、`installWithBackup`(install 失败自动回滚)。CLI 增 `takeover install --backup` / `takeover rollback` / `takeover probe`;Step 9 手册步骤全部换成这些命令;**新增自动化测试**覆盖备份损坏即停、字节级恢复、只删自建文件、自动回滚不留残余 manifest |
 | R4 P1-1 | `readMetaAnchor` 接口声明仍是旧返回类型 | Interfaces 改为 `{ ok, reason, meta }`(**永不返回 null**),并列出四种 `reason` 取值 |
 | R4 P1-2 | freshness 计数允许负数/小数 | `numOrNull` → `countOrNull`(`null` 或 `Number.isInteger(v) && v >= 0`);META reader 的 `toInt` 同步加 `n >= 0`;新增 `-1` / `1.5` / META `ahead: -3` 三例 |
+| R5 P0-1 | 结构化 hook JSON 配非零退出 → 宿主根本不解析,degraded capsule / 恢复说明 / systemMessage 全被丢弃 | **宿主契约勘误**(官方:*JSON output is only processed on exit 0*;exit 1 = 非阻断错误、动作继续)。Task 4 所有已成功序列化 envelope 的返回一律 `exitCode: 0`,新增 `failure:string\|null` 字段承载失败;失败改由 degraded capsule + `systemMessage` + 不发布 receipt + stderr(`reportError`)+ PreToolUse `deny` 表达;非零仅保留给序列化/写出/发布失败与 CLI recovery。`main` 的兜底分支同样 exit 0。Task 6 `probeAdapterBinary` 相应升级为**解析 envelope 与 capsule**并把 `takeover-degraded` 视为拒装理由(退出码已不能判定健康)。新增 `T-takeover-hook-exit-contract`:**真实子进程**证明 emergency 与 degraded 两条路径都 exit 0、stdout 只有 JSON、capsule 合法且 ≤1 KiB、无 committed receipt。Task 8 三条相关断言同步改写。**设计文档同步出勘误**(§0 R6) |
+| R5 P0-2 | 通用恢复命令缺 `--session-id`,Agent 执行必失败 | `buildRecoveryCommand` / `buildGenericRecoveryCommand` **均带 `--session-id`(bash 转义)**,且 sessionId 非法时**返回 `null`**;`recoveryText(cmd)` 在无命令时明确输出 *"Cannot auto-recover: no session id … Restart the session"*,不再谎称可恢复。SessionStart / UserPromptSubmit / 守卫三处 deny/degraded 文案全部改用它;测试断言三处文案均含 `--session-id '<sid>'`,并覆盖单引号 sessionId 的转义与"无 sessionId 不谎称可恢复" |
+| R5 P0-3 | manifest 存相对 settings 路径,子目录 rollback 会解析错位置 | 新增 `resolveSettingsPath(projectRoot, settingsPath)`:相对路径绑 canonical project root、一律存**绝对路径**;**项目外路径明确抛错**(用户级 settings 明示超出 MVP 范围,不隐式处理)。`installTakeoverHooks`/`backupSettings`/`installWithBackup` 内部统一调用,`statusTakeoverHooks` 增可选 `projectRoot`,CLI `status` 传入。新增测试:项目根 `install --backup`(相对路径)→ **chdir 到嵌套子目录** → `restoreSettings` 恢复**根目录**原始字节,且子目录内不新建/删除任何文件 |
+| R5 P1-1 | 缺复审门通过后的 backup 清理动作 | 新增 `discardBackup()` 与 `mem takeover backup-discard`:只删已验证存在的备份文件与 manifest,**不触碰当前 settings**;Step 10 与阶段 2 收口写明"通过则 discard、未通过则 rollback";测试断言幂等且 settings 不变 |
+| R5 P1-2 | 自动回滚失败会覆盖原始安装错误 | `installWithBackup` 的 catch 中若 `restoreSettings` 也抛,则抛 `AggregateError([installError, restoreError])` 并在 message 中给出 manifest 路径供人工恢复 |
+| R5 P1-3 | 计划文本未同步 | Task 6 Files 改为 `install\|status\|rollback\|probe\|backup-discard`;Task 8 Step 1 标题"七条断言"改为"八条断言" |
 | R4 P1-3 | 错误输出用异步 `process.stderr.write`,`process.exit` 前可能未写完 | 新增 `reportError(msg)`:走 `writeAllSync(2, ...)`(与业务输出同一完整写入语义),stderr 不可写时不再抛,由退出码承载;`runTransport` 三处失败路径改用它 |
 
 ## 附:实现期须复核的开放点(非阻断)
