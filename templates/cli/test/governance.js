@@ -6835,6 +6835,145 @@ async function runGovernanceTests() {
             console.log('✅ T-takeover-capsule-states passed');
         }
 
+        console.log('T-takeover-receipt / T-takeover-projectroot. strict root discovery + project-bound receipts ...');
+        {
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const crypto = require('crypto');
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-rc-'));
+            fs.mkdirSync(path.join(root, '.evo-lite'), { recursive: true });
+            const host = 'claude-code', sid = 's/1:weird';
+
+            // 严格根发现:嵌套子目录向上找到 root;无 .evo-lite 的目录必须抛错(不 fail-open)
+            const deep = path.join(root, 'src', 'a'); fs.mkdirSync(deep, { recursive: true });
+            assert.strictEqual(rc.discoverProjectRoot(deep), path.resolve(root), 'walks up to .evo-lite');
+            assert.strictEqual(rc.canonicalProjectRoot(deep), rc.canonicalProjectRoot(root), 'canonical stable across nested cwd');
+            const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-bare-'));
+            assert.throws(() => rc.discoverProjectRoot(bare), /no .evo-lite|not an evo-lite/i, 'non-project dir throws');
+            assert.throws(() => rc.canonicalProjectRoot(bare), /no .evo-lite|not an evo-lite/i, 'canonicalProjectRoot fail-closed');
+            assert.strictEqual(fs.existsSync(path.join(bare, '.evo-lite')), false, 'never creates .evo-lite in a bare dir');
+            fs.rmSync(bare, { recursive: true, force: true });
+            // realpath 故障注入:canonicalization 失败必须【抛】,不得退回未解析的原路径(R4 复审 P0-2)
+            rc.__setFsOps({ realpathSync: () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; } });
+            try { assert.throws(() => rc.canonicalProjectRoot(root), /cannot canonicalize/i, 'realpath failure is fail-closed'); }
+            finally { rc.__resetFsOps(); }
+            console.log('✅ T-takeover-projectroot passed');
+
+            const canon = rc.canonicalProjectRoot(root);
+            const expect = crypto.createHash('sha256').update(`${host}\0${sid}`).digest('hex');
+            const rp = rc.receiptPathFor(root, host, sid);
+            assert.ok(rp.includes(`${expect}.json`), 'filename = sha256(host\\0sid)');
+            assert.ok(rp.replace(/\\/g, '/').includes('/.evo-lite/generated/takeover/receipts/claude-code/'), 'project-bound path');
+
+            rc.publishReceipt(root, { schemaVersion: 1, host, sessionId: sid, projectRoot: canon, state: 'committed', focusHash: 'h', sourceEvent: 'x' });
+            assert.strictEqual(rc.readReceipt(root, host, sid).state, 'committed');
+            rc.publishReceipt(root, { schemaVersion: 1, host, sessionId: sid, projectRoot: '/wrong', state: 'committed', focusHash: 'h' });
+            assert.strictEqual(rc.readReceipt(root, host, sid).state, 'invalid', 'projectRoot mismatch → invalid');
+            assert.strictEqual(rc.readReceipt(root, host, 'nope').state, 'missing');
+            fs.writeFileSync(rc.receiptPathFor(root, host, sid), 'x', 'utf8');
+            assert.strictEqual(rc.readReceipt(root, host, sid).state, 'invalid', 'corrupt → invalid');
+            fs.rmSync(root, { recursive: true, force: true });
+            console.log('✅ T-takeover-receipt passed');
+        }
+
+        console.log('T-takeover-reconcile / T-takeover-degraded. drift refreshes; unreadable degrades even if invalidation fails ...');
+        {
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-rec-'));
+            const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+            const wf = (t) => fs.writeFileSync(path.join(ac, 'active_context.md'),
+                `<!-- BEGIN_META -->\n> headSha: abc123\n> ahead: 2\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\n${t}\n<!-- END_FOCUS -->\n`, 'utf8');
+            wf('FOCUS-A');
+            const canon = rc.canonicalProjectRoot(root);
+            // meta 锚点供 freshness
+            const meta = rc.readMetaAnchor(root);
+            assert.strictEqual(meta.ok, true);
+            assert.strictEqual(meta.meta.headSha, 'abc123'); assert.strictEqual(meta.meta.ahead, 2); assert.strictEqual(meta.meta.behind, 0);
+
+            // 锚点 fail-closed:文件存在但结构损坏 → focus null / meta not-ok(不得当健康处理)
+            const acFile = path.join(ac, 'active_context.md');
+            const saved = fs.readFileSync(acFile, 'utf8');
+            fs.writeFileSync(acFile, '# active_context.md\n这不是合法的 Evo-Lite active context\n', 'utf8');
+            assert.strictEqual(rc.readFocusAnchor(root), null, 'missing FOCUS anchor → null (not empty-but-healthy)');
+            assert.strictEqual(rc.readMetaAnchor(root).ok, false, 'missing META anchor → not ok');
+            assert.strictEqual(rc.readMetaAnchor(root).reason, 'meta-anchor-missing');
+            fs.writeFileSync(acFile, '<!-- BEGIN_FOCUS -->\nA\n<!-- END_FOCUS -->\n<!-- BEGIN_FOCUS -->\nB\n<!-- END_FOCUS -->\n', 'utf8');
+            assert.strictEqual(rc.readFocusAnchor(root), null, 'duplicated FOCUS anchors → null');
+            fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha: abc\n> ahead: many\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const badMeta = rc.readMetaAnchor(root);
+            assert.strictEqual(badMeta.ok, false, 'non-integer ahead → not ok');
+            assert.strictEqual(badMeta.reason, 'meta-fields-invalid');
+            assert.strictEqual(badMeta.meta.ahead, null, 'NaN never leaks into freshness');
+            fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha: abc\n> ahead: -3\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            assert.strictEqual(rc.readMetaAnchor(root).ok, false, 'negative commit count → not ok');
+            assert.strictEqual(rc.readMetaAnchor(root).meta.ahead, null, 'negative count normalized to null');
+            fs.writeFileSync(acFile, saved, 'utf8');
+
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's', projectRoot: canon, state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+            assert.strictEqual(rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' }).verdict.transition, 'active');
+            wf('FOCUS-B');
+            assert.strictEqual(rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' }).verdict.transition, 'refreshed');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's').state, 'committed', 'drift keeps committed');
+            console.log('✅ T-takeover-reconcile passed');
+
+            fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
+            const rd = rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' });
+            assert.strictEqual(rd.verdict.transition, 'degraded');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's').state, 'invalid', 'degraded revokes committed');
+
+            // 失效双失败(tombstone + unlink 均抛)→ verdict 仍 degraded、invalidation.ok=false
+            wf('FOCUS-C');
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's2', projectRoot: canon, state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+            fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
+            rc.__setFsOps({ writeFileSync: () => { throw new Error('tombstone fail'); }, unlinkSync: () => { throw new Error('unlink fail'); } });
+            try {
+                const dbl = rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's2' });
+                assert.strictEqual(dbl.verdict.transition, 'degraded', 'degraded verdict independent of invalidation success');
+                assert.strictEqual(dbl.invalidation.ok, false, 'double failure reported');
+            } finally { rc.__resetFsOps(); }
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's2').state, 'committed', 'stale committed receipt survives on disk (guard must not rely on it)');
+
+            // pathEntryInfo:守卫的路径判定基元,必须直接测(否则 seam 漏键要等 Task 7 才间接暴露)
+            wf('FOCUS-PROBE');   // 前面的 degraded 用例删过 active_context —— 本段自备 fixture,不依赖上游状态
+            const existingFile = path.join(ac, 'active_context.md');
+            assert.deepStrictEqual(rc.pathEntryInfo(existingFile), { exists: true, symbolicLink: false },
+                'a real file exists and is not a link');
+            assert.deepStrictEqual(rc.pathEntryInfo(path.join(root, 'nope.txt')), { exists: false, symbolicLink: false },
+                'ENOENT means absent, not an error');
+            const dangling = path.join(root, 'dangling-link');
+            let danglingMade = false;
+            try { fs.symlinkSync(path.join(root, 'no-such-target'), dangling, 'file'); danglingMade = true; }
+            catch (_) { danglingMade = false; }
+            if (!danglingMade) {
+                assert.strictEqual(process.platform, 'win32', 'dangling symlink is mandatory on POSIX');
+                console.log('   ⏭️ pathEntryInfo dangling case skipped (win32 without symlink privilege)');
+            } else {
+                assert.strictEqual(fs.existsSync(dangling), false, 'existsSync follows the link and reports absent');
+                assert.deepStrictEqual(rc.pathEntryInfo(dangling), { exists: true, symbolicLink: true },
+                    'lstat sees the link entry itself — this is the distinction the guard depends on');
+                fs.rmSync(dangling, { force: true });
+            }
+            // 非 ENOENT 异常不得被吞成"不存在"
+            rc.__setFsOps({ lstatSync: () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; } });
+            try { assert.throws(() => rc.pathEntryInfo(existingFile), /EACCES/, 'permission errors propagate'); }
+            finally { rc.__resetFsOps(); }
+            // 生产默认值完整:__setFsOps 合并后所有键仍是函数
+            rc.__setFsOps({});
+            try { assert.strictEqual(typeof rc.pathEntryInfo(existingFile).exists, 'boolean', 'defaults survive a partial override'); }
+            finally { rc.__resetFsOps(); }
+
+            // canonicalization 失败时的失效:绝不写带假身份的 tombstone,只能用不写入身份的 unlink
+            wf('FOCUS-D');
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's3', projectRoot: canon,
+                state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+            rc.__setFsOps({ realpathSync: () => { throw new Error('EACCES'); } });
+            let inv; try { inv = rc.invalidateReceipt(root, 'claude-code', 's3', 'active-context-unreadable'); }
+            finally { rc.__resetFsOps(); }
+            assert.notStrictEqual(inv.method, 'tombstone', 'no tombstone written without a canonical root');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's3').state, 'missing', 'receipt revoked by unlink instead');
+            fs.rmSync(root, { recursive: true, force: true });
+            console.log('✅ T-takeover-degraded passed');
+        }
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
