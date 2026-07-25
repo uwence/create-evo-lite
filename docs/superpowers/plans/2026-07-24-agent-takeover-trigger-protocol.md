@@ -278,7 +278,7 @@ function buildCapsule(ctx, budget) {
     const full = { ...fixed, focus: focusText }; if (action) full.action = action;
     if (bytes(full) <= budget) return full;
     // 2) 裁剪 focus(保留 action)
-    const shell = { ...fixed, focus: '' }; if (action) shell.action = action;
+    const shell = { ...fixed, focus: '', truncated: true }; if (action) shell.action = action;
     const room = budget - bytes(shell);
     if (room > 0) {
         const cut = truncateToBytes(focusText, room);
@@ -376,6 +376,8 @@ console.log('T-takeover-capsule-states. transitions + budget always <= 1 KiB + e
     const trimmed = mk('active', 'committed', null, null, '焦'.repeat(5000));
     assert.ok(Buffer.byteLength(JSON.stringify(trimmed), 'utf8') <= 1024);
     assert.strictEqual(trimmed.truncated, true);
+    assert.ok(trimmed.focus.length > 0, 'rung 2 actually trims instead of dropping focus entirely');
+    assert.ok('焦'.repeat(5000).startsWith(trimmed.focus), 'the trimmed focus is a real prefix of the original');
     assert.strictEqual(trimmed.focusHash, 'h', 'focusHash preserved when focus trimmed');
     assert.doesNotThrow(() => JSON.parse(JSON.stringify(trimmed)));
     // 超长 action + 超长 focus → 仍 ≤ budget,且固定键(含 focusHash)齐全

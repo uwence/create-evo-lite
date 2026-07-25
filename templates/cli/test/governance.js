@@ -6788,6 +6788,8 @@ async function runGovernanceTests() {
             const trimmed = mk('active', 'committed', null, null, '焦'.repeat(5000));
             assert.ok(Buffer.byteLength(JSON.stringify(trimmed), 'utf8') <= 1024);
             assert.strictEqual(trimmed.truncated, true);
+            assert.ok(trimmed.focus.length > 0, 'rung 2 actually trims instead of dropping focus entirely');
+            assert.ok('焦'.repeat(5000).startsWith(trimmed.focus), 'the trimmed focus is a real prefix of the original');
             assert.strictEqual(trimmed.focusHash, 'h', 'focusHash preserved when focus trimmed');
             assert.doesNotThrow(() => JSON.parse(JSON.stringify(trimmed)));
             // 超长 action + 超长 focus → 仍 ≤ budget,且固定键(含 focusHash)齐全

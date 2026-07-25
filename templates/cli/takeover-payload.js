@@ -120,7 +120,7 @@ function buildCapsule(ctx, budget) {
     const full = { ...fixed, focus: focusText }; if (action) full.action = action;
     if (bytes(full) <= budget) return full;
     // 2) 裁剪 focus(保留 action)
-    const shell = { ...fixed, focus: '' }; if (action) shell.action = action;
+    const shell = { ...fixed, focus: '', truncated: true }; if (action) shell.action = action;
     const room = budget - bytes(shell);
     if (room > 0) {
         const cut = truncateToBytes(focusText, room);
