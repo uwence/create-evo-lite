@@ -6911,13 +6911,40 @@ async function runGovernanceTests() {
             rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's', projectRoot: canon, state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
             assert.strictEqual(rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' }).verdict.transition, 'active');
             wf('FOCUS-B');
+            const focusHashB = rc.readFocusAnchor(root).hash;
             assert.strictEqual(rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' }).verdict.transition, 'refreshed');
             assert.strictEqual(rc.readReceipt(root, 'claude-code', 's').state, 'committed', 'drift keeps committed');
+            // FIX 3(Task 7 二轮 R8):`if (verdict.transition === 'refreshed') publishReceipt(...)` is one of
+            // the two side effects the earlier refactor relocated into reconcile. Deleting that line survives
+            // the whole suite otherwise — transition === 'refreshed' alone does not prove the receipt's
+            // focusHash was actually persisted. Assert the on-disk receipt directly.
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's').receipt.focusHash, focusHashB,
+                'reconcile persists the refreshed focusHash to the on-disk receipt (regression lock for the relocated publishReceipt call)');
+            // Same fixture, prove reconcileReadOnly does NOT persist: drift the focus again, call the
+            // read-only variant, and confirm the on-disk receipt still carries the OLD focusHash.
+            wf('FOCUS-C');
+            const focusHashC = rc.readFocusAnchor(root).hash;
+            rc.reconcileReadOnly({ projectRoot: root, host: 'claude-code', sessionId: 's' });
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's').receipt.focusHash, focusHashB,
+                'reconcileReadOnly must NOT persist the refreshed focusHash — the guard uses this variant and must never write');
+            assert.strictEqual(rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' }).verdict.transition, 'refreshed');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', 's').receipt.focusHash, focusHashC,
+                'reconcile (the write variant) does persist once actually invoked');
             console.log('✅ T-takeover-reconcile passed');
 
             fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
             const rd = rc.reconcile({ projectRoot: root, host: 'claude-code', sessionId: 's' });
             assert.strictEqual(rd.verdict.transition, 'degraded');
+            // FIX 4(Task 7 二轮 R8):changing the degraded verdict's `state` from 'invalid' to 'committed'
+            // survives the suite otherwise. No allow opens directly (the guard checks transition==='degraded'
+            // first), but takeover-payload.js maps receiptVerdict.state==='committed' to receipt:'valid', so a
+            // takeover-degraded capsule would advertise a valid receipt on the UserPromptSubmit path.
+            assert.strictEqual(rd.verdict.state, 'invalid', 'degraded verdict state must be "invalid"');
+            const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
+            const degradedCapsule = tp.buildTakeoverPayload({ kind: 'refresh', host: 'claude-code', sessionId: 's',
+                projectRoot: root, projectName: 'p', sourceEvent: 'UserPromptSubmit', focus: null, focusHash: null,
+                receiptVerdict: rd.verdict, recoveryAction: null }, tp.CAPSULE_BUDGET_BYTES);
+            assert.strictEqual(degradedCapsule.receipt, 'invalid', 'a degraded verdict must yield a capsule advertising receipt:"invalid"');
             assert.strictEqual(rc.readReceipt(root, 'claude-code', 's').state, 'invalid', 'degraded revokes committed');
 
             // 失效双失败(tombstone + unlink 均抛)→ verdict 仍 degraded、invalidation.ok=false
@@ -7861,6 +7888,18 @@ async function runGovernanceTests() {
             assert.strictEqual(outerBoom.permissionDecision, 'deny', 'reconcileReadOnly throw reaches the OUTER catch → deny');
             assert.ok(/takeover guard failed/.test(outerBoom.permissionDecisionReason), 'outer-catch deny carries the generic guard-failed message');
 
+            // FIX 5(Task 7 二轮 R8):`const tool = input.tool_name;` used to be evaluated BEFORE the try in
+            // handlePreToolUse. If that read throws, the exception used to escape to main's generic handler,
+            // which emits a response with no permissionDecision at all — which the host treats as allow. Not
+            // reachable in production (input comes from JSON.parse, which cannot produce accessors), but it
+            // was the one structural violation of "every exception in the guard produces deny". The read now
+            // lives inside the try; prove it with a throwing tool_name getter.
+            const throwingToolNameInput = { hook_event_name: 'PreToolUse', session_id: sid, tool_input: {},
+                get tool_name() { throw new Error('tool_name getter boom'); } };
+            const throwingToolNameOut = await ad.handleHookInput(throwingToolNameInput, { projectRoot: root });
+            assert.strictEqual(throwingToolNameOut.json.hookSpecificOutput.permissionDecision, 'deny',
+                'a throwing tool_name getter must still deny, not escape with no permissionDecision at all');
+
             fs.rmSync(root, { recursive: true, force: true });
             fs.rmSync(outside, { recursive: true, force: true });
             console.log('✅ T-takeover-guard passed');
@@ -7892,11 +7931,13 @@ async function runGovernanceTests() {
                 `sibling '<root>-backup' must deny even though it shares a string prefix with '<root>'`);
             fs.rmSync(sibling, { recursive: true, force: true });
 
-            // A2 regression: canonicalProjectRoot uppercases the win32 drive letter, realpathStrict
-            // preserves the caller's casing. A lowercase-drive file_path (models emit these constantly)
-            // must still ALLOW inside the project on win32 (NTFS is case-insensitive). On POSIX the fold
-            // is a no-op — assert only that an ordinary in-project path still allows there, not case
-            // insensitivity (Task 7 复审 I1 regression lock-in).
+            // A2 regression: canonicalProjectRoot and realpathStrict now both go through
+            // realpathSync.native, so root and target share the disk's true casing before comparison
+            // (no toLowerCase folding anywhere, see FIX 1 / Task 7 二轮 R8). A lowercase-drive file_path
+            // (models emit these constantly, e.g. 'd:\...') must still ALLOW inside the project on win32,
+            // because .native itself normalizes the drive letter to its on-disk casing — not because of
+            // any case-insensitive string compare. On POSIX casing was always sensitive and unaffected —
+            // assert only that an ordinary in-project path still allows there.
             if (process.platform === 'win32' && /^[a-zA-Z]:/.test(root)) {
                 const lowerDriveTarget = root[0].toLowerCase() + root.slice(1) + path.sep + 'case-ok.js';
                 assert.strictEqual(await dec({ file_path: lowerDriveTarget }), 'allow',
@@ -7904,6 +7945,30 @@ async function runGovernanceTests() {
             } else {
                 assert.strictEqual(await dec({ file_path: path.join(root, 'posix-case-ok.js') }), 'allow',
                     'in-project path still allows on POSIX (path casing is sensitive there; no fold asserted)');
+            }
+
+            // FIX 2(Task 7 二轮 R8):the fold's old POSIX branch was a no-op, so a mutant that folded
+            // case unconditionally (which matters most on POSIX, where two directories differing only by
+            // case genuinely coexist) survived undetected. Now that the fold is gone entirely, lock this in
+            // for real: build a sibling directory whose name differs from the project root ONLY by case and
+            // assert the guard DENIES a write into it. NTFS collapses same-name-different-case directories
+            // (mkdirSync throws), so on win32 this sibling cannot be constructed — detect that and skip
+            // explicitly, exactly like the symlink-privilege branches below. On POSIX it must run for real.
+            {
+                const dir = path.dirname(root), base = path.basename(root);
+                const flippedBase = base.split('').map(c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
+                const caseSibling = path.join(dir, flippedBase);
+                let caseSiblingMade = false;
+                try { fs.mkdirSync(caseSibling); caseSiblingMade = true; } catch (_) { caseSiblingMade = false; }
+                if (caseSiblingMade) {
+                    fs.writeFileSync(path.join(caseSibling, 'x.js'), '', 'utf8');
+                    assert.strictEqual(await dec({ file_path: path.join(caseSibling, 'x.js') }), 'deny',
+                        `case-differing sibling '${caseSibling}' must deny (a real, distinct directory on POSIX — no unconditional case fold may allow it)`);
+                    fs.rmSync(caseSibling, { recursive: true, force: true });
+                } else {
+                    assert.strictEqual(process.platform, 'win32', 'case-differing sibling directory creation may only fail on win32 (NTFS case-insensitivity)');
+                    console.log('   ⏭️ case-differing sibling directory case skipped (win32: NTFS collapses same-name-different-case)');
+                }
             }
 
             // symlink 逃逸:project/link → other;POSIX 必测,win32 无权限时跳过并显式说明

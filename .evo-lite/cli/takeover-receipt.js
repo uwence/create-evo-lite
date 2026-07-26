@@ -12,7 +12,14 @@ const HARD_FIELDS = ['schemaVersion', 'host', 'sessionId', 'projectRoot', 'state
 const DEFAULT_FS_OPS = {
     existsSync: fs.existsSync, readFileSync: fs.readFileSync, writeFileSync: fs.writeFileSync,
     renameSync: fs.renameSync, unlinkSync: fs.unlinkSync, mkdirSync: fs.mkdirSync,
-    realpathSync: fs.realpathSync, lstatSync: fs.lstatSync,   // lstatSync 供 pathEntryInfo:漏注册会让守卫对健康路径也抛错 → 全 deny
+    // realpathSync.native,不是纯 JS 的 fs.realpathSync:守卫的 containment 判断要求 root 和 target
+    // 两侧最终落在【同一套大小写】上再比较。纯 JS 实现在 win32 上靠 toUpperCase/toLowerCase 折叠
+    // 大小写,折叠比 NTFS 自己的 upcase 表激进得多 —— KELVIN SIGN(U+212A)会被折叠成与 ASCII 'K'
+    // 相同,即使 NTFS 视二者为两个真实不同的目录,这曾让项目外的写误判为"在项目内"而放行
+    // (真实安全回归,已复现,见 takeover-adapter.js guardWrite)。.native 直接问文件系统要磁盘上的
+    // 真实大小写(测得:全小写输入原样返回真实大小写,如 C:\Users\...\MixedCase\Sub),不折叠任何
+    // 字符,因此能区分 KELVIN SIGN 与 'K';对不存在的路径仍抛 ENOENT,fail-closed 契约不变。
+    realpathSync: fs.realpathSync.native, lstatSync: fs.lstatSync,   // lstatSync 供 pathEntryInfo:漏注册会让守卫对健康路径也抛错 → 全 deny
 };
 let fsOps = { ...DEFAULT_FS_OPS };
 function __setFsOps(overrides) { fsOps = { ...DEFAULT_FS_OPS, ...overrides }; }
@@ -187,5 +194,5 @@ function reconcileReadOnly({ projectRoot, host, sessionId }) {
 module.exports = {
     RECEIPT_SCHEMA_VERSION, discoverProjectRoot, canonicalProjectRoot, evoLiteDir, receiptPathFor,
     readFocusAnchor, readMetaAnchor, publishReceipt, readReceipt, invalidateReceipt, reconcile, reconcileReadOnly,
-    realpathStrict, pathExists, pathEntryInfo, __setFsOps, __resetFsOps,
+    realpathStrict, pathExists, pathEntryInfo, normalize, __setFsOps, __resetFsOps,
 };

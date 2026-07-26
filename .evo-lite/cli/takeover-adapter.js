@@ -205,13 +205,17 @@ function ptu(decision, reason) {
 }
 
 // 守卫【任何】抛错都必须落在 deny 上:PreToolUse 输出里没有 permissionDecision 等于放行,
-// 抛到 main 的通用错误路径就是 fail-open(R4 复审 P0-2 ④)。
+// 抛到 main 的通用错误路径就是 fail-open(R4 复审 P0-2 ④)。这也是为什么 `input.tool_name` 的读取
+// 必须在 try 内部——放在 try 之外(旧代码)时若它抛错(生产环境不可达:input 来自 JSON.parse,
+// 不会产生 getter/Proxy,但这是唯一一处结构上违反"守卫内任何异常都 deny"的读取)会逃逸到 main 的
+// 通用兜底,那条路径不产出 permissionDecision,宿主按无该字段处理即放行(Task 7 复审 R8 FIX 5)。
 function handlePreToolUse(input, deps) {
-    const tool = input.tool_name;
-    if (READONLY_TOOLS.has(tool) || tool === 'Bash') return ptu('allow');
-    if (!GUARDED_WRITE_TOOLS.has(tool)) return ptu('allow');
-    try { return guardWrite(input, deps); }
-    catch (e) {
+    try {
+        const tool = input.tool_name;
+        if (READONLY_TOOLS.has(tool) || tool === 'Bash') return ptu('allow');
+        if (!GUARDED_WRITE_TOOLS.has(tool)) return ptu('allow');
+        return guardWrite(input, deps);
+    } catch (e) {
         const hint = recoveryText(buildGenericRecoveryCommand(input && input.session_id));
         return ptu('deny', `[evo-lite] takeover guard failed (${e.message}); refusing write. Run from the project root — ${hint}`);
     }
@@ -271,15 +275,16 @@ function guardWrite(input, deps) {
     // 未经解析的字符串做 containment 判断,正是 symlink 逃逸能绕过守卫的原因(R4 复审 P0-2 ③)。
     try { probe = rc.realpathStrict(probe); }
     catch (e) { return ptu('deny', `[evo-lite] cannot resolve target '${target}' (${e.message}); refusing write.`); }
-    // cr 来自 canonicalProjectRoot(win32 盘符已大写),cp 来自 realpathStrict —— 后者在 Windows 上
-    // 保留调用方的大小写。模型极常见地发出 'd:\...',于是 'd:/…' vs 'D:/…' 前缀不匹配,
-    // 合法的项目内写被误拒。NTFS 本就大小写不敏感,故 win32 上按大小写不敏感比较(Task 7 复审 I1)。
-    // 分隔符仍参与比较,所以 'D:/Proj-evil/x' 不会因折叠大小写而落进 'D:/Proj' 内。
-    const fold = (p) => {
-        const s = String(p).replace(/\\/g, '/');
-        return process.platform === 'win32' ? s.toLowerCase() : s;
-    };
-    const cp = fold(probe), cr = fold(projectRoot);
+    // 曾经这里在 win32 上对两侧做 toLowerCase() 折叠再比较(Task 7 一审 I1),动机是模型常发出
+    // 'd:\...' 这类小写盘符,不该被误拒。但 JS 的 toLowerCase 折叠比 NTFS 自己的大小写表激进得多:
+    // KELVIN SIGN(U+212A)会被折叠成与 ASCII 'K' 相同,即使 NTFS 视二者为两个真实不同的目录 ——
+    // 于是 <root>\Kappa 之外、<root 的兄弟>\ᴋappa 内的写会被折叠比较误判为"在项目内"而放行,是一次
+    // 真实的安全回归(已复现:文件确实落到了项目外)。现在两侧不再折叠:probe 和 projectRoot 都已经过
+    // 同一条 realpathSync.native(见 takeover-receipt.js DEFAULT_FS_OPS 注释)取得磁盘上的真实大小写,
+    // 再经同一个 normalize() 归一分隔符与盘符大小写,天然共享同一套大小写 —— 大小写不一致不可能造成
+    // 误拒(两侧本就同源同大小写,包括模型发出的小写盘符 'd:\...'),Unicode 折叠也不可能再造成
+    // 误放行(比较不再对任何字符做大小写折叠)。
+    const cp = rc.normalize(probe), cr = rc.normalize(projectRoot);
     if (!(cp === cr || cp.startsWith(cr + '/'))) {
         return ptu('deny', `[evo-lite] target '${target}' resolves outside project '${projectRoot}'.`);
     }
