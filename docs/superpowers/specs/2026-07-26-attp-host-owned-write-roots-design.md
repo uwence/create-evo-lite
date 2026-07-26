@@ -2,9 +2,13 @@
 
 - 日期:2026-07-26
 - 议题:`[db8a] [attp-guard-allowlist]`
-- 授权状态:**设计阶段 AUTHORIZED;生产实现、测试、installer 改动、hive nurture 均 NOT AUTHORIZED**
-- 运行时锚点证据:[`attp-guard-allowlist-step0-transcript-path.md`](../../validation/attp-guard-allowlist-step0-transcript-path.md)
-  (Step 0,Claude Code 2.1.220,8 次真实 PreToolUse 捕获)
+- 授权状态:**设计阶段 + 设计修订 AUTHORIZED;实施计划、生产实现/测试、installer 重构、
+  子仓分发、hive nurture 均 NOT AUTHORIZED**
+- 运行时锚点证据:
+  - [`attp-guard-allowlist-step0-transcript-path.md`](../../validation/attp-guard-allowlist-step0-transcript-path.md)
+    (Step 0,主会话,Claude Code 2.1.220,8 次真实 PreToolUse 捕获)
+  - [`attp-guard-allowlist-step0b-subagent-correlation.md`](../../validation/attp-guard-allowlist-step0b-subagent-correlation.md)
+    (Step 0b,真实 subagent 关联观测,判定**分支 A**,见 §9)
 - 前置关系:本议题是 `[attp-hive-rollout]` 的**阻塞前置**。未关闭前不得向子仓分发 ATTP。
 - 上游契约:[`2026-07-24-agent-takeover-trigger-protocol-design.md`](2026-07-24-agent-takeover-trigger-protocol-design.md)
   (ATTP,R8)。本文件**不重开**该设计,只在其 §0.3 已确立的守卫定位内增加一条窄例外。
@@ -139,8 +143,73 @@ resolvePhysicalPath(target):
     resolved = normalize(realpathStrict(anc)) + 剩余相对尾部
 ```
 
-`takeover-install.js` 的 `resolveManagedSettingsPath` 已有同形算法(R6 P0-2:
-"不存在则逐级找最近存在祖先 realpath 后再拼回尾部"),应抽出共用而非再写一份。
+### §6.1 原语归属(冻结,不留给实现者现场决定)
+
+`takeover-install.js:217` 的 `resolveManagedSettingsPath` 已有同形算法(R6 P0-2)。
+两处**必须共用同一实现**,归属冻结如下:
+
+```text
+新增模块  templates/cli/takeover-physical-path.js
+导出      resolvePhysicalPath(target, fsOps)
+```
+
+模块必须是 **dependency-neutral**:
+
+```text
+- 不 require runtime.js / receipt / installer / memory service
+- 只 require node 内置 path
+- 不持有任何模块级可变 fs seam;fsOps 由调用方每次显式传入
+- 用 lstat 语义寻找最近存在条目(断链 symlink 算"存在",不得退到父目录)
+- realpath 失败、断链、权限错误一律【抛出】,由调用方 fail-closed
+- 回拼的 tail 只能来自已 path.resolve() 的绝对目标
+- 返回:已物理验证前缀 + 未存在尾部,绝对路径
+```
+
+调用关系(单向,无反向耦合):
+
+```text
+takeover-receipt.js   → 传入自己的模块级 fsOps seam;可按需 re-export 给 adapter
+takeover-install.js   → 直接传入其既有的函数级 fsOps 参数
+takeover-adapter.js   → 经 receipt,不直接依赖 installer
+```
+
+**不让 `takeover-install.js` 去 import `takeover-receipt.js`。** 已核对:receipt 持有
+模块级可变 `let fsOps`(`takeover-receipt.js:24`)、`require('./runtime')` 以及治理状态职责;
+installer 则是函数级 `fsOps = fs` 参数(`readSettingsStrict` / `managedSettingsPath` /
+`resolveManagedSettingsPath` 等)。把 installer 绑进 receipt 会制造不必要的反向耦合,
+并让 installer 继承一个它无权控制的全局 seam。
+
+### §6.2 两处 lstat 语义的差异必须先合一
+
+这不是重命名,是一处真实的行为合并,必须有测试证据:
+
+```text
+receipt.pathEntryInfo   纯 lstat:断链 symlink → exists:true → 随后 realpath 抛错 → deny
+installer 的循环        existsSync 先行(跟随链接,断链返回 false),
+                        再用 lstat 补判 dangling,抛 "is a broken link; refusing to touch settings"
+```
+
+两者**结论一致(都 fail-closed)**,但机制与错误文案不同。原语只能保留一种,
+取 receipt 的纯 lstat 语义(更简单、且严格不弱)。
+
+由此产生一条硬约束:**installer 的既有错误文案契约不得漂移。** 实现上,原语抛带
+`code` 的错误(如 `ATTP_NO_EXISTING_ANCESTOR` / `ATTP_UNRESOLVABLE`),installer 捕获后
+按 code 重新抛出它现有的原文消息。
+
+已核查:`templates/cli/test/` 中**目前没有任何测试断言**
+`"is a broken link; refusing to touch settings"` 或 `"no existing ancestor"` 这两条文案。
+因此「不漂移」当前**没有回归网兜底** —— 实施时必须补上这两条文案断言,
+否则该约束只是一句愿望。
+
+### §6.3 installer 重构的验收条件
+
+允许重构 installer 改用中性原语,但同时满足:
+
+```text
+- installer 既有行为与错误文案契约不漂移(见 §6.2,须新增文案断言)
+- Gate 1 相关测试(T-takeover-installer 全套)原样通过,一条不改
+- templates/cli/ 与 .evo-lite/cli/ 镜像一致:sync-runtime 连续两次 copied: 0
+```
 
 **对既有项目判定必须是保持裁决不变的(verdict-preserving)。** 论证:回拼只是把
 「祖先」换成「祖先 + 尾部」,而尾部是相对片段,不改变所属根 ——
@@ -184,25 +253,127 @@ Unicode case-fold 变体(U+212A 等)               不得扩大权限
 每条注入/派生的消费都必须有能杀死「该步未执行」变异体的承重断言;
 下游状态不足以证明消费时,加显式计数(ATTP Gate 2 P1-1 的教训)。
 
-**另需一次真实证据:** 在真实 Claude Code 会话中完成一次跨会话 memory 写入,
-不能只喂 adapter JSON。这是本议题的验收终局门。
+### §8.1 终局门:双会话真实记忆验收(冻结流程)
 
-## §9 实施前必须补的观测(Step 0b)
+自动化回归证明不了「宿主的持久记忆功能真的恢复了」—— 它只能证明文件系统上出现了一个文件。
+终局门必须是下面这个双会话流程,不能用喂 adapter JSON 代替。
 
-**子 agent 的 `transcript_path` 指向何处,尚未观测。** Step 0 只覆盖了主会话
-(交互 + 无头)。若子 agent 的工具调用携带的是它自己的、位于**不同** project-state
-目录的 transcript,则子 agent 的记忆写入会被拒 —— 而 subagent-driven-development
-正是本项目的主力工作流。
+**前置**:使用一个 disposable 的 project-state,其 `memory/` **初始不存在**
+(这样同时覆盖 §6 的首次创建路径)。
 
-这条不确定性**不得靠推理消解**(ATTP 已经因为"从文档推出子目录仍生效"付过一次代价)。
-实施授权前应追加一次窄观测,方法与 Step 0 相同。
+```text
+Session A
+  1. 从 canonical project root 启动(root-launch-only,不得从子目录)
+  2. 完成正常 takeover
+  3. 用真实 Edit / Write 工具 —— 不得用 Bash
+  4. 创建 memory/MEMORY.md 或 memory/<topic>.md
+  5. 写入一个唯一 marker
+  6. 确认守卫返回 allow(而不是"没触发守卫")
+  7. 确认文件确实落在【派生出的】memory root 上,而非别处
 
-## §10 开放问题
+Session B
+  1. 结束 Session A 后,重新启动一个全新会话
+  2. 从同一 canonical project root 启动
+  3. 证明该唯一 marker 被宿主【正常的跨会话记忆机制】消费
+  4. 不得靠直接给绝对路径、或用 Bash 读文件来冒充"跨会话记忆成功"
+```
 
-1. `resolvePhysicalPath` 抽取后,`takeover-install.js` 与 `takeover-adapter.js`
-   共用同一实现,还是各自保留?倾向共用,但会触及 Gate 1 已验收的 installer 代码,
-   需要在计划阶段单独定范围。
-2. 例外是否需要在 `takeover status` / installer 输出中显式声明?
-   倾向需要 —— 用户应当能看出守卫放行了哪些项目外根。
-3. README 是否需要同步(当前 README 明确写"项目外 Edit/Write 会被 deny")。
-   一旦例外落地,该表述变得不准确,须同步修正。
+另需单独保留一次 **`memory/` 已存在**时的写入,覆盖普通路径(不经过首次创建分支)。
+
+三件事必须同时被证明,缺一不可:
+
+```text
+(1) 首次目录创建不再被误拒        ← §6 的回拼修法真的生效
+(2) 写入确实是【守卫放行】的结果  ← 而不是守卫压根没参与
+(3) 宿主持久记忆功能真正恢复      ← 而不是磁盘上多了一个孤立文件
+```
+
+## §9 实施前置观测(Step 0b)—— 已完成,分支 A
+
+证据:[`attp-guard-allowlist-step0b-subagent-correlation.md`](../../validation/attp-guard-allowlist-step0b-subagent-correlation.md)
+
+### §9.1 观测契约(冻结)
+
+只看「子 agent 的 transcript 落在哪个目录」**不足以**判定本设计是否成立。
+决定性的是一对数据 —— transcript 与**实际写入目标**的对应关系。观测必须捕获:
+
+```text
+parent   session_id / transcript_path
+subagent session_id / transcript_path
+subagent tool_name
+subagent tool_input.file_path
+derived  allowedMemoryRoot
+actual   attempted memory target
+```
+
+且必须由**真实 subagent 机制**触发,不得用「从另一个 cwd 启动一个独立 Claude Code 项目」冒充。
+
+判定分支冻结为:
+
+```text
+A. 子 root == 父 root,memory target 也在该 root/memory   → 当前设计成立
+B. 子 root != 父 root,但 target 仍是父 root/memory       → 事件单锚设计不成立,
+                                                            停止实施并重设身份绑定
+C. 子 root != 父 root,target 是子自身 root/memory        → 事件级派生可能成立,
+                                                            但该语义必须写进设计
+D. transcript_path 缺失 / hook 未触发 / target 不可观测   → 不实施
+```
+
+### §9.2 观测结果:**分支 A**
+
+```text
+子 agent 的工具调用携带【父会话的】session_id 与 transcript_path;
+宿主不为子 agent 另开 project-state 目录。
+子 agent 的实际 memory target 严格位于 dirname(transcript_path)/memory 之下。
+```
+
+父/子的区分不靠推断:宿主在事件里直接给出 `agent_id` / `agent_type`,
+父发起的调用(包括 `Agent` 派发动作本身)**没有**这两个字段。
+
+「实际 memory target」也不是提示词造出来的 —— 在**不给它任何路径**的前提下,
+子 agent 自述其系统提示中的持久记忆目录,报出的就是**父项目**的 memory root。
+子 agent 发起的记忆写入是真实存在的路径,且当前同样被守卫以
+`resolves outside project` 拒绝。
+
+### §9.3 对设计的约束
+
+`deriveHostOwnedWriteRoots(hookInput)` 只消费**当前事件**的 `transcript_path`,
+**不区分事件由父还是子发起** —— 因为宿主在这条路径上本就不做区分,无需第二个 allowed root。
+
+**`agent_id` / `agent_type` 不得进入派生逻辑。** 它们是本轮新观测到的字段,
+不在任何文档契约里;分支 A 下它们对结果也没有影响。用了只会凭空增加一处对未文档化字段的依赖。
+
+## §10 已关闭的开放问题(设计冻结前逐条定案)
+
+**1. `resolvePhysicalPath` 的归属 —— 已冻结,见 §6.1/§6.2/§6.3。**
+抽为 dependency-neutral 的 `takeover-physical-path.js`,installer 与 receipt 共用;
+installer 允许重构,但受三条验收条件约束。不再留给实现者现场选择。
+
+**2. `takeover status` 是否展示实际 allowed root —— 本阶段不改。**
+
+理由是它做不到而不是不想做:实际 root 来自**每次事件**的 `transcript_path`,
+而 `status` 是静态命令,**没有事件输入**。此时要输出一个具体路径,只能靠
+(a) 重新猜 slug 编码、(b) 读取其他持久化状态、或 (c) 显示一个并非当前事件权威值的路径
+—— 三条都直接违背本设计「只能从当前事件派生」的原则(§3),
+而该原则已经写进 spec。
+
+未来若确有可见性需求,只允许显示**静态策略**,例如:
+
+```text
+host-owned write policy: event-derived Claude project memory only
+```
+
+**不得声称展示的是当前实际 root。**
+
+**3. README —— 不再是开放问题,升级为实施验收项。**
+
+例外落地后,现有「项目外 `Edit`/`Write` 一律 deny」的表述即不准确。必须同步改成:
+
+```text
+项目外 Edit/Write 默认 deny;
+唯一窄例外是由当前 PreToolUse 事件的 transcript_path
+派生出的、本项目的 Claude Code memory 目录。
+```
+
+并继续保留既有的两条声明:`Bash` 可绕过;守卫是治理保证,**不是**隔离边界。
+`README.md` 与 `README_EN.md` 两份都要改,列入实施任务的验收清单。

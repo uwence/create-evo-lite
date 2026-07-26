@@ -126,9 +126,20 @@ startsWith(A + '/')   误纳 0 个
 4. 不得对 ~/.claude/projects 下的 slug 做裸字符串前缀匹配。
 ```
 
-即 `target === allowedMemoryRoot || target.startsWith(allowedMemoryRoot + path.sep)`,
+即:
+
+```javascript
+target === allowedMemoryRoot ||
+target.startsWith(allowedMemoryRoot + '/')
+```
+
 且两侧必须先经过真实路径归一化。判定发生在 **memory 目录这一层**,不在 project-state
 root 那一层 —— 后者只是派生的中间量,永不直接参与包含判定。
+
+**分隔符必须写字面量 `'/'`,不能写 `path.sep`。** 本项目的 `normalize()` 会把 `\`
+全部折成 `/`;在 Windows 上 `path.sep === '\\'`,两者一旦混用,结果是精确路径仍能命中、
+而 `allowedMemoryRoot/` 下的**任何子文件全部落空** —— 一个只在真实使用时才暴露的漏放行。
+只有在比较**未归一化的原生路径**时才轮得到 `path.sep`,而本设计不存在这种比较。
 
 ## §5 后置恢复检查
 

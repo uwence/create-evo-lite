@@ -12,8 +12,10 @@ relations: [{"kind":"spawned-from","target":"spec:agent-takeover-trigger-protoco
   守卫拒绝了 agent 自身的持久记忆写入。
 - **契约正文(canonical):**`docs/superpowers/specs/2026-07-26-attp-host-owned-write-roots-design.md`。
   本文件是治理挂接层,不复制契约细节;两者分歧时以设计文档为准。
-- 运行时锚点证据:`docs/validation/attp-guard-allowlist-step0-transcript-path.md`
-  (Step 0,Claude Code 2.1.220,8 次真实 PreToolUse 捕获)。
+- 运行时锚点证据:
+  - `docs/validation/attp-guard-allowlist-step0-transcript-path.md`(Step 0,主会话,8 次真实捕获)
+  - `docs/validation/attp-guard-allowlist-step0b-subagent-correlation.md`(Step 0b,真实 subagent
+    关联观测,判定**分支 A**:子 agent 携带父会话的 `transcript_path`,单锚设计成立)
 - 上游:`spec:agent-takeover-trigger-protocol`(ATTP MVP,已 CLOSED)。本议题**不重开**它。
 - 阻塞关系:本 spec 是 `[attp-hive-rollout]` 的**前置**。未收口前不得向子仓分发 ATTP。
 - 授权状态:设计阶段 AUTHORIZED;**实施、生产测试、installer 改动、hive nurture 均 NOT AUTHORIZED**。
@@ -44,13 +46,26 @@ relations: [{"kind":"spawned-from","target":"spec:agent-takeover-trigger-protoco
 - 回归矩阵(设计 §8)全绿,含:其他项目 memory deny、前缀关系项目 memory deny、
   `<slug>` 下非 memory deny、`memory/../escape` deny、memory 内 symlink 指向外部 deny、
   Windows 大小写与 Unicode case-fold 变体不得扩大权限。
-- 终局证据:在**真实 Claude Code 会话**中完成一次跨会话 memory 写入,不能只喂 adapter JSON。
+- 路径原语共用(设计 §6.1–§6.3):新增 dependency-neutral 的
+  `takeover-physical-path.js`,导出 `resolvePhysicalPath(target, fsOps)`;installer 与 receipt
+  共用同一实现,installer **不** import receipt;installer 既有错误文案不漂移(须补文案断言,
+  当前无回归覆盖),`T-takeover-installer` 全套原样通过,镜像 `copied: 0`。
+- 终局证据(设计 §8.1):**双会话**真实记忆验收 —— Session A 在 `memory/` 尚不存在的
+  disposable project-state 上用真实 `Edit`/`Write`(非 Bash)写入唯一 marker 且守卫 allow;
+  Session B 全新会话中该 marker 被宿主**正常的跨会话记忆机制**消费(不得靠给绝对路径或
+  Bash 读文件冒充)。另需一次 `memory/` 已存在的普通路径写入。
+- README 同步(设计 §10-3):`README.md` 与 `README_EN.md` 中「项目外 Edit/Write 一律 deny」
+  须改为「默认 deny + 一条由当前事件 `transcript_path` 派生的窄例外」,并保留
+  `Bash` 可绕过、守卫非隔离边界两条声明。
 
-### 实施前置(不得跳过)
+### 实施前置
 
-**Step 0b —— 子 agent 的 `transcript_path` 观测。** Step 0 只覆盖主会话。若子 agent
-携带的是位于不同 project-state 目录的 transcript,其记忆写入仍会被拒,而
-subagent-driven-development 是本项目的主力工作流。该不确定性**不得靠推理消解**。
+**Step 0b —— 子 agent 关联观测:已完成,判定分支 A。** 观测捕获了
+父/子 `session_id` 与 `transcript_path`、子 agent 的 `tool_name` 与 `tool_input.file_path`、
+派生的 `allowedMemoryRoot` 以及**实际记忆写入目标**,并由宿主直接给出的
+`agent_id` / `agent_type` 区分父子。结论:子 agent 携带**父会话的** `transcript_path`,
+其记忆目标严格落在派生根之下 —— 当前事件单锚设计成立,无需第二个 allowed root,
+且 `agent_id` / `agent_type` 不得进入派生逻辑。
 
-收口条件:上述回归全绿 + 既有 ATTP 套件零改动通过 + 真实会话跨会话记忆写入成功,
+收口条件:上述回归全绿 + 既有 ATTP 套件零改动通过 + 双会话真实记忆验收通过,
 且 `[attp-hive-rollout]` 的阻塞随之解除。
