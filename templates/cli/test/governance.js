@@ -8115,10 +8115,11 @@ async function runGovernanceTests() {
                 freshness: { headSha: 'a', ahead: 0, behind: 0 },
                 degraded: [],
             });
-            const writeDec = async (root, sid) => (await ad.handleHookInput({
+            const writeOut = async (root, sid) => (await ad.handleHookInput({
                 hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write',
                 tool_input: { file_path: path.join(root, 'a.js') },
-            }, { projectRoot: root })).json.hookSpecificOutput.permissionDecision;
+            }, { projectRoot: root })).json.hookSpecificOutput;
+            const writeDec = async (root, sid) => (await writeOut(root, sid)).permissionDecision;
 
             // 1) receipt 发布失败(rename 抛)→ 非零 + 无 committed
             {
@@ -8158,16 +8159,28 @@ async function runGovernanceTests() {
             }
 
             // 4) 失效双失败(tombstone + unlink 均抛)后:旧 committed 仍在盘上,但 Write 仍被 health gate deny。
-            //    注:守卫走 reconcileReadOnly(Task 7 复审 I2),本身不写盘 —— 注入在这里是纵深防御,
-            //    断言的承重点是「持久化失败与否都不影响 deny 判定」+「旧 receipt 确实还在」。
+            //    守卫走 reconcileReadOnly(Task 7 复审 I2)本身不写盘,所以注入若只加在守卫调用上是【惰性】的,
+            //    证明不了任何事。真正会持久化失效的是 UserPromptSubmit 的 reconcile —— 先在注入下走那条路,
+            //    让 tombstone 与 unlink 双双失败(即治理层【无法】记录失效),再问守卫:它会不会因此放行。
+            //    另:deny 必须验【文案】。删掉健康门后 focus 为 null 会让 capsule 构建空指针,被内层 catch 兜成
+            //    "payload build failed" 的伪 deny —— 只断言 decision 的话变异体存活(与 T-takeover-session-scope 同源)。
             {
                 const { root, ac } = mkRoot(); const canon = rc.canonicalProjectRoot(root);
                 rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 'f4', projectRoot: canon,
                     state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
                 fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
                 rc.__setFsOps({ writeFileSync: () => { throw new Error('tombstone fail'); }, unlinkSync: () => { throw new Error('unlink fail'); } });
-                let dec; try { dec = await writeDec(root, 'f4'); } finally { rc.__resetFsOps(); }
-                assert.strictEqual(dec, 'deny', 'health gate denies even when invalidation persistence double-fails');
+                let out;
+                try {
+                    // 载荷步:真实触发失效持久化,并让它双双失败。
+                    await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: 'f4' }, { projectRoot: root });
+                    out = await writeOut(root, 'f4');
+                } finally { rc.__resetFsOps(); }
+                assert.strictEqual(out.permissionDecision, 'deny', 'health gate denies even when invalidation persistence double-fails');
+                assert.ok(/unhealthy/.test(out.permissionDecisionReason),
+                    'and it denies via the health gate, phrased "unhealthy"');
+                assert.ok(!/payload build failed/.test(out.permissionDecisionReason),
+                    'not via a null-dereference in the capsule builder — that deny would survive deleting the gate');
                 assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f4').state, 'committed', 'stale receipt indeed survived on disk');
                 fs.rmSync(root, { recursive: true, force: true });
             }
