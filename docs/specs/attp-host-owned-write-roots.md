@@ -2,6 +2,7 @@
 id: spec:attp-host-owned-write-roots
 status: adopted
 created: 2026-07-26
+linkedPlan: plan:attp-host-owned-write-roots
 title: "Spec: ATTP host-owned write roots (attp-guard-allowlist)"
 relations: [{"kind":"spawned-from","target":"spec:agent-takeover-trigger-protocol"}]
 ---
