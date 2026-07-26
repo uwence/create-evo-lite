@@ -789,7 +789,7 @@ deriveHostOwnedWriteRoots()  捕获【预期的 coded path errors】→ {ok:fals
 即:锚点不可用是**正常的业务结果**,不得变成整个 guard 的"内部故障";
 而真正的编程错误必须继续冒泡,以免掩盖缺陷。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新增套件,置于 `T-takeover-physical-path` 之后:
 
@@ -885,12 +885,12 @@ deriveHostOwnedWriteRoots()  捕获【预期的 coded path errors】→ {ok:fals
 > 而经由 `resolvePhysical` 的那条通路,程序缺陷在**原语内部**就已原样抛出(设计 §6.4,
 > Task 1 用例 7b),所以 derive 侧不需要再做第二次判别 —— 边界只放一处,不重复。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL,`rc.deriveHostOwnedWriteRoots is not a function`
 
-- [ ] **Step 3: 写实现**
+- [x] **Step 3: 写实现**
 
 在 `takeover-receipt.js` 中 `resolvePhysical` 之后加入:
 
@@ -944,12 +944,12 @@ function deriveHostOwnedWriteRoots(hookInput) {
 
 并把 `deriveHostOwnedWriteRoots` 加入 `module.exports`。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: `✅ T-takeover-host-owned-roots passed`
 
-- [ ] **Step 5: 变异体验证**
+- [x] **Step 5: 变异体验证**
 
 | 变异 | 必须被杀于 |
 |---|---|
@@ -960,7 +960,7 @@ Expected: `✅ T-takeover-host-owned-roots passed`
 | `if (!e \|\| !HOST_PATH_CODES.has(e.code)) throw e;` → 恒不抛 | **用例 5b**(Task 1 用例 7b 只直接调原语,观察不到 derive,杀不掉) |
 | `resolvePhysical(stateRoot)` → `resolvePhysical(path.join(stateRoot,'memory'))` | 用例 1 |
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add templates/cli/takeover-receipt.js templates/cli/test/governance.js

@@ -8543,6 +8543,98 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-takeover-physical-path passed');
 
+        console.log('T-takeover-host-owned-roots. event-derived memory root; fail-closed on every malformed anchor ...');
+        {
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-state-'));
+            const realState = fs.realpathSync(stateRoot);
+            const transcript = path.join(stateRoot, 'sess-abc.jsonl');
+            fs.writeFileSync(transcript, '', 'utf8');
+
+            // 1. 正常：唯一 root = dirname(transcript_path)/memory，且【不要求 memory/ 已存在】
+            const okRes = rc.deriveHostOwnedWriteRoots({ transcript_path: transcript });
+            assert.strictEqual(okRes.ok, true, 'well-formed transcript_path enables the exception');
+            assert.deepStrictEqual(okRes.roots, [rc.normalize(realState) + '/memory'],
+                'exactly one root, at the memory level, derived from the current event');
+            assert.strictEqual(fs.existsSync(path.join(stateRoot, 'memory')), false,
+                'and it must not require memory/ to exist — that is the new-project first-write case');
+
+            // 2. fail-closed 输入矩阵：每一条都必须 ok:false 且 roots 为空
+            const bad = [
+                ['null input', null],
+                ['non-object', 'nope'],
+                ['missing field', {}],
+                ['non-string', { transcript_path: 42 }],
+                ['empty string', { transcript_path: '' }],
+                ['relative path', { transcript_path: 'rel/sess.jsonl' }],
+                ['dirname degenerates to itself', { transcript_path: path.parse(realState).root }],
+                ['nonexistent state root', { transcript_path: path.join(stateRoot, 'gone', 'sess.jsonl') }],
+            ];
+            for (const [label, input] of bad) {
+                const r = rc.deriveHostOwnedWriteRoots(input);
+                assert.strictEqual(r.ok, false, `${label} must not enable the exception`);
+                assert.deepStrictEqual(r.roots, [], `${label} must yield no roots`);
+                assert.ok(typeof r.reason === 'string' && r.reason.length > 0, `${label} must carry a diagnosable reason`);
+            }
+
+            // 2b. 承重：上面的循环只断言"有 reason"，不区分是哪一道门挡住的。相对锚点会被
+            //     存在性门（或原语的 NOT_ABSOLUTE）顺手挡下，于是删掉 isAbsolute 检查后整组【仍然全绿】
+            //     —— 这正是 Gate 2 教训里的"伪装 deny"。用 reason 文案把责任门钉死。
+            assert.strictEqual(rc.deriveHostOwnedWriteRoots({ transcript_path: 'rel/sess.jsonl' }).reason,
+                'transcript_path is not absolute',
+                'a relative anchor must be rejected by the absoluteness gate itself, not incidentally downstream');
+
+            // 3. 承重：派生【只】看 transcript_path。喂入 env/settings/receipt 风格的同名旁路值不得生效。
+            const prevEnv = process.env.CLAUDE_TRANSCRIPT_PATH;
+            process.env.CLAUDE_TRANSCRIPT_PATH = transcript;
+            try {
+                const r = rc.deriveHostOwnedWriteRoots({ cwd: stateRoot, session_id: 'abc' });
+                assert.strictEqual(r.ok, false, 'an env-var fallback must NOT exist; only the current event may anchor');
+            } finally {
+                if (prevEnv === undefined) delete process.env.CLAUDE_TRANSCRIPT_PATH;
+                else process.env.CLAUDE_TRANSCRIPT_PATH = prevEnv;
+            }
+
+            // 4. 承重：agent_id / agent_type 不得进入派生逻辑（Step 0b 分支 A；它们是未文档化字段）。
+            const withAgent = rc.deriveHostOwnedWriteRoots({ transcript_path: transcript, agent_id: 'x', agent_type: 'general-purpose' });
+            assert.deepStrictEqual(withAgent.roots, okRes.roots, 'agent_id/agent_type must not change the derived root');
+            const rcSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'), 'utf8');
+            assert.ok(!/agent_id|agent_type/.test(rcSrc), 'receipt must not reference agent_id/agent_type at all');
+
+            // 5. 预期内的路径错误必须【转成 ok:false】而不是抛出；真正的缺陷仍须冒泡。
+            rc.__setFsOps({ lstatSync: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } });
+            try {
+                const r = rc.deriveHostOwnedWriteRoots({ transcript_path: transcript });
+                assert.strictEqual(r.ok, false, 'a coded path error must degrade to ok:false, not throw into the guard');
+                assert.ok(/EACCES|stat/i.test(r.reason), `reason must stay diagnosable; got ${r.reason}`);
+            } finally { rc.__resetFsOps(); }
+
+            rc.__setFsOps({ lstatSync: () => { throw new TypeError('genuine defect: x is not a function'); } });
+            try {
+                assert.throws(() => rc.deriveHostOwnedWriteRoots({ transcript_path: transcript }), /genuine defect/,
+                    'a real programming defect must still bubble — swallowing it would hide the bug');
+            } finally { rc.__resetFsOps(); }
+
+            // 5b.【承重】上面那条在【前置 pathEntryInfo】就抛了，根本没走到 resolvePhysical 的 catch。
+            //     要证明 derive 不会把原语冒泡上来的缺陷【再吞一次】，必须让 lstat 成功、realpath 抛。
+            //     Task 1 用例 7b 只直接调原语，观察不到 derive 的行为，杀不掉这条。
+            {
+                const defect = new TypeError('realpath programming defect');
+                rc.__setFsOps({
+                    lstatSync: () => ({ isSymbolicLink: () => false }),
+                    realpathSync: () => { throw defect; },
+                });
+                try {
+                    assert.throws(() => rc.deriveHostOwnedWriteRoots({ transcript_path: transcript }),
+                        (e) => e === defect,
+                        'a programmatic realpath defect must pass through derive unchanged, not degrade to {ok:false}');
+                } finally { rc.__resetFsOps(); }
+            }
+
+            fs.rmSync(stateRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-takeover-host-owned-roots passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

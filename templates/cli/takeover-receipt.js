@@ -70,6 +70,52 @@ function pathEntryInfo(target) {
 // 绑定本模块的 fs seam：原语自身刻意无 seam，守卫的故障注入必须仍然生效。
 function resolvePhysical(target) { return resolvePhysicalPathRaw(target, fsOps); }
 
+// ── 宿主自有写入根 ──
+// 位于项目【外】、但属于当前宿主 + 当前项目的受信写入根。目前只有一个：该项目的持久记忆目录。
+//
+// transcript_path 是【宿主输入锚】，不是用户配置项：只能来自当前事件，不得从环境变量、settings、
+// receipt 或任何持久化位置读取同名值 —— 否则这条窄例外就退化成一个可配置的项目外写入通道。
+//
+// 契约：永不返回 null；预期内的锚点不可用一律 {ok:false, roots:[]}，绝不抛进守卫。
+// 降级方向只有一个：更严，不更松。任何"锚点不可用时放宽"的分支都是本设计的反面。
+const HOST_PATH_CODES = new Set(Object.values(PATH_CODES));
+
+function deriveHostOwnedWriteRoots(hookInput) {
+    const fail = (reason) => ({ ok: false, reason, roots: [] });
+    if (!hookInput || typeof hookInput !== 'object') return fail('hook input is not an object');
+    if (!Object.prototype.hasOwnProperty.call(hookInput, 'transcript_path')) return fail('transcript_path absent');
+    const tp = hookInput.transcript_path;
+    if (typeof tp !== 'string' || tp.length === 0) return fail('transcript_path is not a non-empty string');
+    if (!path.isAbsolute(tp)) return fail('transcript_path is not absolute');
+    const stateRoot = path.dirname(tp);
+    if (stateRoot === tp) return fail('transcript_path degenerates to a filesystem root');
+
+    // project-state root 本身【必须已存在】。resolvePhysical 会容忍未存在的尾部（那是为
+    // memory/ 首次创建准备的），若直接把它用在 stateRoot 上，一个指向不存在目录的
+    // transcript_path 会被"回拼"成一个看似合法的 root —— 例外就会挂到一个凭空的路径上。
+    let info;
+    try {
+        info = pathEntryInfo(stateRoot);
+    } catch (e) {
+        if (!e || typeof e.code !== 'string') throw e;   // 真正的程序缺陷仍须冒泡
+        return fail(`cannot stat host project state root (${e.code})`);
+    }
+    if (!info.exists) return fail('host project state root does not exist');
+
+    let physical;
+    try {
+        physical = resolvePhysical(stateRoot);
+    } catch (e) {
+        // 预期内的路径错误 → 不启用例外。程序缺陷不会走到这里 —— 原语已在自身层面把
+        // 无 code 的异常原样抛出（设计 §6.4），所以这里只需认已知的 PATH_CODES。
+        if (!e || !HOST_PATH_CODES.has(e.code)) throw e;
+        return fail(`cannot resolve host project state root (${(e.cause && e.cause.code) || e.code})`);
+    }
+    // 允许根只能是 memory 这一层。project-state root 是派生的中间量，永不直接参与包含判定 ——
+    // 本机 ~/.claude/projects/ 下已存在两个与母仓 slug 构成前缀关系的真实目录。
+    return { ok: true, reason: null, roots: [normalize(physical) + '/memory'] };
+}
+
 function evoLiteDir(projectRoot) { return path.join(projectRoot, '.evo-lite'); }
 function receiptDir(projectRoot, host) { return path.join(evoLiteDir(projectRoot), 'generated', 'takeover', 'receipts', host); }
 function receiptPathFor(projectRoot, host, sessionId) {
@@ -199,5 +245,6 @@ module.exports = {
     RECEIPT_SCHEMA_VERSION, discoverProjectRoot, canonicalProjectRoot, evoLiteDir, receiptPathFor,
     readFocusAnchor, readMetaAnchor, publishReceipt, readReceipt, invalidateReceipt, reconcile, reconcileReadOnly,
     realpathStrict, pathExists, pathEntryInfo, normalize, resolvePhysical, PATH_CODES,
+    deriveHostOwnedWriteRoots,
     __setFsOps, __resetFsOps,
 };
