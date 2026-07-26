@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { getWorkspaceRoot } = require('./runtime');
+const { resolvePhysicalPath: resolvePhysicalPathRaw, PATH_CODES } = require('./takeover-physical-path');
 
 const RECEIPT_SCHEMA_VERSION = 1;
 const HARD_FIELDS = ['schemaVersion', 'host', 'sessionId', 'projectRoot', 'state'];
@@ -65,6 +66,9 @@ function pathEntryInfo(target) {
         throw e;   // 权限等异常不得当成"不存在"
     }
 }
+
+// 绑定本模块的 fs seam：原语自身刻意无 seam，守卫的故障注入必须仍然生效。
+function resolvePhysical(target) { return resolvePhysicalPathRaw(target, fsOps); }
 
 function evoLiteDir(projectRoot) { return path.join(projectRoot, '.evo-lite'); }
 function receiptDir(projectRoot, host) { return path.join(evoLiteDir(projectRoot), 'generated', 'takeover', 'receipts', host); }
@@ -194,5 +198,6 @@ function reconcileReadOnly({ projectRoot, host, sessionId }) {
 module.exports = {
     RECEIPT_SCHEMA_VERSION, discoverProjectRoot, canonicalProjectRoot, evoLiteDir, receiptPathFor,
     readFocusAnchor, readMetaAnchor, publishReceipt, readReceipt, invalidateReceipt, reconcile, reconcileReadOnly,
-    realpathStrict, pathExists, pathEntryInfo, normalize, __setFsOps, __resetFsOps,
+    realpathStrict, pathExists, pathEntryInfo, normalize, resolvePhysical, PATH_CODES,
+    __setFsOps, __resetFsOps,
 };

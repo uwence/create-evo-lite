@@ -7179,7 +7179,8 @@ async function runGovernanceTests() {
         {
             const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
             const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
-            const MODULES = ['takeover-adapter.js', 'takeover-payload.js', 'takeover-receipt.js', 'runtime.js'];
+            const MODULES = ['takeover-adapter.js', 'takeover-payload.js', 'takeover-receipt.js',
+                'takeover-physical-path.js', 'runtime.js'];
             const runHook = (cliDir, runtimeRoot, input) => childProcess.spawnSync(process.execPath,
                 [path.join(cliDir, 'takeover-adapter.js')],
                 { input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, EVO_LITE_ROOT: runtimeRoot } });
@@ -8137,7 +8138,67 @@ async function runGovernanceTests() {
                 assert.strictEqual(process.platform, 'win32', 'symlink creation may only be skipped on win32 without privilege');
                 console.log('   ⏭️ symlink escape case skipped (win32 without symlink privilege)');
             }
+            // Task 4 承重：目标的【未存在尾部】必须回拼，而不是塌回最近存在祖先。
+            // 现状实现拿祖先与 projectRoot 比较；对项目内判定这没问题（祖先仍在项目内），
+            // 所以只测 allow 是测不出来的 —— 必须直接观察解析结果。
+            {
+                const rcp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+                const deep = path.join(root, 'no-such-dir', 'deeper', 'new.js');
+                assert.strictEqual(rcp.normalize(rcp.resolvePhysical(deep)),
+                    rcp.normalize(path.join(rcp.canonicalProjectRoot(root), 'no-such-dir', 'deeper', 'new.js')),
+                    'guard-side resolution must re-append the missing tail, not collapse to the nearest ancestor');
+                assert.strictEqual(await dec({ file_path: deep }), 'allow', 'deep not-yet-created in-project path still allows');
+
+                // 上面两条【都杀不掉】"守卫没改用原语"这个变异体：第一条只观察原语本身（Task 1 已覆盖），
+                // 第二条的 allow 旧守卫同样给得出 —— 因为回拼对项目内判定本就是 verdict-preserving。
+                // 下游状态不足以证明消费时，加显式计数（ATTP Gate 2 P1-1 的教训）。
+                const realResolve = rcp.resolvePhysical;
+                let resolveCalls = 0;
+                rcp.resolvePhysical = (t) => { resolveCalls += 1; return realResolve(t); };
+                try {
+                    assert.strictEqual(await dec({ file_path: path.join(root, 'consume.js') }), 'allow',
+                        'ordinary in-project target still allows');
+                    assert.strictEqual(resolveCalls, 1,
+                        'and the guard must have resolved it through the shared primitive, exactly once');
+                } finally { rcp.resolvePhysical = realResolve; }
+
+                // 守卫的三条【解析期】deny 文案同样没有回归网兜底（与 Task 2 在 installer 侧发现的
+                // 是同一类缺口）。原语只给 code，文案是守卫的对外契约，必须逐字钉住 —— 否则把任一
+                // code→文案 的映射删掉，整套仍然全绿。用注入 resolvePhysical 构造，不扰动前两道门。
+                const reasonOf = async (file_path) => (await ad.handleHookInput({
+                    hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write', tool_input: { file_path },
+                }, { projectRoot: root })).json.hookSpecificOutput;
+                const coded = (code) => Object.assign(new Error('coded'), {
+                    code, target: 'T', probe: 'P', cause: { message: 'why' },
+                });
+                const wanted = path.join(root, 'mapped.js');
+                for (const [code, text] of [
+                    [rcp.PATH_CODES.STAT_FAILED, `[evo-lite] cannot stat 'P' (why); refusing write.`],
+                    [rcp.PATH_CODES.NO_EXISTING_ANCESTOR, `[evo-lite] no existing ancestor for '${wanted}'; refusing write.`],
+                    [rcp.PATH_CODES.BROKEN_LINK, `[evo-lite] cannot resolve target '${wanted}' (why); refusing write.`],
+                    [rcp.PATH_CODES.REALPATH_FAILED, `[evo-lite] cannot resolve target '${wanted}' (why); refusing write.`],
+                ]) {
+                    rcp.resolvePhysical = () => { throw coded(code); };
+                    try {
+                        const out = await reasonOf(wanted);
+                        assert.strictEqual(out.permissionDecision, 'deny', `${code} must deny`);
+                        assert.strictEqual(out.permissionDecisionReason, text, `${code} must keep its exact message`);
+                    } finally { rcp.resolvePhysical = realResolve; }
+                }
+
+                // 程序缺陷（无 code）不得被伪装成一条路径判定：交由守卫最外层 catch，
+                // 而不是就地 return 一条 deny —— 后者会让缺陷永远看起来像一次正常拒绝。
+                rcp.resolvePhysical = () => { throw new TypeError('guard-side defect'); };
+                try {
+                    const out = await reasonOf(wanted);
+                    assert.strictEqual(out.permissionDecision, 'deny', 'a defect still ends in deny (fail-closed)');
+                    assert.ok(!/cannot stat|no existing ancestor|cannot resolve target/.test(out.permissionDecisionReason),
+                        `but not disguised as a path verdict; got: ${out.permissionDecisionReason}`);
+                } finally { rcp.resolvePhysical = realResolve; }
+            }
+
             fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(other, { recursive: true, force: true });
+
             console.log('✅ T-takeover-target-path passed');
         }
 

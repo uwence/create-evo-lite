@@ -677,7 +677,7 @@ error now fails closed instead of being swallowed and walked past."
 - Consumes: `resolvePhysicalPath` / `PATH_CODES`(经 receipt re-export,见 Step 1)
 - Produces: 守卫解析出的 `resolved` 为「已验证前缀 + 回拼尾部」
 
-- [ ] **Step 1: 由 receipt re-export,守卫不直接依赖原语文件**
+- [x] **Step 1: 由 receipt re-export,守卫不直接依赖原语文件**
 
 守卫的 fs 注入点始终是 receipt 的 `__setFsOps`(故障注入据此覆盖)。原语无自有 seam,
 必须由 receipt 用自己的 `fsOps` 调用,否则注入会失效。
@@ -697,7 +697,7 @@ function resolvePhysical(target) { return resolvePhysicalPathRaw(target, fsOps);
 
 并把 `resolvePhysical, PATH_CODES` 加入 `module.exports`。
 
-- [ ] **Step 2: 写失败测试(首次创建路径)**
+- [x] **Step 2: 写失败测试(首次创建路径)**
 
 在 `T-takeover-target-path` 块内、该块收尾之前追加:
 
@@ -715,12 +715,12 @@ function resolvePhysical(target) { return resolvePhysicalPathRaw(target, fsOps);
             }
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL,`rcp.resolvePhysical is not a function`(Step 1 未做时)或回拼断言不等
 
-- [ ] **Step 4: 替换守卫的解析段**
+- [x] **Step 4: 替换守卫的解析段**
 
 把 `takeover-adapter.js` 中从 `let probe = abs;` 到
 `catch (e) { return ptu('deny', \`[evo-lite] cannot resolve target ...\`); }` 整段
@@ -746,7 +746,7 @@ Expected: FAIL,`rcp.resolvePhysical is not a function`(Step 1 未做时)或回�
 
 `const cp = rc.normalize(probe), cr = rc.normalize(projectRoot);` 及其后的比较**保持不变**。
 
-- [ ] **Step 5: 跑全套 —— 既有三套件必须原样通过**
+- [x] **Step 5: 跑全套 —— 既有三套件必须原样通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: `✅ T-takeover-target-path passed` / `✅ T-takeover-guard passed` /
@@ -756,7 +756,7 @@ Expected: `✅ T-takeover-target-path passed` / `✅ T-takeover-guard passed` /
 这就是设计 §6 所说的「verdict-preserving 的唯一证据」。若任何一条需要修改才能通过,
 说明回拼不是 verdict-preserving —— **停止并报告**,不要修改既有断言。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add templates/cli/takeover-receipt.js templates/cli/takeover-adapter.js templates/cli/test/governance.js
