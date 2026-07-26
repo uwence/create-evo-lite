@@ -155,8 +155,18 @@ Task 3 再按裁定把该条期望值翻转成 fail-closed。三条既有失败�
 - Produces:
   - `resolvePhysicalPath(target: string, fsOps: {lstatSync, realpathSync}): string`
   - `PATH_CODES: { NOT_ABSOLUTE, NO_EXISTING_ANCESTOR, BROKEN_LINK, REALPATH_FAILED, STAT_FAILED }`
-  - 抛出的 Error 携带:`code`、`target`(已 resolve 的绝对目标)、`probe`(出错时所在的那一级)、
-    `cause`(底层 Error,`NOT_ABSOLUTE` / `NO_EXISTING_ANCESTOR` 时不设)
+  - 抛出的 Error 携带四个字段,其中 `target` 与 `probe` 是**两个不同的诊断事实**:
+
+```text
+code    五个 PATH_CODES 之一
+target  调用方请求解析的完整绝对路径（恒定，上溯不改变它）
+probe   物理证明失败的那一级祖先（随上溯变化）
+cause   底层 fs Error（NOT_ABSOLUTE / NO_EXISTING_ANCESTOR 时不设）
+```
+
+  唯一例外:`NOT_ABSOLUTE` 尚无可 resolve 的绝对目标,`target` 保留原始字符串。
+  把 `target` 写成 `probe` 会在上溯过 ≥1 级之后**丢掉原始请求路径** —— 而那正是
+  调用方拼装用户可见文案时唯一能用的信息。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -189,6 +199,29 @@ Task 3 再按裁定把该条期望值翻转成 fail-closed。三条既有失败�
                 realpathSync: () => { throw new Error('unreachable'); },
             }), (e) => e.code === pp.PATH_CODES.STAT_FAILED && e.cause === statErr,
                 'non-ENOENT stat failure must surface as STAT_FAILED with its cause');
+
+            // 4b.【承重】target 与 probe 是两个不同事实，必须在【上溯过 ≥1 级之后】才区分得开。
+            //     上面所有用例都在第一次 probe 就失败（target === probe），把 target 误写成 probe
+            //     一条也杀不掉。这里构造两级：最深一级 ENOENT 使其上溯，父级 EACCES 使其失败。
+            {
+                const requested = path.join(root, 'missing', 'deep', 'file.md');
+                const deepDir = path.join(root, 'missing', 'deep');
+                const eacces = Object.assign(new Error('denied'), { code: 'EACCES' });
+                assert.throws(() => pp.resolvePhysicalPath(requested, {
+                    lstatSync: (p) => {
+                        if (p === requested) throw Object.assign(new Error('nope'), { code: 'ENOENT' });
+                        if (p === deepDir) throw eacces;
+                        throw new Error(`unexpected probe ${p}`);
+                    },
+                    realpathSync: () => { throw new Error('unreachable'); },
+                }), (e) => {
+                    assert.strictEqual(e.code, pp.PATH_CODES.STAT_FAILED);
+                    assert.strictEqual(e.target, requested, 'target must stay the originally requested path');
+                    assert.strictEqual(e.probe, deepDir, 'probe must be the ancestor that actually failed');
+                    assert.strictEqual(e.cause, eacces, 'cause must be the underlying fs error');
+                    return true;
+                }, 'target and probe must remain distinguishable after the walk has moved up');
+            }
 
             // 5. 断链 symlink 必须与一般 realpath 失败【可区分】—— installer 对前者有专门文案。
             //    用注入 fsOps 构造:lstat 成功且 isSymbolicLink,realpath 抛。跨平台确定,不需要 symlink 权限。
@@ -301,9 +334,15 @@ function resolvePhysicalPath(target, fsOps) {
     if (!path.isAbsolute(abs)) {
         // 相对性解析属于调用方（守卫按 projectRoot 解析，installer 也按 projectRoot 解析）。
         // 在这里静默按 cwd 解析会造成一个只在某些工作目录下才复现的错判。
+        // NOT_ABSOLUTE 是唯一的例外：此时还没有可 resolve 的绝对目标，target 保留原始字符串。
         throw pathError(PATH_CODES.NOT_ABSOLUTE, `path must be absolute: ${abs}`, { target: abs, probe: abs });
     }
-    let probe = path.resolve(abs);
+    // requested 与 probe 承载两个【不同】的诊断事实，任何一处把 target 写成 probe 都会
+    // 在上溯过 ≥1 级之后丢掉调用方原本请求的路径：
+    //   target = 调用方请求解析的完整路径（恒定）
+    //   probe  = 物理证明失败的那一级祖先（随上溯变化）
+    const requested = path.resolve(abs);
+    let probe = requested;
     const tail = [];
     for (;;) {
         let st;
@@ -318,12 +357,12 @@ function resolvePhysicalPath(target, fsOps) {
                 // 权限等异常不得当成"不存在" —— 那会让调用方退到一个它本无权判定的祖先。
                 // 已裁定：installer 也统一到这一侧（设计 §6.2.1），不提供 treat-as-missing 模式。
                 throw pathError(PATH_CODES.STAT_FAILED, `cannot stat ${probe} (${e.message})`,
-                    { target: probe, probe, cause: e });
+                    { target: requested, probe, cause: e });
             }
             const parent = path.dirname(probe);
             if (parent === probe) {
-                throw pathError(PATH_CODES.NO_EXISTING_ANCESTOR, `no existing ancestor for ${path.resolve(abs)}`,
-                    { target: path.resolve(abs), probe });
+                throw pathError(PATH_CODES.NO_EXISTING_ANCESTOR, `no existing ancestor for ${requested}`,
+                    { target: requested, probe });
             }
             tail.unshift(path.basename(probe));
             probe = parent;
@@ -339,7 +378,7 @@ function resolvePhysicalPath(target, fsOps) {
             // 全归为 BROKEN_LINK 会让 installer 对一个权限不足的链接输出误导性文案。
             const dangling = st && st.isSymbolicLink() && (e.code === 'ENOENT' || e.code === 'ENOTDIR');
             throw pathError(dangling ? PATH_CODES.BROKEN_LINK : PATH_CODES.REALPATH_FAILED,
-                `cannot resolve ${probe} (${e.message})`, { target: probe, probe, cause: e });
+                `cannot resolve ${probe} (${e.message})`, { target: requested, probe, cause: e });
         }
         return tail.length ? path.join(physical, ...tail) : physical;
     }
@@ -366,6 +405,7 @@ Expected: `✅ T-takeover-physical-path passed`,全套 EXIT 0
 | 删除 `NOT_ABSOLUTE` 前置检查 | 用例 3 |
 | 删除 lstat 侧的 `typeof e.code !== 'string'` 冒泡 | 用例 7b 第一条 |
 | 删除 realpath 侧的 `typeof e.code !== 'string'` 冒泡 | 用例 7b 第二条 |
+| 任一 `pathError` 的 `target: requested` → `target: probe` | 用例 4b(其余用例 `target === probe`,杀不掉) |
 
 - [ ] **Step 6: 登记到 manifest**
 
@@ -513,7 +553,10 @@ git commit -m "test(takeover): characterize installer path-resolution error mess
 
 **Interfaces:**
 - Consumes: Task 1 的 `resolvePhysicalPath` / `PATH_CODES`
-- Produces: 行为与文案不变的 `resolveManagedSettingsPath`
+- Produces: `resolveManagedSettingsPath`,其中
+  - 既有**成功路径**与既有**错误路径文案**不变(Task 2 的三条逐字断言为准);
+  - **唯一批准的行为变化**:非 ENOENT 的 lstat 错误由「继续上溯」收紧为 fail-closed(设计 §6.2.1),
+    新增文案 `takeover: cannot stat <probe> (<cause>); refusing to touch settings`。
 
 - [ ] **Step 1: 引入原语**
 
@@ -816,6 +859,22 @@ deriveHostOwnedWriteRoots()  捕获【预期的 coded path errors】→ {ok:fals
                     'a real programming defect must still bubble — swallowing it would hide the bug');
             } finally { rc.__resetFsOps(); }
 
+            // 5b.【承重】上面那条在【前置 pathEntryInfo】就抛了，根本没走到 resolvePhysical 的 catch。
+            //     要证明 derive 不会把原语冒泡上来的缺陷【再吞一次】，必须让 lstat 成功、realpath 抛。
+            //     Task 1 用例 7b 只直接调原语，观察不到 derive 的行为，杀不掉这条。
+            {
+                const defect = new TypeError('realpath programming defect');
+                rc.__setFsOps({
+                    lstatSync: () => ({ isSymbolicLink: () => false }),
+                    realpathSync: () => { throw defect; },
+                });
+                try {
+                    assert.throws(() => rc.deriveHostOwnedWriteRoots({ transcript_path: transcript }),
+                        (e) => e === defect,
+                        'a programmatic realpath defect must pass through derive unchanged, not degrade to {ok:false}');
+                } finally { rc.__resetFsOps(); }
+            }
+
             fs.rmSync(stateRoot, { recursive: true, force: true });
         }
         console.log('✅ T-takeover-host-owned-roots passed');
@@ -898,7 +957,7 @@ Expected: `✅ T-takeover-host-owned-roots passed`
 | 删除 `path.isAbsolute(tp)` 检查 | 用例 2「relative path」 |
 | 删除 `if (!info.exists) return fail(...)` | 用例 2「nonexistent state root」 |
 | `if (!e \|\| typeof e.code !== 'string') throw e;`(`pathEntryInfo` 侧)→ 恒不抛 | 用例 5 第二段 |
-| `if (!e \|\| !HOST_PATH_CODES.has(e.code)) throw e;` → 恒不抛 | Task 1 用例 7b(缺陷不再冒泡至此) |
+| `if (!e \|\| !HOST_PATH_CODES.has(e.code)) throw e;` → 恒不抛 | **用例 5b**(Task 1 用例 7b 只直接调原语,观察不到 derive,杀不掉) |
 | `resolvePhysical(stateRoot)` → `resolvePhysical(path.join(stateRoot,'memory'))` | 用例 1 |
 
 - [ ] **Step 6: 提交**

@@ -225,8 +225,19 @@ onStatError: 'treat-as-missing'        → NOT ALLOWED（不给原语加宽松�
 以及既有的各条失败分支;**唯独不适用于**这一个已明确批准修正的 `STAT_FAILED` 场景。
 
 由此产生一条硬约束:**installer 的既有错误文案契约不得漂移。** 实现上,原语抛带
-`code` 的错误(如 `ATTP_NO_EXISTING_ANCESTOR` / `ATTP_UNRESOLVABLE`),installer 捕获后
-按 code 重新抛出它现有的原文消息。
+`code` 的错误,installer 捕获后按 code 重新抛出它现有的原文消息。taxonomy 冻结为五项:
+
+```text
+ATTP_NOT_ABSOLUTE          目标不是绝对路径（相对性解析属于调用方，原语不代劳）
+ATTP_NO_EXISTING_ANCESTOR  一路 ENOENT 走到文件系统根
+ATTP_BROKEN_LINK           条目是 symlink 且 realpath 失败于 ENOENT / ENOTDIR
+ATTP_REALPATH_FAILED       其余 realpath 失败（含 symlink 的 EACCES/EPERM/ELOOP/EIO）
+ATTP_STAT_FAILED           lstat 失败于非 ENOENT
+```
+
+每个错误携带 `code` / `target`(调用方请求的完整绝对路径,恒定)/ `probe`(实际失败的那一级祖先)
+/ `cause`(底层 fs Error)。`target` 与 `probe` 是两个不同的诊断事实,**不得写成同一个值**
+—— 上溯过 ≥1 级后,只有 `target` 还保留调用方原本请求的路径,而那是拼装用户可见文案的唯一来源。
 
 已核查:`templates/cli/test/` 中**目前没有任何测试断言**
 `"is a broken link; refusing to touch settings"` 或 `"no existing ancestor"` 这两条文案。
