@@ -152,27 +152,40 @@ function invalidateReceipt(projectRoot, host, sessionId, reason) {
     } catch (e) { return { ok: false, method: 'none', reason: e.message }; }
 }
 
+// 判定与副作用分离:守卫每次 Edit/Write 都要判一次,但权限检查不该改治理状态。
+// 两者共用同一个分类函数,保证只读变体不会与 reconcile 判出不同结论(Task 7 复审 I2)。
+function classifyReceiptFocus(rr, focus) {
+    if (focus === null) return { state: 'invalid', transition: 'degraded', reason: 'active-context-unreadable' };
+    if (rr.state !== 'committed') return { state: rr.state === 'missing' ? 'missing' : 'invalid', transition: 'stale', reason: rr.reason };
+    if (rr.receipt.focusHash !== focus.hash) return { state: 'committed', transition: 'refreshed', reason: null };
+    return { state: 'committed', transition: 'active', reason: null };
+}
+
 function reconcile({ projectRoot, host, sessionId }) {
     const rr = readReceipt(projectRoot, host, sessionId);
     const focus = readFocusAnchor(projectRoot);
-    if (focus === null) {
+    const verdict = classifyReceiptFocus(rr, focus);
+    if (verdict.transition === 'degraded') {
         let invalidation = { ok: true, method: 'none' };
         if (rr.state === 'committed') invalidation = invalidateReceipt(projectRoot, host, sessionId, 'active-context-unreadable');
         // 失效持久化即便双失败,verdict 仍为 degraded —— 守卫据此 fail-closed(不依赖文件状态)
-        return { verdict: { state: 'invalid', transition: 'degraded', reason: 'active-context-unreadable' }, focus: null, invalidation };
+        return { verdict, focus: null, invalidation };
     }
-    if (rr.state !== 'committed') {
-        return { verdict: { state: rr.state === 'missing' ? 'missing' : 'invalid', transition: 'stale', reason: rr.reason }, focus, invalidation: null };
-    }
-    if (rr.receipt.focusHash !== focus.hash) {
-        publishReceipt(projectRoot, { ...rr.receipt, focusHash: focus.hash });
-        return { verdict: { state: 'committed', transition: 'refreshed', reason: null }, focus, invalidation: null };
-    }
-    return { verdict: { state: 'committed', transition: 'active', reason: null }, focus, invalidation: null };
+    if (verdict.transition === 'refreshed') publishReceipt(projectRoot, { ...rr.receipt, focusHash: focus.hash });
+    return { verdict, focus, invalidation: null };
+}
+
+// 只读判定:结论与 reconcile 逐字相同,但【绝不写盘】。守卫用它 —— 否则一次瞬时的
+// active_context 异常(编辑器保存中 / mem 并发写)会写下 invalid tombstone 且不自愈,
+// 文件恢复后会话仍永久 deny,只能手工 bootstrap --receipt 救回(Task 7 复审 I2)。
+function reconcileReadOnly({ projectRoot, host, sessionId }) {
+    const rr = readReceipt(projectRoot, host, sessionId);
+    const focus = readFocusAnchor(projectRoot);
+    return { verdict: classifyReceiptFocus(rr, focus), focus, invalidation: null };
 }
 
 module.exports = {
     RECEIPT_SCHEMA_VERSION, discoverProjectRoot, canonicalProjectRoot, evoLiteDir, receiptPathFor,
-    readFocusAnchor, readMetaAnchor, publishReceipt, readReceipt, invalidateReceipt, reconcile,
+    readFocusAnchor, readMetaAnchor, publishReceipt, readReceipt, invalidateReceipt, reconcile, reconcileReadOnly,
     realpathStrict, pathExists, pathEntryInfo, __setFsOps, __resetFsOps,
 };

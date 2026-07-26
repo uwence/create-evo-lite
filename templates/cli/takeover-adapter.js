@@ -231,7 +231,9 @@ function guardWrite(input, deps) {
         return ptu('deny', `[evo-lite] takeover required before writing. ${recovery}`);
     }
     // (b) active_context 可读 + reconcile 非 degraded
-    const { verdict, focus } = rc.reconcile({ projectRoot, host: HOST, sessionId });
+    // 只读变体:守卫每次 Edit/Write 都要判一次,但权限检查绝不能改治理状态 —— 否则一次瞬时的
+    // active_context 异常会写下 invalid tombstone 且不自愈(Task 7 复审 I2,见 takeover-receipt.js)。
+    const { verdict, focus } = rc.reconcileReadOnly({ projectRoot, host: HOST, sessionId });
     if (verdict.transition === 'degraded' || verdict.state !== 'committed') {
         return ptu('deny', `[evo-lite] takeover unhealthy (${verdict.reason || verdict.transition}). ${recovery}`);
     }
@@ -269,7 +271,15 @@ function guardWrite(input, deps) {
     // 未经解析的字符串做 containment 判断,正是 symlink 逃逸能绕过守卫的原因(R4 复审 P0-2 ③)。
     try { probe = rc.realpathStrict(probe); }
     catch (e) { return ptu('deny', `[evo-lite] cannot resolve target '${target}' (${e.message}); refusing write.`); }
-    const cp = probe.replace(/\\/g, '/'), cr = projectRoot.replace(/\\/g, '/');
+    // cr 来自 canonicalProjectRoot(win32 盘符已大写),cp 来自 realpathStrict —— 后者在 Windows 上
+    // 保留调用方的大小写。模型极常见地发出 'd:\...',于是 'd:/…' vs 'D:/…' 前缀不匹配,
+    // 合法的项目内写被误拒。NTFS 本就大小写不敏感,故 win32 上按大小写不敏感比较(Task 7 复审 I1)。
+    // 分隔符仍参与比较,所以 'D:/Proj-evil/x' 不会因折叠大小写而落进 'D:/Proj' 内。
+    const fold = (p) => {
+        const s = String(p).replace(/\\/g, '/');
+        return process.platform === 'win32' ? s.toLowerCase() : s;
+    };
+    const cp = fold(probe), cr = fold(projectRoot);
     if (!(cp === cr || cp.startsWith(cr + '/'))) {
         return ptu('deny', `[evo-lite] target '${target}' resolves outside project '${projectRoot}'.`);
     }

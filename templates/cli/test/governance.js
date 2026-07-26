@@ -7208,6 +7208,18 @@ async function runGovernanceTests() {
                 const cap = JSON.parse(up.json.hookSpecificOutput.additionalContext);
                 assert.ok(cap.evoLite === 'takeover-active' || cap.evoLite === 'takeover-stale',
                     `refresh capsule must be a real capsule, got ${cap.evoLite}`);
+
+                // 不变量 6 也必须覆盖守卫路径,不能只测 UserPromptSubmit(Task 7 复审 gap #7)。
+                // 用同一 require-cache 中毒窗口:任何 heavy dep 加载都会抛错,PreToolUse 的 deny/allow
+                // 分支若误引了 memory.service/db/zvec/takeover-session,这里必然炸。
+                const rcIso = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+                const canonIso = rcIso.canonicalProjectRoot(root);
+                rcIso.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's', projectRoot: canonIso,
+                    state: 'committed', focusHash: rcIso.readFocusAnchor(root).hash, sourceEvent: 'x' });
+                const ptuIso = await ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Write',
+                    tool_input: { file_path: path.join(root, 'ok.js') } }, { projectRoot: root });
+                assert.strictEqual(ptuIso.json.hookSpecificOutput.permissionDecision, 'allow',
+                    'PreToolUse guard must not load heavy deps either — otherwise the poisoned cache throws');
                 fs.rmSync(root, { recursive: true, force: true });
             } finally {
                 for (const rp of Object.keys(saved)) { delete require.cache[rp]; if (saved[rp]) require.cache[rp] = saved[rp]; }
@@ -7778,10 +7790,12 @@ async function runGovernanceTests() {
             const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
             const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
             const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-guard-'));
+            const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-guard-out-'));
             const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
             fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
             const canon = rc.canonicalProjectRoot(root), sid = 'g';
             const call = async (tool, tin, deps) => (await ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: sid, tool_name: tool, tool_input: tin || {} }, { projectRoot: root, ...(deps || {}) })).json.hookSpecificOutput;
+            const callRaw = async (tool, tin, deps) => ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: sid, tool_name: tool, tool_input: tin || {} }, { projectRoot: root, ...(deps || {}) });
 
             assert.strictEqual((await call('Read')).permissionDecision, 'allow');
             assert.strictEqual((await call('Glob')).permissionDecision, 'allow');
@@ -7791,12 +7805,28 @@ async function runGovernanceTests() {
             assert.ok(/memory\.js' bootstrap --receipt/.test(noRcpt.permissionDecisionReason), 'deny reason carries recovery command');
             assert.ok(noRcpt.permissionDecisionReason.includes(`--session-id '${sid}'`),
                 'deny reason command is actually executable (runReceiptRecovery requires --session-id)');
+            // 门(a)(缺 committed receipt)必须有自己独立的文案,不能与门(b)(健康检查)撞词 ——
+            // 否则删掉门(a)本身,门(b)会顶上去把它掩盖住,mutation 测不出来(Task 7 复审 gap #3)。
+            assert.ok(/takeover required before writing/.test(noRcpt.permissionDecisionReason), 'gate (a) reason text is distinct from gate (b)');
+            assert.ok(!/unhealthy/.test(noRcpt.permissionDecisionReason), 'gate (a) reason must not read like a gate (b) health failure');
+            // exitCode 契约:PreToolUse 的 deny 必须仍是 exitCode 0 —— 非零会让宿主整体丢弃这段 JSON,
+            // 精心构造的 deny 决定就会静默变成 allow(Task 7 复审 gap #5)。
+            const noRcptRaw = await callRaw('Write', { file_path: path.join(root, 'a.txt') });
+            assert.strictEqual(noRcptRaw.exitCode, 0, 'PreToolUse deny must exit 0, not a nonzero code');
 
             rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: sid, projectRoot: canon,
                 state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
             assert.strictEqual((await call('Write', { file_path: path.join(root, 'src', 'a.txt') })).permissionDecision, 'allow', 'in-project allow');
+            // Edit 是 GUARDED_WRITE_TOOLS 的一半,之前完全没有覆盖(Task 7 复审 gap #1)
+            assert.strictEqual((await call('Edit', { file_path: path.join(root, 'src', 'b.txt') })).permissionDecision, 'allow', 'Edit in-project allow');
+            assert.strictEqual((await call('Edit', { file_path: path.join(outside, 'x.txt') })).permissionDecision, 'deny', 'Edit out-of-project deny');
+            // 相对路径未被覆盖过:必须相对 projectRoot 解析,而不是原样当绝对路径处理(Task 7 复审 gap #9)
+            assert.strictEqual((await call('Write', { file_path: 'src/x.js' })).permissionDecision, 'allow', 'relative in-project path allows');
+            assert.strictEqual((await call('Write', { file_path: '../outside.js' })).permissionDecision, 'deny', 'relative parent-escape path denies');
             assert.strictEqual((await call('Write', {})).permissionDecision, 'deny', 'missing target → fail-closed');
             assert.strictEqual((await call('Write', { file_path: 123 })).permissionDecision, 'deny', 'non-string target → fail-closed');
+            // 今天靠 `!target` 才对;若这个检查退化成只查 typeof,空字符串会变成 allow(Task 7 复审 gap #8)
+            assert.strictEqual((await call('Write', { file_path: '' })).permissionDecision, 'deny', 'empty-string target → fail-closed');
             // 坏 capsule(builder 被注入返回垃圾)→ validateCapsule 失败 → deny
             const badCap = await call('Write', { file_path: path.join(root, 'a.txt') }, { buildPayload: () => ({ unexpected: true }) });
             assert.strictEqual(badCap.permissionDecision, 'deny', 'invalid capsule → deny (validator actually runs)');
@@ -7814,11 +7844,25 @@ async function runGovernanceTests() {
             let tgtFail; try { tgtFail = await call('Write', { file_path: path.join(root, 'locked', 'a.txt') }); } finally { rc.__resetFsOps(); }
             assert.strictEqual(tgtFail.permissionDecision, 'deny', 'target realpath failure → deny (never string-only containment)');
 
-            // 守卫内部任意抛错也必须 deny(注入一个会抛的 reconcile 路径)
+            // 守卫内部任意抛错也必须 deny(注入一个会抛的 buildPayload,走的是【内层】catch)
             const boom = await call('Write', { file_path: path.join(root, 'a.txt') },
                 { buildPayload: () => { throw new Error('kaboom'); } });
             assert.strictEqual(boom.permissionDecision, 'deny', 'any guard exception → deny');
+
+            // 单独证明【外层】catch 也会被走到:此前的 boom 用例是靠 buildPayload 抛错触发内层 catch,
+            // 删掉外层 try/catch 那个变异体完全测不出来。这里从 rc.reconcileReadOnly 本身抛错 ——
+            // 那段代码在 guardWrite 里没有自己的 try/catch,只能被 handlePreToolUse 的外层兜住
+            // (Task 7 复审 gap #2)。
+            const origReconcileRO = rc.reconcileReadOnly;
+            rc.reconcileReadOnly = () => { throw new Error('outer-boom'); };
+            let outerBoom;
+            try { outerBoom = await call('Write', { file_path: path.join(root, 'a.txt') }); }
+            finally { rc.reconcileReadOnly = origReconcileRO; }
+            assert.strictEqual(outerBoom.permissionDecision, 'deny', 'reconcileReadOnly throw reaches the OUTER catch → deny');
+            assert.ok(/takeover guard failed/.test(outerBoom.permissionDecisionReason), 'outer-catch deny carries the generic guard-failed message');
+
             fs.rmSync(root, { recursive: true, force: true });
+            fs.rmSync(outside, { recursive: true, force: true });
             console.log('✅ T-takeover-guard passed');
         }
 
@@ -7837,6 +7881,30 @@ async function runGovernanceTests() {
             assert.strictEqual(await dec({ file_path: path.join(other, 'x.js') }), 'deny', 'cross-project deny');
             assert.strictEqual(await dec({ file_path: path.join(root, '..', 'esc.js') }), 'deny', 'parent escape deny');
             assert.strictEqual(await dec({ file_path: path.join(root, 'ok.js') }), 'allow', 'in-project allow');
+
+            // 前缀陷阱:`cp.startsWith(cr)`(没有 `+ '/'`)会把兄弟目录 `<root>-backup` 误判成在
+            // `<root>` 内部,因为字符串前缀匹配但路径分隔符没参与比较(Task 7 复审 gap #6)。
+            // 用真实存在的兄弟目录构造这个陷阱 —— `other` 是随机命名的临时目录,天然测不到这个 case。
+            const sibling = `${root}-backup`;
+            fs.mkdirSync(sibling, { recursive: true });
+            fs.writeFileSync(path.join(sibling, 'x.js'), '', 'utf8');
+            assert.strictEqual(await dec({ file_path: path.join(sibling, 'x.js') }), 'deny',
+                `sibling '<root>-backup' must deny even though it shares a string prefix with '<root>'`);
+            fs.rmSync(sibling, { recursive: true, force: true });
+
+            // A2 regression: canonicalProjectRoot uppercases the win32 drive letter, realpathStrict
+            // preserves the caller's casing. A lowercase-drive file_path (models emit these constantly)
+            // must still ALLOW inside the project on win32 (NTFS is case-insensitive). On POSIX the fold
+            // is a no-op — assert only that an ordinary in-project path still allows there, not case
+            // insensitivity (Task 7 复审 I1 regression lock-in).
+            if (process.platform === 'win32' && /^[a-zA-Z]:/.test(root)) {
+                const lowerDriveTarget = root[0].toLowerCase() + root.slice(1) + path.sep + 'case-ok.js';
+                assert.strictEqual(await dec({ file_path: lowerDriveTarget }), 'allow',
+                    'lowercase drive-letter target must allow on win32 (a model-emitted d:\\... must not be denied)');
+            } else {
+                assert.strictEqual(await dec({ file_path: path.join(root, 'posix-case-ok.js') }), 'allow',
+                    'in-project path still allows on POSIX (path casing is sensitive there; no fold asserted)');
+            }
 
             // symlink 逃逸:project/link → other;POSIX 必测,win32 无权限时跳过并显式说明
             const link = path.join(root, 'link');
@@ -7888,13 +7956,33 @@ async function runGovernanceTests() {
             const wf = () => fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
             wf();
             const canon = rc.canonicalProjectRoot(root), sid = 'ss';
-            const w = async () => (await ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write', tool_input: { file_path: path.join(root, 'a.js') } }, { projectRoot: root })).json.hookSpecificOutput.permissionDecision;
-            assert.strictEqual(await w(), 'deny', 'no receipt → deny');
+            const w = async () => (await ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write', tool_input: { file_path: path.join(root, 'a.js') } }, { projectRoot: root })).json.hookSpecificOutput;
+            const noRcpt = await w();
+            assert.strictEqual(noRcpt.permissionDecision, 'deny', 'no receipt → deny');
+            // 门(a)必须有自己独立的文案,不能与门(b)撞词(Task 7 复审 gap #3)。
+            assert.ok(/takeover required before writing/.test(noRcpt.permissionDecisionReason), 'gate (a) reason text is distinct from gate (b)');
             rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: sid, projectRoot: canon,
                 state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
-            assert.strictEqual(await w(), 'allow', 'committed + healthy → allow');
+            assert.strictEqual((await w()).permissionDecision, 'allow', 'committed + healthy → allow');
             fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
-            assert.strictEqual(await w(), 'deny', 'governance-health failure → deny (health gate, not unconditional allow)');
+            const unhealthy = await w();
+            assert.strictEqual(unhealthy.permissionDecision, 'deny', 'governance-health failure → deny (health gate, not unconditional allow)');
+            // 删掉门(b)的判定条件后,focus 为 null 会让下面构建 capsule 时对 focus.text 空指针解引用,
+            // 被【内层】catch 接住,деny 文案会变成 "payload build failed" 而不是 "unhealthy" ——
+            // 只断言 decision 抓不住这个变异体,必须断言文案本身(Task 7 复审 gap #4)。
+            assert.ok(/unhealthy/.test(unhealthy.permissionDecisionReason), 'health gate (b) deny is phrased as "unhealthy"');
+            assert.ok(!/payload build failed/.test(unhealthy.permissionDecisionReason),
+                'health gate (b) deny must not be a disguised payload-build failure (that would mean gate (b) was deleted)');
+
+            // A1 regression lock-in: guardWrite must use the read-only reconcile variant — a transient
+            // active_context outage must not tombstone the receipt. Restoring the file must restore
+            // write access, not leave the session permanently denied (Task 7 复审 I2).
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'committed',
+                'receipt must still be committed after a transient active_context outage (guard must not write via reconcile)');
+            wf(); // restore active_context.md
+            assert.strictEqual((await w()).permissionDecision, 'allow', 'guard allows again once active_context is restored — no manual bootstrap --receipt needed');
+            assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'committed', 'receipt remained committed throughout (never invalidated by the guard)');
+
             fs.rmSync(root, { recursive: true, force: true });
             console.log('✅ T-takeover-session-scope passed');
         }
