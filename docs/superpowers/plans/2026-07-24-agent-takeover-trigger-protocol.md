@@ -534,7 +534,14 @@ const HARD_FIELDS = ['schemaVersion', 'host', 'sessionId', 'projectRoot', 'state
 const DEFAULT_FS_OPS = {
     existsSync: fs.existsSync, readFileSync: fs.readFileSync, writeFileSync: fs.writeFileSync,
     renameSync: fs.renameSync, unlinkSync: fs.unlinkSync, mkdirSync: fs.mkdirSync,
-    realpathSync: fs.realpathSync, lstatSync: fs.lstatSync,   // lstatSync 供 pathEntryInfo:漏注册会让守卫对健康路径也抛错 → 全 deny
+    // realpathSync.native,不是纯 JS 的 fs.realpathSync:守卫的 containment 判断要求 root 和 target
+    // 两侧最终落在【同一套大小写】上再比较。纯 JS 实现在 win32 上靠 toUpperCase/toLowerCase 折叠
+    // 大小写,折叠比 NTFS 自己的 upcase 表激进得多 —— KELVIN SIGN(U+212A)会被折叠成与 ASCII 'K'
+    // 相同,即使 NTFS 视二者为两个真实不同的目录,这曾让项目外的写误判为"在项目内"而放行
+    // (真实安全回归,已复现,见 takeover-adapter.js guardWrite)。.native 直接问文件系统要磁盘上的
+    // 真实大小写(测得:全小写输入原样返回真实大小写,如 C:\Users\...\MixedCase\Sub),不折叠任何
+    // 字符,因此能区分 KELVIN SIGN 与 'K';对不存在的路径仍抛 ENOENT,fail-closed 契约不变。
+    realpathSync: fs.realpathSync.native, lstatSync: fs.lstatSync,   // lstatSync 供 pathEntryInfo:漏注册会让守卫对健康路径也抛错 → 全 deny
 };
 let fsOps = { ...DEFAULT_FS_OPS };
 function __setFsOps(overrides) { fsOps = { ...DEFAULT_FS_OPS, ...overrides }; }
@@ -709,7 +716,7 @@ function reconcileReadOnly({ projectRoot, host, sessionId }) {
 module.exports = {
     RECEIPT_SCHEMA_VERSION, discoverProjectRoot, canonicalProjectRoot, evoLiteDir, receiptPathFor,
     readFocusAnchor, readMetaAnchor, publishReceipt, readReceipt, invalidateReceipt, reconcile, reconcileReadOnly,
-    realpathStrict, pathExists, pathEntryInfo, __setFsOps, __resetFsOps,
+    realpathStrict, pathExists, pathEntryInfo, normalize, __setFsOps, __resetFsOps,
 };
 ```
 
@@ -2993,6 +3000,18 @@ console.log('T-takeover-guard. Edit/Write fail-closed incl unknown target and in
     assert.strictEqual(outerBoom.permissionDecision, 'deny', 'reconcileReadOnly throw reaches the OUTER catch → deny');
     assert.ok(/takeover guard failed/.test(outerBoom.permissionDecisionReason), 'outer-catch deny carries the generic guard-failed message');
 
+    // FIX 5(Task 7 二轮 R8):`const tool = input.tool_name;` used to be evaluated BEFORE the try in
+    // handlePreToolUse. If that read throws, the exception used to escape to main's generic handler,
+    // which emits a response with no permissionDecision at all — which the host treats as allow. Not
+    // reachable in production (input comes from JSON.parse, which cannot produce accessors), but it
+    // was the one structural violation of "every exception in the guard produces deny". The read now
+    // lives inside the try; prove it with a throwing tool_name getter.
+    const throwingToolNameInput = { hook_event_name: 'PreToolUse', session_id: sid, tool_input: {},
+        get tool_name() { throw new Error('tool_name getter boom'); } };
+    const throwingToolNameOut = await ad.handleHookInput(throwingToolNameInput, { projectRoot: root });
+    assert.strictEqual(throwingToolNameOut.json.hookSpecificOutput.permissionDecision, 'deny',
+        'a throwing tool_name getter must still deny, not escape with no permissionDecision at all');
+
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(outside, { recursive: true, force: true });
     console.log('✅ T-takeover-guard passed');
@@ -3082,15 +3101,16 @@ function guardWrite(input, deps) {
     // 未经解析的字符串做 containment 判断,正是 symlink 逃逸能绕过守卫的原因(R4 复审 P0-2 ③)。
     try { probe = rc.realpathStrict(probe); }
     catch (e) { return ptu('deny', `[evo-lite] cannot resolve target '${target}' (${e.message}); refusing write.`); }
-    // cr 来自 canonicalProjectRoot(win32 盘符已大写),cp 来自 realpathStrict —— 后者在 Windows 上
-    // 保留调用方的大小写。模型极常见地发出 'd:\...',于是 'd:/…' vs 'D:/…' 前缀不匹配,
-    // 合法的项目内写被误拒。NTFS 本就大小写不敏感,故 win32 上按大小写不敏感比较(Task 7 复审 I1)。
-    // 分隔符仍参与比较,所以 'D:/Proj-evil/x' 不会因折叠大小写而落进 'D:/Proj' 内。
-    const fold = (p) => {
-        const s = String(p).replace(/\\/g, '/');
-        return process.platform === 'win32' ? s.toLowerCase() : s;
-    };
-    const cp = fold(probe), cr = fold(projectRoot);
+    // 曾经这里在 win32 上对两侧做 toLowerCase() 折叠再比较(Task 7 一审 I1),动机是模型常发出
+    // 'd:\...' 这类小写盘符,不该被误拒。但 JS 的 toLowerCase 折叠比 NTFS 自己的大小写表激进得多:
+    // KELVIN SIGN(U+212A)会被折叠成与 ASCII 'K' 相同,即使 NTFS 视二者为两个真实不同的目录 ——
+    // 于是 <root>\Kappa 之外、<root 的兄弟>\ᴋappa 内的写会被折叠比较误判为"在项目内"而放行,是一次
+    // 真实的安全回归(已复现:文件确实落到了项目外)。现在两侧不再折叠:probe 和 projectRoot 都已经过
+    // 同一条 realpathSync.native(见 takeover-receipt.js DEFAULT_FS_OPS 注释)取得磁盘上的真实大小写,
+    // 再经同一个 normalize() 归一分隔符与盘符大小写,天然共享同一套大小写 —— 大小写不一致不可能造成
+    // 误拒(两侧本就同源同大小写,包括模型发出的小写盘符 'd:\...'),Unicode 折叠也不可能再造成
+    // 误放行(比较不再对任何字符做大小写折叠)。
+    const cp = rc.normalize(probe), cr = rc.normalize(projectRoot);
     if (!(cp === cr || cp.startsWith(cr + '/'))) {
         return ptu('deny', `[evo-lite] target '${target}' resolves outside project '${projectRoot}'.`);
     }
@@ -3129,11 +3149,13 @@ console.log('T-takeover-target-path. cross-project / .. escape / symlink escape 
         `sibling '<root>-backup' must deny even though it shares a string prefix with '<root>'`);
     fs.rmSync(sibling, { recursive: true, force: true });
 
-    // A2 regression: canonicalProjectRoot uppercases the win32 drive letter, realpathStrict
-    // preserves the caller's casing. A lowercase-drive file_path (models emit these constantly)
-    // must still ALLOW inside the project on win32 (NTFS is case-insensitive). On POSIX the fold
-    // is a no-op — assert only that an ordinary in-project path still allows there, not case
-    // insensitivity (Task 7 复审 I1 regression lock-in).
+    // A2 regression: canonicalProjectRoot and realpathStrict now both go through
+    // realpathSync.native, so root and target share the disk's true casing before comparison
+    // (no toLowerCase folding anywhere, see FIX 1 / Task 7 二轮 R8). A lowercase-drive file_path
+    // (models emit these constantly, e.g. 'd:\...') must still ALLOW inside the project on win32,
+    // because .native itself normalizes the drive letter to its on-disk casing — not because of
+    // any case-insensitive string compare. On POSIX casing was always sensitive and unaffected —
+    // assert only that an ordinary in-project path still allows there.
     if (process.platform === 'win32' && /^[a-zA-Z]:/.test(root)) {
         const lowerDriveTarget = root[0].toLowerCase() + root.slice(1) + path.sep + 'case-ok.js';
         assert.strictEqual(await dec({ file_path: lowerDriveTarget }), 'allow',
@@ -3141,6 +3163,30 @@ console.log('T-takeover-target-path. cross-project / .. escape / symlink escape 
     } else {
         assert.strictEqual(await dec({ file_path: path.join(root, 'posix-case-ok.js') }), 'allow',
             'in-project path still allows on POSIX (path casing is sensitive there; no fold asserted)');
+    }
+
+    // FIX 2(Task 7 二轮 R8):the fold's old POSIX branch was a no-op, so a mutant that folded
+    // case unconditionally (which matters most on POSIX, where two directories differing only by
+    // case genuinely coexist) survived undetected. Now that the fold is gone entirely, lock this in
+    // for real: build a sibling directory whose name differs from the project root ONLY by case and
+    // assert the guard DENIES a write into it. NTFS collapses same-name-different-case directories
+    // (mkdirSync throws), so on win32 this sibling cannot be constructed — detect that and skip
+    // explicitly, exactly like the symlink-privilege branches below. On POSIX it must run for real.
+    {
+        const dir = path.dirname(root), base = path.basename(root);
+        const flippedBase = base.split('').map(c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
+        const caseSibling = path.join(dir, flippedBase);
+        let caseSiblingMade = false;
+        try { fs.mkdirSync(caseSibling); caseSiblingMade = true; } catch (_) { caseSiblingMade = false; }
+        if (caseSiblingMade) {
+            fs.writeFileSync(path.join(caseSibling, 'x.js'), '', 'utf8');
+            assert.strictEqual(await dec({ file_path: path.join(caseSibling, 'x.js') }), 'deny',
+                `case-differing sibling '${caseSibling}' must deny (a real, distinct directory on POSIX — no unconditional case fold may allow it)`);
+            fs.rmSync(caseSibling, { recursive: true, force: true });
+        } else {
+            assert.strictEqual(process.platform, 'win32', 'case-differing sibling directory creation may only fail on win32 (NTFS case-insensitivity)');
+            console.log('   ⏭️ case-differing sibling directory case skipped (win32: NTFS collapses same-name-different-case)');
+        }
     }
 
     // symlink 逃逸:project/link → other;POSIX 必测,win32 无权限时跳过并显式说明
@@ -3498,5 +3544,7 @@ node .evo-lite/cli/memory.js takeover rollback
 | I2(行为,owner 裁定) | 守卫每次 Edit/Write 都调 `rc.reconcile()`,而它**写盘**:focus 不可读时写 `invalid` tombstone。实测一次瞬时异常(文件移除或半截锚点 —— 编辑器保存中、`mem` 并发写都会产生)即把 receipt 打成 `invalid`,**恢复原文件后仍永久 deny**,只能手工 `bootstrap --receipt` 救回。Task 7 前 reconcile 每轮只跑一次,现在每次写工具都跑,竞态窗口大幅放大 | 判定与副作用分离:抽出 `classifyReceiptFocus(rr, focus)` 作**唯一**判定处,`reconcile` 保持原有副作用(tombstone / 漂移持久化)供 SessionStart、UserPromptSubmit 使用,新增 `reconcileReadOnly` 结论逐字相同但**绝不写盘**,守卫改用它。共用分类器保证只读变体不会与 `reconcile` 判出不同结论。实测:异常时 deny、恢复后自愈 allow、receipt 全程 `committed`;`reconcile` 自身行为逐项未变 |
 | I1(行为,owner 裁定) | `canonicalProjectRoot` 把 win32 盘符大写,`realpathStrict` 保留调用方大小写。`file_path` 为 `d:\...`(模型极常见)时 `cp='d:/…'` 与 `cr='D:/…'` 前缀不匹配 → **合法的项目内写被 deny**。方向 fail-closed 不可利用,但在主力开发平台必现 | 两侧同经 `fold()`:统一分隔符,win32 上折叠大小写(NTFS 本就大小写不敏感)。分隔符仍参与比较,故 `D:/Proj-evil/x` 不会因折叠而落进 `D:/Proj` 内 —— 已单独断言 |
 | 定位(owner 裁定) | MVP 守卫只管 `Edit`/`Write`,`Bash` 等一律 allow,一条 shell 重定向即可绕过接管要求 | 设计文档新增 §0.3,写明守卫是**确定性接管的治理保证,不是文件系统隔离边界**;并把 no-silent-bypass 的准确含义限定为「受管路径上的注入失败不静默放行」。不改代码、不改验收层级 |
+| 二审 Critical(我上一轮裁定引入) | I1 的修法用 `toLowerCase()` 折叠两侧路径。JS 的折叠比 NTFS 的 upcase 表激进:`<base>/Kappa`(ASCII K)与 `<base>/Kappa`(KELVIN SIGN)在 NTFS 上是**两个真实不同的目录**,折叠后却相等 → 守卫 **allow 了向项目外的写入**,已实际写出文件复现。修前代码 deny,即这一"修复"打开了容纳面上唯一的逃逸 | 弃用折叠,改为**真实大小写归一**:fs seam 的 `realpathSync` 换成 `fs.realpathSync.native`(实测返回磁盘真实大小写、能区分 KELVIN、缺失路径仍抛 ENOENT),`normalize()` 从 receipt 导出给 adapter 共用,两侧同源后**大小写敏感**比较。既堵住误放行,又比原方案更彻底地解决 I1(不止盘符,任意大小写不符的路径都归一),且不像 ASCII-only 折叠那样在 `Ét`/`ét`(NTFS 确实合并)上误拒。已验证 8 个既有 receipt 的 `projectRoot` 身份不受 seam 变更影响 |
+| 二审 Important / Minor(4 项) | `reconcile` 的 focus 漂移持久化无回归锁;degraded verdict 的 `state` 字段无断言(会让 `takeover-degraded` capsule 却声称 `receipt: valid`);`const tool = input.tool_name` 落在 try 之外 —— 该读若抛错会逃到 `main` 的通用路径,而 PreToolUse 无 `permissionDecision` 即等于放行;fold 的平台分支在 POSIX 上无有效断言 | 逐条补齐:漂移持久化 + 只读变体不写 的成对断言;degraded `state` 断言;`tool_name` 读入 try 内并加抛错 getter 用例;POSIX 上建大小写差异兄弟目录断言 deny(win32 因 NTFS 合并而显式 skip) |
 | 覆盖缺口(9 个存活变异体) | `Edit` 零覆盖;外层 `try/catch`(计划自己点名的 fail-open 防线)实际被内层 catch 抢先,从未被触达;两个 health gate 互相遮蔽,其中「health gate」断言实际由 `focus.text` 的空指针意外满足;PreToolUse 的 exit-0 契约无断言;`+ '/'` 兄弟前缀逃逸无用例;不变量 6 只测了 UserPromptSubmit;空串/相对路径无用例 | 逐条补断言,并对每个变异体验证「先失败、修复后通过」。变异→断言映射记入实现报告 |
 
