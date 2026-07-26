@@ -90,35 +90,29 @@ status: draft
 
 ---
 
-## 计划阶段发现:一处**真实行为差异**,请在计划复审中裁定
+## 已裁定的行为变更(实施计划复审,设计 §6.2.1)
 
-设计 §6.2 说两处 lstat 语义「结论一致(都 fail-closed),但机制与错误文案不同」。
-逐行核对后,**有一个输入下结论并不一致**:
+计划阶段核对源码时发现设计 §6.2 初稿的「两者结论一致」被证伪:对**非 ENOENT 的 lstat 错误**
+(`EACCES` / `EPERM` / `EIO` …),`takeover-install.js:222-231` 会**吞掉**该错误、
+当作"还没建的文件"继续向上走,而 receipt 的 `pathEntryInfo` 一律抛出。
+即 installer 存在既有的 fail-open-ish 漂移。
+
+**复审裁定:采纳更严的一侧。**
 
 ```text
-场景:走到某一级祖先时 lstat 抛的不是 ENOENT,而是 EACCES / EPERM(不可读的祖先目录)
-
-installer 现状(takeover-install.js:222-231)
-    existsSync(existing) → false（无权限时也返回 false）
-    try { lstatSync(existing); dangling = true } catch (_) { dangling = false }   ← EACCES 被【吞掉】
-    → 当作"还没建的文件",继续向上走,可能最终成功返回一个路径
-
-receipt 现状(takeover-receipt.js:59-67，pathEntryInfo)
-    非 ENOENT 一律 throw          ← "权限等异常不得当成不存在"
-    → 守卫 deny
+installer 遇到非 ENOENT 的 lstat 错误 → 立即 fail-closed，不得继续上溯
+onStatError: 'treat-as-missing'        → NOT ALLOWED（不给原语加宽松模式开关）
 ```
 
-统一到 receipt 的纯 lstat 语义后,installer 在这个输入下会从「继续走并可能成功」变成「抛错」。
-**这是行为变更,不只是文案变更**,超出了「不漂移」的字面授权,因此不自行决定。
+因此 Task 3 **不能**再声称「行为与文案全部不变」,正确表述是:
 
-**建议采纳更严的一侧(即变更 installer 行为)**,理由:静默走过一个读不了的祖先,正是
-R7 复审 P0-1 在守卫侧修掉的同一类缺陷;而 installer 的写入对象是 `.claude/settings.json`,
-在不可读祖先下继续推进只会把失败推迟到更难诊断的位置。
+```text
+既有【成功路径】与既有【错误路径文案】保持不变；
+唯一批准的行为变化是：非 ENOENT 的 lstat 错误由"继续上溯"改为 fail-closed。
+```
 
-**若复审裁定必须保持 installer 现状**,则原语需要一个显式开关(如
-`resolvePhysicalPath(target, fsOps, { onStatError: 'throw' | 'treat-as-missing' })`),
-由 installer 传 `'treat-as-missing'`。Task 1 与 Task 3 的代码需按裁定调整。
-**在裁定前不要开始编码。**
+该变化必须有**前后两态证据**:Task 2 先 characterize 旧行为(吞掉并上溯),
+Task 3 再按裁定把该条期望值翻转成 fail-closed。三条既有失败文案测试**不得**随之改动。
 
 ---
 
@@ -136,6 +130,10 @@ R7 复审 P0-1 在守卫侧修掉的同一类缺陷;而 installer 的写入对�
   templates/cli/template-manifest.js            登记新模块
   templates/cli/test/governance.js              新增 2 个套件 + 扩充 3 个既有套件
   README.md / README_EN.md                      项目外 deny 表述同步
+
+治理产物（Task 9 才写，且必须一并提交）
+  .evo-lite/active_context.md
+  .evo-lite/raw_memory/ · .evo-lite/generated/
 
 镜像（由 sync-runtime 生成，不手改）
   .evo-lite/cli/*
@@ -209,11 +207,38 @@ R7 复审 P0-1 在守卫侧修掉的同一类缺陷;而 installer 的写入对�
                 realpathSync: () => { throw linkErr; },
             }), (e) => e.code === pp.PATH_CODES.REALPATH_FAILED, 'non-link realpath failure must be REALPATH_FAILED');
 
+            // 6b. symlink 的 realpath 失败【不都是断链】：EACCES/EPERM/ELOOP/EIO 都可能。
+            //     全部归为 BROKEN_LINK 会让 installer 对一个仅仅权限不足的链接输出误导性文案。
+            for (const code of ['EACCES', 'EPERM', 'ELOOP']) {
+                assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'lnk'), {
+                    lstatSync: () => ({ isSymbolicLink: () => true }),
+                    realpathSync: () => { throw Object.assign(new Error(code), { code }); },
+                }), (e) => e.code === pp.PATH_CODES.REALPATH_FAILED,
+                    `a symlink failing realpath with ${code} is not a broken link`);
+            }
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'lnk'), {
+                lstatSync: () => ({ isSymbolicLink: () => true }),
+                realpathSync: () => { throw Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' }); },
+            }), (e) => e.code === pp.PATH_CODES.BROKEN_LINK, 'ENOTDIR on a symlink is still a broken link');
+
             // 7. 一路 ENOENT 到根 → NO_EXISTING_ANCESTOR
             assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'a', 'b'), {
                 lstatSync: () => { throw Object.assign(new Error('nope'), { code: 'ENOENT' }); },
                 realpathSync: () => { throw new Error('unreachable'); },
             }), (e) => e.code === pp.PATH_CODES.NO_EXISTING_ANCESTOR, 'exhausting the walk must be NO_EXISTING_ANCESTOR');
+
+            // 7b.【承重】程序缺陷必须在原语层就【原样冒泡】，不得被包装成 coded path error。
+            //     否则它会一路降级成 deriveHostOwnedWriteRoots 的 {ok:false}，缺陷被静默吞掉。
+            //     lstat 与 realpath 两侧都要有，缺一侧就漏一条通路。
+            const defect = new TypeError('genuine defect: x is not a function');
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'd1'), {
+                lstatSync: () => { throw defect; },
+                realpathSync: () => { throw new Error('unreachable'); },
+            }), (e) => e === defect, 'a code-less lstat error is a programming defect and must bubble unwrapped');
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'd2'), {
+                lstatSync: () => ({ isSymbolicLink: () => false }),
+                realpathSync: () => { throw defect; },
+            }), (e) => e === defect, 'a code-less realpath error must bubble unwrapped too');
 
             // 8. 承重:模块必须是 dependency-neutral，且不得持有模块级可变 fs seam。
             //    这两条是 §6.1 的全部意义 —— 没有它们，"共用原语"会把 installer 绑进 receipt 的全局 seam。
@@ -285,9 +310,14 @@ function resolvePhysicalPath(target, fsOps) {
         try {
             st = fsOps.lstatSync(probe);
         } catch (e) {
-            if (!e || e.code !== 'ENOENT') {
+            // 只有【真实 fs 错误】才包装成 coded path error。没有字符串 code 的异常是程序缺陷
+            // （典型是 TypeError），必须原样冒泡 —— 一旦被包装，下游会把它当成正常的路径不可用
+            // 而降级成 {ok:false}，缺陷就被静默吞掉了。
+            if (!e || typeof e.code !== 'string') throw e;
+            if (e.code !== 'ENOENT') {
                 // 权限等异常不得当成"不存在" —— 那会让调用方退到一个它本无权判定的祖先。
-                throw pathError(PATH_CODES.STAT_FAILED, `cannot stat ${probe} (${e && e.message})`,
+                // 已裁定：installer 也统一到这一侧（设计 §6.2.1），不提供 treat-as-missing 模式。
+                throw pathError(PATH_CODES.STAT_FAILED, `cannot stat ${probe} (${e.message})`,
                     { target: probe, probe, cause: e });
             }
             const parent = path.dirname(probe);
@@ -303,9 +333,13 @@ function resolvePhysicalPath(target, fsOps) {
         try {
             physical = fsOps.realpathSync(probe);
         } catch (e) {
+            if (!e || typeof e.code !== 'string') throw e;   // 同上：程序缺陷原样冒泡
             // 断链与一般解析失败必须分得开：installer 对断链有专门文案，守卫对两者用同一条。
-            throw pathError(st && st.isSymbolicLink() ? PATH_CODES.BROKEN_LINK : PATH_CODES.REALPATH_FAILED,
-                `cannot resolve ${probe} (${e && e.message})`, { target: probe, probe, cause: e });
+            // 但 symlink 的 realpath 失败【不都是断链】—— EACCES/EPERM/ELOOP/EIO 只是解析不了，
+            // 全归为 BROKEN_LINK 会让 installer 对一个权限不足的链接输出误导性文案。
+            const dangling = st && st.isSymbolicLink() && (e.code === 'ENOENT' || e.code === 'ENOTDIR');
+            throw pathError(dangling ? PATH_CODES.BROKEN_LINK : PATH_CODES.REALPATH_FAILED,
+                `cannot resolve ${probe} (${e.message})`, { target: probe, probe, cause: e });
         }
         return tail.length ? path.join(physical, ...tail) : physical;
     }
@@ -326,9 +360,12 @@ Expected: `✅ T-takeover-physical-path passed`,全套 EXIT 0
 | 变异 | 必须被杀于 |
 |---|---|
 | `return tail.length ? path.join(physical, ...tail) : physical` → `return physical` | 用例 2 |
-| `if (!e \|\| e.code !== 'ENOENT')` → 删除该分支(全部当作不存在) | 用例 4 |
-| `st && st.isSymbolicLink() ? BROKEN_LINK : REALPATH_FAILED` → 恒为 `REALPATH_FAILED` | 用例 5 |
+| `if (e.code !== 'ENOENT')` → 删除该分支(全部当作不存在) | 用例 4 |
+| `dangling ? BROKEN_LINK : REALPATH_FAILED` → 恒为 `REALPATH_FAILED` | 用例 5 |
+| `dangling` 去掉 `e.code === 'ENOENT' \|\| e.code === 'ENOTDIR'` 收窄条件 | 用例 6b 的三条 |
 | 删除 `NOT_ABSOLUTE` 前置检查 | 用例 3 |
+| 删除 lstat 侧的 `typeof e.code !== 'string'` 冒泡 | 用例 7b 第一条 |
+| 删除 realpath 侧的 `typeof e.code !== 'string'` 冒泡 | 用例 7b 第二条 |
 
 - [ ] **Step 6: 登记到 manifest**
 
@@ -374,29 +411,70 @@ git commit -m "feat(takeover): add dependency-neutral resolvePhysicalPath primit
                 const realRoot = fs.realpathSync(projectRoot);
                 const settings = path.join(realRoot, '.claude', 'settings.json');
                 const enoent = () => Object.assign(new Error('no entry'), { code: 'ENOENT' });
+                // 逐字比较，不用宽正则：宽正则会让"错误映射到了别的分支"照样绿。
+                const exactly = (text) => (e) => { assert.strictEqual(e.message, text); return true; };
 
-                // (1) 断链 symlink：existsSync=false + lstat 成功 → 专属文案
+                // (1) 断链 symlink：lstat 成功且是链接 → 专属文案
                 assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
-                    existsSync: (p) => p === projectRoot,
+                    existsSync: () => false,
                     lstatSync: () => ({ isSymbolicLink: () => true }),
-                    realpathSync: (p) => { if (p === projectRoot) return realRoot; throw enoent(); },
-                }), /is a broken link; refusing to touch settings/,
+                    // 两个都要认：macOS 上 mkdtemp 给 /var/…，realpath 给 /private/var/…
+                    realpathSync: (p) => { if (p === projectRoot || p === realRoot) return realRoot; throw enoent(); },
+                }), exactly(`takeover: ${settings} is a broken link; refusing to touch settings`),
                     'broken-link message is part of the installer contract');
 
-                // (2) 走到根仍无存在条目 → 专属文案
+                // (2) 一路 ENOENT 走到文件系统根 → 专属文案。
+                //     existsSync 必须【恒 false】：若写成 (p) => p === projectRoot，循环会在
+                //     projectRoot 处 break 并成功回拼，根本进不了 no-existing-ancestor 分支。
                 assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
-                    existsSync: (p) => p === projectRoot,
+                    existsSync: () => false,
                     lstatSync: () => { throw enoent(); },
-                    realpathSync: (p) => { if (p === projectRoot) return realRoot; throw enoent(); },
-                }), /no existing ancestor for/, 'no-existing-ancestor message is part of the installer contract');
+                    // 两个都要认：macOS 上 mkdtemp 给 /var/…，realpath 给 /private/var/…
+                    realpathSync: (p) => { if (p === projectRoot || p === realRoot) return realRoot; throw enoent(); },
+                }), exactly(`takeover: no existing ancestor for ${settings}`),
+                    'no-existing-ancestor message is part of the installer contract');
 
-                // (3) projectRoot 自身无法 realpath → realpathOrThrow 的文案
+                // (3) 【Task 3 要替换的那个分支】：projectRoot 解析成功、settings 是普通条目、
+                //     但它自身 realpath 失败。若写成"projectRoot 自己 realpath 失败"，覆盖的是函数
+                //     开头的 realpathOrThrow(projectRoot)，而不是最近存在祖先的解析 —— Task 3 即使
+                //     把 REALPATH_FAILED 映射错，那种写法仍会绿。
                 assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
                     existsSync: () => true,
                     lstatSync: () => ({ isSymbolicLink: () => false }),
-                    realpathSync: () => { throw Object.assign(new Error('boom'), { code: 'EACCES' }); },
-                }), /cannot resolve .*; refusing to touch settings/,
-                    'realpathOrThrow message is part of the installer contract');
+                    realpathSync: (p) => {
+                        if (p === projectRoot || p === realRoot) return realRoot;
+                        throw Object.assign(new Error('boom'), { code: 'EACCES' });
+                    },
+                }), exactly(`takeover: cannot resolve ${settings} (boom); refusing to touch settings`),
+                    'ancestor-realpath-failure message is part of the installer contract');
+
+                // (4) 【legacy characterization —— 记录的是【当前】行为，不是目标行为】
+                //     非 ENOENT 的 lstat 错误目前被【吞掉】，循环继续上溯，最终成功返回受管路径。
+                //     设计 §6.2.1 已裁定这是 fail-open-ish 漂移，Task 3 会把本条期望值翻转。
+                //     先把旧行为钉在这里，才谈得上"前后两态证据"。
+                {
+                    const claudeDir = path.join(realRoot, '.claude');
+                    const unexpected = () => Object.assign(new Error('unexpected probe'), { code: 'ENOENT' });
+                    let statCalls = 0;
+                    // 只让 settings 这一级"看起来不存在"且 lstat 抛 EACCES；它的父目录正常存在。
+                    // 于是循环把这一级当成"还没建的文件"跳过，从父目录成功回拼 —— 这就是漂移本身。
+                    const got = inst.resolveManagedSettingsPath(projectRoot, settings, {
+                        existsSync: (p) => p !== settings,
+                        lstatSync: (p) => {
+                            if (p !== settings) throw unexpected();
+                            statCalls += 1;
+                            throw Object.assign(new Error('denied'), { code: 'EACCES' });
+                        },
+                        realpathSync: (p) => {
+                            if (p === projectRoot) return realRoot;
+                            if (p === claudeDir) return claudeDir;
+                            throw unexpected();
+                        },
+                    });
+                    assert.strictEqual(statCalls, 1, 'the EACCES branch must actually have been exercised');
+                    assert.strictEqual(got, settings,
+                        'LEGACY: a non-ENOENT lstat error is currently swallowed and the walk continues (see §6.2.1)');
+                }
 
                 fs.rmSync(projectRoot, { recursive: true, force: true });
             }
@@ -462,20 +540,59 @@ const { resolvePhysicalPath, PATH_CODES } = require('./takeover-physical-path');
         if (e && e.code === PATH_CODES.NO_EXISTING_ANCESTOR) {
             throw new Error(`takeover: no existing ancestor for ${abs}`);
         }
-        if (e && (e.code === PATH_CODES.REALPATH_FAILED || e.code === PATH_CODES.STAT_FAILED)) {
-            throw new Error(`takeover: cannot resolve ${e.probe} (${e.cause && e.cause.message}); refusing to touch settings`);
+        if (e && e.code === PATH_CODES.REALPATH_FAILED) {
+            throw new Error(`takeover: cannot resolve ${e.probe} (${e.cause.message}); refusing to touch settings`);
+        }
+        // 已批准的行为收紧（§6.2.1）：非 ENOENT 的 lstat 错误不再被吞掉。
+        // 文案用 "cannot stat" 而非 "cannot resolve" —— 二者是不同的失败事实，
+        // 混成一条会让运维看不出到底是"读不到条目"还是"解析不出物理路径"。
+        if (e && e.code === PATH_CODES.STAT_FAILED) {
+            throw new Error(`takeover: cannot stat ${e.probe} (${e.cause.message}); refusing to touch settings`);
         }
         throw e;
     }
     const target = normPath(physical);
 ```
 
-- [ ] **Step 3: 跑测试 —— Task 2 的三条文案断言与 `T-takeover-installer` 全套必须原样通过**
+- [ ] **Step 3: 翻转 legacy characterization(唯一批准的行为变化)**
+
+Task 2 case (4) 记录的是**旧**行为。按设计 §6.2.1 的裁定,把它改成新契约 ——
+**只改这一条**,同一 fsOps 构造原样保留:
+
+```javascript
+                {
+                    const claudeDir = path.join(realRoot, '.claude');
+                    const unexpected = () => Object.assign(new Error('unexpected probe'), { code: 'ENOENT' });
+                    let statCalls = 0;
+                    // §6.2.1 批准的收紧：非 ENOENT 的 lstat 错误不再被当成"不存在"继续上溯。
+                    // "不存在"与"无法证明存在状态"是两个不同事实；后者已经失去构造物理路径证明的能力。
+                    assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
+                        existsSync: (p) => p !== settings,
+                        lstatSync: (p) => {
+                            if (p !== settings) throw unexpected();
+                            statCalls += 1;
+                            throw Object.assign(new Error('denied'), { code: 'EACCES' });
+                        },
+                        realpathSync: (p) => {
+                            if (p === projectRoot) return realRoot;
+                            if (p === claudeDir) return claudeDir;
+                            throw unexpected();
+                        },
+                    }), exactly(`takeover: cannot stat ${settings} (denied); refusing to touch settings`),
+                        'a non-ENOENT lstat error must now fail closed (§6.2.1), not be swallowed');
+                    assert.strictEqual(statCalls, 1, 'and the EACCES branch must still be the one exercised');
+                }
+```
+
+- [ ] **Step 4: 跑测试 —— 三条既有文案断言与 `T-takeover-installer` 全套必须原样通过**
 
 Run: `node templates/cli/test.js governance`
-Expected: `✅ T-takeover-installer passed`,**一条不改**
+Expected: `✅ T-takeover-installer passed`。
 
-- [ ] **Step 4: 承重 —— 确认 installer 与 receipt 的依赖方向没有反向**
+**Task 2 的 (1)(2)(3) 三条逐字文案断言不得有任何改动。** 若它们中的任何一条需要修改才能通过,
+说明映射写错了 —— 停止并报告,不要改断言去迎合实现。允许改变期望值的**只有** case (4) 这一条。
+
+- [ ] **Step 5: 承重 —— 确认 installer 与 receipt 的依赖方向没有反向**
 
 在 `T-takeover-installer` 末尾追加:
 
@@ -491,11 +608,14 @@ Expected: `✅ T-takeover-installer passed`,**一条不改**
             }
 ```
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
 git add templates/cli/takeover-install.js templates/cli/test/governance.js
-git commit -m "refactor(takeover): route installer path resolution through the shared primitive"
+git commit -m "refactor(takeover): route installer path resolution through the shared primitive
+
+Includes the one approved behaviour change (design 6.2.1): a non-ENOENT lstat
+error now fails closed instead of being swallowed and walked past."
 ```
 
 ---
@@ -701,10 +821,10 @@ deriveHostOwnedWriteRoots()  捕获【预期的 coded path errors】→ {ok:fals
         console.log('✅ T-takeover-host-owned-roots passed');
 ```
 
-> 注意用例 5 的第二段:`lstatSync` 抛 `TypeError` 且无 `code` —— 原语会把它包成
-> `STAT_FAILED`(带 `cause`)。因此**实现必须只捕获带已知 `PATH_CODES` 的错误,
-> 并在 `STAT_FAILED` 的 `cause` 不是 Node fs 错误(无 `code` 属性)时重新抛出**。
-> 没有这条区分,用例 5 第二段会失败 —— 这正是它存在的意义。
+> 用例 5 第二段的 `TypeError` 由 `pathEntryInfo` 直接抛出(它只把 `ENOENT` 转成
+> `exists:false`,其余原样抛),再经 derive 的 `typeof e.code !== 'string'` 判别冒泡。
+> 而经由 `resolvePhysical` 的那条通路,程序缺陷在**原语内部**就已原样抛出(设计 §6.4,
+> Task 1 用例 7b),所以 derive 侧不需要再做第二次判别 —— 边界只放一处,不重复。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -752,10 +872,9 @@ function deriveHostOwnedWriteRoots(hookInput) {
     try {
         physical = resolvePhysical(stateRoot);
     } catch (e) {
-        // 预期内的路径错误 → 不启用例外。真正的程序缺陷仍须冒泡，否则会掩盖 bug。
-        const expected = e && HOST_PATH_CODES.has(e.code)
-            && (e.code !== PATH_CODES.STAT_FAILED || (e.cause && typeof e.cause.code === 'string'));
-        if (!expected) throw e;
+        // 预期内的路径错误 → 不启用例外。程序缺陷不会走到这里 —— 原语已在自身层面把
+        // 无 code 的异常原样抛出（设计 §6.4），所以这里只需认已知的 PATH_CODES。
+        if (!e || !HOST_PATH_CODES.has(e.code)) throw e;
         return fail(`cannot resolve host project state root (${(e.cause && e.cause.code) || e.code})`);
     }
     // 允许根只能是 memory 这一层。project-state root 是派生的中间量，永不直接参与包含判定 ——
@@ -778,8 +897,8 @@ Expected: `✅ T-takeover-host-owned-roots passed`
 | `roots: [normalize(physical) + '/memory']` → `[normalize(physical)]` | 用例 1 |
 | 删除 `path.isAbsolute(tp)` 检查 | 用例 2「relative path」 |
 | 删除 `if (!info.exists) return fail(...)` | 用例 2「nonexistent state root」 |
-| `if (!e \|\| typeof e.code !== 'string') throw e;` → 恒不抛(全部吞掉) | 用例 5 第二段 |
-| `if (!expected) throw e;` → 恒不抛 | 用例 5 第二段(经 `resolvePhysical` 分支时) |
+| `if (!e \|\| typeof e.code !== 'string') throw e;`(`pathEntryInfo` 侧)→ 恒不抛 | 用例 5 第二段 |
+| `if (!e \|\| !HOST_PATH_CODES.has(e.code)) throw e;` → 恒不抛 | Task 1 用例 7b(缺陷不再冒泡至此) |
 | `resolvePhysical(stateRoot)` → `resolvePhysical(path.join(stateRoot,'memory'))` | 用例 1 |
 
 - [ ] **Step 6: 提交**
@@ -870,6 +989,30 @@ git commit -m "feat(takeover): derive the host-owned memory write root from the 
             assert.ok(/takeover required/.test(noReceipt.permissionDecisionReason),
                 'and it must deny via the receipt gate, not via the target-path gate');
 
+            // ── 承重：owned.ok 真的被消费，且派生函数真的被调用 ──
+            // 上面那些畸形 transcript_path 用例【杀不掉】删除 owned.ok 的变异体：失败契约返回
+            // roots: []，而 [].some(...) 本来就是 false，deny 照样成立。必须注入一个
+            // 【ok:false 但 roots 非空】的返回值，才能把这两件事分开证明。
+            {
+                const injectedRoot = rc.normalize(fs.realpathSync(stateA)) + '/memory';
+                const original = rc.deriveHostOwnedWriteRoots;
+                let calls = 0;
+                rc.deriveHostOwnedWriteRoots = () => {
+                    calls += 1;
+                    return { ok: false, reason: 'forced-failure', roots: [injectedRoot] };
+                };
+                try {
+                    assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md')), 'deny',
+                        'ok:false must veto the exception even when roots is non-empty');
+                    assert.strictEqual(calls, 1, 'the derivation must actually be consumed, exactly once per decision');
+                } finally {
+                    rc.deriveHostOwnedWriteRoots = original;
+                }
+                // 复原后同一目标必须重新放行 —— 证明上面的 deny 出自注入，而不是别的门。
+                assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md')), 'allow',
+                    'and it must allow again once the injection is removed');
+            }
+
             // memory 内的 symlink 指向项目外 —— 能力探测，不可用则跳过（既有惯例）
             {
                 const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-outside-'));
@@ -959,7 +1102,8 @@ Expected: EXIT 0,含 `✅ T-takeover-memory-root passed`,且**既有 ATTP 套件
 | 变异 | 必须被杀于 |
 |---|---|
 | `cp.startsWith(r + '/')` → `cp.startsWith(r)` | `memoryX` 与前缀兄弟 `stateB` 两条 |
-| `owned.ok &&` → 删除(不检查 ok) | 三条 transcript_path 畸形断言 |
+| `owned.ok &&` → 删除(不检查 ok) | **注入 seam 用例**(三条畸形锚点断言杀不掉它 —— 失败契约的 `roots` 本就是 `[]`) |
+| 删除整句 `const owned = …; if (…) return ptu('allow');` | 注入 seam 的 `calls === 1`,以及全部 allow 用例 |
 | 把例外提到 receipt 门之前 | `no receipt → deny` 的 `takeover required` 文案断言 |
 | `r + '/'` → `r + path.sep` | Windows 上所有 memory 子文件断言(POSIX 上不变,须在 win32 复核) |
 
@@ -1029,19 +1173,27 @@ git commit -m "docs(takeover): document the narrow host-memory write exception; 
 
 ---
 
-### Task 8: 双会话真实记忆终局验收 + 收口
+### Task 8: 双会话真实记忆终局验收(**只产出证据,不做治理闭环**)
 
 自动化回归证明不了「宿主的持久记忆功能真的恢复了」—— 它只能证明文件系统上出现了一个文件。
 本任务是设计 §8.1 冻结的终局门。
 
+**执行者不得同时是实现者与最终验收者。** 本任务在写完证据、跑完收口门后**停止**,
+等待独立复审;`spec → done`、`plan → done`、`mem archive`、backlog 关闭、
+`[attp-hive-rollout]` 解阻,一律留到复审 ACCEPTED 之后**另行授权**(见 Task 9)。
+
 **Files:**
 - Create: `docs/validation/attp-guard-allowlist-acceptance.md`
-- Modify: `docs/specs/attp-host-owned-write-roots.md`(status)、本计划(勾选)
+- **不改** `docs/specs/*` 的 status,**不改** backlog,**不跑** `mem archive`
 
 - [ ] **Step 1: 准备 disposable project-state**
 
-新建一个一次性项目目录并从其**根**启动,使其对应的宿主 project-state 的 `memory/`
-**初始不存在**。记录:项目根、派生出的 state root、`memory/` 不存在的证据。
+```text
+- 在唯一命名的临时路径下建立一个 disposable 的本地项目副本 / worktree
+  （这是【母仓实现验收】，不是 child-repo rollout —— 不得借机在子仓安装 ATTP）
+- 从其【根】启动，使其对应的宿主 project-state 的 memory/ 初始【不存在】
+- 记录三项：项目根、派生出的 state root、memory/ 不存在的证据
+```
 
 - [ ] **Step 2: Session A**
 
@@ -1062,6 +1214,9 @@ git commit -m "docs(takeover): document the narrow host-memory write exception; 
 2. 从同一 canonical project root 启动
 3. 证明该唯一 marker 被宿主【正常的跨会话记忆机制】消费
 4. 不得靠直接给绝对路径、或用 Bash 读文件来冒充成功
+5. 【承重】Session B 在返回 marker 之前，不得对 memory 目录发生任何
+   Read / Glob / Grep / Bash —— 一旦发生，证明的就是"我能读到那个文件"，
+   而不是"宿主把它当作记忆喂了进来"。工具调用记录须一并留证。
 ```
 
 - [ ] **Step 4: 补一次 `memory/` 已存在的普通路径写入**
@@ -1090,38 +1245,81 @@ node .evo-lite/cli/memory.js takeover status   # 三事件在位
 node .evo-lite/cli/memory.js verify
 ```
 
-- [ ] **Step 7: 治理闭环**
+- [ ] **Step 7: 精确清理测试宿主状态**
 
-把 `docs/specs/attp-host-owned-write-roots.md` 的 `status` 置为 `done`,勾选本计划全部步骤,
-并用 `mem archive` 记录任务证据(evidence 需带**完整** task id `task:attp-host-owned-write-roots-tN`,
-裸 `tN` 会静默失败)。
+```text
+- 删除临时项目目录（完整精确路径）
+- 删除它对应的宿主 project-state 目录（完整精确路径）
+- 【禁止通配符】—— slug 由完整路径派生，D--…-evo-lite* 这类模式会命中 worktree 与
+  单破折号兄弟目录（本机已有两个真实实例，见设计 §5）
+- 删除前逐条确认：目标不是母仓 project-state root
+- 删除后逐条确认：母仓 project-state 与母仓 memory 仍然存在、文件数不变
+- 不创建可复用的清理脚本
+```
 
-- [ ] **Step 8: 解阻 `[attp-hive-rollout]`**
-
-在 backlog 中把 `[attp-guard-allowlist]` 关闭,并把 `[attp-hive-rollout]` 的阻塞标记移除。
-**子仓分发本身不在本计划范围内,须单独授权。**
-
-- [ ] **Step 9: 提交**
+- [ ] **Step 8: 提交证据并停止**
 
 ```bash
-git add docs/
+git add docs/validation/attp-guard-allowlist-acceptance.md
 git commit -m "docs(validation): two-session acceptance for the host-owned memory write root"
 ```
 
+**停在这里,等待独立复审。** 不改 spec status、不改 plan status、不跑 `mem archive`、
+不动 backlog、不解阻 `[attp-hive-rollout]`。
+
 ---
 
-## 停止点
+### Task 9: 治理闭环(**复审 ACCEPTED 后另行授权,不得随 Task 8 一并执行**)
 
-**本计划完成后停在计划复审,不得直接开始编码。**
+**Files:**
+- Modify: `docs/specs/attp-host-owned-write-roots.md`(`status: done`)、本计划(`status: done` + 勾选)
+- Modify(治理产物): `.evo-lite/active_context.md`、`.evo-lite/raw_memory/`、`.evo-lite/generated/`
 
-另有一处需要在复审中裁定的事项,见文首《计划阶段发现:一处真实行为差异》——
-在裁定前 Task 1 与 Task 3 的代码不得落地。
+- [ ] **Step 1: 归档任务证据**
+
+`mem archive` 记录各任务证据。evidence 必须带**完整** task id
+`task:attp-host-owned-write-roots-tN` —— 裸 `tN` 会**静默**失败(R008 会因此清不掉)。
+
+- [ ] **Step 2: 状态收口**
+
+spec `status: done`;plan `status: done` 并勾选全部步骤;确认 R006 / R008 / R011 归零。
+
+- [ ] **Step 3: 关闭 backlog 并解阻**
+
+关闭 `[attp-guard-allowlist]`,移除 `[attp-hive-rollout]` 的阻塞标记。
+**子仓分发本身仍不在授权范围内,须单独授权。**
+
+- [ ] **Step 4: 提交(范围必须含治理产物)**
+
+```bash
+git add docs/ .evo-lite/active_context.md .evo-lite/raw_memory/ .evo-lite/generated/
+git commit -m "chore(governance): close attp-host-owned-write-roots; unblock attp-hive-rollout"
+```
+
+`git add docs/` **不够** —— `mem archive` 与 backlog 关闭写的是 `.evo-lite/` 下的
+运行时状态与档案,只提交 `docs/` 会让盘上状态与仓库记录脱节。
+
+---
+
+## 停止点(两处,均为硬停)
+
+```text
+① 本计划完成后 → 停在计划复审，不得直接开始编码
+② Task 8 完成后 → 停在验收复审，Task 9 需另行授权
+```
+
+②是承重的:执行者不得同时是实现者与最终验收者。Task 8 只产出证据,
+`spec → done` / `plan → done` / `mem archive` / backlog 关闭 / `[attp-hive-rollout]` 解阻
+全部在 Task 9,须复审 ACCEPTED 后另行授权。
 
 ## 尚未授权
 
 ```text
-Production implementation / tests   NOT YET AUTHORIZED
-Installer refactor                  NOT YET AUTHORIZED
+Task 1 implementation               NOT YET AUTHORIZED
+Task 2 tests                        NOT YET AUTHORIZED
+Task 3 installer refactor           NOT AUTHORIZED
+Production implementation / tests   NOT AUTHORIZED
+Task 9 governance closure           NOT AUTHORIZED
 Child-repo distribution             NOT AUTHORIZED
 Hive nurture                        BLOCKED / NOT AUTHORIZED
 ATTP MVP                            REMAINS CLOSED（本计划不重开）

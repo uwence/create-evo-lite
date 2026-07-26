@@ -189,8 +189,40 @@ installer 的循环        existsSync 先行(跟随链接,断链返回 false),
                         再用 lstat 补判 dangling,抛 "is a broken link; refusing to touch settings"
 ```
 
-两者**结论一致(都 fail-closed)**,但机制与错误文案不同。原语只能保留一种,
-取 receipt 的纯 lstat 语义(更简单、且严格不弱)。
+原语只能保留一种,取 receipt 的纯 lstat 语义(更简单、且严格不弱)。
+
+#### §6.2.1 勘误(计划阶段源码核对,推翻本节初稿的「结论一致」表述)
+
+本节初稿写的是「两者结论一致(都 fail-closed),但机制与错误文案不同」。
+逐行核对 `takeover-install.js:222-231` 后,**该表述被证伪**:
+
+```text
+在 ENOENT、断链 symlink、普通 realpath 失败三种输入下,两者确实都 fail-closed。
+
+但对【非 ENOENT 的 lstat 错误】(EACCES / EPERM / EIO / …):
+    installer  existsSync → false（无权限时也返回 false）
+               try { lstatSync(...) } catch (_) { dangling = false }   ← 错误被【吞掉】
+               → 当作"还没建的文件"继续向上走,可能最终成功返回一个路径
+    receipt    非 ENOENT 一律 throw（"权限等异常不得当成不存在"）
+```
+
+即 installer 在这一类输入下存在既有的 **fail-open-ish 漂移**。
+
+**裁定(实施计划复审):统一采用 receipt 的严格语义。**
+
+```text
+installer 遇到非 ENOENT 的 lstat 错误 → 立即 fail-closed,不得当作路径不存在继续上溯
+onStatError: 'treat-as-missing'        → NOT ALLOWED（不给原语加宽松模式开关）
+```
+
+理由:「不存在」与「无法证明存在状态」是两个不同事实;`EACCES`/`EPERM` 下已经失去了
+构造物理路径证明的能力,继续上溯等于用一个更远的祖先替代不可验证的路径段;而 installer
+的写入对象是 `.claude/settings.json`,不应在路径证明不完整时继续。给原语加模式开关会让它
+同时承载安全与宽松两套语义,削弱它作为单一物理路径原语的价值。
+
+**这是一次经复审授权的 installer 安全收紧,不属于 verdict-preserving 范围。**
+§6 的 verdict-preserving 要求继续适用于:正常项目路径、ENOENT 尾部、symlink / junction、
+以及既有的各条失败分支;**唯独不适用于**这一个已明确批准修正的 `STAT_FAILED` 场景。
 
 由此产生一条硬约束:**installer 的既有错误文案契约不得漂移。** 实现上,原语抛带
 `code` 的错误(如 `ATTP_NO_EXISTING_ANCESTOR` / `ATTP_UNRESOLVABLE`),installer 捕获后
@@ -206,10 +238,34 @@ installer 的循环        existsSync 先行(跟随链接,断链返回 false),
 允许重构 installer 改用中性原语,但同时满足:
 
 ```text
-- installer 既有行为与错误文案契约不漂移(见 §6.2,须新增文案断言)
+- installer 既有【成功路径】与既有【错误路径文案】不漂移（见 §6.2，须新增逐字文案断言）
+- 唯一批准的行为变化：非 ENOENT 的 lstat 错误由"继续上溯"改为 fail-closed（§6.2.1）
+  该变化必须有前后两态证据：先 characterize 旧行为，再按裁定翻转期望值
 - Gate 1 相关测试(T-takeover-installer 全套)原样通过,一条不改
 - templates/cli/ 与 .evo-lite/cli/ 镜像一致:sync-runtime 连续两次 copied: 0
 ```
+
+### §6.4 原语的异常边界:只包装真实 fs 错误
+
+原语对 `lstatSync` / `realpathSync` 的异常**都**必须先判别:
+
+```text
+typeof e.code !== 'string'  → 原样抛出（这是程序缺陷，不是路径问题）
+否则                        → 包装成带 code 的 path error
+```
+
+否则一个来自 fs 层的编程错误(如 `TypeError`)会被包装成 `REALPATH_FAILED`,
+再被 `deriveHostOwnedWriteRoots` 当作正常的锚点不可用降级成 `{ok:false}` —— 缺陷被静默吞掉。
+把这条边界放在**原语内部**,下游只需捕获已知 `PATH_CODES`,不必各自重复判别。
+
+`BROKEN_LINK` 的分类同样要收窄 —— symlink 的 realpath 失败不都等于断链:
+
+```text
+symlink + cause 为 ENOENT / ENOTDIR   → BROKEN_LINK
+其他 realpath fs 错误（EACCES / EPERM / ELOOP / EIO …）→ REALPATH_FAILED
+```
+
+否则 installer 会对一个仅仅是权限不足的链接输出误导性的 "is a broken link" 文案。
 
 **对既有项目判定必须是保持裁决不变的(verdict-preserving)。** 论证:回拼只是把
 「祖先」换成「祖先 + 尾部」,而尾部是相对片段,不改变所属根 ——
@@ -287,6 +343,11 @@ Session B
 (2) 写入确实是【守卫放行】的结果  ← 而不是守卫压根没参与
 (3) 宿主持久记忆功能真正恢复      ← 而不是磁盘上多了一个孤立文件
 ```
+
+**验收与治理闭环必须分离。** 执行者产出证据后停下接受独立复审;
+`spec → done`、`plan → done`、`mem archive`、backlog 关闭、`[attp-hive-rollout]` 解阻
+一律**在复审 ACCEPTED 之后另行授权**。执行者不得同时是实现者与最终验收者
+—— 这是 ATTP 两道 Gate 一直遵守的纪律。
 
 ## §9 实施前置观测(Step 0b)—— 已完成,分支 A
 
