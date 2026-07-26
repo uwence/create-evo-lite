@@ -8284,6 +8284,118 @@ async function runGovernanceTests() {
             console.log('✅ T-takeover-fault-suite passed');
         }
 
+        console.log('T-takeover-physical-path. neutral primitive: tail re-append + coded errors + no module-level seam ...');
+        {
+            const pp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-physical-path.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-pp-'));
+            const realRoot = fs.realpathSync(root);
+
+            // 1. 已存在的路径:等价于 realpath
+            assert.strictEqual(pp.resolvePhysicalPath(root, fs), realRoot, 'existing path resolves to its realpath');
+
+            // 2. 【本议题的核心】未存在的多级尾部必须【回拼】,而不是退回祖先。
+            //    不回拼的实现会返回 realRoot —— 那正是每个新项目首次记忆写入被误拒的原因。
+            const missing = path.join(root, 'memory', 'deep', 'new.md');
+            assert.strictEqual(pp.resolvePhysicalPath(missing, fs), path.join(realRoot, 'memory', 'deep', 'new.md'),
+                'missing tail must be re-appended to the verified prefix, not collapsed to the ancestor');
+
+            // 3. 相对路径不属于原语职责:必须显式拒绝,不得静默按 cwd 解析
+            assert.throws(() => pp.resolvePhysicalPath('rel/x.md', fs),
+                (e) => e.code === pp.PATH_CODES.NOT_ABSOLUTE, 'relative input must be rejected, never resolved against cwd');
+
+            // 4. lstat 抛非 ENOENT(权限等)→ STAT_FAILED,绝不当成"不存在"而向上走
+            const statErr = Object.assign(new Error('denied'), { code: 'EACCES' });
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'x.md'), {
+                lstatSync: () => { throw statErr; },
+                realpathSync: () => { throw new Error('unreachable'); },
+            }), (e) => e.code === pp.PATH_CODES.STAT_FAILED && e.cause === statErr,
+                'non-ENOENT stat failure must surface as STAT_FAILED with its cause');
+
+            // 4b.【承重】target 与 probe 是两个不同事实，必须在【上溯过 ≥1 级之后】才区分得开。
+            //     上面所有用例都在第一次 probe 就失败（target === probe），把 target 误写成 probe
+            //     一条也杀不掉。这里构造两级：最深一级 ENOENT 使其上溯，父级 EACCES 使其失败。
+            {
+                const requested = path.join(root, 'missing', 'deep', 'file.md');
+                const deepDir = path.join(root, 'missing', 'deep');
+                const eacces = Object.assign(new Error('denied'), { code: 'EACCES' });
+                assert.throws(() => pp.resolvePhysicalPath(requested, {
+                    lstatSync: (p) => {
+                        if (p === requested) throw Object.assign(new Error('nope'), { code: 'ENOENT' });
+                        if (p === deepDir) throw eacces;
+                        throw new Error(`unexpected probe ${p}`);
+                    },
+                    realpathSync: () => { throw new Error('unreachable'); },
+                }), (e) => {
+                    assert.strictEqual(e.code, pp.PATH_CODES.STAT_FAILED);
+                    assert.strictEqual(e.target, requested, 'target must stay the originally requested path');
+                    assert.strictEqual(e.probe, deepDir, 'probe must be the ancestor that actually failed');
+                    assert.strictEqual(e.cause, eacces, 'cause must be the underlying fs error');
+                    return true;
+                }, 'target and probe must remain distinguishable after the walk has moved up');
+            }
+
+            // 5. 断链 symlink 必须与一般 realpath 失败【可区分】—— installer 对前者有专门文案。
+            //    用注入 fsOps 构造:lstat 成功且 isSymbolicLink,realpath 抛。跨平台确定,不需要 symlink 权限。
+            const linkErr = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+            const brokenOps = {
+                lstatSync: () => ({ isSymbolicLink: () => true }),
+                realpathSync: () => { throw linkErr; },
+            };
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'link'), brokenOps),
+                (e) => e.code === pp.PATH_CODES.BROKEN_LINK && e.probe === path.join(root, 'link'),
+                'dangling link must be BROKEN_LINK and carry the offending probe');
+
+            // 6. 非链接的 realpath 失败 → REALPATH_FAILED（与 5 走的是同一分支的两侧，必须分得开）
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'plain'), {
+                lstatSync: () => ({ isSymbolicLink: () => false }),
+                realpathSync: () => { throw linkErr; },
+            }), (e) => e.code === pp.PATH_CODES.REALPATH_FAILED, 'non-link realpath failure must be REALPATH_FAILED');
+
+            // 6b. symlink 的 realpath 失败【不都是断链】：EACCES/EPERM/ELOOP/EIO 都可能。
+            //     全部归为 BROKEN_LINK 会让 installer 对一个仅仅权限不足的链接输出误导性文案。
+            for (const code of ['EACCES', 'EPERM', 'ELOOP']) {
+                assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'lnk'), {
+                    lstatSync: () => ({ isSymbolicLink: () => true }),
+                    realpathSync: () => { throw Object.assign(new Error(code), { code }); },
+                }), (e) => e.code === pp.PATH_CODES.REALPATH_FAILED,
+                    `a symlink failing realpath with ${code} is not a broken link`);
+            }
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'lnk'), {
+                lstatSync: () => ({ isSymbolicLink: () => true }),
+                realpathSync: () => { throw Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' }); },
+            }), (e) => e.code === pp.PATH_CODES.BROKEN_LINK, 'ENOTDIR on a symlink is still a broken link');
+
+            // 7. 一路 ENOENT 到根 → NO_EXISTING_ANCESTOR
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'a', 'b'), {
+                lstatSync: () => { throw Object.assign(new Error('nope'), { code: 'ENOENT' }); },
+                realpathSync: () => { throw new Error('unreachable'); },
+            }), (e) => e.code === pp.PATH_CODES.NO_EXISTING_ANCESTOR, 'exhausting the walk must be NO_EXISTING_ANCESTOR');
+
+            // 7b.【承重】程序缺陷必须在原语层就【原样冒泡】，不得被包装成 coded path error。
+            //     否则它会一路降级成 deriveHostOwnedWriteRoots 的 {ok:false}，缺陷被静默吞掉。
+            //     lstat 与 realpath 两侧都要有，缺一侧就漏一条通路。
+            const defect = new TypeError('genuine defect: x is not a function');
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'd1'), {
+                lstatSync: () => { throw defect; },
+                realpathSync: () => { throw new Error('unreachable'); },
+            }), (e) => e === defect, 'a code-less lstat error is a programming defect and must bubble unwrapped');
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'd2'), {
+                lstatSync: () => ({ isSymbolicLink: () => false }),
+                realpathSync: () => { throw defect; },
+            }), (e) => e === defect, 'a code-less realpath error must bubble unwrapped too');
+
+            // 8. 承重:模块必须是 dependency-neutral，且不得持有模块级可变 fs seam。
+            //    这两条是 §6.1 的全部意义 —— 没有它们，"共用原语"会把 installer 绑进 receipt 的全局 seam。
+            const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'takeover-physical-path.js'), 'utf8');
+            const requires = [...src.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map(m => m[1]);
+            assert.deepStrictEqual(requires, ['path'], `primitive must require only 'path'; got ${JSON.stringify(requires)}`);
+            assert.ok(!/__setFsOps|let\s+fsOps|var\s+fsOps/.test(src), 'primitive must not hold a module-level mutable fs seam');
+            assert.ok(!/require\(['"]fs['"]\)/.test(src), 'primitive must not require fs — fsOps is always caller-supplied');
+
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+        console.log('✅ T-takeover-physical-path passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
