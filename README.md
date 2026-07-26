@@ -713,6 +713,8 @@ PreToolUse        没有有效 receipt 时拒绝 Edit / Write
 - MVP 只守 `Edit` 与 `Write`；`Bash` 及其他工具一律放行，一条 shell 重定向即可绕开。
 - 它防的是「agent 在没读治理状态的情况下就开始改代码」，不防有意规避。
 
+反过来，守卫**确实**会拦住项目外的 `Edit` / `Write`。装上之后，agent 往临时目录、兄弟仓库或别的项目写文件会被 deny（理由为 *resolves outside project*）。这是预期行为，但会改变 agent 放临时文件的习惯——它们需要落在项目内。
+
 ---
 
 ## Subagent Protocol

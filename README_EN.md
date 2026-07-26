@@ -713,6 +713,8 @@ The `PreToolUse` guard exists to **make the agent take over before it touches co
 - The MVP guards `Edit` and `Write` only. `Bash` and every other tool are allowed, so a single shell redirect bypasses it.
 - It defends against an agent editing code without having read the governance state. It does not defend against deliberate evasion.
 
+It does, however, block `Edit`/`Write` outside the project. Once installed, an agent writing to a temp directory, a sibling checkout, or another project is denied with *resolves outside project*. That is intended, but it changes where agents can put scratch files — they have to live inside the project.
+
 ---
 
 ## Subagent Protocol

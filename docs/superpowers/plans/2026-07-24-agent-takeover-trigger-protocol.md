@@ -3381,7 +3381,9 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
         rc.__setFsOps({ renameSync: () => { throw new Error('rename fail'); } });
         let res; try { res = ad.executeHookTransport(r.json, r.publish, { write: () => {} }); } finally { rc.__resetFsOps(); }
         assert.strictEqual(res.exitCode, 1, 'publish failure → nonzero');
-        assert.notStrictEqual(rc.readReceipt(root, 'claude-code', 'f1').state, 'committed', 'no committed receipt when publish fails');
+        // 用 strictEqual('missing') 而不是 notStrictEqual('committed'):后者对 'invalid' 也成立,
+        // 会放过「发布失败却留下了一份坏 receipt」这种结果。
+        assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f1').state, 'missing', 'no receipt at all when publish fails');
         fs.rmSync(root, { recursive: true, force: true });
     }
 
@@ -3391,9 +3393,12 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
         const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f2', source: 'startup' },
             { projectRoot: root, collect: (b) => ({ ...b, kind: 'session', projectName: 'p' }) }); // 缺 rules/health/verify...
         assert.strictEqual(r.exitCode, 0, 'structured envelope exits 0 (host ignores JSON on nonzero)');
-        assert.ok(r.failure, 'invalid payload reported via failure field + systemMessage');
+        assert.ok(r.failure, 'invalid payload reported via the failure field');
+        // 文案里承诺了 systemMessage 就必须真的验它 —— 否则宿主侧看不到任何失败提示,
+        // 而 exit 0 又让宿主认为一切正常。
+        assert.ok(r.json.systemMessage, 'and surfaced to the host via systemMessage');
         assert.strictEqual(r.publish, null, 'invalid payload → no publish');
-        assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f2').state, 'missing');
+        assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f2').state, 'missing', 'and nothing was written to disk');
         fs.rmSync(root, { recursive: true, force: true });
     }
 
@@ -3404,6 +3409,7 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
             { projectRoot: root, collect: () => { throw new Error('initDB boom'); } });
         assert.strictEqual(r.exitCode, 0, 'degraded context must be ingestible → exit 0');
         assert.ok(r.failure && r.publish === null, 'collector failure reported, nothing published');
+        assert.ok(r.json.systemMessage, 'and surfaced to the host via systemMessage');
         assert.ok(/bootstrap --receipt/.test(r.json.hookSpecificOutput.additionalContext), 'degraded context carries recovery command');
         assert.ok(/--session-id 'f3'/.test(r.json.hookSpecificOutput.additionalContext), 'and that command is executable');
         fs.rmSync(root, { recursive: true, force: true });
@@ -3454,8 +3460,15 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
     {
         let published = false;
         const bad = ad.executeCliRecoveryTransport('X', () => { published = true; }, { write: () => { throw new Error('cli stdout fail'); } });
-        assert.strictEqual(bad.exitCode, 1);
+        assert.strictEqual(bad.exitCode, 1, 'CLI delivery failure → nonzero');
         assert.strictEqual(published, false, 'CLI delivery failure → no publish');
+        // 注释承诺「CLI 输出非 hook envelope」就必须验:CLI 面向人,写的是原文,
+        // 不能混进 hookSpecificOutput —— 否则 recovery 输出会被误当成 hook 协议消费。
+        let seen = '';
+        const okRes = ad.executeCliRecoveryTransport('X', () => { published = true; }, { write: (s) => { seen += s; return s.length; } });
+        assert.strictEqual(okRes.exitCode, 0, 'CLI success → exit 0');
+        assert.strictEqual(published, true, 'CLI success → publishes');
+        assert.ok(!/hookSpecificOutput/.test(seen), 'CLI stdout is the payload itself, not a hook envelope');
     }
 
     // 7) same-session refresh 失败分流(R5 承重语义):旧 receipt 不撤销,终局由 health gate 决定
@@ -3480,7 +3493,14 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
         assert.strictEqual(JSON.parse(cap.json.hookSpecificOutput.additionalContext).receipt, 'valid', 'capsule still re-seeds after refresh failure');
         // 反向:governance health 失败(active_context 删除)→ Write deny
         fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
-        assert.strictEqual(await writeDec(root, 'f7'), 'deny', 'governance-health failure → health gate denies');
+        // 与用例 4 同源:只断言 decision 抓不住健康门被删 —— focus 为 null 会让 capsule 构建空指针,
+        // 内层 catch 兜出一个 "payload build failed" 的伪 deny。必须同时验文案。
+        const f7deny = await writeOut(root, 'f7');
+        assert.strictEqual(f7deny.permissionDecision, 'deny', 'governance-health failure → health gate denies');
+        assert.ok(/unhealthy/.test(f7deny.permissionDecisionReason),
+            'and that deny comes from the health gate, phrased "unhealthy"');
+        assert.ok(!/payload build failed/.test(f7deny.permissionDecisionReason),
+            'not from a null-dereference in the capsule builder — that deny would survive deleting the gate');
         fs.rmSync(root, { recursive: true, force: true });
     }
 
