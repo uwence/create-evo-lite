@@ -1,3 +1,9 @@
+---
+id: plan:agent-takeover-trigger-protocol
+title: "Plan: Agent Takeover Trigger Protocol (ATTP)"
+status: done
+---
+
 # Agent Takeover Trigger Protocol Implementation Plan (R11 + Gate 1 remediation)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -87,7 +93,7 @@
   - `SCHEMA_VERSION=1`、`CAPSULE_BUDGET_BYTES=1024`、`EMERGENCY_FLOOR_BYTES`、`TRANSITION_TO_EVOLITE`
 - 纯函数:无 `require('fs')`、无 `require('./memory.service')`、无 `process.env`、无 hook input。
 
-- [ ] **Step 1: 写失败测试(payload 全字段 + 两个 validator)**
+- [x] **Step 1: 写失败测试(payload 全字段 + 两个 validator)**
 
 在 `templates/cli/test/governance.js` 的 `runGovernanceTests()` try 块内新增:
 
@@ -157,12 +163,12 @@ console.log('T-takeover-payload. Pure builder + discriminated validators ...');
 }
 ```
 
-- [ ] **Step 2: 运行验证失败**
+- [x] **Step 2: 运行验证失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL — `Cannot find module '.../takeover-payload.js'`。
 
-- [ ] **Step 3: 实现 `takeover-payload.js`**
+- [x] **Step 3: 实现 `takeover-payload.js`**
 
 ```javascript
 'use strict';
@@ -361,12 +367,12 @@ module.exports = {
 };
 ```
 
-- [ ] **Step 4: 运行验证通过**
+- [x] **Step 4: 运行验证通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T-takeover-payload passed`。
 
-- [ ] **Step 5: 写状态映射 + 预算硬保证 + emergency capsule 测试**
+- [x] **Step 5: 写状态映射 + 预算硬保证 + emergency capsule 测试**
 
 ```javascript
 console.log('T-takeover-capsule-states. transitions + budget always <= 1 KiB + emergency capsule always valid ...');
@@ -433,12 +439,12 @@ console.log('T-takeover-capsule-states. transitions + budget always <= 1 KiB + e
 }
 ```
 
-- [ ] **Step 6: 运行验证通过**
+- [x] **Step 6: 运行验证通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T-takeover-capsule-states passed`。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add templates/cli/takeover-payload.js templates/cli/test/governance.js
@@ -471,7 +477,7 @@ EOF
   - `RECEIPT_SCHEMA_VERSION=1`、`__setFsOps(overrides)` / `__resetFsOps()`(**测试 seam**)
 - **不载** `memory.service`/`db`/memory-index/zvec。
 
-- [ ] **Step 1: 写失败测试(严格根发现 + project-bound + 硬有效性)**
+- [x] **Step 1: 写失败测试(严格根发现 + project-bound + 硬有效性)**
 
 ```javascript
 console.log('T-takeover-receipt / T-takeover-projectroot. strict root discovery + project-bound receipts ...');
@@ -515,9 +521,9 @@ console.log('T-takeover-receipt / T-takeover-projectroot. strict root discovery 
 }
 ```
 
-- [ ] **Step 2: 运行验证失败** — 模块缺失。
+- [x] **Step 2: 运行验证失败** — 模块缺失。
 
-- [ ] **Step 3: 实现 `takeover-receipt.js`**
+- [x] **Step 3: 实现 `takeover-receipt.js`**
 
 ```javascript
 'use strict';
@@ -720,12 +726,12 @@ module.exports = {
 };
 ```
 
-- [ ] **Step 4: 运行验证通过**
+- [x] **Step 4: 运行验证通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T-takeover-projectroot passed`、`✅ T-takeover-receipt passed`。
 
-- [ ] **Step 5: 写 reconcile / degraded / meta 测试**
+- [x] **Step 5: 写 reconcile / degraded / meta 测试**
 
 ```javascript
 console.log('T-takeover-reconcile / T-takeover-degraded. drift refreshes; unreadable degrades even if invalidation fails ...');
@@ -828,7 +834,7 @@ console.log('T-takeover-reconcile / T-takeover-degraded. drift refreshes; unread
 }
 ```
 
-- [ ] **Step 6: 运行验证通过 + 提交**
+- [x] **Step 6: 运行验证通过 + 提交**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — reconcile / degraded 通过。
@@ -858,7 +864,7 @@ EOF
   - `collectSessionTakeoverContextFull(base)` → `Promise<SessionTakeoverContext>`(**async**;`initDB()` → 四件套 → plan-ir → meta;可恢复失败入 `degraded[]`,不可恢复抛错)
 - session-only:内部 lazy require `./db` 与 `./memory.service`;refresh 路径**永不**加载本模块。
 
-- [ ] **Step 1: 写失败测试(纯派生 + 结构化降级 + 真实 verify/recall)**
+- [x] **Step 1: 写失败测试(纯派生 + 结构化降级 + 真实 verify/recall)**
 
 ```javascript
 console.log('T-takeover-collector. plan/spec derivation + structured degradation + real four-part collection ...');
@@ -936,9 +942,9 @@ console.log('T-takeover-collector. plan/spec derivation + structured degradation
 }
 ```
 
-- [ ] **Step 2: 运行验证失败** — 模块缺失。
+- [x] **Step 2: 运行验证失败** — 模块缺失。
 
-- [ ] **Step 3: 实现 `takeover-session.js`**
+- [x] **Step 3: 实现 `takeover-session.js`**
 
 ```javascript
 'use strict';
@@ -1064,7 +1070,7 @@ async function collectSessionTakeoverContextFull(base) {
 module.exports = { derivePlanSpec, assembleSessionContext, collectSessionTakeoverContextFull };
 ```
 
-- [ ] **Step 4: 运行验证通过 + 提交**
+- [x] **Step 4: 运行验证通过 + 提交**
 
 Run: `node templates/cli/test.js governance`
 Expected: PASS — `✅ T-takeover-collector passed`。
@@ -1101,7 +1107,7 @@ EOF
   - `main()`
 - 顶部只 require `takeover-receipt` + `takeover-payload`;collector lazy(不变量 6)。
 
-- [ ] **Step 1: 写失败测试(establishment/refresh + transport 顺序 + 校验前置)**
+- [x] **Step 1: 写失败测试(establishment/refresh + transport 顺序 + 校验前置)**
 
 ```javascript
 console.log('T-takeover-adapter-session. establishment/refresh by receipt presence; validate before publish ...');
@@ -1244,9 +1250,9 @@ console.log('T-takeover-hook-exit-contract. failure paths exit 0 with JSON-only 
 }
 ```
 
-- [ ] **Step 2: 运行验证失败** — 模块缺失。
+- [x] **Step 2: 运行验证失败** — 模块缺失。
 
-- [ ] **Step 3: 实现 `takeover-adapter.js`**
+- [x] **Step 3: 实现 `takeover-adapter.js`**
 
 ```javascript
 'use strict';
@@ -1476,9 +1482,9 @@ module.exports = { handleHookInput, executeHookTransport, executeCliRecoveryTran
     reportError, resolveRoot, buildRecoveryCommand, buildGenericRecoveryCommand };
 ```
 
-- [ ] **Step 4: 运行验证通过** — `✅ T-takeover-adapter-session passed`、`✅ T-takeover-hook-exit-contract passed`。
+- [x] **Step 4: 运行验证通过** — `✅ T-takeover-adapter-session passed`、`✅ T-takeover-hook-exit-contract passed`。
 
-- [ ] **Step 5: 写 refresh 隔离 + transport 顺序测试**
+- [x] **Step 5: 写 refresh 隔离 + transport 顺序测试**
 
 ```javascript
 console.log('T-takeover-refresh-isolation. UserPromptSubmit must not load heavy deps ...');
@@ -1545,7 +1551,7 @@ console.log('T-takeover-transport-order. writeAllSync completeness; deliver-befo
 }
 ```
 
-- [ ] **Step 6: 运行验证通过 + 提交**
+- [x] **Step 6: 运行验证通过 + 提交**
 
 ```bash
 node templates/cli/test.js governance
@@ -1569,7 +1575,7 @@ EOF
 **Interfaces:**
 - Consumes: `takeover-session.collectSessionTakeoverContextFull`、`takeover-payload.{buildTakeoverPayload,validateSessionPayload}`、`takeover-receipt.*`、`takeover-adapter.{executeCliRecoveryTransport,buildRecoveryCommand}`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```javascript
 console.log('T-takeover-recovery. CLI recovery: payload before authorization; committed receipt; root-bound command ...');
@@ -1598,9 +1604,9 @@ console.log('T-takeover-recovery. CLI recovery: payload before authorization; co
 }
 ```
 
-- [ ] **Step 2: 运行验证失败** — `--receipt` 未实现。
+- [x] **Step 2: 运行验证失败** — `--receipt` 未实现。
 
-- [ ] **Step 3: 替换 `memory.js` 的 bootstrap 注册块**
+- [x] **Step 3: 替换 `memory.js` 的 bootstrap 注册块**
 
 把 `program.command('bootstrap')...` 整块替换为:
 
@@ -1619,7 +1625,7 @@ console.log('T-takeover-recovery. CLI recovery: payload before authorization; co
         });
 ```
 
-- [ ] **Step 4: 替换 `runBootstrapCommand` 并新增 `runReceiptRecovery`**
+- [x] **Step 4: 替换 `runBootstrapCommand` 并新增 `runReceiptRecovery`**
 
 ```javascript
 async function buildCanonicalTakeoverPayload(options = {}) {
@@ -1667,7 +1673,7 @@ async function runReceiptRecovery(options = {}) {
 }
 ```
 
-- [ ] **Step 5: 改写 `formatBootstrapReport` 消费新 payload**
+- [x] **Step 5: 改写 `formatBootstrapReport` 消费新 payload**
 
 把整个 `formatBootstrapReport` 函数替换为:
 
@@ -1710,7 +1716,7 @@ function formatBootstrapReport(payload) {
 }
 ```
 
-- [ ] **Step 6: 运行验证通过 + 人工核对**
+- [x] **Step 6: 运行验证通过 + 人工核对**
 
 ```bash
 node templates/cli/test.js governance
@@ -1719,7 +1725,7 @@ EVO_LITE_ROOT="$PWD/.evo-lite" node templates/cli/memory.js bootstrap --json
 ```
 Expected: 测试通过;人类视图含 `takeover/focus/active_plan/freshness/next_step`;`--json` 输出 schemaVersion=1 的完整 payload。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add templates/cli/memory.js templates/cli/test/governance.js
@@ -1763,7 +1769,7 @@ EOF
 - `installTakeoverHooks(settingsPath, { events, projectRoot })` → `{ changed }`(**损坏 JSON 抛错不覆盖;闸不过则抛错、原文件不变**)
 - `statusTakeoverHooks(settingsPath, events, projectRoot?)` → `{ installed[], missing[] }`(**损坏 JSON 抛错**;给出 `projectRoot` 时同样绝对化)
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```javascript
 console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (install & status); probe gate ...');
@@ -2290,9 +2296,9 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
 }
 ```
 
-- [ ] **Step 2: 运行验证失败** — 模块缺失。
+- [x] **Step 2: 运行验证失败** — 模块缺失。
 
-- [ ] **Step 3: 实现 `takeover-install.js`**
+- [x] **Step 3: 实现 `takeover-install.js`**
 
 ```javascript
 'use strict';
@@ -2738,9 +2744,9 @@ module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, is
     discardBackup, installWithBackup, installTakeoverHooks, statusTakeoverHooks };
 ```
 
-- [ ] **Step 4: 运行验证通过** — `✅ T-takeover-installer passed`。
+- [x] **Step 4: 运行验证通过** — `✅ T-takeover-installer passed`。
 
-- [ ] **Step 5: 加 `mem takeover install|status`**
+- [x] **Step 5: 加 `mem takeover install|status`**
 
 在 `buildProgram()` 内 bootstrap 注册之后新增:
 
@@ -2805,7 +2811,7 @@ module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, is
         });
 ```
 
-- [ ] **Step 6: manifest 注册五文件**
+- [x] **Step 6: manifest 注册五文件**
 
 `templates/cli/template-manifest.js` core-cli `files` 数组中 `'memory-index-lock.js',` 之后插入:
 
@@ -2817,7 +2823,7 @@ module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, is
             'takeover-install.js',
 ```
 
-- [ ] **Step 7: integration 覆盖守卫 + gitignore**
+- [x] **Step 7: integration 覆盖守卫 + gitignore**
 
 `templates/cli/test/integration.js:427` 的 `'memory-index-lock.js',` 之后插入:
 
@@ -2837,7 +2843,7 @@ module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, is
 .claude/settings.json.evo-tmp-*
 ```
 
-- [ ] **Step 8: 语法自检 + 同步镜像 + 双运行零 + 全套件**
+- [x] **Step 8: 语法自检 + 同步镜像 + 双运行零 + 全套件**
 
 ```bash
 # 五个新模块先过语法闸:长文计划里的代码块最易死在转义上,
@@ -2851,7 +2857,7 @@ node templates/cli/test.js all
 ```
 Expected: 五个 `node --check` 全部无输出(通过);首次复制五文件;二次 `copied: 0`;`test.js all` 全绿。
 
-- [ ] **Step 9: 母仓事务化安装 → dogfood(宿主自证 transport;失败必须回滚)**
+- [x] **Step 9: 母仓事务化安装 → dogfood(宿主自证 transport;失败必须回滚)**
 
 镜像已在 Step 8 生成。**注意:本地 spawn 出来的 shell 不是 Claude Code 执行 hook 的 shell** —— 命令级 probe 只作诊断,
 **宿主 transport 的权威证据是下面的 `claude -p` dogfood**(由宿主自己执行那条命令并观测 marker)。
@@ -2889,7 +2895,7 @@ git diff --stat .claude/settings.json                                          #
 - **hook 进程退出码实测为 0**,stdout 只有 JSON —— 与官方"JSON only processed on exit 0"契约一致(若观察到宿主在非零退出时仍摄入 JSON,记为契约偏差,但**不据此放宽**本设计);
 - Agent 首轮明确引用 injected focus(S9b,P2 效果证据)。
 
-- [ ] **Step 10: 提交 + 阶段 1 复审门**
+- [x] **Step 10: 提交 + 阶段 1 复审门**
 
 ```bash
 node .evo-lite/cli/memory.js takeover status --settings .claude/settings.json   # dogfood 全绿后确认事件在位
@@ -2921,7 +2927,7 @@ EOF
 
 **Interfaces:** `handlePreToolUse(input, deps)` → `{ json:{ hookSpecificOutput:{ hookEventName:'PreToolUse', permissionDecision, permissionDecisionReason? } }, exitCode:0, publish:null }`。
 
-- [ ] **Step 1: 写失败测试(守卫矩阵 + 未知目标 + 坏 capsule)**
+- [x] **Step 1: 写失败测试(守卫矩阵 + 未知目标 + 坏 capsule)**
 
 ```javascript
 console.log('T-takeover-guard. Edit/Write fail-closed incl unknown target and invalid capsule ...');
@@ -3018,9 +3024,9 @@ console.log('T-takeover-guard. Edit/Write fail-closed incl unknown target and in
 }
 ```
 
-- [ ] **Step 2: 运行验证失败** — PreToolUse 未纳管。
+- [x] **Step 2: 运行验证失败** — PreToolUse 未纳管。
 
-- [ ] **Step 3: 实现 `handlePreToolUse`**
+- [x] **Step 3: 实现 `handlePreToolUse`**
 
 在 `takeover-adapter.js` 新增(并在 `handleHookInput` switch 增 `case 'PreToolUse': return handlePreToolUse(input, deps);`):
 
@@ -3118,9 +3124,9 @@ function guardWrite(input, deps) {
 }
 ```
 
-- [ ] **Step 4: 运行验证通过** — `✅ T-takeover-guard passed`。
+- [x] **Step 4: 运行验证通过** — `✅ T-takeover-guard passed`。
 
-- [ ] **Step 5: 写 target-path(含 symlink)+ session-scope 测试**
+- [x] **Step 5: 写 target-path(含 symlink)+ session-scope 测试**
 
 ```javascript
 console.log('T-takeover-target-path. cross-project / .. escape / symlink escape denied ...');
@@ -3314,7 +3320,7 @@ console.log('T-takeover-session-scope. no receipt → deny; committed+healthy �
 }
 ```
 
-- [ ] **Step 6: 运行验证通过 + 镜像 + 提交**
+- [x] **Step 6: 运行验证通过 + 镜像 + 提交**
 
 ```bash
 node templates/cli/test.js governance
@@ -3343,7 +3349,7 @@ EOF
 > 写入 README 时,**必须**同时写明:① 仅在从项目根启动 Claude Code 时生效;② 子目录启动
 > 既无接管也无守卫,且无 workaround;③ 该限制同时约束阶段二守卫的 no-silent-bypass 范围。
 
-- [ ] **Step 1: 写阶段二验收测试(八条用例:1–7 用注入 seam 真实制造失败,8 为端到端恢复,不注入)**
+- [x] **Step 1: 写阶段二验收测试(八条用例:1–7 用注入 seam 真实制造失败,8 为端到端恢复,不注入)**
 
 > **注入必须可归因**(Gate 2 复审 P1-1):凡是靠 `__setFsOps` 制造失败的用例,必须给 seam 加调用
 > 计数并断言其大于 0。否则删掉触发注入的那一步后,注入一次都不会被调用,而其余断言可能因为
@@ -3539,9 +3545,9 @@ console.log('T-takeover-fault-suite. phase-2 acceptance: 1-7 injected failures, 
 }
 ```
 
-- [ ] **Step 2: 运行验证通过** — `✅ T-takeover-fault-suite passed`。
+- [x] **Step 2: 运行验证通过** — `✅ T-takeover-fault-suite passed`。
 
-- [ ] **Step 3: 装 PreToolUse + 全套件回归**
+- [x] **Step 3: 装 PreToolUse + 全套件回归**
 
 ```bash
 # Gate 1 通过时阶段一 manifest 已被 backup-discard 清掉,这里必须【重新建立备份】,
@@ -3553,7 +3559,7 @@ node templates/cli/test.js all
 ```
 Expected: 备份已建立(manifest `existed:true`,记录阶段一的两事件配置);三事件已装、第三方 hooks 保留;`test.js all` 全绿。
 
-- [ ] **Step 4: 记录 + 提交**
+- [x] **Step 4: 记录 + 提交**
 
 ```bash
 git add templates/cli/test/governance.js .claude/settings.json docs/validation/attp-phase2-fault-injection.md .evo-lite/cli/ README.md README_EN.md
@@ -3565,7 +3571,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 5: 复审门 2 + 阶段收口** — 停止请求复审门(P0 no-silent-bypass)。
+- [x] **Step 5: 复审门 2 + 阶段收口** — 停止请求复审门(P0 no-silent-bypass)。
   两条收口命令都走**运行时镜像**入口(模板入口不可执行):
 
 ```bash
