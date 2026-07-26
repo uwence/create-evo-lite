@@ -558,7 +558,7 @@ git commit -m "test(takeover): characterize installer path-resolution error mess
   - **唯一批准的行为变化**:非 ENOENT 的 lstat 错误由「继续上溯」收紧为 fail-closed(设计 §6.2.1),
     新增文案 `takeover: cannot stat <probe> (<cause>); refusing to touch settings`。
 
-- [ ] **Step 1: 引入原语**
+- [x] **Step 1: 引入原语**
 
 在 `takeover-install.js` 顶部 require 区加入:
 
@@ -566,7 +566,7 @@ git commit -m "test(takeover): characterize installer path-resolution error mess
 const { resolvePhysicalPath, PATH_CODES } = require('./takeover-physical-path');
 ```
 
-- [ ] **Step 2: 替换祖先上溯循环,按 code 恢复既有文案**
+- [x] **Step 2: 替换祖先上溯循环,按 code 恢复既有文案**
 
 把 `resolveManagedSettingsPath` 中从 `let existing = abs;` 到
 `const target = normPath(physical);` 之间的循环替换为:
@@ -597,7 +597,7 @@ const { resolvePhysicalPath, PATH_CODES } = require('./takeover-physical-path');
     const target = normPath(physical);
 ```
 
-- [ ] **Step 3: 翻转 legacy characterization(唯一批准的行为变化)**
+- [x] **Step 3: 翻转 legacy characterization(唯一批准的行为变化)**
 
 Task 2 case (4) 记录的是**旧**行为。按设计 §6.2.1 的裁定,把它改成新契约 ——
 **只改这一条**,同一 fsOps 构造原样保留:
@@ -627,7 +627,7 @@ Task 2 case (4) 记录的是**旧**行为。按设计 §6.2.1 的裁定,把它�
                 }
 ```
 
-- [ ] **Step 4: 跑测试 —— 三条既有文案断言与 `T-takeover-installer` 全套必须原样通过**
+- [x] **Step 4: 跑测试 —— 三条既有文案断言与 `T-takeover-installer` 全套必须原样通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: `✅ T-takeover-installer passed`。
@@ -635,7 +635,7 @@ Expected: `✅ T-takeover-installer passed`。
 **Task 2 的 (1)(2)(3) 三条逐字文案断言不得有任何改动。** 若它们中的任何一条需要修改才能通过,
 说明映射写错了 —— 停止并报告,不要改断言去迎合实现。允许改变期望值的**只有** case (4) 这一条。
 
-- [ ] **Step 5: 承重 —— 确认 installer 与 receipt 的依赖方向没有反向**
+- [x] **Step 5: 承重 —— 确认 installer 与 receipt 的依赖方向没有反向**
 
 在 `T-takeover-installer` 末尾追加:
 
@@ -651,7 +651,7 @@ Expected: `✅ T-takeover-installer passed`。
             }
 ```
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add templates/cli/takeover-install.js templates/cli/test/governance.js

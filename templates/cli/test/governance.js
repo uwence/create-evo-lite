@@ -7856,17 +7856,16 @@ async function runGovernanceTests() {
                 }), exactly(`takeover: cannot resolve ${settings} (boom); refusing to touch settings`),
                     'ancestor-realpath-failure message is part of the installer contract');
 
-                // (4) 【legacy characterization —— 记录的是【当前】行为，不是目标行为】
-                //     非 ENOENT 的 lstat 错误目前被【吞掉】，循环继续上溯，最终成功返回受管路径。
-                //     设计 §6.2.1 已裁定这是 fail-open-ish 漂移，Task 3 会把本条期望值翻转。
-                //     先把旧行为钉在这里，才谈得上"前后两态证据"。
+                // (4) 非 ENOENT 的 lstat 错误：由"吞掉并继续上溯"收紧为 fail-closed。
+                //     这是本议题【唯一】批准的行为变化（设计 §6.2.1）；本条的期望值在 Task 3
+                //     按裁定翻转过一次，上面 (1)(2)(3) 三条逐字文案则一字未动。
                 {
                     const claudeDir = path.join(realRoot, '.claude');
                     const unexpected = () => Object.assign(new Error('unexpected probe'), { code: 'ENOENT' });
                     let statCalls = 0;
-                    // 只让 settings 这一级"看起来不存在"且 lstat 抛 EACCES；它的父目录正常存在。
-                    // 于是循环把这一级当成"还没建的文件"跳过，从父目录成功回拼 —— 这就是漂移本身。
-                    const got = inst.resolveManagedSettingsPath(projectRoot, settings, {
+                    // §6.2.1 批准的收紧：非 ENOENT 的 lstat 错误不再被当成"不存在"继续上溯。
+                    // "不存在"与"无法证明存在状态"是两个不同事实；后者已经失去构造物理路径证明的能力。
+                    assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
                         existsSync: (p) => p !== settings,
                         lstatSync: (p) => {
                             if (p !== settings) throw unexpected();
@@ -7878,13 +7877,22 @@ async function runGovernanceTests() {
                             if (p === claudeDir) return claudeDir;
                             throw unexpected();
                         },
-                    });
-                    assert.strictEqual(statCalls, 1, 'the EACCES branch must actually have been exercised');
-                    assert.strictEqual(got, settings,
-                        'LEGACY: a non-ENOENT lstat error is currently swallowed and the walk continues (see §6.2.1)');
+                    }), exactly(`takeover: cannot stat ${settings} (denied); refusing to touch settings`),
+                        'a non-ENOENT lstat error must now fail closed (§6.2.1), not be swallowed');
+                    assert.strictEqual(statCalls, 1, 'and the EACCES branch must still be the one exercised');
                 }
 
                 fs.rmSync(projectRoot, { recursive: true, force: true });
+            }
+
+            // §6.1 承重：installer 不得 import receipt。receipt 持有模块级可变 fs seam 与 runtime 依赖，
+            // 把 installer 绑进去会制造反向耦合，并让 installer 继承一个它无权控制的全局 seam。
+            {
+                const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'takeover-install.js'), 'utf8');
+                assert.ok(!/require\(['"]\.\/takeover-receipt['"]\)/.test(src),
+                    'takeover-install.js must not require takeover-receipt.js (reverse coupling)');
+                assert.ok(/require\(['"]\.\/takeover-physical-path['"]\)/.test(src),
+                    'takeover-install.js must consume the shared neutral primitive');
             }
 
             console.log('✅ T-takeover-installer passed');
