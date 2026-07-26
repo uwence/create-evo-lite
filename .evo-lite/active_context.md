@@ -22,6 +22,7 @@
 - [ ] [c482] [wiki-ux-debt] Wiki 三项体验债(实际产物复核确认,不重开 4b-1):1) SVG 超宽溢出 — 用 .map-scroll overflow-x:auto 容器包裹(最小修法),后续再考虑缩放/折叠/minimap;2) 首页治理提醒缺范围解释 — 拆「当前活动范围 / 项目历史治理债务 / 未归属」三行,降低 44 项提醒的认知冲突;3) 模块名称层中文化 — 默认 wiki-groups.json aliases 或 module-id 中文词典,只改展示别名,不动 Architecture IR canonical 名称。
 - [ ] [zvec-06-upgrade] 升级 @zvec/zvec 0.5.0→0.6:隔离分支 bump + 现有 memory 测试 + T-zvec06-readonly-matrix 实测(reader/writer 共存行为)+ 旧 collection 打开/重建基准 + Windows native 包 + hive 子仓分发;读路径 readOnly:true 与 coordinated writer 模式拆分随升级落地;规格见 docs/superpowers/specs/2026-07-23-mcp-zvec-lock-design.md 附录 A。索引为派生物,失败恢复=删派生 collection + 降级 + mem rebuild。前置:[a177] 锁协调已收口(0.5.0 baseline,不依赖 0.6)。
 - [ ] [3d78] [attp-hive-rollout] Distribute the already-accepted ATTP runtime and invoke the idempotent takeover installer in selected child repositories through hive nurture. 独立 rollout 议题,不是 ATTP MVP 的一部分 —— MVP 已 ACCEPTED & CLOSED(spec:agent-takeover-trigger-protocol)。需要自己的范围/试点子仓/失败回滚策略/验收门。前置提醒:子仓装上守卫后项目外 Edit/Write 会被 deny;root-launch-only 限制同样适用。
+- [ ] [57b0] [traj-truncate] active_context trajectory 摘要按字符截断但不先折叠换行 — templates/cli/memory.service.js:1519 `details.substring(0, 100)`。归档正文前 100 字符内若含换行,写出的条目会拆成两行,续行没有 '- ' 前缀(实例:1108e9d 断在 'plan:ag')。下游 splitTrajectoryEntries(:847) 用 startsWith('-') 过滤,所以形状会在下次写入时自愈但尾部内容永久丢失;真正风险是续行恰好以 '-' 开头时会被提升为幽灵条目,占掉 10 槽之一挤掉真实条目。修法:截断前先 replace(/\s+/g,' ')(与其它摘要一致),并加回归覆盖'归档正文含换行/含 - 列表'两种输入。来源:ATTP 治理闭环复审 P2-1(非阻断)。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
