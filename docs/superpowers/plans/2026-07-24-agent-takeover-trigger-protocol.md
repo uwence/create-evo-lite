@@ -3257,7 +3257,10 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
 
     // 8) recovery 执行后 Write 解锁(端到端子进程)
     { const { root, ac } = mkRoot();
-      const memJs = path.join(TEMPLATE_CLI_DIR, 'memory.js');
+      // 必须用【运行时镜像】入口:模板入口 require 阶段就解析不到 better-sqlite3
+      // (templates/ 下没有 node_modules)。注意不能用 harness 的 CLI_DIR —— 在模板侧套件里
+      // 它就等于 TEMPLATE_CLI_DIR。镜像入口同时也是 buildRecoveryCommand 生成的那个入口。
+      const memJs = path.join(WORKSPACE_ROOT, '.evo-lite', 'cli', 'memory.js');
       const sub = childProcess.spawnSync(process.execPath, [memJs, 'bootstrap', '--receipt', '--host', 'claude-code',
           '--session-id', 'f8', '--source', 'manual-recovery', '--json'],
           { cwd: root, env: { ...process.env, EVO_LITE_ROOT: ac, EVO_LITE_SKIP_GIT_STATUS: '1' }, encoding: 'utf8' });
@@ -3274,16 +3277,19 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
 - [ ] **Step 3: 装 PreToolUse + 全套件回归**
 
 ```bash
-node templates/cli/memory.js takeover install --events SessionStart,UserPromptSubmit,PreToolUse --settings .claude/settings.json
-node templates/cli/memory.js takeover status --settings .claude/settings.json
+# Gate 1 通过时阶段一 manifest 已被 backup-discard 清掉,这里必须【重新建立备份】,
+# 否则 Step 5 的 rollback / backup-discard 都没有可消费的 manifest(Gate 1 后置复审 P1-3)。
+# 回滚目标是「阶段一已批准、只装两事件」的状态,不是 ATTP 安装前。
+node .evo-lite/cli/memory.js takeover install --backup --events SessionStart,UserPromptSubmit,PreToolUse --settings .claude/settings.json
+node .evo-lite/cli/memory.js takeover status --settings .claude/settings.json
 node templates/cli/test.js all
 ```
-Expected: 三事件已装、第三方 hooks 保留;`test.js all` 全绿。
+Expected: 备份已建立(manifest `existed:true`,记录阶段一的两事件配置);三事件已装、第三方 hooks 保留;`test.js all` 全绿。
 
 - [ ] **Step 4: 记录 + 提交**
 
 ```bash
-git add templates/cli/test/governance.js .claude/settings.json docs/validation/attp-phase2-fault-injection.md .evo-lite/cli/
+git add templates/cli/test/governance.js .claude/settings.json docs/validation/attp-phase2-fault-injection.md .evo-lite/cli/ README.md README_EN.md
 git commit -m "$(cat <<'EOF'
 test(takeover): phase-2 fault-injection acceptance — seam-injected failures per review-gate assertion
 
@@ -3292,7 +3298,17 @@ EOF
 )"
 ```
 
-- [ ] **Step 5: 复审门 2 + 阶段收口** — 停止请求复审门(P0 no-silent-bypass)。通过后 `node templates/cli/memory.js takeover backup-discard` 清理备份;未通过则 `takeover rollback`。两 P0 均达成后,进入治理闭环(`mem` intake spec + plan closure)与 hive nurture 分发。
+- [ ] **Step 5: 复审门 2 + 阶段收口** — 停止请求复审门(P0 no-silent-bypass)。
+  两条收口命令都走**运行时镜像**入口(模板入口不可执行):
+
+```bash
+# Gate 2 通过 → 丢弃阶段二备份
+node .evo-lite/cli/memory.js takeover backup-discard
+# Gate 2 未通过 → 回滚到【阶段一已批准】的两事件配置(依赖 Step 3 建立的备份)
+node .evo-lite/cli/memory.js takeover rollback
+```
+
+  两 P0 均达成后,进入治理闭环(`mem` intake spec + plan closure)与 hive nurture 分发。
 
 ---
 
