@@ -979,7 +979,7 @@ git commit -m "feat(takeover): derive the host-owned memory write root from the 
 - Consumes: `rc.deriveHostOwnedWriteRoots`(Task 5)、Task 4 的 `probe`
 - Produces: 最终的三门守卫行为
 
-- [ ] **Step 1: 写失败测试(设计 §8 回归矩阵逐条)**
+- [x] **Step 1: 写失败测试(设计 §8 回归矩阵逐条)**
 
 ```javascript
         console.log('T-takeover-memory-root. narrow out-of-project exception: memory only, prefix-safe, fail-closed ...');
@@ -1131,12 +1131,12 @@ git commit -m "feat(takeover): derive the host-owned memory write root from the 
         console.log('✅ T-takeover-memory-root passed');
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL,`the event-derived memory root` 断言得到 `deny`
 
-- [ ] **Step 3: 写实现 —— 并列允许根**
+- [x] **Step 3: 写实现 —— 并列允许根**
 
 把 `takeover-adapter.js` 的最终比较段替换为:
 
@@ -1151,12 +1151,12 @@ Expected: FAIL,`the event-derived memory root` 断言得到 `deny`
     return ptu('deny', `[evo-lite] target '${target}' resolves outside project '${projectRoot}'.`);
 ```
 
-- [ ] **Step 4: 跑全套**
+- [x] **Step 4: 跑全套**
 
 Run: `node templates/cli/test.js all`
 Expected: EXIT 0,含 `✅ T-takeover-memory-root passed`,且**既有 ATTP 套件一条未改**
 
-- [ ] **Step 5: 变异体验证**
+- [x] **Step 5: 变异体验证**
 
 | 变异 | 必须被杀于 |
 |---|---|
@@ -1166,7 +1166,7 @@ Expected: EXIT 0,含 `✅ T-takeover-memory-root passed`,且**既有 ATTP 套件
 | 把例外提到 receipt 门之前 | `no receipt → deny` 的 `takeover required` 文案断言 |
 | `r + '/'` → `r + path.sep` | Windows 上所有 memory 子文件断言(POSIX 上不变,须在 win32 复核) |
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add templates/cli/takeover-adapter.js templates/cli/test/governance.js

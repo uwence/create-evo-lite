@@ -8635,6 +8635,154 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-takeover-host-owned-roots passed');
 
+        console.log('T-takeover-memory-root. narrow out-of-project exception: memory only, prefix-safe, fail-closed ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-mem-'));
+            const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+            fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const canon = rc.canonicalProjectRoot(root), sid = 'mem';
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: sid, projectRoot: canon,
+                state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+
+            // 宿主 project-state 目录：母仓 A 与一个【前缀关系】的兄弟 B。
+            // B 不是构造出来的边角：本机 ~/.claude/projects/ 下已真实存在两个这样的目录。
+            const projects = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-projects-'));
+            const stateA = path.join(projects, 'D--Proj-alpha');
+            const stateB = path.join(projects, 'D--Proj-alpha-templates');   // 单破折号，真实案例
+            fs.mkdirSync(path.join(stateA, 'memory'), { recursive: true });
+            fs.mkdirSync(path.join(stateB, 'memory'), { recursive: true });
+            const transcriptA = path.join(stateA, 'sess-a.jsonl'); fs.writeFileSync(transcriptA, '', 'utf8');
+
+            const dec = async (file_path, extra = {}) => (await ad.handleHookInput({
+                hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write',
+                transcript_path: transcriptA, tool_input: { file_path }, ...extra,
+            }, { projectRoot: root })).json.hookSpecificOutput.permissionDecision;
+
+            // ── 允许 ──
+            assert.strictEqual(await dec(path.join(root, 'in-project.js')), 'allow', 'in-project code file');
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'MEMORY.md')), 'allow', 'the event-derived memory root');
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'topic.md')), 'allow', 'new file, memory/ already exists');
+
+            // 首次写入：memory/ 尚不存在。朴素实现会 deny —— 这正是每个新项目的 rollout 场景。
+            const stateC = path.join(projects, 'D--Proj-gamma'); fs.mkdirSync(stateC, { recursive: true });
+            const transcriptC = path.join(stateC, 'sess-c.jsonl'); fs.writeFileSync(transcriptC, '', 'utf8');
+            assert.strictEqual(await dec(path.join(stateC, 'memory', 'first.md'), { transcript_path: transcriptC }),
+                'allow', 'first-ever memory write must allow even though memory/ does not exist yet');
+
+            // ── 拒绝 ──
+            assert.strictEqual(await dec(path.join(projects, 'plain.txt')), 'deny', 'ordinary out-of-project file');
+            assert.strictEqual(await dec(path.join(stateC, 'memory', 'x.md')), 'deny',
+                "an unrelated project's memory (no prefix relation at all)");
+            assert.strictEqual(await dec(path.join(stateB, 'memory', 'x.md')), 'deny',
+                "another project's memory whose slug is a string prefix-extension of ours");
+            assert.strictEqual(await dec(path.join(stateA, 'sess-a.jsonl')), 'deny',
+                'non-memory path under our own state root (the transcript itself)');
+            assert.strictEqual(await dec(path.join(stateA, 'memoryX', 'x.md')), 'deny',
+                "'memoryX' must not match 'memory' — the separator has to participate");
+            assert.strictEqual(await dec(path.join(stateA, 'memory', '..', 'escape.md')), 'deny', 'memory/../escape');
+
+            // 锚点缺失 / 畸形 → 不启用例外（fail-closed 单向）
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md'), { transcript_path: undefined }),
+                'deny', 'absent transcript_path must not enable the exception');
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md'), { transcript_path: 42 }),
+                'deny', 'non-string transcript_path must not enable the exception');
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md'), { transcript_path: 'rel/s.jsonl' }),
+                'deny', 'relative transcript_path must not enable the exception');
+
+            // receipt 门与健康门【不放宽】：未接管的会话同样写不了记忆。
+            const dec2 = async (file_path) => (await ad.handleHookInput({
+                hook_event_name: 'PreToolUse', session_id: 'no-receipt', tool_name: 'Write',
+                transcript_path: transcriptA, tool_input: { file_path },
+            }, { projectRoot: root })).json.hookSpecificOutput;
+            const noReceipt = await dec2(path.join(stateA, 'memory', 'x.md'));
+            assert.strictEqual(noReceipt.permissionDecision, 'deny', 'no receipt → memory write still denied');
+            assert.ok(/takeover required/.test(noReceipt.permissionDecisionReason),
+                'and it must deny via the receipt gate, not via the target-path gate');
+
+            // ── 承重：owned.ok 真的被消费，且派生函数真的被调用 ──
+            // 上面那些畸形 transcript_path 用例【杀不掉】删除 owned.ok 的变异体：失败契约返回
+            // roots: []，而 [].some(...) 本来就是 false，deny 照样成立。必须注入一个
+            // 【ok:false 但 roots 非空】的返回值，才能把这两件事分开证明。
+            {
+                const injectedRoot = rc.normalize(fs.realpathSync(stateA)) + '/memory';
+                const original = rc.deriveHostOwnedWriteRoots;
+                let calls = 0;
+                rc.deriveHostOwnedWriteRoots = () => {
+                    calls += 1;
+                    return { ok: false, reason: 'forced-failure', roots: [injectedRoot] };
+                };
+                try {
+                    assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md')), 'deny',
+                        'ok:false must veto the exception even when roots is non-empty');
+                    assert.strictEqual(calls, 1, 'the derivation must actually be consumed, exactly once per decision');
+                } finally {
+                    rc.deriveHostOwnedWriteRoots = original;
+                }
+                // 复原后同一目标必须重新放行 —— 证明上面的 deny 出自注入，而不是别的门。
+                assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md')), 'allow',
+                    'and it must allow again once the injection is removed');
+            }
+
+            // memory 内的 symlink 指向项目外 —— 能力探测，不可用则跳过（既有惯例）
+            {
+                const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-outside-'));
+                const link = path.join(stateA, 'memory', 'escape-link');
+                let linked = true;
+                try { fs.symlinkSync(outside, link, 'dir'); } catch (e) {
+                    linked = false;
+                    console.log(`   ⏭️ symlink assertion skipped (${e.code || e.message})`);
+                }
+                if (linked) {
+                    assert.strictEqual(await dec(path.join(link, 'x.md')), 'deny',
+                        'a symlink inside memory/ pointing outside must still deny');
+                }
+                fs.rmSync(outside, { recursive: true, force: true });
+            }
+
+            // Windows 小写盘符不得扩大权限（两侧同源于 realpathSync.native，天然同大小写）
+            if (process.platform === 'win32' && /^[a-zA-Z]:/.test(stateA)) {
+                const lower = stateA[0].toLowerCase() + stateA.slice(1);
+                assert.strictEqual(await dec(path.join(lower, 'memory', 'x.md')), 'allow',
+                    'lowercase drive letter on our own memory root must not be denied');
+                assert.strictEqual(await dec(path.join(stateB[0].toLowerCase() + stateB.slice(1), 'memory', 'x.md')),
+                    'deny', 'and lowercase must not widen the exception to a prefix-colliding project');
+            }
+
+            // Unicode case-fold：JS 的 toLowerCase 把 KELVIN SIGN(U+212A)折成 ASCII 'k'，
+            // 比 NTFS 自己的大小写表激进得多。ATTP 已经为这一条付过一次代价（Task 7 一审 I1：
+            // 折叠比较让一次写真的落到了项目外）。这里断言的是【不折叠】：两个 slug 在磁盘上
+            // 是两个真实目录时，它们的 memory 必须互相 deny。
+            {
+                const kAscii = path.join(projects, 'D--Proj-Kappa');
+                const kKelvin = path.join(projects, 'D--Proj-Kappa');   // U+212A KELVIN SIGN，写成转义以免复制时丢失
+                let distinct = true;
+                try {
+                    fs.mkdirSync(path.join(kAscii, 'memory'), { recursive: true });
+                    fs.mkdirSync(path.join(kKelvin, 'memory'), { recursive: true });
+                    // 卷若把二者视为同一目录，realpath 会收敛到同一个物理路径 → 这条构造不成立
+                    distinct = fs.realpathSync(kAscii) !== fs.realpathSync(kKelvin);
+                } catch (e) {
+                    distinct = false;
+                    console.log(`   ⏭️ Unicode case-fold assertion skipped (${e.code || e.message})`);
+                }
+                if (distinct) {
+                    const tK = path.join(kAscii, 'sess-k.jsonl'); fs.writeFileSync(tK, '', 'utf8');
+                    assert.strictEqual(await dec(path.join(kAscii, 'memory', 'x.md'), { transcript_path: tK }),
+                        'allow', 'the ASCII-K project may write its own memory');
+                    assert.strictEqual(await dec(path.join(kKelvin, 'memory', 'x.md'), { transcript_path: tK }),
+                        'deny', 'a U+212A variant is a DIFFERENT directory — folding it in would be a real escape');
+                } else {
+                    console.log('   ⏭️ Unicode case-fold assertion skipped (volume treats U+212A as ASCII K)');
+                }
+            }
+
+            fs.rmSync(projects, { recursive: true, force: true });
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+        console.log('✅ T-takeover-memory-root passed');
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');

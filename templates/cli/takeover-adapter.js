@@ -292,10 +292,14 @@ function guardWrite(input, deps) {
     // 误拒(两侧本就同源同大小写,包括模型发出的小写盘符 'd:\...'),Unicode 折叠也不可能再造成
     // 误放行(比较不再对任何字符做大小写折叠)。
     const cp = rc.normalize(probe), cr = rc.normalize(projectRoot);
-    if (!(cp === cr || cp.startsWith(cr + '/'))) {
-        return ptu('deny', `[evo-lite] target '${target}' resolves outside project '${projectRoot}'.`);
-    }
-    return ptu('allow');
+    if (cp === cr || cp.startsWith(cr + '/')) return ptu('allow');
+    // 项目【外】的唯一窄例外:由当前事件的 transcript_path 派生的、本项目的宿主记忆目录。
+    // 判定在 memory 这一层做;分隔符必须是字面量 '/'(normalize 已把 '\' 折成 '/',
+    // 用 path.sep 会让 Windows 下精确路径命中而所有子文件落空)。锚点不可用时不启用例外,绝不放宽。
+    // 位置也是承重的:排在 receipt 门与健康门【之后】—— 未接管的会话同样写不了记忆。
+    const owned = rc.deriveHostOwnedWriteRoots(input);
+    if (owned.ok && owned.roots.some(r => cp === r || cp.startsWith(r + '/'))) return ptu('allow');
+    return ptu('deny', `[evo-lite] target '${target}' resolves outside project '${projectRoot}'.`);
 }
 
 async function handleHookInput(input, deps = {}) {
