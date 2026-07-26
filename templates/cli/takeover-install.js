@@ -14,15 +14,36 @@ function managedGroup(event) {
     return event === 'PreToolUse' ? { matcher: '*', hooks } : { hooks };
 }
 function managedFragment(events) { const o = {}; for (const e of events) o[e] = [managedGroup(e)]; return o; }
+
+// 托管身份 = 与 HOOK_COMMAND 的【精确同一】,不是"命令里出现 takeover-adapter.js"。
+// 子串匹配会把任何路径里含该文件名的第三方 hook 判成我们的 —— merge 会静默删掉它,
+// status 会对一个根本没装 ATTP 的 settings 误报 installed(Gate 1 复审 P1-1)。
+// 唯一容忍的差异是无语义的空白折叠:手工编辑或格式化过的托管 hook 若认不出来,
+// 重装会留下两份、每轮各注入一次。第三方命令不会因折叠空白而变成我们的命令。
+function canonicalHookCommand(command) {
+    return typeof command === 'string' ? command.trim().replace(/\s+/g, ' ') : null;
+}
+const CANONICAL_HOOK_COMMAND = canonicalHookCommand(HOOK_COMMAND);
+function isManagedHook(h) {
+    return Boolean(h && h.type === 'command' && canonicalHookCommand(h.command) === CANONICAL_HOOK_COMMAND);
+}
 function isManagedGroup(g) {
-    return Boolean(g && Array.isArray(g.hooks) && g.hooks.some(h => h && typeof h.command === 'string' && h.command.includes(MANAGED_MARK)));
+    return Boolean(g && Array.isArray(g.hooks) && g.hooks.some(isManagedHook));
 }
 function mergeHookConfig(existing, fragment) {
     const out = existing && typeof existing === 'object' ? JSON.parse(JSON.stringify(existing)) : {};
     out.hooks = out.hooks && typeof out.hooks === 'object' ? out.hooks : {};
     for (const ev of Object.keys(fragment)) {
         const arr = Array.isArray(out.hooks[ev]) ? out.hooks[ev] : [];
-        out.hooks[ev] = [...arr.filter(g => !isManagedGroup(g)), ...fragment[ev]];
+        // 只摘掉【我们自己的 hook 条目】,不整组丢弃。精确身份单独不够:用户把自己的命令
+        // 加到我们这一组里时,整组过滤仍会连它一起删 —— 同一条"必须保留第三方 hooks"契约。
+        const kept = [];
+        for (const g of arr) {
+            if (!isManagedGroup(g)) { kept.push(g); continue; }
+            const survivors = g.hooks.filter(h => !isManagedHook(h));
+            if (survivors.length > 0) kept.push({ ...g, hooks: survivors });
+        }
+        out.hooks[ev] = [...kept, ...fragment[ev]];
     }
     return out;
 }
@@ -388,7 +409,7 @@ function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
     return { installed, missing };
 }
 
-module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedGroup,
+module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedHook, isManagedGroup,
     mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
     MANAGED_SETTINGS_RELATIVE, managedSettingsPath, resolveManagedSettingsPath, resolveManagedBackupPath,
     backupManifestPath, validateBackupManifestShape, readBackupManifest, backupSettings, restoreSettings,

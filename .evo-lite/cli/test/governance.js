@@ -7261,6 +7261,38 @@ async function runGovernanceTests() {
             assert.ok(m1.hooks.SessionStart.some(g => g.hooks.some(h => /CLAUDE_PROJECT_DIR/.test(h.command))), 'uses CLAUDE_PROJECT_DIR');
             assert.strictEqual(ti.mergeHookConfig(m1, frag).hooks.SessionStart.filter(ti.isManagedGroup).length, 1, 'idempotent');
 
+            // ── 托管身份必须是精确同一,不能是子串(Gate 1 复审 P1-1)──
+            // 子串匹配下,任何路径里含 takeover-adapter.js 的第三方 hook 都会被判成我们的。
+            const vendorCmd = 'node /opt/vendor/takeover-adapter.js --vendor-mode';
+            const vendorGroup = { hooks: [{ type: 'command', command: vendorCmd }] };
+            const vendorMerged = ti.mergeHookConfig({ hooks: { SessionStart: [vendorGroup] } }, ti.managedFragment(['SessionStart']));
+            assert.ok(vendorMerged.hooks.SessionStart.some(g => g.hooks.some(h => h.command.includes('--vendor-mode'))),
+                'third-party name collision must be preserved');
+            assert.strictEqual(vendorMerged.hooks.SessionStart.length, 2, 'vendor group kept alongside the managed group');
+            // 同一个身份判定也喂给 status:纯第三方 settings 不得误报 installed
+            assert.strictEqual(ti.isManagedGroup(vendorGroup), false, 'name collision is not a managed group');
+            const idnSettings = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-idn-')), 'settings.json');
+            fs.writeFileSync(idnSettings, JSON.stringify({ hooks: { SessionStart: [vendorGroup] } }), 'utf8');
+            assert.deepStrictEqual(ti.statusTakeoverHooks(idnSettings, ['SessionStart'], null),
+                { installed: [], missing: ['SessionStart'] }, 'status must not count a colliding third-party hook as installed');
+
+            // 精确身份【单独不够】:第三方与我们同处一组时,整组过滤仍会连它一起删。
+            // 过滤必须落在 hook 条目级,组只有在清空后才消失。
+            const coResident = { hooks: [
+                { type: 'command', command: ti.HOOK_COMMAND },
+                { type: 'command', command: 'node ./scripts/my-own-hook.js' },
+            ] };
+            const coMerged = ti.mergeHookConfig({ hooks: { SessionStart: [coResident] } }, ti.managedFragment(['SessionStart']));
+            assert.ok(JSON.stringify(coMerged).includes('my-own-hook.js'), 'co-resident third-party hook must survive');
+            assert.strictEqual(JSON.stringify(coMerged).split(ti.MANAGED_MARK).length - 1, 1,
+                'the managed hook must appear exactly once after re-merge');
+            // 无语义的空白漂移不得导致重复安装(canonicalizer 的唯一职责)
+            const drifted = { hooks: [{ type: 'command', command: `  ${ti.HOOK_COMMAND.replace(/ /, '  ')}  ` }] };
+            assert.strictEqual(ti.isManagedHook(drifted.hooks[0]), true, 'whitespace-drifted managed hook is still ours');
+            assert.strictEqual(
+                ti.mergeHookConfig({ hooks: { SessionStart: [drifted] } }, ti.managedFragment(['SessionStart'])).hooks.SessionStart.length,
+                1, 'whitespace drift must not produce a duplicate install');
+
             // 用【临时假项目】做 probe,不依赖尚未 sync 的 runtime mirror(路径含空格,顺带验引用)
             const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-inst-'));
             const fakeProject = path.join(dir, 'my project');           // 故意含空格

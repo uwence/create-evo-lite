@@ -523,6 +523,10 @@ function buildProgram() {
                 : ti.installTakeoverHooks(options.settings, { events, projectRoot });
             if (res.backup) console.log(`🗄️  settings backed up: ${res.backup.existed ? res.backup.backupPath : '(no prior settings file)'}`);
             console.log(res.changed ? `✅ takeover hooks installed (${events.join(', ')})` : '✅ takeover hooks already in sync');
+            // 适用范围必须在安装时当面说清:宿主按【启动 cwd】定位项目 settings,并把
+            // $CLAUDE_PROJECT_DIR 展开为启动 cwd。从子目录启动 = 协议完全不参与,且无 workaround。
+            console.log(`ℹ️  scope: takeover only engages when Claude Code is launched from ${projectRoot}`);
+            console.log('   launching from a subdirectory loads no project hooks — there is no supported workaround.');
         });
     takeoverCmd.command('rollback')
         .description('Restore settings.json from the transactional backup manifest.')
@@ -556,8 +560,11 @@ function buildProgram() {
             const ti = require('./takeover-install');
             const rc = require('./takeover-receipt');
             const events = options.events.split(',').map(s => s.trim()).filter(Boolean);
-            const s = ti.statusTakeoverHooks(options.settings, events, rc.canonicalProjectRoot());
+            const projectRoot = rc.canonicalProjectRoot();
+            const s = ti.statusTakeoverHooks(options.settings, events, projectRoot);
             console.log(`installed: ${s.installed.join(', ') || '(none)'} | missing: ${s.missing.join(', ') || '(none)'}`);
+            // "已安装" ≠ "本次会话受管:" 生效范围由启动 cwd 决定,status 必须把这一条一并说清。
+            console.log(`scope: root-launch-only — engages only when Claude Code starts in ${projectRoot}`);
         });
 
     withTextSourceOptions(

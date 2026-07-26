@@ -1,10 +1,11 @@
-# Agent Takeover Trigger Protocol — 设计文档(R6)
+# Agent Takeover Trigger Protocol — 设计文档(R7)
 
 - 议题:backlog `[agent-code-routing]`(4a.x P2 final debt)。谱系:S9b CodePLC dogfood
   实证 —— 干净子仓、零竞争、裸 prompt 下 Agent 自发触发治理面 = **失败**;裁定 P1b
   将"Agent 裸指令路由"定为独立债,Wiki(4b-1)服务人、不能替代 Agent routing。
-- 状态:**R6 = R5 APPROVED 基线 + 宿主契约勘误一处**(见 §0.1)。架构、验收层级、两阶段两复审门**均未变更**;
-  勘误来源:实施计划 R5 外部复审 P0-1 —— 官方 hooks 契约与本文档「非零退出」表述冲突。
+- 状态:**R7 = R5 APPROVED 基线 + 宿主契约勘误两处**(见 §0.1 / §0.2)。架构、验收层级、两阶段两复审门**均未变更**;
+  勘误一来源:实施计划 R5 外部复审 P0-1 —— 官方 hooks 契约与本文档「非零退出」表述冲突;
+  勘误二来源:阶段一 Gate 1 复审 P0-1 —— 适用范围实测收窄为 root-launch-only。
 - 宿主范围:**仅 Claude Code**(MVP);协议本身 host-agnostic。
 - 前置证据:`docs/validation/attp-cc-capability-probe.md`(装机 2.1.218,PROTOCOL-SUPPORTED)。
 - 关联:`[zvec-06-upgrade]`(无关);a177 lock 协调(receipt 授权边界/发布时序/失效事务
@@ -37,6 +38,40 @@
 
 **连带事实**(同一官方页,补记):`additionalContext` / `systemMessage` / 裸 stdout 上限
 **10,000 字符**(超出转存文件 + 预览替换)。本设计 1 KiB capsule 预算远在其下,**不据此放宽**。
+
+---
+
+## 0.2 宿主契约勘误二:适用范围 = root-launch-only(Gate 1,实测)
+
+**问题**:本文档隐含「安装到项目 `.claude/settings.json` 后,该项目的任何会话都受协议管辖」。
+阶段一 dogfood 实测(Claude Code **2.1.220**,win32)证伪:管辖范围由**启动 cwd**决定,不由项目边界决定。
+
+三组对照(同一提示词;证据见 `docs/validation/attp-phase1-dogfood.md` §5):
+
+| 启动方式 | 项目 settings 是否加载 | hook envelope | receipt |
+|---|---|---|---|
+| 项目根 `claude` | 是 | 3 | 新增 |
+| 子目录 `claude` | **否**(仅用户级) | 0 | 无 |
+| 子目录 + `--settings <root>/.claude/settings.json` | 是,**hook 已执行** | 0(执行即失败) | 无 |
+
+两条锚定启动 cwd 的独立机制:
+
+1. **项目设置发现按启动 cwd**,不从子目录向上走到项目根。这与官方 permissions 文档
+   「从当前工作目录及其父目录发现」的表述冲突,按**宿主能力偏差**记录,不假定所有版本一致。
+2. **`$CLAUDE_PROJECT_DIR` 展开为启动 cwd**,不是项目根。第三组即证据:settings 已显式加载、
+   hook 已被调用,但命令解析到 `<cwd>/.evo-lite/cli/takeover-adapter.js` → `Cannot find module`。
+   注:前两组中 cwd 恰等于项目根,无法区分二者;只有第三组能分辨,故结论仅在
+   「settings 目录 ≠ 启动 cwd」这一实测配置下成立,不作更强推广。
+
+**已验证无子目录 workaround**:显式 `--settings` 失败(机制 2);`CLAUDE_PROJECT_DIR` 环境变量
+被宿主覆盖,同样失败。
+
+**裁定(MVP 收口)**:适用范围明确收窄为 **root-launch-only**,不引入用户级 `~/.claude/settings.json`
+安装 —— 它会把项目专属 hook 扩散到所有项目,重新引入跨项目路由/所有权/卸载/fail-open 边界,
+且受机制 2 制约在子目录下依然不工作。安装输出与 README 必须明写该限制。
+
+**对阶段二的连带影响**:守卫的 no-silent-bypass 只在 root-launch-only 范围内成立。子目录启动的会话
+既无接管也无守卫 —— 这是**范围限制**,不是绕过路径,但必须在阶段二验收文案中如实标注。
 
 ---
 

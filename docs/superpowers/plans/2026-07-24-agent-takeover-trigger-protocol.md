@@ -1,4 +1,4 @@
-# Agent Takeover Trigger Protocol Implementation Plan (R11)
+# Agent Takeover Trigger Protocol Implementation Plan (R11 + Gate 1 remediation)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,9 +8,10 @@
 
 **Tech Stack:** Node.js (CommonJS), commander, Claude Code hooks(`hookSpecificOutput.additionalContext` / `permissionDecision` / `${CLAUDE_PROJECT_DIR}`), 现有 `test/harness.js` + assert 骨架。
 
-**契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R6:R5 APPROVED 基线 + §0.1 宿主契约勘误)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218)。
+**契约文档(canonical):** `docs/superpowers/specs/2026-07-24-agent-takeover-trigger-protocol-design.md`(R7:R5 APPROVED 基线 + §0.1 退出码勘误 + §0.2 root-launch-only 勘误)。**probe:** `docs/validation/attp-cc-capability-probe.md`(2.1.218);**阶段一 dogfood:** `docs/validation/attp-phase1-dogfood.md`(2.1.218 / 2.1.220)。
 
 **计划 R1→R10 外部复审(累计 28 个 P0)已折入**,逐条见文末《复审落点》。
+**阶段一 Gate 1 复审(1 P0 + 1 P1)已折入**,见文末《Gate 1 复审落点》。
 
 ## 已核实的代码事实(实现须以此为准,勿再猜测)
 
@@ -31,6 +32,14 @@
 ## Global Constraints
 
 - **宿主范围:** 仅 Claude Code(MVP);非 Claude 宿主只静态 fallback。
+- **启动 cwd 范围:root-launch-only(Gate 1 复审 P0-1,实测收口)。** ATTP 仅在 Claude Code
+  **从 canonical project root 启动**时生效。实测(2.1.220,win32)两条独立机制都锚定启动 cwd:
+  ① 项目级 `.claude/settings.json` 按启动 cwd 定位,**不会**从子目录向上找到项目根;
+  ② `$CLAUDE_PROJECT_DIR` 展开为**启动 cwd**,不是项目根 —— 因此即便用 `--settings` 把受管
+  settings 显式喂进去,hook 命令也会解析到 `<cwd>/.evo-lite/cli/takeover-adapter.js` 而失败。
+  **已验证不存在子目录 workaround**(显式 `--settings`、`CLAUDE_PROJECT_DIR` 环境变量均无效,
+  后者被宿主覆盖)。故:子目录启动 = ATTP 完全不参与,**不得**作为验收项或降级路径;
+  安装输出与 README 必须明写该限制。阶段二守卫的 no-silent-bypass 同样只在此范围内成立。
 - **单一 collector + 单一 builder + 强制校验:** 三条入口全部 `collectSessionTakeoverContextFull(...)` → `buildTakeoverPayload(...)` → **`validateSessionPayload(...)` 通过后才 transport**;禁止任何入口自拼语义或硬编码 `verify:null`/`recall:[]`。**`UserPromptSubmit` 每轮 capsule 同样强制 `validateCapsule`**(probe 已确认宿主静默丢弃类型错字段,无效 capsule = 静默失去再播种能力);校验不过 → emergency degraded capsule + `failure`/`systemMessage`/stderr,**且 `exit 0`**(非零会让宿主丢弃该 capsule)。
 - **锚点解析 fail-closed:** `readFocusAnchor` 在 `BEGIN_FOCUS/END_FOCUS` 非严格一对时返回 `null`(文件存在但结构损坏**不得**当作"空 focus 的健康态");`readMetaAnchor` 返回 `{ok, reason, meta}`,锚点缺失/`ahead|behind` 非整数 → `ok:false` 并入 `degraded[]`,**`NaN` 绝不进入 freshness**。
 - **schema 深校验:** `validateSessionPayload` 校验 `active.plan/spec`(null 或含非空 `id` 的对象)、`freshness` 三键齐全且数值有限或 null、`health.takeover` 枚举、`verify.hasAlerts` 布尔、`recall.status` 字符串、`degraded[]` 每项 `{part:string, reason:string}`。可恢复降级由 collector 归一化为**保守但合法**的值(`hasAlerts:true` / `recall.status:'unavailable'`),事实由 `degraded[]` + `attention-needed` 承载。
@@ -1715,7 +1724,7 @@ EOF
 
 **Interfaces:**
 - `HOOK_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"'`
-- `managedFragment(events)`、`mergeHookConfig(existing, fragment)`、`isManagedGroup(g)`
+- `managedFragment(events)`、`mergeHookConfig(existing, fragment)`、`isManagedHook(h)`、`isManagedGroup(g)`
 - **安装闸(与 shell 无关的两项)**
   - `verifyHookCommandShape(command?)` → `{ ok, reason }`(静态:`node ` 开头、引用受管 adapter、`$CLAUDE_PROJECT_DIR` 处于双引号内)
   - `probeAdapterBinary(projectRoot)` → `{ ok, reason }`(直接 `process.execPath` 跑 adapter,喂最小 UserPromptSubmit JSON;解析 envelope → **`validateCapsule` + 1 KiB 预算** → 拒绝 `takeover-degraded`。安装闸 = envelope 合法 ∧ capsule 合法 ∧ ≤1 KiB ∧ 非 degraded;退出码已不能判定健康)
@@ -1747,6 +1756,38 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.ok(m1.hooks.PreToolUse.some(g => g.hooks.some(h => h.command === 'rtk hook claude')), 'third-party preserved');
     assert.ok(m1.hooks.SessionStart.some(g => g.hooks.some(h => /CLAUDE_PROJECT_DIR/.test(h.command))), 'uses CLAUDE_PROJECT_DIR');
     assert.strictEqual(ti.mergeHookConfig(m1, frag).hooks.SessionStart.filter(ti.isManagedGroup).length, 1, 'idempotent');
+
+    // ── 托管身份必须是精确同一,不能是子串(Gate 1 复审 P1-1)──
+    // 子串匹配下,任何路径里含 takeover-adapter.js 的第三方 hook 都会被判成我们的。
+    const vendorCmd = 'node /opt/vendor/takeover-adapter.js --vendor-mode';
+    const vendorGroup = { hooks: [{ type: 'command', command: vendorCmd }] };
+    const vendorMerged = ti.mergeHookConfig({ hooks: { SessionStart: [vendorGroup] } }, ti.managedFragment(['SessionStart']));
+    assert.ok(vendorMerged.hooks.SessionStart.some(g => g.hooks.some(h => h.command.includes('--vendor-mode'))),
+        'third-party name collision must be preserved');
+    assert.strictEqual(vendorMerged.hooks.SessionStart.length, 2, 'vendor group kept alongside the managed group');
+    // 同一个身份判定也喂给 status:纯第三方 settings 不得误报 installed
+    assert.strictEqual(ti.isManagedGroup(vendorGroup), false, 'name collision is not a managed group');
+    const idnSettings = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-idn-')), 'settings.json');
+    fs.writeFileSync(idnSettings, JSON.stringify({ hooks: { SessionStart: [vendorGroup] } }), 'utf8');
+    assert.deepStrictEqual(ti.statusTakeoverHooks(idnSettings, ['SessionStart'], null),
+        { installed: [], missing: ['SessionStart'] }, 'status must not count a colliding third-party hook as installed');
+
+    // 精确身份【单独不够】:第三方与我们同处一组时,整组过滤仍会连它一起删。
+    // 过滤必须落在 hook 条目级,组只有在清空后才消失。
+    const coResident = { hooks: [
+        { type: 'command', command: ti.HOOK_COMMAND },
+        { type: 'command', command: 'node ./scripts/my-own-hook.js' },
+    ] };
+    const coMerged = ti.mergeHookConfig({ hooks: { SessionStart: [coResident] } }, ti.managedFragment(['SessionStart']));
+    assert.ok(JSON.stringify(coMerged).includes('my-own-hook.js'), 'co-resident third-party hook must survive');
+    assert.strictEqual(JSON.stringify(coMerged).split(ti.MANAGED_MARK).length - 1, 1,
+        'the managed hook must appear exactly once after re-merge');
+    // 无语义的空白漂移不得导致重复安装(canonicalizer 的唯一职责)
+    const drifted = { hooks: [{ type: 'command', command: `  ${ti.HOOK_COMMAND.replace(/ /, '  ')}  ` }] };
+    assert.strictEqual(ti.isManagedHook(drifted.hooks[0]), true, 'whitespace-drifted managed hook is still ours');
+    assert.strictEqual(
+        ti.mergeHookConfig({ hooks: { SessionStart: [drifted] } }, ti.managedFragment(['SessionStart'])).hooks.SessionStart.length,
+        1, 'whitespace drift must not produce a duplicate install');
 
     // 用【临时假项目】做 probe,不依赖尚未 sync 的 runtime mirror(路径含空格,顺带验引用)
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-inst-'));
@@ -2211,15 +2252,36 @@ function managedGroup(event) {
     return event === 'PreToolUse' ? { matcher: '*', hooks } : { hooks };
 }
 function managedFragment(events) { const o = {}; for (const e of events) o[e] = [managedGroup(e)]; return o; }
+
+// 托管身份 = 与 HOOK_COMMAND 的【精确同一】,不是"命令里出现 takeover-adapter.js"。
+// 子串匹配会把任何路径里含该文件名的第三方 hook 判成我们的 —— merge 会静默删掉它,
+// status 会对一个根本没装 ATTP 的 settings 误报 installed(Gate 1 复审 P1-1)。
+// 唯一容忍的差异是无语义的空白折叠:手工编辑或格式化过的托管 hook 若认不出来,
+// 重装会留下两份、每轮各注入一次。第三方命令不会因折叠空白而变成我们的命令。
+function canonicalHookCommand(command) {
+    return typeof command === 'string' ? command.trim().replace(/\s+/g, ' ') : null;
+}
+const CANONICAL_HOOK_COMMAND = canonicalHookCommand(HOOK_COMMAND);
+function isManagedHook(h) {
+    return Boolean(h && h.type === 'command' && canonicalHookCommand(h.command) === CANONICAL_HOOK_COMMAND);
+}
 function isManagedGroup(g) {
-    return Boolean(g && Array.isArray(g.hooks) && g.hooks.some(h => h && typeof h.command === 'string' && h.command.includes(MANAGED_MARK)));
+    return Boolean(g && Array.isArray(g.hooks) && g.hooks.some(isManagedHook));
 }
 function mergeHookConfig(existing, fragment) {
     const out = existing && typeof existing === 'object' ? JSON.parse(JSON.stringify(existing)) : {};
     out.hooks = out.hooks && typeof out.hooks === 'object' ? out.hooks : {};
     for (const ev of Object.keys(fragment)) {
         const arr = Array.isArray(out.hooks[ev]) ? out.hooks[ev] : [];
-        out.hooks[ev] = [...arr.filter(g => !isManagedGroup(g)), ...fragment[ev]];
+        // 只摘掉【我们自己的 hook 条目】,不整组丢弃。精确身份单独不够:用户把自己的命令
+        // 加到我们这一组里时,整组过滤仍会连它一起删 —— 同一条"必须保留第三方 hooks"契约。
+        const kept = [];
+        for (const g of arr) {
+            if (!isManagedGroup(g)) { kept.push(g); continue; }
+            const survivors = g.hooks.filter(h => !isManagedHook(h));
+            if (survivors.length > 0) kept.push({ ...g, hooks: survivors });
+        }
+        out.hooks[ev] = [...kept, ...fragment[ev]];
     }
     return out;
 }
@@ -2585,7 +2647,7 @@ function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
     return { installed, missing };
 }
 
-module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedGroup,
+module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedHook, isManagedGroup,
     mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
     MANAGED_SETTINGS_RELATIVE, managedSettingsPath, resolveManagedSettingsPath, resolveManagedBackupPath,
     backupManifestPath, validateBackupManifestShape, readBackupManifest, backupSettings, restoreSettings,
@@ -2614,6 +2676,10 @@ module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, is
                 : ti.installTakeoverHooks(options.settings, { events, projectRoot });
             if (res.backup) console.log(`🗄️  settings backed up: ${res.backup.existed ? res.backup.backupPath : '(no prior settings file)'}`);
             console.log(res.changed ? `✅ takeover hooks installed (${events.join(', ')})` : '✅ takeover hooks already in sync');
+            // 适用范围必须在安装时当面说清:宿主按【启动 cwd】定位项目 settings,并把
+            // $CLAUDE_PROJECT_DIR 展开为启动 cwd。从子目录启动 = 协议完全不参与,且无 workaround。
+            console.log(`ℹ️  scope: takeover only engages when Claude Code is launched from ${projectRoot}`);
+            console.log('   launching from a subdirectory loads no project hooks — there is no supported workaround.');
         });
     takeoverCmd.command('rollback')
         .description('Restore settings.json from the transactional backup manifest.')
@@ -2647,8 +2713,11 @@ module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, is
             const ti = require('./takeover-install');
             const rc = require('./takeover-receipt');
             const events = options.events.split(',').map(s => s.trim()).filter(Boolean);
-            const s = ti.statusTakeoverHooks(options.settings, events, rc.canonicalProjectRoot());
+            const projectRoot = rc.canonicalProjectRoot();
+            const s = ti.statusTakeoverHooks(options.settings, events, projectRoot);
             console.log(`installed: ${s.installed.join(', ') || '(none)'} | missing: ${s.missing.join(', ') || '(none)'}`);
+            // "已安装" ≠ "本次会话受管:" 生效范围由启动 cwd 决定,status 必须把这一条一并说清。
+            console.log(`scope: root-launch-only — engages only when Claude Code starts in ${projectRoot}`);
         });
 ```
 
@@ -2728,7 +2797,10 @@ git diff --stat .claude/settings.json                                          #
 用 `claude -p` 跑裸 prompt("分析当前项目正在做什么,下一步该做什么"),记录到 `docs/validation/attp-phase1-dogfood.md`:
 - 首次推理前上下文含 `[evo-lite takeover]` payload;每轮 capsule `takeover-active`;
 - receipt 落 `.evo-lite/generated/takeover/receipts/claude-code/` 为 committed;
-- **在子目录 cwd 下**仍生效(证明宿主确实展开了 `$CLAUDE_PROJECT_DIR`,这是命令级 transport 的**权威证据**);
+- **启动 cwd 契约(root-launch-only)**:必须从 canonical project root 启动 Claude Code。
+  记录三组对照 —— ①项目根启动、②子目录启动、③子目录启动 + 显式 `--settings <root>/.claude/settings.json`;
+  每组记 `--debug-file` 里的 setting sources 行、hook envelope 数、receipt 增量。
+  预期:仅 ① 生效。**不得**把"子目录仍生效"写成验收项(Gate 1 复审 P0-1:该断言实测不成立);
 - 命令级 probe 的本机结果(ok / skipped / 失败原因)与宿主实际行为是否一致 —— **不一致本身就是要记录的发现**;
 - **hook 进程退出码实测为 0**,stdout 只有 JSON —— 与官方"JSON only processed on exit 0"契约一致(若观察到宿主在非零退出时仍摄入 JSON,记为契约偏差,但**不据此放宽**本设计);
 - Agent 首轮明确引用 injected focus(S9b,P2 效果证据)。
@@ -3011,7 +3083,13 @@ EOF
 **Files:**
 - Test: `templates/cli/test/governance.js`(`T-takeover-fault-suite`)
 - Modify: `.claude/settings.json`(installer events 增 `PreToolUse`)
+- Modify: `README.md` / `README_EN.md`(ATTP 面向用户的首次成文)
 - Create: `docs/validation/attp-phase2-fault-injection.md`
+
+> **README 前置项(Gate 1 复审 P0-1 结转)**:Gate 1 时 README 尚无任何 ATTP/hooks 章节,
+> 无可修正文案,故 root-launch-only 只落在设计、计划与**安装/status 输出**三处。ATTP 首次
+> 写入 README 时,**必须**同时写明:① 仅在从项目根启动 Claude Code 时生效;② 子目录启动
+> 既无接管也无守卫,且无 workaround;③ 该限制同时约束阶段二守卫的 no-silent-bypass 范围。
 
 - [ ] **Step 1: 写故障注入测试(八条断言,均用注入 seam 真实制造失败)**
 
@@ -3179,7 +3257,7 @@ EOF
 | R3 P1-4 | 残留实施期占位判断 | 已实测:`formatBootstrapReport`/`runBootstrapCommand`/`buildTakeoverRecall` **仅 `memory.js` 内部调用**(282/469/474/475/513),无其他调用点;MCP `evo_active_context` 走独立 `handleActiveContext()`,不受影响 |
 | R4 P0-1 | emergency capsule 不保证合法且 ≤1 KiB,超长时退回未预算普通文本 | Task 1 新增 `buildEmergencyCapsule(input, budget)` → `{capsule, systemMessage}`:**独立于正常 builder**、共用同一 UTF-8 裁剪、确定性降级阶梯(全量 → 去 action → 裁 project → 去 focusHash → 常量地板 `EMERGENCY_FLOOR_BYTES`),恒 ≤ 预算且恒过 `validateCapsule`;**恢复命令只整条带上或整条省略**(截断的 shell 命令比没有更危险),省略时完整命令走 `systemMessage`。Task 4 删除普通文本分支,UPS 全部失败模式(builder 垃圾 / builder 抛错 / validator 拒绝 / 根解析失败)统一走 `emergencyResult`;测试注入超长 root+sessionId+action 及垃圾输入,并对四种失败模式统一断言"必是预算内合法 capsule" |
 | R4 P0-2 | realpath / canonicalization 三处 fail-open | ①`canonicalProjectRoot` 的 realpath 失败**即抛**(删 try/catch);②`invalidateReceipt` **不再** `path.resolve` 兜底 —— 无 canonical root 时跳过 tombstone,只用"不写入任何身份"的 unlink 撤销,再失败如实报 `ok:false`;③守卫 target 解析改用 `rc.realpathStrict`/`rc.pathExists`(同一 fs seam),失败**即 deny**;④`handlePreToolUse` 外层 try/catch + `resolveRoot`,**任何异常一律 deny**(PreToolUse 缺 `permissionDecision` = 放行,原实现会经 `main` 泄成 fail-open)。故障注入测试分别覆盖 root 与 target(后者用只对含 `locked` 路径抛错的注入隔离) |
-| R4 P0-3 | `probeHookCommand` 验的是 Node 默认 OS shell,不是宿主 shell,可能误拒装 | 安装闸改为**与 shell 无关的两项**:`verifyHookCommandShape`(静态:`node ` 开头 + 引用受管 adapter + `$CLAUDE_PROJECT_DIR` 在双引号内)+ `probeAdapterBinary`。`probeHookCommand(projectRoot,{shell,resolveShell})` **降级为诊断**,必须显式指定 shell(`resolveHostShell`:`EVO_LITE_HOOK_SHELL`/`CLAUDE_CODE_GIT_BASH_PATH` → win32 Git Bash → `/bin/sh`),shell 不可发现时返回 `{ok:true,skipped:true}`,**绝不因此拒装**;新增"坏 shell 如实报错""skipped 不影响安装"两例。**宿主 transport 的权威证据改为 Step 9 的真实 `claude -p` dogfood**(子目录 cwd 生效即证明宿主展开了 `$CLAUDE_PROJECT_DIR`),并要求记录本机 probe 与宿主行为不一致的情况 |
+| R4 P0-3 | `probeHookCommand` 验的是 Node 默认 OS shell,不是宿主 shell,可能误拒装 | 安装闸改为**与 shell 无关的两项**:`verifyHookCommandShape`(静态:`node ` 开头 + 引用受管 adapter + `$CLAUDE_PROJECT_DIR` 在双引号内)+ `probeAdapterBinary`。`probeHookCommand(projectRoot,{shell,resolveShell})` **降级为诊断**,必须显式指定 shell(`resolveHostShell`:`EVO_LITE_HOOK_SHELL`/`CLAUDE_CODE_GIT_BASH_PATH` → win32 Git Bash → `/bin/sh`),shell 不可发现时返回 `{ok:true,skipped:true}`,**绝不因此拒装**;新增"坏 shell 如实报错""skipped 不影响安装"两例。**宿主 transport 的权威证据改为 Step 9 的真实 `claude -p` dogfood**(根 cwd 下 hook 实际注入即证据;"子目录 cwd 生效"这一原推论已被 Gate 1 复审 P0-1 证伪,见 §Global Constraints 的 root-launch-only 条款),并要求记录本机 probe 与宿主行为不一致的情况 |
 | R4 P0-4 | settings 备份失败被 `\|\| true` 吞掉,回滚可能 `rm` 掉用户原配置 | Task 6 新增事务式三件套:`backupSettings`(原文件存在却写失败/回读不一致 → **立即抛**;唯一备份路径 + 确定性 manifest `.evo-lite/generated/takeover/settings-backup.json` 存 `existed/backupPath/sha256`;manifest 已存在即抛,不覆盖旧备份)、`restoreSettings`(按 sha256 校验后**恢复原始字节**;仅 `existed:false` 才允许删文件)、`installWithBackup`(install 失败自动回滚)。CLI 增 `takeover install --backup` / `takeover rollback` / `takeover probe`;Step 9 手册步骤全部换成这些命令;**新增自动化测试**覆盖备份损坏即停、字节级恢复、只删自建文件、自动回滚不留残余 manifest |
 | R4 P1-1 | `readMetaAnchor` 接口声明仍是旧返回类型 | Interfaces 改为 `{ ok, reason, meta }`(**永不返回 null**),并列出四种 `reason` 取值 |
 | R4 P1-2 | freshness 计数允许负数/小数 | `numOrNull` → `countOrNull`(`null` 或 `Number.isInteger(v) && v >= 0`);META reader 的 `toInt` 同步加 `n >= 0`;新增 `-1` / `1.5` / META `ahead: -3` 三例 |
@@ -3223,3 +3301,10 @@ EOF
 - `SessionStart(compact)` / `CwdChanged`:probe 列为待实测优化器,阶段 2 后以 echo-harness 验证再决定纳管。
 - **宿主 hook shell 的确切身份**:计划只依赖"命令形状正确 + adapter 可执行 + dogfood 实证",不依赖对宿主 shell 的猜测。若 Step 9 dogfood 显示宿主行为与本机诊断 probe 不一致,把实测结论补进 `docs/validation/attp-cc-capability-probe.md`,再决定是否把 `resolveHostShell` 的候选顺序调整为实测结果。
 - nurture 分发:子仓获取 hook 需在 nurture 侧调 `mem takeover install`;本 MVP 只保证 installer 幂等可用。
+
+## Gate 1 复审落点(阶段一实现复审)
+
+| 编号 | Gate 1 问题 | 落点 |
+|---|---|---|
+| P0-1 | 子目录启动未接管;计划把「子目录仍生效」列为验收项,该断言实测不成立 | 按裁定收口为 **root-launch-only**,不引入用户级安装。重跑四组对照(项目根 / 子目录 / 子目录 + `--settings` / 再加 `CLAUDE_PROJECT_DIR` 环境变量),用 `--debug-file` 的 setting sources + receipt 增量取证,发现**两条各自独立、都锚定启动 cwd** 的机制:①项目设置按启动 cwd 定位,不向上查找(与官方 permissions 文档表述冲突,按宿主能力偏差记录);②`$CLAUDE_PROJECT_DIR` 展开为**启动 cwd** —— 第三组中 settings 已加载、hook 已执行,却报 `Cannot find module …/templates/.evo-lite/cli/takeover-adapter.js`。**据此,复审建议的「把显式 `--settings` 记为可选 workaround」不成立**(它不恢复接管,反而让 hook 每轮真实报错),已验证不存在任何子目录 workaround。落点:设计 §0.2、计划 Global Constraints「启动 cwd 范围」、Step 9 断言改写、`takeover install` 与 `takeover status` 各增一行 scope 输出、dogfood §5 重写;README 首次写入 ATTP 时同写该限制,挂为 Task 8 前置项(Gate 1 时 README 尚无任何 ATTP 章节,无可修正文案) |
+| P1-1 | `isManagedGroup` 按子串 `takeover-adapter.js` 判定托管身份,会静默删除名称碰撞的第三方 hook | 身份改为**精确同一**:新增 `isManagedHook(h)`(`type === 'command'` 且命令经 `canonicalHookCommand` 归一后严格等于 `HOOK_COMMAND`),`isManagedGroup` 复用之;`statusTakeoverHooks` 与安装 merge 共用同一判定,故纯第三方 settings 不再误报 `installed`。**另修同类第二条路径**:精确身份单独不够 —— 第三方 hook 与我们同处一组时,整组过滤仍会连它一起删,故过滤下沉到 **hook 条目级**,组只有在清空后才移除。canonicalizer 仅折叠无语义空白,唯一职责是避免手工编辑/格式化后的托管 hook 认不出来而重复安装。新增 6 条回归(名称碰撞保留且组数为 2、`isManagedGroup` 对碰撞返回 false、status 不误报、同组第三方存活且托管 hook 恰一份、空白漂移仍被认出、空白漂移不产生重复);三个变异体(退回子串 / 退回整组过滤 / 去掉 canonicalizer)分别被三条不同断言杀死 |
