@@ -12,8 +12,8 @@
 
 | 验收项 | 结果 |
 |---|---|
-| 八条故障注入用例全部通过 | **达成**(`✅ T-takeover-fault-suite passed`) |
-| 注入均为真实 seam,不是断言编造 | **达成**,详见 §2 |
+| 八条阶段二验收用例全部通过(1–7 故障/状态注入,8 端到端恢复) | **达成**(`✅ T-takeover-fault-suite passed`) |
+| 注入被真实消费这件事**锁进了回归**,不只是当下成立 | **达成**(Gate 2 复审 P1-1 修订后),详见 §2 |
 | `PreToolUse` 装入真实仓库 | **达成**,三事件在位 |
 | 安装前备份逐字节可回滚 | **达成**,sha256 与安装前一致 |
 | 全套件在守卫在位时回归 | **达成**,`test.js all` EXIT 0 |
@@ -67,21 +67,24 @@ scope: root-launch-only — engages only when Claude Code starts in D:/Data/Proj
 
 ---
 
-## §2 八条故障注入用例
+## §2 八条阶段二验收用例
 
 全部位于 `templates/cli/test/governance.js` 的 `T-takeover-fault-suite`,注入 seam 为
 `takeover-receipt.js` 的 `__setFsOps` / transport 的 `write` / `deps.collect`。
 
+用例 1–7 是故障/状态注入,**用例 8 不注入任何故障** —— 它是端到端恢复验收,
+放在同一块里是因为它消费的正是前面几条造成的锁定状态。
+
 | # | 注入的失败 | 承重断言 |
 |---|---|---|
 | 1 | receipt 发布时 `renameSync` 抛错 | 非零退出,且盘上**没有** committed receipt |
-| 2 | collector 返回残缺 payload | 校验拦截 → exit 0(宿主只在 exit 0 解析 JSON)+ 不发布 + `failure` 标记 |
-| 3 | collector 抛错 | exit 0 + 不发布 + degraded 上下文里带**可执行**的恢复命令(含 `--session-id`) |
+| 2 | collector 返回残缺 payload | 校验拦截 → exit 0(宿主只在 exit 0 解析 JSON)+ 不发布 + `failure` 标记 + `systemMessage` |
+| 3 | collector 抛错 | exit 0 + 不发布 + `systemMessage` + degraded 上下文里带**可执行**的恢复命令(含 `--session-id`) |
 | 4 | 失效持久化双失败(tombstone 与 unlink 均抛) | 守卫仍 deny,**且 deny 出自健康门**(见下) |
 | 5 | `source=resume` / `clear` 且 receipt 缺失 | 走 establishment,不因 source 跳过 |
 | 6 | CLI stdout 写出失败 | 不发布 receipt |
 | 7 | 同会话 refresh 失败 | 旧 receipt **不**自动撤销;健康正常时 Write 仍 allow;删 `active_context` 后转 deny |
-| 8 | 无 | 端到端子进程执行恢复命令后,Write 解锁 |
+| 8 | 不注入(端到端恢复) | 子进程真实执行恢复命令后,Write 解锁 |
 
 ### 用例 4:计划原文的断言杀不掉变异体(本轮修正)
 
@@ -108,6 +111,31 @@ scope: root-launch-only — engages only when Claude Code starts in D:/Data/Proj
 
 并补两条文案断言 —— deny 必须措辞为 `unhealthy`,且**不得**是 `payload build failed`。
 独立归因验证:`if (false)` 变异体现在由用例 4 自己杀掉,不再依赖相邻测试。
+
+### 用例 4 续:注入被消费这件事当时仍未锁进回归(Gate 2 复审 P1-1)
+
+上面那版**当下**成立,但没有把「双失败真的发生过」变成永久约束。删掉 `UserPromptSubmit` 调用后:
+
+```text
+基线              tombstone=1 unlink=1   四条断言全过
+删 UserPromptSubmit tombstone=0 unlink=0   四条断言【仍然全过】
+```
+
+两个 seam 一次都没被调用,而守卫本来就会因 `active_context` 缺失而 deny —— 于是用例只证明了
+「receipt 仍 committed + active_context 不可读 → deny」,与注入无关。上一轮验收记录把
+「注入均为真实 seam」写成已达成,**超出了当时的证据**,该表述已在本轮更正。
+
+修正:给两个 seam 加调用计数,并在 `UserPromptSubmit` 之后立即断言两者都被尝试过。
+四条变异逐条独立归因(生产模块变异后均已复原):
+
+| 变异 | 被杀于 |
+|---|---|
+| 删除 `UserPromptSubmit` 调用 | `tombstoneAttempts > 0` 与 `unlinkAttempts > 0` |
+| 删除 `invalidateReceipt` 的 tombstone → unlink 回退 | `unlinkAttempts > 0` |
+| 让 tombstone 注入不抛错 | `receipt 仍 committed`(另触发 `unlinkAttempts`、`unhealthy` 两条) |
+| 删除 health gate | `unhealthy` 与 `非 payload build failed` |
+
+三个承重点由此彼此独立:双失败确实发生、旧 committed receipt 确实残留、health gate 独立 fail-closed。
 
 ---
 

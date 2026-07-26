@@ -8095,7 +8095,8 @@ async function runGovernanceTests() {
             console.log('✅ T-takeover-session-scope passed');
         }
 
-        console.log('T-takeover-fault-suite. injected failures per review-gate assertion ...');
+        // 八条阶段二验收用例:1–7 为故障/状态注入,8 是端到端恢复(不注入任何故障)。
+        console.log('T-takeover-fault-suite. phase-2 acceptance: 1-7 injected failures, 8 end-to-end recovery ...');
         {
             const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
             const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
@@ -8136,7 +8137,9 @@ async function runGovernanceTests() {
                 fs.rmSync(root, { recursive: true, force: true });
             }
 
-            // 2) 坏 session payload(collector 返回残缺)→ 校验拦截 → 无 committed + 非零
+            // 2) 坏 session payload(collector 返回残缺)→ 校验拦截 → 无 committed + exit 0 + 显式 systemMessage
+            //    exit 0 是【契约】而不是漏改:宿主只在 exit 0 时解析 hook 的 JSON,非零会把整个 envelope 丢掉,
+            //    degraded capsule 与恢复说明也一并丢失。失败改由 failure 字段 + systemMessage + stderr 表达。
             {
                 const { root } = mkRoot();
                 const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f2', source: 'startup' },
@@ -8151,7 +8154,7 @@ async function runGovernanceTests() {
                 fs.rmSync(root, { recursive: true, force: true });
             }
 
-            // 3) collector 抛错(不可恢复)→ 无 committed + 非零 + 明示恢复命令
+            // 3) collector 抛错(不可恢复)→ 无 committed + exit 0 + 显式 systemMessage + 明示恢复命令
             {
                 const { root } = mkRoot();
                 const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f3', source: 'startup' },
@@ -8175,11 +8178,21 @@ async function runGovernanceTests() {
                 rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 'f4', projectRoot: canon,
                     state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
                 fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
-                rc.__setFsOps({ writeFileSync: () => { throw new Error('tombstone fail'); }, unlinkSync: () => { throw new Error('unlink fail'); } });
+                // 计数是必需的:没有它,删掉下面的 UserPromptSubmit 调用后两个 seam 一次都不会被调用,
+                // 而其余断言【全部照常通过】—— 因为守卫本来就会因 active_context 缺失而 deny。
+                // 那样这个用例只证明了「receipt 仍 committed + active_context 不可读 → deny」,
+                // 根本没证明双失败真的发生过(Gate 2 复审 P1-1)。
+                let tombstoneAttempts = 0, unlinkAttempts = 0;
+                rc.__setFsOps({
+                    writeFileSync: () => { tombstoneAttempts += 1; throw new Error('tombstone fail'); },
+                    unlinkSync: () => { unlinkAttempts += 1; throw new Error('unlink fail'); },
+                });
                 let out;
                 try {
                     // 载荷步:真实触发失效持久化,并让它双双失败。
                     await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: 'f4' }, { projectRoot: root });
+                    assert.ok(tombstoneAttempts > 0, 'UserPromptSubmit must attempt tombstone persistence');
+                    assert.ok(unlinkAttempts > 0, 'failed tombstone persistence must fall back to unlink');
                     out = await writeOut(root, 'f4');
                 } finally { rc.__resetFsOps(); }
                 assert.strictEqual(out.permissionDecision, 'deny', 'health gate denies even when invalidation persistence double-fails');

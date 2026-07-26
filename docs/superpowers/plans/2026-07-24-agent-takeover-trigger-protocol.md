@@ -3343,10 +3343,14 @@ EOF
 > 写入 README 时,**必须**同时写明:① 仅在从项目根启动 Claude Code 时生效;② 子目录启动
 > 既无接管也无守卫,且无 workaround;③ 该限制同时约束阶段二守卫的 no-silent-bypass 范围。
 
-- [ ] **Step 1: 写故障注入测试(八条断言,均用注入 seam 真实制造失败)**
+- [ ] **Step 1: 写阶段二验收测试(八条用例:1–7 用注入 seam 真实制造失败,8 为端到端恢复,不注入)**
+
+> **注入必须可归因**(Gate 2 复审 P1-1):凡是靠 `__setFsOps` 制造失败的用例,必须给 seam 加调用
+> 计数并断言其大于 0。否则删掉触发注入的那一步后,注入一次都不会被调用,而其余断言可能因为
+> 别的原因照常通过 —— 用例看着是绿的,证明的却不是它声称的东西。
 
 ```javascript
-console.log('T-takeover-fault-suite. injected failures per review-gate assertion ...');
+console.log('T-takeover-fault-suite. phase-2 acceptance: 1-7 injected failures, 8 end-to-end recovery ...');
 {
     const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
     const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
@@ -3387,7 +3391,9 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
         fs.rmSync(root, { recursive: true, force: true });
     }
 
-    // 2) 坏 session payload(collector 返回残缺)→ 校验拦截 → 无 committed + 非零
+    // 2) 坏 session payload(collector 返回残缺)→ 校验拦截 → 无 committed + exit 0 + 显式 systemMessage
+    //    exit 0 是【契约】而不是漏改:宿主只在 exit 0 时解析 hook 的 JSON,非零会把整个 envelope 丢掉,
+    //    degraded capsule 与恢复说明也一并丢失。失败改由 failure 字段 + systemMessage + stderr 表达。
     {
         const { root } = mkRoot();
         const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f2', source: 'startup' },
@@ -3402,7 +3408,7 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
         fs.rmSync(root, { recursive: true, force: true });
     }
 
-    // 3) collector 抛错(不可恢复)→ 无 committed + 非零 + 明示恢复命令
+    // 3) collector 抛错(不可恢复)→ 无 committed + exit 0 + 显式 systemMessage + 明示恢复命令
     {
         const { root } = mkRoot();
         const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f3', source: 'startup' },
@@ -3426,11 +3432,21 @@ console.log('T-takeover-fault-suite. injected failures per review-gate assertion
         rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 'f4', projectRoot: canon,
             state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
         fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
-        rc.__setFsOps({ writeFileSync: () => { throw new Error('tombstone fail'); }, unlinkSync: () => { throw new Error('unlink fail'); } });
+        // 计数是必需的:没有它,删掉下面的 UserPromptSubmit 调用后两个 seam 一次都不会被调用,
+        // 而其余断言【全部照常通过】—— 因为守卫本来就会因 active_context 缺失而 deny。
+        // 那样这个用例只证明了「receipt 仍 committed + active_context 不可读 → deny」,
+        // 根本没证明双失败真的发生过(Gate 2 复审 P1-1)。
+        let tombstoneAttempts = 0, unlinkAttempts = 0;
+        rc.__setFsOps({
+            writeFileSync: () => { tombstoneAttempts += 1; throw new Error('tombstone fail'); },
+            unlinkSync: () => { unlinkAttempts += 1; throw new Error('unlink fail'); },
+        });
         let out;
         try {
             // 载荷步:真实触发失效持久化,并让它双双失败。
             await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: 'f4' }, { projectRoot: root });
+            assert.ok(tombstoneAttempts > 0, 'UserPromptSubmit must attempt tombstone persistence');
+            assert.ok(unlinkAttempts > 0, 'failed tombstone persistence must fall back to unlink');
             out = await writeOut(root, 'f4');
         } finally { rc.__resetFsOps(); }
         assert.strictEqual(out.permissionDecision, 'deny', 'health gate denies even when invalidation persistence double-fails');
