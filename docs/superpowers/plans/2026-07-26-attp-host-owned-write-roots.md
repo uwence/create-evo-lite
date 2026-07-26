@@ -1181,7 +1181,7 @@ git commit -m "feat(takeover): allow the event-derived host memory root as a nar
 - Modify: `README.md`、`README_EN.md`
 - Modify(生成): `.evo-lite/cli/*`(经 `sync-runtime`,**不手改**)
 
-- [ ] **Step 1: 改 README 的守卫边界表述**
+- [x] **Step 1: 改 README 的守卫边界表述**
 
 两份 README 的 "Agent Takeover / 确定性接管" 一节中,把「项目外 `Edit`/`Write` 会被 deny」
 改成(中文版):
@@ -1205,7 +1205,7 @@ enabled when the anchor is absent or malformed.
 
 > 注意:README 使用**全角标点**(`;`、`,`)。编辑前先读取确切字节,否则 Edit 匹配会失败。
 
-- [ ] **Step 2: 同步运行时镜像**
+- [x] **Step 2: 同步运行时镜像**
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime
@@ -1214,7 +1214,7 @@ node .evo-lite/cli/memory.js sync-runtime
 
 Expected: 第二次 `copied: 0`
 
-- [ ] **Step 3: 在镜像上跑一次全套**
+- [x] **Step 3: 在镜像上跑一次全套**
 
 ```bash
 node templates/cli/test.js all
@@ -1223,7 +1223,7 @@ node --check .evo-lite/cli/takeover-physical-path.js
 
 Expected: EXIT 0;新模块确实出现在镜像中
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add README.md README_EN.md .evo-lite/cli/

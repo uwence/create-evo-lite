@@ -7179,7 +7179,8 @@ async function runGovernanceTests() {
         {
             const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
             const tp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-payload.js'));
-            const MODULES = ['takeover-adapter.js', 'takeover-payload.js', 'takeover-receipt.js', 'runtime.js'];
+            const MODULES = ['takeover-adapter.js', 'takeover-payload.js', 'takeover-receipt.js',
+                'takeover-physical-path.js', 'runtime.js'];
             const runHook = (cliDir, runtimeRoot, input) => childProcess.spawnSync(process.execPath,
                 [path.join(cliDir, 'takeover-adapter.js')],
                 { input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, EVO_LITE_ROOT: runtimeRoot } });
@@ -7809,6 +7810,92 @@ async function runGovernanceTests() {
             assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'broken adapter fails the install gate');
             assert.strictEqual(ti.probeHookCommand(fakeProject).ok, false, 'broken adapter fails the command probe too');
             fs.rmSync(dir, { recursive: true, force: true });
+            // ── 错误文案 characterization（Task 2）──
+            // 这三条文案是 installer 的对外契约，但在此之前【没有任何测试断言过】。
+            // Task 3 要把解析逻辑换成中性原语，没有这张网，"文案不漂移"只是一句愿望。
+            // 用注入 fsOps 构造，不依赖 symlink 权限，跨平台确定。
+            {
+                const inst = require(path.join(TEMPLATE_CLI_DIR, 'takeover-install.js'));
+                const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-inst-msg-'));
+                const realRoot = fs.realpathSync(projectRoot);
+                const settings = path.join(realRoot, '.claude', 'settings.json');
+                const enoent = () => Object.assign(new Error('no entry'), { code: 'ENOENT' });
+                // 逐字比较，不用宽正则：宽正则会让"错误映射到了别的分支"照样绿。
+                const exactly = (text) => (e) => { assert.strictEqual(e.message, text); return true; };
+
+                // (1) 断链 symlink：lstat 成功且是链接 → 专属文案
+                assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
+                    existsSync: () => false,
+                    lstatSync: () => ({ isSymbolicLink: () => true }),
+                    // 两个都要认：macOS 上 mkdtemp 给 /var/…，realpath 给 /private/var/…
+                    realpathSync: (p) => { if (p === projectRoot || p === realRoot) return realRoot; throw enoent(); },
+                }), exactly(`takeover: ${settings} is a broken link; refusing to touch settings`),
+                    'broken-link message is part of the installer contract');
+
+                // (2) 一路 ENOENT 走到文件系统根 → 专属文案。
+                //     existsSync 必须【恒 false】：若写成 (p) => p === projectRoot，循环会在
+                //     projectRoot 处 break 并成功回拼，根本进不了 no-existing-ancestor 分支。
+                assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
+                    existsSync: () => false,
+                    lstatSync: () => { throw enoent(); },
+                    // 两个都要认：macOS 上 mkdtemp 给 /var/…，realpath 给 /private/var/…
+                    realpathSync: (p) => { if (p === projectRoot || p === realRoot) return realRoot; throw enoent(); },
+                }), exactly(`takeover: no existing ancestor for ${settings}`),
+                    'no-existing-ancestor message is part of the installer contract');
+
+                // (3) 【Task 3 要替换的那个分支】：projectRoot 解析成功、settings 是普通条目、
+                //     但它自身 realpath 失败。若写成"projectRoot 自己 realpath 失败"，覆盖的是函数
+                //     开头的 realpathOrThrow(projectRoot)，而不是最近存在祖先的解析 —— Task 3 即使
+                //     把 REALPATH_FAILED 映射错，那种写法仍会绿。
+                assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
+                    existsSync: () => true,
+                    lstatSync: () => ({ isSymbolicLink: () => false }),
+                    realpathSync: (p) => {
+                        if (p === projectRoot || p === realRoot) return realRoot;
+                        throw Object.assign(new Error('boom'), { code: 'EACCES' });
+                    },
+                }), exactly(`takeover: cannot resolve ${settings} (boom); refusing to touch settings`),
+                    'ancestor-realpath-failure message is part of the installer contract');
+
+                // (4) 非 ENOENT 的 lstat 错误：由"吞掉并继续上溯"收紧为 fail-closed。
+                //     这是本议题【唯一】批准的行为变化（设计 §6.2.1）；本条的期望值在 Task 3
+                //     按裁定翻转过一次，上面 (1)(2)(3) 三条逐字文案则一字未动。
+                {
+                    const claudeDir = path.join(realRoot, '.claude');
+                    const unexpected = () => Object.assign(new Error('unexpected probe'), { code: 'ENOENT' });
+                    let statCalls = 0;
+                    // §6.2.1 批准的收紧：非 ENOENT 的 lstat 错误不再被当成"不存在"继续上溯。
+                    // "不存在"与"无法证明存在状态"是两个不同事实；后者已经失去构造物理路径证明的能力。
+                    assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
+                        existsSync: (p) => p !== settings,
+                        lstatSync: (p) => {
+                            if (p !== settings) throw unexpected();
+                            statCalls += 1;
+                            throw Object.assign(new Error('denied'), { code: 'EACCES' });
+                        },
+                        realpathSync: (p) => {
+                            if (p === projectRoot) return realRoot;
+                            if (p === claudeDir) return claudeDir;
+                            throw unexpected();
+                        },
+                    }), exactly(`takeover: cannot stat ${settings} (denied); refusing to touch settings`),
+                        'a non-ENOENT lstat error must now fail closed (§6.2.1), not be swallowed');
+                    assert.strictEqual(statCalls, 1, 'and the EACCES branch must still be the one exercised');
+                }
+
+                fs.rmSync(projectRoot, { recursive: true, force: true });
+            }
+
+            // §6.1 承重：installer 不得 import receipt。receipt 持有模块级可变 fs seam 与 runtime 依赖，
+            // 把 installer 绑进去会制造反向耦合，并让 installer 继承一个它无权控制的全局 seam。
+            {
+                const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'takeover-install.js'), 'utf8');
+                assert.ok(!/require\(['"]\.\/takeover-receipt['"]\)/.test(src),
+                    'takeover-install.js must not require takeover-receipt.js (reverse coupling)');
+                assert.ok(/require\(['"]\.\/takeover-physical-path['"]\)/.test(src),
+                    'takeover-install.js must consume the shared neutral primitive');
+            }
+
             console.log('✅ T-takeover-installer passed');
         }
 
@@ -8051,7 +8138,67 @@ async function runGovernanceTests() {
                 assert.strictEqual(process.platform, 'win32', 'symlink creation may only be skipped on win32 without privilege');
                 console.log('   ⏭️ symlink escape case skipped (win32 without symlink privilege)');
             }
+            // Task 4 承重：目标的【未存在尾部】必须回拼，而不是塌回最近存在祖先。
+            // 现状实现拿祖先与 projectRoot 比较；对项目内判定这没问题（祖先仍在项目内），
+            // 所以只测 allow 是测不出来的 —— 必须直接观察解析结果。
+            {
+                const rcp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+                const deep = path.join(root, 'no-such-dir', 'deeper', 'new.js');
+                assert.strictEqual(rcp.normalize(rcp.resolvePhysical(deep)),
+                    rcp.normalize(path.join(rcp.canonicalProjectRoot(root), 'no-such-dir', 'deeper', 'new.js')),
+                    'guard-side resolution must re-append the missing tail, not collapse to the nearest ancestor');
+                assert.strictEqual(await dec({ file_path: deep }), 'allow', 'deep not-yet-created in-project path still allows');
+
+                // 上面两条【都杀不掉】"守卫没改用原语"这个变异体：第一条只观察原语本身（Task 1 已覆盖），
+                // 第二条的 allow 旧守卫同样给得出 —— 因为回拼对项目内判定本就是 verdict-preserving。
+                // 下游状态不足以证明消费时，加显式计数（ATTP Gate 2 P1-1 的教训）。
+                const realResolve = rcp.resolvePhysical;
+                let resolveCalls = 0;
+                rcp.resolvePhysical = (t) => { resolveCalls += 1; return realResolve(t); };
+                try {
+                    assert.strictEqual(await dec({ file_path: path.join(root, 'consume.js') }), 'allow',
+                        'ordinary in-project target still allows');
+                    assert.strictEqual(resolveCalls, 1,
+                        'and the guard must have resolved it through the shared primitive, exactly once');
+                } finally { rcp.resolvePhysical = realResolve; }
+
+                // 守卫的三条【解析期】deny 文案同样没有回归网兜底（与 Task 2 在 installer 侧发现的
+                // 是同一类缺口）。原语只给 code，文案是守卫的对外契约，必须逐字钉住 —— 否则把任一
+                // code→文案 的映射删掉，整套仍然全绿。用注入 resolvePhysical 构造，不扰动前两道门。
+                const reasonOf = async (file_path) => (await ad.handleHookInput({
+                    hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write', tool_input: { file_path },
+                }, { projectRoot: root })).json.hookSpecificOutput;
+                const coded = (code) => Object.assign(new Error('coded'), {
+                    code, target: 'T', probe: 'P', cause: { message: 'why' },
+                });
+                const wanted = path.join(root, 'mapped.js');
+                for (const [code, text] of [
+                    [rcp.PATH_CODES.STAT_FAILED, `[evo-lite] cannot stat 'P' (why); refusing write.`],
+                    [rcp.PATH_CODES.NO_EXISTING_ANCESTOR, `[evo-lite] no existing ancestor for '${wanted}'; refusing write.`],
+                    [rcp.PATH_CODES.BROKEN_LINK, `[evo-lite] cannot resolve target '${wanted}' (why); refusing write.`],
+                    [rcp.PATH_CODES.REALPATH_FAILED, `[evo-lite] cannot resolve target '${wanted}' (why); refusing write.`],
+                ]) {
+                    rcp.resolvePhysical = () => { throw coded(code); };
+                    try {
+                        const out = await reasonOf(wanted);
+                        assert.strictEqual(out.permissionDecision, 'deny', `${code} must deny`);
+                        assert.strictEqual(out.permissionDecisionReason, text, `${code} must keep its exact message`);
+                    } finally { rcp.resolvePhysical = realResolve; }
+                }
+
+                // 程序缺陷（无 code）不得被伪装成一条路径判定：交由守卫最外层 catch，
+                // 而不是就地 return 一条 deny —— 后者会让缺陷永远看起来像一次正常拒绝。
+                rcp.resolvePhysical = () => { throw new TypeError('guard-side defect'); };
+                try {
+                    const out = await reasonOf(wanted);
+                    assert.strictEqual(out.permissionDecision, 'deny', 'a defect still ends in deny (fail-closed)');
+                    assert.ok(!/cannot stat|no existing ancestor|cannot resolve target/.test(out.permissionDecisionReason),
+                        `but not disguised as a path verdict; got: ${out.permissionDecisionReason}`);
+                } finally { rcp.resolvePhysical = realResolve; }
+            }
+
             fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(other, { recursive: true, force: true });
+
             console.log('✅ T-takeover-target-path passed');
         }
 
@@ -8283,6 +8430,358 @@ async function runGovernanceTests() {
 
             console.log('✅ T-takeover-fault-suite passed');
         }
+
+        console.log('T-takeover-physical-path. neutral primitive: tail re-append + coded errors + no module-level seam ...');
+        {
+            const pp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-physical-path.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-pp-'));
+            const realRoot = fs.realpathSync(root);
+
+            // 1. 已存在的路径:等价于 realpath
+            assert.strictEqual(pp.resolvePhysicalPath(root, fs), realRoot, 'existing path resolves to its realpath');
+
+            // 2. 【本议题的核心】未存在的多级尾部必须【回拼】,而不是退回祖先。
+            //    不回拼的实现会返回 realRoot —— 那正是每个新项目首次记忆写入被误拒的原因。
+            const missing = path.join(root, 'memory', 'deep', 'new.md');
+            assert.strictEqual(pp.resolvePhysicalPath(missing, fs), path.join(realRoot, 'memory', 'deep', 'new.md'),
+                'missing tail must be re-appended to the verified prefix, not collapsed to the ancestor');
+
+            // 3. 相对路径不属于原语职责:必须显式拒绝,不得静默按 cwd 解析
+            assert.throws(() => pp.resolvePhysicalPath('rel/x.md', fs),
+                (e) => e.code === pp.PATH_CODES.NOT_ABSOLUTE, 'relative input must be rejected, never resolved against cwd');
+
+            // 4. lstat 抛非 ENOENT(权限等)→ STAT_FAILED,绝不当成"不存在"而向上走
+            const statErr = Object.assign(new Error('denied'), { code: 'EACCES' });
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'x.md'), {
+                lstatSync: () => { throw statErr; },
+                realpathSync: () => { throw new Error('unreachable'); },
+            }), (e) => e.code === pp.PATH_CODES.STAT_FAILED && e.cause === statErr,
+                'non-ENOENT stat failure must surface as STAT_FAILED with its cause');
+
+            // 4b.【承重】target 与 probe 是两个不同事实，必须在【上溯过 ≥1 级之后】才区分得开。
+            //     上面所有用例都在第一次 probe 就失败（target === probe），把 target 误写成 probe
+            //     一条也杀不掉。这里构造两级：最深一级 ENOENT 使其上溯，父级 EACCES 使其失败。
+            {
+                const requested = path.join(root, 'missing', 'deep', 'file.md');
+                const deepDir = path.join(root, 'missing', 'deep');
+                const eacces = Object.assign(new Error('denied'), { code: 'EACCES' });
+                assert.throws(() => pp.resolvePhysicalPath(requested, {
+                    lstatSync: (p) => {
+                        if (p === requested) throw Object.assign(new Error('nope'), { code: 'ENOENT' });
+                        if (p === deepDir) throw eacces;
+                        throw new Error(`unexpected probe ${p}`);
+                    },
+                    realpathSync: () => { throw new Error('unreachable'); },
+                }), (e) => {
+                    assert.strictEqual(e.code, pp.PATH_CODES.STAT_FAILED);
+                    assert.strictEqual(e.target, requested, 'target must stay the originally requested path');
+                    assert.strictEqual(e.probe, deepDir, 'probe must be the ancestor that actually failed');
+                    assert.strictEqual(e.cause, eacces, 'cause must be the underlying fs error');
+                    return true;
+                }, 'target and probe must remain distinguishable after the walk has moved up');
+            }
+
+            // 5. 断链 symlink 必须与一般 realpath 失败【可区分】—— installer 对前者有专门文案。
+            //    用注入 fsOps 构造:lstat 成功且 isSymbolicLink,realpath 抛。跨平台确定,不需要 symlink 权限。
+            const linkErr = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+            const brokenOps = {
+                lstatSync: () => ({ isSymbolicLink: () => true }),
+                realpathSync: () => { throw linkErr; },
+            };
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'link'), brokenOps),
+                (e) => e.code === pp.PATH_CODES.BROKEN_LINK && e.probe === path.join(root, 'link'),
+                'dangling link must be BROKEN_LINK and carry the offending probe');
+
+            // 6. 非链接的 realpath 失败 → REALPATH_FAILED（与 5 走的是同一分支的两侧，必须分得开）
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'plain'), {
+                lstatSync: () => ({ isSymbolicLink: () => false }),
+                realpathSync: () => { throw linkErr; },
+            }), (e) => e.code === pp.PATH_CODES.REALPATH_FAILED, 'non-link realpath failure must be REALPATH_FAILED');
+
+            // 6b. symlink 的 realpath 失败【不都是断链】：EACCES/EPERM/ELOOP/EIO 都可能。
+            //     全部归为 BROKEN_LINK 会让 installer 对一个仅仅权限不足的链接输出误导性文案。
+            for (const code of ['EACCES', 'EPERM', 'ELOOP']) {
+                assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'lnk'), {
+                    lstatSync: () => ({ isSymbolicLink: () => true }),
+                    realpathSync: () => { throw Object.assign(new Error(code), { code }); },
+                }), (e) => e.code === pp.PATH_CODES.REALPATH_FAILED,
+                    `a symlink failing realpath with ${code} is not a broken link`);
+            }
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'lnk'), {
+                lstatSync: () => ({ isSymbolicLink: () => true }),
+                realpathSync: () => { throw Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' }); },
+            }), (e) => e.code === pp.PATH_CODES.BROKEN_LINK, 'ENOTDIR on a symlink is still a broken link');
+
+            // 7. 一路 ENOENT 到根 → NO_EXISTING_ANCESTOR
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'a', 'b'), {
+                lstatSync: () => { throw Object.assign(new Error('nope'), { code: 'ENOENT' }); },
+                realpathSync: () => { throw new Error('unreachable'); },
+            }), (e) => e.code === pp.PATH_CODES.NO_EXISTING_ANCESTOR, 'exhausting the walk must be NO_EXISTING_ANCESTOR');
+
+            // 7b.【承重】程序缺陷必须在原语层就【原样冒泡】，不得被包装成 coded path error。
+            //     否则它会一路降级成 deriveHostOwnedWriteRoots 的 {ok:false}，缺陷被静默吞掉。
+            //     lstat 与 realpath 两侧都要有，缺一侧就漏一条通路。
+            const defect = new TypeError('genuine defect: x is not a function');
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'd1'), {
+                lstatSync: () => { throw defect; },
+                realpathSync: () => { throw new Error('unreachable'); },
+            }), (e) => e === defect, 'a code-less lstat error is a programming defect and must bubble unwrapped');
+            assert.throws(() => pp.resolvePhysicalPath(path.join(root, 'd2'), {
+                lstatSync: () => ({ isSymbolicLink: () => false }),
+                realpathSync: () => { throw defect; },
+            }), (e) => e === defect, 'a code-less realpath error must bubble unwrapped too');
+
+            // 8. 承重:模块必须是 dependency-neutral，且不得持有模块级可变 fs seam。
+            //    这两条是 §6.1 的全部意义 —— 没有它们，"共用原语"会把 installer 绑进 receipt 的全局 seam。
+            const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'takeover-physical-path.js'), 'utf8');
+            const requires = [...src.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map(m => m[1]);
+            assert.deepStrictEqual(requires, ['path'], `primitive must require only 'path'; got ${JSON.stringify(requires)}`);
+            assert.ok(!/__setFsOps|let\s+fsOps|var\s+fsOps/.test(src), 'primitive must not hold a module-level mutable fs seam');
+            assert.ok(!/require\(['"]fs['"]\)/.test(src), 'primitive must not require fs — fsOps is always caller-supplied');
+
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+        console.log('✅ T-takeover-physical-path passed');
+
+        console.log('T-takeover-host-owned-roots. event-derived memory root; fail-closed on every malformed anchor ...');
+        {
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-state-'));
+            const realState = fs.realpathSync(stateRoot);
+            const transcript = path.join(stateRoot, 'sess-abc.jsonl');
+            fs.writeFileSync(transcript, '', 'utf8');
+
+            // 1. 正常：唯一 root = dirname(transcript_path)/memory，且【不要求 memory/ 已存在】
+            const okRes = rc.deriveHostOwnedWriteRoots({ transcript_path: transcript });
+            assert.strictEqual(okRes.ok, true, 'well-formed transcript_path enables the exception');
+            assert.deepStrictEqual(okRes.roots, [rc.normalize(realState) + '/memory'],
+                'exactly one root, at the memory level, derived from the current event');
+            assert.strictEqual(fs.existsSync(path.join(stateRoot, 'memory')), false,
+                'and it must not require memory/ to exist — that is the new-project first-write case');
+
+            // 2. fail-closed 输入矩阵：每一条都必须 ok:false 且 roots 为空
+            const bad = [
+                ['null input', null],
+                ['non-object', 'nope'],
+                ['missing field', {}],
+                ['non-string', { transcript_path: 42 }],
+                ['empty string', { transcript_path: '' }],
+                ['relative path', { transcript_path: 'rel/sess.jsonl' }],
+                ['dirname degenerates to itself', { transcript_path: path.parse(realState).root }],
+                ['nonexistent state root', { transcript_path: path.join(stateRoot, 'gone', 'sess.jsonl') }],
+            ];
+            for (const [label, input] of bad) {
+                const r = rc.deriveHostOwnedWriteRoots(input);
+                assert.strictEqual(r.ok, false, `${label} must not enable the exception`);
+                assert.deepStrictEqual(r.roots, [], `${label} must yield no roots`);
+                assert.ok(typeof r.reason === 'string' && r.reason.length > 0, `${label} must carry a diagnosable reason`);
+            }
+
+            // 2b. 承重：上面的循环只断言"有 reason"，不区分是哪一道门挡住的。相对锚点会被
+            //     存在性门（或原语的 NOT_ABSOLUTE）顺手挡下，于是删掉 isAbsolute 检查后整组【仍然全绿】
+            //     —— 这正是 Gate 2 教训里的"伪装 deny"。用 reason 文案把责任门钉死。
+            assert.strictEqual(rc.deriveHostOwnedWriteRoots({ transcript_path: 'rel/sess.jsonl' }).reason,
+                'transcript_path is not absolute',
+                'a relative anchor must be rejected by the absoluteness gate itself, not incidentally downstream');
+
+            // 3. 承重：派生【只】看 transcript_path。喂入 env/settings/receipt 风格的同名旁路值不得生效。
+            const prevEnv = process.env.CLAUDE_TRANSCRIPT_PATH;
+            process.env.CLAUDE_TRANSCRIPT_PATH = transcript;
+            try {
+                const r = rc.deriveHostOwnedWriteRoots({ cwd: stateRoot, session_id: 'abc' });
+                assert.strictEqual(r.ok, false, 'an env-var fallback must NOT exist; only the current event may anchor');
+            } finally {
+                if (prevEnv === undefined) delete process.env.CLAUDE_TRANSCRIPT_PATH;
+                else process.env.CLAUDE_TRANSCRIPT_PATH = prevEnv;
+            }
+
+            // 4. 承重：agent_id / agent_type 不得进入派生逻辑（Step 0b 分支 A；它们是未文档化字段）。
+            const withAgent = rc.deriveHostOwnedWriteRoots({ transcript_path: transcript, agent_id: 'x', agent_type: 'general-purpose' });
+            assert.deepStrictEqual(withAgent.roots, okRes.roots, 'agent_id/agent_type must not change the derived root');
+            const rcSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'), 'utf8');
+            assert.ok(!/agent_id|agent_type/.test(rcSrc), 'receipt must not reference agent_id/agent_type at all');
+
+            // 5. 预期内的路径错误必须【转成 ok:false】而不是抛出；真正的缺陷仍须冒泡。
+            rc.__setFsOps({ lstatSync: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } });
+            try {
+                const r = rc.deriveHostOwnedWriteRoots({ transcript_path: transcript });
+                assert.strictEqual(r.ok, false, 'a coded path error must degrade to ok:false, not throw into the guard');
+                assert.ok(/EACCES|stat/i.test(r.reason), `reason must stay diagnosable; got ${r.reason}`);
+            } finally { rc.__resetFsOps(); }
+
+            rc.__setFsOps({ lstatSync: () => { throw new TypeError('genuine defect: x is not a function'); } });
+            try {
+                assert.throws(() => rc.deriveHostOwnedWriteRoots({ transcript_path: transcript }), /genuine defect/,
+                    'a real programming defect must still bubble — swallowing it would hide the bug');
+            } finally { rc.__resetFsOps(); }
+
+            // 5b.【承重】上面那条在【前置 pathEntryInfo】就抛了，根本没走到 resolvePhysical 的 catch。
+            //     要证明 derive 不会把原语冒泡上来的缺陷【再吞一次】，必须让 lstat 成功、realpath 抛。
+            //     Task 1 用例 7b 只直接调原语，观察不到 derive 的行为，杀不掉这条。
+            {
+                const defect = new TypeError('realpath programming defect');
+                rc.__setFsOps({
+                    lstatSync: () => ({ isSymbolicLink: () => false }),
+                    realpathSync: () => { throw defect; },
+                });
+                try {
+                    assert.throws(() => rc.deriveHostOwnedWriteRoots({ transcript_path: transcript }),
+                        (e) => e === defect,
+                        'a programmatic realpath defect must pass through derive unchanged, not degrade to {ok:false}');
+                } finally { rc.__resetFsOps(); }
+            }
+
+            fs.rmSync(stateRoot, { recursive: true, force: true });
+        }
+        console.log('✅ T-takeover-host-owned-roots passed');
+
+        console.log('T-takeover-memory-root. narrow out-of-project exception: memory only, prefix-safe, fail-closed ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-mem-'));
+            const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+            fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const canon = rc.canonicalProjectRoot(root), sid = 'mem';
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: sid, projectRoot: canon,
+                state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+
+            // 宿主 project-state 目录：母仓 A 与一个【前缀关系】的兄弟 B。
+            // B 不是构造出来的边角：本机 ~/.claude/projects/ 下已真实存在两个这样的目录。
+            const projects = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-projects-'));
+            const stateA = path.join(projects, 'D--Proj-alpha');
+            const stateB = path.join(projects, 'D--Proj-alpha-templates');   // 单破折号，真实案例
+            fs.mkdirSync(path.join(stateA, 'memory'), { recursive: true });
+            fs.mkdirSync(path.join(stateB, 'memory'), { recursive: true });
+            const transcriptA = path.join(stateA, 'sess-a.jsonl'); fs.writeFileSync(transcriptA, '', 'utf8');
+
+            const dec = async (file_path, extra = {}) => (await ad.handleHookInput({
+                hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write',
+                transcript_path: transcriptA, tool_input: { file_path }, ...extra,
+            }, { projectRoot: root })).json.hookSpecificOutput.permissionDecision;
+
+            // ── 允许 ──
+            assert.strictEqual(await dec(path.join(root, 'in-project.js')), 'allow', 'in-project code file');
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'MEMORY.md')), 'allow', 'the event-derived memory root');
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'topic.md')), 'allow', 'new file, memory/ already exists');
+
+            // 首次写入：memory/ 尚不存在。朴素实现会 deny —— 这正是每个新项目的 rollout 场景。
+            const stateC = path.join(projects, 'D--Proj-gamma'); fs.mkdirSync(stateC, { recursive: true });
+            const transcriptC = path.join(stateC, 'sess-c.jsonl'); fs.writeFileSync(transcriptC, '', 'utf8');
+            assert.strictEqual(await dec(path.join(stateC, 'memory', 'first.md'), { transcript_path: transcriptC }),
+                'allow', 'first-ever memory write must allow even though memory/ does not exist yet');
+
+            // ── 拒绝 ──
+            assert.strictEqual(await dec(path.join(projects, 'plain.txt')), 'deny', 'ordinary out-of-project file');
+            assert.strictEqual(await dec(path.join(stateC, 'memory', 'x.md')), 'deny',
+                "an unrelated project's memory (no prefix relation at all)");
+            assert.strictEqual(await dec(path.join(stateB, 'memory', 'x.md')), 'deny',
+                "another project's memory whose slug is a string prefix-extension of ours");
+            assert.strictEqual(await dec(path.join(stateA, 'sess-a.jsonl')), 'deny',
+                'non-memory path under our own state root (the transcript itself)');
+            assert.strictEqual(await dec(path.join(stateA, 'memoryX', 'x.md')), 'deny',
+                "'memoryX' must not match 'memory' — the separator has to participate");
+            assert.strictEqual(await dec(path.join(stateA, 'memory', '..', 'escape.md')), 'deny', 'memory/../escape');
+
+            // 锚点缺失 / 畸形 → 不启用例外（fail-closed 单向）
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md'), { transcript_path: undefined }),
+                'deny', 'absent transcript_path must not enable the exception');
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md'), { transcript_path: 42 }),
+                'deny', 'non-string transcript_path must not enable the exception');
+            assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md'), { transcript_path: 'rel/s.jsonl' }),
+                'deny', 'relative transcript_path must not enable the exception');
+
+            // receipt 门与健康门【不放宽】：未接管的会话同样写不了记忆。
+            const dec2 = async (file_path) => (await ad.handleHookInput({
+                hook_event_name: 'PreToolUse', session_id: 'no-receipt', tool_name: 'Write',
+                transcript_path: transcriptA, tool_input: { file_path },
+            }, { projectRoot: root })).json.hookSpecificOutput;
+            const noReceipt = await dec2(path.join(stateA, 'memory', 'x.md'));
+            assert.strictEqual(noReceipt.permissionDecision, 'deny', 'no receipt → memory write still denied');
+            assert.ok(/takeover required/.test(noReceipt.permissionDecisionReason),
+                'and it must deny via the receipt gate, not via the target-path gate');
+
+            // ── 承重：owned.ok 真的被消费，且派生函数真的被调用 ──
+            // 上面那些畸形 transcript_path 用例【杀不掉】删除 owned.ok 的变异体：失败契约返回
+            // roots: []，而 [].some(...) 本来就是 false，deny 照样成立。必须注入一个
+            // 【ok:false 但 roots 非空】的返回值，才能把这两件事分开证明。
+            {
+                const injectedRoot = rc.normalize(fs.realpathSync(stateA)) + '/memory';
+                const original = rc.deriveHostOwnedWriteRoots;
+                let calls = 0;
+                rc.deriveHostOwnedWriteRoots = () => {
+                    calls += 1;
+                    return { ok: false, reason: 'forced-failure', roots: [injectedRoot] };
+                };
+                try {
+                    assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md')), 'deny',
+                        'ok:false must veto the exception even when roots is non-empty');
+                    assert.strictEqual(calls, 1, 'the derivation must actually be consumed, exactly once per decision');
+                } finally {
+                    rc.deriveHostOwnedWriteRoots = original;
+                }
+                // 复原后同一目标必须重新放行 —— 证明上面的 deny 出自注入，而不是别的门。
+                assert.strictEqual(await dec(path.join(stateA, 'memory', 'x.md')), 'allow',
+                    'and it must allow again once the injection is removed');
+            }
+
+            // memory 内的 symlink 指向项目外 —— 能力探测，不可用则跳过（既有惯例）
+            {
+                const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-outside-'));
+                const link = path.join(stateA, 'memory', 'escape-link');
+                let linked = true;
+                try { fs.symlinkSync(outside, link, 'dir'); } catch (e) {
+                    linked = false;
+                    console.log(`   ⏭️ symlink assertion skipped (${e.code || e.message})`);
+                }
+                if (linked) {
+                    assert.strictEqual(await dec(path.join(link, 'x.md')), 'deny',
+                        'a symlink inside memory/ pointing outside must still deny');
+                }
+                fs.rmSync(outside, { recursive: true, force: true });
+            }
+
+            // Windows 小写盘符不得扩大权限（两侧同源于 realpathSync.native，天然同大小写）
+            if (process.platform === 'win32' && /^[a-zA-Z]:/.test(stateA)) {
+                const lower = stateA[0].toLowerCase() + stateA.slice(1);
+                assert.strictEqual(await dec(path.join(lower, 'memory', 'x.md')), 'allow',
+                    'lowercase drive letter on our own memory root must not be denied');
+                assert.strictEqual(await dec(path.join(stateB[0].toLowerCase() + stateB.slice(1), 'memory', 'x.md')),
+                    'deny', 'and lowercase must not widen the exception to a prefix-colliding project');
+            }
+
+            // Unicode case-fold：JS 的 toLowerCase 把 KELVIN SIGN(U+212A)折成 ASCII 'k'，
+            // 比 NTFS 自己的大小写表激进得多。ATTP 已经为这一条付过一次代价（Task 7 一审 I1：
+            // 折叠比较让一次写真的落到了项目外）。这里断言的是【不折叠】：两个 slug 在磁盘上
+            // 是两个真实目录时，它们的 memory 必须互相 deny。
+            {
+                const kAscii = path.join(projects, 'D--Proj-Kappa');
+                const kKelvin = path.join(projects, 'D--Proj-Kappa');   // U+212A KELVIN SIGN，写成转义以免复制时丢失
+                let distinct = true;
+                try {
+                    fs.mkdirSync(path.join(kAscii, 'memory'), { recursive: true });
+                    fs.mkdirSync(path.join(kKelvin, 'memory'), { recursive: true });
+                    // 卷若把二者视为同一目录，realpath 会收敛到同一个物理路径 → 这条构造不成立
+                    distinct = fs.realpathSync(kAscii) !== fs.realpathSync(kKelvin);
+                } catch (e) {
+                    distinct = false;
+                    console.log(`   ⏭️ Unicode case-fold assertion skipped (${e.code || e.message})`);
+                }
+                if (distinct) {
+                    const tK = path.join(kAscii, 'sess-k.jsonl'); fs.writeFileSync(tK, '', 'utf8');
+                    assert.strictEqual(await dec(path.join(kAscii, 'memory', 'x.md'), { transcript_path: tK }),
+                        'allow', 'the ASCII-K project may write its own memory');
+                    assert.strictEqual(await dec(path.join(kKelvin, 'memory', 'x.md'), { transcript_path: tK }),
+                        'deny', 'a U+212A variant is a DIFFERENT directory — folding it in would be a real escape');
+                } else {
+                    console.log('   ⏭️ Unicode case-fold assertion skipped (volume treats U+212A as ASCII K)');
+                }
+            }
+
+            fs.rmSync(projects, { recursive: true, force: true });
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+        console.log('✅ T-takeover-memory-root passed');
 
         await runChildRuntimeTests();
 

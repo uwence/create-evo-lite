@@ -5,6 +5,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { validateCapsule, CAPSULE_BUDGET_BYTES } = require('./takeover-payload');
+// 中性路径原语：与守卫共用同一份物理解析。刻意【不】require takeover-receipt ——
+// 那个模块持有模块级可变 fs seam 与 runtime 依赖，把 installer 绑进去是反向耦合。
+const { resolvePhysicalPath, PATH_CODES } = require('./takeover-physical-path');
 
 const MANAGED_MARK = 'takeover-adapter.js';
 const HOOK_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"';
@@ -217,20 +220,28 @@ function resolveManagedBackupPath(managedSettings, backupPathInput, fsOps = fs) 
 function resolveManagedSettingsPath(projectRoot, settingsPath, fsOps = fs) {
     const canonRoot = normPath(realpathOrThrow(fsOps, projectRoot));
     const abs = path.isAbsolute(settingsPath) ? path.resolve(settingsPath) : path.resolve(projectRoot, settingsPath);
-    let existing = abs;
-    const tail = [];
-    for (;;) {
-        if (fsOps.existsSync(existing)) break;                 // existsSync 跟随链接
-        let dangling = false;
-        try { fsOps.lstatSync(existing); dangling = true; }    // 链接本身在、目标不在 = 损坏链接
-        catch (_) { dangling = false; }
-        if (dangling) throw new Error(`takeover: ${existing} is a broken link; refusing to touch settings`);
-        const parent = path.dirname(existing);
-        if (parent === existing) throw new Error(`takeover: no existing ancestor for ${abs}`);
-        tail.unshift(path.basename(existing));
-        existing = parent;
+    // 祖先上溯 + 回拼尾部交给共用原语。文案是 installer 的对外契约，原语只给 code，文案在这里恢复。
+    let physical;
+    try {
+        physical = resolvePhysicalPath(abs, fsOps);
+    } catch (e) {
+        if (e && e.code === PATH_CODES.BROKEN_LINK) {
+            throw new Error(`takeover: ${e.probe} is a broken link; refusing to touch settings`);
+        }
+        if (e && e.code === PATH_CODES.NO_EXISTING_ANCESTOR) {
+            throw new Error(`takeover: no existing ancestor for ${abs}`);
+        }
+        if (e && e.code === PATH_CODES.REALPATH_FAILED) {
+            throw new Error(`takeover: cannot resolve ${e.probe} (${e.cause.message}); refusing to touch settings`);
+        }
+        // 已批准的行为收紧（设计 §6.2.1）：非 ENOENT 的 lstat 错误不再被吞掉、不再继续上溯。
+        // "不存在"与"无法证明存在状态"是两个不同事实；后者已经失去构造物理路径证明的能力。
+        // 文案用 cannot stat 而非 cannot resolve —— 混成一条会让运维分不出是读不到条目还是解析不出路径。
+        if (e && e.code === PATH_CODES.STAT_FAILED) {
+            throw new Error(`takeover: cannot stat ${e.probe} (${e.cause.message}); refusing to touch settings`);
+        }
+        throw e;
     }
-    const physical = path.join(realpathOrThrow(fsOps, existing), ...tail);
     const target = normPath(physical);
     // 明确决定:MVP 只管项目内 settings。用户级(~/.claude/settings.json)超出范围,拒绝而非隐式处理。
     if (!(target === canonRoot || target.startsWith(canonRoot + '/'))) {

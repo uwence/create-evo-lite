@@ -261,20 +261,27 @@ function guardWrite(input, deps) {
     const abs = path.isAbsolute(target) ? target : path.resolve(projectRoot, target);
     // 向上找最近【条目存在】的一层。注意用 lstat 而非 exists:断链 symlink 的 exists 为 false,
     // 若按"还没建的文件"跳过它退到父目录,守卫就会放行,而 Write 会沿链接写到项目外(R7 复审 P0-1)。
-    let probe = abs;
-    for (;;) {
-        let info;
-        try { info = rc.pathEntryInfo(probe); }
-        catch (e) { return ptu('deny', `[evo-lite] cannot stat '${probe}' (${e.message}); refusing write.`); }
-        if (info.exists) break;                      // 含"存在的链接",下面必须物理解析它
-        const parent = path.dirname(probe);
-        if (parent === probe) return ptu('deny', `[evo-lite] no existing ancestor for '${target}'; refusing write.`);
-        probe = parent;
-    }
-    // 最近存在条目的 realpath 失败(权限/断链/不可解析 junction)→ deny。
+    // 解析交给共用原语(takeover-physical-path.js,经 receipt 绑定同一 fs seam)。lstat 语义与
+    // 断链处理不变;唯一变化是把"最近存在祖先"换成"已验证前缀 + 回拼的未存在尾部"。
+    // 对项目包含判定这是 verdict-preserving:尾部是相对片段,不改变所属根。
+    // 回拼是必需的 —— 只比较祖先时,写 <root>/memory/new.md 而 memory/ 尚不存在会退到 <root>,
+    // 于是任何"允许根"判定都必然落空(设计 §6)。
     // 未经解析的字符串做 containment 判断,正是 symlink 逃逸能绕过守卫的原因(R4 复审 P0-2 ③)。
-    try { probe = rc.realpathStrict(probe); }
-    catch (e) { return ptu('deny', `[evo-lite] cannot resolve target '${target}' (${e.message}); refusing write.`); }
+    let probe;
+    try {
+        probe = rc.resolvePhysical(abs);
+    } catch (e) {
+        if (e && e.code === rc.PATH_CODES.STAT_FAILED) {
+            return ptu('deny', `[evo-lite] cannot stat '${e.probe}' (${e.cause.message}); refusing write.`);
+        }
+        if (e && e.code === rc.PATH_CODES.NO_EXISTING_ANCESTOR) {
+            return ptu('deny', `[evo-lite] no existing ancestor for '${target}'; refusing write.`);
+        }
+        if (e && (e.code === rc.PATH_CODES.BROKEN_LINK || e.code === rc.PATH_CODES.REALPATH_FAILED)) {
+            return ptu('deny', `[evo-lite] cannot resolve target '${target}' (${e.cause.message}); refusing write.`);
+        }
+        throw e;   // 程序缺陷不得被伪装成一条路径判定,交由守卫最外层 catch
+    }
     // 曾经这里在 win32 上对两侧做 toLowerCase() 折叠再比较(Task 7 一审 I1),动机是模型常发出
     // 'd:\...' 这类小写盘符,不该被误拒。但 JS 的 toLowerCase 折叠比 NTFS 自己的大小写表激进得多:
     // KELVIN SIGN(U+212A)会被折叠成与 ASCII 'K' 相同,即使 NTFS 视二者为两个真实不同的目录 ——
@@ -285,10 +292,14 @@ function guardWrite(input, deps) {
     // 误拒(两侧本就同源同大小写,包括模型发出的小写盘符 'd:\...'),Unicode 折叠也不可能再造成
     // 误放行(比较不再对任何字符做大小写折叠)。
     const cp = rc.normalize(probe), cr = rc.normalize(projectRoot);
-    if (!(cp === cr || cp.startsWith(cr + '/'))) {
-        return ptu('deny', `[evo-lite] target '${target}' resolves outside project '${projectRoot}'.`);
-    }
-    return ptu('allow');
+    if (cp === cr || cp.startsWith(cr + '/')) return ptu('allow');
+    // 项目【外】的唯一窄例外:由当前事件的 transcript_path 派生的、本项目的宿主记忆目录。
+    // 判定在 memory 这一层做;分隔符必须是字面量 '/'(normalize 已把 '\' 折成 '/',
+    // 用 path.sep 会让 Windows 下精确路径命中而所有子文件落空)。锚点不可用时不启用例外,绝不放宽。
+    // 位置也是承重的:排在 receipt 门与健康门【之后】—— 未接管的会话同样写不了记忆。
+    const owned = rc.deriveHostOwnedWriteRoots(input);
+    if (owned.ok && owned.roots.some(r => cp === r || cp.startsWith(r + '/'))) return ptu('allow');
+    return ptu('deny', `[evo-lite] target '${target}' resolves outside project '${projectRoot}'.`);
 }
 
 async function handleHookInput(input, deps = {}) {

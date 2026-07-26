@@ -713,7 +713,14 @@ PreToolUse        没有有效 receipt 时拒绝 Edit / Write
 - MVP 只守 `Edit` 与 `Write`；`Bash` 及其他工具一律放行，一条 shell 重定向即可绕开。
 - 它防的是「agent 在没读治理状态的情况下就开始改代码」，不防有意规避。
 
-反过来，守卫**确实**会拦住项目外的 `Edit` / `Write`。装上之后，agent 往临时目录、兄弟仓库或别的项目写文件会被 deny（理由为 *resolves outside project*）。这是预期行为，但会改变 agent 放临时文件的习惯——它们需要落在项目内。
+反过来，项目外的 `Edit` / `Write` **默认 deny**。装上之后，agent 往临时目录、兄弟仓库或别的项目写文件会被拦住（理由为 *resolves outside project*）。这是预期行为，但会改变 agent 放临时文件的习惯——它们需要落在项目内。
+
+唯一的窄例外，是由当前 `PreToolUse` 事件的 `transcript_path` 派生出的、**本项目的** Claude Code 记忆目录（`dirname(transcript_path)/memory`）——没有它，装上 ATTP 的项目里 agent 写不了自己的跨会话记忆。该例外：
+
+- 只从当前事件派生，不读环境变量、settings 或 receipt，也不猜宿主的目录名编码；
+- 只放开 `memory` 那一层，project-state 目录本身及其下的其他路径（含 transcript 自身）仍然 deny；
+- 只在接管健康时生效——receipt 门与治理健康门都不放宽，未接管的会话同样写不了记忆；
+- 锚点缺失、类型不对或不可解析时**不启用**，绝不退回宽白名单。
 
 ---
 

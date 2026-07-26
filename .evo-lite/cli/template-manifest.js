@@ -15,6 +15,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'memory-index.js',
             'memory-index-zvec.js',
             'memory-index-lock.js',
+            'takeover-physical-path.js',
             'takeover-payload.js',
             'takeover-receipt.js',
             'takeover-session.js',
