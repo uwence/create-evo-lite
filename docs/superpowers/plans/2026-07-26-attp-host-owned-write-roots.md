@@ -168,7 +168,7 @@ cause   底层 fs Error（NOT_ABSOLUTE / NO_EXISTING_ANCESTOR 时不设）
   把 `target` 写成 `probe` 会在上溯过 ≥1 级之后**丢掉原始请求路径** —— 而那正是
   调用方拼装用户可见文案时唯一能用的信息。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `templates/cli/test/governance.js` 的 `T-takeover-fault-suite` 之后插入:
 
@@ -286,12 +286,12 @@ cause   底层 fs Error（NOT_ABSOLUTE / NO_EXISTING_ANCESTOR 时不设）
         console.log('✅ T-takeover-physical-path passed');
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `node templates/cli/test.js governance`
 Expected: FAIL,`Cannot find module '…/takeover-physical-path.js'`
 
-- [ ] **Step 3: 写最小实现**
+- [x] **Step 3: 写最小实现**
 
 Create `templates/cli/takeover-physical-path.js`:
 
@@ -387,12 +387,12 @@ function resolvePhysicalPath(target, fsOps) {
 module.exports = { resolvePhysicalPath, PATH_CODES };
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `node templates/cli/test.js governance`
 Expected: `✅ T-takeover-physical-path passed`,全套 EXIT 0
 
-- [ ] **Step 5: 变异体验证(承重,逐条独立归因)**
+- [x] **Step 5: 变异体验证(承重,逐条独立归因)**
 
 对生产模块逐条施加下列变异,确认**各自**被杀,然后**复原**:
 
@@ -407,7 +407,7 @@ Expected: `✅ T-takeover-physical-path passed`,全套 EXIT 0
 | 删除 realpath 侧的 `typeof e.code !== 'string'` 冒泡 | 用例 7b 第二条 |
 | 任一 `pathError` 的 `target: requested` → `target: probe` | 用例 4b(其余用例 `target === probe`,杀不掉) |
 
-- [ ] **Step 6: 登记到 manifest**
+- [x] **Step 6: 登记到 manifest**
 
 在 `templates/cli/template-manifest.js` 的 takeover 模块数组中,`'takeover-payload.js'` 之前插入一行:
 
@@ -415,7 +415,7 @@ Expected: `✅ T-takeover-physical-path passed`,全套 EXIT 0
             'takeover-physical-path.js',
 ```
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add templates/cli/takeover-physical-path.js templates/cli/template-manifest.js templates/cli/test/governance.js
