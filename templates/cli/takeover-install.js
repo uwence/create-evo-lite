@@ -30,9 +30,33 @@ function isManagedHook(h) {
 function isManagedGroup(g) {
     return Boolean(g && Array.isArray(g.hooks) && g.hooks.some(isManagedHook));
 }
+function isPlainObject(v) { return Boolean(v) && typeof v === 'object' && !Array.isArray(v); }
+
+// 合法 JSON 但【形状不可安全 deep-merge】的输入必须 fail-loud,不得猜测或覆盖(Gate 1 修订复审 P1-1)。
+// 三种静默损害:①`hooks: []` —— 数组 typeof 也是 'object',写进去的事件键会被 JSON.stringify 丢掉,
+// 于是 changed:false、CLI 报 "already in sync",实际一个 hook 都没装(假成功);
+// ②`hooks` 是标量/null —— 被直接替换成我们的配置,原值消失;
+// ③事件值不是数组(如 `hooks.SessionStart: {...}`)—— 当成空数组,用户内容整块丢失。
+// 只校验【我们要动的事件】:用户其它事件即使畸形也不该由本工具裁决。
+function assertManagedHooksShape(settings, events) {
+    if (!isPlainObject(settings)) {
+        throw new Error('takeover: settings is not a JSON object; leaving it unchanged');
+    }
+    if ('hooks' in settings && !isPlainObject(settings.hooks)) {
+        throw new Error('takeover: settings hooks field is not an object; leaving it unchanged');
+    }
+    const hooks = settings.hooks || {};
+    for (const event of events) {
+        if (event in hooks && !Array.isArray(hooks[event])) {
+            throw new Error(`takeover: hooks.${event} is not an array; leaving settings unchanged`);
+        }
+    }
+}
+
 function mergeHookConfig(existing, fragment) {
-    const out = existing && typeof existing === 'object' ? JSON.parse(JSON.stringify(existing)) : {};
-    out.hooks = out.hooks && typeof out.hooks === 'object' ? out.hooks : {};
+    assertManagedHooksShape(existing, Object.keys(fragment));
+    const out = JSON.parse(JSON.stringify(existing));
+    out.hooks = isPlainObject(out.hooks) ? out.hooks : {};
     for (const ev of Object.keys(fragment)) {
         const arr = Array.isArray(out.hooks[ev]) ? out.hooks[ev] : [];
         // 只摘掉【我们自己的 hook 条目】,不整组丢弃。精确身份单独不够:用户把自己的命令
@@ -401,6 +425,7 @@ function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
     // projectRoot 给出时同样做物理解析(子目录下 status 才不会读错文件);测试可省略
     const settingsPath = projectRoot ? resolveManagedSettingsPath(projectRoot, settingsPathInput) : settingsPathInput;
     const cfg = readSettingsStrict(settingsPath);                  // 损坏 → 抛(不误报 all-missing)
+    assertManagedHooksShape(cfg, events);                          // 形状不可判读 → 抛(同 install,不误报 missing)
     const hooks = cfg.hooks || {};
     const installed = [], missing = [];
     for (const ev of events) {
@@ -410,7 +435,7 @@ function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
 }
 
 module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedHook, isManagedGroup,
-    mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
+    assertManagedHooksShape, mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
     MANAGED_SETTINGS_RELATIVE, managedSettingsPath, resolveManagedSettingsPath, resolveManagedBackupPath,
     backupManifestPath, validateBackupManifestShape, readBackupManifest, backupSettings, restoreSettings,
     discardBackup, installWithBackup, installTakeoverHooks, statusTakeoverHooks };

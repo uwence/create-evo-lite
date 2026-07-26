@@ -7324,6 +7324,45 @@ async function runGovernanceTests() {
             assert.ok(/capsule invalid/.test(thin.reason), `expected schema rejection, got: ${thin.reason}`);
             fs.writeFileSync(adapterStub, stubCapsule('takeover-stale'), 'utf8');   // 复位为健康 stub
 
+            // ── 合法 JSON 但形状不可安全 deep-merge → install 与 status 都必须 fail-loud
+            //    (Gate 1 修订复审 P1-1;与顶层非对象属同一类,但发生在 hooks 容器与事件值上)
+            const shapeSettings = path.join(fakeProject, '.claude', 'settings.json');
+            fs.mkdirSync(path.dirname(shapeSettings), { recursive: true });
+            const badShapes = [
+                { raw: '{"hooks":[]}', events: ['SessionStart'], why: /hooks field is not an object/ },
+                { raw: '{"hooks":42}', events: ['SessionStart'], why: /hooks field is not an object/ },
+                { raw: '{"hooks":"x"}', events: ['SessionStart'], why: /hooks field is not an object/ },
+                { raw: '{"hooks":null}', events: ['SessionStart'], why: /hooks field is not an object/ },
+                { raw: '{"hooks":{"SessionStart":{}}}', events: ['SessionStart'], why: /hooks\.SessionStart is not an array/ },
+                { raw: '{"hooks":{"UserPromptSubmit":"bad"}}', events: ['UserPromptSubmit'], why: /hooks\.UserPromptSubmit is not an array/ },
+            ];
+            for (const { raw, events: evs, why } of badShapes) {
+                fs.writeFileSync(shapeSettings, raw, 'utf8');
+                // 端到端:真正的 installer 入口必须抛,且**一个字节都不改**
+                assert.throws(() => ti.installTakeoverHooks(shapeSettings, { events: evs, projectRoot: fakeProject }),
+                    why, `install must fail loud on ${raw}`);
+                assert.strictEqual(fs.readFileSync(shapeSettings, 'utf8'), raw, `settings bytes unchanged after rejecting ${raw}`);
+                // status 共用同一判定:不得把不可判读的形状误报成 missing
+                assert.throws(() => ti.statusTakeoverHooks(shapeSettings, evs, fakeProject), why,
+                    `status must fail loud on ${raw}`);
+                assert.strictEqual(fs.readFileSync(shapeSettings, 'utf8'), raw, `status must not touch ${raw}`);
+                // 除 settings 本身外不得留下临时/备份产物
+                assert.deepStrictEqual(fs.readdirSync(path.dirname(shapeSettings)), ['settings.json'],
+                    `no stray artifacts after rejecting ${raw}`);
+            }
+            // `hooks: []` 曾是最恶劣的一例:数组的事件键会被 JSON.stringify 丢掉 →
+            // changed:false → CLI 报 "already in sync",而实际一个 hook 都没装(假成功)。
+            assert.throws(() => ti.mergeHookConfig({ hooks: [] }, ti.managedFragment(['SessionStart'])),
+                /hooks field is not an object/, 'the false-success shape is rejected at the merge boundary too');
+            // 顶层就是数组时,公开的 mergeHookConfig 同样不得静默吞掉托管 hook
+            assert.throws(() => ti.mergeHookConfig([], ti.managedFragment(['SessionStart'])), /not a JSON object/);
+            // 正常形状仍必须通过,且未受管事件即使畸形也不由本工具裁决
+            assert.ok(ti.mergeHookConfig({}, ti.managedFragment(['SessionStart'])).hooks.SessionStart);
+            assert.ok(ti.mergeHookConfig({ hooks: {} }, ti.managedFragment(['SessionStart'])).hooks.SessionStart);
+            assert.ok(ti.mergeHookConfig({ hooks: { Stop: 'weird', SessionStart: [] } }, ti.managedFragment(['SessionStart'])).hooks.SessionStart,
+                'a malformed value on an event we do not manage is left alone');
+            fs.rmSync(path.dirname(shapeSettings), { recursive: true, force: true });
+
             // 安装闸①:命令形状静态可验证(与本机 shell 无关)
             assert.strictEqual(ti.verifyHookCommandShape(ti.HOOK_COMMAND).ok, true, 'shipped HOOK_COMMAND shape is valid');
             assert.strictEqual(ti.verifyHookCommandShape('node $CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js').ok, false,

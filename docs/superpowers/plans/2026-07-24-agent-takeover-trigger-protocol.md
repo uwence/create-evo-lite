@@ -1724,7 +1724,7 @@ EOF
 
 **Interfaces:**
 - `HOOK_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.evo-lite/cli/takeover-adapter.js"'`
-- `managedFragment(events)`、`mergeHookConfig(existing, fragment)`、`isManagedHook(h)`、`isManagedGroup(g)`
+- `managedFragment(events)`、`mergeHookConfig(existing, fragment)`、`isManagedHook(h)`、`isManagedGroup(g)`、`assertManagedHooksShape(settings, events)`
 - **安装闸(与 shell 无关的两项)**
   - `verifyHookCommandShape(command?)` → `{ ok, reason }`(静态:`node ` 开头、引用受管 adapter、`$CLAUDE_PROJECT_DIR` 处于双引号内)
   - `probeAdapterBinary(projectRoot)` → `{ ok, reason }`(直接 `process.execPath` 跑 adapter,喂最小 UserPromptSubmit JSON;解析 envelope → **`validateCapsule` + 1 KiB 预算** → 拒绝 `takeover-degraded`。安装闸 = envelope 合法 ∧ capsule 合法 ∧ ≤1 KiB ∧ 非 degraded;退出码已不能判定健康)
@@ -1819,6 +1819,45 @@ console.log('T-takeover-installer. idempotent deep-merge; corrupt → throw (ins
     assert.strictEqual(thin.ok, false, 'a capsule missing fixed keys must not pass the install gate');
     assert.ok(/capsule invalid/.test(thin.reason), `expected schema rejection, got: ${thin.reason}`);
     fs.writeFileSync(adapterStub, stubCapsule('takeover-stale'), 'utf8');   // 复位为健康 stub
+
+    // ── 合法 JSON 但形状不可安全 deep-merge → install 与 status 都必须 fail-loud
+    //    (Gate 1 修订复审 P1-1;与顶层非对象属同一类,但发生在 hooks 容器与事件值上)
+    const shapeSettings = path.join(fakeProject, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(shapeSettings), { recursive: true });
+    const badShapes = [
+        { raw: '{"hooks":[]}', events: ['SessionStart'], why: /hooks field is not an object/ },
+        { raw: '{"hooks":42}', events: ['SessionStart'], why: /hooks field is not an object/ },
+        { raw: '{"hooks":"x"}', events: ['SessionStart'], why: /hooks field is not an object/ },
+        { raw: '{"hooks":null}', events: ['SessionStart'], why: /hooks field is not an object/ },
+        { raw: '{"hooks":{"SessionStart":{}}}', events: ['SessionStart'], why: /hooks\.SessionStart is not an array/ },
+        { raw: '{"hooks":{"UserPromptSubmit":"bad"}}', events: ['UserPromptSubmit'], why: /hooks\.UserPromptSubmit is not an array/ },
+    ];
+    for (const { raw, events: evs, why } of badShapes) {
+        fs.writeFileSync(shapeSettings, raw, 'utf8');
+        // 端到端:真正的 installer 入口必须抛,且**一个字节都不改**
+        assert.throws(() => ti.installTakeoverHooks(shapeSettings, { events: evs, projectRoot: fakeProject }),
+            why, `install must fail loud on ${raw}`);
+        assert.strictEqual(fs.readFileSync(shapeSettings, 'utf8'), raw, `settings bytes unchanged after rejecting ${raw}`);
+        // status 共用同一判定:不得把不可判读的形状误报成 missing
+        assert.throws(() => ti.statusTakeoverHooks(shapeSettings, evs, fakeProject), why,
+            `status must fail loud on ${raw}`);
+        assert.strictEqual(fs.readFileSync(shapeSettings, 'utf8'), raw, `status must not touch ${raw}`);
+        // 除 settings 本身外不得留下临时/备份产物
+        assert.deepStrictEqual(fs.readdirSync(path.dirname(shapeSettings)), ['settings.json'],
+            `no stray artifacts after rejecting ${raw}`);
+    }
+    // `hooks: []` 曾是最恶劣的一例:数组的事件键会被 JSON.stringify 丢掉 →
+    // changed:false → CLI 报 "already in sync",而实际一个 hook 都没装(假成功)。
+    assert.throws(() => ti.mergeHookConfig({ hooks: [] }, ti.managedFragment(['SessionStart'])),
+        /hooks field is not an object/, 'the false-success shape is rejected at the merge boundary too');
+    // 顶层就是数组时,公开的 mergeHookConfig 同样不得静默吞掉托管 hook
+    assert.throws(() => ti.mergeHookConfig([], ti.managedFragment(['SessionStart'])), /not a JSON object/);
+    // 正常形状仍必须通过,且未受管事件即使畸形也不由本工具裁决
+    assert.ok(ti.mergeHookConfig({}, ti.managedFragment(['SessionStart'])).hooks.SessionStart);
+    assert.ok(ti.mergeHookConfig({ hooks: {} }, ti.managedFragment(['SessionStart'])).hooks.SessionStart);
+    assert.ok(ti.mergeHookConfig({ hooks: { Stop: 'weird', SessionStart: [] } }, ti.managedFragment(['SessionStart'])).hooks.SessionStart,
+        'a malformed value on an event we do not manage is left alone');
+    fs.rmSync(path.dirname(shapeSettings), { recursive: true, force: true });
 
     // 安装闸①:命令形状静态可验证(与本机 shell 无关)
     assert.strictEqual(ti.verifyHookCommandShape(ti.HOOK_COMMAND).ok, true, 'shipped HOOK_COMMAND shape is valid');
@@ -2268,9 +2307,33 @@ function isManagedHook(h) {
 function isManagedGroup(g) {
     return Boolean(g && Array.isArray(g.hooks) && g.hooks.some(isManagedHook));
 }
+function isPlainObject(v) { return Boolean(v) && typeof v === 'object' && !Array.isArray(v); }
+
+// 合法 JSON 但【形状不可安全 deep-merge】的输入必须 fail-loud,不得猜测或覆盖(Gate 1 修订复审 P1-1)。
+// 三种静默损害:①`hooks: []` —— 数组 typeof 也是 'object',写进去的事件键会被 JSON.stringify 丢掉,
+// 于是 changed:false、CLI 报 "already in sync",实际一个 hook 都没装(假成功);
+// ②`hooks` 是标量/null —— 被直接替换成我们的配置,原值消失;
+// ③事件值不是数组(如 `hooks.SessionStart: {...}`)—— 当成空数组,用户内容整块丢失。
+// 只校验【我们要动的事件】:用户其它事件即使畸形也不该由本工具裁决。
+function assertManagedHooksShape(settings, events) {
+    if (!isPlainObject(settings)) {
+        throw new Error('takeover: settings is not a JSON object; leaving it unchanged');
+    }
+    if ('hooks' in settings && !isPlainObject(settings.hooks)) {
+        throw new Error('takeover: settings hooks field is not an object; leaving it unchanged');
+    }
+    const hooks = settings.hooks || {};
+    for (const event of events) {
+        if (event in hooks && !Array.isArray(hooks[event])) {
+            throw new Error(`takeover: hooks.${event} is not an array; leaving settings unchanged`);
+        }
+    }
+}
+
 function mergeHookConfig(existing, fragment) {
-    const out = existing && typeof existing === 'object' ? JSON.parse(JSON.stringify(existing)) : {};
-    out.hooks = out.hooks && typeof out.hooks === 'object' ? out.hooks : {};
+    assertManagedHooksShape(existing, Object.keys(fragment));
+    const out = JSON.parse(JSON.stringify(existing));
+    out.hooks = isPlainObject(out.hooks) ? out.hooks : {};
     for (const ev of Object.keys(fragment)) {
         const arr = Array.isArray(out.hooks[ev]) ? out.hooks[ev] : [];
         // 只摘掉【我们自己的 hook 条目】,不整组丢弃。精确身份单独不够:用户把自己的命令
@@ -2639,6 +2702,7 @@ function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
     // projectRoot 给出时同样做物理解析(子目录下 status 才不会读错文件);测试可省略
     const settingsPath = projectRoot ? resolveManagedSettingsPath(projectRoot, settingsPathInput) : settingsPathInput;
     const cfg = readSettingsStrict(settingsPath);                  // 损坏 → 抛(不误报 all-missing)
+    assertManagedHooksShape(cfg, events);                          // 形状不可判读 → 抛(同 install,不误报 missing)
     const hooks = cfg.hooks || {};
     const installed = [], missing = [];
     for (const ev of events) {
@@ -2648,7 +2712,7 @@ function statusTakeoverHooks(settingsPathInput, events, projectRoot) {
 }
 
 module.exports = { MANAGED_MARK, HOOK_COMMAND, managedGroup, managedFragment, isManagedHook, isManagedGroup,
-    mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
+    assertManagedHooksShape, mergeHookConfig, verifyHookCommandShape, probeAdapterBinary, resolveHostShell, probeHookCommand,
     MANAGED_SETTINGS_RELATIVE, managedSettingsPath, resolveManagedSettingsPath, resolveManagedBackupPath,
     backupManifestPath, validateBackupManifestShape, readBackupManifest, backupSettings, restoreSettings,
     discardBackup, installWithBackup, installTakeoverHooks, statusTakeoverHooks };
@@ -3308,3 +3372,4 @@ EOF
 |---|---|---|
 | P0-1 | 子目录启动未接管;计划把「子目录仍生效」列为验收项,该断言实测不成立 | 按裁定收口为 **root-launch-only**,不引入用户级安装。重跑四组对照(项目根 / 子目录 / 子目录 + `--settings` / 再加 `CLAUDE_PROJECT_DIR` 环境变量),用 `--debug-file` 的 setting sources + receipt 增量取证,发现**两条各自独立、都锚定启动 cwd** 的机制:①项目设置按启动 cwd 定位,不向上查找(与官方 permissions 文档表述冲突,按宿主能力偏差记录);②`$CLAUDE_PROJECT_DIR` 展开为**启动 cwd** —— 第三组中 settings 已加载、hook 已执行,却报 `Cannot find module …/templates/.evo-lite/cli/takeover-adapter.js`。**据此,复审建议的「把显式 `--settings` 记为可选 workaround」不成立**(它不恢复接管,反而让 hook 每轮真实报错),已验证不存在任何子目录 workaround。落点:设计 §0.2、计划 Global Constraints「启动 cwd 范围」、Step 9 断言改写、`takeover install` 与 `takeover status` 各增一行 scope 输出、dogfood §5 重写;README 首次写入 ATTP 时同写该限制,挂为 Task 8 前置项(Gate 1 时 README 尚无任何 ATTP 章节,无可修正文案) |
 | P1-1 | `isManagedGroup` 按子串 `takeover-adapter.js` 判定托管身份,会静默删除名称碰撞的第三方 hook | 身份改为**精确同一**:新增 `isManagedHook(h)`(`type === 'command'` 且命令经 `canonicalHookCommand` 归一后严格等于 `HOOK_COMMAND`),`isManagedGroup` 复用之;`statusTakeoverHooks` 与安装 merge 共用同一判定,故纯第三方 settings 不再误报 `installed`。**另修同类第二条路径**:精确身份单独不够 —— 第三方 hook 与我们同处一组时,整组过滤仍会连它一起删,故过滤下沉到 **hook 条目级**,组只有在清空后才移除。canonicalizer 仅折叠无语义空白,唯一职责是避免手工编辑/格式化后的托管 hook 认不出来而重复安装。新增 6 条回归(名称碰撞保留且组数为 2、`isManagedGroup` 对碰撞返回 false、status 不误报、同组第三方存活且托管 hook 恰一份、空白漂移仍被认出、空白漂移不产生重复);三个变异体(退回子串 / 退回整组过滤 / 去掉 canonicalizer)分别被三条不同断言杀死 |
+| 修订复审 P1-1 | `hooks` 容器与受管事件值的类型未校验:`hooks: []` 会**假成功**(数组的事件键被 `JSON.stringify` 丢弃 → `changed:false` → CLI 报 already in sync,实际一个 hook 都没装);`hooks` 为标量/null、事件值为对象/字符串则被静默覆盖,用户内容整块丢失 | 新增共享校验 `assertManagedHooksShape(settings, events)`(顶层必须 plain object;`hooks` 若存在必须 plain object;**受管**事件值若存在必须 array),由 `mergeHookConfig` 与 `statusTakeoverHooks` 共用 → install 与 status 同时 fail-loud。未受管事件即使畸形也不干预。回归覆盖六种形状 × (install 抛 / status 抛 / **字节不变** / 目录内无多余产物),外加顶层数组直调 `mergeHookConfig` 与四条正常路径;四个变异体(去容器校验 / 去事件值校验 / status 不共用 / 顶层放宽允许数组)分别被四条不同断言杀死 |
