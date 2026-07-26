@@ -195,11 +195,93 @@ function handleUserPromptSubmit(input, deps) {
     return { json, exitCode: 0, publish: null, failure: null };
 }
 
+const READONLY_TOOLS = new Set(['Read', 'Glob', 'Grep']);
+const GUARDED_WRITE_TOOLS = new Set(['Edit', 'Write']); // MVP:NotebookEdit 待 probe 证明工具名+输入 schema
+
+function ptu(decision, reason) {
+    const hookSpecificOutput = { hookEventName: 'PreToolUse', permissionDecision: decision };
+    if (reason) hookSpecificOutput.permissionDecisionReason = reason;
+    return { json: { hookSpecificOutput }, exitCode: 0, publish: null };
+}
+
+// 守卫【任何】抛错都必须落在 deny 上:PreToolUse 输出里没有 permissionDecision 等于放行,
+// 抛到 main 的通用错误路径就是 fail-open(R4 复审 P0-2 ④)。
+function handlePreToolUse(input, deps) {
+    const tool = input.tool_name;
+    if (READONLY_TOOLS.has(tool) || tool === 'Bash') return ptu('allow');
+    if (!GUARDED_WRITE_TOOLS.has(tool)) return ptu('allow');
+    try { return guardWrite(input, deps); }
+    catch (e) {
+        const hint = recoveryText(buildGenericRecoveryCommand(input && input.session_id));
+        return ptu('deny', `[evo-lite] takeover guard failed (${e.message}); refusing write. Run from the project root — ${hint}`);
+    }
+}
+
+function guardWrite(input, deps) {
+    const rootRes = resolveRoot(deps);   // canonicalization(含 realpath)失败 → deny
+    if (!rootRes.ok) {
+        return ptu('deny', `[evo-lite] cannot canonicalize the project root (${rootRes.error}); refusing write. Run from the project root — ${recoveryText(buildGenericRecoveryCommand(input.session_id))}`);
+    }
+    const projectRoot = rootRes.root;
+    const sessionId = input.session_id;
+    const recovery = recoveryText(buildRecoveryCommand(projectRoot, sessionId));
+
+    // (a) committed receipt
+    if (rc.readReceipt(projectRoot, HOST, sessionId).state !== 'committed') {
+        return ptu('deny', `[evo-lite] takeover required before writing. ${recovery}`);
+    }
+    // (b) active_context 可读 + reconcile 非 degraded
+    const { verdict, focus } = rc.reconcile({ projectRoot, host: HOST, sessionId });
+    if (verdict.transition === 'degraded' || verdict.state !== 'committed') {
+        return ptu('deny', `[evo-lite] takeover unhealthy (${verdict.reason || verdict.transition}). ${recovery}`);
+    }
+    // (b2) 构建 refresh capsule → validateCapsule → 字节预算
+    const build = deps.buildPayload || buildTakeoverPayload;
+    let capsule;
+    try {
+        capsule = build({ kind: 'refresh', host: HOST, sessionId, projectRoot, projectName: path.basename(projectRoot),
+            sourceEvent: 'PreToolUse', focus: focus.text, focusHash: focus.hash,
+            receiptVerdict: verdict, recoveryAction: recovery }, CAPSULE_BUDGET_BYTES);
+    } catch (e) { return ptu('deny', `[evo-lite] takeover payload build failed (${e.message}). ${recovery}`); }
+    const capVerdict = validateCapsule(capsule, CAPSULE_BUDGET_BYTES);
+    if (!capVerdict.ok) return ptu('deny', `[evo-lite] takeover payload invalid (${capVerdict.errors.join(',')}). ${recovery}`);
+
+    // (c) target-path fail-closed
+    const ti = input.tool_input;
+    const target = ti && typeof ti === 'object' ? ti.file_path : null;
+    if (!target || typeof target !== 'string') {
+        return ptu('deny', `[evo-lite] cannot determine target path; refusing write. ${recovery}`);
+    }
+    const abs = path.isAbsolute(target) ? target : path.resolve(projectRoot, target);
+    // 向上找最近【条目存在】的一层。注意用 lstat 而非 exists:断链 symlink 的 exists 为 false,
+    // 若按"还没建的文件"跳过它退到父目录,守卫就会放行,而 Write 会沿链接写到项目外(R7 复审 P0-1)。
+    let probe = abs;
+    for (;;) {
+        let info;
+        try { info = rc.pathEntryInfo(probe); }
+        catch (e) { return ptu('deny', `[evo-lite] cannot stat '${probe}' (${e.message}); refusing write.`); }
+        if (info.exists) break;                      // 含"存在的链接",下面必须物理解析它
+        const parent = path.dirname(probe);
+        if (parent === probe) return ptu('deny', `[evo-lite] no existing ancestor for '${target}'; refusing write.`);
+        probe = parent;
+    }
+    // 最近存在条目的 realpath 失败(权限/断链/不可解析 junction)→ deny。
+    // 未经解析的字符串做 containment 判断,正是 symlink 逃逸能绕过守卫的原因(R4 复审 P0-2 ③)。
+    try { probe = rc.realpathStrict(probe); }
+    catch (e) { return ptu('deny', `[evo-lite] cannot resolve target '${target}' (${e.message}); refusing write.`); }
+    const cp = probe.replace(/\\/g, '/'), cr = projectRoot.replace(/\\/g, '/');
+    if (!(cp === cr || cp.startsWith(cr + '/'))) {
+        return ptu('deny', `[evo-lite] target '${target}' resolves outside project '${projectRoot}'.`);
+    }
+    return ptu('allow');
+}
+
 async function handleHookInput(input, deps = {}) {
     switch (input && input.hook_event_name) {
         case 'SessionStart': return handleSessionStart(input, deps);
         case 'UserPromptSubmit': return handleUserPromptSubmit(input, deps);
-        default: return { json: {}, exitCode: 0, publish: null, failure: null }; // 阶段2 增 PreToolUse
+        case 'PreToolUse': return handlePreToolUse(input, deps);
+        default: return { json: {}, exitCode: 0, publish: null, failure: null };
     }
 }
 

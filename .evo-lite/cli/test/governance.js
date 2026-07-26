@@ -7773,6 +7773,132 @@ async function runGovernanceTests() {
             console.log('✅ T-takeover-installer passed');
         }
 
+        console.log('T-takeover-guard. Edit/Write fail-closed incl unknown target and invalid capsule ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-guard-'));
+            const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+            fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const canon = rc.canonicalProjectRoot(root), sid = 'g';
+            const call = async (tool, tin, deps) => (await ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: sid, tool_name: tool, tool_input: tin || {} }, { projectRoot: root, ...(deps || {}) })).json.hookSpecificOutput;
+
+            assert.strictEqual((await call('Read')).permissionDecision, 'allow');
+            assert.strictEqual((await call('Glob')).permissionDecision, 'allow');
+            assert.strictEqual((await call('Bash')).permissionDecision, 'allow', 'Bash excluded from guard');
+            const noRcpt = await call('Write', { file_path: path.join(root, 'a.txt') });
+            assert.strictEqual(noRcpt.permissionDecision, 'deny', 'no receipt → deny');
+            assert.ok(/memory\.js' bootstrap --receipt/.test(noRcpt.permissionDecisionReason), 'deny reason carries recovery command');
+            assert.ok(noRcpt.permissionDecisionReason.includes(`--session-id '${sid}'`),
+                'deny reason command is actually executable (runReceiptRecovery requires --session-id)');
+
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: sid, projectRoot: canon,
+                state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+            assert.strictEqual((await call('Write', { file_path: path.join(root, 'src', 'a.txt') })).permissionDecision, 'allow', 'in-project allow');
+            assert.strictEqual((await call('Write', {})).permissionDecision, 'deny', 'missing target → fail-closed');
+            assert.strictEqual((await call('Write', { file_path: 123 })).permissionDecision, 'deny', 'non-string target → fail-closed');
+            // 坏 capsule(builder 被注入返回垃圾)→ validateCapsule 失败 → deny
+            const badCap = await call('Write', { file_path: path.join(root, 'a.txt') }, { buildPayload: () => ({ unexpected: true }) });
+            assert.strictEqual(badCap.permissionDecision, 'deny', 'invalid capsule → deny (validator actually runs)');
+
+            // realpath 故障注入 ①:项目根不可 canonicalize → deny(绝不抛到 main 变成放行)
+            rc.__setFsOps({ realpathSync: () => { throw new Error('EACCES'); } });
+            let rootFail; try { rootFail = await call('Write', { file_path: path.join(root, 'a.txt') }); } finally { rc.__resetFsOps(); }
+            assert.strictEqual(rootFail.permissionDecision, 'deny', 'root realpath failure → deny');
+            assert.ok(/--session-id 'g'/.test(rootFail.permissionDecisionReason),
+                'root-failure deny still hands back an executable recovery command');
+
+            // realpath 故障注入 ②:仅 target 侧不可解析(根仍正常)→ deny
+            fs.mkdirSync(path.join(root, 'locked'), { recursive: true });
+            rc.__setFsOps({ realpathSync: (p) => { if (String(p).includes('locked')) throw new Error('EPERM'); return fs.realpathSync(p); } });
+            let tgtFail; try { tgtFail = await call('Write', { file_path: path.join(root, 'locked', 'a.txt') }); } finally { rc.__resetFsOps(); }
+            assert.strictEqual(tgtFail.permissionDecision, 'deny', 'target realpath failure → deny (never string-only containment)');
+
+            // 守卫内部任意抛错也必须 deny(注入一个会抛的 reconcile 路径)
+            const boom = await call('Write', { file_path: path.join(root, 'a.txt') },
+                { buildPayload: () => { throw new Error('kaboom'); } });
+            assert.strictEqual(boom.permissionDecision, 'deny', 'any guard exception → deny');
+            fs.rmSync(root, { recursive: true, force: true });
+            console.log('✅ T-takeover-guard passed');
+        }
+
+        console.log('T-takeover-target-path. cross-project / .. escape / symlink escape denied ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-tp-'));
+            const other = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-other-'));
+            const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+            fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const canon = rc.canonicalProjectRoot(root), sid = 'tp';
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: sid, projectRoot: canon,
+                state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+            const dec = async (tin) => (await ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write', tool_input: tin }, { projectRoot: root })).json.hookSpecificOutput.permissionDecision;
+            assert.strictEqual(await dec({ file_path: path.join(other, 'x.js') }), 'deny', 'cross-project deny');
+            assert.strictEqual(await dec({ file_path: path.join(root, '..', 'esc.js') }), 'deny', 'parent escape deny');
+            assert.strictEqual(await dec({ file_path: path.join(root, 'ok.js') }), 'allow', 'in-project allow');
+
+            // symlink 逃逸:project/link → other;POSIX 必测,win32 无权限时跳过并显式说明
+            const link = path.join(root, 'link');
+            let linked = false;
+            try { fs.symlinkSync(other, link, 'junction'); linked = true; }
+            catch (_) { try { fs.symlinkSync(other, link, 'dir'); linked = true; } catch (_) { linked = false; } }
+            if (linked) {
+                assert.strictEqual(await dec({ file_path: path.join(link, 'x.js') }), 'deny', 'symlink/junction escape deny');
+
+                // 断链逃逸(R7 复审 P0-1):目标【尚不存在】的链接,existsSync 为 false,
+                // 但 Write 仍会沿链接在项目外创建文件 —— 必须 deny,且不得真的产生该文件。
+                const missingOutside = path.join(other, 'new-file.js');
+                const broken = path.join(root, 'broken-link.js');
+                let brokenMade = false;
+                try { fs.symlinkSync(missingOutside, broken, 'file'); brokenMade = true; } catch (_) { brokenMade = false; }
+                if (!brokenMade) {
+                    assert.strictEqual(process.platform, 'win32', 'dangling file symlink case is mandatory on POSIX');
+                    console.log('   ⏭️ dangling file symlink case skipped (win32 without symlink privilege)');
+                } else {
+                    assert.strictEqual(fs.existsSync(broken), false, 'a dangling link reads as "does not exist" — the exact trap');
+                    assert.strictEqual(await dec({ file_path: broken }), 'deny', 'dangling symlink target → deny (not treated as a new file)');
+                    assert.strictEqual(fs.existsSync(missingOutside), false, 'nothing was created outside the project');
+                }
+                // 中间目录断链:project/link-dir → other/missing-dir
+                const brokenDir = path.join(root, 'link-dir');
+                let brokenDirMade = false;
+                try { fs.symlinkSync(path.join(other, 'missing-dir'), brokenDir, 'junction'); brokenDirMade = true; }
+                catch (_) { try { fs.symlinkSync(path.join(other, 'missing-dir'), brokenDir, 'dir'); brokenDirMade = true; } catch (_) { brokenDirMade = false; } }
+                if (!brokenDirMade) {
+                    assert.strictEqual(process.platform, 'win32', 'dangling directory link case is mandatory on POSIX');
+                    console.log('   ⏭️ dangling directory link case skipped (win32 without symlink privilege)');
+                } else {
+                    assert.strictEqual(await dec({ file_path: path.join(brokenDir, 'a.js') }), 'deny', 'dangling directory link → deny');
+                }
+            } else {
+                assert.strictEqual(process.platform, 'win32', 'symlink creation may only be skipped on win32 without privilege');
+                console.log('   ⏭️ symlink escape case skipped (win32 without symlink privilege)');
+            }
+            fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(other, { recursive: true, force: true });
+            console.log('✅ T-takeover-target-path passed');
+        }
+
+        console.log('T-takeover-session-scope. no receipt → deny; committed+healthy → allow; governance-health fail → deny ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-ss-'));
+            const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+            const wf = () => fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            wf();
+            const canon = rc.canonicalProjectRoot(root), sid = 'ss';
+            const w = async () => (await ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write', tool_input: { file_path: path.join(root, 'a.js') } }, { projectRoot: root })).json.hookSpecificOutput.permissionDecision;
+            assert.strictEqual(await w(), 'deny', 'no receipt → deny');
+            rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: sid, projectRoot: canon,
+                state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+            assert.strictEqual(await w(), 'allow', 'committed + healthy → allow');
+            fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
+            assert.strictEqual(await w(), 'deny', 'governance-health failure → deny (health gate, not unconditional allow)');
+            fs.rmSync(root, { recursive: true, force: true });
+            console.log('✅ T-takeover-session-scope passed');
+        }
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
