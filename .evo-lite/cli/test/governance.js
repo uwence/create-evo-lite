@@ -7947,28 +7947,71 @@ async function runGovernanceTests() {
                     'in-project path still allows on POSIX (path casing is sensitive there; no fold asserted)');
             }
 
-            // FIX 2(Task 7 二轮 R8):the fold's old POSIX branch was a no-op, so a mutant that folded
-            // case unconditionally (which matters most on POSIX, where two directories differing only by
-            // case genuinely coexist) survived undetected. Now that the fold is gone entirely, lock this in
-            // for real: build a sibling directory whose name differs from the project root ONLY by case and
-            // assert the guard DENIES a write into it. NTFS collapses same-name-different-case directories
-            // (mkdirSync throws), so on win32 this sibling cannot be constructed — detect that and skip
-            // explicitly, exactly like the symlink-privilege branches below. On POSIX it must run for real.
+            // ── 仅大小写不同的兄弟目录 ──
+            // 大小写敏感的卷上这是两个真实目录,任何无条件折叠都会把它误判成项目内。
+            // 能否构造取决于【文件系统能力】,不是 OS 名字:NTFS 与 macOS 默认的 APFS 都不敏感,
+            // 按 `process.platform === 'win32'` 判定会让这条断言在 case-insensitive 的 macOS 卷上误报失败。
+            // 故按实际行为探测,并且只吞 EEXIST —— 其它错误必须 fail-loud(Task 7 三审 P1-1)。
             {
                 const dir = path.dirname(root), base = path.basename(root);
                 const flippedBase = base.split('').map(c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
                 const caseSibling = path.join(dir, flippedBase);
-                let caseSiblingMade = false;
-                try { fs.mkdirSync(caseSibling); caseSiblingMade = true; } catch (_) { caseSiblingMade = false; }
-                if (caseSiblingMade) {
+                let caseState = 'distinct';
+                try {
+                    fs.mkdirSync(caseSibling);
+                    // 创建"成功"也可能只是别名;物理解析后同一目录 = 卷不区分大小写
+                    if (rc.realpathStrict(caseSibling) === rc.realpathStrict(root)) caseState = 'aliased';
+                } catch (e) {
+                    if (e.code === 'EEXIST') caseState = 'aliased';
+                    else throw e;
+                }
+                if (caseState === 'distinct') {
                     fs.writeFileSync(path.join(caseSibling, 'x.js'), '', 'utf8');
                     assert.strictEqual(await dec({ file_path: path.join(caseSibling, 'x.js') }), 'deny',
-                        `case-differing sibling '${caseSibling}' must deny (a real, distinct directory on POSIX — no unconditional case fold may allow it)`);
-                    fs.rmSync(caseSibling, { recursive: true, force: true });
+                        `case-differing sibling '${caseSibling}' must deny (a real, distinct directory here — no unconditional case fold may allow it)`);
+                    fs.rmSync(caseSibling, { recursive: true, force: true });   // aliased 时【绝不能删】,那是项目根本身
                 } else {
-                    assert.strictEqual(process.platform, 'win32', 'case-differing sibling directory creation may only fail on win32 (NTFS case-insensitivity)');
-                    console.log('   ⏭️ case-differing sibling directory case skipped (win32: NTFS collapses same-name-different-case)');
+                    console.log('   ⏭️ case-differing sibling skipped: this filesystem aliases the two names');
                 }
+            }
+
+            // ── Unicode fold 逃逸:永久回归锚点(Task 7 二审 Critical / 三审 P1-1)──
+            // 曾经的修法在 win32 上对两侧做 toLowerCase() 再比较。JS 的折叠比 NTFS 自己的
+            // 大小写表宽得多:KELVIN SIGN(U+212A)折成 ASCII 'k',而 NTFS 把 'Kappa' 与
+            // '\u212Aappa' 当作两个【真实不同】的目录 —— 于是守卫放行了一次确实落到项目外的写入
+            // (已实际写出文件复现)。上面那条"仅大小写不同"的兄弟目录在 NTFS 上根本建不出来,
+            // 所以杀不掉这个变异;这个 fixture 能在真实 Windows 上稳定构造,故【必须真跑】,
+            // 不得只留在套件外的记录里。
+            {
+                const uniParent = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-unicode-fold-'));
+                const asciiRoot = path.join(uniParent, 'Kappa');
+                const kelvinSibling = path.join(uniParent, '\u212Aappa');   // KELVIN SIGN,不是 ASCII 'K'
+                fs.mkdirSync(path.join(asciiRoot, '.evo-lite'), { recursive: true });
+                fs.mkdirSync(kelvinSibling, { recursive: true });
+                // 只有当文件系统确实把二者当成两个目录时,这个逃逸才存在
+                if (rc.realpathStrict(asciiRoot) === rc.realpathStrict(kelvinSibling)) {
+                    console.log('   ⏭️ Unicode-fold fixture skipped: filesystem aliases the two names');
+                } else {
+                    fs.writeFileSync(path.join(asciiRoot, '.evo-lite', 'active_context.md'),
+                        '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+                    const uniSid = 'uf';
+                    rc.publishReceipt(asciiRoot, { schemaVersion: 1, host: 'claude-code', sessionId: uniSid,
+                        projectRoot: rc.canonicalProjectRoot(asciiRoot), state: 'committed',
+                        focusHash: rc.readFocusAnchor(asciiRoot).hash, sourceEvent: 'x' });
+                    const escaped = path.join(kelvinSibling, 'x.js');
+                    const uniOut = (await ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: uniSid,
+                        tool_name: 'Write', tool_input: { file_path: escaped } },
+                        { projectRoot: asciiRoot })).json.hookSpecificOutput;
+                    assert.strictEqual(uniOut.permissionDecision, 'deny',
+                        'KELVIN SIGN sibling is a distinct directory outside the project and must deny — folding case here allowed a real out-of-project write');
+                    assert.strictEqual(fs.existsSync(escaped), false, 'nothing may be created outside the project');
+                    // 项目内的对照写仍须放行,证明这条断言不是靠"全拒"取胜
+                    assert.strictEqual((await ad.handleHookInput({ hook_event_name: 'PreToolUse', session_id: uniSid,
+                        tool_name: 'Write', tool_input: { file_path: path.join(asciiRoot, 'ok.js') } },
+                        { projectRoot: asciiRoot })).json.hookSpecificOutput.permissionDecision, 'allow',
+                        'the in-project control write must still allow');
+                }
+                fs.rmSync(uniParent, { recursive: true, force: true });
             }
 
             // symlink 逃逸:project/link → other;POSIX 必测,win32 无权限时跳过并显式说明
