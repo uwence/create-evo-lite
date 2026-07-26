@@ -674,6 +674,47 @@ host adapters: AGENTS.md / CLAUDE.md / .claude/commands / .codex/hooks.json / .g
 
 ---
 
+## Agent Takeover / 确定性接管（Claude Code）
+
+上面的适配层是**被动**的：它把语义摆在那里，等 agent 自己去读。实测表明这个假设不成立——面对一句白开水提示词，agent 通常不会主动发现治理层。
+
+`takeover` 把接管改成**宿主生命周期驱动**：Claude Code 每次开会话、每轮提示词都会执行一条 hook，由 Evo-Lite 主动把 focus、风险、下一步注入上下文。
+
+```bash
+# 安装（会先备份 .claude/settings.json）
+node .evo-lite/cli/memory.js takeover install --backup \
+  --events SessionStart,UserPromptSubmit,PreToolUse \
+  --settings .claude/settings.json
+
+node .evo-lite/cli/memory.js takeover status    # 查看已装/缺失的事件
+node .evo-lite/cli/memory.js takeover rollback  # 按备份逐字节恢复
+```
+
+三个事件各司其职：
+
+```text
+SessionStart      建立接管，写下绑定本会话的 receipt
+UserPromptSubmit  每轮重新注入一枚 ≤1 KiB 的上下文胶囊
+PreToolUse        没有有效 receipt 时拒绝 Edit / Write
+```
+
+### ⚠️ 只在从项目根启动时生效
+
+这是一条**硬限制**，不是配置项：
+
+1. **只有从 canonical project root 启动 Claude Code，接管才会生效。**
+2. **从子目录启动则既不接管、也无守卫，并且没有可用的 workaround。** 两条互相独立的宿主机制都锚定在启动 cwd 上：项目 settings 按启动 cwd 定位、不向上查找；`$CLAUDE_PROJECT_DIR` 也展开为启动 cwd。因此显式传 `--settings` 同样无效——hook 会被加载，却因路径拼错而每轮真实报错。
+3. **该限制同样约束 `PreToolUse` 守卫。** 守卫的 no-silent-bypass 保证只在 hook 实际被加载时成立；子目录启动下守卫根本不运行，写入不会被拦，也不会有任何提示。
+
+### 守卫是治理保证，不是隔离边界
+
+`PreToolUse` 守卫的职责是**保证 agent 先接管再动代码**，它不是安全沙箱：
+
+- MVP 只守 `Edit` 与 `Write`；`Bash` 及其他工具一律放行，一条 shell 重定向即可绕开。
+- 它防的是「agent 在没读治理状态的情况下就开始改代码」，不防有意规避。
+
+---
+
 ## Subagent Protocol
 
 Subagent 完成实现时，不能只提交代码。至少要满足：

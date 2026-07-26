@@ -674,6 +674,47 @@ host adapters: AGENTS.md / CLAUDE.md / .claude/commands / .codex/hooks.json / .g
 
 ---
 
+## Agent Takeover (Claude Code)
+
+The adapter layer above is **passive**: it leaves the semantics lying around and waits for the agent to go read them. Measurement says that assumption does not hold — given a bare prompt, an agent generally does not discover the governance layer on its own.
+
+`takeover` makes entry **host-lifecycle driven** instead: Claude Code runs a hook at every session start and every prompt, and Evo-Lite pushes the current focus, risks, and next step into context rather than waiting to be asked.
+
+```bash
+# Install (backs up .claude/settings.json first)
+node .evo-lite/cli/memory.js takeover install --backup \
+  --events SessionStart,UserPromptSubmit,PreToolUse \
+  --settings .claude/settings.json
+
+node .evo-lite/cli/memory.js takeover status    # which events are installed / missing
+node .evo-lite/cli/memory.js takeover rollback  # byte-for-byte restore from the backup
+```
+
+Each event has one job:
+
+```text
+SessionStart      establish takeover, write a receipt bound to this session
+UserPromptSubmit  re-inject a <=1 KiB context capsule every turn
+PreToolUse        deny Edit / Write when there is no valid receipt
+```
+
+### ⚠️ Root-launch only
+
+This is a **hard limitation**, not a setting:
+
+1. **Takeover engages only when Claude Code is launched from the canonical project root.**
+2. **Launching from a subdirectory gives you neither takeover nor the guard, and there is no supported workaround.** Two independent host mechanisms both anchor on the launch cwd: project settings are located by launch cwd and are not discovered by walking up, and `$CLAUDE_PROJECT_DIR` expands to the launch cwd as well. Passing `--settings` explicitly does not help either — the hook loads and then fails on every turn with a wrong module path.
+3. **The same limitation binds the `PreToolUse` guard.** Its no-silent-bypass guarantee holds only where the hook is actually loaded. Launched from a subdirectory, the guard never runs: writes are not gated, and nothing tells you so.
+
+### The guard is a governance guarantee, not a containment boundary
+
+The `PreToolUse` guard exists to **make the agent take over before it touches code**. It is not a security sandbox:
+
+- The MVP guards `Edit` and `Write` only. `Bash` and every other tool are allowed, so a single shell redirect bypasses it.
+- It defends against an agent editing code without having read the governance state. It does not defend against deliberate evasion.
+
+---
+
 ## Subagent Protocol
 
 When a subagent finishes implementation, code changes alone are not enough. It should satisfy at least:
