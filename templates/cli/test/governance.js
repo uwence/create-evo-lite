@@ -8095,6 +8095,149 @@ async function runGovernanceTests() {
             console.log('✅ T-takeover-session-scope passed');
         }
 
+        console.log('T-takeover-fault-suite. injected failures per review-gate assertion ...');
+        {
+            const ad = require(path.join(TEMPLATE_CLI_DIR, 'takeover-adapter.js'));
+            const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
+            const ts = require(path.join(TEMPLATE_CLI_DIR, 'takeover-session.js'));
+            const mkRoot = () => {
+                const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-tk-f-'));
+                const ac = path.join(root, '.evo-lite'); fs.mkdirSync(ac, { recursive: true });
+                fs.writeFileSync(path.join(ac, 'active_context.md'), '<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+                return { root, ac };
+            };
+            const goodCollect = (base) => ts.assembleSessionContext(base, {
+                summary: {},
+                sessionstart: { contextStatus: 'configured', architectureStatus: 'configured', activeTaskCount: 0, reminders: ['r'], warnings: [] },
+                verify: { hasAlerts: false, nextSteps: [] },
+                recall: { status: 'no-match' },
+                planSpec: { plan: null, spec: null },
+                freshness: { headSha: 'a', ahead: 0, behind: 0 },
+                degraded: [],
+            });
+            const writeDec = async (root, sid) => (await ad.handleHookInput({
+                hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write',
+                tool_input: { file_path: path.join(root, 'a.js') },
+            }, { projectRoot: root })).json.hookSpecificOutput.permissionDecision;
+
+            // 1) receipt 发布失败(rename 抛)→ 非零 + 无 committed
+            {
+                const { root } = mkRoot();
+                const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f1', source: 'startup' },
+                    { projectRoot: root, collect: goodCollect });
+                // 目的地无关的注入在这里是安全的:publishReceipt 是本用例唯一的 rename 调用点。
+                rc.__setFsOps({ renameSync: () => { throw new Error('rename fail'); } });
+                let res; try { res = ad.executeHookTransport(r.json, r.publish, { write: () => {} }); } finally { rc.__resetFsOps(); }
+                assert.strictEqual(res.exitCode, 1, 'publish failure → nonzero');
+                assert.notStrictEqual(rc.readReceipt(root, 'claude-code', 'f1').state, 'committed', 'no committed receipt when publish fails');
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+
+            // 2) 坏 session payload(collector 返回残缺)→ 校验拦截 → 无 committed + 非零
+            {
+                const { root } = mkRoot();
+                const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f2', source: 'startup' },
+                    { projectRoot: root, collect: (b) => ({ ...b, kind: 'session', projectName: 'p' }) }); // 缺 rules/health/verify...
+                assert.strictEqual(r.exitCode, 0, 'structured envelope exits 0 (host ignores JSON on nonzero)');
+                assert.ok(r.failure, 'invalid payload reported via failure field + systemMessage');
+                assert.strictEqual(r.publish, null, 'invalid payload → no publish');
+                assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f2').state, 'missing');
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+
+            // 3) collector 抛错(不可恢复)→ 无 committed + 非零 + 明示恢复命令
+            {
+                const { root } = mkRoot();
+                const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f3', source: 'startup' },
+                    { projectRoot: root, collect: () => { throw new Error('initDB boom'); } });
+                assert.strictEqual(r.exitCode, 0, 'degraded context must be ingestible → exit 0');
+                assert.ok(r.failure && r.publish === null, 'collector failure reported, nothing published');
+                assert.ok(/bootstrap --receipt/.test(r.json.hookSpecificOutput.additionalContext), 'degraded context carries recovery command');
+                assert.ok(/--session-id 'f3'/.test(r.json.hookSpecificOutput.additionalContext), 'and that command is executable');
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+
+            // 4) 失效双失败(tombstone + unlink 均抛)后:旧 committed 仍在盘上,但 Write 仍被 health gate deny。
+            //    注:守卫走 reconcileReadOnly(Task 7 复审 I2),本身不写盘 —— 注入在这里是纵深防御,
+            //    断言的承重点是「持久化失败与否都不影响 deny 判定」+「旧 receipt 确实还在」。
+            {
+                const { root, ac } = mkRoot(); const canon = rc.canonicalProjectRoot(root);
+                rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 'f4', projectRoot: canon,
+                    state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
+                fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
+                rc.__setFsOps({ writeFileSync: () => { throw new Error('tombstone fail'); }, unlinkSync: () => { throw new Error('unlink fail'); } });
+                let dec; try { dec = await writeDec(root, 'f4'); } finally { rc.__resetFsOps(); }
+                assert.strictEqual(dec, 'deny', 'health gate denies even when invalidation persistence double-fails');
+                assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f4').state, 'committed', 'stale receipt indeed survived on disk');
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+
+            // 5) source=resume/clear 且 receipt 缺失 → 走 establishment(不因 source 跳过)
+            {
+                const { root } = mkRoot();
+                for (const source of ['resume', 'clear']) {
+                    const sid = `f5-${source}`;
+                    const r = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: sid, source },
+                        { projectRoot: root, collect: goodCollect });
+                    assert.strictEqual(typeof r.publish, 'function', `${source} with missing receipt must establish`);
+                    ad.executeHookTransport(r.json, r.publish, { write: () => {} });
+                    assert.strictEqual(rc.readReceipt(root, 'claude-code', sid).state, 'committed', `${source} established committed receipt`);
+                }
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+
+            // 6) CLI write 失败 → 不 publish;CLI 输出非 hook envelope
+            {
+                let published = false;
+                const bad = ad.executeCliRecoveryTransport('X', () => { published = true; }, { write: () => { throw new Error('cli stdout fail'); } });
+                assert.strictEqual(bad.exitCode, 1);
+                assert.strictEqual(published, false, 'CLI delivery failure → no publish');
+            }
+
+            // 7) same-session refresh 失败分流(R5 承重语义):旧 receipt 不撤销,终局由 health gate 决定
+            {
+                const { root, ac } = mkRoot();
+                // 先建立 committed receipt
+                const est = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f7', source: 'startup' },
+                    { projectRoot: root, collect: goodCollect });
+                ad.executeHookTransport(est.json, est.publish, { write: () => {} });
+                assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f7').state, 'committed');
+                // 同 session resume,但 full refresh 失败(collector 抛错)
+                const refreshFail = await ad.handleHookInput({ hook_event_name: 'SessionStart', session_id: 'f7', source: 'resume' },
+                    { projectRoot: root, collect: () => { throw new Error('verify exploded'); } });
+                assert.strictEqual(refreshFail.exitCode, 0, 'refresh failure still exits 0 so its context is ingested');
+                assert.ok(refreshFail.failure, 'refresh failure reported explicitly via the failure field');
+                assert.strictEqual(refreshFail.publish, null, 'refresh failure publishes nothing');
+                assert.strictEqual(rc.readReceipt(root, 'claude-code', 'f7').state, 'committed', 'old receipt NOT auto-revoked on refresh failure');
+                // governance health 正常 → Write 仍 allow(session-only 失败不阻断)
+                assert.strictEqual(await writeDec(root, 'f7'), 'allow', 'session-only refresh failure → health gate allows');
+                // capsule 仍每轮注入
+                const cap = await ad.handleHookInput({ hook_event_name: 'UserPromptSubmit', session_id: 'f7' }, { projectRoot: root });
+                assert.strictEqual(JSON.parse(cap.json.hookSpecificOutput.additionalContext).receipt, 'valid', 'capsule still re-seeds after refresh failure');
+                // 反向:governance health 失败(active_context 删除)→ Write deny
+                fs.rmSync(path.join(ac, 'active_context.md'), { force: true });
+                assert.strictEqual(await writeDec(root, 'f7'), 'deny', 'governance-health failure → health gate denies');
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+
+            // 8) recovery 执行后 Write 解锁(端到端子进程)
+            {
+                const { root, ac } = mkRoot();
+                // 必须用【运行时镜像】入口:模板入口 require 阶段就解析不到 better-sqlite3
+                // (templates/ 下没有 node_modules)。注意不能用 harness 的 CLI_DIR —— 在模板侧套件里
+                // 它就等于 TEMPLATE_CLI_DIR。镜像入口同时也是 buildRecoveryCommand 生成的那个入口。
+                const memJs = path.join(WORKSPACE_ROOT, '.evo-lite', 'cli', 'memory.js');
+                const sub = childProcess.spawnSync(process.execPath, [memJs, 'bootstrap', '--receipt', '--host', 'claude-code',
+                    '--session-id', 'f8', '--source', 'manual-recovery', '--json'],
+                    { cwd: root, env: { ...process.env, EVO_LITE_ROOT: ac, EVO_LITE_SKIP_GIT_STATUS: '1' }, encoding: 'utf8' });
+                assert.strictEqual(sub.status, 0, `recovery ok (stderr: ${sub.stderr})`);
+                assert.strictEqual(await writeDec(root, 'f8'), 'allow', 'Write unlocked after explicit recovery');
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+
+            console.log('✅ T-takeover-fault-suite passed');
+        }
+
         await runChildRuntimeTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
