@@ -436,7 +436,7 @@ git commit -m "feat(takeover): add dependency-neutral resolvePhysicalPath primit
 - Consumes: `takeover-install.js` 的 `resolveManagedSettingsPath(projectRoot, settingsPath, fsOps)`(已导出)
 - Produces: 三条文案的回归网,供 Task 3 证明不漂移
 
-- [ ] **Step 1: 写 characterization 测试**
+- [x] **Step 1: 写 characterization 测试**
 
 在 `T-takeover-installer` 块内、`console.log('✅ T-takeover-installer passed')` 之前追加:
 
@@ -520,7 +520,7 @@ git commit -m "feat(takeover): add dependency-neutral resolvePhysicalPath primit
             }
 ```
 
-- [ ] **Step 2: 跑测试确认【立即通过】**
+- [x] **Step 2: 跑测试确认【立即通过】**
 
 Run: `node templates/cli/test.js governance`
 Expected: `✅ T-takeover-installer passed`。
@@ -528,13 +528,13 @@ Expected: `✅ T-takeover-installer passed`。
 **这一步不期望红灯。** 若任何一条失败,说明《已核实的代码事实》中关于 installer 文案的记录有误
 —— **停止,报告实际文案,不要修改生产代码**。
 
-- [ ] **Step 3: 反向验证这张网真的收得住**
+- [x] **Step 3: 反向验证这张网真的收得住**
 
 临时把 `takeover-install.js:227` 的 broken-link 文案改一个字(如 `broken` → `bad`),
 确认用例 (1) 变红;然后**复原**。对 (2) 同样做一次。
 没有这一步,characterization 测试可能只是恰好命中了别的错误路径。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add templates/cli/test/governance.js

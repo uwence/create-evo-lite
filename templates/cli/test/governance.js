@@ -7809,6 +7809,84 @@ async function runGovernanceTests() {
             assert.strictEqual(ti.probeAdapterBinary(fakeProject).ok, false, 'broken adapter fails the install gate');
             assert.strictEqual(ti.probeHookCommand(fakeProject).ok, false, 'broken adapter fails the command probe too');
             fs.rmSync(dir, { recursive: true, force: true });
+            // ── 错误文案 characterization（Task 2）──
+            // 这三条文案是 installer 的对外契约，但在此之前【没有任何测试断言过】。
+            // Task 3 要把解析逻辑换成中性原语，没有这张网，"文案不漂移"只是一句愿望。
+            // 用注入 fsOps 构造，不依赖 symlink 权限，跨平台确定。
+            {
+                const inst = require(path.join(TEMPLATE_CLI_DIR, 'takeover-install.js'));
+                const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-inst-msg-'));
+                const realRoot = fs.realpathSync(projectRoot);
+                const settings = path.join(realRoot, '.claude', 'settings.json');
+                const enoent = () => Object.assign(new Error('no entry'), { code: 'ENOENT' });
+                // 逐字比较，不用宽正则：宽正则会让"错误映射到了别的分支"照样绿。
+                const exactly = (text) => (e) => { assert.strictEqual(e.message, text); return true; };
+
+                // (1) 断链 symlink：lstat 成功且是链接 → 专属文案
+                assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
+                    existsSync: () => false,
+                    lstatSync: () => ({ isSymbolicLink: () => true }),
+                    // 两个都要认：macOS 上 mkdtemp 给 /var/…，realpath 给 /private/var/…
+                    realpathSync: (p) => { if (p === projectRoot || p === realRoot) return realRoot; throw enoent(); },
+                }), exactly(`takeover: ${settings} is a broken link; refusing to touch settings`),
+                    'broken-link message is part of the installer contract');
+
+                // (2) 一路 ENOENT 走到文件系统根 → 专属文案。
+                //     existsSync 必须【恒 false】：若写成 (p) => p === projectRoot，循环会在
+                //     projectRoot 处 break 并成功回拼，根本进不了 no-existing-ancestor 分支。
+                assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
+                    existsSync: () => false,
+                    lstatSync: () => { throw enoent(); },
+                    // 两个都要认：macOS 上 mkdtemp 给 /var/…，realpath 给 /private/var/…
+                    realpathSync: (p) => { if (p === projectRoot || p === realRoot) return realRoot; throw enoent(); },
+                }), exactly(`takeover: no existing ancestor for ${settings}`),
+                    'no-existing-ancestor message is part of the installer contract');
+
+                // (3) 【Task 3 要替换的那个分支】：projectRoot 解析成功、settings 是普通条目、
+                //     但它自身 realpath 失败。若写成"projectRoot 自己 realpath 失败"，覆盖的是函数
+                //     开头的 realpathOrThrow(projectRoot)，而不是最近存在祖先的解析 —— Task 3 即使
+                //     把 REALPATH_FAILED 映射错，那种写法仍会绿。
+                assert.throws(() => inst.resolveManagedSettingsPath(projectRoot, settings, {
+                    existsSync: () => true,
+                    lstatSync: () => ({ isSymbolicLink: () => false }),
+                    realpathSync: (p) => {
+                        if (p === projectRoot || p === realRoot) return realRoot;
+                        throw Object.assign(new Error('boom'), { code: 'EACCES' });
+                    },
+                }), exactly(`takeover: cannot resolve ${settings} (boom); refusing to touch settings`),
+                    'ancestor-realpath-failure message is part of the installer contract');
+
+                // (4) 【legacy characterization —— 记录的是【当前】行为，不是目标行为】
+                //     非 ENOENT 的 lstat 错误目前被【吞掉】，循环继续上溯，最终成功返回受管路径。
+                //     设计 §6.2.1 已裁定这是 fail-open-ish 漂移，Task 3 会把本条期望值翻转。
+                //     先把旧行为钉在这里，才谈得上"前后两态证据"。
+                {
+                    const claudeDir = path.join(realRoot, '.claude');
+                    const unexpected = () => Object.assign(new Error('unexpected probe'), { code: 'ENOENT' });
+                    let statCalls = 0;
+                    // 只让 settings 这一级"看起来不存在"且 lstat 抛 EACCES；它的父目录正常存在。
+                    // 于是循环把这一级当成"还没建的文件"跳过，从父目录成功回拼 —— 这就是漂移本身。
+                    const got = inst.resolveManagedSettingsPath(projectRoot, settings, {
+                        existsSync: (p) => p !== settings,
+                        lstatSync: (p) => {
+                            if (p !== settings) throw unexpected();
+                            statCalls += 1;
+                            throw Object.assign(new Error('denied'), { code: 'EACCES' });
+                        },
+                        realpathSync: (p) => {
+                            if (p === projectRoot) return realRoot;
+                            if (p === claudeDir) return claudeDir;
+                            throw unexpected();
+                        },
+                    });
+                    assert.strictEqual(statCalls, 1, 'the EACCES branch must actually have been exercised');
+                    assert.strictEqual(got, settings,
+                        'LEGACY: a non-ENOENT lstat error is currently swallowed and the walk continues (see §6.2.1)');
+                }
+
+                fs.rmSync(projectRoot, { recursive: true, force: true });
+            }
+
             console.log('✅ T-takeover-installer passed');
         }
 
