@@ -1,11 +1,12 @@
-# Agent Takeover Trigger Protocol — 设计文档(R7)
+# Agent Takeover Trigger Protocol — 设计文档(R8)
 
 - 议题:backlog `[agent-code-routing]`(4a.x P2 final debt)。谱系:S9b CodePLC dogfood
   实证 —— 干净子仓、零竞争、裸 prompt 下 Agent 自发触发治理面 = **失败**;裁定 P1b
   将"Agent 裸指令路由"定为独立债,Wiki(4b-1)服务人、不能替代 Agent routing。
-- 状态:**R7 = R5 APPROVED 基线 + 宿主契约勘误两处**(见 §0.1 / §0.2)。架构、验收层级、两阶段两复审门**均未变更**;
+- 状态:**R8 = R5 APPROVED 基线 + 勘误三处**(见 §0.1 / §0.2 / §0.3)。架构、验收层级、两阶段两复审门**均未变更**;
   勘误一来源:实施计划 R5 外部复审 P0-1 —— 官方 hooks 契约与本文档「非零退出」表述冲突;
-  勘误二来源:阶段一 Gate 1 复审 P0-1 —— 适用范围实测收窄为 root-launch-only。
+  勘误二来源:阶段一 Gate 1 复审 P0-1 —— 适用范围实测收窄为 root-launch-only;
+  勘误三来源:Task 7 复审 —— 明确守卫是治理保证而非隔离边界(§0.3),避免 no-silent-bypass 被过度解读。
 - 宿主范围:**仅 Claude Code**(MVP);协议本身 host-agnostic。
 - 前置证据:`docs/validation/attp-cc-capability-probe.md`(装机 2.1.218,PROTOCOL-SUPPORTED)。
 - 关联:`[zvec-06-upgrade]`(无关);a177 lock 协调(receipt 授权边界/发布时序/失效事务
@@ -72,6 +73,30 @@
 
 **对阶段二的连带影响**:守卫的 no-silent-bypass 只在 root-launch-only 范围内成立。子目录启动的会话
 既无接管也无守卫 —— 这是**范围限制**,不是绕过路径,但必须在阶段二验收文案中如实标注。
+
+---
+
+## 0.3 守卫的定位:治理保证,不是隔离边界(Task 7 复审)
+
+**必须先说清楚这一条,否则守卫会被误当成安全边界。**
+
+MVP 守卫工具集是 **`Edit` / `Write` 两个,仅此**。`Read`/`Glob`/`Grep` 明确 allow;`Bash` 也明确
+allow;`MultiEdit`/`NotebookEdit`/`Task` 等不在受管集合里,一律走「非受管即 allow」分支。
+installer 用 `matcher: '*'` 注册 PreToolUse,所以 handler 确实看得见每个工具 —— 是**判定**放行,
+不是没看见。
+
+因此:**一条 `Bash` 里的 shell 重定向就能在没有有效接管的情况下写文件。** 这不是缺陷,是 MVP
+边界(工具名与 `tool_input` schema 未经 probe 证实前不纳管),但它决定了守卫是什么:
+
+> 守卫是**确定性接管的治理保证** —— 让 Agent 在没有有效接管上下文时,不会经由主力编辑路径
+> 继续改代码。它**不是文件系统隔离边界**,不能用来防御有意绕过,也不应被当作沙箱或权限系统。
+
+「no-silent-bypass」这一 P0 验收项的准确含义是:**受管路径(`Edit`/`Write`)上的注入失败不会
+静默放行**,而不是「任何写入都必须先接管」。阶段二验收文案必须按前者书写。
+
+若日后要把守卫升级为真正的containment,前置条件是:① probe 证实全部可写工具的名称与
+`tool_input` schema;② `Bash` 的写入检测(命令解析,难度显著高于路径判定);③ 重新过设计门。
+本 MVP 不做,亦不声称做到。
 
 ---
 
