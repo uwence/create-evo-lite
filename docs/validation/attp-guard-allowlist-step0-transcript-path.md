@@ -19,7 +19,7 @@
 | `transcript_path` 是否存在 | **存在**,8/8 次捕获均有 |
 | 类型与形态 | `string`,绝对路径 |
 | 是否稳定指向当前项目对应的宿主 project-state 目录 | **是** —— 同一项目的两个不同会话导出**同一** root |
-| `dirname(transcript_path)/memory` 是否精确命中记忆目录 | **是** —— 落在真实目录上(含 `MEMORY.md`,18 个文件) |
+| `dirname(transcript_path)/memory` 是否精确命中记忆目录 | **是** —— 落在真实目录上(共 18 个文件,含 `MEMORY.md`) |
 | 不同项目是否导出不同 memory root | **是** —— 两个项目得到两个互异 root |
 
 **判定:路径成立。** 四条门全部满足,可以进入后续设计 —— 但设计须避开下面 §4 的前缀陷阱。
@@ -76,7 +76,7 @@ allowed memory root     = dirname(transcript_path)/memory
 
 | 项目 | 派生出的 project-state root | 会话数 | `/memory` 存在 |
 |---|---|---|---|
-| 母仓 `create-evo-lite` | `…/projects/D--Data-ProjectAgent-create-evo-lite` | 2(含本会话) | **是**(`MEMORY.md` + 18 文件) |
+| 母仓 `create-evo-lite` | `…/projects/D--Data-ProjectAgent-create-evo-lite` | 2(含本会话) | **是**(共 18 个文件,含 `MEMORY.md`) |
 | harness | `…/projects/D--Data-ProjectAgent-create-evo-lite--superpowers-sdd-step0-harness` | 1 | 否(该项目从未写过记忆) |
 
 两条要点:
@@ -100,9 +100,35 @@ A === B                -> false
 ```
 
 这与 ATTP 已经修过一次的那类边界缺陷同源(containment 比较必须带分隔符)。
-结论:**B 路径的判定必须对 project-state root 做精确相等,不得用前缀包含**;
-「其他项目的 memory 必须 deny」这条回归因此有了具体的、可构造的攻击形状,
-而不只是一条抽象要求。
+
+**该风险已经在本机真实存在,不是探测产物。** 清理 harness 后清点
+`~/.claude/projects/` 下与母仓 slug 构成前缀关系的目录,发现**两个既有实例**:
+
+```text
+D--Data-ProjectAgent-create-evo-lite                                <- 母仓本体(有 memory)
+D--Data-ProjectAgent-create-evo-lite--claude-worktrees-…-8d0f4d     <- 一个 git worktree
+D--Data-ProjectAgent-create-evo-lite-templates                      <- 曾从 templates/ 启动
+
+裸 startsWith(A)      误纳 2 个
+startsWith(A + '/')   误纳 0 个
+```
+
+注意第三个是**单破折号** `-templates`。任何以母仓路径为前缀的兄弟目录、worktree
+或子目录启动,都会生成这样一个 slug。
+
+**设计结论(Step 0 复审 P2-1 收窄后的表述):** 规则不是「project-state root 精确相等」,
+而是:
+
+```text
+1. 只从【当前事件】的 transcript_path 派生唯一 allowedMemoryRoot;
+2. 对目标路径执行与现有守卫一致的 realpath / 最近存在祖先解析;
+3. 判定 target === allowedMemoryRoot,或 target 位于 allowedMemoryRoot + 分隔符之下;
+4. 不得对 ~/.claude/projects 下的 slug 做裸字符串前缀匹配。
+```
+
+即 `target === allowedMemoryRoot || target.startsWith(allowedMemoryRoot + path.sep)`,
+且两侧必须先经过真实路径归一化。判定发生在 **memory 目录这一层**,不在 project-state
+root 那一层 —— 后者只是派生的中间量,永不直接参与包含判定。
 
 ## §5 后置恢复检查
 
