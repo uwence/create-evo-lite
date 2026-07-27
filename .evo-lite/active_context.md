@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-ATTP 宿主自有写入根 Implementation Plan: 双会话真实记忆终局验收(**只产出证据,不做治理闭环**)
+ATTP host-owned write roots 已在支持拓扑内完成治理闭环(spec/plan done, 9/9);等待用户选择下一项已授权工作。[attp-hive-rollout] 仍 BLOCKED,禁止子仓分发与 hive nurture。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
