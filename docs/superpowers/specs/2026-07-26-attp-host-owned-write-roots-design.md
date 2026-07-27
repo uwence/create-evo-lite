@@ -8,10 +8,13 @@
   Tasks 1–7                  ACCEPTED
   Task 8                     COMPLETE / ACCEPTED within §2.1 SUPPORTED topology
   Topology-scope amendment   APPROVED / FROZEN
-  Task 9                     NOT AUTHORIZED
+  Task 9                     COMPLETE —— spec/plan status: done，plan 9/9
+  current issue              CLOSED within the §2.1 supported topology only
+                             （linked worktree 缺口未解决，见
+                             spec:attp-linked-worktree-memory-identity）
   new production changes     NOT AUTHORIZED
   child distribution         NOT AUTHORIZED
-  hive rollout               REMAINS BLOCKED
+  hive rollout               REMAINS BLOCKED（本次收口未解除）
   ```
 - 运行时锚点证据:
   - [`attp-guard-allowlist-step0-transcript-path.md`](../../validation/attp-guard-allowlist-step0-transcript-path.md)

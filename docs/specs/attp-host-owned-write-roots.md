@@ -1,6 +1,6 @@
 ---
 id: spec:attp-host-owned-write-roots
-status: adopted
+status: done
 created: 2026-07-26
 linkedPlan: plan:attp-host-owned-write-roots
 title: "Spec: ATTP host-owned write roots (attp-guard-allowlist)"
@@ -26,10 +26,11 @@ relations: [{"kind":"spawned-from","target":"spec:agent-takeover-trigger-protoco
   Tasks 1–7                  ACCEPTED
   Task 8                     COMPLETE / ACCEPTED within 设计 §2.1 SUPPORTED topology
   Topology-scope amendment   APPROVED / FROZEN
-  Task 9                     NOT AUTHORIZED
+  Task 9                     COMPLETE —— 本 spec status: done，plan 9/9
+  current issue              CLOSED within the supported topology only
   new production changes     NOT AUTHORIZED
   child distribution         NOT AUTHORIZED
-  hive rollout               REMAINS BLOCKED
+  hive rollout               REMAINS BLOCKED（本次收口未解除）
   ```
 
 ## 一句话定位

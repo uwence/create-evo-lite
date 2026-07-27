@@ -1,7 +1,7 @@
 ---
 id: plan:attp-host-owned-write-roots
 title: "Plan: ATTP host-owned write roots (attp-guard-allowlist)"
-status: draft
+status: done
 ---
 
 # ATTP 宿主自有写入根 Implementation Plan
@@ -1373,7 +1373,11 @@ git commit -m "docs(validation): two-session acceptance for the host-owned memor
 > 它**不包含** linked worktree 缺口的解决,也**不解除** `[attp-hive-rollout]` 的阻塞。
 
 **Files:**
-- Modify: `docs/specs/attp-host-owned-write-roots.md`(`status: done`)、本计划(`status: done` + 勾选)
+- Modify: `docs/specs/attp-host-owned-write-roots.md`(`status: done`)
+- Modify: `docs/superpowers/plans/2026-07-26-attp-host-owned-write-roots.md`
+  (本计划自身:`status: done` + 勾选 —— 必须写成显式路径,写「本计划」不会被 linkedFiles 识别,R006 不会清)
+- Modify: `docs/superpowers/specs/2026-07-26-attp-host-owned-write-roots-design.md`
+  (当前状态块 —— 不更新它,收口后它会立刻显示过期的 `Task 9 NOT AUTHORIZED`)
 - Modify(治理产物): `.evo-lite/active_context.md`、`.evo-lite/raw_memory/`、`.evo-lite/generated/`
 
 **收口前置(缺一不可):**
@@ -1384,16 +1388,16 @@ git commit -m "docs(validation): two-session acceptance for the host-owned memor
 - Task 8 的单工作树成功链与 linked worktree 负向观测都已落证据文档
 ```
 
-- [ ] **Step 1: 归档任务证据**
+- [x] **Step 1: 归档任务证据**
 
 `mem archive` 记录各任务证据。evidence 必须带**完整** task id
 `task:attp-host-owned-write-roots-tN` —— 裸 `tN` 会**静默**失败(R008 会因此清不掉)。
 
-- [ ] **Step 2: 状态收口**
+- [x] **Step 2: 状态收口**
 
 spec `status: done`;plan `status: done` 并勾选全部步骤;确认 R006 / R008 / R011 归零。
 
-- [ ] **Step 3: 关闭 backlog + 建立 residual blocker(**不解阻 rollout**)**
+- [x] **Step 3: 关闭 backlog + 建立 residual blocker(**不解阻 rollout**)**
 
 以**支持拓扑限定**的形式关闭 `[attp-guard-allowlist]` —— 关闭理由必须写明
 「单工作树拓扑已解决;linked worktree 缺口转 residual」,不得写成无条件已解决。
@@ -1416,7 +1420,7 @@ C. Claude Code 提供新的权威 memory identity
 
 **「多数子仓可能不是 worktree」不构成解阻证据。** 子仓分发本身仍不在授权范围内,须单独授权。
 
-- [ ] **Step 4: 提交(范围必须含治理产物)**
+- [x] **Step 4: 提交(范围必须含治理产物)**
 
 ```bash
 git add docs/ .evo-lite/active_context.md .evo-lite/raw_memory/ .evo-lite/generated/
@@ -1446,19 +1450,31 @@ git commit -m "chore(governance): close attp-host-owned-write-roots within its s
 因此本议题以**明确的支持拓扑限制**收口,缺口转 residual spec,而不是留作一个
 看似仍可编码解决的普通开放任务。
 
-## 当前授权状态(2026-07-27)
+## 最终状态(2026-07-27,收口)
 
 ```text
 Task 1–7 implementation             ACCEPTED
 Task 8                              COMPLETE / ACCEPTED（设计 §2.1 的 SUPPORTED 拓扑内）
 Topology-scope closure amendment    APPROVED / FROZEN
-Task 9 governance closure           NOT AUTHORIZED
+Task 9 governance closure           COMPLETE
+plan / spec                         status: done，9/9
+[attp-guard-allowlist]              CLOSED —— 【仅限支持拓扑】
 Production changes                  NOT AUTHORIZED
 Child-repo distribution             NOT AUTHORIZED
-[attp-hive-rollout]                 REMAINS BLOCKED（Task 9 也不解除）
+[attp-hive-rollout]                 REMAINS BLOCKED（本次收口【未】解除）
 Hive nurture                        BLOCKED / NOT AUTHORIZED
 ATTP MVP                            REMAINS CLOSED（本计划不重开）
 ```
+
+收口口径**必须**如实陈述,不得简写成「问题已解决」:
+
+```text
+单工作树 / 独立项目副本拓扑已解决并完成真实验收；
+git linked worktree 缺口未解决，已转入 spec:attp-linked-worktree-memory-identity。
+```
+
+已完成 Task 的代码块是**当时的实施计划快照**,不是当前源码镜像;
+**as-built truth = 当前源码 + 已接受的 validation 证据**。本次收口**未**做反向同步。
 
 已完成 Task 的代码块是**当时的实施计划快照**,不是当前源码镜像;
 **as-built truth = 当前源码 + 已接受的 validation 证据**。Task 9 不做反向同步。
