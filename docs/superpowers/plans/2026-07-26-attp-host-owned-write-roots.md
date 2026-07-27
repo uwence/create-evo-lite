@@ -1275,7 +1275,7 @@ spec / plan 收口、mem archive、当前 backlog 关闭
 - Create: `docs/validation/attp-guard-allowlist-acceptance.md`
 - **不改** `docs/specs/*` 的 status,**不改** backlog,**不跑** `mem archive`
 
-- [ ] **Step 1: 准备 disposable project-state**
+- [x] **Step 1: 准备 disposable project-state**
 
 ```text
 - 在唯一命名的临时路径下建立一个 disposable 的本地项目副本
@@ -1290,7 +1290,7 @@ spec / plan 收口、mem archive、当前 backlog 关闭
   【目标文件】尚不存在；「目录整体不存在」的分支只有自动化证据
 ```
 
-- [ ] **Step 2: Session A**
+- [x] **Step 2: Session A**
 
 ```text
 1. 从 canonical project root 启动（root-launch-only，不得从子目录）
@@ -1302,7 +1302,7 @@ spec / plan 收口、mem archive、当前 backlog 关闭
 7. 确认文件确实落在【派生出的】memory root 上，而非别处
 ```
 
-- [ ] **Step 3: Session B**
+- [x] **Step 3: Session B**
 
 ```text
 1. 结束 Session A 后重新启动一个【全新】会话
@@ -1314,11 +1314,11 @@ spec / plan 收口、mem archive、当前 backlog 关闭
    而不是"宿主把它当作记忆喂了进来"。工具调用记录须一并留证。
 ```
 
-- [ ] **Step 4: 补一次 `memory/` 已存在的普通路径写入**
+- [x] **Step 4: 补一次 `memory/` 已存在的普通路径写入**
 
 覆盖不经过首次创建分支的常规路径。
 
-- [ ] **Step 5: 写验收记录**
+- [x] **Step 5: 写验收记录**
 
 `docs/validation/attp-guard-allowlist-acceptance.md` 须逐条记录三件事的证据:
 
@@ -1333,7 +1333,7 @@ spec / plan 收口、mem archive、当前 backlog 关闭
 若在验收过程中撞到 §2.1 的 UNSUPPORTED 拓扑,须**如实记录为预期内的 fail-closed 限制**,
 既不得用成功的副本掩盖它,也不得据此宣称 Task 8 失败。
 
-- [ ] **Step 6: 收口门**
+- [x] **Step 6: 收口门**
 
 ```bash
 node --check templates/cli/takeover-physical-path.js
@@ -1343,7 +1343,7 @@ node .evo-lite/cli/memory.js takeover status   # 三事件在位
 node .evo-lite/cli/memory.js verify
 ```
 
-- [ ] **Step 7: 精确清理测试宿主状态**
+- [x] **Step 7: 精确清理测试宿主状态**
 
 ```text
 - 删除临时项目目录（完整精确路径）
@@ -1355,7 +1355,7 @@ node .evo-lite/cli/memory.js verify
 - 不创建可复用的清理脚本
 ```
 
-- [ ] **Step 8: 提交证据并停止**
+- [x] **Step 8: 提交证据并停止**
 
 ```bash
 git add docs/validation/attp-guard-allowlist-acceptance.md
@@ -1450,8 +1450,8 @@ git commit -m "chore(governance): close attp-host-owned-write-roots within its s
 
 ```text
 Task 1–7 implementation             ACCEPTED
-Task 8 evidence                     ACCEPTED（SUPPORTED 拓扑内）；勾选待文档修订复审
-Topology-scope closure amendment    AUTHORIZED（纯文档，进行中/待复审）
+Task 8                              COMPLETE / ACCEPTED（设计 §2.1 的 SUPPORTED 拓扑内）
+Topology-scope closure amendment    APPROVED / FROZEN
 Task 9 governance closure           NOT AUTHORIZED
 Production changes                  NOT AUTHORIZED
 Child-repo distribution             NOT AUTHORIZED
@@ -1459,3 +1459,6 @@ Child-repo distribution             NOT AUTHORIZED
 Hive nurture                        BLOCKED / NOT AUTHORIZED
 ATTP MVP                            REMAINS CLOSED（本计划不重开）
 ```
+
+已完成 Task 的代码块是**当时的实施计划快照**,不是当前源码镜像;
+**as-built truth = 当前源码 + 已接受的 validation 证据**。Task 9 不做反向同步。

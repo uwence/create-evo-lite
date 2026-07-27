@@ -6,8 +6,8 @@
 
   ```text
   Tasks 1–7                  ACCEPTED
-  Task 8 evidence            ACCEPTED within §2.1 SUPPORTED topology
-  Task 8 checkbox closure    pending topology-amendment review
+  Task 8                     COMPLETE / ACCEPTED within §2.1 SUPPORTED topology
+  Topology-scope amendment   APPROVED / FROZEN
   Task 9                     NOT AUTHORIZED
   new production changes     NOT AUTHORIZED
   child distribution         NOT AUTHORIZED
