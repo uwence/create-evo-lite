@@ -18,8 +18,19 @@ relations: [{"kind":"spawned-from","target":"spec:agent-takeover-trigger-protoco
   - `docs/validation/attp-guard-allowlist-step0b-subagent-correlation.md`(Step 0b,真实 subagent
     关联观测,判定**分支 A**:子 agent 携带父会话的 `transcript_path`,单锚设计成立)
 - 上游:`spec:agent-takeover-trigger-protocol`(ATTP MVP,已 CLOSED)。本议题**不重开**它。
-- 阻塞关系:本 spec 是 `[attp-hive-rollout]` 的**前置**。未收口前不得向子仓分发 ATTP。
-- 授权状态:设计阶段 AUTHORIZED;**实施、生产测试、installer 改动、hive nurture 均 NOT AUTHORIZED**。
+- 阻塞关系:本 spec 是 `[attp-hive-rollout]` 的**前置**,但**不是充分条件** —— 本 spec 收口后
+  rollout 仍保持 BLOCKED(见下「支持拓扑」)。任何时候都不得在未解阻前向子仓分发 ATTP。
+- 授权状态(**当前**,2026-07-27):
+
+  ```text
+  Tasks 1–7                  ACCEPTED
+  Task 8 evidence            ACCEPTED within 设计 §2.1 SUPPORTED topology
+  Task 8 checkbox closure    pending topology-amendment review
+  Task 9                     NOT AUTHORIZED
+  new production changes     NOT AUTHORIZED
+  child distribution         NOT AUTHORIZED
+  hive rollout               REMAINS BLOCKED
+  ```
 
 ## 一句话定位
 
@@ -53,10 +64,13 @@ relations: [{"kind":"spawned-from","target":"spec:agent-takeover-trigger-protoco
   `takeover-physical-path.js`,导出 `resolvePhysicalPath(target, fsOps)`;installer 与 receipt
   共用同一实现,installer **不** import receipt;installer 既有错误文案不漂移(须补文案断言,
   当前无回归覆盖),`T-takeover-installer` 全套原样通过,镜像 `copied: 0`。
-- 终局证据(设计 §8.1):**双会话**真实记忆验收 —— Session A 在 `memory/` 尚不存在的
-  disposable project-state 上用真实 `Edit`/`Write`(非 Bash)写入唯一 marker 且守卫 allow;
+- 终局证据(设计 §8.1):**双会话**真实记忆验收 —— Session A 使用一个**目标文件初始不存在**的
+  disposable **单工作树** project(设计 §2.1 的 SUPPORTED 拓扑;**不得用 linked worktree**),
+  用真实 `Edit`/`Write`(非 Bash)写入唯一 marker 且守卫 allow;
   Session B 全新会话中该 marker 被宿主**正常的跨会话记忆机制**消费(不得靠给绝对路径或
   Bash 读文件冒充)。另需一次 `memory/` 已存在的普通路径写入。
+  宿主可能在 SessionStart 自行创建 `memory/`,因此实景证明的是**首次 agent memory 文件写入**;
+  `memory/` 整体不存在时的多级尾部再拼**只由自动化回归证明**。
 - README 同步(设计 §10-3):`README.md` 与 `README_EN.md` 中「项目外 Edit/Write 一律 deny」
   须改为「默认 deny + 一条由当前事件 `transcript_path` 派生的窄例外」,并保留
   `Bash` 可绕过、守卫非隔离边界两条声明。
@@ -83,7 +97,15 @@ git linked worktree                UNSUPPORTED（Claude Code 2.1.220）—— �
 `docs/validation/attp-guard-allowlist-step0c-worktree-memory-identity.md`。
 
 该缺口**不在本 spec 内解决**,转由 residual spec 记录:
-`spec:attp-linked-worktree-memory-identity`(`status: blocked`,blocked-by 宿主契约)。
+
+```text
+spec:attp-linked-worktree-memory-identity
+  status: parked
+  parkedUntil: blocked-upstream / waiting-host-contract
+```
+
+(registry 只对 `done` / `parked` 做显式状态分支,其余无 linked plan 的未知状态会落入
+`adopted` —— 写字面量 `blocked` 会把 residual 错误归类为已采纳议题。)
 
 收口条件:上述回归全绿 + 既有 ATTP 套件零改动通过 + **SUPPORTED 拓扑内**的双会话
 真实记忆验收通过 + 支持拓扑限制已落文档 + residual spec 已建立。

@@ -2,8 +2,17 @@
 
 - 日期:2026-07-26
 - 议题:`[db8a] [attp-guard-allowlist]`
-- 授权状态:**设计阶段 + 设计修订 AUTHORIZED;实施计划、生产实现/测试、installer 重构、
-  子仓分发、hive nurture 均 NOT AUTHORIZED**
+- 授权状态(**当前**,2026-07-27;设计正文冻结不代表授权元数据可以停留在过期状态):
+
+  ```text
+  Tasks 1–7                  ACCEPTED
+  Task 8 evidence            ACCEPTED within §2.1 SUPPORTED topology
+  Task 8 checkbox closure    pending topology-amendment review
+  Task 9                     NOT AUTHORIZED
+  new production changes     NOT AUTHORIZED
+  child distribution         NOT AUTHORIZED
+  hive rollout               REMAINS BLOCKED
+  ```
 - 运行时锚点证据:
   - [`attp-guard-allowlist-step0-transcript-path.md`](../../validation/attp-guard-allowlist-step0-transcript-path.md)
     (Step 0,主会话,Claude Code 2.1.220,8 次真实 PreToolUse 捕获)
@@ -13,7 +22,9 @@
     (Task 8,单工作树拓扑双会话实景验收)
   - [`attp-guard-allowlist-step0c-worktree-memory-identity.md`](../../validation/attp-guard-allowlist-step0c-worktree-memory-identity.md)
     (Step 0c,linked worktree 记忆身份观测,终止分支 **B ∧ C**,冻结 §2.1 的支持拓扑)
-- 前置关系:本议题是 `[attp-hive-rollout]` 的**阻塞前置**。未关闭前不得向子仓分发 ATTP。
+- 前置关系:本议题是 `[attp-hive-rollout]` 的**阻塞前置**,但**不是它的充分条件** ——
+  本议题收口后 rollout 仍保持 BLOCKED,解阻条件见 `spec:attp-linked-worktree-memory-identity`。
+  任何时候都不得在未解阻前向子仓分发 ATTP。
 - 上游契约:[`2026-07-24-agent-takeover-trigger-protocol-design.md`](2026-07-24-agent-takeover-trigger-protocol-design.md)
   (ATTP,R8)。本文件**不重开**该设计,只在其 §0.3 已确立的守卫定位内增加一条窄例外。
 
@@ -177,7 +188,12 @@ allow ⟺
   → deny
 ```
 
-即**每个新项目的第一次记忆写入都会被拒**。子仓 rollout 时这是常态。
+即**若宿主尚未创建 `memory/`,朴素实现会拒绝该首次文件写入**。
+
+算法反例本身成立,不受宿主行为影响。但**实景范围要收紧**(Step 0c):
+当前 Claude Code 2.1.220 会在 SessionStart 自行建好空 `memory/`,因此这条
+多级尾部分支在当前宿主中**不会被触发**,它保留为自动化覆盖的**防御性下界** ——
+宿主行为一旦变化就会重新变成真实路径,故不得因未被实景触发而移除。
 
 修法:保留祖先上溯(它提供的是物理安全 —— symlink / junction / 断链的真实解析),
 但把比较对象换成 **「已物理验证的前缀 + 回拼的未存在尾部」**:
@@ -409,10 +425,19 @@ Session B
 
 (1) 的措辞在 Step 0c 后收紧过:实景证明的是**首次 memory 文件**写入,不是**目录创建**。
 
-**验收与治理闭环必须分离。** 执行者产出证据后停下接受独立复审;
-`spec → done`、`plan → done`、`mem archive`、backlog 关闭、`[attp-hive-rollout]` 解阻
-一律**在复审 ACCEPTED 之后另行授权**。执行者不得同时是实现者与最终验收者
-—— 这是 ATTP 两道 Gate 一直遵守的纪律。
+**验收与治理闭环必须分离。** 执行者产出证据后停下接受独立复审:
+
+```text
+spec / plan 收口、mem archive、当前 backlog 关闭
+  → 治理闭环任务，须在复审 ACCEPTED 之后另行授权
+
+[attp-hive-rollout]
+  → 不属于该治理闭环任务
+  → 本议题收口后仍保持 BLOCKED
+  → 仅按 spec:attp-linked-worktree-memory-identity 的 A / B / C 条件另行解阻
+```
+
+执行者不得同时是实现者与最终验收者 —— 这是 ATTP 两道 Gate 一直遵守的纪律。
 
 ## §9 实施前置观测(Step 0b)—— 已完成,分支 A
 

@@ -28,7 +28,9 @@ status: draft
 `docs/validation/attp-guard-allowlist-step0b-subagent-correlation.md`(Step 0b,真实 subagent,**分支 A**)。
 
 **上游:** `spec:agent-takeover-trigger-protocol`(ATTP MVP)**保持 CLOSED,本计划不重开它**。
-**下游:** 本计划收口后解除 `[attp-hive-rollout]` 的阻塞。
+**下游:** `[attp-hive-rollout]` **不随本计划收口解阻**。本计划只在设计 §2.1 的 SUPPORTED
+拓扑内收口;linked worktree 缺口转 `spec:attp-linked-worktree-memory-identity`,
+rollout 只能按该 residual spec 的 A / B / C 条件另行解阻。
 
 ---
 
@@ -1257,8 +1259,17 @@ git commit -m "docs(takeover): document the narrow host-memory write exception; 
 > 是设计要求的行为,不构成 Task 8 未达成 —— 但它也**不允许**被当作"已支持"来陈述。
 
 **执行者不得同时是实现者与最终验收者。** 本任务在写完证据、跑完收口门后**停止**,
-等待独立复审;`spec → done`、`plan → done`、`mem archive`、backlog 关闭、
-`[attp-hive-rollout]` 解阻,一律留到复审 ACCEPTED 之后**另行授权**(见 Task 9)。
+等待独立复审。
+
+```text
+spec / plan 收口、mem archive、当前 backlog 关闭
+  → Task 9，须另行授权
+
+[attp-hive-rollout]
+  → 不属于 Task 9
+  → 本议题收口后仍保持 BLOCKED
+  → 仅按 spec:attp-linked-worktree-memory-identity 的 A / B / C 条件另行解阻
+```
 
 **Files:**
 - Create: `docs/validation/attp-guard-allowlist-acceptance.md`
