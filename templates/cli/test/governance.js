@@ -8701,6 +8701,32 @@ async function runGovernanceTests() {
             assert.ok(/takeover required/.test(noReceipt.permissionDecisionReason),
                 'and it must deny via the receipt gate, not via the target-path gate');
 
+            // 健康门同样不得被例外绕过 —— 这是【授权边界】，不是覆盖率优化。
+            // 上一条只证明了 receipt 门在例外之前；把例外挪到 receipt 门【之后】、健康门【之前】，
+            // 它照样通过，而"已接管但治理状态不健康"的会话就能往项目外的 memory 写。
+            // 既有健康门测试用的都是项目内普通文件，对这个变异体是盲的。
+            {
+                const acFile = path.join(ac, 'active_context.md');
+                const healthy = fs.readFileSync(acFile, 'utf8');
+                const memTarget = path.join(stateA, 'memory', 'x.md');
+                const decide = async (file_path) => (await ad.handleHookInput({
+                    hook_event_name: 'PreToolUse', session_id: sid, tool_name: 'Write',
+                    transcript_path: transcriptA, tool_input: { file_path },
+                }, { projectRoot: root })).json.hookSpecificOutput;
+
+                fs.unlinkSync(acFile);
+                let unhealthy;
+                try { unhealthy = await decide(memTarget); }
+                finally { fs.writeFileSync(acFile, healthy, 'utf8'); }
+                assert.strictEqual(unhealthy.permissionDecision, 'deny',
+                    'committed receipt + unhealthy governance → memory write must still be denied');
+                assert.ok(/takeover unhealthy/.test(unhealthy.permissionDecisionReason),
+                    `and it must deny via the health gate; got: ${unhealthy.permissionDecisionReason}`);
+
+                assert.strictEqual((await decide(memTarget)).permissionDecision, 'allow',
+                    'and the same target allows again once governance is healthy — proving the deny came from the gate');
+            }
+
             // ── 承重：owned.ok 真的被消费，且派生函数真的被调用 ──
             // 上面那些畸形 transcript_path 用例【杀不掉】删除 owned.ok 的变异体：失败契约返回
             // roots: []，而 [].some(...) 本来就是 false，deny 照样成立。必须注入一个
@@ -8761,8 +8787,11 @@ async function runGovernanceTests() {
                 try {
                     fs.mkdirSync(path.join(kAscii, 'memory'), { recursive: true });
                     fs.mkdirSync(path.join(kKelvin, 'memory'), { recursive: true });
-                    // 卷若把二者视为同一目录，realpath 会收敛到同一个物理路径 → 这条构造不成立
-                    distinct = fs.realpathSync(kAscii) !== fs.realpathSync(kKelvin);
+                    // 卷若把二者视为同一目录，realpath 会收敛到同一个物理路径 → 这条构造不成立。
+                    // 必须用【与生产同源】的解析：生产走 fs.realpathSync.native（见 DEFAULT_FS_OPS 注释），
+                    // 纯 JS 的 fs.realpathSync 在 win32 上自行折叠大小写，可能恰好在最需要这条断言的
+                    // Node/Windows 组合上把两者收敛成同一路径，于是打印 skip、掩盖折叠回归。
+                    distinct = rc.realpathStrict(kAscii) !== rc.realpathStrict(kKelvin);
                 } catch (e) {
                     distinct = false;
                     console.log(`   ⏭️ Unicode case-fold assertion skipped (${e.code || e.message})`);
