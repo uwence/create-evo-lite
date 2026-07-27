@@ -1237,6 +1237,25 @@ git commit -m "docs(takeover): document the narrow host-memory write exception; 
 自动化回归证明不了「宿主的持久记忆功能真的恢复了」—— 它只能证明文件系统上出现了一个文件。
 本任务是设计 §8.1 冻结的终局门。
 
+> **执行结果(2026-07-27,复审后修订)**
+>
+> ```text
+> 单工作树拓扑成功链          ACCEPTED
+>   Session A  3 次工具调用 ↔ 3 次守卫 allow / 0 deny，Bash 机械禁用
+>   Session B  0 次 Read/Glob/Grep/Bash，逐字返回 marker，空 memory 项目负控 NO-MARKER
+>   Session C  memory/ 已存在时的常规路径写入，额外覆盖 Edit 臂
+>   证据 docs/validation/attp-guard-allowlist-acceptance.md
+>
+> linked worktree 负向观测      预期内的 fail-closed 限制（不是本任务的失败）
+>   守卫拒绝写入，理由 resolves outside project
+>   根因是宿主在该拓扑下 transcript 身份与 memory 身份不同源，且映射不稳定
+>   证据 docs/validation/attp-guard-allowlist-step0c-worktree-memory-identity.md
+>   裁定 设计 §2.1 冻结支持拓扑；缺口转 spec:attp-linked-worktree-memory-identity
+> ```
+>
+> 本任务的验收范围**限定在设计 §2.1 的 SUPPORTED 拓扑内**。linked worktree 中的拒绝
+> 是设计要求的行为,不构成 Task 8 未达成 —— 但它也**不允许**被当作"已支持"来陈述。
+
 **执行者不得同时是实现者与最终验收者。** 本任务在写完证据、跑完收口门后**停止**,
 等待独立复审;`spec → done`、`plan → done`、`mem archive`、backlog 关闭、
 `[attp-hive-rollout]` 解阻,一律留到复审 ACCEPTED 之后**另行授权**(见 Task 9)。
@@ -1248,10 +1267,16 @@ git commit -m "docs(takeover): document the narrow host-memory write exception; 
 - [ ] **Step 1: 准备 disposable project-state**
 
 ```text
-- 在唯一命名的临时路径下建立一个 disposable 的本地项目副本 / worktree
+- 在唯一命名的临时路径下建立一个 disposable 的本地项目副本
   （这是【母仓实现验收】，不是 child-repo rollout —— 不得借机在子仓安装 ATTP）
+- 【Step 0c 后收紧】载体必须落在设计 §2.1 的 SUPPORTED 拓扑内：
+  单工作树仓库 或 独立 git init 的项目副本。【不得用 git linked worktree】——
+  该拓扑下宿主的 memory 身份与 transcript 身份不同源，守卫会正确地 fail-closed，
+  用它做载体只会重现已裁定的限制，不能验收窄例外本身
 - 从其【根】启动，使其对应的宿主 project-state 的 memory/ 初始【不存在】
 - 记录三项：项目根、派生出的 state root、memory/ 不存在的证据
+- 【实景说明】宿主会在 SessionStart 自行建好空 memory/，因此该前置实际保证的是
+  【目标文件】尚不存在；「目录整体不存在」的分支只有自动化证据
 ```
 
 - [ ] **Step 2: Session A**
@@ -1287,12 +1312,15 @@ git commit -m "docs(takeover): document the narrow host-memory write exception; 
 `docs/validation/attp-guard-allowlist-acceptance.md` 须逐条记录三件事的证据:
 
 ```text
-(1) 首次目录创建不再被误拒
+(1) 首次 agent memory【文件】写入不再被误拒
+    —— 【Step 0c 后修正】不是「目录创建」：当前宿主自己在 SessionStart 建好 memory/
 (2) 写入确实是【守卫放行】的结果，而不是守卫压根没参与
 (3) 宿主持久记忆功能真正恢复，而不是磁盘上多了一个孤立文件
 ```
 
 并记录**未观察到**的项(与阶段二验收记录同一体例),不得把自动化覆盖冒充实景证据。
+若在验收过程中撞到 §2.1 的 UNSUPPORTED 拓扑,须**如实记录为预期内的 fail-closed 限制**,
+既不得用成功的副本掩盖它,也不得据此宣称 Task 8 失败。
 
 - [ ] **Step 6: 收口门**
 
@@ -1330,9 +1358,20 @@ git commit -m "docs(validation): two-session acceptance for the host-owned memor
 
 ### Task 9: 治理闭环(**复审 ACCEPTED 后另行授权,不得随 Task 8 一并执行**)
 
+> **Step 0c 后修订(2026-07-27)**:本任务的收口对象是**按支持拓扑限定后的**本议题。
+> 它**不包含** linked worktree 缺口的解决,也**不解除** `[attp-hive-rollout]` 的阻塞。
+
 **Files:**
 - Modify: `docs/specs/attp-host-owned-write-roots.md`(`status: done`)、本计划(`status: done` + 勾选)
 - Modify(治理产物): `.evo-lite/active_context.md`、`.evo-lite/raw_memory/`、`.evo-lite/generated/`
+
+**收口前置(缺一不可):**
+
+```text
+- 拓扑范围修订已通过复审（设计 §2.1、intake spec、README/README_EN、Task 8/9 文案）
+- residual spec:attp-linked-worktree-memory-identity 已建立且状态为 blocked-upstream
+- Task 8 的单工作树成功链与 linked worktree 负向观测都已落证据文档
+```
 
 - [ ] **Step 1: 归档任务证据**
 
@@ -1343,43 +1382,69 @@ git commit -m "docs(validation): two-session acceptance for the host-owned memor
 
 spec `status: done`;plan `status: done` 并勾选全部步骤;确认 R006 / R008 / R011 归零。
 
-- [ ] **Step 3: 关闭 backlog 并解阻**
+- [ ] **Step 3: 关闭 backlog + 建立 residual blocker(**不解阻 rollout**)**
 
-关闭 `[attp-guard-allowlist]`,移除 `[attp-hive-rollout]` 的阻塞标记。
-**子仓分发本身仍不在授权范围内,须单独授权。**
+以**支持拓扑限定**的形式关闭 `[attp-guard-allowlist]` —— 关闭理由必须写明
+「单工作树拓扑已解决;linked worktree 缺口转 residual」,不得写成无条件已解决。
+
+同时新建 residual backlog 条目,指向
+`spec:attp-linked-worktree-memory-identity`,状态 `blocked-upstream / waiting-host-contract`。
+
+```text
+[attp-hive-rollout]  的阻塞标记【不得在本步移除】
+```
+
+它只能在 rollout 设计满足下列之一后另行解阻:
+
+```text
+A. 所有目标子仓都被证明是独立单工作树仓库
+B. rollout 增加 topology preflight —— 检测到 linked worktree 时拒绝启用该 memory 例外，
+   并输出明确诊断
+C. Claude Code 提供新的权威 memory identity
+```
+
+**「多数子仓可能不是 worktree」不构成解阻证据。** 子仓分发本身仍不在授权范围内,须单独授权。
 
 - [ ] **Step 4: 提交(范围必须含治理产物)**
 
 ```bash
 git add docs/ .evo-lite/active_context.md .evo-lite/raw_memory/ .evo-lite/generated/
-git commit -m "chore(governance): close attp-host-owned-write-roots; unblock attp-hive-rollout"
+git commit -m "chore(governance): close attp-host-owned-write-roots within its supported topology"
 ```
+
+提交说明**不得**出现 `unblock attp-hive-rollout` —— 该阻塞在本任务中不解除。
 
 `git add docs/` **不够** —— `mem archive` 与 backlog 关闭写的是 `.evo-lite/` 下的
 运行时状态与档案,只提交 `docs/` 会让盘上状态与仓库记录脱节。
 
 ---
 
-## 停止点(两处,均为硬停)
+## 停止点(三处,均为硬停)
 
 ```text
 ① 本计划完成后 → 停在计划复审，不得直接开始编码
 ② Task 8 完成后 → 停在验收复审，Task 9 需另行授权
+③ 拓扑范围修订完成后 → 停在文档修订复审；通过后方可勾选 Task 8，再另行授权 Task 9
 ```
 
 ②是承重的:执行者不得同时是实现者与最终验收者。Task 8 只产出证据,
-`spec → done` / `plan → done` / `mem archive` / backlog 关闭 / `[attp-hive-rollout]` 解阻
-全部在 Task 9,须复审 ACCEPTED 后另行授权。
+`spec → done` / `plan → done` / `mem archive` / backlog 关闭全部在 Task 9,
+须复审 ACCEPTED 后另行授权。
 
-## 尚未授权
+③来自 Step 0c 的裁定:linked worktree 缺口在当前宿主契约下**不可安全实施**,
+因此本议题以**明确的支持拓扑限制**收口,缺口转 residual spec,而不是留作一个
+看似仍可编码解决的普通开放任务。
+
+## 当前授权状态(2026-07-27)
 
 ```text
-Task 1 implementation               NOT YET AUTHORIZED
-Task 2 tests                        NOT YET AUTHORIZED
-Task 3 installer refactor           NOT AUTHORIZED
-Production implementation / tests   NOT AUTHORIZED
+Task 1–7 implementation             ACCEPTED
+Task 8 evidence                     ACCEPTED（SUPPORTED 拓扑内）；勾选待文档修订复审
+Topology-scope closure amendment    AUTHORIZED（纯文档，进行中/待复审）
 Task 9 governance closure           NOT AUTHORIZED
+Production changes                  NOT AUTHORIZED
 Child-repo distribution             NOT AUTHORIZED
+[attp-hive-rollout]                 REMAINS BLOCKED（Task 9 也不解除）
 Hive nurture                        BLOCKED / NOT AUTHORIZED
 ATTP MVP                            REMAINS CLOSED（本计划不重开）
 ```

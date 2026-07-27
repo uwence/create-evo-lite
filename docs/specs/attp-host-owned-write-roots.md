@@ -40,8 +40,10 @@ relations: [{"kind":"spawned-from","target":"spec:agent-takeover-trigger-protoco
   前缀关系的真实目录,裸前缀会误纳)。
 - 守卫的 receipt 门与健康门**不放宽**,例外只作用于 target-path 门。
 - 未存在的 `memory/` 必须能被安全判定:比较对象是「已物理验证的祖先前缀 + 回拼的
-  未存在尾部」,而非祖先本身 —— 否则每个新项目的首次记忆写入都会被拒。
+  未存在尾部」,而非祖先本身 —— 否则新项目的首次记忆写入会被拒。
   该改动对既有项目判定必须 verdict-preserving,证据是既有 `T-takeover-*` 全套原样通过。
+  **Step 0c 实景修正**:当前宿主在 SessionStart 自行创建空 `memory/`,所以实景走的是
+  「目录已存在、目标文件不存在」的单级尾部;多级尾部再拼只有自动化证据,仍作为防御性下界保留。
 - fail-closed 单向:锚点缺失/畸形/不可解析、宿主版本变化导致字段消失,一律**不启用例外**,
   绝不退回宽白名单;`Bash` 边界维持原设计,不得据此宣称守卫成为安全隔离。
 - 回归矩阵(设计 §8)全绿,含:其他项目 memory deny、前缀关系项目 memory deny、
@@ -68,5 +70,24 @@ relations: [{"kind":"spawned-from","target":"spec:agent-takeover-trigger-protoco
 其记忆目标严格落在派生根之下 —— 当前事件单锚设计成立,无需第二个 allowed root,
 且 `agent_id` / `agent_type` 不得进入派生逻辑。
 
-收口条件:上述回归全绿 + 既有 ATTP 套件零改动通过 + 双会话真实记忆验收通过,
-且 `[attp-hive-rollout]` 的阻塞随之解除。
+### 支持拓扑(Step 0c 后冻结,承重)
+
+```text
+单工作树仓库 / 独立项目副本        SUPPORTED —— 双会话实景验收成立
+git linked worktree                UNSUPPORTED（Claude Code 2.1.220）—— 必须 fail-closed
+```
+
+宿主在 linked worktree 中对 transcript 与 memory 使用**不同**的项目身份,且该映射
+在路径大小写维度上不稳定;判定条件不在 hook 可见输入里,Git identity 也补不上
+(路径→slug 编码未文档化、有损、Windows 上非单射)。证据:
+`docs/validation/attp-guard-allowlist-step0c-worktree-memory-identity.md`。
+
+该缺口**不在本 spec 内解决**,转由 residual spec 记录:
+`spec:attp-linked-worktree-memory-identity`(`status: blocked`,blocked-by 宿主契约)。
+
+收口条件:上述回归全绿 + 既有 ATTP 套件零改动通过 + **SUPPORTED 拓扑内**的双会话
+真实记忆验收通过 + 支持拓扑限制已落文档 + residual spec 已建立。
+
+**`[attp-hive-rollout]` 的阻塞不随本 spec 收口自动解除。** 它需要下列之一:
+目标子仓全部被证明是独立单工作树仓库;或 rollout 增加 topology preflight
+(检测到 linked worktree 即拒绝启用该例外并输出明确诊断);或宿主提供新的权威 memory identity。

@@ -722,6 +722,24 @@ PreToolUse        没有有效 receipt 时拒绝 Edit / Write
 - 只在接管健康时生效——receipt 门与治理健康门都不放宽，未接管的会话同样写不了记忆；
 - 锚点缺失、类型不对或不可解析时**不启用**，绝不退回宽白名单。
 
+**该例外的支持拓扑（Claude Code 2.1.220 实测）：**
+
+| 项目形态 | 记忆写入 |
+|---|---|
+| 普通单工作树仓库、独立项目副本 | 支持 |
+| **git linked worktree** | **可能被安全拒绝** |
+
+在 linked worktree 里启动会话时，宿主对 transcript 用当前 worktree 的身份、对记忆目录用**主工作树**的身份，两者不同源。守卫只信当前事件派生出的那一个根，所以此时它会拒绝写入，理由仍是 *resolves outside project*。这是**有意为之的 fail-closed**：宿主没有给出可验证的记忆根，守卫就宁可不放行，也不去猜第二个根。
+
+不要用下面这些方式绕过——它们要么无效，要么会真的削弱 containment：
+
+- 改变启动路径的大小写（宿主的记忆根会随之漂移，问题只是换了个样子）；
+- 自己拼宿主的目录名编码（该编码未文档化、有损，Windows 上还不是一一对应）；
+- 在用户级配置里给守卫加一个项目外的允许根。
+
+需要在 linked worktree 里用跨会话记忆时，改用独立 clone 或独立项目副本。缺口本身记在
+`docs/specs/attp-linked-worktree-memory-identity.md`，等宿主提供权威记忆身份后再谈。
+
 ---
 
 ## Subagent Protocol

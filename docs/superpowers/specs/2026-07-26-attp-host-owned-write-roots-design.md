@@ -9,6 +9,10 @@
     (Step 0,主会话,Claude Code 2.1.220,8 次真实 PreToolUse 捕获)
   - [`attp-guard-allowlist-step0b-subagent-correlation.md`](../../validation/attp-guard-allowlist-step0b-subagent-correlation.md)
     (Step 0b,真实 subagent 关联观测,判定**分支 A**,见 §9)
+  - [`attp-guard-allowlist-acceptance.md`](../../validation/attp-guard-allowlist-acceptance.md)
+    (Task 8,单工作树拓扑双会话实景验收)
+  - [`attp-guard-allowlist-step0c-worktree-memory-identity.md`](../../validation/attp-guard-allowlist-step0c-worktree-memory-identity.md)
+    (Step 0c,linked worktree 记忆身份观测,终止分支 **B ∧ C**,冻结 §2.1 的支持拓扑)
 - 前置关系:本议题是 `[attp-hive-rollout]` 的**阻塞前置**。未关闭前不得向子仓分发 ATTP。
 - 上游契约:[`2026-07-24-agent-takeover-trigger-protocol-design.md`](2026-07-24-agent-takeover-trigger-protocol-design.md)
   (ATTP,R8)。本文件**不重开**该设计,只在其 §0.3 已确立的守卫定位内增加一条窄例外。
@@ -37,6 +41,37 @@ ATTP 的 PreToolUse 守卫按已批准契约拒绝一切项目外 `Edit`/`Write`
   本例外不使守卫成为安全隔离,也不得被描述成安全加固。
 - **不猜 `<slug>` 编码。** 宿主 slug 的生成规则是宿主内部实现,不是契约。
 
+### §2.1 支持拓扑(**Step 0c 后冻结**)
+
+本例外的适用范围是**有条件的**,条件由宿主的 project 身份语义决定,不由本设计决定。
+证据:[`attp-guard-allowlist-step0c-worktree-memory-identity.md`](../../validation/attp-guard-allowlist-step0c-worktree-memory-identity.md)。
+
+```text
+单工作树仓库(普通 clone)              SUPPORTED
+独立项目副本 / 独立 git init            SUPPORTED
+git linked worktree                     UNSUPPORTED（Claude Code 2.1.220）
+```
+
+linked worktree 中,宿主对 **transcript** 用当前 worktree 的身份、对 **memory** 用
+主工作树的身份,两者不同源;且该重定向**不稳定** —— 同一物理目录换成小写路径拼写启动时
+重定向消失。判定条件不在 hook 可见输入里,也无法由 Git identity 安全补足(§2 的
+「不猜 slug」在此依然承重,且观测证明该编码有损:非 ASCII 字符会塌缩)。
+
+**因此 mismatch 必须 fail-closed:**
+
+```text
+target 与当前事件派生根一致    → 可以放行
+两者不一致                    → 必须拒绝
+为提高可用性去猜第二个根       → 禁止（会同时造成扩权与失效）
+```
+
+「UNSUPPORTED」不等于无条件拒绝一切 linked worktree —— 它等于:守卫在该拓扑下只按同一条
+安全证明工作,证明不成立就拒绝,代价是该拓扑下宿主持久记忆不可用。这是**已记录的限制**,
+不是静默失败。
+
+重新进入 linked worktree 设计的条件见 `spec:attp-linked-worktree-memory-identity`
+(residual,blocked-upstream)。宿主版本变化之前,不再做 slug 逆向或路径探测实验。
+
 ## §3 信任锚:`transcript_path`
 
 Step 0 已在真实 PreToolUse 输入中观测到该字段(8/8),并验证:
@@ -49,6 +84,11 @@ allowedMemoryRoot    = dirname(transcript_path) / "memory"
 - 同一项目的不同会话(交互会话 + 无头会话)导出**同一** root → 锚点绑定项目而非会话。
 - 不同项目导出**互异** root → 无需实现 slug 编码。
 - 母仓的派生结果精确命中真实记忆目录。
+
+以上三条在 **§2.1 列为 SUPPORTED 的拓扑内**成立。Step 0c 已证明:在 git linked worktree 中,
+`dirname(transcript_path)` 指向当前 worktree 的 project-state,而宿主使用的是主工作树的
+project-state —— 单锚在该拓扑下被真实宿主行为证伪。这不是锚点选错,而是宿主的 memory
+身份本身没有稳定契约(§2.1)。
 
 **`transcript_path` 是宿主输入锚,不是用户配置项。** 它只能来自当前事件;
 不得从环境变量、settings、receipt 或任何持久化位置读取同名值。
@@ -77,7 +117,13 @@ allowedMemoryRoot    = dirname(transcript_path) / "memory"
 成功时 `roots = [ normalize(realpathStrict(dirname(transcript_path))) + '/memory' ]`。
 
 注意:**只对 project-state root 做 realpath,不要求 `memory/` 已存在**。
-新项目的首次记忆写入必然发生在 `memory/` 尚未创建时(见 §6),这是常态而非边角。
+
+关于「`memory/` 尚未创建」的实景修正(Step 0c 观测):**当前宿主(Claude Code 2.1.220)
+会在 SessionStart 阶段自行创建空的 `memory/`**,因此 agent 侧真实遇到的首次写入是
+「`memory/` 已存在、**目标文件**尚不存在」的单级尾部再拼。「`memory/` 整体不存在时的
+多级尾部再拼」在真实宿主中**未被观察到**,只有自动化回归证据(见 §8.1)。
+该能力仍然正确且必要 —— 它是宿主行为变化时的防御性下界,不得因未被实景触发而移除 ——
+但不得再被描述为「已获得真实宿主证据」。
 
 ## §5 判定规则
 
@@ -306,6 +352,8 @@ dirname 不存在 / realpath 失败                  → 不启用例外
 当前 transcript 对应的 memory/MEMORY.md           allow
 当前 memory 下新建文件(memory/ 已存在)           allow
 当前 memory 下新建文件(memory/ 尚不存在)         allow   ← §6,朴素实现会 deny
+                                                          （仅自动化证据,见 §4 实景修正)
+linked worktree 中指向主工作树的 memory           deny    ← §2.1,拓扑不受支持,必须 fail-closed
 其他项目的 memory                                 deny
 与本项目 slug 构成前缀关系的项目的 memory         deny    ← §5,本机已有 2 个真实实例
 <slug> 下的非 memory 路径(如 transcript 本身)    deny
@@ -325,8 +373,12 @@ Unicode case-fold 变体(U+212A 等)               不得扩大权限
 自动化回归证明不了「宿主的持久记忆功能真的恢复了」—— 它只能证明文件系统上出现了一个文件。
 终局门必须是下面这个双会话流程,不能用喂 adapter JSON 代替。
 
-**前置**:使用一个 disposable 的 project-state,其 `memory/` **初始不存在**
-(这样同时覆盖 §6 的首次创建路径)。
+**前置**:使用一个 disposable 的 project-state,其 `memory/` **初始不存在**,
+且项目必须落在 §2.1 的 SUPPORTED 拓扑内(单工作树 / 独立副本;**不得用 linked worktree**)。
+
+实景修正(Step 0c):宿主会在 SessionStart 自行建好空 `memory/`,所以这一前置实际保证的是
+「**目标文件**尚不存在」,而不是「目录尚不存在」——「目录整体不存在」的分支在当前宿主中
+无法由 agent 触发,只有自动化证据。
 
 ```text
 Session A
@@ -350,10 +402,12 @@ Session B
 三件事必须同时被证明,缺一不可:
 
 ```text
-(1) 首次目录创建不再被误拒        ← §6 的回拼修法真的生效
-(2) 写入确实是【守卫放行】的结果  ← 而不是守卫压根没参与
-(3) 宿主持久记忆功能真正恢复      ← 而不是磁盘上多了一个孤立文件
+(1) 首次 agent memory 文件写入不再被误拒  ← §6 的回拼修法真的生效（单级尾部)
+(2) 写入确实是【守卫放行】的结果          ← 而不是守卫压根没参与
+(3) 宿主持久记忆功能真正恢复              ← 而不是磁盘上多了一个孤立文件
 ```
+
+(1) 的措辞在 Step 0c 后收紧过:实景证明的是**首次 memory 文件**写入,不是**目录创建**。
 
 **验收与治理闭环必须分离。** 执行者产出证据后停下接受独立复审;
 `spec → done`、`plan → done`、`mem archive`、backlog 关闭、`[attp-hive-rollout]` 解阻

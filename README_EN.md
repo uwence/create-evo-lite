@@ -722,6 +722,24 @@ The single narrow exception is **this project's** Claude Code memory directory, 
 - applies only while takeover is healthy. Neither the receipt gate nor the governance-health gate is relaxed, so a session that has not taken over still cannot write memory;
 - is **not** enabled when the anchor is absent, of the wrong type, or unresolvable. It never falls back to a broad allowlist.
 
+**Supported topologies for this exception (measured on Claude Code 2.1.220):**
+
+| Project shape | Memory writes |
+|---|---|
+| Ordinary single-worktree repo, standalone project copy | Supported |
+| **Git linked worktree** | **May be safely denied** |
+
+In a session launched from a linked worktree, the host anchors the transcript on the current worktree's identity but the memory directory on the **main worktree's** identity. The two do not agree. The guard trusts only the root derived from the current event, so it denies the write with the same *resolves outside project* reason. This is **deliberate fail-closed behaviour**: with no verifiable memory root on offer, the guard would rather refuse than guess a second one.
+
+Do not try to work around it by any of the following — they either do not work or genuinely weaken containment:
+
+- changing the case of the launch path (the host's memory root moves with it, so the problem only changes shape);
+- reconstructing the host's directory-name encoding yourself (it is undocumented, lossy, and not one-to-one on Windows);
+- adding an out-of-project allowed root in user-level settings.
+
+If you need cross-session memory inside a linked worktree, use a separate clone or a standalone project copy instead. The gap itself is recorded in
+`docs/specs/attp-linked-worktree-memory-identity.md` and stays parked until the host offers an authoritative memory identity.
+
 ---
 
 ## Subagent Protocol
