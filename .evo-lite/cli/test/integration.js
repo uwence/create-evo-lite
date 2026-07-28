@@ -523,6 +523,49 @@ async function runIntegrationTests() {
             console.log('✅ 2r context add --label + resolve-by-label passed');
         }
 
+        console.log('2s. Testing trajectory summary folds whitespace before truncating ...');
+        {
+            // A trajectory entry is a single anchor line. Truncating the archive body by
+            // character count without folding newlines first splits one entry across
+            // physical lines: the tail is dropped on the next write (permanent loss), and
+            // a continuation line that happens to start with "-" is promoted to a ghost
+            // entry that consumes one of the 10 slots.
+            const trajRuntime = createTempRuntimeRoot('traj-fold');
+            const trajLoaded = await bootstrapRuntime(trajRuntime.runtimeRoot, {
+                EVO_LITE_SKIP_GIT_STATUS: '1',
+                EVO_LITE_GIT_COMMIT: 'ccc3333',
+            });
+            const trajSvc = trajLoaded.service;
+
+            await trajSvc.track('MultiLineDetails', 'Line one of the closure note.\nLine two continues after a newline and must stay on one trajectory line.');
+            await trajSvc.track('ListDetails', 'Closure summary head.\n- ghost bullet must not become its own entry\n- second bullet');
+
+            const trajMd = fs.readFileSync(path.join(trajRuntime.runtimeRoot, 'active_context.md'), 'utf8');
+            const trajSection = trajMd.match(/<!-- BEGIN_TRAJECTORY -->([\s\S]*?)<!-- END_TRAJECTORY -->/)[1];
+            const trajLines = trajSection.split('\n').map(line => line.trim()).filter(Boolean);
+
+            // Two tracked entries plus the seeded "- [init]" template entry.
+            assert.strictEqual(
+                trajLines.length,
+                3,
+                `trajectory must hold exactly one physical line per entry, got ${trajLines.length}:\n${trajSection}`
+            );
+            for (const line of trajLines.slice(0, 2)) {
+                assert.ok(
+                    /^- \[[^\]]+\] \d{4}-\d{2}-\d{2} [^:]+: /.test(line),
+                    `trajectory entry lost its anchor shape: ${line}`
+                );
+            }
+            assert.ok(trajLines[2].startsWith('- [init]'), `seeded template entry was displaced: ${trajLines[2]}`);
+            assert.ok(trajLines[0].includes('ghost bullet must not become its own entry'), 'folded summary dropped the text after the first newline');
+            assert.ok(trajLines[1].includes('Line two continues after a newline'), 'folded summary dropped the text after the first newline');
+
+            // Downstream parsing must see three well-formed entries, not ghosts.
+            const trajParsed = trajLoaded.service.splitTrajectoryEntries(trajSection);
+            assert.strictEqual(trajParsed.length, 3, 'splitTrajectoryEntries saw a ghost entry');
+            console.log('✅ 2s trajectory whitespace folding passed');
+        }
+
         console.log('2a. Testing context read / summary / validate ...');
         const contextSnapshot = primaryLoaded.service.readActiveContext();
         assert.strictEqual(contextSnapshot.path, path.join(primary.runtimeRoot, 'active_context.md'), 'context read returned the wrong active_context path');

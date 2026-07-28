@@ -1516,7 +1516,12 @@ function updateMetaGitState(markdown, projectRoot) {
 function updateTrajectory(markdown, mechanism, details, trajectoryId = getCommitHash()) {
     const trajectory = readSection(markdown, 'TRAJECTORY') || '';
     const entries = splitTrajectoryEntries(trajectory);
-    entries.unshift(`- [${trajectoryId}] ${new Date().toISOString().split('T')[0]} ${mechanism}: ${details.substring(0, 100)}`);
+    // A trajectory entry is one physical line. Fold whitespace BEFORE truncating: a raw
+    // substring of an archive body can carry a newline, which splits the entry across
+    // lines. splitTrajectoryEntries then drops the continuation (silent tail loss), or —
+    // when it starts with "-" — promotes it to a ghost entry that eats one of the 10 slots.
+    const summary = details.replace(/\s+/g, ' ').trim().substring(0, 100);
+    entries.unshift(`- [${trajectoryId}] ${new Date().toISOString().split('T')[0]} ${mechanism}: ${summary}`);
     while (entries.length > 10) {
         entries.pop();
     }
