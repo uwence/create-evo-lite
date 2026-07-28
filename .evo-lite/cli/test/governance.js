@@ -10957,6 +10957,31 @@ async function runChildRuntimeTests() {
         assert.ok(mpage.includes('module:a'), 'original module id stays available (tech details)');
         assert.ok(mpage.includes('progress-fill'), 'module page renders a progress bar');
         assert.ok(mpage.includes('涉及') && mpage.includes('abcdef1'), 'recent commit line lists sha + touched files');
+
+        // 超宽架构图:必须落在 .map-scroll 容器内并保留自然宽度 —— 可横向滚动,不压缩不裁切。
+        // 8 条泳道 → PAD + 8 * (CARD_W + LANE_GAP) + PAD = 1752px,远超 body 的 max-width:1100px。
+        const wideRoles = ['entry', 'service', 'feature', 'ui', 'runtime', 'scanner', 'governance', 'docs'];
+        const wideModules = wideRoles.map((role, i) => mkMp(`module:w${i}`, role));
+        const wideMap = renderSvgMap({ modules: wideModules, groupsConfig: null, pageMap: createPageMap(), validEdges: [] });
+        const wideWidth = wideMap.match(/<svg[^>]*\swidth="(\d+)"/);
+        assert.ok(wideWidth, 'map must declare an explicit pixel width');
+        assert.ok(Number(wideWidth[1]) > 1100, `wide map must exceed the 1100px body width, got ${wideWidth[1]}`);
+        assert.ok(wideMap.startsWith('<div class="map-scroll">'), `map must be wrapped in .map-scroll, got: ${wideMap.slice(0, 60)}`);
+        assert.ok(wideMap.endsWith('</div>'), 'map wrapper must be closed');
+        assert.ok(!/max-width:\s*100%/.test(wideMap), 'the map itself must not be shrunk to fit');
+
+        const wideHtml = renderIndex({ projection: { modules: wideModules, project: baseProject,
+            totals: { taskDone: 0, taskOpen: 0, taskUnknown: 0 }, warnings: [] },
+            groupsConfig: null, pageMap: createPageMap(), meta });
+        assert.ok(wideHtml.includes('<div class="map-scroll">'), 'index page must carry the scroll wrapper');
+        assert.ok(/\.map-scroll\s*\{[^}]*overflow-x:\s*auto/.test(wideHtml), 'page CSS must give .map-scroll overflow-x:auto');
+        assert.ok(/\.map-scroll\s*\{[^}]*max-width:\s*100%/.test(wideHtml), 'the wrapper must stay bounded by the page width');
+        // 包裹不得改变链接与节点标识
+        const widePageMap = createPageMap();
+        for (const m of wideModules) {
+            assert.ok(wideHtml.includes(`href="${widePageMap.modulePage(m.moduleId)}"`), `module link lost for ${m.moduleId}`);
+            assert.ok(wideHtml.includes(m.moduleId), `module id lost for ${m.moduleId}`);
+        }
         console.log('✅ T-wiki-render passed');
     }
 

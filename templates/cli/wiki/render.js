@@ -108,8 +108,14 @@ function renderSvgMap({ modules, groupsConfig, pageMap, validEdges }) {
         }
     }
     const width = x + PAD;
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
-        + edgeParts.join('') + parts.join('') + '</svg>';
+    // The map keeps its natural pixel width — lanes must stay readable, so it is never
+    // scaled down to fit. Wrapping it here (rather than at the call site) means every
+    // consumer of the map gets the horizontal scroll container, and the page body itself
+    // never overflows. See CSS `.map-scroll`.
+    return '<div class="map-scroll">'
+        + `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+        + edgeParts.join('') + parts.join('') + '</svg>'
+        + '</div>';
 }
 
 const CSS = `body{font-family:system-ui,'Microsoft YaHei',sans-serif;margin:24px;max-width:1100px}
@@ -121,7 +127,8 @@ table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:4px 8px;font-
 .progress-fill{height:8px;background:#5a9;border-radius:4px}
 nav ul{margin:4px 0 4px 18px;padding:0}nav li{font-size:13px;line-height:1.7}
 .note{color:#666;font-size:13px}
-details{margin-top:12px}summary{cursor:pointer;color:#666}`;
+details{margin-top:12px}summary{cursor:pointer;color:#666}
+.map-scroll{max-width:100%;overflow-x:auto}`;
 
 function pageChrome({ title, body, meta }) {
     return `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>`
