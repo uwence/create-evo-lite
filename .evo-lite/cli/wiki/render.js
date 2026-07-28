@@ -179,12 +179,23 @@ function renderIndex({ projection, groupsConfig, pageMap, meta }) {
         return bits.join(',');
     };
     const gs = p.governanceScope;
+    const unattributedLine = bucket => {
+        const un = countsOf(bucket);
+        return `<p>未归属:${un ? `${un},无法定位到具体模块` : '未发现无法定位到具体模块的治理项'}。</p>`;
+    };
     let healthLine;
-    if (gs && gs.status === 'resolved') {
-        const un = countsOf(gs.unattributed);
+    if (gs && gs.status === 'resolved' && (focus.moduleIds || []).length) {
         healthLine = `<p>当前活动范围:${countsOf(gs.current) || '未发现治理错误或提醒'}。</p>`
             + `<p>项目历史治理债务:${countsOf(gs.historical) || '未发现治理错误或提醒'}。</p>`
-            + `<p>未归属:${un ? `${un},无法定位到具体模块` : '未发现无法定位到具体模块的治理项'}。</p>`;
+            + unattributedLine(gs.unattributed);
+    } else if (gs && gs.status === 'resolved') {
+        // 焦点已解析,但没有映射到任何已索引模块。current 为空在这里只说明「桶是空的」,
+        // 不能说明「当前范围检查过、没有问题」—— 把覆盖缺失说成健康,比原来那条合计数字
+        // 更危险。分桶本身仍然确定且守恒,需要收窄的只是这一处解释边界。
+        const his = countsOf(gs.historical);
+        healthLine = '<p>当前活动范围:焦点已解析,但未映射到任何已索引模块,无法判定当前模块范围的治理状态。</p>'
+            + `<p>项目历史治理债务:${his ? `${his}(按现有模块映射归入非当前范围)` : '未发现治理错误或提醒'}。</p>`
+            + unattributedLine(gs.unattributed);
     } else {
         // 焦点无法可靠定位 → 不编造 current/historical。合计仍然显示,数据不消失。
         const globalBits = [];

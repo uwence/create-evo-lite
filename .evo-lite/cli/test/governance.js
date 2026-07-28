@@ -10935,6 +10935,18 @@ async function runChildRuntimeTests() {
         assert.strictEqual(
             bucketTotal(gn.current) + bucketTotal(gn.historical) + bucketTotal(gn.unattributed), 4,
             'conservation must hold when the focus maps to no module');
+        // current=0 在这里只说明桶是空的,不能渲染成「检查过、没问题」——
+        // 把覆盖缺失说成健康,比 Phase 2 之前那条合计数字更容易误导。
+        const htmlN = renderIndex({ projection: noModuleFocus, groupsConfig: null, pageMap: createPageMap(), meta });
+        assert.ok(!htmlN.includes('当前活动范围:未发现治理错误或提醒'),
+            'an unmapped focus must never be rendered as a clean current scope');
+        assert.ok(htmlN.includes('焦点已解析'), 'unmapped-focus copy must state that the focus did resolve');
+        assert.ok(htmlN.includes('未映射到任何已索引模块'), 'unmapped-focus copy must state the missing module mapping');
+        assert.ok(htmlN.includes('1 项治理错误,2 项治理提醒(按现有模块映射归入非当前范围)'),
+            'historical count stays exact and names the mapping it came from');
+        assert.ok(htmlN.includes('未归属:1 项治理提醒,无法定位到具体模块。'), 'unattributed count stays exact');
+        // 正常 resolved-with-modules 与 unresolved 两条路径的文案不得被这条分支污染
+        assert.ok(!htmlN.includes('焦点无法可靠定位'), 'a resolved-but-unmapped focus is not the unresolved case');
 
         // 7. focus 无法解析 → 不得编造 current/historical,unattributed 仍准确
         const unresolved = buildProjection({ architectureIR: scopeArch, planIR: scopePlan, driftReport: scopeDrift,
