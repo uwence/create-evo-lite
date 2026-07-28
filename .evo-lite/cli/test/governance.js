@@ -2767,6 +2767,162 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-lock-ephemeral passed');
 
+        console.log('T-zvec06-readonly-matrix. Characterizing real cross-process readOnly concurrency (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed');
+            } else {
+                const zvec = require('@zvec/zvec');
+                const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+
+                // 设计附录 A 的七项判定矩阵。必须用真实临时 collection + 独立 OS 进程:
+                // 函数 arity、源码 grep、同进程双实例都测不出 OS 级文件锁行为。
+                // 0.5.0 已实测会「接受 { readOnly: true } 但无实际语义」—— 静默接受正是
+                // 本矩阵要抓的东西,所以判定只能来自可观察的并发结果。
+                const HOLDER_SRC = [
+                    "'use strict';",
+                    "const fs = require('fs');",
+                    "const zvec = require('@zvec/zvec');",
+                    "const [, , colPath, mode, readyFile, releaseFile] = process.argv;",
+                    "let col;",
+                    "try { col = mode === 'ro' ? zvec.ZVecOpen(colPath, { readOnly: true }) : zvec.ZVecOpen(colPath); }",
+                    "catch (e) {",
+                    "    fs.writeFileSync(readyFile, JSON.stringify({ ok: false, name: e.name, code: e.code, message: String(e.message) }));",
+                    "    process.exit(0);",
+                    "}",
+                    "global.__evoHoldCollection = col;   // 防 V8 GC 回收无引用局部量 → 原生 finalizer 提前释放锁",
+                    "fs.writeFileSync(readyFile, JSON.stringify({ ok: true, pid: process.pid }));",
+                    "const timer = setInterval(() => {",
+                    "    if (!fs.existsSync(releaseFile)) return;",
+                    "    clearInterval(timer);",
+                    "    try { col.closeSync(); } catch (_) {}",
+                    "    process.exit(0);",
+                    "}, 40);",
+                ].join('\n');
+
+                const matrixDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-zvec06-'));
+                const holderScript = path.join(matrixDir, 'holder.js');
+                fs.writeFileSync(holderScript, HOLDER_SRC, 'utf8');
+                const colPath = path.join(matrixDir, 'collection');
+                zvec.ZVecCreateAndOpen(colPath, new zvec.ZVecCollectionSchema({
+                    name: 'zvec06matrix',
+                    fields: [{ name: 'content', dataType: zvec.ZVecDataType.STRING }],
+                })).closeSync();
+
+                const waitFor = (file, timeoutMs) => {
+                    const deadline = Date.now() + timeoutMs;
+                    while (Date.now() < deadline) {
+                        if (fs.existsSync(file)) return true;
+                        lock.sleepSync(40);
+                    }
+                    return fs.existsSync(file);
+                };
+                const holders = [];
+                const startHolder = (tag, mode) => {
+                    const readyFile = path.join(matrixDir, `${tag}-ready.json`);
+                    const releaseFile = path.join(matrixDir, `${tag}-release`);
+                    const proc = childProcess.spawn(process.execPath, [holderScript, colPath, mode, readyFile, releaseFile],
+                        { stdio: 'ignore', cwd: WORKSPACE_ROOT, env: { ...process.env } });
+                    holders.push({ tag, proc, releaseFile });
+                    assert.ok(waitFor(readyFile, 15000), `${tag} holder never reported back`);
+                    return JSON.parse(fs.readFileSync(readyFile, 'utf8'));
+                };
+                const releaseHolder = tag => {
+                    const h = holders.find(x => x.tag === tag);
+                    if (!h) return;
+                    fs.writeFileSync(h.releaseFile, 'go', 'utf8');
+                    const deadline = Date.now() + 15000;
+                    while (Date.now() < deadline && h.proc.exitCode === null && h.proc.signalCode === null) lock.sleepSync(40);
+                };
+                // 探测方也是独立进程(本测试进程 ≠ holder 进程),是真实跨进程冲突。
+                const probe = opts => {
+                    let handle = null;
+                    try {
+                        handle = opts ? zvec.ZVecOpen(colPath, opts) : zvec.ZVecOpen(colPath);
+                        try { handle.closeSync(); } catch (_) {}
+                        return { ok: true };
+                    } catch (e) {
+                        return {
+                            ok: false, name: e.name, code: e.code, message: String(e.message),
+                            isZVecError: zvec.isZVecError(e),
+                            matchesCanLock: /can't lock/i.test(String(e.message || '')),
+                            hasCause: e.cause !== undefined,
+                            isLockError_current: lock.isLockError(e),
+                        };
+                    }
+                };
+                const observed = {};
+                const report = () => {
+                    console.log('   --- zvec readOnly concurrency contract (observed) ---');
+                    for (const [k, v] of Object.entries(observed)) {
+                        console.log(`   ${k.padEnd(28)} ${v.ok ? 'OK' : 'BLOCKED ' + v.name + '/' + v.code}`);
+                    }
+                };
+
+                try {
+                    // 0. 负控:两个可写打开【必须】冲突。没有这条,「两个 reader 共存」
+                    //    可能只是夹具根本检测不出冲突,而不是 readOnly 真的生效。
+                    startHolder('control', 'rw');
+                    observed['0 control writer×writer'] = probe(null);
+                    assert.ok(!observed['0 control writer×writer'].ok,
+                        'negative control failed: two writable opens did NOT conflict, so this fixture cannot detect lock conflicts at all and every other row below is meaningless');
+                    releaseHolder('control');
+
+                    // 1. reader A 以 readOnly:true 打开
+                    observed['1 readerA(ro)'] = startHolder('readerA', 'ro');
+                    assert.ok(observed['1 readerA(ro)'].ok,
+                        `reader A must open read-only: ${JSON.stringify(observed['1 readerA(ro)'])}`);
+
+                    // 2. reader B 与 A 并发打开 —— 本次升级的核心契约
+                    observed['2 readerB(ro) w/ A'] = probe({ readOnly: true });
+                    // 3. reader 存活时 writer 的实际结果(不预设方向,只要求结论自洽)
+                    observed['3 writer w/ readers'] = probe(null);
+                    // 4. 所有 reader 关闭后 writer 是否立即恢复
+                    releaseHolder('readerA');
+                    observed['4 writer after readers'] = probe(null);
+                    // 5. writer 存活时 reader 的实际结果
+                    startHolder('writer', 'rw');
+                    observed['5 reader w/ writer'] = probe({ readOnly: true });
+                    // 6. writer 关闭后 reader 是否恢复
+                    releaseHolder('writer');
+                    observed['6 reader after writer'] = probe({ readOnly: true });
+                    report();
+
+                    // --- 不变量:与 0.5/0.6 无关,任何版本都必须成立 ---
+                    assert.ok(observed['4 writer after readers'].ok,
+                        `writer must recover once every reader closed: ${JSON.stringify(observed['4 writer after readers'])}`);
+                    assert.ok(observed['6 reader after writer'].ok,
+                        `reader must recover once the writer closed: ${JSON.stringify(observed['6 reader after writer'])}`);
+                    // 7. 锁冲突的真实错误形状 —— 附录 A 第 8 项:检测锚定在 0.5 的
+                    //    /can't lock/i 文案上,文案一变所有冲突会静默降级为裸 rethrow。
+                    const conflicts = Object.entries(observed).filter(([, v]) => !v.ok);
+                    for (const [caseName, v] of conflicts) {
+                        assert.ok(v.isZVecError, `${caseName}: a lock conflict must still be a zvec error — ${JSON.stringify(v)}`);
+                        assert.ok(v.isLockError_current,
+                            `${caseName}: the current isLockError() must still classify this conflict, otherwise every lock diagnostic silently degrades to a bare rethrow — ${JSON.stringify(v)}`);
+                    }
+                    if (conflicts.length) {
+                        const [, sample] = conflicts[0];
+                        console.log(`   lock error shape: name=${sample.name} code=${sample.code} `
+                            + `isZVecError=${sample.isZVecError} matchesCanLock=${sample.matchesCanLock} hasCause=${sample.hasCause}`);
+                    }
+
+                    // --- 升级判定契约:多进程并发只读 ---
+                    assert.ok(observed['2 readerB(ro) w/ A'].ok,
+                        `two concurrent read-only readers must coexist — this is the contract [zvec-06-upgrade] depends on. Observed: ${JSON.stringify(observed['2 readerB(ro) w/ A'])}`);
+                } finally {
+                    for (const h of holders) {
+                        try { fs.writeFileSync(h.releaseFile, 'go', 'utf8'); } catch (_) {}
+                        try { h.proc.kill(); } catch (_) {}
+                    }
+                    try { fs.rmSync(matrixDir, { recursive: true, force: true }); } catch (_) {}
+                }
+                console.log('✅ T-zvec06-readonly-matrix passed');
+            }
+        }
+
         console.log('T-mcp-stdin-exit. Testing MCP stdin-EOF lifecycle (A) + shutdown cleanup of a held lock (B) (skips if @zvec/zvec absent) ...');
         {
             let zvecAvailable = true;
