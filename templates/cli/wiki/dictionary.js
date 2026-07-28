@@ -21,6 +21,31 @@ const ROLE_LABELS = {
     scanner: '扫描与分析', governance: '治理', docs: '文档', test: '测试', unknown: '其他',
 };
 
+// Display-only Chinese names for module ids verified against this repo's
+// Architecture IR. EXACT id match only — no tokenizing, no regex guessing, no
+// role substitution, no prefix matching: a child repo whose module ids differ
+// simply falls back to its own module name. A project's own
+// wiki-groups.moduleAliases still wins over this table. Canonical identity
+// (moduleId, IR name, hrefs, edge endpoints) is never touched by this.
+const DEFAULT_MODULE_LABELS = {
+    'module:agents-workflow': 'Agent 与工作流',
+    'module:architecture': '架构扫描',
+    'module:architecture-wiki': '架构治理 Wiki',
+    'module:cli-entry': 'CLI 入口',
+    'module:dashboard': '仪表盘',
+    'module:docs-planning': '文档与规划',
+    'module:hook-scaffold': '钩子脚手架',
+    'module:inspector': '检视器',
+    'module:memory-service': '记忆服务',
+    'module:planning': '计划扫描',
+    'module:runtime': '运行时',
+    'module:test': '测试',
+};
+
+function moduleLabel(moduleId, fallback) {
+    return DEFAULT_MODULE_LABELS[moduleId] || fallback;
+}
+
 function translateRule(rule) {
     return RULE_LABELS[rule] || '发现一项尚未分类的治理检查';
 }
@@ -38,9 +63,12 @@ function progressLabel(mp) {
     return text;
 }
 
-function moduleNarrative(mp) {
+// displayName is the caller-resolved display name (config alias > default label >
+// IR name). It is passed in rather than read off `mp` so the projection's
+// canonical `mp.name` is never rewritten for rendering.
+function moduleNarrative(mp, displayName) {
     const parts = [];
-    parts.push(`「${mp.name}」属于${roleLabel(mp.role)}分区,包含 ${mp.files.length} 个文件。`);
+    parts.push(`「${displayName || moduleLabel(mp.moduleId, mp.name)}」属于${roleLabel(mp.role)}分区,包含 ${mp.files.length} 个文件。`);
     parts.push(`进度:${progressLabel(mp)}。`);
     if (mp.healthState === 'normal') parts.push('治理健康:正常。');
     else {
@@ -55,4 +83,4 @@ function listBareTerms(text) {
     return (String(text).match(/R\d{3}/g) || []);
 }
 
-module.exports = { RULE_LABELS, translateRule, healthLabel, roleLabel, progressLabel, moduleNarrative, listBareTerms };
+module.exports = { RULE_LABELS, DEFAULT_MODULE_LABELS, moduleLabel, translateRule, healthLabel, roleLabel, progressLabel, moduleNarrative, listBareTerms };

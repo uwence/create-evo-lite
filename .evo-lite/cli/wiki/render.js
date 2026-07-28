@@ -4,7 +4,7 @@
 // groups config. Output: html/svg strings. NO fact computation here — only
 // verbalization (via dictionary) and geometry (deterministic lane layout).
 
-const { healthLabel, roleLabel, progressLabel, moduleNarrative, translateRule } = require('./dictionary');
+const { healthLabel, roleLabel, progressLabel, moduleNarrative, translateRule, moduleLabel } = require('./dictionary');
 const { CANONICAL_ROLES } = require('./projection');   // single source of the lane order — no local copy
 
 const LANE_ORDER = CANONICAL_ROLES;
@@ -84,7 +84,7 @@ function renderSvgMap({ modules, groupsConfig, pageMap, validEdges }) {
         let y = PAD + LANE_HEADER;
         for (const m of lane.modules) {
             pos.set(m.moduleId, { cx: x + CARD_W / 2, cy: y + CARD_H / 2 });
-            const alias = (groupsConfig && groupsConfig.moduleAliases && groupsConfig.moduleAliases[m.moduleId]) || m.name;
+            const alias = displayNameOf(groupsConfig, m.moduleId, m.name);
             const total = m.taskCounts.done + m.taskCounts.open + m.taskCounts.unknown;
             const ratio = total ? m.taskCounts.done / total : 0;
             parts.push(`<a href="${escapeHtml(pageMap.modulePage(m.moduleId))}">`
@@ -136,8 +136,16 @@ function pageChrome({ title, body, meta }) {
         + `<footer>生成于 ${escapeHtml(meta.generatedAt)} @ ${escapeHtml(meta.headSha)}</footer></body></html>`;
 }
 
-function aliasOf(groupsConfig, moduleId, fallback) {
-    return (groupsConfig && groupsConfig.moduleAliases && groupsConfig.moduleAliases[moduleId]) || fallback;
+// The single resolution point for a module's DISPLAY name. Priority:
+//   project wiki-groups alias > built-in Chinese label > the IR's own name.
+// Every display surface (map card, nav tree, focus links, module page title /
+// h1 / narrative) must go through this — re-implementing the priority per call
+// site is exactly how those surfaces drift apart. Canonical identity is never
+// affected: hrefs, page filenames, moduleId, edge endpoints and the technical
+// details keep using the IR values.
+function displayNameOf(groupsConfig, moduleId, fallback) {
+    const configured = groupsConfig && groupsConfig.moduleAliases && groupsConfig.moduleAliases[moduleId];
+    return configured || moduleLabel(moduleId, fallback);
 }
 
 function renderIndex({ projection, groupsConfig, pageMap, meta }) {
@@ -151,10 +159,14 @@ function renderIndex({ projection, groupsConfig, pageMap, meta }) {
 
     // 2. 当前焦点(人话;unresolved → 固定文案)
     const focus = p.focus || { resolved: !!p.focusResolved, label: '', moduleIds: [] };
+    // focus.moduleIds carries ids only — resolve the IR name from the projection so
+    // the focus links use the SAME display name as the map and the nav tree.
+    const irNameById = new Map(projection.modules.map(m => [m.moduleId, m.name]));
     const focusLine = focus.resolved
         ? `<p>当前焦点:${escapeHtml(focus.label)}${(focus.moduleIds || []).length
             ? '(位于 ' + focus.moduleIds.map(id =>
-                `<a href="${escapeHtml(pageMap.modulePage(id))}">${escapeHtml(aliasOf(groupsConfig, id, id))}</a>`).join('、') + ')'
+                `<a href="${escapeHtml(pageMap.modulePage(id))}">`
+                + `${escapeHtml(displayNameOf(groupsConfig, id, irNameById.get(id) || id))}</a>`).join('、') + ')'
             : ''}。</p>`
         : '<p>当前焦点无法可靠定位。</p>';
 
@@ -235,7 +247,7 @@ function renderIndex({ projection, groupsConfig, pageMap, meta }) {
     const lanes = computeLanes(projection.modules, groupsConfig);
     const nav = '<nav><h2>本页导航</h2><ul>' + lanes.map(l =>
         `<li>${escapeHtml(l.label)}<ul>` + l.modules.map(m =>
-            `<li><a href="${escapeHtml(pageMap.modulePage(m.moduleId))}">${escapeHtml(aliasOf(groupsConfig, m.moduleId, m.name))}</a></li>`).join('')
+            `<li><a href="${escapeHtml(pageMap.modulePage(m.moduleId))}">${escapeHtml(displayNameOf(groupsConfig, m.moduleId, m.name))}</a></li>`).join('')
         + '</ul></li>').join('') + '</ul></nav>';
 
     const body = `<h1>${escapeHtml(meta.projectName || '')} 项目全貌</h1>`
@@ -248,7 +260,7 @@ function renderIndex({ projection, groupsConfig, pageMap, meta }) {
 }
 
 function renderModulePage({ mp, pageMap, meta, sourcePageFor, groupsConfig }) {
-    const alias = aliasOf(groupsConfig, mp.moduleId, mp.name);
+    const alias = displayNameOf(groupsConfig, mp.moduleId, mp.name);
     const rows = mp.files.map(f => {
         const target = sourcePageFor(f);
         const cell = target.page ? `<a href="../${escapeHtml(target.page)}">${escapeHtml(f)}</a>`
@@ -264,7 +276,7 @@ function renderModulePage({ mp, pageMap, meta, sourcePageFor, groupsConfig }) {
         `<li><code>${escapeHtml(c.sha.slice(0, 7))}</code> ${escapeHtml(c.subject)}`
         + `${(c.files && c.files.length) ? ' —— 涉及:' + c.files.map(f => escapeHtml(f)).join('、') : ''}</li>`).join('');
     const body = `<h1>${escapeHtml(alias)}</h1>`
-        + `<p>${escapeHtml(moduleNarrative(mp))}</p>`
+        + `<p>${escapeHtml(moduleNarrative(mp, alias))}</p>`
         + (mp.description ? `<p><em>${escapeHtml(mp.description)}</em></p>` : '')
         + `<h2>任务(${escapeHtml(progressLabel(mp))})</h2>` + progressBar
         + `<table>${taskRows || '<tr><td>尚未纳入规划</td></tr>'}</table>`

@@ -11120,6 +11120,87 @@ async function runChildRuntimeTests() {
         console.log('✅ T-wiki-render passed');
     }
 
+    console.log('T-wiki-names. Module display names: built-in dictionary, config override, unknown fallback, canonical identity ...');
+    {
+        const rPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'render'));
+        delete require.cache[rPath];
+        const pmPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'page-map'));
+        delete require.cache[pmPath];
+        const dPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'dictionary'));
+        delete require.cache[dPath];
+        const { renderIndex, renderModulePage, renderSvgMap } = require(rPath);
+        const { createPageMap } = require(pmPath);
+        const { DEFAULT_MODULE_LABELS, moduleLabel } = require(dPath);
+
+        const mkNamed = (id, name, role) => ({ moduleId: id, name, description: '', role,
+            files: ['src/x.js'], tasks: [], taskCounts: { done: 1, open: 0, unknown: 0, shared: 0 },
+            progressState: 'done', healthState: 'normal', healthReasons: [], focus: false, recentCommits: [] });
+        const nmMeta = { generatedAt: '2026-01-01T00:00:00.000Z', headSha: 'abc1234', projectName: 'NameProj' };
+        const nmProject = { driftErrors: 0, driftWarnings: 0, driftInfo: 0, unattributedFindings: [], verify: null,
+            governanceScope: { status: 'resolved', current: { errors: 0, warnings: 0, findingIds: [] },
+                historical: { errors: 0, warnings: 0, findingIds: [] }, unattributed: { errors: 0, warnings: 0, findingIds: [] } },
+            focus: { resolved: true, taskId: 'task:t', label: '做点事', moduleIds: ['module:memory-service'] }, focusResolved: true,
+            codePerception: null, links: null,
+            inputFreshness: { architecture: { state: 'unknown', reason: '' }, planning: { state: 'unknown', reason: '' } } };
+        const nmTotals = { taskDone: 1, taskOpen: 0, taskUnknown: 0 };
+        const srcPage = () => ({ page: 'source/src-x.js--00000000.html' });
+
+        // 1. 默认词典命中 —— 六处显示面必须一致
+        const zh = DEFAULT_MODULE_LABELS['module:memory-service'];
+        assert.ok(zh && /[一-鿿]/.test(zh), 'the built-in table must carry a Chinese label for a known module id');
+        const known = mkNamed('module:memory-service', 'Memory Service', 'service');
+        const pm1 = createPageMap();
+        const map1 = renderSvgMap({ modules: [known], groupsConfig: null, pageMap: pm1, validEdges: [] });
+        assert.ok(map1.includes(`>${zh}`), 'map card title must use the display name');
+        assert.ok(!map1.includes('Memory Service'), 'map card must not fall back to the canonical English name');
+        const idx1 = renderIndex({ projection: { modules: [known], project: nmProject, totals: nmTotals, warnings: [] },
+            groupsConfig: null, pageMap: pm1, meta: nmMeta });
+        // 导航树与焦点链接是两处独立的显示面,两处都必须命中
+        assert.strictEqual((idx1.match(new RegExp(`>${zh}</a>`, 'g')) || []).length, 2,
+            'both the nav tree link and the focus link must use the display name');
+        const page1 = renderModulePage({ mp: known, pageMap: pm1, meta: nmMeta, sourcePageFor: srcPage, groupsConfig: null });
+        assert.ok(page1.includes(`<h1>${zh}</h1>`), 'module page h1 must use the display name');
+        assert.ok(page1.includes(`<title>${zh} — Evo-Lite Wiki</title>`), 'module page title must use the display name');
+        assert.ok(page1.includes(`「${zh}」属于`), 'narrative must use the display name');
+        assert.ok(!page1.includes('「Memory Service」'), 'narrative must not leak the canonical English name');
+
+        // 2. 项目配置覆盖内置词典 —— 所有显示面都用项目自定义名
+        const custom = { laneLabels: {}, moduleAliases: { 'module:memory-service': '项目自定义名' }, groups: [] };
+        const pm2 = createPageMap();
+        const map2 = renderSvgMap({ modules: [known], groupsConfig: custom, pageMap: pm2, validEdges: [] });
+        const idx2 = renderIndex({ projection: { modules: [known], project: nmProject, totals: nmTotals, warnings: [] },
+            groupsConfig: custom, pageMap: pm2, meta: nmMeta });
+        const page2 = renderModulePage({ mp: known, pageMap: pm2, meta: nmMeta, sourcePageFor: srcPage, groupsConfig: custom });
+        for (const [label, html] of [['map', map2], ['index', idx2], ['module page', page2]]) {
+            assert.ok(html.includes('项目自定义名'), `${label} must honour the project alias`);
+            assert.ok(!html.includes(zh), `${label} must not keep the built-in label once the project overrides it`);
+        }
+        assert.ok(page2.includes('「项目自定义名」属于'), 'narrative must honour the project alias too');
+
+        // 3. 未知模块 —— 保留原始 name,不猜译、不报错
+        const unknownMod = mkNamed('module:zzz-not-in-dictionary', 'Zzz Not In Dictionary', 'service');
+        assert.strictEqual(moduleLabel('module:zzz-not-in-dictionary', 'Zzz Not In Dictionary'), 'Zzz Not In Dictionary',
+            'an unknown module id must fall back to its own name');
+        const pm3 = createPageMap();
+        const page3 = renderModulePage({ mp: unknownMod, pageMap: pm3, meta: nmMeta, sourcePageFor: srcPage, groupsConfig: null });
+        assert.ok(page3.includes('<h1>Zzz Not In Dictionary</h1>'), 'unknown module keeps its original name');
+        assert.ok(page3.includes('「Zzz Not In Dictionary」属于'), 'unknown module narrative keeps its original name');
+
+        // 4. canonical identity 不得被显示名替换
+        const href = pm1.modulePage('module:memory-service');
+        assert.ok(href.includes('module-memory-service'), `page filename must stay canonical, got ${href}`);
+        assert.ok(!href.includes(encodeURIComponent(zh)) && !href.includes(zh), 'display name must never enter the href');
+        assert.ok(page1.includes(href.replace(/^module\//, '')) || page1.includes('module:memory-service'),
+            'module page technical details must keep the canonical moduleId');
+        assert.strictEqual(known.name, 'Memory Service', 'rendering must not rewrite the projection module name');
+        assert.strictEqual(known.moduleId, 'module:memory-service', 'rendering must not rewrite the projection moduleId');
+        const twoMods = [known, mkNamed('module:runtime', 'Runtime', 'runtime')];
+        const mapEdge = renderSvgMap({ modules: twoMods, groupsConfig: custom, pageMap: createPageMap(),
+            validEdges: [{ sourceModuleId: 'module:memory-service', targetModuleId: 'module:runtime', kind: 'depends' }] });
+        assert.ok(mapEdge.includes('dependency-edge'), 'edges still resolve through canonical module ids, not display names');
+        console.log('✅ T-wiki-names passed');
+    }
+
     console.log('T-wiki-source. Source pages: containment, escaping, line anchors, binary/size caps ...');
     {
         const sPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'source-pages'));
