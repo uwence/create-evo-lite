@@ -10840,6 +10840,122 @@ async function runChildRuntimeTests() {
         console.log('✅ T-wiki-projection passed');
     }
 
+    console.log('T-wiki-scope. Governance findings partitioned by scope: current / historical / unattributed ...');
+    {
+        const prPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'projection'));
+        delete require.cache[prPath];
+        const rPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'render'));
+        delete require.cache[rPath];
+        const pmPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'page-map'));
+        delete require.cache[pmPath];
+        const { buildProjection } = require(prPath);
+        const { renderIndex } = require(rPath);
+        const { createPageMap } = require(pmPath);
+
+        const scopeArch = {
+            modules: [
+                { id: 'module:focus', name: 'Focus', paths: ['src/focus/'], role: 'service', confidence: 1 },
+                { id: 'module:other', name: 'Other', paths: ['src/other/'], role: 'feature', confidence: 1 },
+            ],
+            files: [
+                { path: 'src/focus/f.js', module: 'module:focus', confidence: 1 },
+                { path: 'src/other/o.js', module: 'module:other', confidence: 1 },
+            ],
+            edges: [],
+        };
+        const scopePlan = { tasks: [
+            { id: 'task:focus', title: 'Focus task', status: 'active', linkedFiles: ['src/focus/f.js'] },
+            { id: 'task:other', title: 'Other task', status: 'todo', linkedFiles: ['src/other/o.js'] },
+        ] };
+        // 1 focus-only warning / 2 non-focus error / 3 both / 4 unattributable / 5 info / 6 duplicate id
+        const scopeDrift = { findings: [
+            { id: 'W-focus', rule: 'R008', level: 'warning', evidence: ['src/focus/f.js'] },
+            { id: 'E-other', rule: 'R003', level: 'error', evidence: ['src/other/o.js'] },
+            { id: 'W-both', rule: 'R006', level: 'warning', evidence: ['src/focus/f.js', 'src/other/o.js'] },
+            { id: 'W-none', rule: 'R011', level: 'warning', evidence: ['no/such/file.js'] },
+            { id: 'I-info', rule: 'R009', level: 'info', evidence: ['src/focus/f.js'] },
+            { id: 'W-focus', rule: 'R008', level: 'warning', evidence: ['src/focus/f.js'] },
+        ], summary: { total: 6, errors: 1, warnings: 4, info: 1 } };
+
+        const resolved = buildProjection({ architectureIR: scopeArch, planIR: scopePlan, driftReport: scopeDrift,
+            exploreResult: { focus: { taskId: 'task:focus', resolved: true } }, verifySummary: null, recentCommits: [] });
+        const gs = resolved.project.governanceScope;
+        assert.strictEqual(gs.status, 'resolved', 'focus with modules must resolve the scope split');
+
+        // 互斥:三个集合两两无交集
+        const setOf = b => new Set(b.findingIds);
+        const pairs = [['current', 'historical'], ['current', 'unattributed'], ['historical', 'unattributed']];
+        for (const [x, y] of pairs) {
+            const sx = setOf(gs[x]);
+            for (const id of gs[y].findingIds) {
+                assert.ok(!sx.has(id), `${x} and ${y} must be disjoint, ${id} appears in both`);
+            }
+        }
+        // 总数守恒:三个集合之和 = 去重后的非 info finding 数(4:W-focus/E-other/W-both/W-none)
+        const bucketTotal = b => b.errors + b.warnings;
+        const partitioned = bucketTotal(gs.current) + bucketTotal(gs.historical) + bucketTotal(gs.unattributed);
+        assert.strictEqual(partitioned, 4, `partition must cover every deduped non-info finding, got ${partitioned}`);
+        assert.strictEqual(gs.current.findingIds.length + gs.historical.findingIds.length + gs.unattributed.findingIds.length, 4,
+            'findingIds count must match the bucket counters');
+        // 具体归属
+        assert.deepStrictEqual(gs.current.findingIds, ['W-both', 'W-focus'], 'focus-hitting findings (incl. multi-module) go to current');
+        assert.deepStrictEqual(gs.historical.findingIds, ['E-other'], 'attributable non-focus findings are historical debt');
+        assert.deepStrictEqual(gs.unattributed.findingIds, ['W-none'], 'evidence with no module stays unattributed');
+        assert.strictEqual(gs.current.errors, 0, 'current has no errors here');
+        assert.strictEqual(gs.current.warnings, 2, 'multi-module finding counted ONCE in current');
+        assert.strictEqual(gs.historical.errors, 1, 'non-focus error lands in historical');
+        // info 不进入任何分区,但仍保留在 driftInfo
+        for (const b of ['current', 'historical', 'unattributed']) {
+            assert.ok(!gs[b].findingIds.includes('I-info'), `info finding must not enter ${b}`);
+        }
+        assert.strictEqual(resolved.project.driftInfo, 1, 'info findings stay counted in driftInfo');
+        // 既有全局总量不得被本次改动改写
+        assert.strictEqual(resolved.project.driftErrors, 1, 'global driftErrors unchanged');
+        assert.strictEqual(resolved.project.driftWarnings, 4, 'global driftWarnings unchanged');
+
+        // 首页三行文案;旧的单一「治理健康:X 项…」行必须消失
+        const meta = { generatedAt: '2026-01-01T00:00:00.000Z', headSha: 'abc1234', projectName: 'ScopeProj' };
+        const htmlR = renderIndex({ projection: resolved, groupsConfig: null, pageMap: createPageMap(), meta });
+        assert.ok(htmlR.includes('当前活动范围:2 项治理提醒。'), `current scope line missing: ${htmlR.slice(0, 0) || ''}`);
+        assert.ok(htmlR.includes('项目历史治理债务:1 项治理错误。'), 'historical debt line missing');
+        assert.ok(htmlR.includes('未归属:1 项治理提醒,无法定位到具体模块。'), 'unattributed line missing');
+        // 定位段落里的「治理健康」是散文,保留;要消失的是带计数的那一行
+        assert.ok(!/治理健康:[^<]*项治理/.test(htmlR), 'the single aggregate 治理健康 line must be gone');
+        assert.ok(!htmlR.includes('另有 1 项无法定位到具体模块的治理提醒'), 'the standalone unattributed line must not duplicate the scope line');
+
+        // focus 已解析但落不到任何模块 ≠ 无法解析:范围是已知的,只是不含任何已索引模块,
+        // 所以 current 合法地为 0、其余进入 historical。若把它当成 unresolved,可归属的
+        // finding 会从三个桶里全部消失,守恒被静默破坏。
+        const noModuleFocus = buildProjection({ architectureIR: scopeArch, planIR: scopePlan, driftReport: scopeDrift,
+            exploreResult: { focus: { taskId: 'task:ghost', resolved: true } }, verifySummary: null, recentCommits: [] });
+        const gn = noModuleFocus.project.governanceScope;
+        assert.strictEqual(gn.status, 'resolved', 'a resolved focus stays resolved even when it maps to no module');
+        assert.deepStrictEqual(gn.current.findingIds, [], 'no focus module → nothing is in the current scope');
+        assert.deepStrictEqual(gn.historical.findingIds, ['E-other', 'W-both', 'W-focus'], 'the rest is historical debt, not dropped');
+        assert.strictEqual(
+            bucketTotal(gn.current) + bucketTotal(gn.historical) + bucketTotal(gn.unattributed), 4,
+            'conservation must hold when the focus maps to no module');
+
+        // 7. focus 无法解析 → 不得编造 current/historical,unattributed 仍准确
+        const unresolved = buildProjection({ architectureIR: scopeArch, planIR: scopePlan, driftReport: scopeDrift,
+            exploreResult: { focus: { resolved: false } }, verifySummary: null, recentCommits: [] });
+        const gu = unresolved.project.governanceScope;
+        assert.strictEqual(gu.status, 'unresolved', 'unresolved focus must not claim a resolved split');
+        assert.deepStrictEqual(gu.current.findingIds, [], 'unresolved focus must not invent a current scope');
+        assert.deepStrictEqual(gu.historical.findingIds, [], 'unresolved focus must not label everything as historical debt');
+        assert.strictEqual(gu.current.errors + gu.current.warnings + gu.historical.errors + gu.historical.warnings, 0,
+            'no fabricated counts when the scope is unknown');
+        assert.deepStrictEqual(gu.unattributed.findingIds, ['W-none'], 'unattributed stays exact without a focus');
+
+        const htmlU = renderIndex({ projection: unresolved, groupsConfig: null, pageMap: createPageMap(), meta });
+        assert.ok(htmlU.includes('当前活动范围:焦点无法可靠定位,不能判定相关治理项。'), 'unresolved current copy missing');
+        assert.ok(htmlU.includes('项目历史治理债务:因活动范围未知,不能可靠拆分。'), 'unresolved historical copy missing');
+        assert.ok(htmlU.includes('未归属:1 项治理提醒。'), 'unattributed count must still be reported');
+        assert.ok(htmlU.includes('全项目治理总量:1 项治理错误,4 项治理提醒(未按范围拆分)。'), 'global total must not disappear when the split is unavailable');
+        assert.ok(!/当前活动范围:\d/.test(htmlU), 'unresolved page must not print a current-scope number');
+        console.log('✅ T-wiki-scope passed');
+    }
+
     console.log('T-wiki-dictionary. Chinese dictionary coverage: no bare Rxxx in generated narrative ...');
     {
         const dPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'wiki', 'dictionary'));
@@ -10930,6 +11046,10 @@ async function runChildRuntimeTests() {
         // index:resolved focus 人话 + 健康摘要 + 待确认关联;provider stale = 信息性文案
         const html2 = renderIndex({ projection: { modules, project: { ...baseProject,
             driftWarnings: 2, focusResolved: true,
+            governanceScope: { status: 'resolved',
+                current: { errors: 0, warnings: 1, findingIds: ['cur1'] },
+                historical: { errors: 0, warnings: 1, findingIds: ['his1'] },
+                unattributed: { errors: 0, warnings: 0, findingIds: [] } },
             focus: { resolved: true, taskId: 'task:t9', label: '让向导跑起来', moduleIds: ['module:a'] },
             codePerception: { providers: [{ id: 'provider:codegraph', role: 'structural-primary', ready: true, indexState: 'ok', degraded: false }], freshness: { stale: true, dirty: false } },
             links: { confirmed: 1, derived: 0, proposed: 3 },
@@ -10938,7 +11058,10 @@ async function runChildRuntimeTests() {
             groupsConfig: null, pageMap: createPageMap(), meta });
         assert.ok(html2.includes('当前焦点') && html2.includes('让向导跑起来'), 'resolved focus renders its label');
         assert.ok(!html2.includes('当前焦点无法可靠定位'), 'resolved focus must not show the unresolved copy');
-        assert.ok(html2.includes('2 项治理提醒'), 'health summary verbalizes drift warnings');
+        // drift 提醒按范围分行,而不是合成一条总数
+        assert.ok(html2.includes('当前活动范围:1 项治理提醒。'), 'current-scope drift line');
+        assert.ok(html2.includes('项目历史治理债务:1 项治理提醒。'), 'historical-debt drift line');
+        assert.ok(!/治理健康:[^<]*项治理/.test(html2), 'the single aggregate 治理健康 line must be gone');
         assert.ok(html2.includes('全局验证:未发现失败项'), 'clean verify renders its summary');
         assert.ok(html2.includes('3 项代码关联待确认'), 'proposed links surfaced');
         assert.ok(html2.includes('结构代码索引落后'), 'provider stale renders informational copy');

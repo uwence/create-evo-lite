@@ -169,11 +169,33 @@ function renderIndex({ projection, groupsConfig, pageMap, meta }) {
         : states.every(s => s === 'fresh') ? '<p>数据新鲜度:已确认。</p>'
         : '<p>数据新鲜度无法确认。</p>';
 
-    // 4. ProjectHealth 人话摘要
-    const healthBits = [];
-    if (p.driftErrors) healthBits.push(`${p.driftErrors} 项治理错误`);
-    if (p.driftWarnings) healthBits.push(`${p.driftWarnings} 项治理提醒`);
-    const healthLine = `<p>治理健康:${healthBits.length ? healthBits.join(',') : '未发现需要处理的问题'}。</p>`;
+    // 4. ProjectHealth 人话摘要 —— 按范围分三行。一条合计数字会让人把项目历史欠账
+    //    读成「当前这次开发制造了 N 个问题」;三行让读者一眼看出哪些真属于当前活动范围。
+    //    数字全部来自 projection 的 governanceScope,本层只负责措辞。
+    const countsOf = bucket => {
+        const bits = [];
+        if (bucket.errors) bits.push(`${bucket.errors} 项治理错误`);
+        if (bucket.warnings) bits.push(`${bucket.warnings} 项治理提醒`);
+        return bits.join(',');
+    };
+    const gs = p.governanceScope;
+    let healthLine;
+    if (gs && gs.status === 'resolved') {
+        const un = countsOf(gs.unattributed);
+        healthLine = `<p>当前活动范围:${countsOf(gs.current) || '未发现治理错误或提醒'}。</p>`
+            + `<p>项目历史治理债务:${countsOf(gs.historical) || '未发现治理错误或提醒'}。</p>`
+            + `<p>未归属:${un ? `${un},无法定位到具体模块` : '未发现无法定位到具体模块的治理项'}。</p>`;
+    } else {
+        // 焦点无法可靠定位 → 不编造 current/historical。合计仍然显示,数据不消失。
+        const globalBits = [];
+        if (p.driftErrors) globalBits.push(`${p.driftErrors} 项治理错误`);
+        if (p.driftWarnings) globalBits.push(`${p.driftWarnings} 项治理提醒`);
+        const un = gs ? countsOf(gs.unattributed) : '';
+        healthLine = '<p>当前活动范围:焦点无法可靠定位,不能判定相关治理项。</p>'
+            + '<p>项目历史治理债务:因活动范围未知,不能可靠拆分。</p>'
+            + `<p>未归属:${un || '无'}。</p>`
+            + `<p class="note">全项目治理总量:${globalBits.join(',') || '未发现需要处理的问题'}(未按范围拆分)。</p>`;
+    }
     // 全局 verify 摘要(确定性;绝不用 generatedDataFresh 反推 IR freshness)
     let verifyLine = '';
     const v = p.verify;
@@ -186,8 +208,7 @@ function renderIndex({ projection, groupsConfig, pageMap, meta }) {
         else if (v.drift && v.drift.errors > 0) verifyLine = `<p>全局验证:存在 ${v.drift.errors} 项验证失败。</p>`;
         else verifyLine = '<p>全局验证:未发现失败项。</p>';
     }
-    const unattributed = p.unattributedFindings.length
-        ? `<p>另有 ${p.unattributedFindings.length} 项无法定位到具体模块的治理提醒(详见技术详情)。</p>` : '';
+    // 未归属数量已由上面的第三条范围文案承载,不再单独重复一行(原始数据仍在技术详情里)。
     // provider 状态是信息性文案,绝不渲染为风险(provider stale ≠ IR 不新鲜)
     let providerLine = '';
     const cp = p.codePerception;
@@ -208,7 +229,7 @@ function renderIndex({ projection, groupsConfig, pageMap, meta }) {
 
     const body = `<h1>${escapeHtml(meta.projectName || '')} 项目全貌</h1>`
         + positioning + focusLine + progressLine + fresh
-        + healthLine + verifyLine + unattributed + providerLine + linksLine
+        + healthLine + verifyLine + providerLine + linksLine
         + nav
         + renderSvgMap({ modules: projection.modules, groupsConfig, pageMap, validEdges: projection.validEdges || [] })
         + `<details><summary>技术详情</summary><pre>${escapeHtml(JSON.stringify(p, null, 2))}</pre></details>`;

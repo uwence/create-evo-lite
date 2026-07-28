@@ -121,15 +121,23 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
     // counted into ProjectHealth.driftInfo — data never silently disappears.
     const unattributed = [];
     const findingsByModule = new Map();
+    // Non-info findings deduped by finding id — the input for the governance-scope
+    // partition below. A finding with no id gets a positional key so id-less findings
+    // are never silently collapsed into one.
+    const scopeFindings = new Map();
     let infoCount = 0;
+    let findingIndex = -1;
     for (const f of (((driftReport || {}).findings) || [])) {
         if (!f) continue;
+        findingIndex += 1;
         if (f.level === 'info') { infoCount += 1; continue; }
         const hits = new Set();
         for (const ev of (f.evidence || [])) {
             const att = fileIndex.get(normalizePath(ev));
             if (att) hits.add(att.module);
         }
+        const scopeKey = f.id == null ? `#${findingIndex}` : f.id;
+        if (!scopeFindings.has(scopeKey)) scopeFindings.set(scopeKey, { key: scopeKey, level: f.level, hits });
         if (!hits.size) { unattributed.push(f); continue; }
         for (const moduleId of hits) {
             if (!findingsByModule.has(moduleId)) findingsByModule.set(moduleId, new Map());
@@ -158,6 +166,42 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
                 if (m) m.focus = true;
             }
         }
+    }
+
+    // ---- governance scope: current / historical / unattributed (mutually exclusive) ----
+    // Three disjoint buckets over the NON-INFO findings, deduped by finding id. Their
+    // sum equals the deduped non-info finding count — the homepage must never present
+    // project-wide historical debt as if the current work produced it.
+    //   - a finding hitting BOTH a focus module and a non-focus module counts ONCE, in
+    //     `current`: it really is part of the active scope, and putting it in both would
+    //     inflate two numbers from one fact.
+    //   - info findings never enter these buckets (design §3.3); they stay in driftInfo.
+    //   - focus UNRESOLVED → status 'unresolved' and current/historical stay EMPTY.
+    //     Labelling every attributable finding as historical debt would be a guess.
+    //     `unattributed` is still exact, and the render layer still shows the global total,
+    //     so nothing disappears from the page.
+    //   - focus resolved but attributable to NO module is NOT the same thing: the scope is
+    //     known, it simply contains no indexed module, so current is legitimately 0 and the
+    //     rest is historical. Treating this as 'unresolved' would drop every attributable
+    //     finding out of all three buckets and silently break conservation.
+    const focusModuleIds = new Set(focusInfo.moduleIds);
+    const emptyBucket = () => ({ errors: 0, warnings: 0, findingIds: [] });
+    const governanceScope = {
+        status: focusInfo.resolved ? 'resolved' : 'unresolved',
+        current: emptyBucket(), historical: emptyBucket(), unattributed: emptyBucket(),
+    };
+    const addToScope = (bucket, entry) => {
+        if (entry.level === 'error') bucket.errors += 1; else bucket.warnings += 1;
+        bucket.findingIds.push(entry.key);
+    };
+    for (const entry of scopeFindings.values()) {
+        if (!entry.hits.size) { addToScope(governanceScope.unattributed, entry); continue; }
+        if (governanceScope.status !== 'resolved') continue;
+        addToScope([...entry.hits].some(id => focusModuleIds.has(id))
+            ? governanceScope.current : governanceScope.historical, entry);
+    }
+    for (const bucket of [governanceScope.current, governanceScope.historical, governanceScope.unattributed]) {
+        bucket.findingIds.sort();
     }
 
     // ---- recent commits per module ----
@@ -196,6 +240,7 @@ function buildProjection({ architectureIR, planIR, exploreResult, driftReport, v
         driftWarnings: summary.warnings ?? 0,
         driftInfo: summary.info ?? infoCount,
         unattributedFindings: unattributed.map(f => ({ id: f.id, rule: f.rule, level: f.level })),
+        governanceScope,
         verify: verifySummary || null,
         inputFreshness: {
             architecture: computeFreshness(architectureIR),
