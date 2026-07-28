@@ -11146,8 +11146,10 @@ async function runChildRuntimeTests() {
         const srcPage = () => ({ page: 'source/src-x.js--00000000.html' });
 
         // 1. 默认词典命中 —— 六处显示面必须一致
-        const zh = DEFAULT_MODULE_LABELS['module:memory-service'];
-        assert.ok(zh && /[一-鿿]/.test(zh), 'the built-in table must carry a Chinese label for a known module id');
+        const zh = moduleLabel('module:memory-service', 'Memory Service');
+        assert.ok(/[一-鿿]/.test(zh), 'the built-in table must carry a Chinese label for a known module id + canonical name');
+        assert.strictEqual(DEFAULT_MODULE_LABELS['module:memory-service'].expectedName, 'Memory Service',
+            'each built-in entry must declare the canonical IR name it is scoped to');
         const known = mkNamed('module:memory-service', 'Memory Service', 'service');
         const pm1 = createPageMap();
         const map1 = renderSvgMap({ modules: [known], groupsConfig: null, pageMap: pm1, validEdges: [] });
@@ -11176,6 +11178,36 @@ async function runChildRuntimeTests() {
             assert.ok(!html.includes(zh), `${label} must not keep the built-in label once the project overrides it`);
         }
         assert.ok(page2.includes('「项目自定义名」属于'), 'narrative must honour the project alias too');
+
+        // 2b. 同 id、不同 canonical name —— 内置标签不得套到子仓头上。
+        //     dictionary.js 随 templates/ 下发,而 module:<slug> 在项目之间没有全局唯一语义:
+        //     子仓完全可能也有 module:planning,含义却是运动规划而不是 Planning IR 扫描器。
+        const zhPlanning = moduleLabel('module:planning', 'Planning');
+        assert.ok(/[一-鿿]/.test(zhPlanning), 'the mother-repo canonical name must still hit the built-in label');
+        assert.strictEqual(moduleLabel('module:planning', 'PLC Motion Planning'), 'PLC Motion Planning',
+            'a module that merely shares the id must keep its own canonical name');
+        const collision = mkNamed('module:planning', 'PLC Motion Planning', 'service');
+        const collisionProject = { ...nmProject,
+            focus: { resolved: true, taskId: 'task:t', label: '做点事', moduleIds: ['module:planning'] } };
+        const pmC = createPageMap();
+        const mapC = renderSvgMap({ modules: [collision], groupsConfig: null, pageMap: pmC, validEdges: [] });
+        const idxC = renderIndex({ projection: { modules: [collision], project: collisionProject, totals: nmTotals, warnings: [] },
+            groupsConfig: null, pageMap: pmC, meta: nmMeta });
+        const pageC = renderModulePage({ mp: collision, pageMap: pmC, meta: nmMeta, sourcePageFor: srcPage, groupsConfig: null });
+        for (const [label, html] of [['map', mapC], ['index', idxC], ['module page', pageC]]) {
+            assert.ok(!html.includes(zhPlanning), `${label} must not apply the mother-repo label to a same-id foreign module`);
+            assert.ok(html.includes('PLC Motion Planning'), `${label} must keep the foreign module's own name`);
+        }
+        assert.ok(pageC.includes('<title>PLC Motion Planning — Evo-Lite Wiki</title>'), 'title keeps the foreign name');
+        assert.ok(pageC.includes('<h1>PLC Motion Planning</h1>'), 'h1 keeps the foreign name');
+        assert.ok(pageC.includes('「PLC Motion Planning」属于'), 'narrative keeps the foreign name');
+
+        // 2c. 项目配置对同 id 异名模块仍然拥有最高优先级
+        const collisionAlias = { laneLabels: {}, moduleAliases: { 'module:planning': '运动规划' }, groups: [] };
+        const pageCA = renderModulePage({ mp: collision, pageMap: createPageMap(), meta: nmMeta,
+            sourcePageFor: srcPage, groupsConfig: collisionAlias });
+        assert.ok(pageCA.includes('<h1>运动规划</h1>'), 'the project alias still wins for a same-id foreign module');
+        assert.ok(!pageCA.includes(zhPlanning), 'the built-in label must not resurface once the project sets an alias');
 
         // 3. 未知模块 —— 保留原始 name,不猜译、不报错
         const unknownMod = mkNamed('module:zzz-not-in-dictionary', 'Zzz Not In Dictionary', 'service');

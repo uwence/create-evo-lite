@@ -21,29 +21,38 @@ const ROLE_LABELS = {
     scanner: '扫描与分析', governance: '治理', docs: '文档', test: '测试', unknown: '其他',
 };
 
-// Display-only Chinese names for module ids verified against this repo's
-// Architecture IR. EXACT id match only — no tokenizing, no regex guessing, no
-// role substitution, no prefix matching: a child repo whose module ids differ
-// simply falls back to its own module name. A project's own
-// wiki-groups.moduleAliases still wins over this table. Canonical identity
-// (moduleId, IR name, hrefs, edge endpoints) is never touched by this.
+// Display-only Chinese names for modules verified against THIS repo's
+// Architecture IR. Keyed by module id AND guarded by the canonical IR name,
+// because this file ships to child repos through templates/ and `module:<slug>`
+// carries no cross-project meaning: a child repo may well have its own
+// `module:planning` that means motion planning, not the Planning IR scanner.
+// Applying a label on the id alone would silently misstate that repo's
+// architecture. Requiring the name to match too is fail-safe — if the mother's
+// own IR name ever changes, the worst case is falling back to the canonical
+// name, never wearing a stale label.
+//
+// EXACT matches only — no tokenizing, no regex guessing, no role substitution,
+// no prefix matching. A project's own wiki-groups.moduleAliases still wins over
+// this table, and canonical identity (moduleId, IR name, hrefs, edge endpoints)
+// is never touched by any of it.
 const DEFAULT_MODULE_LABELS = {
-    'module:agents-workflow': 'Agent 与工作流',
-    'module:architecture': '架构扫描',
-    'module:architecture-wiki': '架构治理 Wiki',
-    'module:cli-entry': 'CLI 入口',
-    'module:dashboard': '仪表盘',
-    'module:docs-planning': '文档与规划',
-    'module:hook-scaffold': '钩子脚手架',
-    'module:inspector': '检视器',
-    'module:memory-service': '记忆服务',
-    'module:planning': '计划扫描',
-    'module:runtime': '运行时',
-    'module:test': '测试',
+    'module:agents-workflow': { expectedName: 'Agents & Workflow', label: 'Agent 与工作流' },
+    'module:architecture': { expectedName: 'Architecture', label: '架构扫描' },
+    'module:architecture-wiki': { expectedName: 'Architecture Governance Wiki', label: '架构治理 Wiki' },
+    'module:cli-entry': { expectedName: 'CLI Entry', label: 'CLI 入口' },
+    'module:dashboard': { expectedName: 'Dashboard', label: '仪表盘' },
+    'module:docs-planning': { expectedName: 'Docs & Planning', label: '文档与规划' },
+    'module:hook-scaffold': { expectedName: 'Hook Scaffold', label: '钩子脚手架' },
+    'module:inspector': { expectedName: 'Inspector', label: '检视器' },
+    'module:memory-service': { expectedName: 'Memory Service', label: '记忆服务' },
+    'module:planning': { expectedName: 'Planning', label: '计划扫描' },
+    'module:runtime': { expectedName: 'Runtime', label: '运行时' },
+    'module:test': { expectedName: 'Test', label: '测试' },
 };
 
 function moduleLabel(moduleId, fallback) {
-    return DEFAULT_MODULE_LABELS[moduleId] || fallback;
+    const entry = DEFAULT_MODULE_LABELS[moduleId];
+    return entry && entry.expectedName === fallback ? entry.label : fallback;
 }
 
 function translateRule(rule) {
