@@ -1557,20 +1557,31 @@ async function track(mechanism, details, options = {}) {
         throw new Error('Usage: node .evo-lite/cli/memory.js context track --mechanism="机制名" --details="长文本经验" [--resolve="4-char-hash"]');
     }
 
+    // A trajectory entry is one physical line, and mechanism is interpolated into it ahead
+    // of the folded summary — so it has to be single-line too, or it reopens the same split
+    // entry / ghost entry hole that folding details closed. Normalize BEFORE any archive
+    // write so a whitespace-only label fails fast instead of leaving an orphan archive, and
+    // report the normalized value everywhere so archive, trajectory, log and the returned
+    // payload never disagree about what mechanism this call used.
+    const normalizedMechanism = String(mechanism).replace(/\s+/g, ' ').trim();
+    if (!normalizedMechanism) {
+        throw new Error('无效的 mechanism：机制名不能是纯空白，必须是单行非空文本。');
+    }
+
     ensureContextFile();
     ensureCleanWorktree();
     await ensureMemoryStoreReady();
 
     const type = options.type || 'task';
     const archiveId = buildArchiveId();
-    const archiveResult = await archive(`[${mechanism}]\n${details}`, type, {
+    const archiveResult = await archive(`[${normalizedMechanism}]\n${details}`, type, {
         id: archiveId,
         silent: options.silent,
         timestamp: new Date().toISOString(),
     });
 
     let markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
-    markdown = updateTrajectory(markdown, mechanism, details, getCommitHash());
+    markdown = updateTrajectory(markdown, normalizedMechanism, details, getCommitHash());
     markdown = updateMetaGitState(markdown, getWorkspaceRoot());
 
     let resolvedLine = null;
@@ -1581,11 +1592,11 @@ async function track(mechanism, details, options = {}) {
     }
 
     fs.writeFileSync(ACTIVE_CONTEXT_PATH, markdown, 'utf8');
-    appendLog('TRACK', `${mechanism} | resolve=${options.resolve || 'none'}`);
+    appendLog('TRACK', `${normalizedMechanism} | resolve=${options.resolve || 'none'}`);
     return {
         archivePath: archiveResult.filePath,
         chunkCount: archiveResult.chunkCount,
-        mechanism,
+        mechanism: normalizedMechanism,
         resolvedLine,
         status: {
             archive: 'written',

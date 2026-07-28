@@ -537,32 +537,55 @@ async function runIntegrationTests() {
             });
             const trajSvc = trajLoaded.service;
 
+            const trajContextPath = path.join(trajRuntime.runtimeRoot, 'active_context.md');
+            const trajArchiveDir = path.join(trajRuntime.runtimeRoot, 'raw_memory');
+            const countArchives = () => (fs.existsSync(trajArchiveDir) ? fs.readdirSync(trajArchiveDir).length : 0);
+
             await trajSvc.track('MultiLineDetails', 'Line one of the closure note.\nLine two continues after a newline and must stay on one trajectory line.');
             await trajSvc.track('ListDetails', 'Closure summary head.\n- ghost bullet must not become its own entry\n- second bullet');
+            // mechanism is user input too, and is interpolated ahead of the summary.
+            await trajSvc.track('Mechanism\n- ghost mechanism', 'Ordinary details with no newline.');
 
-            const trajMd = fs.readFileSync(path.join(trajRuntime.runtimeRoot, 'active_context.md'), 'utf8');
+            // A whitespace-only mechanism must fail BEFORE any archive is written, so the
+            // rejection cannot leave an orphan archive or a half-updated active context.
+            const archivesBeforeReject = countArchives();
+            const contextBeforeReject = fs.readFileSync(trajContextPath, 'utf8');
+            await assert.rejects(
+                () => trajSvc.track(' \n\t ', 'details for a blank mechanism'),
+                /mechanism|机制名/i,
+                'a whitespace-only mechanism must be rejected'
+            );
+            assert.strictEqual(countArchives(), archivesBeforeReject, 'rejected track still wrote an archive');
+            assert.strictEqual(fs.readFileSync(trajContextPath, 'utf8'), contextBeforeReject, 'rejected track still mutated active_context');
+
+            const trajMd = fs.readFileSync(trajContextPath, 'utf8');
             const trajSection = trajMd.match(/<!-- BEGIN_TRAJECTORY -->([\s\S]*?)<!-- END_TRAJECTORY -->/)[1];
             const trajLines = trajSection.split('\n').map(line => line.trim()).filter(Boolean);
 
-            // Two tracked entries plus the seeded "- [init]" template entry.
+            // Three tracked entries plus the seeded "- [init]" template entry.
             assert.strictEqual(
                 trajLines.length,
-                3,
+                4,
                 `trajectory must hold exactly one physical line per entry, got ${trajLines.length}:\n${trajSection}`
             );
-            for (const line of trajLines.slice(0, 2)) {
+            for (const line of trajLines.slice(0, 3)) {
                 assert.ok(
                     /^- \[[^\]]+\] \d{4}-\d{2}-\d{2} [^:]+: /.test(line),
                     `trajectory entry lost its anchor shape: ${line}`
                 );
             }
-            assert.ok(trajLines[2].startsWith('- [init]'), `seeded template entry was displaced: ${trajLines[2]}`);
-            assert.ok(trajLines[0].includes('ghost bullet must not become its own entry'), 'folded summary dropped the text after the first newline');
-            assert.ok(trajLines[1].includes('Line two continues after a newline'), 'folded summary dropped the text after the first newline');
+            assert.ok(trajLines[3].startsWith('- [init]'), `seeded template entry was displaced: ${trajLines[3]}`);
+            assert.ok(trajLines[0].includes('Mechanism - ghost mechanism: Ordinary details with no newline.'), `mechanism was not folded to one line: ${trajLines[0]}`);
+            assert.ok(!trajLines.some(line => line.startsWith('- ghost mechanism')), 'a folded mechanism must not leave a ghost entry');
+            assert.ok(trajLines[1].includes('ghost bullet must not become its own entry'), 'folded summary dropped the text after the first newline');
+            assert.ok(trajLines[2].includes('Line two continues after a newline'), 'folded summary dropped the text after the first newline');
 
-            // Downstream parsing must see three well-formed entries, not ghosts.
+            // Downstream parsing must see four well-formed entries, not ghosts.
             const trajParsed = trajLoaded.service.splitTrajectoryEntries(trajSection);
-            assert.strictEqual(trajParsed.length, 3, 'splitTrajectoryEntries saw a ghost entry');
+            assert.strictEqual(trajParsed.length, 4, 'splitTrajectoryEntries saw a ghost entry');
+            // The returned payload must carry the same normalized mechanism the entry shows.
+            const normalizedTrack = await trajSvc.track('Payload\tMechanism', 'Payload mechanism must be normalized in the return value too.');
+            assert.strictEqual(normalizedTrack.mechanism, 'Payload Mechanism', 'track payload reported a non-normalized mechanism');
             console.log('✅ 2s trajectory whitespace folding passed');
         }
 
