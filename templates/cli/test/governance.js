@@ -7452,7 +7452,7 @@ async function runGovernanceTests() {
             if (process.platform === 'win32') {
                 // `managed` (受管 settings 绝对路径) is declared further below — compute the same
                 // path locally rather than forward-referencing that const.
-                const managedForShellGuard = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
+                const managedForShellGuard = path.join(fs.realpathSync.native(fakeProject), '.claude', 'settings.json');
                 const comspec = process.env.ComSpec || process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe';
                 assert.ok(fs.existsSync(comspec), `sanity: ${comspec} must exist to run this guard`);
                 const savedHookShell = process.env.EVO_LITE_HOOK_SHELL;
@@ -7477,7 +7477,7 @@ async function runGovernanceTests() {
             }
 
             // 受管对象唯一:<canonicalProjectRoot>/.claude/settings.json —— 项目内的其他文件也不许被本工具触碰
-            const managed = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
+            const managed = path.join(fs.realpathSync.native(fakeProject), '.claude', 'settings.json');
             assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'), managed,
                 'relative settings bind to the physical project root');
             assert.strictEqual(ti.managedSettingsPath(fakeProject), managed, 'managed path is derived, not supplied');
@@ -7836,7 +7836,7 @@ async function runGovernanceTests() {
             {
                 const inst = require(path.join(TEMPLATE_CLI_DIR, 'takeover-install.js'));
                 const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-inst-msg-'));
-                const realRoot = fs.realpathSync(projectRoot);
+                const realRoot = fs.realpathSync.native(projectRoot);
                 const settings = path.join(realRoot, '.claude', 'settings.json');
                 const enoent = () => Object.assign(new Error('no entry'), { code: 'ENOENT' });
                 // 逐字比较，不用宽正则：宽正则会让"错误映射到了别的分支"照样绿。
@@ -7973,7 +7973,7 @@ async function runGovernanceTests() {
 
             // realpath 故障注入 ②:仅 target 侧不可解析(根仍正常)→ deny
             fs.mkdirSync(path.join(root, 'locked'), { recursive: true });
-            rc.__setFsOps({ realpathSync: (p) => { if (String(p).includes('locked')) throw new Error('EPERM'); return fs.realpathSync(p); } });
+            rc.__setFsOps({ realpathSync: (p) => { if (String(p).includes('locked')) throw new Error('EPERM'); return fs.realpathSync.native(p); } });
             let tgtFail; try { tgtFail = await call('Write', { file_path: path.join(root, 'locked', 'a.txt') }); } finally { rc.__resetFsOps(); }
             assert.strictEqual(tgtFail.permissionDecision, 'deny', 'target realpath failure → deny (never string-only containment)');
 
@@ -8454,7 +8454,7 @@ async function runGovernanceTests() {
         {
             const pp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-physical-path.js'));
             const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-pp-'));
-            const realRoot = fs.realpathSync(root);
+            const realRoot = fs.realpathSync.native(root);
 
             // 1. 已存在的路径:等价于 realpath
             assert.strictEqual(pp.resolvePhysicalPath(root, fs), realRoot, 'existing path resolves to its realpath');
@@ -8566,7 +8566,13 @@ async function runGovernanceTests() {
         {
             const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
             const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-state-'));
-            const realState = fs.realpathSync(stateRoot);
+            // 期望值必须用 realpathSync.native —— 与守卫 DEFAULT_FS_OPS 同一个原语。
+            // 纯 JS 的 fs.realpathSync 在 win32 上【不展开 8.3 短名】,于是在
+            // os.tmpdir() 被短名化的宿主上(CI runner:C:\Users\RUNNER~1\...)算出
+            // 'RUNNER~1',而实现返回真实长名 'runneradmin' —— 测试红,实现无辜。
+            // 用弱原语迁就实现正是 takeover-receipt.js:16-22 记录的那次真实安全回归的
+            // 成因(大小写折叠让项目外写被误判为项目内),这里绝不反向妥协。
+            const realState = fs.realpathSync.native(stateRoot);
             const transcript = path.join(stateRoot, 'sess-abc.jsonl');
             fs.writeFileSync(transcript, '', 'utf8');
 
@@ -8751,7 +8757,7 @@ async function runGovernanceTests() {
             // roots: []，而 [].some(...) 本来就是 false，deny 照样成立。必须注入一个
             // 【ok:false 但 roots 非空】的返回值，才能把这两件事分开证明。
             {
-                const injectedRoot = rc.normalize(fs.realpathSync(stateA)) + '/memory';
+                const injectedRoot = rc.normalize(fs.realpathSync.native(stateA)) + '/memory';
                 const original = rc.deriveHostOwnedWriteRoots;
                 let calls = 0;
                 rc.deriveHostOwnedWriteRoots = () => {
