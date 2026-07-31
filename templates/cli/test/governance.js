@@ -7452,7 +7452,10 @@ async function runGovernanceTests() {
             if (process.platform === 'win32') {
                 // `managed` (受管 settings 绝对路径) is declared further below — compute the same
                 // path locally rather than forward-referencing that const.
-                const managedForShellGuard = path.join(fs.realpathSync.native(fakeProject), '.claude', 'settings.json');
+                // 纯 JS realpathSync,不是 .native:takeover-install.js 的 fsOps 默认就是 fs,
+                // 期望值必须与【它自己的】规范化一致。takeover-receipt.js 用 .native 是另一个
+                // 模块的另一套合同,不可互相套用(混用会在 8.3 短名宿主上两头对不上)。
+                const managedForShellGuard = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
                 const comspec = process.env.ComSpec || process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe';
                 assert.ok(fs.existsSync(comspec), `sanity: ${comspec} must exist to run this guard`);
                 const savedHookShell = process.env.EVO_LITE_HOOK_SHELL;
@@ -7477,7 +7480,7 @@ async function runGovernanceTests() {
             }
 
             // 受管对象唯一:<canonicalProjectRoot>/.claude/settings.json —— 项目内的其他文件也不许被本工具触碰
-            const managed = path.join(fs.realpathSync.native(fakeProject), '.claude', 'settings.json');
+            const managed = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');   // 同上:配 takeover-install 的 fsOps
             assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'), managed,
                 'relative settings bind to the physical project root');
             assert.strictEqual(ti.managedSettingsPath(fakeProject), managed, 'managed path is derived, not supplied');
@@ -7836,7 +7839,7 @@ async function runGovernanceTests() {
             {
                 const inst = require(path.join(TEMPLATE_CLI_DIR, 'takeover-install.js'));
                 const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-inst-msg-'));
-                const realRoot = fs.realpathSync.native(projectRoot);
+                const realRoot = fs.realpathSync(projectRoot);   // takeover-install 侧:纯 JS fsOps
                 const settings = path.join(realRoot, '.claude', 'settings.json');
                 const enoent = () => Object.assign(new Error('no entry'), { code: 'ENOENT' });
                 // 逐字比较，不用宽正则：宽正则会让"错误映射到了别的分支"照样绿。
@@ -7973,7 +7976,7 @@ async function runGovernanceTests() {
 
             // realpath 故障注入 ②:仅 target 侧不可解析(根仍正常)→ deny
             fs.mkdirSync(path.join(root, 'locked'), { recursive: true });
-            rc.__setFsOps({ realpathSync: (p) => { if (String(p).includes('locked')) throw new Error('EPERM'); return fs.realpathSync.native(p); } });
+            rc.__setFsOps({ realpathSync: (p) => { if (String(p).includes('locked')) throw new Error('EPERM'); return fs.realpathSync(p); } });
             let tgtFail; try { tgtFail = await call('Write', { file_path: path.join(root, 'locked', 'a.txt') }); } finally { rc.__resetFsOps(); }
             assert.strictEqual(tgtFail.permissionDecision, 'deny', 'target realpath failure → deny (never string-only containment)');
 
@@ -8454,7 +8457,8 @@ async function runGovernanceTests() {
         {
             const pp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-physical-path.js'));
             const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-pp-'));
-            const realRoot = fs.realpathSync.native(root);
+            // 本块把 fs 显式传给 pp.resolvePhysicalPath(root, fs),所以期望值也要用纯 JS 版。
+            const realRoot = fs.realpathSync(root);
 
             // 1. 已存在的路径:等价于 realpath
             assert.strictEqual(pp.resolvePhysicalPath(root, fs), realRoot, 'existing path resolves to its realpath');
