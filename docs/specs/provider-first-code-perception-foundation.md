@@ -1,8 +1,9 @@
 ---
 id: spec:provider-first-code-perception-foundation
-status: adopted
+status: parked
 created: 2026-07-07
 relations: [{"kind":"spawned-from","target":"spec:evo-lite-providers"}]
+parkedUntil: Deferred behind active P0 [zvec-win-unicode-containment]; reactivate when code-perception sub-spec ② becomes the next explicitly authorized delivery track.
 ---
 
 # Spec: Provider-First Code Perception Foundation (Umbrella)
