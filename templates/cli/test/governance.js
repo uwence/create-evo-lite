@@ -11855,6 +11855,62 @@ async function runChildRuntimeTests() {
         }
         console.log('✅ T-zwuc-characterization passed');
     }
+
+    console.log('T-zwuc-T1-lexical-purity. Lexical layer is a pure predicate: no FS, no zvec, deterministic ...');
+    {
+        const modPath = path.join(CLI_DIR, 'zvec-path-containment.js');
+        const inputs = [
+            'C:\\evo\\project\\.evo-lite\\zvec\\collection',
+            'C:\\evo\\\u9879\u76ee\\.evo-lite\\zvec\\collection',
+            '\\\\server\\share\\evo\\.evo-lite\\zvec\\collection',
+            '\\\\?\\C:\\evo\\.evo-lite\\zvec\\collection',
+            'C:\\evo\\CON\\zvec\\collection',
+        ];
+        // Run in a child process: the parent suite has already loaded plenty of
+        // modules, so "was @zvec/zvec pulled in?" is only answerable in a process
+        // whose require cache this module is the only cause of.
+        //
+        // fs is patched AFTER the require so the CJS loader's own reads are not
+        // counted as classifier behaviour — the claim under test is that CALLING
+        // classifyLexical touches no filesystem, not that loading a file does not.
+        const childSource = [
+            "'use strict';",
+            `const mod = require(${JSON.stringify(modPath)});`,
+            "const fsMod = require('fs');",
+            'const fsCalls = [];',
+            'const originals = new Map();',
+            'for (const key of Object.keys(fsMod)) {',
+            "    if (typeof fsMod[key] !== 'function') continue;",
+            '    const original = fsMod[key];',
+            '    originals.set(key, original);',
+            '    fsMod[key] = function patched(...args) { fsCalls.push(key); return original.apply(this, args); };',
+            '}',
+            `const inputs = ${JSON.stringify(inputs)};`,
+            "const first = inputs.map((i) => mod.classifyLexical(i, 'win32'));",
+            "const second = inputs.map((i) => mod.classifyLexical(i, 'win32'));",
+            'for (const [key, original] of originals) fsMod[key] = original;',
+            'const zvecLoaded = Object.keys(require.cache).filter((k) => /@zvec|memory-index-zvec/.test(k));',
+            'process.stdout.write(JSON.stringify({ fsCalls, zvecLoaded, first, second }));',
+        ].join('\n');
+        const run = childProcess.spawnSync(process.execPath, ['-e', childSource], { encoding: 'utf8' });
+        assert.strictEqual(run.status, 0, `lexical purity child must exit 0 (stderr: ${run.stderr})`);
+        const purity = JSON.parse(run.stdout);
+        assert.deepStrictEqual(purity.fsCalls, [], 'classifyLexical must perform zero filesystem calls (I5)');
+        assert.deepStrictEqual(purity.zvecLoaded, [], 'the containment module must not load @zvec/zvec or memory-index-zvec (I4)');
+        assert.deepStrictEqual(purity.first, purity.second, 'classifyLexical must be deterministic for identical input');
+        assert.strictEqual(purity.first[0].verdict, 'LEXICALLY_ELIGIBLE', 'plain ASCII drive-absolute path is lexically eligible');
+        for (const result of purity.first.slice(1)) {
+            assert.strictEqual(result.verdict, 'UNKNOWN', 'every non-profile form is lexically UNKNOWN');
+        }
+
+        // I9: the platform argument, not the host OS, decides. Without this the
+        // whole matrix would be untestable on Linux CI, where these strings are
+        // ordinary filenames.
+        const zpc = require(modPath);
+        assert.strictEqual(zpc.classifyLexical('/home/u/\u9879\u76ee/.evo-lite/zvec/collection', 'linux').verdict,
+            'LEXICALLY_ELIGIBLE', 'non-win32 platforms keep their current behaviour (I9)');
+        console.log('✅ T-zwuc-T1-lexical-purity passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
