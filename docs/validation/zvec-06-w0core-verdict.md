@@ -6,6 +6,11 @@
 - 隔离工作区:`$CLAUDE_JOB_DIR/tmp/w0core`(v05 控制组 / v06 实验组各自独立 `npm install`)
 - 生产影响:**无** —— 未改默认依赖、未改运行时代码、未做 hive nurture
 
+> **ERRATA(2026-07-31)**:本判决把 readOnly 矩阵推迟到 W0-ext,措辞隐含
+> 「readOnly 是 0.6 才有的能力」。Phase 0/0B 实测证伪:0.5.0 已具备真实共享
+> 只读语义,两版矩阵逐行一致。原文保留;后续结论见
+> `docs/validation/zvec-06-phase0b-verdict.md`。
+
 ## 判决
 
 ```

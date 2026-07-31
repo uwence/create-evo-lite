@@ -9,6 +9,14 @@
   `node .evo-lite/cli/memory.js mcp` 僵尸进程持有 zvec 写锁。
 - 分发范围:母仓 + hive nurture(CodePLC、hungersnakegame4)。
 
+> **ERRATA(2026-07-31,`[zvec-06-upgrade]` Phase 0/0B)**
+> 本文 §1 表格与 §2 中「0.5.0 无 readOnly 选项 / reader-writer 拆分随
+> `[zvec-06-upgrade]` 落地」的前提**已被实测证伪**:0.5.0 与 0.6.0 均支持
+> `ZVecOpen(path, { readOnly: true })`,且跨进程共享读语义两版逐行一致
+> (七项矩阵 + 写×写负控)。原文保留不改,仅在此声明作废;详见
+> `docs/validation/zvec-06-phase0b-verdict.md`。
+> 该证伪**不影响** a177 的锁协调结论 —— 那部分基于写锁行为,未受此前提牵连。
+
 ## 1. 问题陈述(grounded facts)
 
 | 事实 | 出处 |
