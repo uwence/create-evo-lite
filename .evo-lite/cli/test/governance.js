@@ -2923,6 +2923,122 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T-zvec-namespace-isolation. Testing that an empty scope never leaks other namespaces (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed');
+            } else {
+                // 数据隔离合同。zvec 0.5.0 无法区分「没有 candidate 限制」与「过滤器已执行
+                // 但命中 0 条」,于是把空 candidate 列表当成「不过滤」—— recall 一个【空】
+                // namespace 会返回其他 namespace 的文档。实测 0.5.0 泄漏 / 0.6.0 返回 []。
+                // 这是 Evo-Lite 自己的 prose/code/symbol 边界,不是上游 release note 的转述,
+                // 所以断言必须走真实的 ZvecMemoryIndex.searchText,不能只测引擎原语。
+                const prevRoot = process.env.EVO_LITE_ROOT;
+                const prevDb = process.env.EVO_LITE_DB_PATH;
+                const nsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-ns-isolation-'));
+                try {
+                    resetCliModuleCache();
+                    process.env.EVO_LITE_ROOT = nsDir;
+                    process.env.EVO_LITE_DB_PATH = path.join(nsDir, 'memory.db');
+                    const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                    const idx = new ZvecMemoryIndex();
+                    idx.initialize();
+                    try {
+                        const ts = '2026-07-31T00:00:00.000Z';
+                        idx.upsert({ content: 'zqxjkvbrw 只存在于 prose 的独特令牌', namespace: 'prose', timestamp: ts });
+                        idx.upsert({ content: 'zqxjkvbrw shared token in the symbol namespace', namespace: 'symbol', timestamp: ts });
+                        // namespace 'code' 故意留空 —— 这正是触发条件。
+
+                        // 控制项先行:过滤器命中时必须真的返回结果。若这两条失败,
+                        // 下面的空结果可能只是「查询本身就查不到」,断言就没有意义。
+                        const all = idx.searchText('zqxjkvbrw', { scope: 'all', topK: 10 });
+                        assert.strictEqual(all.length, 2,
+                            `control failed: the token must be findable without a scope filter, else the isolation assertion below is vacuous. Got ${JSON.stringify(all.map(r => r.namespace))}`);
+                        const prose = idx.searchText('zqxjkvbrw', { scope: 'prose', topK: 10 });
+                        assert.deepStrictEqual(prose.map(r => r.namespace), ['prose'],
+                            `control failed: a scope filter that DOES match must still return its own namespace. Got ${JSON.stringify(prose.map(r => r.namespace))}`);
+
+                        // 合同本体:目标 namespace 为空 → 必须严格为空,不得回退成「不过滤」。
+                        const empty = idx.searchText('zqxjkvbrw', { scope: 'code', topK: 10 });
+                        assert.deepStrictEqual(empty.map(r => r.namespace), [],
+                            `namespace isolation breach: recall(scope='code') returned documents from ${JSON.stringify(empty.map(r => r.namespace))} while the code namespace is empty. A zero-match scalar filter must NOT degrade into "no filter" — that hands the agent other namespaces' memory under a scope it explicitly narrowed.`);
+                        const unknown = idx.searchText('zqxjkvbrw', { scope: 'no-such-namespace', topK: 10 });
+                        assert.deepStrictEqual(unknown.map(r => r.namespace), [],
+                            `namespace isolation breach: an unknown scope returned ${JSON.stringify(unknown.map(r => r.namespace))} instead of nothing.`);
+                    } finally {
+                        try { idx.close(); } catch (_) {}
+                    }
+                } finally {
+                    if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
+                    if (prevDb === undefined) delete process.env.EVO_LITE_DB_PATH; else process.env.EVO_LITE_DB_PATH = prevDb;
+                    resetCliModuleCache();
+                    try { fs.rmSync(nsDir, { recursive: true, force: true }); } catch (_) {}
+                }
+                console.log('✅ T-zvec-namespace-isolation passed');
+            }
+        }
+
+        console.log('T-zvec-reopen-visibility. Testing that un-optimized writes survive a reopen (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed');
+            } else {
+                // ZvecMemoryIndex._finalizeSync() 吞掉 optimizeSync() 的异常
+                // (`try { ... } catch (_) {}`),进程被杀时也根本走不到 optimize。
+                // 于是「已写入但未 optimize」是一个合法且可达的落盘状态。zvec 0.5.0
+                // 重开后丢失该 writing segment 的 FTS 统计 → 这些 archive 静默检索不到。
+                // 这里用 _dirty=false 精确复刻「optimize 没有发生」的那条路径。
+                const prevRoot = process.env.EVO_LITE_ROOT;
+                const prevDb = process.env.EVO_LITE_DB_PATH;
+                const rvDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-reopen-vis-'));
+                try {
+                    resetCliModuleCache();
+                    process.env.EVO_LITE_ROOT = rvDir;
+                    process.env.EVO_LITE_DB_PATH = path.join(rvDir, 'memory.db');
+                    const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                    const ts = '2026-07-31T00:00:00.000Z';
+
+                    const first = new ZvecMemoryIndex();
+                    first.initialize();
+                    for (let i = 0; i < 3; i++) {
+                        first.upsert({ content: `sealed rvprobe archive ${i}`, namespace: 'prose', timestamp: ts });
+                    }
+                    first.close();                       // dirty → optimize 正常发生,成为已封存 segment
+
+                    const second = new ZvecMemoryIndex();
+                    second.initialize();
+                    for (let i = 0; i < 3; i++) {
+                        second.upsert({ content: `unoptimized rvprobe archive ${i}`, namespace: 'prose', timestamp: ts });
+                    }
+                    const before = second.searchText('rvprobe', { scope: 'all', topK: 20 });
+                    assert.strictEqual(before.length, 6,
+                        `control failed: all 6 archives must be visible to the writer that just wrote them, else the post-reopen assertion is vacuous. Got ${before.length}`);
+                    second._dirty = false;               // 复刻 optimize 未发生(异常被吞 / 进程被杀)
+                    second.close();
+
+                    const third = new ZvecMemoryIndex();
+                    third.initialize();
+                    try {
+                        const after = third.searchText('rvprobe', { scope: 'all', topK: 20 });
+                        assert.strictEqual(after.length, 6,
+                            `archive loss after reopen: only ${after.length}/6 archives are findable once the collection is reopened without an intervening optimize. Writes that were never optimized must stay searchable — otherwise a swallowed optimizeSync() error or a killed process silently makes committed archives unrecallable, with no error anywhere.`);
+                    } finally {
+                        try { third.close(); } catch (_) {}
+                    }
+                } finally {
+                    if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
+                    if (prevDb === undefined) delete process.env.EVO_LITE_DB_PATH; else process.env.EVO_LITE_DB_PATH = prevDb;
+                    resetCliModuleCache();
+                    try { fs.rmSync(rvDir, { recursive: true, force: true }); } catch (_) {}
+                }
+                console.log('✅ T-zvec-reopen-visibility passed');
+            }
+        }
+
         console.log('T-mcp-stdin-exit. Testing MCP stdin-EOF lifecycle (A) + shutdown cleanup of a held lock (B) (skips if @zvec/zvec absent) ...');
         {
             let zvecAvailable = true;
