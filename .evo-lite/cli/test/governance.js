@@ -2767,6 +2767,303 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-lock-ephemeral passed');
 
+        console.log('T-zvec06-readonly-matrix. Characterizing real cross-process readOnly concurrency (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed');
+            } else {
+                const zvec = require('@zvec/zvec');
+                const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+
+                // 设计附录 A 的七项判定矩阵。必须用真实临时 collection + 独立 OS 进程:
+                // 函数 arity、源码 grep、同进程双实例都测不出 OS 级文件锁行为。
+                // API 是否接受 { readOnly: true } 并不能说明它是否具有实际共享读语义 ——
+                // 静默接受正是本矩阵要抓的东西,所以判定只能来自跨进程可观察的并发结果。
+                // Phase 0B 实测:0.5.0 与 0.6.0 【均】具有真实共享读语义,两版逐行一致。
+                // holder 落在 os.tmpdir(),Node 的模块解析以【脚本所在目录】向上走,cwd 不参与。
+                // 裸 require('@zvec/zvec') 在 CI runner 上必然 MODULE_NOT_FOUND;开发机上则会
+                // 命中一个游离的用户级 node_modules,于是 holder 加载的 zvec 与父进程【不是同一份】
+                // —— Phase 0B 的 0.6 只读矩阵就是这样变成 0.5-holder × 0.6-prober 的混版测量。
+                // 传绝对路径同时解决两件事:CI 上能解析,且两端保证同一 binding。
+                const zvecEntry = require.resolve('@zvec/zvec');
+                const HOLDER_SRC = [
+                    "'use strict';",
+                    "const fs = require('fs');",
+                    "const [, , colPath, mode, readyFile, releaseFile, zvecEntry] = process.argv;",
+                    "const zvec = require(zvecEntry);",
+                    "let col;",
+                    "try { col = mode === 'ro' ? zvec.ZVecOpen(colPath, { readOnly: true }) : zvec.ZVecOpen(colPath); }",
+                    "catch (e) {",
+                    "    fs.writeFileSync(readyFile, JSON.stringify({ ok: false, name: e.name, code: e.code, message: String(e.message) }));",
+                    "    process.exit(0);",
+                    "}",
+                    "global.__evoHoldCollection = col;   // 防 V8 GC 回收无引用局部量 → 原生 finalizer 提前释放锁",
+                    "fs.writeFileSync(readyFile, JSON.stringify({ ok: true, pid: process.pid }));",
+                    "const timer = setInterval(() => {",
+                    "    if (!fs.existsSync(releaseFile)) return;",
+                    "    clearInterval(timer);",
+                    "    try { col.closeSync(); } catch (_) {}",
+                    "    process.exit(0);",
+                    "}, 40);",
+                ].join('\n');
+
+                const matrixDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-zvec06-'));
+                const holderScript = path.join(matrixDir, 'holder.js');
+                fs.writeFileSync(holderScript, HOLDER_SRC, 'utf8');
+                const colPath = path.join(matrixDir, 'collection');
+                zvec.ZVecCreateAndOpen(colPath, new zvec.ZVecCollectionSchema({
+                    name: 'zvec06matrix',
+                    fields: [{ name: 'content', dataType: zvec.ZVecDataType.STRING }],
+                })).closeSync();
+
+                const waitFor = (file, timeoutMs) => {
+                    const deadline = Date.now() + timeoutMs;
+                    while (Date.now() < deadline) {
+                        if (fs.existsSync(file)) return true;
+                        lock.sleepSync(40);
+                    }
+                    return fs.existsSync(file);
+                };
+                const holders = [];
+                const startHolder = (tag, mode) => {
+                    const readyFile = path.join(matrixDir, `${tag}-ready.json`);
+                    const releaseFile = path.join(matrixDir, `${tag}-release`);
+                    const proc = childProcess.spawn(process.execPath, [holderScript, colPath, mode, readyFile, releaseFile, zvecEntry],
+                        { stdio: ['ignore', 'ignore', 'pipe'], cwd: WORKSPACE_ROOT, env: { ...process.env } });
+                    // 一个死掉的 holder 必须自报死因。stdio:'ignore' 会把子进程异常吞掉,只留下
+                    // 一句 'never reported back' —— 那正是 release-gate 曾经红了八天却指错方向的原因。
+                    let stderr = '';
+                    let exited = null;
+                    let spawnError = null;
+                    proc.stderr.on('data', d => { stderr += String(d); });
+                    proc.on('error', e => { spawnError = e; });
+                    proc.on('exit', (code, signal) => { exited = { code, signal }; });
+                    holders.push({ tag, proc, releaseFile });
+                    assert.ok(waitFor(readyFile, 15000),
+                        `${tag} holder never reported back. `
+                        + `spawnError=${spawnError ? spawnError.message : 'none'} `
+                        + `exit=${exited ? JSON.stringify(exited) : 'still running'} `
+                        + `stderr=${JSON.stringify(stderr.slice(0, 600)) || '(empty)'}`);
+                    return JSON.parse(fs.readFileSync(readyFile, 'utf8'));
+                };
+                const releaseHolder = tag => {
+                    const h = holders.find(x => x.tag === tag);
+                    if (!h) return;
+                    fs.writeFileSync(h.releaseFile, 'go', 'utf8');
+                    const deadline = Date.now() + 15000;
+                    while (Date.now() < deadline && h.proc.exitCode === null && h.proc.signalCode === null) lock.sleepSync(40);
+                };
+                // 探测方也是独立进程(本测试进程 ≠ holder 进程),是真实跨进程冲突。
+                const probe = opts => {
+                    let handle = null;
+                    try {
+                        handle = opts ? zvec.ZVecOpen(colPath, opts) : zvec.ZVecOpen(colPath);
+                        try { handle.closeSync(); } catch (_) {}
+                        return { ok: true };
+                    } catch (e) {
+                        return {
+                            ok: false, name: e.name, code: e.code, message: String(e.message),
+                            isZVecError: zvec.isZVecError(e),
+                            matchesCanLock: /can't lock/i.test(String(e.message || '')),
+                            hasCause: e.cause !== undefined,
+                            isLockError_current: lock.isLockError(e),
+                        };
+                    }
+                };
+                const observed = {};
+                const report = () => {
+                    console.log('   --- zvec readOnly concurrency contract (observed) ---');
+                    for (const [k, v] of Object.entries(observed)) {
+                        console.log(`   ${k.padEnd(28)} ${v.ok ? 'OK' : 'BLOCKED ' + v.name + '/' + v.code}`);
+                    }
+                };
+
+                try {
+                    // 0. 负控:两个可写打开【必须】冲突。没有这条,「两个 reader 共存」
+                    //    可能只是夹具根本检测不出冲突,而不是 readOnly 真的生效。
+                    startHolder('control', 'rw');
+                    observed['0 control writer×writer'] = probe(null);
+                    assert.ok(!observed['0 control writer×writer'].ok,
+                        'negative control failed: two writable opens did NOT conflict, so this fixture cannot detect lock conflicts at all and every other row below is meaningless');
+                    releaseHolder('control');
+
+                    // 1. reader A 以 readOnly:true 打开
+                    observed['1 readerA(ro)'] = startHolder('readerA', 'ro');
+                    assert.ok(observed['1 readerA(ro)'].ok,
+                        `reader A must open read-only: ${JSON.stringify(observed['1 readerA(ro)'])}`);
+
+                    // 2. reader B 与 A 并发打开 —— 跨版本兼容性与读写锁行为合同
+                    observed['2 readerB(ro) w/ A'] = probe({ readOnly: true });
+                    // 3. reader 存活时 writer 的实际结果(不预设方向,只要求结论自洽)
+                    observed['3 writer w/ readers'] = probe(null);
+                    // 4. 所有 reader 关闭后 writer 是否立即恢复
+                    releaseHolder('readerA');
+                    observed['4 writer after readers'] = probe(null);
+                    // 5. writer 存活时 reader 的实际结果
+                    startHolder('writer', 'rw');
+                    observed['5 reader w/ writer'] = probe({ readOnly: true });
+                    // 6. writer 关闭后 reader 是否恢复
+                    releaseHolder('writer');
+                    observed['6 reader after writer'] = probe({ readOnly: true });
+                    report();
+
+                    // --- 不变量:与 0.5/0.6 无关,任何版本都必须成立 ---
+                    assert.ok(observed['4 writer after readers'].ok,
+                        `writer must recover once every reader closed: ${JSON.stringify(observed['4 writer after readers'])}`);
+                    assert.ok(observed['6 reader after writer'].ok,
+                        `reader must recover once the writer closed: ${JSON.stringify(observed['6 reader after writer'])}`);
+                    // 7. 锁冲突的真实错误形状 —— 附录 A 第 8 项:检测锚定在 0.5 的
+                    //    /can't lock/i 文案上,文案一变所有冲突会静默降级为裸 rethrow。
+                    const conflicts = Object.entries(observed).filter(([, v]) => !v.ok);
+                    for (const [caseName, v] of conflicts) {
+                        assert.ok(v.isZVecError, `${caseName}: a lock conflict must still be a zvec error — ${JSON.stringify(v)}`);
+                        assert.ok(v.isLockError_current,
+                            `${caseName}: the current isLockError() must still classify this conflict, otherwise every lock diagnostic silently degrades to a bare rethrow — ${JSON.stringify(v)}`);
+                    }
+                    if (conflicts.length) {
+                        const [, sample] = conflicts[0];
+                        console.log(`   lock error shape: name=${sample.name} code=${sample.code} `
+                            + `isZVecError=${sample.isZVecError} matchesCanLock=${sample.matchesCanLock} hasCause=${sample.hasCause}`);
+                    }
+
+                    // --- 跨版本行为合同:多进程并发只读 ---
+                    // 不是 0.5 RED / 0.6 GREEN 的升级判据 —— 两版都满足。它锁的是
+                    // 「这条语义在升级前后都不许消失」,回归时才会变红。
+                    assert.ok(observed['2 readerB(ro) w/ A'].ok,
+                        `two concurrent read-only readers must coexist — a behavioural contract that held on both 0.5.0 and 0.6.0 and must not regress. Observed: ${JSON.stringify(observed['2 readerB(ro) w/ A'])}`);
+                } finally {
+                    for (const h of holders) {
+                        try { fs.writeFileSync(h.releaseFile, 'go', 'utf8'); } catch (_) {}
+                        try { h.proc.kill(); } catch (_) {}
+                    }
+                    try { fs.rmSync(matrixDir, { recursive: true, force: true }); } catch (_) {}
+                }
+                console.log('✅ T-zvec06-readonly-matrix passed');
+            }
+        }
+
+        console.log('T-zvec-namespace-isolation. Testing that an empty scope never leaks other namespaces (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed');
+            } else {
+                // 数据隔离合同。zvec 0.5.0 无法区分「没有 candidate 限制」与「过滤器已执行
+                // 但命中 0 条」,于是把空 candidate 列表当成「不过滤」—— recall 一个【空】
+                // namespace 会返回其他 namespace 的文档。实测 0.5.0 泄漏 / 0.6.0 返回 []。
+                // 这是 Evo-Lite 自己的 prose/code/symbol 边界,不是上游 release note 的转述,
+                // 所以断言必须走真实的 ZvecMemoryIndex.searchText,不能只测引擎原语。
+                const prevRoot = process.env.EVO_LITE_ROOT;
+                const prevDb = process.env.EVO_LITE_DB_PATH;
+                const nsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-ns-isolation-'));
+                try {
+                    resetCliModuleCache();
+                    process.env.EVO_LITE_ROOT = nsDir;
+                    process.env.EVO_LITE_DB_PATH = path.join(nsDir, 'memory.db');
+                    const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                    const idx = new ZvecMemoryIndex();
+                    idx.initialize();
+                    try {
+                        const ts = '2026-07-31T00:00:00.000Z';
+                        idx.upsert({ content: 'zqxjkvbrw 只存在于 prose 的独特令牌', namespace: 'prose', timestamp: ts });
+                        idx.upsert({ content: 'zqxjkvbrw shared token in the symbol namespace', namespace: 'symbol', timestamp: ts });
+                        // namespace 'code' 故意留空 —— 这正是触发条件。
+
+                        // 控制项先行:过滤器命中时必须真的返回结果。若这两条失败,
+                        // 下面的空结果可能只是「查询本身就查不到」,断言就没有意义。
+                        const all = idx.searchText('zqxjkvbrw', { scope: 'all', topK: 10 });
+                        assert.strictEqual(all.length, 2,
+                            `control failed: the token must be findable without a scope filter, else the isolation assertion below is vacuous. Got ${JSON.stringify(all.map(r => r.namespace))}`);
+                        const prose = idx.searchText('zqxjkvbrw', { scope: 'prose', topK: 10 });
+                        assert.deepStrictEqual(prose.map(r => r.namespace), ['prose'],
+                            `control failed: a scope filter that DOES match must still return its own namespace. Got ${JSON.stringify(prose.map(r => r.namespace))}`);
+
+                        // 合同本体:目标 namespace 为空 → 必须严格为空,不得回退成「不过滤」。
+                        const empty = idx.searchText('zqxjkvbrw', { scope: 'code', topK: 10 });
+                        assert.deepStrictEqual(empty.map(r => r.namespace), [],
+                            `namespace isolation breach: recall(scope='code') returned documents from ${JSON.stringify(empty.map(r => r.namespace))} while the code namespace is empty. A zero-match scalar filter must NOT degrade into "no filter" — that hands the agent other namespaces' memory under a scope it explicitly narrowed.`);
+                        const unknown = idx.searchText('zqxjkvbrw', { scope: 'no-such-namespace', topK: 10 });
+                        assert.deepStrictEqual(unknown.map(r => r.namespace), [],
+                            `namespace isolation breach: an unknown scope returned ${JSON.stringify(unknown.map(r => r.namespace))} instead of nothing.`);
+                    } finally {
+                        try { idx.close(); } catch (_) {}
+                    }
+                } finally {
+                    if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
+                    if (prevDb === undefined) delete process.env.EVO_LITE_DB_PATH; else process.env.EVO_LITE_DB_PATH = prevDb;
+                    resetCliModuleCache();
+                    try { fs.rmSync(nsDir, { recursive: true, force: true }); } catch (_) {}
+                }
+                console.log('✅ T-zvec-namespace-isolation passed');
+            }
+        }
+
+        console.log('T-zvec-reopen-visibility. Testing that un-optimized writes survive a reopen (skips if @zvec/zvec absent) ...');
+        {
+            let zvecAvailable = true;
+            try { require.resolve('@zvec/zvec'); } catch (_) { zvecAvailable = false; }
+            if (!zvecAvailable) {
+                console.log('   ⏭️ skipped — @zvec/zvec not installed');
+            } else {
+                // ZvecMemoryIndex._finalizeSync() 吞掉 optimizeSync() 的异常
+                // (`try { ... } catch (_) {}`),进程被杀时也根本走不到 optimize。
+                // 于是「已写入但未 optimize」是一个合法且可达的落盘状态。zvec 0.5.0
+                // 重开后丢失该 writing segment 的 FTS 统计 → 这些 archive 静默检索不到。
+                // 这里用 _dirty=false 精确复刻「optimize 没有发生」的那条路径。
+                const prevRoot = process.env.EVO_LITE_ROOT;
+                const prevDb = process.env.EVO_LITE_DB_PATH;
+                const rvDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-reopen-vis-'));
+                try {
+                    resetCliModuleCache();
+                    process.env.EVO_LITE_ROOT = rvDir;
+                    process.env.EVO_LITE_DB_PATH = path.join(rvDir, 'memory.db');
+                    const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+                    const ts = '2026-07-31T00:00:00.000Z';
+
+                    const first = new ZvecMemoryIndex();
+                    first.initialize();
+                    for (let i = 0; i < 3; i++) {
+                        first.upsert({ content: `sealed rvprobe archive ${i}`, namespace: 'prose', timestamp: ts });
+                    }
+                    first.close();                       // dirty → optimize 正常发生,成为已封存 segment
+
+                    const second = new ZvecMemoryIndex();
+                    second.initialize();
+                    for (let i = 0; i < 3; i++) {
+                        second.upsert({ content: `unoptimized rvprobe archive ${i}`, namespace: 'prose', timestamp: ts });
+                    }
+                    const before = second.searchText('rvprobe', { scope: 'all', topK: 20 });
+                    assert.strictEqual(before.length, 6,
+                        `control failed: all 6 archives must be visible to the writer that just wrote them, else the post-reopen assertion is vacuous. Got ${before.length}`);
+                    // ⚠ fault injection seam(白盒),不是业务用法:直接压掉 _dirty 让
+                    // _finalizeSync() 跳过 optimizeSync(),精确复刻「optimize 没有发生」
+                    // 的那条落盘路径 —— 异常被 catch(_) 吞掉,或进程在 finalize 前被杀。
+                    // 若将来 _dirty 更名或语义变化,这里要跟着改,否则测试会静默失效。
+                    second._dirty = false;
+                    second.close();
+
+                    const third = new ZvecMemoryIndex();
+                    third.initialize();
+                    try {
+                        const after = third.searchText('rvprobe', { scope: 'all', topK: 20 });
+                        assert.strictEqual(after.length, 6,
+                            `archive loss after reopen: only ${after.length}/6 archives are findable once the collection is reopened without an intervening optimize. Writes that were never optimized must stay searchable — otherwise a swallowed optimizeSync() error or a killed process silently makes committed archives unrecallable, with no error anywhere.`);
+                    } finally {
+                        try { third.close(); } catch (_) {}
+                    }
+                } finally {
+                    if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT; else process.env.EVO_LITE_ROOT = prevRoot;
+                    if (prevDb === undefined) delete process.env.EVO_LITE_DB_PATH; else process.env.EVO_LITE_DB_PATH = prevDb;
+                    resetCliModuleCache();
+                    try { fs.rmSync(rvDir, { recursive: true, force: true }); } catch (_) {}
+                }
+                console.log('✅ T-zvec-reopen-visibility passed');
+            }
+        }
+
         console.log('T-mcp-stdin-exit. Testing MCP stdin-EOF lifecycle (A) + shutdown cleanup of a held lock (B) (skips if @zvec/zvec absent) ...');
         {
             let zvecAvailable = true;
