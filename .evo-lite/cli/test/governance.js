@@ -2569,12 +2569,18 @@ async function runGovernanceTests() {
                     col.closeSync();
                     return { dir, colPath };
                 };
-                // holder:真实持锁 + 以 memory.js mcp 形态运行 + 写真 owner
+                // holder 脚本落在 os.tmpdir(),而 Node 的模块解析以【脚本所在目录】
+                // 向上走,cwd 不参与。因此裸 require('@zvec/zvec') 在 CI runner 上必然
+                // MODULE_NOT_FOUND —— 本地之所以能过,是碰巧命中了开发机上一个游离的
+                // 用户级 node_modules(实测解析到 C:\Users\<user>\node_modules),
+                // 与本仓安装无关。父进程已用绝对路径传 lock 模块,zvec 照同一方式传,
+                // 顺带保证 holder 与父进程加载的是【同一份】zvec,不会跨版本错配。
+                const zvecEntry = require.resolve('@zvec/zvec');
                 const HOLDER_SRC = [
                     "'use strict';",
                     "const fs = require('fs');",
                     "const path = require('path');",
-                    "const zvec = require('@zvec/zvec');",
+                    "const zvec = require(process.argv[6]);",
                     "const lock = require(process.argv[4]);",
                     "const dir = process.argv[3];",
                     "const col = zvec.ZVecOpen(path.join(dir, 'collection'));",
@@ -2602,11 +2608,24 @@ async function runGovernanceTests() {
                 {
                     const { dir, colPath } = mkCollection();
                     const scriptPath = writeHolderScript();
-                    const holder = childProcess.spawn(process.execPath, [scriptPath, 'mcp', dir, lockModulePath, HERE], {
-                        stdio: 'ignore', cwd: WORKSPACE_ROOT, env: { ...process.env },
+                    const holder = childProcess.spawn(process.execPath, [scriptPath, 'mcp', dir, lockModulePath, HERE, zvecEntry], {
+                        stdio: ['ignore', 'ignore', 'pipe'], cwd: WORKSPACE_ROOT, env: { ...process.env },
                     });
+                    // 可观察性:holder 以 stdio:'ignore' 起时,任何子进程异常都被吞掉,
+                    // 父测试只能报一句误导性的 'holder acquired the lock'。把 spawn 错误、
+                    // 退出码/信号与 stderr 收集起来,超时时一并放进断言。
+                    let holderStderr = '';
+                    let holderExit = null;
+                    let holderSpawnError = null;
+                    holder.stderr.on('data', d => { holderStderr += String(d); });
+                    holder.on('error', e => { holderSpawnError = e; });
+                    holder.on('exit', (code, signal) => { holderExit = { code, signal }; });
                     try {
-                        assert.ok(waitForFile(path.join(dir, 'holder-ready.txt'), 8000), 'holder acquired the lock');
+                        assert.ok(waitForFile(path.join(dir, 'holder-ready.txt'), 8000),
+                            'holder never signalled readiness — it did not acquire the lock. '
+                            + `spawnError=${holderSpawnError ? holderSpawnError.message : 'none'} `
+                            + `exit=${holderExit ? JSON.stringify(holderExit) : 'still running'} `
+                            + `stderr=${JSON.stringify(holderStderr.slice(0, 600)) || '(empty)'}`);
                         const holderOwnerBytes = fs.readFileSync(path.join(dir, 'owner.json'), 'utf8');
                         const killSpy = [];
                         let threw = null;
@@ -2645,15 +2664,15 @@ async function runGovernanceTests() {
                         "const { spawn } = require('child_process');",
                         "const fs = require('fs');",
                         "const path = require('path');",
-                        "const [holderScript, dir, lockPath, projectRoot] = process.argv.slice(2);",
-                        "const child = spawn(process.execPath, [holderScript, 'mcp', dir, lockPath, projectRoot], { detached: true, stdio: 'ignore', env: process.env, cwd: process.cwd() });",
+                        "const [holderScript, dir, lockPath, projectRoot, zvecEntry] = process.argv.slice(2);",
+                        "const child = spawn(process.execPath, [holderScript, 'mcp', dir, lockPath, projectRoot, zvecEntry], { detached: true, stdio: 'ignore', env: process.env, cwd: process.cwd() });",
                         "child.unref();",
                         "const ready = path.join(dir, 'holder-ready.txt');",
                         "(function wait() { if (fs.existsSync(ready)) process.exit(0); setTimeout(wait, 50); })();",
                     ].join('\n');
                     const spawnerPath = path.join(path.dirname(scriptPath), 'spawner.js');
                     fs.writeFileSync(spawnerPath, SPAWNER_SRC, 'utf8');
-                    childProcess.execFileSync(process.execPath, [spawnerPath, scriptPath, dir, lockModulePath, HERE], {
+                    childProcess.execFileSync(process.execPath, [spawnerPath, scriptPath, dir, lockModulePath, HERE, zvecEntry], {
                         cwd: WORKSPACE_ROOT, env: { ...process.env }, timeout: 15000,
                     });
                     const orphanPid = Number(fs.readFileSync(path.join(dir, 'holder-ready.txt'), 'utf8'));
