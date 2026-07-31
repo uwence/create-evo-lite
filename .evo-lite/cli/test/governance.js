@@ -2782,11 +2782,17 @@ async function runGovernanceTests() {
                 // API 是否接受 { readOnly: true } 并不能说明它是否具有实际共享读语义 ——
                 // 静默接受正是本矩阵要抓的东西,所以判定只能来自跨进程可观察的并发结果。
                 // Phase 0B 实测:0.5.0 与 0.6.0 【均】具有真实共享读语义,两版逐行一致。
+                // holder 落在 os.tmpdir(),Node 的模块解析以【脚本所在目录】向上走,cwd 不参与。
+                // 裸 require('@zvec/zvec') 在 CI runner 上必然 MODULE_NOT_FOUND;开发机上则会
+                // 命中一个游离的用户级 node_modules,于是 holder 加载的 zvec 与父进程【不是同一份】
+                // —— Phase 0B 的 0.6 只读矩阵就是这样变成 0.5-holder × 0.6-prober 的混版测量。
+                // 传绝对路径同时解决两件事:CI 上能解析,且两端保证同一 binding。
+                const zvecEntry = require.resolve('@zvec/zvec');
                 const HOLDER_SRC = [
                     "'use strict';",
                     "const fs = require('fs');",
-                    "const zvec = require('@zvec/zvec');",
-                    "const [, , colPath, mode, readyFile, releaseFile] = process.argv;",
+                    "const [, , colPath, mode, readyFile, releaseFile, zvecEntry] = process.argv;",
+                    "const zvec = require(zvecEntry);",
                     "let col;",
                     "try { col = mode === 'ro' ? zvec.ZVecOpen(colPath, { readOnly: true }) : zvec.ZVecOpen(colPath); }",
                     "catch (e) {",
@@ -2824,10 +2830,22 @@ async function runGovernanceTests() {
                 const startHolder = (tag, mode) => {
                     const readyFile = path.join(matrixDir, `${tag}-ready.json`);
                     const releaseFile = path.join(matrixDir, `${tag}-release`);
-                    const proc = childProcess.spawn(process.execPath, [holderScript, colPath, mode, readyFile, releaseFile],
-                        { stdio: 'ignore', cwd: WORKSPACE_ROOT, env: { ...process.env } });
+                    const proc = childProcess.spawn(process.execPath, [holderScript, colPath, mode, readyFile, releaseFile, zvecEntry],
+                        { stdio: ['ignore', 'ignore', 'pipe'], cwd: WORKSPACE_ROOT, env: { ...process.env } });
+                    // 一个死掉的 holder 必须自报死因。stdio:'ignore' 会把子进程异常吞掉,只留下
+                    // 一句 'never reported back' —— 那正是 release-gate 曾经红了八天却指错方向的原因。
+                    let stderr = '';
+                    let exited = null;
+                    let spawnError = null;
+                    proc.stderr.on('data', d => { stderr += String(d); });
+                    proc.on('error', e => { spawnError = e; });
+                    proc.on('exit', (code, signal) => { exited = { code, signal }; });
                     holders.push({ tag, proc, releaseFile });
-                    assert.ok(waitFor(readyFile, 15000), `${tag} holder never reported back`);
+                    assert.ok(waitFor(readyFile, 15000),
+                        `${tag} holder never reported back. `
+                        + `spawnError=${spawnError ? spawnError.message : 'none'} `
+                        + `exit=${exited ? JSON.stringify(exited) : 'still running'} `
+                        + `stderr=${JSON.stringify(stderr.slice(0, 600)) || '(empty)'}`);
                     return JSON.parse(fs.readFileSync(readyFile, 'utf8'));
                 };
                 const releaseHolder = tag => {
