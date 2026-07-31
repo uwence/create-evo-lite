@@ -11783,6 +11783,78 @@ async function runChildRuntimeTests() {
         fs.rmSync(rc.receiptPathFor(WORKSPACE_ROOT, 'claude-code', 'rec-test'), { force: true });
         console.log('✅ T-takeover-recovery passed');
     }
+
+    // ---------------------------------------------------------------------------
+    // [zvec-win-unicode-containment] — decision layer contract.
+    //
+    // Spec:     docs/specs/zvec-win-unicode-containment.md
+    // Plan:     docs/superpowers/plans/2026-07-31-zvec-win-unicode-containment.md
+    // Evidence: docs/validation/zvec-win-unicode-path-matrix.md
+    //
+    // These tests cover the DECISION LAYER ONLY. The engine seam is untouched in
+    // this round (Task 4), which T-zwuc-characterization asserts explicitly.
+    // Nothing here loads @zvec/zvec or runs the crash probe.
+    // ---------------------------------------------------------------------------
+
+    console.log('T-zwuc-characterization. BASELINE: engine selection matrix + the dual loadZvecIndex path ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const prevEngineEnv = process.env.EVO_LITE_MEMORY_ENGINE;
+        // Counting seam. resolveActiveImpl/selectEngine already accept an injected
+        // loader, so the current behaviour can be pinned without touching the
+        // module system, the require cache, or any production file.
+        const countingLoader = (result) => {
+            const load = () => { load.calls += 1; return result; };
+            load.calls = 0;
+            return load;
+        };
+        try {
+            // (a) The selection matrix, measured together with loader call counts.
+            const matrix = [
+                { engine: 'zvec', loaded: class FakeZvecA {}, impl: 'zvec', degraded: false, loads: 1 },
+                { engine: 'zvec', loaded: null, impl: 'sqlite', degraded: true, loads: 1 },
+                { engine: 'sqlite-fts5-trigram', loaded: class FakeZvecB {}, impl: 'sqlite', degraded: false, loads: 0 },
+            ];
+            for (const row of matrix) {
+                process.env.EVO_LITE_MEMORY_ENGINE = row.engine;
+                const load = countingLoader(row.loaded);
+                const got = mi.resolveActiveImpl(load);
+                assert.strictEqual(got.choice, row.engine, `choice reflects ${row.engine}`);
+                assert.strictEqual(got.impl, row.impl, `${row.engine} + loader ${row.loaded ? 'available' : 'unavailable'} -> impl ${row.impl}`);
+                assert.strictEqual(got.degraded, row.degraded, `${row.engine} -> degraded ${row.degraded}`);
+                assert.strictEqual(load.calls, row.loads, `${row.engine} diagnosis loads zvec ${row.loads} time(s)`);
+            }
+
+            // (b) THE DUAL PATH (spec §6.1) — the fact this whole spec exists for.
+            // Diagnosis and instantiation each reach loadZvecIndex on their own;
+            // there is no shared decision for either of them to consume, so
+            // containment applied to only one of them would not protect runtime.
+            process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+            const shared = countingLoader(class FakeZvecC {});
+            mi.resolveActiveImpl(shared);          // diagnosis path
+            mi.selectEngine('zvec', shared);       // instantiation path
+            assert.strictEqual(shared.calls, 2,
+                'BASELINE: diagnosis + instantiation load zvec twice. Task 4 must collapse this to one shared decision, and to ZERO on a non-SAFE path (T6).');
+
+            // (c) Structural: no engine decision exists on the export surface, and
+            // getMemoryIndex has no injection point through which it could be
+            // handed the diagnosis result.
+            assert.ok(!('resolveEngineDecision' in mi),
+                'BASELINE: resolveEngineDecision does not exist yet — Task 4 introduces it');
+            assert.strictEqual(mi.getMemoryIndex.length, 0,
+                'BASELINE: getMemoryIndex accepts no loader, so it cannot consume the diagnosis decision');
+
+            // (d) Authorized-scope guard: Task 1–3 delivers the decision layer and
+            // wires nothing. Task 4 is the change that deletes this assertion.
+            const selectorSource = fs.readFileSync(path.join(CLI_DIR, 'memory-index.js'), 'utf8');
+            assert.ok(!/zvec-path-containment/.test(selectorSource),
+                'Task 1–3 scope: the selector must NOT consume the classifier yet (that is Task 4)');
+        } finally {
+            if (prevEngineEnv === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
+            else process.env.EVO_LITE_MEMORY_ENGINE = prevEngineEnv;
+        }
+        console.log('✅ T-zwuc-characterization passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
