@@ -1,0 +1,2724 @@
+{
+  "note": "Per-sample verdicts only. Full per-run records were not committed (R3 raw alone is 254 KB); sha256 of each original file is recorded for local cross-check, and the fixture regenerates equivalent results.",
+  "rounds": [
+    {
+      "round": "R1",
+      "title": "single-script category sweep",
+      "sourceFile": "results.json",
+      "sha256": "d2952e3c6dc5f1e32fc8a4a1a1c2fe6fb70297008a5b5dc70a0e7d648d2aee3f",
+      "generatedAt": "2026-07-31T08:45:39.651Z",
+      "host": {
+        "node": "v22.22.2",
+        "platform": "win32",
+        "arch": "x64",
+        "osRelease": "10.0.26200"
+      },
+      "binding": "D:\\Data\\ProjectAgent\\create-evo-lite\\node_modules\\@zvec\\zvec\\src\\index.js",
+      "zvecVersion": "0.6.0",
+      "repeats": 3,
+      "positions": null,
+      "originalEvidenceMismatches": null,
+      "anyFlip": null,
+      "sampleCount": 14,
+      "rows": [
+        {
+          "id": "a01-ascii-baseline",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "a02-space-parens",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "b01-chinese",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "b02-chinese-mixed",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "b03-japanese-kana",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "b04-korean-hangul",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "c01-latin-precomposed",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "c02-latin-combining",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "c03-cyrillic",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "c04-greek",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "d01-emoji-sp",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "d02-cjk-ext-b-sp",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": null
+        },
+        {
+          "id": "e01-long-ascii",
+          "verdict": "NORMAL_JS_ERROR",
+          "observed": [
+            "NORMAL_JS_ERROR"
+          ],
+          "lastStages": [
+            "schema_built"
+          ],
+          "statuses": [
+            1
+          ],
+          "agreement": null
+        },
+        {
+          "id": "e02-long-chinese",
+          "verdict": "NORMAL_JS_ERROR",
+          "observed": [
+            "NORMAL_JS_ERROR"
+          ],
+          "lastStages": [
+            "schema_built"
+          ],
+          "statuses": [
+            1
+          ],
+          "agreement": null
+        }
+      ]
+    },
+    {
+      "round": "R2",
+      "title": "original-evidence replication + separator + script-pair",
+      "sourceFile": "results2.json",
+      "sha256": "5b58df3a56b5cd913b4e98c4f5881b7df7b6e2b93e8293b10ef8cb980723dbed",
+      "generatedAt": "2026-07-31T08:50:55.603Z",
+      "host": {
+        "node": "v22.22.2",
+        "platform": "win32",
+        "arch": "x64",
+        "osRelease": "10.0.26200"
+      },
+      "binding": "D:\\Data\\ProjectAgent\\create-evo-lite\\node_modules\\@zvec\\zvec\\src\\index.js",
+      "zvecVersion": "0.6.0",
+      "repeats": 3,
+      "positions": null,
+      "originalEvidenceMismatches": 0,
+      "anyFlip": null,
+      "sampleCount": 42,
+      "rows": [
+        {
+          "id": "o1-han-kana-hangul-dash",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "MATCH"
+        },
+        {
+          "id": "o2-kana-hangul-dash",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "MATCH"
+        },
+        {
+          "id": "o3-hankana-pair-dash",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "MATCH"
+        },
+        {
+          "id": "o4-kana-hangul-space",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "MATCH"
+        },
+        {
+          "id": "o5-kana-hangul-dot",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "MATCH"
+        },
+        {
+          "id": "o6-kana-hangul-uscore",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "MATCH"
+        },
+        {
+          "id": "o7-han-pair-dash",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "MATCH"
+        },
+        {
+          "id": "o8-han-plain",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "MATCH"
+        },
+        {
+          "id": "o9-ascii-plain",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "MATCH"
+        },
+        {
+          "id": "s-dash",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "s-uscore",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "s-space",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "s-dot",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "s-plus",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "s-tilde",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "s-none",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "s-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-han-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-han-kana",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-han-hangul",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-han-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-han-cyr",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-kana-han",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-kana-kana",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-kana-hangul",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-kana-ascii",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-kana-cyr",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-hangul-han",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-hangul-kana",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-hangul-hangul",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-hangul-ascii",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-hangul-cyr",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": [
+            3221226505
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-ascii-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-ascii-kana",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-ascii-hangul",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-ascii-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-ascii-cyr",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-cyr-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-cyr-kana",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-cyr-hangul",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-cyr-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        },
+        {
+          "id": "p-cyr-cyr",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": [
+            0
+          ],
+          "agreement": "n/a"
+        }
+      ]
+    },
+    {
+      "round": "R3",
+      "title": "Chinese+English dense falsification",
+      "sourceFile": "results3.json",
+      "sha256": "775b3ba6cc7a376dc270d0d32ddf94487604150a1a27878260381ff4bdcf1ac0",
+      "generatedAt": "2026-07-31T09:08:48.121Z",
+      "host": {
+        "node": "v22.22.2",
+        "platform": "win32",
+        "arch": "x64",
+        "osRelease": "10.0.26200"
+      },
+      "binding": "D:\\Data\\ProjectAgent\\create-evo-lite\\node_modules\\@zvec\\zvec\\src\\index.js",
+      "zvecVersion": null,
+      "repeats": 3,
+      "positions": [
+        "root",
+        "leaf"
+      ],
+      "originalEvidenceMismatches": null,
+      "anyFlip": null,
+      "sampleCount": 79,
+      "rows": [
+        {
+          "id": "han-dash-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-dash-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-dash-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-uscore-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-uscore-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-uscore-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-dot-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-dot-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-dot-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-plus-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-plus-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-plus-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-tilde-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-tilde-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-tilde-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-space-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-space-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-space-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-none-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-none-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-none-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-paren-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-paren-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-paren-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-bracket-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-bracket-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-bracket-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-amp-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-amp-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-amp-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-hash-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-hash-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-hash-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-at-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-at-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-at-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-bang-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-bang-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-bang-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-comma-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-comma-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-comma-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-semi-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-semi-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-semi-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-eq-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-eq-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-eq-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-pct-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-pct-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-pct-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-dollar-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-dollar-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-dollar-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-caret-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-caret-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-caret-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-digit-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-digit-ascii",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-digit-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "punct-fw-paren",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "punct-cjk-comma",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "punct-cjk-dot",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "punct-dash-em",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "punct-fw-colon",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "punct-quote",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "punct-fw-digit",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "punct-fw-latin",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-trad",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-rare",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-ext-b",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-radical",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-compat",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "observed": [
+            "FAIL_FAST_REPRODUCED"
+          ],
+          "lastStages": [
+            "create_or_open"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "han-long-han",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-plain",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-dots",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-spaces",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-upper",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        },
+        {
+          "id": "ascii-mixedpunct",
+          "verdict": "PASS_SAFE",
+          "observed": [
+            "PASS_SAFE"
+          ],
+          "lastStages": [
+            "child_done"
+          ],
+          "statuses": null,
+          "agreement": null
+        }
+      ]
+    },
+    {
+      "round": "R4",
+      "title": "length control experiment",
+      "sourceFile": "results4.json",
+      "sha256": "954c597efd87524d9198bffa0e5af6b8fa7b27037e128675df2859f78602d853",
+      "generatedAt": "2026-07-31T09:19:46.108Z",
+      "host": {
+        "node": "v22.22.2",
+        "platform": "win32",
+        "arch": "x64",
+        "osRelease": "10.0.26200"
+      },
+      "binding": "D:\\Data\\ProjectAgent\\create-evo-lite\\node_modules\\@zvec\\zvec\\src\\index.js",
+      "zvecVersion": null,
+      "repeats": 2,
+      "positions": null,
+      "originalEvidenceMismatches": null,
+      "anyFlip": false,
+      "sampleCount": 7,
+      "rows": [
+        {
+          "id": "crash-kana-hangul-dash",
+          "segment": "日本語-한국어",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "flipped": false,
+          "padSweep": [
+            {
+              "pad": 0,
+              "pathLen": 109,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 1,
+              "pathLen": 110,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 2,
+              "pathLen": 111,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 3,
+              "pathLen": 112,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 4,
+              "pathLen": 113,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 5,
+              "pathLen": 114,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 6,
+              "pathLen": 115,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 7,
+              "pathLen": 116,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 8,
+              "pathLen": 117,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 9,
+              "pathLen": 118,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 10,
+              "pathLen": 119,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 11,
+              "pathLen": 120,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 12,
+              "pathLen": 121,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 13,
+              "pathLen": 122,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 14,
+              "pathLen": 123,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 15,
+              "pathLen": 124,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 16,
+              "pathLen": 125,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 17,
+              "pathLen": 126,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 18,
+              "pathLen": 127,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 19,
+              "pathLen": 128,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 20,
+              "pathLen": 129,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 21,
+              "pathLen": 130,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 22,
+              "pathLen": 131,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 23,
+              "pathLen": 132,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            }
+          ]
+        },
+        {
+          "id": "crash-hankana-pair",
+          "segment": "中文語-中文語",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "flipped": false,
+          "padSweep": [
+            {
+              "pad": 0,
+              "pathLen": 109,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 1,
+              "pathLen": 110,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 2,
+              "pathLen": 111,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 3,
+              "pathLen": 112,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 4,
+              "pathLen": 113,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 5,
+              "pathLen": 114,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 6,
+              "pathLen": 115,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 7,
+              "pathLen": 116,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 8,
+              "pathLen": 117,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 9,
+              "pathLen": 118,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 10,
+              "pathLen": 119,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 11,
+              "pathLen": 120,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 12,
+              "pathLen": 121,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 13,
+              "pathLen": 122,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 14,
+              "pathLen": 123,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 15,
+              "pathLen": 124,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 16,
+              "pathLen": 125,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 17,
+              "pathLen": 126,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 18,
+              "pathLen": 127,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 19,
+              "pathLen": 128,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 20,
+              "pathLen": 129,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 21,
+              "pathLen": 130,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 22,
+              "pathLen": 131,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 23,
+              "pathLen": 132,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            }
+          ]
+        },
+        {
+          "id": "safe-han-pair",
+          "segment": "中文中文-中文中文",
+          "verdict": "PASS_SAFE",
+          "flipped": false,
+          "padSweep": [
+            {
+              "pad": 0,
+              "pathLen": 111,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 1,
+              "pathLen": 112,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 2,
+              "pathLen": 113,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 3,
+              "pathLen": 114,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 4,
+              "pathLen": 115,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 5,
+              "pathLen": 116,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 6,
+              "pathLen": 117,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 7,
+              "pathLen": 118,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 8,
+              "pathLen": 119,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 9,
+              "pathLen": 120,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 10,
+              "pathLen": 121,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 11,
+              "pathLen": 122,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 12,
+              "pathLen": 123,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 13,
+              "pathLen": 124,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 14,
+              "pathLen": 125,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 15,
+              "pathLen": 126,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 16,
+              "pathLen": 127,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 17,
+              "pathLen": 128,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 18,
+              "pathLen": 129,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 19,
+              "pathLen": 130,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 20,
+              "pathLen": 131,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 21,
+              "pathLen": 132,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 22,
+              "pathLen": 133,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 23,
+              "pathLen": 134,
+              "verdict": "PASS_SAFE"
+            }
+          ]
+        },
+        {
+          "id": "safe-han-ascii",
+          "segment": "中文-repo",
+          "verdict": "PASS_SAFE",
+          "flipped": false,
+          "padSweep": [
+            {
+              "pad": 0,
+              "pathLen": 109,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 1,
+              "pathLen": 110,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 2,
+              "pathLen": 111,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 3,
+              "pathLen": 112,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 4,
+              "pathLen": 113,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 5,
+              "pathLen": 114,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 6,
+              "pathLen": 115,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 7,
+              "pathLen": 116,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 8,
+              "pathLen": 117,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 9,
+              "pathLen": 118,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 10,
+              "pathLen": 119,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 11,
+              "pathLen": 120,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 12,
+              "pathLen": 121,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 13,
+              "pathLen": 122,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 14,
+              "pathLen": 123,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 15,
+              "pathLen": 124,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 16,
+              "pathLen": 125,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 17,
+              "pathLen": 126,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 18,
+              "pathLen": 127,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 19,
+              "pathLen": 128,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 20,
+              "pathLen": 129,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 21,
+              "pathLen": 130,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 22,
+              "pathLen": 131,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 23,
+              "pathLen": 132,
+              "verdict": "PASS_SAFE"
+            }
+          ]
+        },
+        {
+          "id": "safe-ascii",
+          "segment": "ascii-control",
+          "verdict": "PASS_SAFE",
+          "flipped": false,
+          "padSweep": [
+            {
+              "pad": 0,
+              "pathLen": 115,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 1,
+              "pathLen": 116,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 2,
+              "pathLen": 117,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 3,
+              "pathLen": 118,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 4,
+              "pathLen": 119,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 5,
+              "pathLen": 120,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 6,
+              "pathLen": 121,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 7,
+              "pathLen": 122,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 8,
+              "pathLen": 123,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 9,
+              "pathLen": 124,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 10,
+              "pathLen": 125,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 11,
+              "pathLen": 126,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 12,
+              "pathLen": 127,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 13,
+              "pathLen": 128,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 14,
+              "pathLen": 129,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 15,
+              "pathLen": 130,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 16,
+              "pathLen": 131,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 17,
+              "pathLen": 132,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 18,
+              "pathLen": 133,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 19,
+              "pathLen": 134,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 20,
+              "pathLen": 135,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 21,
+              "pathLen": 136,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 22,
+              "pathLen": 137,
+              "verdict": "PASS_SAFE"
+            },
+            {
+              "pad": 23,
+              "pathLen": 138,
+              "verdict": "PASS_SAFE"
+            }
+          ]
+        },
+        {
+          "id": "crash-han-compat",
+          "segment": "虜-golf",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "flipped": false,
+          "padSweep": [
+            {
+              "pad": 0,
+              "pathLen": 108,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 1,
+              "pathLen": 109,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 2,
+              "pathLen": 110,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 3,
+              "pathLen": 111,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 4,
+              "pathLen": 112,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 5,
+              "pathLen": 113,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 6,
+              "pathLen": 114,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 7,
+              "pathLen": 115,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 8,
+              "pathLen": 116,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 9,
+              "pathLen": 117,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 10,
+              "pathLen": 118,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 11,
+              "pathLen": 119,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 12,
+              "pathLen": 120,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 13,
+              "pathLen": 121,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 14,
+              "pathLen": 122,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 15,
+              "pathLen": 123,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 16,
+              "pathLen": 124,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 17,
+              "pathLen": 125,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 18,
+              "pathLen": 126,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 19,
+              "pathLen": 127,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 20,
+              "pathLen": 128,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 21,
+              "pathLen": 129,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 22,
+              "pathLen": 130,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 23,
+              "pathLen": 131,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            }
+          ]
+        },
+        {
+          "id": "crash-han-rare",
+          "segment": "龘齉爩-项目",
+          "verdict": "FAIL_FAST_REPRODUCED",
+          "flipped": false,
+          "padSweep": [
+            {
+              "pad": 0,
+              "pathLen": 108,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 1,
+              "pathLen": 109,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 2,
+              "pathLen": 110,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 3,
+              "pathLen": 111,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 4,
+              "pathLen": 112,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 5,
+              "pathLen": 113,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 6,
+              "pathLen": 114,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 7,
+              "pathLen": 115,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 8,
+              "pathLen": 116,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 9,
+              "pathLen": 117,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 10,
+              "pathLen": 118,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 11,
+              "pathLen": 119,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 12,
+              "pathLen": 120,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 13,
+              "pathLen": 121,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 14,
+              "pathLen": 122,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 15,
+              "pathLen": 123,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 16,
+              "pathLen": 124,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 17,
+              "pathLen": 125,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 18,
+              "pathLen": 126,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 19,
+              "pathLen": 127,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 20,
+              "pathLen": 128,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 21,
+              "pathLen": 129,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 22,
+              "pathLen": 130,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            },
+            {
+              "pad": 23,
+              "pathLen": 131,
+              "verdict": "FAIL_FAST_REPRODUCED"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

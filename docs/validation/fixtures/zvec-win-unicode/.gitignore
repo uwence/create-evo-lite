@@ -1,0 +1,4 @@
+# Scratch output produced by probe-runner.js. Evidence lives in corpus.json and
+# results-summary.json, which ARE tracked; these are per-run leftovers.
+.runs/
+last-run.json

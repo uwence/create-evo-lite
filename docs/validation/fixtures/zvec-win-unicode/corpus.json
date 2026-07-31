@@ -1,0 +1,1221 @@
+{
+  "note": "Sample corpus for the Windows non-ASCII zvec path probe. R4 reuses segments from R2/R3 and is therefore not repeated here. expected is non-null ONLY for the 9 samples replicated verbatim from docs/validation/zvec-06-phase0b-verdict.md section 8; all other samples were exploratory and carry no prior expectation.",
+  "sampleCount": 135,
+  "samples": [
+    {
+      "round": "R1",
+      "id": "a01-ascii-baseline",
+      "segment": "ascii-project",
+      "codepoints": "U+0061 U+0073 U+0063 U+0069 U+0069 U+002D U+0070 U+0072 U+006F U+006A U+0065 U+0063 U+0074",
+      "byteLen": 13,
+      "block": "ascii",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "a02-space-parens",
+      "segment": "my project (v2)",
+      "codepoints": "U+006D U+0079 U+0020 U+0070 U+0072 U+006F U+006A U+0065 U+0063 U+0074 U+0020 U+0028 U+0076 U+0032 U+0029",
+      "byteLen": 15,
+      "block": "ascii-punct",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "b01-chinese",
+      "segment": "中文项目",
+      "codepoints": "U+4E2D U+6587 U+9879 U+76EE",
+      "byteLen": 12,
+      "block": "cjk-han",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "b02-chinese-mixed",
+      "segment": "repo-中文-01",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+002D U+4E2D U+6587 U+002D U+0030 U+0031",
+      "byteLen": 14,
+      "block": "cjk-han-mixed",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "b03-japanese-kana",
+      "segment": "日本語プロ",
+      "codepoints": "U+65E5 U+672C U+8A9E U+30D7 U+30ED",
+      "byteLen": 15,
+      "block": "cjk-kana",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "b04-korean-hangul",
+      "segment": "한국어모음",
+      "codepoints": "U+D55C U+AD6D U+C5B4 U+BAA8 U+C74C",
+      "byteLen": 15,
+      "block": "cjk-hangul",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "c01-latin-precomposed",
+      "segment": "café-résumé",
+      "codepoints": "U+0063 U+0061 U+0066 U+00E9 U+002D U+0072 U+00E9 U+0073 U+0075 U+006D U+00E9",
+      "byteLen": 14,
+      "block": "latin-ext-nfc",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "c02-latin-combining",
+      "segment": "café-résumé",
+      "codepoints": "U+0063 U+0061 U+0066 U+0065 U+0301 U+002D U+0072 U+0065 U+0301 U+0073 U+0075 U+006D U+0065 U+0301",
+      "byteLen": 17,
+      "block": "latin-ext-nfd",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "c03-cyrillic",
+      "segment": "проект",
+      "codepoints": "U+043F U+0440 U+043E U+0435 U+043A U+0442",
+      "byteLen": 12,
+      "block": "cyrillic",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "c04-greek",
+      "segment": "εργο",
+      "codepoints": "U+03B5 U+03C1 U+03B3 U+03BF",
+      "byteLen": 8,
+      "block": "greek",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "d01-emoji-sp",
+      "segment": "proj-😀",
+      "codepoints": "U+0070 U+0072 U+006F U+006A U+002D U+1F600",
+      "byteLen": 9,
+      "block": "emoji-supplementary",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "d02-cjk-ext-b-sp",
+      "segment": "proj-𠀋",
+      "codepoints": "U+0070 U+0072 U+006F U+006A U+002D U+2000B",
+      "byteLen": 9,
+      "block": "cjk-ext-b-supplementary",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "e01-long-ascii",
+      "segment": "LLLLLLLLLLLLLLLLLLLL...(120 chars)",
+      "codepoints": "U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+004C U+002E U+002E U+002E U+0028 U+0031 U+0032 U+0030 U+0020 U+0063 U+0068 U+0061 U+0072 U+0073 U+0029",
+      "byteLen": 34,
+      "block": "long-path-ascii",
+      "expected": null
+    },
+    {
+      "round": "R1",
+      "id": "e02-long-chinese",
+      "segment": "项项项项项项项项项项项项项项项项项项项项...(60 chars)",
+      "codepoints": "U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+9879 U+002E U+002E U+002E U+0028 U+0036 U+0030 U+0020 U+0063 U+0068 U+0061 U+0072 U+0073 U+0029",
+      "byteLen": 73,
+      "block": "long-path-cjk",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "o1-han-kana-hangul-dash",
+      "segment": "中文-日本語-한국어",
+      "codepoints": "U+4E2D U+6587 U+002D U+65E5 U+672C U+8A9E U+002D U+D55C U+AD6D U+C5B4",
+      "byteLen": 26,
+      "block": "original",
+      "expected": "CRASH"
+    },
+    {
+      "round": "R2",
+      "id": "o2-kana-hangul-dash",
+      "segment": "日本語-한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002D U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "original",
+      "expected": "CRASH"
+    },
+    {
+      "round": "R2",
+      "id": "o3-hankana-pair-dash",
+      "segment": "中文語-中文語",
+      "codepoints": "U+4E2D U+6587 U+8A9E U+002D U+4E2D U+6587 U+8A9E",
+      "byteLen": 19,
+      "block": "original",
+      "expected": "CRASH"
+    },
+    {
+      "round": "R2",
+      "id": "o4-kana-hangul-space",
+      "segment": "日本語 한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+0020 U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "original",
+      "expected": "CRASH"
+    },
+    {
+      "round": "R2",
+      "id": "o5-kana-hangul-dot",
+      "segment": "日本語.한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002E U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "original",
+      "expected": "CRASH"
+    },
+    {
+      "round": "R2",
+      "id": "o6-kana-hangul-uscore",
+      "segment": "日本語_한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+005F U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "original",
+      "expected": "OK"
+    },
+    {
+      "round": "R2",
+      "id": "o7-han-pair-dash",
+      "segment": "中文中文-中文中文",
+      "codepoints": "U+4E2D U+6587 U+4E2D U+6587 U+002D U+4E2D U+6587 U+4E2D U+6587",
+      "byteLen": 25,
+      "block": "original",
+      "expected": "OK"
+    },
+    {
+      "round": "R2",
+      "id": "o8-han-plain",
+      "segment": "中文目录",
+      "codepoints": "U+4E2D U+6587 U+76EE U+5F55",
+      "byteLen": 12,
+      "block": "original",
+      "expected": "OK"
+    },
+    {
+      "round": "R2",
+      "id": "o9-ascii-plain",
+      "segment": "ascii-control",
+      "codepoints": "U+0061 U+0073 U+0063 U+0069 U+0069 U+002D U+0063 U+006F U+006E U+0074 U+0072 U+006F U+006C",
+      "byteLen": 13,
+      "block": "original",
+      "expected": "OK"
+    },
+    {
+      "round": "R2",
+      "id": "s-dash",
+      "segment": "日本語-한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002D U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "separator",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "s-uscore",
+      "segment": "日本語_한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+005F U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "separator",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "s-space",
+      "segment": "日本語 한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+0020 U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "separator",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "s-dot",
+      "segment": "日本語.한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002E U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "separator",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "s-plus",
+      "segment": "日本語+한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002B U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "separator",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "s-tilde",
+      "segment": "日本語~한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+007E U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "separator",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "s-none",
+      "segment": "日本語한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+D55C U+AD6D U+C5B4",
+      "byteLen": 18,
+      "block": "separator",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "s-han",
+      "segment": "日本語的한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+7684 U+D55C U+AD6D U+C5B4",
+      "byteLen": 21,
+      "block": "separator",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-han",
+      "segment": "中文-中文",
+      "codepoints": "U+4E2D U+6587 U+002D U+4E2D U+6587",
+      "byteLen": 13,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-kana",
+      "segment": "中文-日本語",
+      "codepoints": "U+4E2D U+6587 U+002D U+65E5 U+672C U+8A9E",
+      "byteLen": 16,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-hangul",
+      "segment": "中文-한국어",
+      "codepoints": "U+4E2D U+6587 U+002D U+D55C U+AD6D U+C5B4",
+      "byteLen": 16,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-ascii",
+      "segment": "中文-abc",
+      "codepoints": "U+4E2D U+6587 U+002D U+0061 U+0062 U+0063",
+      "byteLen": 10,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-cyr",
+      "segment": "中文-проект",
+      "codepoints": "U+4E2D U+6587 U+002D U+043F U+0440 U+043E U+0435 U+043A U+0442",
+      "byteLen": 19,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-han",
+      "segment": "日本語-中文",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002D U+4E2D U+6587",
+      "byteLen": 16,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-kana",
+      "segment": "日本語-日本語",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002D U+65E5 U+672C U+8A9E",
+      "byteLen": 19,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-hangul",
+      "segment": "日本語-한국어",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002D U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-ascii",
+      "segment": "日本語-abc",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002D U+0061 U+0062 U+0063",
+      "byteLen": 13,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-cyr",
+      "segment": "日本語-проект",
+      "codepoints": "U+65E5 U+672C U+8A9E U+002D U+043F U+0440 U+043E U+0435 U+043A U+0442",
+      "byteLen": 22,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-han",
+      "segment": "한국어-中文",
+      "codepoints": "U+D55C U+AD6D U+C5B4 U+002D U+4E2D U+6587",
+      "byteLen": 16,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-kana",
+      "segment": "한국어-日本語",
+      "codepoints": "U+D55C U+AD6D U+C5B4 U+002D U+65E5 U+672C U+8A9E",
+      "byteLen": 19,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-hangul",
+      "segment": "한국어-한국어",
+      "codepoints": "U+D55C U+AD6D U+C5B4 U+002D U+D55C U+AD6D U+C5B4",
+      "byteLen": 19,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-ascii",
+      "segment": "한국어-abc",
+      "codepoints": "U+D55C U+AD6D U+C5B4 U+002D U+0061 U+0062 U+0063",
+      "byteLen": 13,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-cyr",
+      "segment": "한국어-проект",
+      "codepoints": "U+D55C U+AD6D U+C5B4 U+002D U+043F U+0440 U+043E U+0435 U+043A U+0442",
+      "byteLen": 22,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-han",
+      "segment": "abc-中文",
+      "codepoints": "U+0061 U+0062 U+0063 U+002D U+4E2D U+6587",
+      "byteLen": 10,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-kana",
+      "segment": "abc-日本語",
+      "codepoints": "U+0061 U+0062 U+0063 U+002D U+65E5 U+672C U+8A9E",
+      "byteLen": 13,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-hangul",
+      "segment": "abc-한국어",
+      "codepoints": "U+0061 U+0062 U+0063 U+002D U+D55C U+AD6D U+C5B4",
+      "byteLen": 13,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-ascii",
+      "segment": "abc-abc",
+      "codepoints": "U+0061 U+0062 U+0063 U+002D U+0061 U+0062 U+0063",
+      "byteLen": 7,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-cyr",
+      "segment": "abc-проект",
+      "codepoints": "U+0061 U+0062 U+0063 U+002D U+043F U+0440 U+043E U+0435 U+043A U+0442",
+      "byteLen": 16,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-han",
+      "segment": "проект-中文",
+      "codepoints": "U+043F U+0440 U+043E U+0435 U+043A U+0442 U+002D U+4E2D U+6587",
+      "byteLen": 19,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-kana",
+      "segment": "проект-日本語",
+      "codepoints": "U+043F U+0440 U+043E U+0435 U+043A U+0442 U+002D U+65E5 U+672C U+8A9E",
+      "byteLen": 22,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-hangul",
+      "segment": "проект-한국어",
+      "codepoints": "U+043F U+0440 U+043E U+0435 U+043A U+0442 U+002D U+D55C U+AD6D U+C5B4",
+      "byteLen": 22,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-ascii",
+      "segment": "проект-abc",
+      "codepoints": "U+043F U+0440 U+043E U+0435 U+043A U+0442 U+002D U+0061 U+0062 U+0063",
+      "byteLen": 16,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-cyr",
+      "segment": "проект-проект",
+      "codepoints": "U+043F U+0440 U+043E U+0435 U+043A U+0442 U+002D U+043F U+0440 U+043E U+0435 U+043A U+0442",
+      "byteLen": 25,
+      "block": "pair",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dash-han",
+      "segment": "中文-项目",
+      "codepoints": "U+4E2D U+6587 U+002D U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dash-ascii",
+      "segment": "中文-repo",
+      "codepoints": "U+4E2D U+6587 U+002D U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-dash-han",
+      "segment": "repo-中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+002D U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-uscore-han",
+      "segment": "中文_项目",
+      "codepoints": "U+4E2D U+6587 U+005F U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-uscore-ascii",
+      "segment": "中文_repo",
+      "codepoints": "U+4E2D U+6587 U+005F U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-uscore-han",
+      "segment": "repo_中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+005F U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dot-han",
+      "segment": "中文.项目",
+      "codepoints": "U+4E2D U+6587 U+002E U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dot-ascii",
+      "segment": "中文.repo",
+      "codepoints": "U+4E2D U+6587 U+002E U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-dot-han",
+      "segment": "repo.中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+002E U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-plus-han",
+      "segment": "中文+项目",
+      "codepoints": "U+4E2D U+6587 U+002B U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-plus-ascii",
+      "segment": "中文+repo",
+      "codepoints": "U+4E2D U+6587 U+002B U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-plus-han",
+      "segment": "repo+中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+002B U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-tilde-han",
+      "segment": "中文~项目",
+      "codepoints": "U+4E2D U+6587 U+007E U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-tilde-ascii",
+      "segment": "中文~repo",
+      "codepoints": "U+4E2D U+6587 U+007E U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-tilde-han",
+      "segment": "repo~中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+007E U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-space-han",
+      "segment": "中文 项目",
+      "codepoints": "U+4E2D U+6587 U+0020 U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-space-ascii",
+      "segment": "中文 repo",
+      "codepoints": "U+4E2D U+6587 U+0020 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-space-han",
+      "segment": "repo 中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+0020 U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-none-han",
+      "segment": "中文项目",
+      "codepoints": "U+4E2D U+6587 U+9879 U+76EE",
+      "byteLen": 12,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-none-ascii",
+      "segment": "中文repo",
+      "codepoints": "U+4E2D U+6587 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 10,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-none-han",
+      "segment": "repo中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+4E2D U+6587",
+      "byteLen": 10,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-paren-han",
+      "segment": "中文()项目",
+      "codepoints": "U+4E2D U+6587 U+0028 U+0029 U+9879 U+76EE",
+      "byteLen": 14,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-paren-ascii",
+      "segment": "中文()repo",
+      "codepoints": "U+4E2D U+6587 U+0028 U+0029 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 12,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-paren-han",
+      "segment": "repo()中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+0028 U+0029 U+4E2D U+6587",
+      "byteLen": 12,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-bracket-han",
+      "segment": "中文[]项目",
+      "codepoints": "U+4E2D U+6587 U+005B U+005D U+9879 U+76EE",
+      "byteLen": 14,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-bracket-ascii",
+      "segment": "中文[]repo",
+      "codepoints": "U+4E2D U+6587 U+005B U+005D U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 12,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-bracket-han",
+      "segment": "repo[]中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+005B U+005D U+4E2D U+6587",
+      "byteLen": 12,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-amp-han",
+      "segment": "中文&项目",
+      "codepoints": "U+4E2D U+6587 U+0026 U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-amp-ascii",
+      "segment": "中文&repo",
+      "codepoints": "U+4E2D U+6587 U+0026 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-amp-han",
+      "segment": "repo&中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+0026 U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-hash-han",
+      "segment": "中文#项目",
+      "codepoints": "U+4E2D U+6587 U+0023 U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-hash-ascii",
+      "segment": "中文#repo",
+      "codepoints": "U+4E2D U+6587 U+0023 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-hash-han",
+      "segment": "repo#中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+0023 U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-at-han",
+      "segment": "中文@项目",
+      "codepoints": "U+4E2D U+6587 U+0040 U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-at-ascii",
+      "segment": "中文@repo",
+      "codepoints": "U+4E2D U+6587 U+0040 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-at-han",
+      "segment": "repo@中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+0040 U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-bang-han",
+      "segment": "中文!项目",
+      "codepoints": "U+4E2D U+6587 U+0021 U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-bang-ascii",
+      "segment": "中文!repo",
+      "codepoints": "U+4E2D U+6587 U+0021 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-bang-han",
+      "segment": "repo!中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+0021 U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-comma-han",
+      "segment": "中文,项目",
+      "codepoints": "U+4E2D U+6587 U+002C U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-comma-ascii",
+      "segment": "中文,repo",
+      "codepoints": "U+4E2D U+6587 U+002C U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-comma-han",
+      "segment": "repo,中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+002C U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-semi-han",
+      "segment": "中文;项目",
+      "codepoints": "U+4E2D U+6587 U+003B U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-semi-ascii",
+      "segment": "中文;repo",
+      "codepoints": "U+4E2D U+6587 U+003B U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-semi-han",
+      "segment": "repo;中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+003B U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-eq-han",
+      "segment": "中文=项目",
+      "codepoints": "U+4E2D U+6587 U+003D U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-eq-ascii",
+      "segment": "中文=repo",
+      "codepoints": "U+4E2D U+6587 U+003D U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-eq-han",
+      "segment": "repo=中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+003D U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-pct-han",
+      "segment": "中文%项目",
+      "codepoints": "U+4E2D U+6587 U+0025 U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-pct-ascii",
+      "segment": "中文%repo",
+      "codepoints": "U+4E2D U+6587 U+0025 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-pct-han",
+      "segment": "repo%中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+0025 U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dollar-han",
+      "segment": "中文$项目",
+      "codepoints": "U+4E2D U+6587 U+0024 U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dollar-ascii",
+      "segment": "中文$repo",
+      "codepoints": "U+4E2D U+6587 U+0024 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-dollar-han",
+      "segment": "repo$中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+0024 U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-caret-han",
+      "segment": "中文^项目",
+      "codepoints": "U+4E2D U+6587 U+005E U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-caret-ascii",
+      "segment": "中文^repo",
+      "codepoints": "U+4E2D U+6587 U+005E U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-caret-han",
+      "segment": "repo^中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+005E U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-digit-han",
+      "segment": "中文0项目",
+      "codepoints": "U+4E2D U+6587 U+0030 U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-digit-ascii",
+      "segment": "中文0repo",
+      "codepoints": "U+4E2D U+6587 U+0030 U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 11,
+      "block": "han-sep-ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-digit-han",
+      "segment": "repo0中文",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+0030 U+4E2D U+6587",
+      "byteLen": 11,
+      "block": "ascii-sep-han",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-fw-paren",
+      "segment": "中文（测试）",
+      "codepoints": "U+4E2D U+6587 U+FF08 U+6D4B U+8BD5 U+FF09",
+      "byteLen": 18,
+      "block": "cjk-punct",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-cjk-comma",
+      "segment": "中文、项目",
+      "codepoints": "U+4E2D U+6587 U+3001 U+9879 U+76EE",
+      "byteLen": 15,
+      "block": "cjk-punct",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-cjk-dot",
+      "segment": "中文·项目",
+      "codepoints": "U+4E2D U+6587 U+00B7 U+9879 U+76EE",
+      "byteLen": 14,
+      "block": "cjk-punct",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-dash-em",
+      "segment": "中文——项目",
+      "codepoints": "U+4E2D U+6587 U+2014 U+2014 U+9879 U+76EE",
+      "byteLen": 18,
+      "block": "cjk-punct",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-fw-colon",
+      "segment": "中文：项目",
+      "codepoints": "U+4E2D U+6587 U+FF1A U+9879 U+76EE",
+      "byteLen": 15,
+      "block": "cjk-punct",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-quote",
+      "segment": "中文「项目」",
+      "codepoints": "U+4E2D U+6587 U+300C U+9879 U+76EE U+300D",
+      "byteLen": 18,
+      "block": "cjk-punct",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-fw-digit",
+      "segment": "中文２０２６",
+      "codepoints": "U+4E2D U+6587 U+FF12 U+FF10 U+FF12 U+FF16",
+      "byteLen": 18,
+      "block": "cjk-punct",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-fw-latin",
+      "segment": "中文ＡＢＣ",
+      "codepoints": "U+4E2D U+6587 U+FF21 U+FF22 U+FF23",
+      "byteLen": 15,
+      "block": "cjk-punct",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-trad",
+      "segment": "繁體中文-專案",
+      "codepoints": "U+7E41 U+9AD4 U+4E2D U+6587 U+002D U+5C08 U+6848",
+      "byteLen": 19,
+      "block": "han-variant",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-rare",
+      "segment": "龘齉爩-项目",
+      "codepoints": "U+9F98 U+9F49 U+7229 U+002D U+9879 U+76EE",
+      "byteLen": 16,
+      "block": "han-variant",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-ext-b",
+      "segment": "𠀋𠮷-项目",
+      "codepoints": "U+2000B U+20BB7 U+002D U+9879 U+76EE",
+      "byteLen": 15,
+      "block": "han-variant",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-radical",
+      "segment": "氵扌-项目",
+      "codepoints": "U+6C35 U+624C U+002D U+9879 U+76EE",
+      "byteLen": 13,
+      "block": "han-variant",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-compat",
+      "segment": "虜-golf",
+      "codepoints": "U+865C U+002D U+0067 U+006F U+006C U+0066",
+      "byteLen": 8,
+      "block": "han-variant",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "han-long-han",
+      "segment": "这是一个很长的中文项目目录名称用于测试路径边界",
+      "codepoints": "U+8FD9 U+662F U+4E00 U+4E2A U+5F88 U+957F U+7684 U+4E2D U+6587 U+9879 U+76EE U+76EE U+5F55 U+540D U+79F0 U+7528 U+4E8E U+6D4B U+8BD5 U+8DEF U+5F84 U+8FB9 U+754C",
+      "byteLen": 69,
+      "block": "han-variant",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-plain",
+      "segment": "my-repo",
+      "codepoints": "U+006D U+0079 U+002D U+0072 U+0065 U+0070 U+006F",
+      "byteLen": 7,
+      "block": "ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-dots",
+      "segment": "my.repo.v2",
+      "codepoints": "U+006D U+0079 U+002E U+0072 U+0065 U+0070 U+006F U+002E U+0076 U+0032",
+      "byteLen": 10,
+      "block": "ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-spaces",
+      "segment": "My Repo 2026",
+      "codepoints": "U+004D U+0079 U+0020 U+0052 U+0065 U+0070 U+006F U+0020 U+0032 U+0030 U+0032 U+0036",
+      "byteLen": 12,
+      "block": "ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-upper",
+      "segment": "MyRepo",
+      "codepoints": "U+004D U+0079 U+0052 U+0065 U+0070 U+006F",
+      "byteLen": 6,
+      "block": "ascii",
+      "expected": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-mixedpunct",
+      "segment": "repo_v2.1-final(prod)",
+      "codepoints": "U+0072 U+0065 U+0070 U+006F U+005F U+0076 U+0032 U+002E U+0031 U+002D U+0066 U+0069 U+006E U+0061 U+006C U+0028 U+0070 U+0072 U+006F U+0064 U+0029",
+      "byteLen": 21,
+      "block": "ascii",
+      "expected": null
+    }
+  ]
+}
