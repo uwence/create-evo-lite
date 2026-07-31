@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: ee9866190b8c552c7c8b94efeea95e28f37b6cd2
-> upstreamSha: ee9866190b8c552c7c8b94efeea95e28f37b6cd2
-> ahead: 0
+> headSha: c8621813b20132bcc694504678b55fd43f365d21
+> upstreamSha: 17012e24b2303ad64254cf62df6a481d8cb25c6c
+> ahead: 1
 > behind: 0
-> focusUpdatedAt: 2026-07-31T07:28:14.217Z
+> focusUpdatedAt: 2026-07-31T08:15:20.404Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -27,6 +27,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [c862181] 2026-07-31 SpecPortfolioAgingDisposition: 将 spec:provider-first-code-perception-foundation 从 adopted 调整为 parked，保留 umbrella 与 spawned-from 关系。
 - [ee98661] 2026-07-31 Zvec06CorrectnessClosure: [zvec-06-upgrade] 收口。议题由「功能升级」重分类为「P0 现存正确性缺陷修复」——原立项理由(0.5.0 无 readOnly、reader/writer 拆分随升级落地)被同版重测
 - [b181245] 2026-07-28 feature-completion: [c482] Wiki UX debt closed across three phases. 32911e0 wraps the architecture SVG in a natural-widt
 - [c466344] 2026-07-28 bug-fix: [57b0] trajectory entry single-line invariant closed. de352ec folds details before truncation; c4663
@@ -36,7 +37,6 @@
 - [659984d] 2026-07-23 governance-closure: [a177] mcp-zvec-lock 设计+计划阶段收口。设计文档 docs/superpowers/specs/2026-07-23-mcp-zvec-lock-design.md:三层锁协调(
 - [b5803d3] 2026-07-23 governance-closure: 4b-1 Architecture-Governance Wiki closure. Q5 user acceptance PASS (2026-07-23). Implementation main
 - [035afb0] 2026-07-22 backlog-closure: Close stale backlog [06fd][mcp-detect-missing]: templates/cli/mcp-detect.js now exists (6.1K) and te
-- [035afb0] 2026-07-22 backlog-closure: Close stale backlog [fresh-plan-progress]: fixed pre-2.3.0 in templates/cli/planning.js (plan progre
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
