@@ -31,6 +31,7 @@
 // the boundary. Requiring 'fs'/'path' is a module load, not a filesystem access;
 // the lexical layer performs zero FS calls.
 
+const fs = require('fs');
 const win32 = require('path').win32;
 
 // Windows path grammar is parsed with path.win32 explicitly, never the ambient
@@ -38,6 +39,10 @@ const win32 = require('path').win32;
 // untestable on Linux CI, where these very strings are ordinary filenames.
 
 const LEXICAL_VERDICT = { ELIGIBLE: 'LEXICALLY_ELIGIBLE', UNKNOWN: 'UNKNOWN' };
+const PROFILE_VERDICT = { IN_PROFILE: 'IN_PROFILE', UNKNOWN: 'UNKNOWN' };
+// UNSAFE is declared so consumers can switch exhaustively; see §5.2 for why it
+// is never returned by this implementation.
+const VERDICT = { SAFE: 'SAFE', UNKNOWN: 'UNKNOWN', UNSAFE: 'UNSAFE' };
 
 // §5.1 Layer 1 character set. Space is inside the set on purpose (`Program
 // Files` is an ordinary ASCII path); trailing spaces are rejected per-segment
@@ -45,6 +50,11 @@ const LEXICAL_VERDICT = { ELIGIBLE: 'LEXICALLY_ELIGIBLE', UNKNOWN: 'UNKNOWN' };
 const SUPPORTED_CHARS = /^[A-Za-z0-9_\-.\\/: ]+$/;
 const DRIVE_ABSOLUTE = /^[A-Za-z]:[\\/]/;
 const RESERVED_DEVICE = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+// 8.3 alias form (`PROGRA~1`). Detected here, resolved nowhere: the short-name
+// identity residual belongs to [attp-win83-canonical-root-identity], and this
+// spec only requires that its presence force UNKNOWN.
+const SHORT_NAME_8_3 = /^[^\\/:]{1,8}~[0-9]{1,3}(\.[^\\/:.]{1,3})?$/;
+
 function lexEligible(reason) {
     return { verdict: LEXICAL_VERDICT.ELIGIBLE, reason };
 }
@@ -113,7 +123,173 @@ function classifyLexical(collectionPath, platform) {
     return lexEligible('lexical:supported-ascii-profile');
 }
 
+// Read-only probe surface. Injectable so the profile layer can be tested without
+// building real junctions, and so a reviewer can assert by construction that no
+// mutating call exists in the set.
+const DEFAULT_FS_OPS = {
+    existsSync: (p) => fs.existsSync(p),
+    lstatSync: (p) => fs.lstatSync(p),
+    // .native returns the canonical on-disk spelling, which is what makes 8.3
+    // expansion and casing divergence observable at all.
+    realpathSync: (p) => fs.realpathSync.native(p),
+};
+
+function profileIn(reason) {
+    return { verdict: PROFILE_VERDICT.IN_PROFILE, reason };
+}
+
+function profileUnknown(reason, extra) {
+    return Object.assign({ verdict: PROFILE_VERDICT.UNKNOWN, reason }, extra || {});
+}
+
+function probeFailed(op, target, err) {
+    // §5.1: a probe that FAILS is not a probe that passed. Permission denied on
+    // an ancestor tells us nothing about reparse points, so it is UNKNOWN.
+    return profileUnknown(
+        `profile:probe-failed:${op}:${(err && err.code) || 'UNKNOWN_ERROR'}`,
+        { probeFailure: { op, target } },
+    );
+}
+
+// ['C:\\', 'C:\\p', 'C:\\p\\.evo-lite', ...] — the collection itself included,
+// because it may already exist and may itself be a reparse point.
+function ancestorChain(collectionPath) {
+    const root = collectionPath.slice(0, 3);
+    const chain = [root];
+    let current = root.replace(/\\+$/, '');
+    for (const segment of collectionPath.slice(3).split('\\')) {
+        current = `${current}\\${segment}`;
+        chain.push(current);
+    }
+    return chain;
+}
+
+/**
+ * Layer 2: read-only topology probing. Never writes, never loads zvec.
+ * Any probe failure yields UNKNOWN rather than a pass.
+ *
+ * @param {string} collectionPath
+ * @param {object} [fsOps] {existsSync, lstatSync, realpathSync} — read-only by contract
+ * @returns {{verdict: string, reason: string}}
+ */
+function evaluateProfile(collectionPath, fsOps) {
+    const ops = fsOps || DEFAULT_FS_OPS;
+    if (typeof collectionPath !== 'string' || !DRIVE_ABSOLUTE.test(collectionPath)) {
+        return profileUnknown('profile:input-not-lexically-eligible');
+    }
+
+    // 8.3 aliases are a topology question (which long name does this alias?), so
+    // §5.1 places them in Layer 2. Note that a LITERAL short name never reaches
+    // here through classifyCollectionPath: '~' is outside the Layer 1 character
+    // set, so `C:\PROGRA~1\...` is already UNKNOWN for a charset reason. This
+    // check covers callers that invoke evaluateProfile() directly. On the
+    // composite path the working 8.3 defense is the realpath divergence check
+    // below, which catches a short name that the OS expands.
+    for (const segment of collectionPath.slice(3).split('\\')) {
+        if (SHORT_NAME_8_3.test(segment)) {
+            return profileUnknown('profile:8dot3-short-name-alias-suspected');
+        }
+    }
+
+    const chain = ancestorChain(collectionPath);
+    let deepestExisting = null;
+    for (const ancestor of chain) {
+        let exists;
+        try {
+            exists = ops.existsSync(ancestor);
+        } catch (err) {
+            return probeFailed('existsSync', ancestor, err);
+        }
+        if (!exists) break;
+
+        let stat;
+        try {
+            stat = ops.lstatSync(ancestor);
+        } catch (err) {
+            return probeFailed('lstatSync', ancestor, err);
+        }
+        if (!stat || typeof stat.isSymbolicLink !== 'function') {
+            return profileUnknown('profile:lstat-result-not-interpretable');
+        }
+        // Node reports Windows directory junctions as symbolic links, so this one
+        // predicate covers both junction and symlink reparse points.
+        if (stat.isSymbolicLink()) {
+            return profileUnknown('profile:reparse-point-in-ancestor-chain', { at: ancestor });
+        }
+        deepestExisting = ancestor;
+    }
+
+    if (deepestExisting === null) {
+        // Not even the drive root probed as existing. Nothing was verified, so
+        // nothing may be claimed.
+        return profileUnknown('profile:no-existing-ancestor-to-probe');
+    }
+
+    let real;
+    try {
+        real = ops.realpathSync(deepestExisting);
+    } catch (err) {
+        return probeFailed('realpathSync', deepestExisting, err);
+    }
+    if (typeof real !== 'string') return profileUnknown('profile:realpath-result-not-a-string');
+
+    const realTrimmed = real.replace(/\\+$/, '');
+    const inputTrimmed = deepestExisting.replace(/\\+$/, '');
+    const resolvedFull = realTrimmed + collectionPath.slice(inputTrimmed.length);
+
+    // The whole point: an ASCII-looking path may resolve to a non-ASCII target.
+    // Re-run Layer 1 on what the OS says the path really is.
+    const lexicalOfReal = classifyLexical(resolvedFull, 'win32');
+    if (lexicalOfReal.verdict !== LEXICAL_VERDICT.ELIGIBLE) {
+        return profileUnknown('profile:realpath-target-not-lexically-eligible', {
+            resolvedReason: lexicalOfReal.reason,
+        });
+    }
+
+    // Case-insensitive because Windows path comparison is; any REMAINING
+    // difference means something was rewritten (8.3 expansion, alias), and an
+    // unexplained rewrite is not evidence of being in profile.
+    if (realTrimmed.toLowerCase() !== inputTrimmed.toLowerCase()) {
+        return profileUnknown('profile:realpath-diverges-from-input');
+    }
+
+    return profileIn('profile:in-supported-profile');
+}
+
+/**
+ * Composite decision. SAFE requires BOTH layers; everything else is UNKNOWN and
+ * must be handled as unsafe (I3). UNSAFE is never returned (§5.2).
+ *
+ * @param {string} collectionPath the exact path destined for ZVecOpen/ZVecCreateAndOpen
+ * @param {object} [options] {platform, fsOps}
+ * @returns {{verdict: string, layer: string, reason: string, lexical: object, profile: object|null}}
+ */
+function classifyCollectionPath(collectionPath, options) {
+    const opts = options || {};
+    const platform = opts.platform === undefined ? process.platform : opts.platform;
+    const lexical = classifyLexical(collectionPath, platform);
+
+    if (platform !== 'win32') {
+        // I9. Note this returns SAFE without touching the filesystem.
+        return { verdict: VERDICT.SAFE, layer: 'platform', reason: lexical.reason, lexical, profile: null };
+    }
+    if (lexical.verdict !== LEXICAL_VERDICT.ELIGIBLE) {
+        return { verdict: VERDICT.UNKNOWN, layer: 'lexical', reason: lexical.reason, lexical, profile: null };
+    }
+
+    const profile = evaluateProfile(collectionPath, opts.fsOps);
+    if (profile.verdict !== PROFILE_VERDICT.IN_PROFILE) {
+        return { verdict: VERDICT.UNKNOWN, layer: 'profile', reason: profile.reason, lexical, profile };
+    }
+    return { verdict: VERDICT.SAFE, layer: 'both', reason: 'supported-ascii-profile', lexical, profile };
+}
+
 module.exports = {
     classifyLexical,
+    evaluateProfile,
+    classifyCollectionPath,
+    DEFAULT_FS_OPS,
+    VERDICT,
     LEXICAL_VERDICT,
+    PROFILE_VERDICT,
 };
