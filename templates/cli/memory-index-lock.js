@@ -280,7 +280,10 @@ function diagnoseLockConflict(dir, ctx = {}) {
     if (process.platform !== 'win32') {
         return {
             verdict: 'live-foreign', owner, snapshot,
-            report: { ...base, reason: `pid ${owner.pid}:unix 平台孤儿自愈默认关闭(孤儿被 init 接管,父进程判定不可靠),仅诊断不终止` },
+            // 设计 §4.2:所有 live-foreign report 必须明示「不会自动终止该进程」。
+            // 本分支原文写作「仅诊断不终止」—— 语义相近但不满足该用户可见合同,
+            // 于是 T-lock-orphan-refusal-matrix case 3 在非 win32 上必然失败。
+            report: { ...base, reason: `pid ${owner.pid}:unix 平台孤儿自愈默认关闭(孤儿被 init 接管,父进程判定不可靠),不会自动终止该进程,仅提供诊断` },
         };
     }
     // 闸③:父进程仍活着 = 有人管着它

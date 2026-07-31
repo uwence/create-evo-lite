@@ -2569,12 +2569,18 @@ async function runGovernanceTests() {
                     col.closeSync();
                     return { dir, colPath };
                 };
-                // holder:真实持锁 + 以 memory.js mcp 形态运行 + 写真 owner
+                // holder 脚本落在 os.tmpdir(),而 Node 的模块解析以【脚本所在目录】
+                // 向上走,cwd 不参与。因此裸 require('@zvec/zvec') 在 CI runner 上必然
+                // MODULE_NOT_FOUND —— 本地之所以能过,是碰巧命中了开发机上一个游离的
+                // 用户级 node_modules(实测解析到 C:\Users\<user>\node_modules),
+                // 与本仓安装无关。父进程已用绝对路径传 lock 模块,zvec 照同一方式传,
+                // 顺带保证 holder 与父进程加载的是【同一份】zvec,不会跨版本错配。
+                const zvecEntry = require.resolve('@zvec/zvec');
                 const HOLDER_SRC = [
                     "'use strict';",
                     "const fs = require('fs');",
                     "const path = require('path');",
-                    "const zvec = require('@zvec/zvec');",
+                    "const zvec = require(process.argv[6]);",
                     "const lock = require(process.argv[4]);",
                     "const dir = process.argv[3];",
                     "const col = zvec.ZVecOpen(path.join(dir, 'collection'));",
@@ -2602,11 +2608,24 @@ async function runGovernanceTests() {
                 {
                     const { dir, colPath } = mkCollection();
                     const scriptPath = writeHolderScript();
-                    const holder = childProcess.spawn(process.execPath, [scriptPath, 'mcp', dir, lockModulePath, HERE], {
-                        stdio: 'ignore', cwd: WORKSPACE_ROOT, env: { ...process.env },
+                    const holder = childProcess.spawn(process.execPath, [scriptPath, 'mcp', dir, lockModulePath, HERE, zvecEntry], {
+                        stdio: ['ignore', 'ignore', 'pipe'], cwd: WORKSPACE_ROOT, env: { ...process.env },
                     });
+                    // 可观察性:holder 以 stdio:'ignore' 起时,任何子进程异常都被吞掉,
+                    // 父测试只能报一句误导性的 'holder acquired the lock'。把 spawn 错误、
+                    // 退出码/信号与 stderr 收集起来,超时时一并放进断言。
+                    let holderStderr = '';
+                    let holderExit = null;
+                    let holderSpawnError = null;
+                    holder.stderr.on('data', d => { holderStderr += String(d); });
+                    holder.on('error', e => { holderSpawnError = e; });
+                    holder.on('exit', (code, signal) => { holderExit = { code, signal }; });
                     try {
-                        assert.ok(waitForFile(path.join(dir, 'holder-ready.txt'), 8000), 'holder acquired the lock');
+                        assert.ok(waitForFile(path.join(dir, 'holder-ready.txt'), 8000),
+                            'holder never signalled readiness — it did not acquire the lock. '
+                            + `spawnError=${holderSpawnError ? holderSpawnError.message : 'none'} `
+                            + `exit=${holderExit ? JSON.stringify(holderExit) : 'still running'} `
+                            + `stderr=${JSON.stringify(holderStderr.slice(0, 600)) || '(empty)'}`);
                         const holderOwnerBytes = fs.readFileSync(path.join(dir, 'owner.json'), 'utf8');
                         const killSpy = [];
                         let threw = null;
@@ -2645,15 +2664,15 @@ async function runGovernanceTests() {
                         "const { spawn } = require('child_process');",
                         "const fs = require('fs');",
                         "const path = require('path');",
-                        "const [holderScript, dir, lockPath, projectRoot] = process.argv.slice(2);",
-                        "const child = spawn(process.execPath, [holderScript, 'mcp', dir, lockPath, projectRoot], { detached: true, stdio: 'ignore', env: process.env, cwd: process.cwd() });",
+                        "const [holderScript, dir, lockPath, projectRoot, zvecEntry] = process.argv.slice(2);",
+                        "const child = spawn(process.execPath, [holderScript, 'mcp', dir, lockPath, projectRoot, zvecEntry], { detached: true, stdio: 'ignore', env: process.env, cwd: process.cwd() });",
                         "child.unref();",
                         "const ready = path.join(dir, 'holder-ready.txt');",
                         "(function wait() { if (fs.existsSync(ready)) process.exit(0); setTimeout(wait, 50); })();",
                     ].join('\n');
                     const spawnerPath = path.join(path.dirname(scriptPath), 'spawner.js');
                     fs.writeFileSync(spawnerPath, SPAWNER_SRC, 'utf8');
-                    childProcess.execFileSync(process.execPath, [spawnerPath, scriptPath, dir, lockModulePath, HERE], {
+                    childProcess.execFileSync(process.execPath, [spawnerPath, scriptPath, dir, lockModulePath, HERE, zvecEntry], {
                         cwd: WORKSPACE_ROOT, env: { ...process.env }, timeout: 15000,
                     });
                     const orphanPid = Number(fs.readFileSync(path.join(dir, 'holder-ready.txt'), 'utf8'));
@@ -7433,6 +7452,9 @@ async function runGovernanceTests() {
             if (process.platform === 'win32') {
                 // `managed` (受管 settings 绝对路径) is declared further below — compute the same
                 // path locally rather than forward-referencing that const.
+                // 纯 JS realpathSync,不是 .native:takeover-install.js 的 fsOps 默认就是 fs,
+                // 期望值必须与【它自己的】规范化一致。takeover-receipt.js 用 .native 是另一个
+                // 模块的另一套合同,不可互相套用(混用会在 8.3 短名宿主上两头对不上)。
                 const managedForShellGuard = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
                 const comspec = process.env.ComSpec || process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe';
                 assert.ok(fs.existsSync(comspec), `sanity: ${comspec} must exist to run this guard`);
@@ -7458,7 +7480,7 @@ async function runGovernanceTests() {
             }
 
             // 受管对象唯一:<canonicalProjectRoot>/.claude/settings.json —— 项目内的其他文件也不许被本工具触碰
-            const managed = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');
+            const managed = path.join(fs.realpathSync(fakeProject), '.claude', 'settings.json');   // 同上:配 takeover-install 的 fsOps
             assert.strictEqual(ti.resolveManagedSettingsPath(fakeProject, '.claude/settings.json'), managed,
                 'relative settings bind to the physical project root');
             assert.strictEqual(ti.managedSettingsPath(fakeProject), managed, 'managed path is derived, not supplied');
@@ -7817,7 +7839,7 @@ async function runGovernanceTests() {
             {
                 const inst = require(path.join(TEMPLATE_CLI_DIR, 'takeover-install.js'));
                 const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-inst-msg-'));
-                const realRoot = fs.realpathSync(projectRoot);
+                const realRoot = fs.realpathSync(projectRoot);   // takeover-install 侧:纯 JS fsOps
                 const settings = path.join(realRoot, '.claude', 'settings.json');
                 const enoent = () => Object.assign(new Error('no entry'), { code: 'ENOENT' });
                 // 逐字比较，不用宽正则：宽正则会让"错误映射到了别的分支"照样绿。
@@ -8435,6 +8457,7 @@ async function runGovernanceTests() {
         {
             const pp = require(path.join(TEMPLATE_CLI_DIR, 'takeover-physical-path.js'));
             const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-pp-'));
+            // 本块把 fs 显式传给 pp.resolvePhysicalPath(root, fs),所以期望值也要用纯 JS 版。
             const realRoot = fs.realpathSync(root);
 
             // 1. 已存在的路径:等价于 realpath
@@ -8547,7 +8570,13 @@ async function runGovernanceTests() {
         {
             const rc = require(path.join(TEMPLATE_CLI_DIR, 'takeover-receipt.js'));
             const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-state-'));
-            const realState = fs.realpathSync(stateRoot);
+            // 期望值必须用 realpathSync.native —— 与守卫 DEFAULT_FS_OPS 同一个原语。
+            // 纯 JS 的 fs.realpathSync 在 win32 上【不展开 8.3 短名】,于是在
+            // os.tmpdir() 被短名化的宿主上(CI runner:C:\Users\RUNNER~1\...)算出
+            // 'RUNNER~1',而实现返回真实长名 'runneradmin' —— 测试红,实现无辜。
+            // 用弱原语迁就实现正是 takeover-receipt.js:16-22 记录的那次真实安全回归的
+            // 成因(大小写折叠让项目外写被误判为项目内),这里绝不反向妥协。
+            const realState = fs.realpathSync.native(stateRoot);
             const transcript = path.join(stateRoot, 'sess-abc.jsonl');
             fs.writeFileSync(transcript, '', 'utf8');
 
@@ -8732,7 +8761,7 @@ async function runGovernanceTests() {
             // roots: []，而 [].some(...) 本来就是 false，deny 照样成立。必须注入一个
             // 【ok:false 但 roots 非空】的返回值，才能把这两件事分开证明。
             {
-                const injectedRoot = rc.normalize(fs.realpathSync(stateA)) + '/memory';
+                const injectedRoot = rc.normalize(fs.realpathSync.native(stateA)) + '/memory';
                 const original = rc.deriveHostOwnedWriteRoots;
                 let calls = 0;
                 rc.deriveHostOwnedWriteRoots = () => {
