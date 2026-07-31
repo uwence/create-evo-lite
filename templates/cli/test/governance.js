@@ -2779,8 +2779,9 @@ async function runGovernanceTests() {
 
                 // 设计附录 A 的七项判定矩阵。必须用真实临时 collection + 独立 OS 进程:
                 // 函数 arity、源码 grep、同进程双实例都测不出 OS 级文件锁行为。
-                // 0.5.0 已实测会「接受 { readOnly: true } 但无实际语义」—— 静默接受正是
-                // 本矩阵要抓的东西,所以判定只能来自可观察的并发结果。
+                // API 是否接受 { readOnly: true } 并不能说明它是否具有实际共享读语义 ——
+                // 静默接受正是本矩阵要抓的东西,所以判定只能来自跨进程可观察的并发结果。
+                // Phase 0B 实测:0.5.0 与 0.6.0 【均】具有真实共享读语义,两版逐行一致。
                 const HOLDER_SRC = [
                     "'use strict';",
                     "const fs = require('fs');",
@@ -2875,7 +2876,7 @@ async function runGovernanceTests() {
                     assert.ok(observed['1 readerA(ro)'].ok,
                         `reader A must open read-only: ${JSON.stringify(observed['1 readerA(ro)'])}`);
 
-                    // 2. reader B 与 A 并发打开 —— 本次升级的核心契约
+                    // 2. reader B 与 A 并发打开 —— 跨版本兼容性与读写锁行为合同
                     observed['2 readerB(ro) w/ A'] = probe({ readOnly: true });
                     // 3. reader 存活时 writer 的实际结果(不预设方向,只要求结论自洽)
                     observed['3 writer w/ readers'] = probe(null);
@@ -2909,9 +2910,11 @@ async function runGovernanceTests() {
                             + `isZVecError=${sample.isZVecError} matchesCanLock=${sample.matchesCanLock} hasCause=${sample.hasCause}`);
                     }
 
-                    // --- 升级判定契约:多进程并发只读 ---
+                    // --- 跨版本行为合同:多进程并发只读 ---
+                    // 不是 0.5 RED / 0.6 GREEN 的升级判据 —— 两版都满足。它锁的是
+                    // 「这条语义在升级前后都不许消失」,回归时才会变红。
                     assert.ok(observed['2 readerB(ro) w/ A'].ok,
-                        `two concurrent read-only readers must coexist — this is the contract [zvec-06-upgrade] depends on. Observed: ${JSON.stringify(observed['2 readerB(ro) w/ A'])}`);
+                        `two concurrent read-only readers must coexist — a behavioural contract that held on both 0.5.0 and 0.6.0 and must not regress. Observed: ${JSON.stringify(observed['2 readerB(ro) w/ A'])}`);
                 } finally {
                     for (const h of holders) {
                         try { fs.writeFileSync(h.releaseFile, 'go', 'utf8'); } catch (_) {}
@@ -3017,7 +3020,11 @@ async function runGovernanceTests() {
                     const before = second.searchText('rvprobe', { scope: 'all', topK: 20 });
                     assert.strictEqual(before.length, 6,
                         `control failed: all 6 archives must be visible to the writer that just wrote them, else the post-reopen assertion is vacuous. Got ${before.length}`);
-                    second._dirty = false;               // 复刻 optimize 未发生(异常被吞 / 进程被杀)
+                    // ⚠ fault injection seam(白盒),不是业务用法:直接压掉 _dirty 让
+                    // _finalizeSync() 跳过 optimizeSync(),精确复刻「optimize 没有发生」
+                    // 的那条落盘路径 —— 异常被 catch(_) 吞掉,或进程在 finalize 前被杀。
+                    // 若将来 _dirty 更名或语义变化,这里要跟着改,否则测试会静默失效。
+                    second._dirty = false;
                     second.close();
 
                     const third = new ZvecMemoryIndex();
