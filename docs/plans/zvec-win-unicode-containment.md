@@ -70,6 +70,18 @@ Windows 上部分非 ASCII collection 路径在 `insertSync` 触发 `0xC0000409`
 
 ### Task 4: 单一 engine decision
 
+**Files:**
+- Create: `.evo-lite/cli/zvec-collection-path.js`
+- Create: `templates/cli/zvec-collection-path.js`
+- Modify: `.evo-lite/cli/memory-index.js`
+- Sync: `templates/cli/memory-index.js`
+- Modify: `.evo-lite/cli/memory-index-zvec.js`
+- Sync: `templates/cli/memory-index-zvec.js`
+- Modify: `.evo-lite/cli/template-manifest.js`
+- Sync: `templates/cli/template-manifest.js`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
+
 - [ ] 诊断与实例化消费同一决策；**非 `SAFE` 时 `loadZvecIndex` 调用次数 = 0**
 
 ### Task 5: native 入口收口
