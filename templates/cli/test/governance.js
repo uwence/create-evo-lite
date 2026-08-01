@@ -11870,32 +11870,49 @@ async function runChildRuntimeTests() {
         // modules, so "was @zvec/zvec pulled in?" is only answerable in a process
         // whose require cache this module is the only cause of.
         //
-        // fs is patched AFTER the require so the CJS loader's own reads are not
-        // counted as classifier behaviour — the claim under test is that CALLING
-        // classifyLexical touches no filesystem, not that loading a file does not.
+        // The child hands the classifier a read-only Proxy of `fs` instead of
+        // mutating the real module. Assigning over every function property (the
+        // obvious approach) breaks on Node 24, where `fs.Utf8Stream` is a
+        // getter-only accessor and the write throws. A Proxy also keeps the
+        // stronger property the test is actually after: ANY call reaching the fs
+        // module is recorded, however that property happens to be defined.
         const childSource = [
             "'use strict';",
-            `const mod = require(${JSON.stringify(modPath)});`,
-            "const fsMod = require('fs');",
+            "const Module = require('module');",
             'const fsCalls = [];',
-            'const originals = new Map();',
-            'for (const key of Object.keys(fsMod)) {',
-            "    if (typeof fsMod[key] !== 'function') continue;",
-            '    const original = fsMod[key];',
-            '    originals.set(key, original);',
-            '    fsMod[key] = function patched(...args) { fsCalls.push(key); return original.apply(this, args); };',
-            '}',
+            'const wrapFs = (target) => new Proxy(target, {',
+            '    get(t, prop) {',
+            '        const value = Reflect.get(t, prop, t);',
+            "        if (typeof value !== 'function') return value;",
+            '        return function recorded(...args) { fsCalls.push(String(prop)); return value.apply(t, args); };',
+            '    },',
+            "    set() { throw new Error('the classifier must not mutate the fs module'); },",
+            '});',
+            'const originalLoad = Module._load;',
+            'Module._load = function (request, parent, isMain) {',
+            '    const loaded = originalLoad.call(this, request, parent, isMain);',
+            "    return (request === 'fs' || request === 'node:fs') ? wrapFs(loaded) : loaded;",
+            '};',
+            'let mod;',
+            `try { mod = require(${JSON.stringify(modPath)}); } finally { Module._load = originalLoad; }`,
             `const inputs = ${JSON.stringify(inputs)};`,
             "const first = inputs.map((i) => mod.classifyLexical(i, 'win32'));",
             "const second = inputs.map((i) => mod.classifyLexical(i, 'win32'));",
-            'for (const [key, original] of originals) fsMod[key] = original;',
+            'const lexicalCalls = fsCalls.slice();',
+            '// Positive control: the harness must be able to SEE a filesystem call,',
+            '// otherwise "zero calls" would prove nothing. The profile layer is',
+            '// expected to probe, so it must show up in the same recorder.',
+            "try { mod.evaluateProfile('C:\\\\evo\\\\control\\\\.evo-lite\\\\zvec\\\\collection'); } catch (_) {}",
+            'const controlCalls = fsCalls.length - lexicalCalls.length;',
             'const zvecLoaded = Object.keys(require.cache).filter((k) => /@zvec|memory-index-zvec/.test(k));',
-            'process.stdout.write(JSON.stringify({ fsCalls, zvecLoaded, first, second }));',
+            'process.stdout.write(JSON.stringify({ lexicalCalls, controlCalls, zvecLoaded, first, second }));',
         ].join('\n');
         const run = childProcess.spawnSync(process.execPath, ['-e', childSource], { encoding: 'utf8' });
         assert.strictEqual(run.status, 0, `lexical purity child must exit 0 (stderr: ${run.stderr})`);
         const purity = JSON.parse(run.stdout);
-        assert.deepStrictEqual(purity.fsCalls, [], 'classifyLexical must perform zero filesystem calls (I5)');
+        assert.deepStrictEqual(purity.lexicalCalls, [], 'classifyLexical must perform zero filesystem calls (I5)');
+        assert.ok(purity.controlCalls > 0,
+            'positive control: the recorder must observe the profile layer probing, otherwise "zero calls" is vacuous');
         assert.deepStrictEqual(purity.zvecLoaded, [], 'the containment module must not load @zvec/zvec or memory-index-zvec (I4)');
         assert.deepStrictEqual(purity.first, purity.second, 'classifyLexical must be deterministic for identical input');
         assert.strictEqual(purity.first[0].verdict, 'LEXICALLY_ELIGIBLE', 'plain ASCII drive-absolute path is lexically eligible');
