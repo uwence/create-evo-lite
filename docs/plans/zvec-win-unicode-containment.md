@@ -14,7 +14,7 @@ created: 2026-07-31
 > adopt 发生在实施**之前**，不在 Task 9（spec §13）。
 
 **Canonical 详细计划**：`docs/superpowers/plans/2026-07-31-zvec-win-unicode-containment.md`
-**契约文档**：`docs/superpowers/specs/2026-07-31-zvec-win-unicode-containment-design.md`
+**契约文档（canonical Spec）**：`docs/specs/zvec-win-unicode-containment.md`
 **运行时证据**：`docs/validation/zvec-win-unicode-path-matrix.md`
 **可复现 fixture**：`docs/validation/fixtures/zvec-win-unicode/`（默认拒绝执行）
 
@@ -40,13 +40,31 @@ Windows 上部分非 ASCII collection 路径在 `insertSync` 触发 `0xC0000409`
 
 ### Task 1: Characterization —— 锁住现状（零生产改动）
 
+**Files:**
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
+
 - [ ] 固化 `resolveActiveImpl` 现有行为与**双路径事实**（Task 4 的 RED 前置）
 
 ### Task 2: Lexical classifier
 
+**Files:**
+- Create: `.evo-lite/cli/zvec-path-containment.js`
+- Create: `templates/cli/zvec-path-containment.js`
+- Modify: `.evo-lite/cli/template-manifest.js`
+- Sync: `templates/cli/template-manifest.js`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
+
 - [ ] 纯谓词：不加载 zvec、不访问文件系统
 
 ### Task 3: Supported-profile evaluator
+
+**Files:**
+- Modify: `.evo-lite/cli/zvec-path-containment.js`
+- Sync: `templates/cli/zvec-path-containment.js`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
 
 - [ ] 只读 FS 探查；探查失败 → `UNKNOWN`；合成 `SAFE` 需两层均通过
 
