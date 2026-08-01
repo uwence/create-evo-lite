@@ -3,6 +3,11 @@
 const fs = require('fs');
 const path = require('path');
 const { getRawMemoryDir, getLogPath } = require('./runtime');
+// [zvec-win-unicode-containment] Task 5 — the A/B goes through the same
+// containment decision as every other engine consumer. This module loads no
+// native code by itself; memory-index only reaches the binding after a SAFE
+// verdict, and this file never requires @zvec/zvec or ./memory-index-zvec.
+const { resolveEngineDecision, SqliteFtsIndex } = require('./memory-index');
 
 // The spike's hard recall targets — the cases trigram was chosen for.
 const BUILTIN_QUERIES = [
@@ -25,8 +30,10 @@ function sampleLogQueries(limit = 20) {
 }
 
 // Build a throwaway ZvecMemoryIndex from every raw_memory archive body.
-function buildZvecFromArchive(ZvecMemoryIndex) {
-    const idx = new ZvecMemoryIndex();
+// `paths` is the snapshot the containment decision actually judged — the engine
+// must open the path that was cleared, not one it re-derives afterwards.
+function buildZvecFromArchive(ZvecMemoryIndex, paths) {
+    const idx = new ZvecMemoryIndex(paths ? { paths } : undefined);
     idx.initialize();
     const dir = getRawMemoryDir();
     if (!fs.existsSync(dir)) return idx;
@@ -71,22 +78,55 @@ function mean(nums) {
     return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
 }
 
+// Refusal, not degradation. Falling back to "SQLite vs SQLite" would print a
+// comparison table showing near-perfect agreement while measuring nothing — a
+// false green is worse than a missing result. memory.js turns a thrown error
+// into exit code 1, so the refusal is observable to a script, not just a human.
+function buildContainedError(decision) {
+    const containment = decision.containment
+        || { verdict: 'UNKNOWN', reason: 'containment:decision-carried-no-verdict' };
+    const err = new Error(
+        'A/B comparison refused: the Zvec collection path is contained on this host.\n'
+        + `containment: ${containment.verdict} (${containment.reason})\n`
+        + `collection: ${decision.collectionPath || '<unresolvable>'}\n`
+        + 'No sqlite-vs-sqlite comparison was run — comparing SQLite against itself '
+        + 'would report agreement while comparing nothing.\n'
+        + 'The existing collection, if any, was neither opened nor modified.');
+    err.code = 'EVO_ZVEC_CONTAINED';
+    err.verdict = containment.verdict;
+    err.containment = containment;
+    err.collectionPath = decision.collectionPath || null;
+    return err;
+}
+
+// [zvec-win-unicode-containment] Task 5 — this used to be the last selector
+// bypass: its first statement resolved the native binding directly, so the
+// offline A/B reached it before anything classified the collection path. On a
+// contained path that is exactly the load the spec forbids (I1), and no
+// try/catch can contain the fault it triggers.
+//
+// opts.decisionInputs forwards the same options memory-index already accepts
+// (platform / paths / fsOps / loadZvecIndex). Production passes nothing and
+// inherits the ambient decision; the seam exists so a test can pin a verdict
+// without a real native binding, not to give this call different semantics
+// under test.
 async function runMemoryAb(opts = {}) {
-    let ZvecMemoryIndex;
-    try {
-        require('@zvec/zvec');
-        ZvecMemoryIndex = require('./memory-index-zvec').ZvecMemoryIndex;
-    } catch (_) {
+    const decision = resolveEngineDecision({ choice: 'zvec', ...(opts.decisionInputs || {}) });
+    if (!decision.containment || decision.containment.verdict !== 'SAFE') {
+        // Thrown BEFORE the SQLite comparison instance exists: a refused run
+        // must not leave half a comparison behind.
+        throw buildContainedError(decision);
+    }
+    if (!decision.ZvecIndex) {
         console.log('⏭️  @zvec/zvec is not installed — run `npm i @zvec/zvec` to enable the A/B. Nothing to compare.');
         return { rows: [], agreement: null, graded: null };
     }
 
     // Force the SQLite engine directly (NOT recall(), which honours memory-engine.json
     // and could otherwise make this a zvec-vs-zvec comparison).
-    const { SqliteFtsIndex } = require('./memory-index');
     const sqlite = new SqliteFtsIndex();
     sqlite.initialize();
-    const zvec = buildZvecFromArchive(ZvecMemoryIndex);
+    const zvec = buildZvecFromArchive(decision.ZvecIndex, decision.paths);
     const corpus = loadArchiveCorpus();
 
     const queries = BUILTIN_QUERIES.concat(opts.fromLogs ? sampleLogQueries() : []);
@@ -135,4 +175,4 @@ async function runMemoryAb(opts = {}) {
     return { rows, agreement, graded };
 }
 
-module.exports = { runMemoryAb, BUILTIN_QUERIES, sampleLogQueries, loadArchiveCorpus, gradeHits };
+module.exports = { runMemoryAb, buildContainedError, BUILTIN_QUERIES, sampleLogQueries, loadArchiveCorpus, gradeHits };

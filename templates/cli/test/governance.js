@@ -2900,7 +2900,15 @@ async function runGovernanceTests() {
                             isZVecError: zvec.isZVecError(e),
                             matchesCanLock: /can't lock/i.test(String(e.message || '')),
                             hasCause: e.cause !== undefined,
-                            isLockError_current: lock.isLockError(e),
+                            // [zvec-win-unicode-containment] Task 5 — production now
+                            // injects the native predicate (memory-index-lock no longer
+                            // requires @zvec/zvec itself). Both forms are observed here:
+                            // the injected one is what production runs, the pure one is
+                            // the fallback mirroring upstream's own isZVecError contract.
+                            // Requiring them to agree turns an upstream definition change
+                            // into a red test instead of a silent downgrade to bare rethrow.
+                            isLockError_injected: lock.isLockError(e, zvec.isZVecError),
+                            isLockError_pure: lock.isLockError(e),
                         };
                     }
                 };
@@ -2951,8 +2959,10 @@ async function runGovernanceTests() {
                     const conflicts = Object.entries(observed).filter(([, v]) => !v.ok);
                     for (const [caseName, v] of conflicts) {
                         assert.ok(v.isZVecError, `${caseName}: a lock conflict must still be a zvec error — ${JSON.stringify(v)}`);
-                        assert.ok(v.isLockError_current,
-                            `${caseName}: the current isLockError() must still classify this conflict, otherwise every lock diagnostic silently degrades to a bare rethrow — ${JSON.stringify(v)}`);
+                        assert.ok(v.isLockError_injected,
+                            `${caseName}: isLockError() with the injected native predicate — the form production uses — must still classify this conflict, otherwise every lock diagnostic silently degrades to a bare rethrow — ${JSON.stringify(v)}`);
+                        assert.strictEqual(v.isLockError_pure, v.isLockError_injected,
+                            `${caseName}: the native-free fallback disagrees with the injected predicate, so upstream's isZVecError contract has moved and the mirror in memory-index-lock is stale — ${JSON.stringify(v)}`);
                     }
                     if (conflicts.length) {
                         const [, sample] = conflicts[0];
@@ -3708,8 +3718,20 @@ async function runGovernanceTests() {
             const gMiss = ab.gradeHits([{ content: 'nothing here' }], 'R008');
             assert.strictEqual(gMiss.hit, false, 'gradeHits reports a miss when no returned doc contains the query');
 
-            // With @zvec present this rebuilds + compares + grades; without it returns { rows: [], graded: null }.
-            const res = await ab.runMemoryAb({ fromLogs: false });
+            // [zvec-win-unicode-containment] Task 5 — the A/B now goes through the
+            // containment decision, so a run that expects the comparison to HAPPEN
+            // must supply a collection path the classifier admits. Left ambient this
+            // asserted "the A/B runs" while silently depending on wherever the runner
+            // happens to root the runtime — the same defect Task 4's CI cycles found.
+            const anchor = createContainedZvecRoot('ab-graded');
+            assert.ok(anchor.safe, `workspace anchor must be in the supported profile (${anchor.containment.reason})`);
+            let res;
+            try {
+                // With @zvec present this rebuilds + compares + grades; without it returns { rows: [], graded: null }.
+                res = await ab.runMemoryAb({ fromLogs: false, decisionInputs: { paths: anchor.paths } });
+            } finally {
+                anchor.cleanup();
+            }
             assert.ok(res && Array.isArray(res.rows), 'runMemoryAb returns rows array');
             if (res.graded) {
                 assert.ok(Array.isArray(res.graded.rows), 'graded.rows is an array');
@@ -3722,6 +3744,112 @@ async function runGovernanceTests() {
             }
         }
         console.log('✅ T-AB memory-ab passed');
+
+        // [zvec-win-unicode-containment] Task 5 — the T7 cases that need real
+        // infrastructure (an initialized SQLite db, a real native binding, the
+        // repository anchor). The child-safe half of T7 lives in
+        // runChildRuntimeTests alongside the rest of the containment suite.
+        console.log('T7-2-ab-safe-available. A SAFE path hands the A/B the decision class and the decision paths ...');
+        {
+            const ab = require(path.join(CLI_DIR, 'memory-ab.js'));
+            const paths = { rootPath: 'C:\\evo\\ab\\zvec', collectionPath: 'C:\\evo\\ab\\zvec\\collection' };
+            const cleanFs = { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p };
+            const seen = { ctorArgs: [], initialized: 0, closed: 0 };
+            // A fake stands in for the engine so this asserts the WIRING without
+            // needing a native binding: what matters is which class the A/B uses
+            // and which path object it hands over, not what that class does.
+            class FakeZvecIndex {
+                constructor(options) { seen.ctorArgs.push(options); }
+                get engine() { return 'fake-zvec'; }
+                initialize() { seen.initialized += 1; }
+                upsert() { return { id: seen.initialized }; }
+                searchText() { return []; }
+                close() { seen.closed += 1; }
+            }
+            const res = await ab.runMemoryAb({
+                fromLogs: false,
+                decisionInputs: { platform: 'win32', paths, fsOps: cleanFs, loadZvecIndex: () => FakeZvecIndex },
+            });
+            assert.strictEqual(seen.ctorArgs.length, 1, 'the A/B builds exactly one zvec index');
+            assert.ok(seen.ctorArgs[0] && seen.ctorArgs[0].paths === paths,
+                'the index receives the EXACT decision snapshot object — a copy would mean the path judged is not provably the path opened');
+            assert.strictEqual(seen.initialized, 1, 'the comparison index is initialized');
+            assert.strictEqual(seen.closed, 1, 'and released afterwards');
+            assert.ok(res && Array.isArray(res.rows) && res.rows.length > 0, 'the comparison actually ran');
+            console.log('✅ T7-2-ab-safe-available passed');
+        }
+
+        console.log('T7-6-lock-injection-wired. The real open path injects the native predicate ...');
+        {
+            const anchor = createContainedZvecRoot('t7-lock-injection');
+            assert.ok(anchor.safe, `workspace anchor must be in the supported profile (${anchor.containment.reason})`);
+            const zvecPath = require.resolve(path.join(CLI_DIR, 'memory-index-zvec.js'));
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+            const realOpen = lock.openWithCoordination;
+            let capturedCtx = null;
+            // memory-index-zvec destructures at require time, so the spy has to be
+            // in place BEFORE it is (re-)required.
+            lock.openWithCoordination = (openFn, dir, ctx) => { capturedCtx = ctx; return realOpen(openFn, dir, ctx); };
+            delete require.cache[zvecPath];
+            let index = null;
+            try {
+                const { ZvecMemoryIndex } = require(zvecPath);
+                index = new ZvecMemoryIndex({ paths: anchor.paths });
+                index.initialize();
+                assert.ok(capturedCtx && capturedCtx.seams && typeof capturedCtx.seams.isLockErrorFn === 'function',
+                    'ZvecMemoryIndex.initialize must inject a lock classifier — without it the lock module would have to resolve the binding itself again, which is the entry Task 5 closed');
+                const zvecLock = Object.assign(new Error("Can't lock the collection"), { name: 'Error', code: 'ZVEC_IO_ERROR' });
+                const plain = Object.assign(new Error('disk full'), { name: 'Error', code: 'ENOSPC' });
+                assert.strictEqual(capturedCtx.seams.isLockErrorFn(zvecLock), true,
+                    'the injected classifier recognises a real-shaped zvec lock error');
+                assert.strictEqual(capturedCtx.seams.isLockErrorFn(plain), false,
+                    'and leaves non-lock errors to be rethrown untouched');
+            } finally {
+                try { if (index) index.close(); } catch (_) {}
+                lock.openWithCoordination = realOpen;
+                delete require.cache[zvecPath];
+                anchor.cleanup();
+            }
+            console.log('✅ T7-6-lock-injection-wired passed');
+        }
+
+        console.log('T7-8-call-chain-audit. Every production memory entry reaches the shared decision ...');
+        {
+            const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+            const serviceSrc = fs.readFileSync(path.join(CLI_DIR, 'memory.service.js'), 'utf8');
+            const mcpSrc = fs.readFileSync(path.join(CLI_DIR, 'mcp-server.js'), 'utf8');
+
+            // Source side: no production consumer may construct the engine itself.
+            for (const [name, src] of [['memory.service.js', serviceSrc], ['mcp-server.js', mcpSrc]]) {
+                assert.ok(!src.includes('new ZvecMemoryIndex('),
+                    `${name} must not construct the zvec engine directly — instantiation belongs to instantiateFromDecision`);
+            }
+            assert.ok(serviceSrc.includes("require('./memory-index')"),
+                'memory.service reaches the index through the selector module');
+            assert.ok(mcpSrc.includes("require('./memory-index')"),
+                'the MCP server reaches the index through the selector module');
+
+            // Behavioural side: the entries named in the Task 5 contract end up at
+            // the SAME shared decision object. Asserting identity, not merely "a
+            // decision exists", is what shows they share one verdict instead of
+            // each taking their own.
+            const service = require(path.join(CLI_DIR, 'memory.service.js'));
+            mi.resetMemoryIndex();
+            assert.strictEqual(mi.peekEngineDecision(), null, 'reset clears the shared decision');
+            service.list();
+            const shared = mi.peekEngineDecision();
+            assert.ok(shared, 'the first memory operation takes the shared decision');
+            for (const [name, call] of [
+                ['recall', () => service.recall('zwuc-call-chain-probe', 1)],
+                ['stats', () => service.stats()],
+                ['list', () => service.list()],
+            ]) {
+                await call();
+                assert.strictEqual(mi.peekEngineDecision(), shared,
+                    `${name} must consume the same decision object, not compute its own`);
+            }
+            console.log('✅ T7-8-call-chain-audit passed');
+        }
 
         console.log('T-spec-portfolio. Testing spec portfolio registry derivation + report ...');
         {
@@ -12759,6 +12887,226 @@ async function runChildRuntimeTests() {
         }
         console.log('✅ T-zwuc-no-collection-side-effects passed');
     }
+
+    // ---------------------------------------------------------------------
+    // [zvec-win-unicode-containment] Task 5 — native entry containment.
+    // Task 4 routed the SELECTOR through the containment decision. Two
+    // production entries still reached the binding around it: memory-ab opened
+    // with require('@zvec/zvec') before anything was classified, and the lock
+    // helper re-resolved the binding on every error classification. T7 pins
+    // both closed and audits that nothing else is left.
+    // ---------------------------------------------------------------------
+
+    const CLEAN_FS = { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p };
+    const CONTAINED_COL = 'C:\\evo\\\u9879\u76ee\\.evo-lite\\zvec\\collection';
+
+    console.log('T7-1-ab-refusal. memory-ab must REFUSE a contained path, not degrade to sqlite-vs-sqlite ...');
+    {
+        const miPath = require.resolve(path.join(CLI_DIR, 'memory-index.js'));
+        const abPath = require.resolve(path.join(CLI_DIR, 'memory-ab.js'));
+        const mi = require(miPath);
+
+        // A refused run must not leave half a comparison behind. Spying on the
+        // SQLite class is the only way to prove the refusal happens BEFORE the
+        // control side is built — the thrown error alone cannot show that.
+        const realSqlite = mi.SqliteFtsIndex;
+        let sqliteConstructed = 0;
+        class SpySqliteFtsIndex extends realSqlite {
+            constructor(...args) { super(...args); sqliteConstructed += 1; }
+        }
+        mi.SqliteFtsIndex = SpySqliteFtsIndex;
+        delete require.cache[abPath];
+        let thrown = null;
+        try {
+            const ab = require(abPath);
+            try {
+                await ab.runMemoryAb({
+                    fromLogs: false,
+                    decisionInputs: { platform: 'win32', collectionPath: CONTAINED_COL, fsOps: CLEAN_FS },
+                });
+            } catch (err) {
+                thrown = err;
+            }
+        } finally {
+            mi.SqliteFtsIndex = realSqlite;
+            delete require.cache[abPath];
+        }
+
+        assert.ok(thrown, 'a contained collection path must make memory-ab throw, not return a comparison');
+        assert.strictEqual(thrown.code, 'EVO_ZVEC_CONTAINED', 'refusal carries a machine-readable code');
+        assert.strictEqual(thrown.verdict, 'UNKNOWN', 'the non-ASCII path is UNKNOWN, never UNSAFE (§5.2)');
+        for (const fragment of [
+            'A/B comparison refused',
+            'lexical:character-outside-supported-ascii-set',
+            CONTAINED_COL,
+            'No sqlite-vs-sqlite comparison was run',
+        ]) {
+            assert.ok(String(thrown.message).includes(fragment),
+                `refusal message must state "${fragment}" — a bare failure gives the operator nothing to act on: ${thrown.message}`);
+        }
+        assert.strictEqual(sqliteConstructed, 0,
+            'the SQLite control side must never be constructed on a refused run');
+
+        // Real proof, not stub bookkeeping: a fresh process using the REAL
+        // loader must end the refused run with neither the binding nor the zvec
+        // engine module in its require cache.
+        const source = [
+            "'use strict';",
+            'const sep = require("path").sep;',
+            `const ab = require(${JSON.stringify(path.join(CLI_DIR, 'memory-ab.js'))});`,
+            'const cache = () => ({',
+            '  binding: Object.keys(require.cache).some(k => k.includes(`${sep}@zvec${sep}`)),',
+            '  engine: Object.keys(require.cache).some(k => k.endsWith("memory-index-zvec.js")),',
+            '});',
+            'ab.runMemoryAb({ fromLogs: false, decisionInputs: { platform: "win32", collectionPath: '
+                + JSON.stringify(CONTAINED_COL)
+                + ', fsOps: { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p } } })',
+            '  .then(() => process.stdout.write(JSON.stringify({ threw: false, ...cache() })))',
+            '  .catch(err => process.stdout.write(JSON.stringify({ threw: true, code: err.code, ...cache() })));',
+        ].join('\n');
+        const run = childProcess.spawnSync(process.execPath, ['-e', source], { encoding: 'utf8' });
+        assert.strictEqual(run.status, 0, `child probe failed: ${run.stderr}`);
+        const probe = JSON.parse(run.stdout);
+        assert.strictEqual(probe.threw, true, 'the child process also refuses');
+        assert.strictEqual(probe.code, 'EVO_ZVEC_CONTAINED', 'and refuses for the containment reason');
+        assert.strictEqual(probe.binding, false, '@zvec/zvec must be absent from require.cache after a refused A/B');
+        assert.strictEqual(probe.engine, false, 'memory-index-zvec.js must not even be reached');
+
+        // win32 only: the real CLI, on a real non-ASCII path, must end nonzero.
+        // Safe to run — the whole point is that it stops before the loader; if
+        // the binding were ever loaded here the require-cache probes above would
+        // already have failed.
+        if (process.platform === 'win32') {
+            const nonAscii = path.join(os.tmpdir(), `zwuc-t7-${process.pid}-\u9879\u76ee`);
+            fs.rmSync(nonAscii, { recursive: true, force: true });
+            fs.mkdirSync(nonAscii, { recursive: true });
+            try {
+                const cli = childProcess.spawnSync(
+                    process.execPath,
+                    [path.join(CLI_DIR, 'memory.js'), 'memory-ab'],
+                    { encoding: 'utf8', env: { ...process.env, EVO_LITE_ROOT: nonAscii, EVO_LITE_MEMORY_ENGINE: 'zvec' } },
+                );
+                assert.notStrictEqual(cli.status, 0,
+                    `the CLI must exit nonzero when the A/B is refused — a warning-and-success would let a script treat "nothing was compared" as a passing comparison. stdout=${cli.stdout}`);
+                assert.ok(String(cli.stdout).includes('A/B comparison refused'),
+                    `refusal must reach the operator on stdout: ${cli.stdout}`);
+                assert.ok(!fs.existsSync(path.join(nonAscii, 'zvec')),
+                    'a refused A/B must not create the zvec root on the contained path');
+            } finally {
+                fs.rmSync(nonAscii, { recursive: true, force: true });
+            }
+        }
+        console.log('✅ T7-1-ab-refusal passed');
+    }
+
+    console.log('T7-3-ab-safe-unavailable. A SAFE path with no dependency keeps the old skip semantics ...');
+    {
+        const ab = require(path.join(CLI_DIR, 'memory-ab.js'));
+        const res = await ab.runMemoryAb({
+            fromLogs: false,
+            decisionInputs: {
+                platform: 'win32', fsOps: CLEAN_FS,
+                collectionPath: 'C:\\evo\\project\\.evo-lite\\zvec\\collection',
+                loadZvecIndex: () => null,
+            },
+        });
+        assert.deepStrictEqual(res, { rows: [], agreement: null, graded: null },
+            'a missing optional dependency still skips quietly — it is not a containment refusal and must not be reported as one');
+        console.log('✅ T7-3-ab-safe-unavailable passed');
+    }
+
+    console.log('T7-4-lock-classifier. Lock classification is pure and needs both conditions ...');
+    {
+        const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+        const zvecLock = Object.assign(new Error("Can't lock the collection"), { name: 'Error', code: 'ZVEC_IO_ERROR' });
+        const zvecOther = Object.assign(new Error('schema mismatch'), { name: 'Error', code: 'ZVEC_SCHEMA_ERROR' });
+        const plainLock = Object.assign(new Error("Can't lock the file"), { name: 'Error', code: 'EBUSY' });
+
+        assert.strictEqual(lock.isLockError(zvecLock, () => true), true,
+            'injected predicate true + "Can\'t lock" message => lock error');
+        assert.strictEqual(lock.isLockError(zvecLock, () => false), false,
+            'injected predicate false => not a zvec lock error, even with the lock message');
+        assert.strictEqual(lock.isLockError(zvecOther, () => true), false,
+            'a zvec error without the lock message is NOT a lock error — non-lock errors must rethrow untouched');
+        assert.strictEqual(lock.isLockError(plainLock, () => false), false,
+            'an ordinary EBUSY "can\'t lock" must never be promoted into the zvec self-heal ladder');
+        assert.strictEqual(lock.isLockError(null, () => true), false, 'no error, no classification');
+
+        // The native-free fallback mirrors upstream isZVecError (code prefix),
+        // which is what makes the un-injected form still usable.
+        assert.strictEqual(lock.isLockError(zvecLock), true, 'fallback classifies a ZVEC_-coded lock error');
+        assert.strictEqual(lock.isLockError(plainLock), false, 'fallback rejects a non-zvec error with the same message');
+        assert.strictEqual(lock.looksLikeZVecError(zvecOther), true, 'fallback predicate keys on the ZVEC_ code prefix');
+        assert.strictEqual(lock.looksLikeZVecError(plainLock), false, 'and on nothing else');
+
+        // A predicate that throws must not take the classification down with it.
+        assert.strictEqual(lock.isLockError(zvecLock, () => { throw new Error('binding blew up'); }), true,
+            'a throwing predicate falls back to the pure mirror instead of losing the original error');
+        console.log('✅ T7-4-lock-classifier passed');
+    }
+
+    console.log('T7-5-lock-purity. Requiring or using the lock module must not load @zvec/zvec ...');
+    {
+        const source = [
+            "'use strict';",
+            'const sep = require("path").sep;',
+            `const lock = require(${JSON.stringify(path.join(CLI_DIR, 'memory-index-lock.js'))});`,
+            'const afterRequire = Object.keys(require.cache).some(k => k.includes(`${sep}@zvec${sep}`));',
+            'const err = Object.assign(new Error("Can\'t lock"), { name: "Error", code: "ZVEC_IO_ERROR" });',
+            'const classified = lock.isLockError(err);',
+            'const afterCall = Object.keys(require.cache).some(k => k.includes(`${sep}@zvec${sep}`));',
+            'require("@zvec/zvec");',
+            'const control = Object.keys(require.cache).some(k => k.includes(`${sep}@zvec${sep}`));',
+            'process.stdout.write(JSON.stringify({ afterRequire, classified, afterCall, control }));',
+        ].join('\n');
+        const run = childProcess.spawnSync(process.execPath, ['-e', source], { encoding: 'utf8' });
+        assert.strictEqual(run.status, 0, `lock purity probe failed: ${run.stderr}`);
+        const probe = JSON.parse(run.stdout);
+        assert.strictEqual(probe.afterRequire, false, 'requiring memory-index-lock must not load the binding');
+        assert.strictEqual(probe.classified, true, 'and it still classifies a zvec lock error without it');
+        assert.strictEqual(probe.afterCall, false, 'classification itself must not load the binding either');
+        assert.strictEqual(probe.control, true,
+            'positive control: the detector does fire once @zvec/zvec is genuinely loaded, so the two falses above mean something');
+        console.log('✅ T7-5-lock-purity passed');
+    }
+
+    console.log('T7-7-native-entry-audit. Only two production sites may resolve the binding ...');
+    {
+        // Comment-aware: zvec-path-containment.js documents the pattern it must
+        // never execute, and that file is out of scope for this task.
+        const stripComments = src => src
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .split('\n')
+            .map(line => line.replace(/(^|[^:])\/\/.*$/, '$1'))
+            .join('\n');
+        const NEEDLE = "require('@zvec/zvec')";
+        const ENGINE_NEEDLE = "require('./memory-index-zvec')";
+        const APPROVED = new Set(['memory-index.js', 'memory-index-zvec.js']);
+
+        const files = fs.readdirSync(CLI_DIR).filter(f => f.endsWith('.js'));
+        assert.ok(files.length > 5, 'the audit must actually see the production CLI');
+        const offenders = [];
+        const engineRequirers = [];
+        for (const file of files) {
+            const code = stripComments(fs.readFileSync(path.join(CLI_DIR, file), 'utf8'));
+            if (code.includes(NEEDLE) && !APPROVED.has(file)) offenders.push(file);
+            if (code.includes(ENGINE_NEEDLE)) engineRequirers.push(file);
+        }
+        assert.deepStrictEqual(offenders, [],
+            `production files may only reach @zvec/zvec through memory-index (SAFE-gated loader) or memory-index-zvec (lazy, already-cleared instance): ${offenders.join(', ')}`);
+        assert.deepStrictEqual(engineRequirers, ['memory-index.js'],
+            `the zvec engine module must be reachable only from the selector's loader, otherwise a caller can construct it around the decision: ${engineRequirers.join(', ')}`);
+
+        // Stricter, stripper-independent check on the two files this task closed:
+        // neither may contain the pattern in any context at all.
+        for (const file of ['memory-ab.js', 'memory-index-lock.js']) {
+            const raw = fs.readFileSync(path.join(CLI_DIR, file), 'utf8');
+            assert.ok(!raw.includes(NEEDLE),
+                `${file} must not contain ${NEEDLE} anywhere — this assertion does not depend on comment stripping being correct`);
+        }
+        console.log('✅ T7-7-native-entry-audit passed');
+    }
+
 }
 
 module.exports = { runGovernanceTests };
