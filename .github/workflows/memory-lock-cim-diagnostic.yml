@@ -1,0 +1,88 @@
+# [memory-lock-win-cim-snapshot-reliability] Phase 1 — temporary diagnostic asset.
+#
+# Observation only. It does not gate anything and does not replace release-gate.yml,
+# which is deliberately untouched.
+#
+# It exists to answer one question: when getProcessSnapshot() returns null on a
+# Windows runner, where do the ten seconds go? The diagnostic runs at three
+# points so a slow-from-the-start runner can be told apart from one that only
+# degrades after the install and test load.
+#
+# DELETE OR CONVERT THIS FILE when the investigation closes. It must not be left
+# attached to every pull request.
+name: memory-lock CIM snapshot diagnostic
+
+on:
+  push:
+    branches:
+      - codex/memory-lock-win-cim-snapshot-reliability
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - scripts/diagnostics/memory-lock-cim-snapshot.js
+      - .github/workflows/memory-lock-cim-diagnostic.yml
+      - .evo-lite/cli/test/governance.js
+      - templates/cli/test/governance.js
+      - docs/validation/memory-lock-win-cim-snapshot-reliability.md
+
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    # Even when the paths filter matches on some unrelated branch, only the
+    # investigation branch actually runs. Everything else is skipped.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.head_ref == 'codex/memory-lock-win-cim-snapshot-reliability'
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    name: cim diagnostic on windows-latest / node ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # T1 — clean runner, before any dependency work touches the machine.
+      - name: diagnostic (clean runner)
+        run: node scripts/diagnostics/memory-lock-cim-snapshot.js --label clean-runner
+
+      - name: npm ci
+        run: npm ci
+
+      - name: runtime npm ci
+        working-directory: .evo-lite
+        run: npm ci
+
+      # T2 — after installs. If the stall only appears here, the trigger is load
+      # or state introduced by the install, not the runner image itself.
+      - name: diagnostic (after install)
+        run: node scripts/diagnostics/memory-lock-cim-snapshot.js --label after-install
+
+      # The suite is expected to fail when the defect reproduces. Its exit code
+      # is preserved and re-applied at the end, so this job stays honest.
+      - name: npm test (failure preserved)
+        id: suite
+        continue-on-error: true
+        run: npm test
+
+      # T3 — after the full test sequence, always, including when the suite died.
+      - name: diagnostic (after tests)
+        if: always()
+        run: node scripts/diagnostics/memory-lock-cim-snapshot.js --label after-tests
+
+      - name: re-apply the suite exit code
+        if: always()
+        shell: bash
+        run: |
+          echo "npm test outcome: ${{ steps.suite.outcome }}"
+          if [ "${{ steps.suite.outcome }}" != "success" ]; then
+            echo "The runtime suite failed; this job reports that failure unchanged."
+            exit 1
+          fi

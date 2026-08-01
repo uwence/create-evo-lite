@@ -2263,6 +2263,22 @@ async function runGovernanceTests() {
 
             // 自身快照:alive + isNode + commandLine + startedAt(win32 CIM / unix ps)
             const self = lock.getProcessSnapshot(process.pid);
+            // [memory-lock-win-cim-snapshot-reliability] Phase 1 — 仅观测。
+            //
+            // getProcessSnapshot 把 spawn 失败 / 超时 / 非零退出 / 空 stdout /
+            // 解析失败 / 空 CIM 行全部折叠成同一个 null,所以这条断言红的时候,
+            // 日志无法说明红在哪一层。诊断脚本在此处补上那一层信息 —— 它**不**
+            // 改变判定:不重试 getProcessSnapshot、不因诊断成功而放行、不降级为
+            // warning、不跳过 Windows、不延长原 timeout。CI 仍然诚实为红。
+            if (!(self && self.alive === true) && process.platform === 'win32') {
+                try {
+                    const diag = require(path.join(WORKSPACE_ROOT, 'scripts', 'diagnostics', 'memory-lock-cim-snapshot.js'));
+                    diag.emitLine(diag.collect({ label: 'T-lock-ident-null-snapshot' }));
+                } catch (err) {
+                    // 子运行时里没有 scripts/ 树;缺诊断也不能改变断言结果。
+                    console.log(`CIM_SNAPSHOT_DIAG_ERROR=${JSON.stringify({ message: String(err && err.message) })}`);
+                }
+            }
             assert.ok(self && self.alive === true, 'self snapshot alive');
             assert.strictEqual(self.isNode, true, 'self is a node process');
             assert.ok(typeof self.commandLine === 'string' && self.commandLine.length > 0, 'commandLine captured');
