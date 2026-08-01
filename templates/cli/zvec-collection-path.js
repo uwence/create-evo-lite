@@ -11,36 +11,42 @@
 // module from the selector to reach it would defeat the point of deciding first.
 //
 // So the computation is lifted here, into a module that depends on nothing but
-// `path` and the runtime's own path resolution. memory-index-zvec.js keeps its
-// internal copy for now (it is out of scope this round), which makes these two
-// definitions a divergence risk: if they ever disagree, containment would be
-// classifying a path the engine does not actually use, and would silently guard
-// nothing. T-zwuc-T4-path-agreement pins them together by constructing the real
-// ZvecMemoryIndex and comparing its _colPath against zvecCollectionPath().
-// Collapsing the duplicate belongs to the round that may edit memory-index-zvec.
+// `path` and the runtime's own path resolution — and memory-index-zvec.js
+// CONSUMES it rather than keeping a second copy. That direction matters: a
+// classifier and an engine that merely agree today are still two formulas, and
+// the safety property required is "the path judged IS the path handed to
+// ZVecOpen", not "the two happen to match".
+//
+// zvecPaths() returns both values from ONE root derivation so a caller can never
+// pair a root from one evaluation with a collection path from another.
 
 const path = require('path');
 const { getDbPath } = require('./runtime');
 
-// Mirrors memory-index-zvec.js: dirname(getDbPath())/zvec, collection inside it.
 const ZVEC_DIR_NAME = 'zvec';
 const COLLECTION_DIR_NAME = 'collection';
 
 /**
- * Directory holding the collection plus its sidecars (id counter, lock).
+ * The single derivation. Both the containment decision and ZvecMemoryIndex read
+ * their paths from here.
+ *
  * @param {string} [dbPath] override, for tests; defaults to the live runtime db
+ * @returns {{rootPath: string, collectionPath: string}}
+ *   rootPath       directory holding the collection plus its sidecars (id counter, lock)
+ *   collectionPath the exact string passed to ZVecOpen / ZVecCreateAndOpen — the
+ *                  thing the classifier must judge (I10), not the project root
  */
+function zvecPaths(dbPath) {
+    const rootPath = path.join(path.dirname(dbPath === undefined ? getDbPath() : dbPath), ZVEC_DIR_NAME);
+    return { rootPath, collectionPath: path.join(rootPath, COLLECTION_DIR_NAME) };
+}
+
 function zvecRootDir(dbPath) {
-    return path.join(path.dirname(dbPath === undefined ? getDbPath() : dbPath), ZVEC_DIR_NAME);
+    return zvecPaths(dbPath).rootPath;
 }
 
-/**
- * The exact path passed to ZVecOpen / ZVecCreateAndOpen. This is the string the
- * containment classifier must judge — not the project root, not the runtime root.
- * @param {string} [dbPath] override, for tests; defaults to the live runtime db
- */
 function zvecCollectionPath(dbPath) {
-    return path.join(zvecRootDir(dbPath), COLLECTION_DIR_NAME);
+    return zvecPaths(dbPath).collectionPath;
 }
 
-module.exports = { zvecRootDir, zvecCollectionPath, ZVEC_DIR_NAME, COLLECTION_DIR_NAME };
+module.exports = { zvecPaths, zvecRootDir, zvecCollectionPath, ZVEC_DIR_NAME, COLLECTION_DIR_NAME };

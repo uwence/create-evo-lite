@@ -3,9 +3,16 @@
 const fs = require('fs');
 const path = require('path');
 const { getNamespaces } = require('./db');
-const { getDbPath, getWorkspaceRoot } = require('./runtime');
+const { getWorkspaceRoot } = require('./runtime');
 const { generateSnippet, rerankByExact } = require('./memory-index-util');
 const { openWithCoordination, clearOwner } = require('./memory-index-lock');
+// [zvec-win-unicode-containment] §6.2 — the collection path is derived in ONE
+// place, shared with the containment decision in memory-index.js. This module
+// must not re-derive it: a second formula would mean the classifier judges a
+// path this class does not actually open, guarding nothing while appearing to
+// guard everything. The shared module depends on `path` and runtime only, so
+// requiring it here still loads no native code.
+const { zvecPaths } = require('./zvec-collection-path');
 
 const ENGINE = 'zvec-jieba-fts';
 const COLLECTION_NAME = 'evomemory';
@@ -17,10 +24,6 @@ function loadZvec() {
     return Z;
 }
 
-function zvecRoot() {
-    return path.join(path.dirname(getDbPath()), 'zvec');
-}
-
 // ZvecMemoryIndex — MemoryIndex implementation backed by a Zvec jieba-FTS
 // collection. Self-contained: owns its collection dir + a sidecar id counter,
 // with no dependency on the SQLite raw_memory table.
@@ -29,8 +32,11 @@ class ZvecMemoryIndex {
         this._col = null;
         this._dirty = false;      // writes pending an FTS optimize
         this._exitHooked = false;
-        this._dir = zvecRoot();
-        this._colPath = path.join(this._dir, 'collection');
+        // Both values come from a single derivation, so a root from one
+        // evaluation can never be paired with a collection path from another.
+        const { rootPath, collectionPath } = zvecPaths();
+        this._dir = rootPath;
+        this._colPath = collectionPath;
         this._idFile = path.join(this._dir, 'nextid.json');
         // Ephemeral tenure ([a177]): open→op→finalize per public op, so the
         // zvec write lock is held for milliseconds instead of process lifetime.

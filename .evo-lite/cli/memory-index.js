@@ -269,11 +269,31 @@ function resolveEngineDecision(options = {}) {
 
 let active = null;
 let decision = null;
+let decisionKey = null;
+
+// Everything the decision depends on. Caching a decision across a change to any
+// of these would reuse a verdict about a path or an engine that is no longer the
+// one in play — and a stale SAFE is the one direction that must never happen.
+function currentDecisionKey() {
+    let collectionPath;
+    try {
+        collectionPath = zvecCollectionPath();
+    } catch (_) {
+        collectionPath = ' unresolvable';
+    }
+    return `${resolveEngine()} ${collectionPath} ${process.platform}`;
+}
 
 // THE shared decision. Both consumers below read this same object, which is what
 // makes "one decision, two consumers" observable rather than merely intended.
+// Recomputed only when its inputs change; the hot path (getMemoryIndex with an
+// index already built) never reaches here, so this costs nothing per memory op.
 function sharedEngineDecision() {
-    if (!decision) decision = resolveEngineDecision();
+    const key = currentDecisionKey();
+    if (!decision || decisionKey !== key) {
+        decision = resolveEngineDecision();
+        decisionKey = key;
+    }
     return decision;
 }
 
@@ -285,12 +305,19 @@ function peekEngineDecision() {
 
 function instantiateFromDecision(d) {
     if (d && d.ZvecIndex) return new d.ZvecIndex();
-    if (d && d.reason === 'dependency-unavailable') {
-        console.warn('⚠️ memory engine "zvec" selected but @zvec/zvec is unavailable — falling back to SqliteFtsIndex.');
-    } else if (d && d.reason === 'containment') {
-        // Deliberately worded as containment, not as a fix: the upstream native
-        // fault is untouched, this process simply refuses to enter it.
-        console.warn(`⚠️ memory engine "zvec" is contained on this path (${d.containment && d.containment.reason}) — using SqliteFtsIndex.`);
+    // At most one warning per decision: the decision is cached, so a degraded
+    // process says this once instead of on every memory operation.
+    if (d && !d.warned) {
+        d.warned = true;
+        if (d.reason === 'dependency-unavailable') {
+            console.warn('⚠️ memory engine "zvec" selected but @zvec/zvec is unavailable — falling back to SqliteFtsIndex.');
+        } else if (d.reason === 'containment') {
+            // Worded as containment, not as a fix. The upstream native fault is
+            // untouched; this process only refuses to enter it. Nothing here
+            // claims an existing collection was read, repaired or removed, and
+            // nothing claims a recovery mechanism exists yet — it does not.
+            console.warn(`⚠️ memory engine "zvec" is contained on this path (${d.containment && d.containment.reason}) — using SqliteFtsIndex instead. The existing collection, if any, was neither opened nor modified.`);
+        }
     }
     return new SqliteFtsIndex();
 }
@@ -332,6 +359,7 @@ function getMemoryIndex() {
 function resetMemoryIndex() {
     active = null;
     decision = null;
+    decisionKey = null;
 }
 
 // 只读访问当前活动索引(不创建实例)。MCP shutdown 用它收尾:实例从未创建时
