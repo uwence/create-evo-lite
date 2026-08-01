@@ -126,13 +126,20 @@ function classifyLexical(collectionPath, platform) {
 // Read-only probe surface. Injectable so the profile layer can be tested without
 // building real junctions, and so a reviewer can assert by construction that no
 // mutating call exists in the set.
-const DEFAULT_FS_OPS = {
-    existsSync: (p) => fs.existsSync(p),
-    lstatSync: (p) => fs.lstatSync(p),
+//
+// existsSync is deliberately NOT part of this set. It returns a bare boolean
+// with no error channel, so "confirmed absent" and "exists but could not be
+// probed" (EACCES/EPERM/EIO) both come back as `false`. Using it to decide
+// where to stop walking the ancestor chain is fail-OPEN: an unprobeable
+// ancestor would be mistaken for a not-yet-created suffix and skipped, and the
+// path could still reach SAFE. lstatSync with throwIfNoEntry:false keeps the
+// two cases apart — `undefined` means absent, a throw means unprobeable.
+const DEFAULT_FS_OPS = Object.freeze({
+    lstatSync: (p) => fs.lstatSync(p, { throwIfNoEntry: false }),
     // .native returns the canonical on-disk spelling, which is what makes 8.3
     // expansion and casing divergence observable at all.
     realpathSync: (p) => fs.realpathSync.native(p),
-};
+});
 
 function profileIn(reason) {
     return { verdict: PROFILE_VERDICT.IN_PROFILE, reason };
@@ -169,7 +176,10 @@ function ancestorChain(collectionPath) {
  * Any probe failure yields UNKNOWN rather than a pass.
  *
  * @param {string} collectionPath
- * @param {object} [fsOps] {existsSync, lstatSync, realpathSync} — read-only by contract
+ * @param {object} [fsOps] {lstatSync, realpathSync} — read-only by contract.
+ *   lstatSync must return undefined for an absent entry and throw for any other
+ *   failure; a probe that cannot distinguish those two is fail-open (see
+ *   DEFAULT_FS_OPS).
  * @returns {{verdict: string, reason: string}}
  */
 function evaluateProfile(collectionPath, fsOps) {
@@ -194,20 +204,20 @@ function evaluateProfile(collectionPath, fsOps) {
     const chain = ancestorChain(collectionPath);
     let deepestExisting = null;
     for (const ancestor of chain) {
-        let exists;
-        try {
-            exists = ops.existsSync(ancestor);
-        } catch (err) {
-            return probeFailed('existsSync', ancestor, err);
-        }
-        if (!exists) break;
-
         let stat;
         try {
             stat = ops.lstatSync(ancestor);
         } catch (err) {
+            // Could not be probed. Not knowing whether this ancestor is a
+            // reparse point is exactly the case that must NOT continue.
             return probeFailed('lstatSync', ancestor, err);
         }
+        // `undefined` is the ONLY value that means "confirmed absent" (Node's
+        // throwIfNoEntry:false contract). Everything below the first absent
+        // ancestor is a suffix the collection will create, so there is nothing
+        // there to probe yet. Any other falsy value is an unusable probe result,
+        // not an absence claim, and falls through to UNKNOWN below.
+        if (stat === undefined) break;
         if (!stat || typeof stat.isSymbolicLink !== 'function') {
             return profileUnknown('profile:lstat-result-not-interpretable');
         }

@@ -11916,13 +11916,12 @@ async function runChildRuntimeTests() {
     {
         const zpc = require(path.join(CLI_DIR, 'zvec-path-containment.js'));
         const colPath = 'C:\\evo\\project\\.evo-lite\\zvec\\collection';
-        const READ_ONLY_OPS = ['existsSync', 'lstatSync', 'realpathSync'];
+        const READ_ONLY_OPS = ['lstatSync', 'realpathSync'];
 
         // (a) The probe surface is exactly the read-only set — asserted by
         // recording which ops the evaluator actually reaches for.
         const used = [];
         const recordingOps = {
-            existsSync: (p) => { used.push('existsSync'); return true; },
             lstatSync: (p) => { used.push('lstatSync'); return { isSymbolicLink: () => false }; },
             realpathSync: (p) => { used.push('realpathSync'); return p; },
         };
@@ -11930,27 +11929,75 @@ async function runChildRuntimeTests() {
         assert.strictEqual(inProfile.verdict, 'IN_PROFILE', 'a clean ASCII topology is in profile');
         assert.ok(used.length > 0, 'the profile layer must actually probe');
         for (const op of used) assert.ok(READ_ONLY_OPS.includes(op), `${op} is not a read-only probe`);
-        assert.ok(READ_ONLY_OPS.every((op) => Object.prototype.hasOwnProperty.call(zpc.DEFAULT_FS_OPS, op)),
-            'DEFAULT_FS_OPS declares the read-only probe surface');
         assert.deepStrictEqual(Object.keys(zpc.DEFAULT_FS_OPS).sort(), [...READ_ONLY_OPS].sort(),
             'DEFAULT_FS_OPS must contain read-only probes ONLY — a mutating entry here would silently license writes (I6)');
 
-        // (b) A probe that FAILS is not a probe that passed. Each of the three ops
-        // must fail closed independently; permission denied on an ancestor tells
-        // us nothing about reparse points.
+        // existsSync must stay OUT of the safety decision. It returns a bare
+        // boolean, so "confirmed absent" and "exists but unprobeable" collapse to
+        // the same `false`; using it to end the ancestor walk would let an
+        // inaccessible ancestor pass as a not-yet-created suffix. That is
+        // fail-OPEN, which is the one direction this classifier may never fail in.
+        assert.ok(!('existsSync' in zpc.DEFAULT_FS_OPS),
+            'existsSync must not be a safety-decision capability — it cannot distinguish absent from unprobeable');
+        assert.ok(Object.isFrozen(zpc.DEFAULT_FS_OPS), 'DEFAULT_FS_OPS must be frozen so the probe surface cannot be widened at runtime');
+
+        // (b) A probe that FAILS is not a probe that passed. Each op must fail
+        // closed independently, for every errno a real Windows volume can raise:
+        // permission denied, IO error, unsupported filesystem.
         for (const failing of READ_ONLY_OPS) {
-            const ops = {
-                existsSync: () => true,
-                lstatSync: () => ({ isSymbolicLink: () => false }),
-                realpathSync: (p) => p,
-            };
-            ops[failing] = () => { const err = new Error('probe denied'); err.code = 'EPERM'; throw err; };
-            const result = zpc.evaluateProfile(colPath, ops);
-            assert.strictEqual(result.verdict, 'UNKNOWN', `${failing} failure must yield UNKNOWN, never a pass`);
-            assert.ok(result.reason.includes(`probe-failed:${failing}:EPERM`), `${failing} failure reason names the op and errno`);
+            for (const code of ['EACCES', 'EPERM', 'EIO', 'ENOTSUP']) {
+                const ops = {
+                    lstatSync: () => ({ isSymbolicLink: () => false }),
+                    realpathSync: (p) => p,
+                };
+                ops[failing] = () => { const err = new Error('probe denied'); err.code = code; throw err; };
+                const result = zpc.evaluateProfile(colPath, ops);
+                assert.strictEqual(result.verdict, 'UNKNOWN', `${failing} ${code} must yield UNKNOWN, never a pass`);
+                assert.ok(result.reason.includes(`probe-failed:${failing}:${code}`), `${failing} ${code} reason names the op and errno`);
+            }
         }
 
-        // (c) Real filesystem, real default ops: probing must leave nothing behind.
+        // (c) An ancestor that EXISTS but cannot be probed must not be mistaken
+        // for the absent suffix. This is the exact fail-open the existsSync-based
+        // walk allowed: C:\evo probes clean, C:\evo\project is inaccessible, and
+        // a boolean probe would have reported it as "does not exist" and stopped.
+        const inaccessibleAt = (target, code) => ({
+            lstatSync: (p) => {
+                if (p === target) { const err = new Error('denied'); err.code = code; throw err; }
+                return { isSymbolicLink: () => false };
+            },
+            realpathSync: (p) => p,
+        });
+        for (const code of ['EACCES', 'EPERM', 'EIO', 'ENOTSUP']) {
+            const mid = zpc.evaluateProfile(colPath, inaccessibleAt('C:\\evo\\project', code));
+            assert.strictEqual(mid.verdict, 'UNKNOWN', `an unprobeable intermediate ancestor (${code}) must be UNKNOWN, not a skipped suffix`);
+            assert.ok(mid.reason.includes(`probe-failed:lstatSync:${code}`), `${code} on an ancestor is reported as a probe failure`);
+        }
+        const rootDenied = zpc.evaluateProfile(colPath, inaccessibleAt('C:\\', 'EACCES'));
+        assert.strictEqual(rootDenied.verdict, 'UNKNOWN', 'a drive root that cannot be confirmed must be UNKNOWN');
+
+        // (d) The legitimate stop condition: `undefined` (Node's
+        // throwIfNoEntry:false contract for an absent entry). Everything below
+        // the first absent ancestor is a suffix the collection will create, so a
+        // clean chain down to that point is still IN_PROFILE.
+        const absentBelow = (firstAbsent) => ({
+            lstatSync: (p) => (p.startsWith(firstAbsent) ? undefined : { isSymbolicLink: () => false }),
+            realpathSync: (p) => p,
+        });
+        const missingSuffix = zpc.evaluateProfile(colPath, absentBelow('C:\\evo\\project\\.evo-lite'));
+        assert.strictEqual(missingSuffix.verdict, 'IN_PROFILE', 'a not-yet-created suffix must not block a clean ancestor chain');
+        const nothingExists = zpc.evaluateProfile(colPath, { lstatSync: () => undefined, realpathSync: (p) => p });
+        assert.strictEqual(nothingExists.verdict, 'UNKNOWN', 'nothing probeable at all leaves nothing verified');
+        assert.ok(nothingExists.reason.includes('no-existing-ancestor-to-probe'), 'and says so');
+
+        // A probe result that is neither Stats nor `undefined` is not an absence
+        // claim — it is an unusable answer.
+        for (const bogus of [null, false, 0, '']) {
+            const odd = zpc.evaluateProfile(colPath, { lstatSync: () => bogus, realpathSync: (p) => p });
+            assert.strictEqual(odd.verdict, 'UNKNOWN', `lstatSync returning ${JSON.stringify(bogus)} must not be read as "absent"`);
+        }
+
+        // (e) Real filesystem, real default ops: probing must leave nothing behind.
         // Guarded on lexical eligibility because a CI host whose workspace sits
         // under an 8.3 short name (RUNNER~1) is legitimately out of profile —
         // skipping loudly beats asserting something untrue.
@@ -12014,7 +12061,6 @@ async function runChildRuntimeTests() {
     {
         const zpc = require(path.join(CLI_DIR, 'zvec-path-containment.js'));
         const cleanOps = {
-            existsSync: () => true,
             lstatSync: () => ({ isSymbolicLink: () => false }),
             realpathSync: (p) => p,
         };
@@ -12051,12 +12097,10 @@ async function runChildRuntimeTests() {
     {
         const zpc = require(path.join(CLI_DIR, 'zvec-path-containment.js'));
         const clean = {
-            existsSync: () => true,
             lstatSync: () => ({ isSymbolicLink: () => false }),
             realpathSync: (p) => p,
         };
         const throwing = (code) => ({
-            existsSync: () => true,
             lstatSync: () => { const e = new Error('probe failed'); e.code = code; throw e; },
             realpathSync: (p) => p,
         });
@@ -12077,25 +12121,30 @@ async function runChildRuntimeTests() {
             ['non-normalized (forward slash)', 'C:/evo/project/.evo-lite/zvec/collection', clean, 'UNKNOWN', 'not-normalized'],
             ['8.3 short name', 'C:\\PROGRA~1\\evo\\zvec\\collection', clean, 'UNKNOWN', 'character-outside-supported-ascii-set'],
             ['reparse point ancestor', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
-                existsSync: () => true,
                 lstatSync: (p) => ({ isSymbolicLink: () => p === 'C:\\evo\\project' }),
                 realpathSync: (p) => p,
             }, 'UNKNOWN', 'reparse-point-in-ancestor-chain'],
             ['realpath redirects to non-ASCII', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
-                existsSync: () => true,
                 lstatSync: () => ({ isSymbolicLink: () => false }),
                 realpathSync: () => 'C:\\evo\\\u9879\u76ee',
             }, 'UNKNOWN', 'realpath-target-not-lexically-eligible'],
             ['realpath diverges (alias expansion)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
-                existsSync: () => true,
                 lstatSync: () => ({ isSymbolicLink: () => false }),
                 realpathSync: () => 'C:\\evo\\elsewhere',
             }, 'UNKNOWN', 'realpath-diverges-from-input'],
+            ['probe failure (EACCES)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', throwing('EACCES'), 'UNKNOWN', 'probe-failed:lstatSync:EACCES'],
             ['probe failure (EPERM)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', throwing('EPERM'), 'UNKNOWN', 'probe-failed:lstatSync:EPERM'],
+            ['probe failure (EIO)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', throwing('EIO'), 'UNKNOWN', 'probe-failed:lstatSync:EIO'],
             ['probe failure (ENOTSUP)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', throwing('ENOTSUP'), 'UNKNOWN', 'probe-failed:lstatSync:ENOTSUP'],
+            ['unprobeable intermediate ancestor', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
+                lstatSync: (p) => {
+                    if (p === 'C:\\evo\\project') { const e = new Error('denied'); e.code = 'EACCES'; throw e; }
+                    return { isSymbolicLink: () => false };
+                },
+                realpathSync: (p) => p,
+            }, 'UNKNOWN', 'probe-failed:lstatSync:EACCES'],
             ['nothing probes as existing', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
-                existsSync: () => false,
-                lstatSync: () => ({ isSymbolicLink: () => false }),
+                lstatSync: () => undefined,
                 realpathSync: (p) => p,
             }, 'UNKNOWN', 'no-existing-ancestor-to-probe'],
         ];
