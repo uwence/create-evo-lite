@@ -10,6 +10,38 @@ const {
     createHookTestRepo, readNdjson, bootstrapRuntime, captureConsole, resetCliModuleCache,
 } = require('./harness');
 
+// [zvec-win-unicode-containment] Tests that need a LIVE zvec engine also need a
+// collection path inside the supported ASCII profile. os.tmpdir() on a Windows
+// runner is typically C:\Users\RUNNER~1\AppData\Local\Temp — an 8.3 short name,
+// which containment correctly refuses. Anchoring a zvec integration test there
+// degrades it to SQLite, and the test then asserts the wrong engine for a reason
+// that has nothing to do with what it is testing.
+//
+// So anchor those tests under the workspace and VERIFY the anchor classifies
+// SAFE rather than assuming it. Only EVO_LITE_DB_PATH moves; the runtime root
+// stays in the temp dir, so the rest of the runtime state remains isolated.
+function createContainedZvecRoot(name) {
+    const { zvecPaths } = require(path.join(CLI_DIR, 'zvec-collection-path.js'));
+    const { classifyCollectionPath } = require(path.join(CLI_DIR, 'zvec-path-containment.js'));
+    // Deliberately NOT under SHARED_CACHE_DIR: that directory is shared suite
+    // infrastructure other tests wipe, and a half-removed anchor there surfaces
+    // as an unrelated EBUSY three tests later.
+    const base = path.join(WORKSPACE_ROOT, '.evo-lite', '.zwuc-live', name);
+    fs.rmSync(base, { recursive: true, force: true });
+    fs.mkdirSync(base, { recursive: true });
+    const dbPath = path.join(base, 'memory.db');
+    const paths = zvecPaths(dbPath);
+    const containment = classifyCollectionPath(paths.collectionPath);
+    return {
+        base,
+        dbPath,
+        paths,
+        containment,
+        safe: containment.verdict === 'SAFE',
+        cleanup: () => { try { fs.rmSync(base, { recursive: true, force: true }); } catch (_) {} },
+    };
+}
+
 async function runGovernanceTests() {
     const { IS_CHILD_RUNTIME } = require('./harness');
     if (IS_CHILD_RUNTIME) {
@@ -3143,12 +3175,28 @@ async function runGovernanceTests() {
                 //    证明 shutdown 会收尾活动 collection。)
                 {
                     const runtime = createTempRuntimeRoot('mcp-stdin-b');
-                    await bootstrapRuntime(runtime.runtimeRoot);
+                    // This sub-case needs a REAL zvec owner, so it needs a
+                    // collection path containment will actually admit.
+                    const anchor = createContainedZvecRoot('mcp-stdin-b');
+                    if (!anchor.safe) {
+                        anchor.cleanup();
+                        throw new Error(`cannot run the live-zvec lock case: workspace anchor is not in the supported profile (${anchor.containment.reason}). Move the checkout to an ASCII path.`);
+                    }
+                    // bootstrapRuntime writes extraEnv straight into process.env
+                    // and never restores it, so this must be undone by hand —
+                    // otherwise later tests inherit a db path pointing at the
+                    // anchor this block is about to delete.
+                    const prevDbPath = process.env.EVO_LITE_DB_PATH;
+                    const anchored = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_DB_PATH: anchor.dbPath });
                     const wrapDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-lock-mcpwrap-'));
                     const readyFile = path.join(wrapDir, 'wrapper-ready.txt');
                     const WRAPPER_SRC = [
                         "'use strict';",
                         `process.env.EVO_LITE_ROOT = ${JSON.stringify(runtime.runtimeRoot)};`,
+                        // Supported-profile anchor: containment must admit this
+                        // path, otherwise the wrapper degrades to SQLite and no
+                        // zvec owner is ever written.
+                        `process.env.EVO_LITE_DB_PATH = ${JSON.stringify(anchor.dbPath)};`,
                         "process.env.EVO_LITE_SKIP_GIT_GUARD = '1';",
                         "process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';",
                         "delete process.env.EVO_LITE_INDEX_EPHEMERAL; // 防外部 shell 环境污染(plan R2 执行提示)",
@@ -3177,7 +3225,7 @@ async function runGovernanceTests() {
                             await new Promise(r => setTimeout(r, 50));
                         }
                         assert.ok(fs.existsSync(readyFile), 'wrapper initialized a lock-holding index');
-                        const zvecDir = path.join(runtime.runtimeRoot, 'zvec');
+                        const zvecDir = anchor.paths.rootPath;
                         const held = lock.readOwner(zvecDir);
                         assert.strictEqual(held.state, 'valid', 'owner present while index holds the lock');
                         assert.strictEqual(held.owner.pid, Number(fs.readFileSync(readyFile, 'utf8')), 'owner is the wrapper process');
@@ -3193,15 +3241,25 @@ async function runGovernanceTests() {
                         assert.ok(!killedByTimeout, 'wrapper exits on its own (shutdown closed the active index)');
                         assert.strictEqual(code, 0, `exit code 0 expected, got ${code}`);
                         assert.strictEqual(lock.readOwner(zvecDir).state, 'missing', 'shutdown cleared the active owner');
-                        // 不变量 6:native 锁确实释放 —— 新 writer 立即 initialize 成功
+                        // 不变量 6:native 锁确实释放 —— 新 writer 立即 initialize 成功。
+                        // 绑定到同一个受控 anchor,否则这里会去开另一个 collection,
+                        // 证明不了刚才那把锁被释放。
                         resetCliModuleCache();
                         const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
-                        const writer = new ZvecMemoryIndex();
+                        const writer = new ZvecMemoryIndex({ paths: anchor.paths });
+                        assert.strictEqual(writer._colPath, anchor.paths.collectionPath, 'the new writer targets the collection the server just held');
                         writer.initialize(); // 死服务器若仍持锁,这里 Can't lock
                         writer.close();
                     } finally {
                         clearTimeout(failsafe);
                         try { child.kill(); } catch (_) {}
+                        // The parent still holds a better-sqlite3 handle on the
+                        // anchored db; on Windows an open handle turns the
+                        // cleanup unlink into EBUSY.
+                        try { anchored.db.closeDb(); } catch (_) {}
+                        if (prevDbPath === undefined) delete process.env.EVO_LITE_DB_PATH;
+                        else process.env.EVO_LITE_DB_PATH = prevDbPath;
+                        anchor.cleanup();
                     }
                 }
             }
@@ -3216,10 +3274,18 @@ async function runGovernanceTests() {
                 console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
             } else {
                 const prevEngine = process.env.EVO_LITE_MEMORY_ENGINE;
+                const prevDb = process.env.EVO_LITE_DB_PATH;
                 process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+                // Live-zvec assertion → needs a supported-profile collection path.
+                const anchor = createContainedZvecRoot('verify-space-engine');
+                assert.ok(anchor.safe, `workspace anchor must be in the supported profile (${anchor.containment.reason})`);
+                // Hoisted so the finally can close THIS loader's db instance;
+                // re-requiring db.js there would get a different module object
+                // after loadCli reset the cache, leaving the real handle open.
+                let loaded = null;
                 try {
                     const runtime = createTempRuntimeRoot('verify-space-engine');
-                    const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+                    loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1', EVO_LITE_DB_PATH: anchor.dbPath });
                     await loaded.service.memorize('active-engine display probe: the space line must name the live index.');
                     const output = await captureConsole(async () => {
                         await loaded.service.verify();
@@ -3233,6 +3299,22 @@ async function runGovernanceTests() {
                 } finally {
                     if (prevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
                     else process.env.EVO_LITE_MEMORY_ENGINE = prevEngine;
+                    if (prevDb === undefined) delete process.env.EVO_LITE_DB_PATH;
+                    else process.env.EVO_LITE_DB_PATH = prevDb;
+                    // Release BOTH handles before deleting the anchor: the live
+                    // zvec collection holds a rocksdb LOCK and the SQLite db an
+                    // open file, either of which leaves debris behind on Windows.
+                    // loadCli reset the module cache before requiring, and nothing
+                    // has reset it since, so this is the same instance the service
+                    // is using.
+                    try {
+                        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+                        const liveIndex = mi.peekMemoryIndex();
+                        if (liveIndex && liveIndex.close) liveIndex.close();
+                        mi.resetMemoryIndex();
+                    } catch (_) {}
+                    try { if (loaded) loaded.db.closeDb(); } catch (_) {}
+                    anchor.cleanup();
                 }
             }
         }
@@ -3246,10 +3328,18 @@ async function runGovernanceTests() {
                 console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
             } else {
                 const prevEngine = process.env.EVO_LITE_MEMORY_ENGINE;
+                const prevDb = process.env.EVO_LITE_DB_PATH;
                 process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+                // Live-zvec assertion → needs a supported-profile collection path.
+                const anchor = createContainedZvecRoot('verify-config-retrieval');
+                assert.ok(anchor.safe, `workspace anchor must be in the supported profile (${anchor.containment.reason})`);
+                // Hoisted so the finally can close THIS loader's db instance;
+                // re-requiring db.js there would get a different module object
+                // after loadCli reset the cache, leaving the real handle open.
+                let loaded = null;
                 try {
                     const runtime = createTempRuntimeRoot('verify-config-retrieval');
-                    const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+                    loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1', EVO_LITE_DB_PATH: anchor.dbPath });
                     await loaded.service.memorize('config-retrieval display probe: the top line must name the live engine.');
                     const output = await captureConsole(async () => {
                         await loaded.service.verify();
@@ -3263,6 +3353,22 @@ async function runGovernanceTests() {
                 } finally {
                     if (prevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
                     else process.env.EVO_LITE_MEMORY_ENGINE = prevEngine;
+                    if (prevDb === undefined) delete process.env.EVO_LITE_DB_PATH;
+                    else process.env.EVO_LITE_DB_PATH = prevDb;
+                    // Release BOTH handles before deleting the anchor: the live
+                    // zvec collection holds a rocksdb LOCK and the SQLite db an
+                    // open file, either of which leaves debris behind on Windows.
+                    // loadCli reset the module cache before requiring, and nothing
+                    // has reset it since, so this is the same instance the service
+                    // is using.
+                    try {
+                        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+                        const liveIndex = mi.peekMemoryIndex();
+                        if (liveIndex && liveIndex.close) liveIndex.close();
+                        mi.resetMemoryIndex();
+                    } catch (_) {}
+                    try { if (loaded) loaded.db.closeDb(); } catch (_) {}
+                    anchor.cleanup();
                 }
             }
         }
@@ -3296,17 +3402,44 @@ async function runGovernanceTests() {
         {
             const { selectEngine, resolveEngine, resolveActiveImpl, SqliteFtsIndex } = require(path.join(CLI_DIR, 'memory-index.js'));
 
+            // [zvec-win-unicode-containment] Engine selection is no longer a
+            // function of the engine choice alone: containment can veto zvec even
+            // when a loader is supplied. The cases below therefore pin the
+            // classification inputs — a supported ASCII path and a clean topology
+            // — so they test SELECTION, not whichever directory the suite happens
+            // to be running from. Without this the assertions pass on Linux and on
+            // a developer's ASCII checkout, and fail on a Windows runner whose
+            // temp root is C:\Users\RUNNER~1\..., for a reason that has nothing to
+            // do with engine selection. The containment veto itself is asserted
+            // explicitly at the end of this block.
+            const supported = {
+                platform: 'win32',
+                paths: { rootPath: 'C:\\evo\\engine-select\\zvec', collectionPath: 'C:\\evo\\engine-select\\zvec\\collection' },
+                fsOps: { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p },
+            };
+
             // default: no zvec
             assert.ok(selectEngine('sqlite-fts5-trigram') instanceof SqliteFtsIndex, 'default is SqliteFtsIndex');
 
             // zvec configured but unavailable -> fall back to SqliteFtsIndex
-            const fallback = selectEngine('zvec', () => null);
+            const fallback = selectEngine({ ...supported, choice: 'zvec', loadZvecIndex: () => null });
             assert.ok(fallback instanceof SqliteFtsIndex, 'zvec-unavailable falls back to SqliteFtsIndex');
 
             // zvec configured + available (fake class) -> uses it
             class FakeZvec { get engine() { return 'zvec-jieba-fts'; } }
-            const picked = selectEngine('zvec', () => FakeZvec);
+            const picked = selectEngine({ ...supported, choice: 'zvec', loadZvecIndex: () => FakeZvec });
             assert.strictEqual(picked.engine, 'zvec-jieba-fts', 'zvec-available is used');
+
+            // ...and the new veto: the SAME call on a path containment refuses
+            // degrades, injected loader or not. This is the behaviour that broke
+            // the old environment-dependent form of this test.
+            const vetoed = selectEngine({
+                ...supported,
+                choice: 'zvec',
+                loadZvecIndex: () => FakeZvec,
+                paths: { rootPath: 'C:\\evo\\\u9879\u76ee\\zvec', collectionPath: 'C:\\evo\\\u9879\u76ee\\zvec\\collection' },
+            });
+            assert.ok(vetoed instanceof SqliteFtsIndex, 'containment vetoes zvec even when a loader is injected');
 
             // env overrides json config
             const prev = process.env.EVO_LITE_MEMORY_ENGINE;
@@ -3318,23 +3451,39 @@ async function runGovernanceTests() {
             const { DEFAULT_ENGINE_CHOICE } = require(path.join(CLI_DIR, 'memory-index.js'));
             assert.strictEqual(DEFAULT_ENGINE_CHOICE, 'zvec', 'default engine flipped to zvec');
             // a depless instance still degrades to SqliteFtsIndex (children-not-forced holds under the flip)
-            const deplessDefault = selectEngine(DEFAULT_ENGINE_CHOICE, () => null);
+            const deplessDefault = selectEngine({ ...supported, choice: DEFAULT_ENGINE_CHOICE, loadZvecIndex: () => null });
             assert.ok(deplessDefault instanceof SqliteFtsIndex, 'depless default falls back to SqliteFtsIndex');
 
             assert.strictEqual(typeof resolveActiveImpl, 'function', 'resolveActiveImpl must be exported');
             const activePrev = process.env.EVO_LITE_MEMORY_ENGINE;
             process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
             try {
+                // Same reasoning as above: pin the classification inputs so this
+                // measures diagnosis, not the host's directory layout.
                 assert.deepStrictEqual(
-                    resolveActiveImpl(() => null),
+                    resolveActiveImpl({ ...supported, loadZvecIndex: () => null }),
                     { choice: 'zvec', impl: 'sqlite', degraded: true },
                     'zvec choice with absent dep reports sqlite degradation'
                 );
                 class FakeActiveZvec {}
                 assert.deepStrictEqual(
-                    resolveActiveImpl(() => FakeActiveZvec),
+                    resolveActiveImpl({ ...supported, loadZvecIndex: () => FakeActiveZvec }),
                     { choice: 'zvec', impl: 'zvec', degraded: false },
                     'zvec choice with available dep reports active zvec impl'
+                );
+                // Legacy positional form still works for callers that only care
+                // about dependency availability.
+                assert.strictEqual(typeof resolveActiveImpl(() => null).impl, 'string', 'the loader-only form is still accepted');
+                // Diagnosis reports containment degradation too, not just a
+                // missing dependency.
+                assert.deepStrictEqual(
+                    resolveActiveImpl({
+                        ...supported,
+                        loadZvecIndex: () => FakeActiveZvec,
+                        paths: { rootPath: 'C:\\evo\\\u9879\u76ee\\zvec', collectionPath: 'C:\\evo\\\u9879\u76ee\\zvec\\collection' },
+                    }),
+                    { choice: 'zvec', impl: 'sqlite', degraded: true },
+                    'a contained path is reported as degraded even with the dependency present'
                 );
             } finally {
                 if (activePrev === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
@@ -3492,7 +3641,14 @@ async function runGovernanceTests() {
                 console.log('   ⏭️ skipped — @zvec/zvec not installed (optional dependency)');
             } else {
                 const runtime = createTempRuntimeRoot('rebuild-zvec');
-                await bootstrapRuntime(runtime.runtimeRoot);
+                // Live-zvec rebuild → needs a collection path containment admits.
+                // Without the anchor this test still PASSES on a Windows runner,
+                // silently exercising the SQLite rebuild instead of the zvec one —
+                // a green test that stopped testing what its name says.
+                const anchor = createContainedZvecRoot('rebuild-zvec');
+                assert.ok(anchor.safe, `workspace anchor must be in the supported profile (${anchor.containment.reason})`);
+                const prevDbPath = process.env.EVO_LITE_DB_PATH;
+                await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_DB_PATH: anchor.dbPath });
                 const prevEngine = process.env.EVO_LITE_MEMORY_ENGINE;
                 process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
                 try {
@@ -3500,6 +3656,11 @@ async function runGovernanceTests() {
                     delete require.cache[require.resolve(path.join(CLI_DIR, 'memory.service.js'))];
                     const svc = require(path.join(CLI_DIR, 'memory.service.js'));
                     const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+
+                    // Guard the premise: if containment degraded this to SQLite the
+                    // assertions below would still pass while testing the wrong
+                    // rebuild path entirely.
+                    assert.strictEqual(mi.getMemoryIndex().engine, 'zvec-jieba-fts', 'this test must be exercising the zvec rebuild, not a degraded SQLite one');
 
                     // Archive a doc — writes raw_memory/*.md AND upserts into the zvec engine.
                     await svc.archive('rebuild probe doc mentioning memory.service recall', 'task');
@@ -3517,8 +3678,13 @@ async function runGovernanceTests() {
                     // Release the collection lock so later tests can open a zvec collection.
                     try { require(path.join(CLI_DIR, 'memory-index.js')).getMemoryIndex().close(); } catch (_) {}
                     if (prevEngine === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE; else process.env.EVO_LITE_MEMORY_ENGINE = prevEngine;
+                    // bootstrapRuntime writes extraEnv into process.env and never
+                    // restores it; leaving this set points later tests at a db
+                    // under an anchor that is about to be deleted.
+                    if (prevDbPath === undefined) delete process.env.EVO_LITE_DB_PATH; else process.env.EVO_LITE_DB_PATH = prevDbPath;
                     delete require.cache[require.resolve(path.join(CLI_DIR, 'memory-index.js'))];
                     delete require.cache[require.resolve(path.join(CLI_DIR, 'memory.service.js'))];
+                    anchor.cleanup();
                 }
             }
         }
@@ -9924,18 +10090,28 @@ async function runChildRuntimeTests() {
             assert.strictEqual(typeof mi.resolveActiveImpl, 'function', 'resolveActiveImpl must be exported');
             const prevEnv = process.env.EVO_LITE_MEMORY_ENGINE;
             process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+            // [zvec-win-unicode-containment] Containment can veto zvec on top of
+            // dependency availability, so pin the classification inputs: this test
+            // is about choice-vs-impl-vs-degraded, not about which directory the
+            // suite runs from. Unpinned, it passes on Linux and fails on a Windows
+            // runner whose temp root is an 8.3 short name.
+            const supported = {
+                platform: 'win32',
+                paths: { rootPath: 'C:\\evo\\engine-impl\\zvec', collectionPath: 'C:\\evo\\engine-impl\\zvec\\collection' },
+                fsOps: { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p },
+            };
             try {
-                const degraded = mi.resolveActiveImpl(() => null);
+                const degraded = mi.resolveActiveImpl({ ...supported, loadZvecIndex: () => null });
                 assert.strictEqual(degraded.choice, 'zvec', 'choice reflects zvec selection');
                 assert.strictEqual(degraded.impl, 'sqlite', 'impl falls back to sqlite when zvec loader returns null');
                 assert.strictEqual(degraded.degraded, true, 'degraded true when choice zvec but impl sqlite');
 
-                const healthy = mi.resolveActiveImpl(() => (class FakeZvec {}));
+                const healthy = mi.resolveActiveImpl({ ...supported, loadZvecIndex: () => (class FakeZvec {}) });
                 assert.strictEqual(healthy.impl, 'zvec', 'impl zvec when loader returns a class');
                 assert.strictEqual(healthy.degraded, false, 'not degraded when impl matches choice');
 
                 process.env.EVO_LITE_MEMORY_ENGINE = 'sqlite-fts5-trigram';
-                const sqliteChoice = mi.resolveActiveImpl(() => (class FakeZvec {}));
+                const sqliteChoice = mi.resolveActiveImpl({ ...supported, loadZvecIndex: () => (class FakeZvec {}) });
                 assert.strictEqual(sqliteChoice.impl, 'sqlite', 'sqlite choice -> sqlite impl');
                 assert.strictEqual(sqliteChoice.degraded, false, 'sqlite choice never degraded');
             } finally {
@@ -11796,7 +11972,7 @@ async function runChildRuntimeTests() {
     // Nothing here loads @zvec/zvec or runs the crash probe.
     // ---------------------------------------------------------------------------
 
-    console.log('T-zwuc-characterization. BASELINE: engine selection matrix + the dual loadZvecIndex path ...');
+    console.log('T-zwuc-characterization. Engine selection matrix + the single shared decision (was: dual path) ...');
     {
         const mi = require(path.join(CLI_DIR, 'memory-index.js'));
         const prevEngineEnv = process.env.EVO_LITE_MEMORY_ENGINE;
@@ -11808,47 +11984,101 @@ async function runChildRuntimeTests() {
             load.calls = 0;
             return load;
         };
+        // Asserting that zvec is REACHED requires supplying supported-profile
+        // inputs. The loader-only form substitutes the loader and nothing else —
+        // platform, collection path and topology still come from the ambient
+        // runtime — so under it a Windows runner rooted at C:\Users\RUNNER~1\...
+        // correctly returns sqlite. That is the contract working, not a defect,
+        // which is why the matrix supplies its inputs instead of restricting the
+        // legacy form. Choice travels through options too: mixing an env var with
+        // explicit options would reintroduce exactly the hidden input being
+        // removed here.
+        const supported = {
+            platform: 'win32',
+            paths: {
+                rootPath: 'C:\\evo\\characterization\\zvec',
+                collectionPath: 'C:\\evo\\characterization\\zvec\\collection',
+            },
+            fsOps: {
+                lstatSync: () => ({ isSymbolicLink: () => false }),
+                realpathSync: (p) => p,
+            },
+        };
         try {
             // (a) The selection matrix, measured together with loader call counts.
             const matrix = [
-                { engine: 'zvec', loaded: class FakeZvecA {}, impl: 'zvec', degraded: false, loads: 1 },
-                { engine: 'zvec', loaded: null, impl: 'sqlite', degraded: true, loads: 1 },
-                { engine: 'sqlite-fts5-trigram', loaded: class FakeZvecB {}, impl: 'sqlite', degraded: false, loads: 0 },
+                { choice: 'zvec', loaded: class FakeZvecA {}, impl: 'zvec', degraded: false, loads: 1 },
+                { choice: 'zvec', loaded: null, impl: 'sqlite', degraded: true, loads: 1 },
+                { choice: 'sqlite-fts5-trigram', loaded: class FakeZvecB {}, impl: 'sqlite', degraded: false, loads: 0 },
             ];
             for (const row of matrix) {
-                process.env.EVO_LITE_MEMORY_ENGINE = row.engine;
                 const load = countingLoader(row.loaded);
-                const got = mi.resolveActiveImpl(load);
-                assert.strictEqual(got.choice, row.engine, `choice reflects ${row.engine}`);
-                assert.strictEqual(got.impl, row.impl, `${row.engine} + loader ${row.loaded ? 'available' : 'unavailable'} -> impl ${row.impl}`);
-                assert.strictEqual(got.degraded, row.degraded, `${row.engine} -> degraded ${row.degraded}`);
-                assert.strictEqual(load.calls, row.loads, `${row.engine} diagnosis loads zvec ${row.loads} time(s)`);
+                const got = mi.resolveActiveImpl({ ...supported, choice: row.choice, loadZvecIndex: load });
+                assert.strictEqual(got.choice, row.choice, `choice reflects ${row.choice}`);
+                assert.strictEqual(got.impl, row.impl, `${row.choice} + loader ${row.loaded ? 'available' : 'unavailable'} -> impl ${row.impl}`);
+                assert.strictEqual(got.degraded, row.degraded, `${row.choice} -> degraded ${row.degraded}`);
+                assert.strictEqual(load.calls, row.loads, `${row.choice} diagnosis loads zvec ${row.loads} time(s)`);
             }
 
-            // (b) THE DUAL PATH (spec §6.1) — the fact this whole spec exists for.
-            // Diagnosis and instantiation each reach loadZvecIndex on their own;
-            // there is no shared decision for either of them to consume, so
-            // containment applied to only one of them would not protect runtime.
+            // (a2) The complementary half. Same choice, same available dependency,
+            // only the path differs — so this block proves both directions rather
+            // than only the permissive one.
+            {
+                const load = countingLoader(class FakeZvecContained {});
+                const got = mi.resolveActiveImpl({
+                    ...supported,
+                    choice: 'zvec',
+                    loadZvecIndex: load,
+                    paths: {
+                        rootPath: 'C:\\evo\\\u9879\u76ee\\zvec',
+                        collectionPath: 'C:\\evo\\\u9879\u76ee\\zvec\\collection',
+                    },
+                });
+                assert.deepStrictEqual(got, { choice: 'zvec', impl: 'sqlite', degraded: true },
+                    'a contained path degrades even with the dependency available');
+                assert.strictEqual(load.calls, 0, 'and the loader is never reached (I1)');
+            }
+
+            // (a3) The legacy loader-only form still resolves. It is deliberately
+            // NOT asserted to yield zvec: ambient containment may veto it, and
+            // pinning that expectation is what made this test host-dependent.
+            const ambient = mi.resolveActiveImpl(() => null);
+            assert.strictEqual(typeof ambient.impl, 'string', 'the loader-only form remains supported');
+
+            // (b) THE DUAL PATH, now collapsed (spec §6.1 → §6.2).
+            //
+            // Task 1 pinned the defect here: diagnosis and instantiation each
+            // reached loadZvecIndex on their own, for two loads and no shared
+            // decision. Task 4 flipped it — both consumers now read ONE decision
+            // object, which is asserted by identity rather than by counting, so
+            // the property holds through the real code path with no stubs.
             process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
-            const shared = countingLoader(class FakeZvecC {});
-            mi.resolveActiveImpl(shared);          // diagnosis path
-            mi.selectEngine('zvec', shared);       // instantiation path
-            assert.strictEqual(shared.calls, 2,
-                'BASELINE: diagnosis + instantiation load zvec twice. Task 4 must collapse this to one shared decision, and to ZERO on a non-SAFE path (T6).');
+            const previousIndex = mi.peekMemoryIndex();
+            mi.resetMemoryIndex();
+            try {
+                assert.strictEqual(mi.peekEngineDecision(), null, 'resetMemoryIndex clears the decision, not just the index');
+                mi.resolveActiveImpl();                       // diagnosis path
+                const taken = mi.peekEngineDecision();
+                assert.ok(taken, 'diagnosis takes the shared decision');
+                mi.getMemoryIndex();                          // instantiation path
+                assert.strictEqual(mi.peekEngineDecision(), taken,
+                    'instantiation must consume the SAME decision object — a second decision is the §6.1 defect returning');
+            } finally {
+                try { const idx = mi.peekMemoryIndex(); if (idx && idx.close) idx.close(); } catch (_) {}
+                mi.resetMemoryIndex();
+                if (previousIndex) { /* the suite re-acquires lazily; nothing to restore */ }
+            }
 
-            // (c) Structural: no engine decision exists on the export surface, and
-            // getMemoryIndex has no injection point through which it could be
-            // handed the diagnosis result.
-            assert.ok(!('resolveEngineDecision' in mi),
-                'BASELINE: resolveEngineDecision does not exist yet — Task 4 introduces it');
-            assert.strictEqual(mi.getMemoryIndex.length, 0,
-                'BASELINE: getMemoryIndex accepts no loader, so it cannot consume the diagnosis decision');
+            // (c) Structural: the single decision now exists on the export surface.
+            assert.strictEqual(typeof mi.resolveEngineDecision, 'function', 'resolveEngineDecision is the single engine decision (AC3)');
+            assert.strictEqual(typeof mi.peekEngineDecision, 'function', 'the decision is observable without recomputing it');
+            assert.strictEqual(mi.getMemoryIndex.length, 0, 'getMemoryIndex still takes no arguments');
 
-            // (d) Authorized-scope guard: Task 1–3 delivers the decision layer and
-            // wires nothing. Task 4 is the change that deletes this assertion.
+            // (d) The selector consumes the classifier. Task 1–3 asserted the
+            // opposite; this is the assertion that flipped when the seam landed.
             const selectorSource = fs.readFileSync(path.join(CLI_DIR, 'memory-index.js'), 'utf8');
-            assert.ok(!/zvec-path-containment/.test(selectorSource),
-                'Task 1–3 scope: the selector must NOT consume the classifier yet (that is Task 4)');
+            assert.ok(/zvec-path-containment/.test(selectorSource), 'the selector must consume the containment classifier (Task 4)');
+            assert.ok(/zvec-collection-path/.test(selectorSource), 'the selector must compute the collection path without loading zvec');
         } finally {
             if (prevEngineEnv === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
             else process.env.EVO_LITE_MEMORY_ENGINE = prevEngineEnv;
@@ -12180,6 +12410,354 @@ async function runChildRuntimeTests() {
         assert.strictEqual(shortName.verdict, 'UNKNOWN', 'evaluateProfile rejects a literal 8.3 short name');
         assert.ok(shortName.reason.includes('8dot3-short-name-alias-suspected'), '8.3 rejection is named as such');
         console.log('✅ T-zwuc-T5-fail-closed passed');
+    }
+
+    console.log('T-zwuc-T6-zero-load. Non-SAFE paths must never load @zvec/zvec (AC3, the spec\'s core guarantee) ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const CHINESE = 'C:\\evo\\\u9879\u76ee\\.evo-lite\\zvec\\collection';
+        const ASCII = 'C:\\evo\\project\\.evo-lite\\zvec\\collection';
+        const cleanFs = { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p };
+        const countingLoader = () => {
+            const load = () => { load.calls += 1; return class FakeZvec {}; };
+            load.calls = 0;
+            return load;
+        };
+
+        // (a) The decision itself: a non-SAFE verdict must short-circuit BEFORE
+        // the loader is reached. This is the assertion the whole spec turns on.
+        for (const [label, colPath, fsOps] of [
+            ['non-ASCII path', CHINESE, cleanFs],
+            ['reparse ancestor', ASCII, { lstatSync: (p) => ({ isSymbolicLink: () => p === 'C:\\evo\\project' }), realpathSync: (p) => p }],
+            ['unprobeable ancestor', ASCII, { lstatSync: () => { const e = new Error('denied'); e.code = 'EACCES'; throw e; }, realpathSync: (p) => p }],
+        ]) {
+            const load = countingLoader();
+            const d = mi.resolveEngineDecision({ choice: 'zvec', platform: 'win32', collectionPath: colPath, fsOps, loadZvecIndex: load });
+            assert.strictEqual(load.calls, 0, `${label}: loadZvecIndex must be called ZERO times (I1)`);
+            assert.strictEqual(d.impl, 'sqlite', `${label}: degrades to sqlite`);
+            assert.strictEqual(d.degraded, true, `${label}: reported as degraded`);
+            assert.strictEqual(d.reason, 'containment', `${label}: degradation is attributed to containment, not a missing dependency`);
+            assert.strictEqual(d.ZvecIndex, null, `${label}: no engine class is carried, so nothing downstream can instantiate zvec`);
+        }
+
+        // (b) Both consumers, from the same non-SAFE decision. Instantiation
+        // cannot load anything because the decision carries no class.
+        {
+            const load = countingLoader();
+            const d = mi.resolveEngineDecision({ choice: 'zvec', platform: 'win32', collectionPath: CHINESE, fsOps: cleanFs, loadZvecIndex: load });
+            const index = mi.instantiateFromDecision(d);
+            assert.ok(index instanceof mi.SqliteFtsIndex, 'instantiation from a contained decision yields SqliteFtsIndex');
+            assert.strictEqual(load.calls, 0, 'instantiation must not reach the loader either');
+        }
+
+        // (c) The complement: a SAFE path still loads exactly once, so the guard
+        // is not simply switching zvec off for everyone.
+        {
+            const load = countingLoader();
+            const d = mi.resolveEngineDecision({ choice: 'zvec', platform: 'win32', collectionPath: ASCII, fsOps: cleanFs, loadZvecIndex: load });
+            assert.strictEqual(load.calls, 1, 'a SAFE path loads the engine exactly once');
+            assert.strictEqual(d.impl, 'zvec', 'a SAFE path keeps zvec');
+            assert.strictEqual(d.degraded, false, 'a SAFE path is not degraded');
+        }
+
+        // (d) Real proof, not stub bookkeeping: in a fresh process using the
+        // REAL loader, a non-SAFE decision must leave @zvec/zvec absent from the
+        // require cache. A counting stub can only show that our own code did not
+        // call it; this shows the binding was never loaded at all.
+        const probe = (colPath, platform) => {
+            const source = [
+                "'use strict';",
+                `const mi = require(${JSON.stringify(path.join(CLI_DIR, 'memory-index.js'))});`,
+                `const d = mi.resolveEngineDecision({ choice: 'zvec', platform: ${JSON.stringify(platform)}, collectionPath: ${JSON.stringify(colPath)}, fsOps: { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p } });`,
+                'const loaded = Object.keys(require.cache).some((k) => k.includes(`${require("path").sep}@zvec${require("path").sep}`));',
+                'process.stdout.write(JSON.stringify({ impl: d.impl, reason: d.reason, loaded }));',
+            ].join('\n');
+            const run = childProcess.spawnSync(process.execPath, ['-e', source], { encoding: 'utf8' });
+            assert.strictEqual(run.status, 0, `zero-load probe must exit 0 (stderr: ${run.stderr})`);
+            return JSON.parse(run.stdout);
+        };
+        const contained = probe(CHINESE, 'win32');
+        assert.strictEqual(contained.impl, 'sqlite', 'contained path degrades in a real process');
+        assert.strictEqual(contained.loaded, false, '@zvec/zvec must NOT be in the require cache after a contained decision');
+
+        // Positive control for (d): with a SAFE path the same probe DOES load the
+        // binding, so `loaded:false` above is a real observation rather than a
+        // detector that never fires. Skipped only when the optional dep is absent.
+        let depPresent = true;
+        try { require.resolve('@zvec/zvec'); } catch (_) { depPresent = false; }
+        if (depPresent) {
+            const allowed = probe(path.join(WORKSPACE_ROOT, '.evo-lite', 'zvec', 'collection'), process.platform);
+            assert.strictEqual(allowed.loaded, true, 'positive control: a SAFE decision does load @zvec/zvec, so the detector works');
+        } else {
+            console.log('   note: positive control skipped — @zvec/zvec is not installed in this runtime');
+        }
+        console.log('✅ T-zwuc-T6-zero-load passed');
+    }
+
+    console.log('T-zwuc-T9-platform-isolation. Non-win32 behaviour is unchanged (I9) ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const explode = () => { throw new Error('the profile layer must not probe on a non-win32 platform'); };
+        for (const platform of ['linux', 'darwin']) {
+            const load = () => class FakeZvec {};
+            // A path that would be rejected outright on Windows, plus filesystem
+            // probes that fail the test if they are ever reached.
+            const d = mi.resolveEngineDecision({
+                choice: 'zvec', platform, loadZvecIndex: load,
+                collectionPath: `/home/u/\u9879\u76ee/.evo-lite/zvec/collection`,
+                fsOps: { lstatSync: explode, realpathSync: explode },
+            });
+            assert.strictEqual(d.impl, 'zvec', `${platform}: engine choice is honoured exactly as before`);
+            assert.strictEqual(d.degraded, false, `${platform}: nothing is degraded`);
+            assert.strictEqual(d.containment.verdict, 'SAFE', `${platform}: containment is a no-op`);
+            assert.strictEqual(d.containment.layer, 'platform', `${platform}: decided at the platform gate, before any probing`);
+        }
+        console.log('✅ T-zwuc-T9-platform-isolation passed');
+    }
+
+    console.log('T-zwuc-path-source. The engine CONSUMES the shared collection path, it does not re-derive it ...');
+    {
+        const zcp = require(path.join(CLI_DIR, 'zvec-collection-path.js'));
+        const sharedModulePath = require.resolve(path.join(CLI_DIR, 'zvec-collection-path.js'));
+        const zvecModulePath = require.resolve(path.join(CLI_DIR, 'memory-index-zvec.js'));
+
+        // Equality is not the property under test. Two independent formulas can
+        // agree today and diverge tomorrow, and a classifier judging a path the
+        // engine does not open would guard nothing while appearing to guard
+        // everything. What must hold is that there is ONE derivation and the
+        // engine reads it — proved by replacing the shared function and watching
+        // the engine's own _dir/_colPath follow.
+        const sentinelRoot = path.join('C:', 'sentinel-root', 'zvec');
+        const sentinelCol = path.join(sentinelRoot, 'collection');
+        const childSource = [
+            "'use strict';",
+            `const shared = require(${JSON.stringify(sharedModulePath)});`,
+            `shared.zvecPaths = () => ({ rootPath: ${JSON.stringify(sentinelRoot)}, collectionPath: ${JSON.stringify(sentinelCol)} });`,
+            `const { ZvecMemoryIndex } = require(${JSON.stringify(zvecModulePath)});`,
+            'const instance = new ZvecMemoryIndex();',
+            'const sep = require("path").sep;',
+            'process.stdout.write(JSON.stringify({',
+            '    dir: instance._dir,',
+            '    col: instance._colPath,',
+            '    idFile: instance._idFile,',
+            '    zvecLoaded: Object.keys(require.cache).some((k) => k.includes(`${sep}@zvec${sep}`)),',
+            `    createdSentinel: require('fs').existsSync(${JSON.stringify(sentinelRoot)}),`,
+            '}));',
+        ].join('\n');
+        const run = childProcess.spawnSync(process.execPath, ['-e', childSource], { encoding: 'utf8' });
+        assert.strictEqual(run.status, 0, `path-source child must exit 0 (stderr: ${run.stderr})`);
+        const observed = JSON.parse(run.stdout);
+        assert.strictEqual(observed.dir, sentinelRoot, 'ZvecMemoryIndex._dir must come from the shared module, not its own formula');
+        assert.strictEqual(observed.col, sentinelCol, 'ZvecMemoryIndex._colPath must come from the shared module, not its own formula');
+        assert.strictEqual(observed.idFile, path.join(sentinelRoot, 'nextid.json'), 'the sidecar hangs off the same shared root');
+
+        // Constructing the engine must stay inert: no native load, no directory.
+        assert.strictEqual(observed.zvecLoaded, false, 'constructing ZvecMemoryIndex must not load @zvec/zvec (the require is lazy, inside loadZvec)');
+        assert.strictEqual(observed.createdSentinel, false, 'constructing ZvecMemoryIndex must not create the collection directory');
+
+        // Structural: the old duplicate formula is gone, not merely shadowed.
+        const zvecSource = fs.readFileSync(path.join(CLI_DIR, 'memory-index-zvec.js'), 'utf8');
+        assert.ok(/require\(['"]\.\/zvec-collection-path['"]\)/.test(zvecSource), 'memory-index-zvec must consume the shared collection-path module');
+        assert.ok(!/function\s+zvecRoot/.test(zvecSource), 'the private zvecRoot() duplicate must be gone');
+        assert.ok(!/getDbPath/.test(zvecSource), 'memory-index-zvec must no longer derive paths from getDbPath itself');
+
+        // And in-process the live values still agree, which is now a consequence
+        // of the single source rather than the thing being asserted.
+        const { ZvecMemoryIndex } = require(zvecModulePath);
+        const live = new ZvecMemoryIndex();
+        const livePaths = zcp.zvecPaths();
+        assert.strictEqual(live._colPath, livePaths.collectionPath, 'live collection path matches the shared derivation');
+        assert.strictEqual(live._dir, livePaths.rootPath, 'live root path matches the shared derivation');
+        assert.strictEqual(livePaths.collectionPath, path.join(livePaths.rootPath, 'collection'), 'zvecPaths returns a matched pair from one root derivation');
+
+        const fabricated = path.join('C:', 'evo', 'x', '.evo-lite', 'memory.db');
+        assert.deepStrictEqual(zcp.zvecPaths(fabricated), {
+            rootPath: path.join(path.dirname(fabricated), 'zvec'),
+            collectionPath: path.join(path.dirname(fabricated), 'zvec', 'collection'),
+        }, 'the override form composes the same way');
+        console.log('✅ T-zwuc-path-source passed');
+    }
+
+    console.log('T-zwuc-path-snapshot. The engine opens the paths the decision judged, not a fresh derivation ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const zcp = require(path.join(CLI_DIR, 'zvec-collection-path.js'));
+        const cleanFs = { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p };
+
+        // Sharing one formula is not enough. Between the verdict and the
+        // instantiation the ambient inputs can move, and an engine that
+        // re-derives its own path would then open something nothing classified.
+        const judged = { rootPath: 'C:\\evo\\judged\\zvec', collectionPath: 'C:\\evo\\judged\\zvec\\collection' };
+        const captured = [];
+        class RecordingZvec {
+            constructor(options) { captured.push(options && options.paths); }
+        }
+        const d = mi.resolveEngineDecision({
+            choice: 'zvec', platform: 'win32', paths: judged, fsOps: cleanFs,
+            loadZvecIndex: () => RecordingZvec,
+        });
+        assert.strictEqual(d.impl, 'zvec', 'the judged path is SAFE');
+        assert.deepStrictEqual(d.paths, judged, 'the decision carries the exact snapshot it judged');
+        assert.strictEqual(d.collectionPath, judged.collectionPath, 'and reports it consistently');
+
+        const prevDb = process.env.EVO_LITE_DB_PATH;
+        process.env.EVO_LITE_DB_PATH = path.join(SHARED_CACHE_DIR, 'zwuc-moved-after-decision', 'memory.db');
+        try {
+            assert.notStrictEqual(zcp.zvecCollectionPath(), judged.collectionPath,
+                'precondition: the ambient path really moved after the decision was taken');
+            mi.instantiateFromDecision(d);
+            assert.strictEqual(captured.length, 1, 'the decision instantiated exactly one engine');
+            assert.strictEqual(captured[0], d.paths,
+                'the instance receives the judged snapshot object itself — not a re-derivation of the moved ambient path');
+        } finally {
+            if (prevDb === undefined) delete process.env.EVO_LITE_DB_PATH;
+            else process.env.EVO_LITE_DB_PATH = prevDb;
+        }
+
+        // And the real engine honours the injected snapshot.
+        const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+        const bound = new ZvecMemoryIndex({ paths: judged });
+        assert.strictEqual(bound._dir, judged.rootPath, 'ZvecMemoryIndex binds _dir to the injected snapshot');
+        assert.strictEqual(bound._colPath, judged.collectionPath, 'and _colPath, which is what reaches ZVecOpen');
+        assert.strictEqual(bound._idFile, path.join(judged.rootPath, 'nextid.json'), 'sidecars hang off the same snapshot');
+        assert.ok(!fs.existsSync(judged.rootPath), 'binding a snapshot creates nothing on disk');
+        console.log('✅ T-zwuc-path-snapshot passed');
+    }
+
+    console.log('T-zwuc-classifier-failure. A classifier that throws degrades, it does not take the command down ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const ASCII = 'C:\\evo\\project\\.evo-lite\\zvec\\collection';
+        const countingLoader = () => {
+            const load = () => { load.calls += 1; return class FakeZvec {}; };
+            load.calls = 0;
+            return load;
+        };
+
+        // The evaluator already turns probe errors into UNKNOWN, so reaching this
+        // path means the classifier itself misbehaved. It must still fail closed:
+        // no load, sqlite, and the command keeps working so archive stays writable.
+        for (const [label, classifyPath, fragment] of [
+            ['throws with a code', () => { const e = new Error('boom'); e.code = 'EBOOM'; throw e; }, 'classifier:failed:EBOOM'],
+            // Falls back to the error NAME, not a generic tag. A programmer error
+            // degrading the engine under a bare "ERROR" reads as an environment
+            // problem — which is exactly how a missing import hid itself during
+            // this task's development until the reason string was widened.
+            ['throws without a code', () => { throw new Error('boom'); }, 'classifier:failed:Error'],
+            ['throws a TypeError', () => { throw new TypeError('x is not a function'); }, 'classifier:failed:TypeError'],
+            ['returns undefined', () => undefined, 'classifier:unusable-result'],
+            ['returns a non-object', () => 'SAFE', 'classifier:unusable-result'],
+            ['returns an object with no verdict', () => ({ layer: 'lexical' }), 'classifier:unusable-result'],
+        ]) {
+            const load = countingLoader();
+            const d = mi.resolveEngineDecision({ choice: 'zvec', platform: 'win32', collectionPath: ASCII, classifyPath, loadZvecIndex: load });
+            assert.strictEqual(load.calls, 0, `${label}: the loader must not be reached`);
+            assert.strictEqual(d.impl, 'sqlite', `${label}: degrades to sqlite`);
+            assert.strictEqual(d.degraded, true, `${label}: reported as degraded`);
+            assert.strictEqual(d.reason, 'containment', `${label}: attributed to containment`);
+            assert.strictEqual(d.containment.verdict, 'UNKNOWN', `${label}: fails closed, never SAFE`);
+            assert.strictEqual(d.containment.layer, 'classifier', `${label}: the failure is attributed to the classifier`);
+            assert.ok(d.containment.reason.includes(fragment), `${label}: reason names the failure (${d.containment.reason})`);
+            // The instance still comes up, so archive and recall keep working.
+            assert.ok(mi.instantiateFromDecision(d) instanceof mi.SqliteFtsIndex, `${label}: a usable index is still produced`);
+        }
+        console.log('✅ T-zwuc-classifier-failure passed');
+    }
+
+    console.log('T-zwuc-decision-freshness. A cached decision must not outlive its inputs ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const prevEngineEnv = process.env.EVO_LITE_MEMORY_ENGINE;
+        const prevDbPath = process.env.EVO_LITE_DB_PATH;
+        mi.resetMemoryIndex();
+        try {
+            process.env.EVO_LITE_MEMORY_ENGINE = 'sqlite-fts5-trigram';
+            const first = mi.resolveActiveImpl();
+            assert.strictEqual(first.choice, 'sqlite-fts5-trigram', 'baseline choice');
+            const cached = mi.peekEngineDecision();
+            assert.strictEqual(mi.resolveActiveImpl().choice, 'sqlite-fts5-trigram', 'unchanged inputs reuse the decision');
+            assert.strictEqual(mi.peekEngineDecision(), cached, 'and reuse means the same object');
+
+            // Engine choice changed underneath: the old decision must not answer.
+            process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+            assert.strictEqual(mi.resolveActiveImpl().choice, 'zvec', 'a changed engine choice must not be answered from a stale decision');
+            assert.notStrictEqual(mi.peekEngineDecision(), cached, 'a changed input yields a new decision object');
+
+            // Collection path changed underneath: same requirement. A stale SAFE
+            // verdict about a different path is the one failure mode that matters.
+            const afterEngine = mi.peekEngineDecision();
+            process.env.EVO_LITE_DB_PATH = path.join(SHARED_CACHE_DIR, 'zwuc-freshness', 'memory.db');
+            assert.notStrictEqual(mi.resolveActiveImpl() && mi.peekEngineDecision(), afterEngine,
+                'a changed collection path must not be answered from a stale decision');
+            assert.strictEqual(mi.peekEngineDecision().collectionPath,
+                require(path.join(CLI_DIR, 'zvec-collection-path.js')).zvecCollectionPath(),
+                'the fresh decision is about the path now in play');
+
+            // peekEngineDecision only observes.
+            const observedBefore = mi.peekEngineDecision();
+            assert.strictEqual(mi.peekEngineDecision(), observedBefore, 'peekEngineDecision must not recompute');
+            mi.resetMemoryIndex();
+            assert.strictEqual(mi.peekEngineDecision(), null, 'and reset clears it');
+        } finally {
+            if (prevEngineEnv === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
+            else process.env.EVO_LITE_MEMORY_ENGINE = prevEngineEnv;
+            if (prevDbPath === undefined) delete process.env.EVO_LITE_DB_PATH;
+            else process.env.EVO_LITE_DB_PATH = prevDbPath;
+            mi.resetMemoryIndex();
+        }
+        console.log('✅ T-zwuc-decision-freshness passed');
+    }
+
+    console.log('T-zwuc-warn-once. Containment degradation warns once, accurately ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const CHINESE = 'C:\\evo\\\u9879\u76ee\\.evo-lite\\zvec\\collection';
+        const contained = mi.resolveEngineDecision({
+            choice: 'zvec', platform: 'win32', collectionPath: CHINESE,
+            fsOps: { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p },
+            loadZvecIndex: () => { throw new Error('loader must not be reached'); },
+        });
+        const output = await captureConsole(async () => {
+            mi.instantiateFromDecision(contained);
+            mi.instantiateFromDecision(contained);
+            mi.instantiateFromDecision(contained);
+        });
+        const occurrences = output.split('is contained on this path').length - 1;
+        assert.strictEqual(occurrences, 1, 'one decision warns exactly once, not on every memory operation');
+        assert.ok(/neither opened nor modified/.test(output), 'the warning must say the existing collection was not touched');
+        assert.ok(!/fixed|repaired|removed|deleted|recovered/i.test(output), 'the warning must not claim a fix, a repair or a recovery that does not exist');
+
+        // Non-win32 and an explicit sqlite choice must stay silent about containment.
+        const quiet = await captureConsole(async () => {
+            mi.instantiateFromDecision(mi.resolveEngineDecision({ choice: 'zvec', platform: 'linux', loadZvecIndex: () => null }));
+            mi.instantiateFromDecision(mi.resolveEngineDecision({ choice: 'sqlite-fts5-trigram' }));
+        });
+        assert.ok(!/is contained on this path/.test(quiet), 'no containment warning on non-win32 or an explicit sqlite choice');
+        console.log('✅ T-zwuc-warn-once passed');
+    }
+
+    console.log('T-zwuc-no-collection-side-effects. A contained decision creates nothing on disk ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const base = path.join(SHARED_CACHE_DIR, 'zwuc-t4-sideeffects');
+        fs.rmSync(base, { recursive: true, force: true });
+        fs.mkdirSync(base, { recursive: true });
+        try {
+            const colPath = path.join(base, 'zvec', 'collection');
+            const before = fs.readdirSync(base);
+            const d = mi.resolveEngineDecision({
+                choice: 'zvec', platform: 'win32', collectionPath: colPath,
+                fsOps: { lstatSync: () => ({ isSymbolicLink: () => true }), realpathSync: (p) => p },
+                loadZvecIndex: () => { throw new Error('loader must not be reached'); },
+            });
+            assert.strictEqual(d.impl, 'sqlite', 'contained');
+            mi.instantiateFromDecision(d);
+            assert.deepStrictEqual(fs.readdirSync(base), before, 'a contained decision must not create the zvec directory');
+            assert.ok(!fs.existsSync(path.join(base, 'zvec')), 'and specifically not the collection root');
+        } finally {
+            fs.rmSync(base, { recursive: true, force: true });
+        }
+        console.log('✅ T-zwuc-no-collection-side-effects passed');
     }
 }
 

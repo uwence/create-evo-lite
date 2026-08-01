@@ -193,6 +193,18 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 
 ### Task 4: 单一 engine decision（AC3）—— 本计划最关键的一步
 
+**Files:**
+- Create: `.evo-lite/cli/zvec-collection-path.js`
+- Create: `templates/cli/zvec-collection-path.js`
+- Modify: `.evo-lite/cli/memory-index.js`
+- Sync: `templates/cli/memory-index.js`
+- Modify: `.evo-lite/cli/memory-index-zvec.js`
+- Sync: `templates/cli/memory-index-zvec.js`
+- Modify: `.evo-lite/cli/template-manifest.js`
+- Sync: `templates/cli/template-manifest.js`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
+
 - [ ] 提取 `zvec-collection-path.js`：不依赖 zvec 地计算 collection 路径
       （**不得**从 `memory-index.js` 调用未导出的 `zvecRoot()`）
 - [ ] 新增 `resolveEngineDecision()`：读 choice → 算路径 → win32 上判定 →
