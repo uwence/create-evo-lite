@@ -224,6 +224,17 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 
 ### Task 5: native 入口收口（AC4）
 
+**Files:**
+- Modify: `.evo-lite/cli/memory-ab.js`
+- Sync: `templates/cli/memory-ab.js`
+- Modify: `.evo-lite/cli/memory-index-lock.js`
+- Sync: `templates/cli/memory-index-lock.js`
+- Modify: `.evo-lite/cli/memory-index-zvec.js`
+- Sync: `templates/cli/memory-index-zvec.js`
+- Add: `docs/validation/zvec-win-unicode-native-entry-audit.md`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
+
 - [ ] `memory-ab`：非 `SAFE` → **拒绝执行并输出 containment 诊断**；
       **不得**自动降级为 sqlite-vs-sqlite（那会把对比实验静默变成自比）
 - [ ] 走查并留证：`recall` / `remember` / `archive` / `track` / `sync` / `rebuild` / MCP

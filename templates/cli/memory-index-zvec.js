@@ -5,7 +5,7 @@ const path = require('path');
 const { getNamespaces } = require('./db');
 const { getWorkspaceRoot } = require('./runtime');
 const { generateSnippet, rerankByExact } = require('./memory-index-util');
-const { openWithCoordination, clearOwner } = require('./memory-index-lock');
+const { openWithCoordination, clearOwner, isLockError } = require('./memory-index-lock');
 // [zvec-win-unicode-containment] §6.2 — the collection path is derived in ONE
 // place, shared with the containment decision in memory-index.js. This module
 // must not re-derive it: a second formula would mean the classifier judges a
@@ -75,7 +75,14 @@ class ZvecMemoryIndex {
                 ? z.ZVecOpen(this._colPath)
                 : z.ZVecCreateAndOpen(this._colPath, this._schema()),
             this._dir,
-            { projectRoot: getWorkspaceRoot() },
+            {
+                projectRoot: getWorkspaceRoot(),
+                // [zvec-win-unicode-containment] Task 5 — the lock module no longer
+                // resolves @zvec/zvec to classify errors. `z` is already loaded here,
+                // on a path the containment decision cleared, so the native predicate
+                // is injected instead of re-resolved inside the failure path.
+                seams: { isLockErrorFn: err => isLockError(err, e => z.isZVecError(e)) },
+            },
         );
         this._col = result;
         this._leaseId = leaseId;

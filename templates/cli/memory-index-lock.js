@@ -324,17 +324,51 @@ function waitForExit(pid, timeoutMs) {
     return !pidAlive(pid);
 }
 
-// 锁错误识别:zvec.isZVecError + "Can't lock" message。识别失败宁可当非锁
+// 锁错误识别:Zvec 错误判定 + "Can't lock" message。识别失败宁可当非锁
 // 错误 rethrow(设计 §6:非锁错误零干预)。
-function isLockError(err) {
+//
+// [zvec-win-unicode-containment] Task 5 —— 本模块不再解析 @zvec/zvec。
+// 这里原先在**每一次错误分类时**就地解析 native binding 并调用 isZVecError:
+// 一个绕开判定层的 native 入口,而且发生在最不该再碰 native 的时刻 ——
+// collection 打开失败之后。判定谓词改由调用方注入:调用方
+// (ZvecMemoryIndex.initialize)此刻已在 SAFE 判定下持有 z,不需要第二次解析
+// native 模块。
+//
+// 未注入谓词时的回退**镜像上游自身的定义** —— @zvec/zvec 的 isZVecError 判定
+// 的是 `code` 以 'ZVEC_' 开头,不是错误名。原先的回退写作 /zvec/i.test(name),
+// 在真实 zvec 错误上几乎必然为 false;它从前只在 require 失败(即 zvec 根本
+// 不存在、也就不会有 zvec 错误)时才走到,所以这个缺陷一直没有暴露。把裸
+// require 移除后该分支变成常规路径,必须先修正,否则「消除 require」会顺手
+// 把锁诊断降级成裸 rethrow。
+//
+// 这是对上游契约的镜像而非猜测:真实并发矩阵测试用真实锁冲突同时验证注入
+// 形式与回退形式并要求二者一致,上游改定义会红,而不是静默降级。
+//
+// 两个条件必须同时成立 —— 绝不因为消除 require 就把任意带 "can't lock" 的
+// 普通错误当成 Zvec 锁错误,那会让非锁错误进入 backoff/诊断/自愈阶梯。
+const LOCK_MESSAGE_RE = /can't lock/i;
+
+function looksLikeZVecError(err) {
+    return typeof err === 'object' && err !== null
+        && typeof err.name === 'string'
+        && typeof err.code === 'string' && err.code.startsWith('ZVEC_');
+}
+
+function isLockError(err, isZVecError) {
     if (!err) return false;
-    let isZ = false;
-    try {
-        isZ = require('@zvec/zvec').isZVecError(err);
-    } catch (_) {
-        isZ = /zvec/i.test(String(err.name || ''));
+    let isZ;
+    if (typeof isZVecError === 'function') {
+        // 注入的谓词来自 native binding;它自身抛错时退回纯判定,
+        // 而不是让错误分类把调用方的原始错误吞掉。
+        try {
+            isZ = Boolean(isZVecError(err));
+        } catch (_) {
+            isZ = looksLikeZVecError(err);
+        }
+    } else {
+        isZ = looksLikeZVecError(err);
     }
-    return isZ && /can't lock/i.test(String(err.message || ''));
+    return isZ && LOCK_MESSAGE_RE.test(String(err.message || ''));
 }
 
 // 自愈阶梯(设计 §4.4,仅 orphaned-own-mcp 验判进入):
@@ -482,6 +516,7 @@ module.exports = {
     POST_KILL_SETTLE_MS,
     sleepSync,
     waitForExit,
+    looksLikeZVecError,
     isLockError,
     attemptSelfHeal,
     openWithCoordination,
