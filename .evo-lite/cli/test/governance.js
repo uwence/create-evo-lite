@@ -11796,7 +11796,7 @@ async function runChildRuntimeTests() {
     // Nothing here loads @zvec/zvec or runs the crash probe.
     // ---------------------------------------------------------------------------
 
-    console.log('T-zwuc-characterization. BASELINE: engine selection matrix + the dual loadZvecIndex path ...');
+    console.log('T-zwuc-characterization. Engine selection matrix + the single shared decision (was: dual path) ...');
     {
         const mi = require(path.join(CLI_DIR, 'memory-index.js'));
         const prevEngineEnv = process.env.EVO_LITE_MEMORY_ENGINE;
@@ -11825,30 +11825,40 @@ async function runChildRuntimeTests() {
                 assert.strictEqual(load.calls, row.loads, `${row.engine} diagnosis loads zvec ${row.loads} time(s)`);
             }
 
-            // (b) THE DUAL PATH (spec §6.1) — the fact this whole spec exists for.
-            // Diagnosis and instantiation each reach loadZvecIndex on their own;
-            // there is no shared decision for either of them to consume, so
-            // containment applied to only one of them would not protect runtime.
+            // (b) THE DUAL PATH, now collapsed (spec §6.1 → §6.2).
+            //
+            // Task 1 pinned the defect here: diagnosis and instantiation each
+            // reached loadZvecIndex on their own, for two loads and no shared
+            // decision. Task 4 flipped it — both consumers now read ONE decision
+            // object, which is asserted by identity rather than by counting, so
+            // the property holds through the real code path with no stubs.
             process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
-            const shared = countingLoader(class FakeZvecC {});
-            mi.resolveActiveImpl(shared);          // diagnosis path
-            mi.selectEngine('zvec', shared);       // instantiation path
-            assert.strictEqual(shared.calls, 2,
-                'BASELINE: diagnosis + instantiation load zvec twice. Task 4 must collapse this to one shared decision, and to ZERO on a non-SAFE path (T6).');
+            const previousIndex = mi.peekMemoryIndex();
+            mi.resetMemoryIndex();
+            try {
+                assert.strictEqual(mi.peekEngineDecision(), null, 'resetMemoryIndex clears the decision, not just the index');
+                mi.resolveActiveImpl();                       // diagnosis path
+                const taken = mi.peekEngineDecision();
+                assert.ok(taken, 'diagnosis takes the shared decision');
+                mi.getMemoryIndex();                          // instantiation path
+                assert.strictEqual(mi.peekEngineDecision(), taken,
+                    'instantiation must consume the SAME decision object — a second decision is the §6.1 defect returning');
+            } finally {
+                try { const idx = mi.peekMemoryIndex(); if (idx && idx.close) idx.close(); } catch (_) {}
+                mi.resetMemoryIndex();
+                if (previousIndex) { /* the suite re-acquires lazily; nothing to restore */ }
+            }
 
-            // (c) Structural: no engine decision exists on the export surface, and
-            // getMemoryIndex has no injection point through which it could be
-            // handed the diagnosis result.
-            assert.ok(!('resolveEngineDecision' in mi),
-                'BASELINE: resolveEngineDecision does not exist yet — Task 4 introduces it');
-            assert.strictEqual(mi.getMemoryIndex.length, 0,
-                'BASELINE: getMemoryIndex accepts no loader, so it cannot consume the diagnosis decision');
+            // (c) Structural: the single decision now exists on the export surface.
+            assert.strictEqual(typeof mi.resolveEngineDecision, 'function', 'resolveEngineDecision is the single engine decision (AC3)');
+            assert.strictEqual(typeof mi.peekEngineDecision, 'function', 'the decision is observable without recomputing it');
+            assert.strictEqual(mi.getMemoryIndex.length, 0, 'getMemoryIndex still takes no arguments');
 
-            // (d) Authorized-scope guard: Task 1–3 delivers the decision layer and
-            // wires nothing. Task 4 is the change that deletes this assertion.
+            // (d) The selector consumes the classifier. Task 1–3 asserted the
+            // opposite; this is the assertion that flipped when the seam landed.
             const selectorSource = fs.readFileSync(path.join(CLI_DIR, 'memory-index.js'), 'utf8');
-            assert.ok(!/zvec-path-containment/.test(selectorSource),
-                'Task 1–3 scope: the selector must NOT consume the classifier yet (that is Task 4)');
+            assert.ok(/zvec-path-containment/.test(selectorSource), 'the selector must consume the containment classifier (Task 4)');
+            assert.ok(/zvec-collection-path/.test(selectorSource), 'the selector must compute the collection path without loading zvec');
         } finally {
             if (prevEngineEnv === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
             else process.env.EVO_LITE_MEMORY_ENGINE = prevEngineEnv;
@@ -12180,6 +12190,156 @@ async function runChildRuntimeTests() {
         assert.strictEqual(shortName.verdict, 'UNKNOWN', 'evaluateProfile rejects a literal 8.3 short name');
         assert.ok(shortName.reason.includes('8dot3-short-name-alias-suspected'), '8.3 rejection is named as such');
         console.log('✅ T-zwuc-T5-fail-closed passed');
+    }
+
+    console.log('T-zwuc-T6-zero-load. Non-SAFE paths must never load @zvec/zvec (AC3, the spec\'s core guarantee) ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const CHINESE = 'C:\\evo\\\u9879\u76ee\\.evo-lite\\zvec\\collection';
+        const ASCII = 'C:\\evo\\project\\.evo-lite\\zvec\\collection';
+        const cleanFs = { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p };
+        const countingLoader = () => {
+            const load = () => { load.calls += 1; return class FakeZvec {}; };
+            load.calls = 0;
+            return load;
+        };
+
+        // (a) The decision itself: a non-SAFE verdict must short-circuit BEFORE
+        // the loader is reached. This is the assertion the whole spec turns on.
+        for (const [label, colPath, fsOps] of [
+            ['non-ASCII path', CHINESE, cleanFs],
+            ['reparse ancestor', ASCII, { lstatSync: (p) => ({ isSymbolicLink: () => p === 'C:\\evo\\project' }), realpathSync: (p) => p }],
+            ['unprobeable ancestor', ASCII, { lstatSync: () => { const e = new Error('denied'); e.code = 'EACCES'; throw e; }, realpathSync: (p) => p }],
+        ]) {
+            const load = countingLoader();
+            const d = mi.resolveEngineDecision({ choice: 'zvec', platform: 'win32', collectionPath: colPath, fsOps, loadZvecIndex: load });
+            assert.strictEqual(load.calls, 0, `${label}: loadZvecIndex must be called ZERO times (I1)`);
+            assert.strictEqual(d.impl, 'sqlite', `${label}: degrades to sqlite`);
+            assert.strictEqual(d.degraded, true, `${label}: reported as degraded`);
+            assert.strictEqual(d.reason, 'containment', `${label}: degradation is attributed to containment, not a missing dependency`);
+            assert.strictEqual(d.ZvecIndex, null, `${label}: no engine class is carried, so nothing downstream can instantiate zvec`);
+        }
+
+        // (b) Both consumers, from the same non-SAFE decision. Instantiation
+        // cannot load anything because the decision carries no class.
+        {
+            const load = countingLoader();
+            const d = mi.resolveEngineDecision({ choice: 'zvec', platform: 'win32', collectionPath: CHINESE, fsOps: cleanFs, loadZvecIndex: load });
+            const index = mi.instantiateFromDecision(d);
+            assert.ok(index instanceof mi.SqliteFtsIndex, 'instantiation from a contained decision yields SqliteFtsIndex');
+            assert.strictEqual(load.calls, 0, 'instantiation must not reach the loader either');
+        }
+
+        // (c) The complement: a SAFE path still loads exactly once, so the guard
+        // is not simply switching zvec off for everyone.
+        {
+            const load = countingLoader();
+            const d = mi.resolveEngineDecision({ choice: 'zvec', platform: 'win32', collectionPath: ASCII, fsOps: cleanFs, loadZvecIndex: load });
+            assert.strictEqual(load.calls, 1, 'a SAFE path loads the engine exactly once');
+            assert.strictEqual(d.impl, 'zvec', 'a SAFE path keeps zvec');
+            assert.strictEqual(d.degraded, false, 'a SAFE path is not degraded');
+        }
+
+        // (d) Real proof, not stub bookkeeping: in a fresh process using the
+        // REAL loader, a non-SAFE decision must leave @zvec/zvec absent from the
+        // require cache. A counting stub can only show that our own code did not
+        // call it; this shows the binding was never loaded at all.
+        const probe = (colPath, platform) => {
+            const source = [
+                "'use strict';",
+                `const mi = require(${JSON.stringify(path.join(CLI_DIR, 'memory-index.js'))});`,
+                `const d = mi.resolveEngineDecision({ choice: 'zvec', platform: ${JSON.stringify(platform)}, collectionPath: ${JSON.stringify(colPath)}, fsOps: { lstatSync: () => ({ isSymbolicLink: () => false }), realpathSync: (p) => p } });`,
+                'const loaded = Object.keys(require.cache).some((k) => k.includes(`${require("path").sep}@zvec${require("path").sep}`));',
+                'process.stdout.write(JSON.stringify({ impl: d.impl, reason: d.reason, loaded }));',
+            ].join('\n');
+            const run = childProcess.spawnSync(process.execPath, ['-e', source], { encoding: 'utf8' });
+            assert.strictEqual(run.status, 0, `zero-load probe must exit 0 (stderr: ${run.stderr})`);
+            return JSON.parse(run.stdout);
+        };
+        const contained = probe(CHINESE, 'win32');
+        assert.strictEqual(contained.impl, 'sqlite', 'contained path degrades in a real process');
+        assert.strictEqual(contained.loaded, false, '@zvec/zvec must NOT be in the require cache after a contained decision');
+
+        // Positive control for (d): with a SAFE path the same probe DOES load the
+        // binding, so `loaded:false` above is a real observation rather than a
+        // detector that never fires. Skipped only when the optional dep is absent.
+        let depPresent = true;
+        try { require.resolve('@zvec/zvec'); } catch (_) { depPresent = false; }
+        if (depPresent) {
+            const allowed = probe(path.join(WORKSPACE_ROOT, '.evo-lite', 'zvec', 'collection'), process.platform);
+            assert.strictEqual(allowed.loaded, true, 'positive control: a SAFE decision does load @zvec/zvec, so the detector works');
+        } else {
+            console.log('   note: positive control skipped — @zvec/zvec is not installed in this runtime');
+        }
+        console.log('✅ T-zwuc-T6-zero-load passed');
+    }
+
+    console.log('T-zwuc-T9-platform-isolation. Non-win32 behaviour is unchanged (I9) ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const explode = () => { throw new Error('the profile layer must not probe on a non-win32 platform'); };
+        for (const platform of ['linux', 'darwin']) {
+            const load = () => class FakeZvec {};
+            // A path that would be rejected outright on Windows, plus filesystem
+            // probes that fail the test if they are ever reached.
+            const d = mi.resolveEngineDecision({
+                choice: 'zvec', platform, loadZvecIndex: load,
+                collectionPath: `/home/u/\u9879\u76ee/.evo-lite/zvec/collection`,
+                fsOps: { lstatSync: explode, realpathSync: explode },
+            });
+            assert.strictEqual(d.impl, 'zvec', `${platform}: engine choice is honoured exactly as before`);
+            assert.strictEqual(d.degraded, false, `${platform}: nothing is degraded`);
+            assert.strictEqual(d.containment.verdict, 'SAFE', `${platform}: containment is a no-op`);
+            assert.strictEqual(d.containment.layer, 'platform', `${platform}: decided at the platform gate, before any probing`);
+        }
+        console.log('✅ T-zwuc-T9-platform-isolation passed');
+    }
+
+    console.log('T-zwuc-path-agreement. The classified path is the path the engine actually opens ...');
+    {
+        const zcp = require(path.join(CLI_DIR, 'zvec-collection-path.js'));
+
+        // The duplication this pins: zvecRoot() still lives, unexported, inside
+        // memory-index-zvec.js, and this round may not edit that file. If the two
+        // definitions ever drift, containment would be judging a path the engine
+        // does not use — guarding nothing while appearing to guard everything.
+        // Constructing ZvecMemoryIndex is safe here: it requires @zvec/zvec lazily
+        // inside loadZvec(), so the constructor touches no native code.
+        const { ZvecMemoryIndex } = require(path.join(CLI_DIR, 'memory-index-zvec.js'));
+        const instance = new ZvecMemoryIndex();
+        assert.strictEqual(instance._colPath, zcp.zvecCollectionPath(),
+            'zvecCollectionPath() must equal the _colPath ZvecMemoryIndex will hand to ZVecOpen/ZVecCreateAndOpen');
+        assert.strictEqual(instance._dir, zcp.zvecRootDir(), 'and the collection directory must agree too');
+
+        // Path computation must not depend on the ambient db location being real.
+        const fabricated = path.join('C:', 'evo', 'x', '.evo-lite', 'memory.db');
+        assert.strictEqual(zcp.zvecCollectionPath(fabricated), path.join(path.dirname(fabricated), 'zvec', 'collection'),
+            'the override form composes the same way');
+        console.log('✅ T-zwuc-path-agreement passed');
+    }
+
+    console.log('T-zwuc-no-collection-side-effects. A contained decision creates nothing on disk ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const base = path.join(SHARED_CACHE_DIR, 'zwuc-t4-sideeffects');
+        fs.rmSync(base, { recursive: true, force: true });
+        fs.mkdirSync(base, { recursive: true });
+        try {
+            const colPath = path.join(base, 'zvec', 'collection');
+            const before = fs.readdirSync(base);
+            const d = mi.resolveEngineDecision({
+                choice: 'zvec', platform: 'win32', collectionPath: colPath,
+                fsOps: { lstatSync: () => ({ isSymbolicLink: () => true }), realpathSync: (p) => p },
+                loadZvecIndex: () => { throw new Error('loader must not be reached'); },
+            });
+            assert.strictEqual(d.impl, 'sqlite', 'contained');
+            mi.instantiateFromDecision(d);
+            assert.deepStrictEqual(fs.readdirSync(base), before, 'a contained decision must not create the zvec directory');
+            assert.ok(!fs.existsSync(path.join(base, 'zvec')), 'and specifically not the collection root');
+        } finally {
+            fs.rmSync(base, { recursive: true, force: true });
+        }
+        console.log('✅ T-zwuc-no-collection-side-effects passed');
     }
 }
 

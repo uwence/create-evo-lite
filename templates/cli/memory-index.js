@@ -13,6 +13,10 @@ const {
 } = require('./db');
 const { getLogPath, getDbPath } = require('./runtime');
 const { generateSnippet } = require('./memory-index-util');
+// Both are zvec-free by construction — requiring them here must not pull in the
+// native binding, or the containment decision would happen after the hazard.
+const { zvecCollectionPath } = require('./zvec-collection-path');
+const { classifyCollectionPath } = require('./zvec-path-containment');
 
 const fs = require('fs');
 const path = require('path');
@@ -193,38 +197,141 @@ function defaultLoadZvecIndex() {
     }
 }
 
-function resolveActiveImpl(loadZvecIndex = defaultLoadZvecIndex) {
-    const choice = resolveEngine();
-    const impl = choice === 'zvec' && loadZvecIndex() ? 'zvec' : 'sqlite';
+// [zvec-win-unicode-containment] AC3 — ONE decision, consumed twice.
+//
+// Diagnosis (resolveActiveImpl) and instantiation (getMemoryIndex → selectEngine)
+// used to reach loadZvecIndex() independently, and defaultLoadZvecIndex()'s first
+// statement is require('@zvec/zvec'). On Windows, some non-ASCII collection paths
+// make the native side terminate the process with 0xC0000409, which no try/catch
+// can contain — so the load itself is what must not happen (spec I1). Guarding
+// only one of the two consumers would have left the runtime unprotected.
+//
+// resolveEngineDecision() therefore classifies the collection path BEFORE any
+// load and, when the verdict is not SAFE, returns a sqlite decision without ever
+// calling loadZvecIndex. The zero-load property is the single most important
+// executable guarantee in this spec (§6.2) and is asserted by T-zwuc-T6.
+//
+// Nothing here opens or creates a collection: on a non-SAFE path ZvecIndex stays
+// null, so ZvecMemoryIndex — which is what mkdirs the directory and calls
+// ZVecOpen/ZVecCreateAndOpen in initialize() — is never constructed.
+function resolveEngineDecision(options = {}) {
+    const loadZvecIndex = options.loadZvecIndex || defaultLoadZvecIndex;
+    const choice = options.choice === undefined ? resolveEngine() : options.choice;
+
+    if (choice !== 'zvec') {
+        return {
+            choice, impl: 'sqlite', degraded: false, ZvecIndex: null,
+            containment: null, collectionPath: null, reason: 'engine-choice',
+        };
+    }
+
+    let collectionPath;
+    try {
+        collectionPath = options.collectionPath === undefined
+            ? zvecCollectionPath()
+            : options.collectionPath;
+    } catch (err) {
+        // Cannot even name the path, so it cannot be classified. Fail closed.
+        return {
+            choice, impl: 'sqlite', degraded: true, ZvecIndex: null, collectionPath: null,
+            containment: {
+                verdict: 'UNKNOWN',
+                layer: 'path',
+                reason: `path:collection-path-unresolvable:${(err && err.code) || 'ERROR'}`,
+            },
+            reason: 'containment',
+        };
+    }
+
+    const containment = classifyCollectionPath(collectionPath, {
+        platform: options.platform,
+        fsOps: options.fsOps,
+    });
+    if (containment.verdict !== 'SAFE') {
+        // loadZvecIndex is deliberately NOT called on this branch.
+        return {
+            choice, impl: 'sqlite', degraded: true, ZvecIndex: null,
+            containment, collectionPath, reason: 'containment',
+        };
+    }
+
+    const ZvecIndex = loadZvecIndex();
     return {
         choice,
-        impl,
-        degraded: choice === 'zvec' && impl === 'sqlite',
+        impl: ZvecIndex ? 'zvec' : 'sqlite',
+        degraded: !ZvecIndex,
+        ZvecIndex: ZvecIndex || null,
+        containment,
+        collectionPath,
+        reason: ZvecIndex ? 'zvec' : 'dependency-unavailable',
     };
 }
 
-function selectEngine(engine, loadZvecIndex = defaultLoadZvecIndex) {
-    if (engine === 'zvec') {
-        const ZvecIdx = loadZvecIndex();
-        if (ZvecIdx) return new ZvecIdx();
+let active = null;
+let decision = null;
+
+// THE shared decision. Both consumers below read this same object, which is what
+// makes "one decision, two consumers" observable rather than merely intended.
+function sharedEngineDecision() {
+    if (!decision) decision = resolveEngineDecision();
+    return decision;
+}
+
+// Read-only access to the decision already taken; null when none has been.
+// Diagnostics (Task 7) consume this rather than recomputing.
+function peekEngineDecision() {
+    return decision;
+}
+
+function instantiateFromDecision(d) {
+    if (d && d.ZvecIndex) return new d.ZvecIndex();
+    if (d && d.reason === 'dependency-unavailable') {
         console.warn('⚠️ memory engine "zvec" selected but @zvec/zvec is unavailable — falling back to SqliteFtsIndex.');
+    } else if (d && d.reason === 'containment') {
+        // Deliberately worded as containment, not as a fix: the upstream native
+        // fault is untouched, this process simply refuses to enter it.
+        console.warn(`⚠️ memory engine "zvec" is contained on this path (${d.containment && d.containment.reason}) — using SqliteFtsIndex.`);
     }
     return new SqliteFtsIndex();
 }
 
-let active = null;
+// Return shape is pinned to {choice, impl, degraded}: memory.service consumes it
+// as `engineImpl` and T-ENGINE deep-compares it. Containment detail is reached
+// through peekEngineDecision()/resolveEngineDecision() instead of widening this.
+function resolveActiveImpl(loadZvecIndex) {
+    const d = loadZvecIndex === undefined
+        ? sharedEngineDecision()
+        : resolveEngineDecision({ loadZvecIndex });
+    return { choice: d.choice, impl: d.impl, degraded: d.degraded };
+}
+
+// Legacy positional form (engine, loader) is preserved for existing callers; an
+// options object may be passed instead when a test needs to pin platform,
+// collection path or probe behaviour deterministically.
+function selectEngine(engine, loadZvecIndex) {
+    if (engine === undefined && loadZvecIndex === undefined) {
+        return instantiateFromDecision(sharedEngineDecision());
+    }
+    const options = (engine && typeof engine === 'object')
+        ? engine
+        : { choice: engine, loadZvecIndex };
+    return instantiateFromDecision(resolveEngineDecision(options));
+}
 
 function getMemoryIndex() {
     if (!active) {
-        active = selectEngine(resolveEngine());
+        active = instantiateFromDecision(sharedEngineDecision());
     }
     return active;
 }
 
 // Drop the cached engine so the next getMemoryIndex() re-initializes. Used by
 // rebuild after wiping a derived store so no stale handle points at a removed dir.
+// The decision is dropped with it: the collection path or its topology may have
+// changed, and a stale SAFE verdict would be exactly the wrong thing to keep.
 function resetMemoryIndex() {
     active = null;
+    decision = null;
 }
 
 // 只读访问当前活动索引(不创建实例)。MCP shutdown 用它收尾:实例从未创建时
@@ -233,4 +340,8 @@ function peekMemoryIndex() {
     return active;
 }
 
-module.exports = { SqliteFtsIndex, getMemoryIndex, resetMemoryIndex, peekMemoryIndex, resolveEngine, resolveActiveImpl, selectEngine, DEFAULT_ENGINE_CHOICE };
+module.exports = {
+    SqliteFtsIndex, getMemoryIndex, resetMemoryIndex, peekMemoryIndex,
+    resolveEngine, resolveActiveImpl, selectEngine, DEFAULT_ENGINE_CHOICE,
+    resolveEngineDecision, peekEngineDecision, instantiateFromDecision,
+};
