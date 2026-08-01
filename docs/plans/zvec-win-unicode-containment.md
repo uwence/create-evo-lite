@@ -86,6 +86,17 @@ Windows 上部分非 ASCII collection 路径在 `insertSync` 触发 `0xC0000409`
 
 ### Task 5: native 入口收口
 
+**Files:**
+- Modify: `.evo-lite/cli/memory-ab.js`
+- Sync: `templates/cli/memory-ab.js`
+- Modify: `.evo-lite/cli/memory-index-lock.js`
+- Sync: `templates/cli/memory-index-lock.js`
+- Modify: `.evo-lite/cli/memory-index-zvec.js`
+- Sync: `templates/cli/memory-index-zvec.js`
+- Add: `docs/validation/zvec-win-unicode-native-entry-audit.md`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
+
 - [ ] `memory-ab` 非 `SAFE` 拒绝执行；`memory-index-lock` 静态审查；全仓复查绕行路径
 
 ### Task 6: 降级恢复状态机
