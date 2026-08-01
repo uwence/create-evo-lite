@@ -368,10 +368,19 @@ function instantiateFromDecision(d) {
 // Return shape is pinned to {choice, impl, degraded}: memory.service consumes it
 // as `engineImpl` and T-ENGINE deep-compares it. Containment detail is reached
 // through peekEngineDecision()/resolveEngineDecision() instead of widening this.
-function resolveActiveImpl(loadZvecIndex) {
-    const d = loadZvecIndex === undefined
-        ? sharedEngineDecision()
-        : resolveEngineDecision({ loadZvecIndex });
+// Accepts the legacy loader function or a full options object, so a caller that
+// needs a deterministic verdict can pin the platform and the path instead of
+// inheriting whatever the ambient runtime happens to be. No argument means "use
+// the shared decision", which is what production does.
+function resolveActiveImpl(loadZvecIndexOrOptions) {
+    let d;
+    if (loadZvecIndexOrOptions === undefined) {
+        d = sharedEngineDecision();
+    } else if (typeof loadZvecIndexOrOptions === 'function') {
+        d = resolveEngineDecision({ loadZvecIndex: loadZvecIndexOrOptions });
+    } else {
+        d = resolveEngineDecision(loadZvecIndexOrOptions);
+    }
     return { choice: d.choice, impl: d.impl, degraded: d.degraded };
 }
 
