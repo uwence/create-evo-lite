@@ -3,17 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 7628fdb80a79d5fdb53c28b334e85e84a832aa63
+> headSha: befedf1c9b51af280167729aae4ce49e9bb1a7e9
 > upstreamSha: 
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-07-31T12:41:27.801Z
+> focusUpdatedAt: 2026-08-01T08:19:47.968Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-@zvec/zvec 0.6.0 正确性升级已合入 main@ee98661，并通过 Ubuntu Node 20/22/24 与 Windows Node 22/24 五组合完整发布链。下一正式发布及任何 Windows 非 ASCII 子仓 rollout 由 [zvec-win-unicode-containment] 阻断；当前仅完成 P0 booking，containment 设计与实现尚未授权。[attp-hive-rollout] 仍按其独立试点、回滚与 topology preflight 条件保持 BLOCKED。
+[zvec-win-unicode-containment] Task 1–4 已实现并合入 main@befedf1；真实 Windows 非 ASCII 停止点 2 E2E 已通过（非 SAFE 路径下 choice=zvec / impl=sqlite / degraded=true / containment UNKNOWN，@zvec/zvec 与 memory-index-zvec 均未加载，zvec collection 与 sidecar 零创建，archive 与 recall 正常）。当前 focus 为 Task 5 native 入口收口：memory-ab selector bypass、memory-index-lock 裸 native require、全生产入口审计。Task 6 marker/recovery、Task 7 verify、Task 8 release enforcement 均未授权且未实现。正式发布与 Windows 非 ASCII rollout 继续阻断。[attp-hive-rollout] 独立保持 BLOCKED。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -27,6 +27,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [befedf1] 2026-08-01 ZvecWinUnicodeContainmentTask4Closure: [zvec-win-unicode-containment] Task 1–4 收口，运行时上下文对齐。 实现与合入：Task 1–3(判定层)经 PR #6 合入 main@a10dfd7；Task
 - [7628fdb] 2026-07-31 ZvecWinUnicodeContainmentDesignFreeze: 完成 [zvec-win-unicode-containment] Phase D 证据与设计冻结：固化 Windows 非 ASCII collection 路径 fail-fast 的有界证据矩阵
 - [c862181] 2026-07-31 SpecPortfolioAgingDisposition: 将 spec:provider-first-code-perception-foundation 从 adopted 调整为 parked，保留 umbrella 与 spawned-from 关系。
 - [ee98661] 2026-07-31 Zvec06CorrectnessClosure: [zvec-06-upgrade] 收口。议题由「功能升级」重分类为「P0 现存正确性缺陷修复」——原立项理由(0.5.0 无 readOnly、reader/writer 拆分随升级落地)被同版重测
@@ -36,7 +37,6 @@
 - [1108e9d] 2026-07-26 governance-closure: ATTP (Agent Takeover Trigger Protocol) closure. spec:agent-takeover-trigger-protocol
 - [89cb3d7] 2026-07-23 governance-closure: [a177] mcp-zvec-lock closure. Final review Ready-to-merge:Yes (opus). Implementation 8db7a99..e1a7cc
 - [659984d] 2026-07-23 governance-closure: [a177] mcp-zvec-lock 设计+计划阶段收口。设计文档 docs/superpowers/specs/2026-07-23-mcp-zvec-lock-design.md:三层锁协调(
-- [b5803d3] 2026-07-23 governance-closure: 4b-1 Architecture-Governance Wiki closure. Q5 user acceptance PASS (2026-07-23). Implementation main
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
