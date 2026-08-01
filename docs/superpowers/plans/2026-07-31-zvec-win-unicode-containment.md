@@ -37,7 +37,7 @@ Spec Portfolio 中对整个实施期不可见 —— 一条 release-blocking P0 
 **Tech Stack:** Node.js (CommonJS)、既有 `templates/cli/test/harness.js` + `assert`、
 GitHub Actions、`sync-runtime` 模板镜像。
 
-**契约文档（canonical）:** `docs/superpowers/specs/2026-07-31-zvec-win-unicode-containment-design.md`
+**契约文档（canonical Spec）:** `docs/specs/zvec-win-unicode-containment.md`
 **运行时证据:** `docs/validation/zvec-win-unicode-path-matrix.md`
 **可复现 fixture:** `docs/validation/fixtures/zvec-win-unicode/`（默认拒绝执行）
 
@@ -135,6 +135,10 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 
 ### Task 1: Characterization —— 锁住现状（零生产改动）
 
+**Files:**
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
+
 - [ ] 固化 `resolveActiveImpl` 现有行为：`choice=zvec`+可用 → `impl=zvec, degraded=false`；
       不可用 → `impl=sqlite, degraded=true`；`choice=sqlite` → `degraded=false`
 - [ ] **固化双路径事实**：断言 `getMemoryIndex()` 与 `resolveActiveImpl()` 各自触发一次
@@ -145,6 +149,14 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 **验收**：新增测试通过；生产文件零 diff。
 
 ### Task 2: Lexical classifier（AC1）
+
+**Files:**
+- Create: `.evo-lite/cli/zvec-path-containment.js`
+- Create: `templates/cli/zvec-path-containment.js`
+- Modify: `.evo-lite/cli/template-manifest.js`
+- Sync: `templates/cli/template-manifest.js`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
 
 - [ ] 新建 `zvec-path-containment.js`，导出 `classifyLexical(collectionPath, platform)`
       → `'LEXICALLY_ELIGIBLE' | 'UNKNOWN'` + reason
@@ -158,6 +170,12 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 **验收**：T1 绿；模块不引入新依赖。
 
 ### Task 3: Supported-profile evaluator（AC2）
+
+**Files:**
+- Modify: `.evo-lite/cli/zvec-path-containment.js`
+- Sync: `templates/cli/zvec-path-containment.js`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
 
 - [ ] 同模块导出 `evaluateProfile(collectionPath, fsOps)` → `'IN_PROFILE' | 'UNKNOWN'` + reason
 - [ ] 只读探查：祖先链无 reparse point（junction/symlink）；`realpath` 结果仍满足 Layer 1；

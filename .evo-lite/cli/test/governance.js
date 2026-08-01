@@ -11783,6 +11783,404 @@ async function runChildRuntimeTests() {
         fs.rmSync(rc.receiptPathFor(WORKSPACE_ROOT, 'claude-code', 'rec-test'), { force: true });
         console.log('✅ T-takeover-recovery passed');
     }
+
+    // ---------------------------------------------------------------------------
+    // [zvec-win-unicode-containment] — decision layer contract.
+    //
+    // Spec:     docs/specs/zvec-win-unicode-containment.md
+    // Plan:     docs/superpowers/plans/2026-07-31-zvec-win-unicode-containment.md
+    // Evidence: docs/validation/zvec-win-unicode-path-matrix.md
+    //
+    // These tests cover the DECISION LAYER ONLY. The engine seam is untouched in
+    // this round (Task 4), which T-zwuc-characterization asserts explicitly.
+    // Nothing here loads @zvec/zvec or runs the crash probe.
+    // ---------------------------------------------------------------------------
+
+    console.log('T-zwuc-characterization. BASELINE: engine selection matrix + the dual loadZvecIndex path ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const prevEngineEnv = process.env.EVO_LITE_MEMORY_ENGINE;
+        // Counting seam. resolveActiveImpl/selectEngine already accept an injected
+        // loader, so the current behaviour can be pinned without touching the
+        // module system, the require cache, or any production file.
+        const countingLoader = (result) => {
+            const load = () => { load.calls += 1; return result; };
+            load.calls = 0;
+            return load;
+        };
+        try {
+            // (a) The selection matrix, measured together with loader call counts.
+            const matrix = [
+                { engine: 'zvec', loaded: class FakeZvecA {}, impl: 'zvec', degraded: false, loads: 1 },
+                { engine: 'zvec', loaded: null, impl: 'sqlite', degraded: true, loads: 1 },
+                { engine: 'sqlite-fts5-trigram', loaded: class FakeZvecB {}, impl: 'sqlite', degraded: false, loads: 0 },
+            ];
+            for (const row of matrix) {
+                process.env.EVO_LITE_MEMORY_ENGINE = row.engine;
+                const load = countingLoader(row.loaded);
+                const got = mi.resolveActiveImpl(load);
+                assert.strictEqual(got.choice, row.engine, `choice reflects ${row.engine}`);
+                assert.strictEqual(got.impl, row.impl, `${row.engine} + loader ${row.loaded ? 'available' : 'unavailable'} -> impl ${row.impl}`);
+                assert.strictEqual(got.degraded, row.degraded, `${row.engine} -> degraded ${row.degraded}`);
+                assert.strictEqual(load.calls, row.loads, `${row.engine} diagnosis loads zvec ${row.loads} time(s)`);
+            }
+
+            // (b) THE DUAL PATH (spec §6.1) — the fact this whole spec exists for.
+            // Diagnosis and instantiation each reach loadZvecIndex on their own;
+            // there is no shared decision for either of them to consume, so
+            // containment applied to only one of them would not protect runtime.
+            process.env.EVO_LITE_MEMORY_ENGINE = 'zvec';
+            const shared = countingLoader(class FakeZvecC {});
+            mi.resolveActiveImpl(shared);          // diagnosis path
+            mi.selectEngine('zvec', shared);       // instantiation path
+            assert.strictEqual(shared.calls, 2,
+                'BASELINE: diagnosis + instantiation load zvec twice. Task 4 must collapse this to one shared decision, and to ZERO on a non-SAFE path (T6).');
+
+            // (c) Structural: no engine decision exists on the export surface, and
+            // getMemoryIndex has no injection point through which it could be
+            // handed the diagnosis result.
+            assert.ok(!('resolveEngineDecision' in mi),
+                'BASELINE: resolveEngineDecision does not exist yet — Task 4 introduces it');
+            assert.strictEqual(mi.getMemoryIndex.length, 0,
+                'BASELINE: getMemoryIndex accepts no loader, so it cannot consume the diagnosis decision');
+
+            // (d) Authorized-scope guard: Task 1–3 delivers the decision layer and
+            // wires nothing. Task 4 is the change that deletes this assertion.
+            const selectorSource = fs.readFileSync(path.join(CLI_DIR, 'memory-index.js'), 'utf8');
+            assert.ok(!/zvec-path-containment/.test(selectorSource),
+                'Task 1–3 scope: the selector must NOT consume the classifier yet (that is Task 4)');
+        } finally {
+            if (prevEngineEnv === undefined) delete process.env.EVO_LITE_MEMORY_ENGINE;
+            else process.env.EVO_LITE_MEMORY_ENGINE = prevEngineEnv;
+        }
+        console.log('✅ T-zwuc-characterization passed');
+    }
+
+    console.log('T-zwuc-T1-lexical-purity. Lexical layer is a pure predicate: no FS, no zvec, deterministic ...');
+    {
+        const modPath = path.join(CLI_DIR, 'zvec-path-containment.js');
+        const inputs = [
+            'C:\\evo\\project\\.evo-lite\\zvec\\collection',
+            'C:\\evo\\\u9879\u76ee\\.evo-lite\\zvec\\collection',
+            '\\\\server\\share\\evo\\.evo-lite\\zvec\\collection',
+            '\\\\?\\C:\\evo\\.evo-lite\\zvec\\collection',
+            'C:\\evo\\CON\\zvec\\collection',
+        ];
+        // Run in a child process: the parent suite has already loaded plenty of
+        // modules, so "was @zvec/zvec pulled in?" is only answerable in a process
+        // whose require cache this module is the only cause of.
+        //
+        // The child hands the classifier a read-only Proxy of `fs` instead of
+        // mutating the real module. Assigning over every function property (the
+        // obvious approach) breaks on Node 24, where `fs.Utf8Stream` is a
+        // getter-only accessor and the write throws. A Proxy also keeps the
+        // stronger property the test is actually after: ANY call reaching the fs
+        // module is recorded, however that property happens to be defined.
+        const childSource = [
+            "'use strict';",
+            "const Module = require('module');",
+            'const fsCalls = [];',
+            'const wrapFs = (target) => new Proxy(target, {',
+            '    get(t, prop) {',
+            '        const value = Reflect.get(t, prop, t);',
+            "        if (typeof value !== 'function') return value;",
+            '        return function recorded(...args) { fsCalls.push(String(prop)); return value.apply(t, args); };',
+            '    },',
+            "    set() { throw new Error('the classifier must not mutate the fs module'); },",
+            '});',
+            'const originalLoad = Module._load;',
+            'Module._load = function (request, parent, isMain) {',
+            '    const loaded = originalLoad.call(this, request, parent, isMain);',
+            "    return (request === 'fs' || request === 'node:fs') ? wrapFs(loaded) : loaded;",
+            '};',
+            'let mod;',
+            `try { mod = require(${JSON.stringify(modPath)}); } finally { Module._load = originalLoad; }`,
+            `const inputs = ${JSON.stringify(inputs)};`,
+            "const first = inputs.map((i) => mod.classifyLexical(i, 'win32'));",
+            "const second = inputs.map((i) => mod.classifyLexical(i, 'win32'));",
+            'const lexicalCalls = fsCalls.slice();',
+            '// Positive control: the harness must be able to SEE a filesystem call,',
+            '// otherwise "zero calls" would prove nothing. The profile layer is',
+            '// expected to probe, so it must show up in the same recorder.',
+            "try { mod.evaluateProfile('C:\\\\evo\\\\control\\\\.evo-lite\\\\zvec\\\\collection'); } catch (_) {}",
+            'const controlCalls = fsCalls.length - lexicalCalls.length;',
+            'const zvecLoaded = Object.keys(require.cache).filter((k) => /@zvec|memory-index-zvec/.test(k));',
+            'process.stdout.write(JSON.stringify({ lexicalCalls, controlCalls, zvecLoaded, first, second }));',
+        ].join('\n');
+        const run = childProcess.spawnSync(process.execPath, ['-e', childSource], { encoding: 'utf8' });
+        assert.strictEqual(run.status, 0, `lexical purity child must exit 0 (stderr: ${run.stderr})`);
+        const purity = JSON.parse(run.stdout);
+        assert.deepStrictEqual(purity.lexicalCalls, [], 'classifyLexical must perform zero filesystem calls (I5)');
+        assert.ok(purity.controlCalls > 0,
+            'positive control: the recorder must observe the profile layer probing, otherwise "zero calls" is vacuous');
+        assert.deepStrictEqual(purity.zvecLoaded, [], 'the containment module must not load @zvec/zvec or memory-index-zvec (I4)');
+        assert.deepStrictEqual(purity.first, purity.second, 'classifyLexical must be deterministic for identical input');
+        assert.strictEqual(purity.first[0].verdict, 'LEXICALLY_ELIGIBLE', 'plain ASCII drive-absolute path is lexically eligible');
+        for (const result of purity.first.slice(1)) {
+            assert.strictEqual(result.verdict, 'UNKNOWN', 'every non-profile form is lexically UNKNOWN');
+        }
+
+        // I9: the platform argument, not the host OS, decides. Without this the
+        // whole matrix would be untestable on Linux CI, where these strings are
+        // ordinary filenames.
+        const zpc = require(modPath);
+        assert.strictEqual(zpc.classifyLexical('/home/u/\u9879\u76ee/.evo-lite/zvec/collection', 'linux').verdict,
+            'LEXICALLY_ELIGIBLE', 'non-win32 platforms keep their current behaviour (I9)');
+        console.log('✅ T-zwuc-T1-lexical-purity passed');
+    }
+
+    console.log('T-zwuc-T2-profile-readonly. Profile layer probes read-only and fails closed ...');
+    {
+        const zpc = require(path.join(CLI_DIR, 'zvec-path-containment.js'));
+        const colPath = 'C:\\evo\\project\\.evo-lite\\zvec\\collection';
+        const READ_ONLY_OPS = ['lstatSync', 'realpathSync'];
+
+        // (a) The probe surface is exactly the read-only set — asserted by
+        // recording which ops the evaluator actually reaches for.
+        const used = [];
+        const recordingOps = {
+            lstatSync: (p) => { used.push('lstatSync'); return { isSymbolicLink: () => false }; },
+            realpathSync: (p) => { used.push('realpathSync'); return p; },
+        };
+        const inProfile = zpc.evaluateProfile(colPath, recordingOps);
+        assert.strictEqual(inProfile.verdict, 'IN_PROFILE', 'a clean ASCII topology is in profile');
+        assert.ok(used.length > 0, 'the profile layer must actually probe');
+        for (const op of used) assert.ok(READ_ONLY_OPS.includes(op), `${op} is not a read-only probe`);
+        assert.deepStrictEqual(Object.keys(zpc.DEFAULT_FS_OPS).sort(), [...READ_ONLY_OPS].sort(),
+            'DEFAULT_FS_OPS must contain read-only probes ONLY — a mutating entry here would silently license writes (I6)');
+
+        // existsSync must stay OUT of the safety decision. It returns a bare
+        // boolean, so "confirmed absent" and "exists but unprobeable" collapse to
+        // the same `false`; using it to end the ancestor walk would let an
+        // inaccessible ancestor pass as a not-yet-created suffix. That is
+        // fail-OPEN, which is the one direction this classifier may never fail in.
+        assert.ok(!('existsSync' in zpc.DEFAULT_FS_OPS),
+            'existsSync must not be a safety-decision capability — it cannot distinguish absent from unprobeable');
+        assert.ok(Object.isFrozen(zpc.DEFAULT_FS_OPS), 'DEFAULT_FS_OPS must be frozen so the probe surface cannot be widened at runtime');
+
+        // (b) A probe that FAILS is not a probe that passed. Each op must fail
+        // closed independently, for every errno a real Windows volume can raise:
+        // permission denied, IO error, unsupported filesystem.
+        for (const failing of READ_ONLY_OPS) {
+            for (const code of ['EACCES', 'EPERM', 'EIO', 'ENOTSUP']) {
+                const ops = {
+                    lstatSync: () => ({ isSymbolicLink: () => false }),
+                    realpathSync: (p) => p,
+                };
+                ops[failing] = () => { const err = new Error('probe denied'); err.code = code; throw err; };
+                const result = zpc.evaluateProfile(colPath, ops);
+                assert.strictEqual(result.verdict, 'UNKNOWN', `${failing} ${code} must yield UNKNOWN, never a pass`);
+                assert.ok(result.reason.includes(`probe-failed:${failing}:${code}`), `${failing} ${code} reason names the op and errno`);
+            }
+        }
+
+        // (c) An ancestor that EXISTS but cannot be probed must not be mistaken
+        // for the absent suffix. This is the exact fail-open the existsSync-based
+        // walk allowed: C:\evo probes clean, C:\evo\project is inaccessible, and
+        // a boolean probe would have reported it as "does not exist" and stopped.
+        const inaccessibleAt = (target, code) => ({
+            lstatSync: (p) => {
+                if (p === target) { const err = new Error('denied'); err.code = code; throw err; }
+                return { isSymbolicLink: () => false };
+            },
+            realpathSync: (p) => p,
+        });
+        for (const code of ['EACCES', 'EPERM', 'EIO', 'ENOTSUP']) {
+            const mid = zpc.evaluateProfile(colPath, inaccessibleAt('C:\\evo\\project', code));
+            assert.strictEqual(mid.verdict, 'UNKNOWN', `an unprobeable intermediate ancestor (${code}) must be UNKNOWN, not a skipped suffix`);
+            assert.ok(mid.reason.includes(`probe-failed:lstatSync:${code}`), `${code} on an ancestor is reported as a probe failure`);
+        }
+        const rootDenied = zpc.evaluateProfile(colPath, inaccessibleAt('C:\\', 'EACCES'));
+        assert.strictEqual(rootDenied.verdict, 'UNKNOWN', 'a drive root that cannot be confirmed must be UNKNOWN');
+
+        // (d) The legitimate stop condition: `undefined` (Node's
+        // throwIfNoEntry:false contract for an absent entry). Everything below
+        // the first absent ancestor is a suffix the collection will create, so a
+        // clean chain down to that point is still IN_PROFILE.
+        const absentBelow = (firstAbsent) => ({
+            lstatSync: (p) => (p.startsWith(firstAbsent) ? undefined : { isSymbolicLink: () => false }),
+            realpathSync: (p) => p,
+        });
+        const missingSuffix = zpc.evaluateProfile(colPath, absentBelow('C:\\evo\\project\\.evo-lite'));
+        assert.strictEqual(missingSuffix.verdict, 'IN_PROFILE', 'a not-yet-created suffix must not block a clean ancestor chain');
+        const nothingExists = zpc.evaluateProfile(colPath, { lstatSync: () => undefined, realpathSync: (p) => p });
+        assert.strictEqual(nothingExists.verdict, 'UNKNOWN', 'nothing probeable at all leaves nothing verified');
+        assert.ok(nothingExists.reason.includes('no-existing-ancestor-to-probe'), 'and says so');
+
+        // A probe result that is neither Stats nor `undefined` is not an absence
+        // claim — it is an unusable answer.
+        for (const bogus of [null, false, 0, '']) {
+            const odd = zpc.evaluateProfile(colPath, { lstatSync: () => bogus, realpathSync: (p) => p });
+            assert.strictEqual(odd.verdict, 'UNKNOWN', `lstatSync returning ${JSON.stringify(bogus)} must not be read as "absent"`);
+        }
+
+        // (e) Real filesystem, real default ops: probing must leave nothing behind.
+        // Guarded on lexical eligibility because a CI host whose workspace sits
+        // under an 8.3 short name (RUNNER~1) is legitimately out of profile —
+        // skipping loudly beats asserting something untrue.
+        const realBase = path.join(SHARED_CACHE_DIR, 'zwuc-t2-readonly');
+        fs.mkdirSync(realBase, { recursive: true });
+        try {
+            const realCol = path.join(realBase, '.evo-lite', 'zvec', 'collection');
+            const before = fs.readdirSync(realBase);
+            zpc.evaluateProfile(realCol);                       // DEFAULT_FS_OPS, real fs
+            zpc.classifyCollectionPath(realCol, { platform: 'win32' });
+            assert.deepStrictEqual(fs.readdirSync(realBase), before, 'profile probing must not create anything on disk');
+            assert.ok(!fs.existsSync(path.join(realBase, '.evo-lite')), 'profile probing must not create the collection tree');
+        } finally {
+            fs.rmSync(realBase, { recursive: true, force: true });
+        }
+        console.log('✅ T-zwuc-T2-profile-readonly passed');
+    }
+
+    console.log('T-zwuc-T3-crash-corpus. Every reproduced fail-fast sample classifies non-SAFE, without touching native ...');
+    {
+        const zpc = require(path.join(CLI_DIR, 'zvec-path-containment.js'));
+        const fixtureDir = path.join(WORKSPACE_ROOT, 'docs', 'validation', 'fixtures', 'zvec-win-unicode');
+        const corpus = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'corpus.json'), 'utf8'));
+        const summary = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'results-summary.json'), 'utf8'));
+        const segmentByKey = new Map(corpus.samples.map((s) => [`${s.round}/${s.id}`, s.segment]));
+
+        const crashing = [];
+        for (const round of summary.rounds) {
+            for (const row of round.rows) {
+                if (row.verdict !== 'FAIL_FAST_REPRODUCED') continue;
+                const key = `${round.round}/${row.id}`;
+                const segment = row.segment !== undefined ? row.segment : segmentByKey.get(key);
+                assert.strictEqual(typeof segment, 'string', `crash sample ${key} must resolve to a path segment`);
+                crashing.push({ key, segment });
+            }
+        }
+        // Pinned to the frozen evidence set. If this number moves, the evidence
+        // moved, and the classifier's coverage claim has to be re-argued rather
+        // than silently re-baselined.
+        assert.strictEqual(crashing.length, 26, 'the frozen evidence contains 26 reproduced fail-fast samples');
+
+        // Any filesystem reach on a known-crashing sample is itself the bug: the
+        // whole point is that these are rejected on the string alone, before any
+        // I/O and long before @zvec/zvec would be loaded.
+        const forbidden = (op) => () => { throw new Error(`T3 must not probe the filesystem (${op})`); };
+        const noProbe = { existsSync: forbidden('existsSync'), lstatSync: forbidden('lstatSync'), realpathSync: forbidden('realpathSync') };
+        for (const sample of crashing) {
+            const colPath = `C:\\evo\\${sample.segment}\\.evo-lite\\zvec\\collection`;
+            const result = zpc.classifyCollectionPath(colPath, { platform: 'win32', fsOps: noProbe });
+            assert.notStrictEqual(result.verdict, 'SAFE', `${sample.key} must never classify SAFE`);
+            // §5.2: UNSAFE is reserved and not produced by this implementation, so
+            // the contract asserts "not SAFE" rather than "is UNSAFE".
+            assert.strictEqual(result.verdict, 'UNKNOWN', `${sample.key} classifies UNKNOWN (UNSAFE is reserved, §5.2)`);
+            assert.strictEqual(result.layer, 'lexical', `${sample.key} is rejected lexically, before any FS probe`);
+        }
+        console.log(`   crash corpus: ${crashing.length}/${crashing.length} non-SAFE, 0 filesystem probes, 0 native invocations`);
+        console.log('✅ T-zwuc-T3-crash-corpus passed');
+    }
+
+    console.log('T-zwuc-T4-supported-profile. Control: in-profile ASCII paths reach SAFE (over-blocking guard) ...');
+    {
+        const zpc = require(path.join(CLI_DIR, 'zvec-path-containment.js'));
+        const cleanOps = {
+            lstatSync: () => ({ isSymbolicLink: () => false }),
+            realpathSync: (p) => p,
+        };
+        const control = [
+            'C:\\evo\\project\\.evo-lite\\zvec\\collection',
+            'D:\\Data\\ProjectAgent\\create-evo-lite\\.evo-lite\\zvec\\collection',
+            'C:\\Program Files\\evo\\.evo-lite\\zvec\\collection',
+            'C:\\evo\\my-project_v2.1\\.evo-lite\\zvec\\collection',
+        ];
+        for (const colPath of control) {
+            const result = zpc.classifyCollectionPath(colPath, { platform: 'win32', fsOps: cleanOps });
+            assert.strictEqual(result.verdict, 'SAFE', `${colPath} must stay SAFE — over-blocking would degrade every Windows user to sqlite`);
+            assert.strictEqual(result.layer, 'both', 'SAFE requires BOTH layers to pass (§5.0)');
+        }
+
+        // Real filesystem corroboration with the default probes.
+        const realBase = path.join(SHARED_CACHE_DIR, 'zwuc-t4-control');
+        fs.mkdirSync(path.join(realBase, '.evo-lite', 'zvec'), { recursive: true });
+        try {
+            const realCol = path.join(realBase, '.evo-lite', 'zvec', 'collection');
+            if (process.platform === 'win32' && zpc.classifyLexical(realCol, 'win32').verdict === 'LEXICALLY_ELIGIBLE') {
+                const live = zpc.classifyCollectionPath(realCol);
+                assert.strictEqual(live.verdict, 'SAFE', `a real ASCII workspace path must classify SAFE (got ${live.reason})`);
+            } else {
+                console.log(`   note: real-fs control skipped — host workspace path is not in the supported ASCII profile (${realCol})`);
+            }
+        } finally {
+            fs.rmSync(realBase, { recursive: true, force: true });
+        }
+        console.log('✅ T-zwuc-T4-supported-profile passed');
+    }
+
+    console.log('T-zwuc-T5-fail-closed. Boundary matrix: every unproven form is non-SAFE ...');
+    {
+        const zpc = require(path.join(CLI_DIR, 'zvec-path-containment.js'));
+        const clean = {
+            lstatSync: () => ({ isSymbolicLink: () => false }),
+            realpathSync: (p) => p,
+        };
+        const throwing = (code) => ({
+            lstatSync: () => { const e = new Error('probe failed'); e.code = code; throw e; },
+            realpathSync: (p) => p,
+        });
+        const boundary = [
+            ['local ASCII path', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', clean, 'SAFE', 'supported-ascii-profile'],
+            ['Chinese path', 'C:\\evo\\\u9879\u76ee\\.evo-lite\\zvec\\collection', clean, 'UNKNOWN', 'character-outside-supported-ascii-set'],
+            ['UNC', '\\\\server\\share\\evo\\.evo-lite\\zvec\\collection', clean, 'UNKNOWN', 'unc-or-double-root'],
+            ['\\\\?\\ prefix', '\\\\?\\C:\\evo\\.evo-lite\\zvec\\collection', clean, 'UNKNOWN', 'extended-length-prefix'],
+            ['\\\\.\\ device namespace', '\\\\.\\PhysicalDrive0\\evo\\zvec\\collection', clean, 'UNKNOWN', 'device-namespace'],
+            ['\\??\\ NT namespace', '\\??\\C:\\evo\\zvec\\collection', clean, 'UNKNOWN', 'nt-namespace'],
+            ['reserved device name', 'C:\\evo\\CON\\zvec\\collection', clean, 'UNKNOWN', 'reserved-device-name'],
+            ['reserved name with extension', 'C:\\evo\\COM1.txt\\zvec\\collection', clean, 'UNKNOWN', 'reserved-device-name'],
+            ['trailing dot', 'C:\\evo\\project.\\zvec\\collection', clean, 'UNKNOWN', 'trailing-dot-in-segment'],
+            ['trailing space', 'C:\\evo\\project \\zvec\\collection', clean, 'UNKNOWN', 'trailing-space-in-segment'],
+            ['alternate data stream', 'C:\\evo\\project.txt:stream\\zvec\\collection', clean, 'UNKNOWN', 'alternate-data-stream'],
+            ['relative . / .. segment', 'C:\\evo\\..\\other\\zvec\\collection', clean, 'UNKNOWN', 'relative-segment'],
+            ['duplicate separator', 'C:\\evo\\\\project\\zvec\\collection', clean, 'UNKNOWN', 'empty-or-duplicated-separator'],
+            ['non-normalized (forward slash)', 'C:/evo/project/.evo-lite/zvec/collection', clean, 'UNKNOWN', 'not-normalized'],
+            ['8.3 short name', 'C:\\PROGRA~1\\evo\\zvec\\collection', clean, 'UNKNOWN', 'character-outside-supported-ascii-set'],
+            ['reparse point ancestor', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
+                lstatSync: (p) => ({ isSymbolicLink: () => p === 'C:\\evo\\project' }),
+                realpathSync: (p) => p,
+            }, 'UNKNOWN', 'reparse-point-in-ancestor-chain'],
+            ['realpath redirects to non-ASCII', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
+                lstatSync: () => ({ isSymbolicLink: () => false }),
+                realpathSync: () => 'C:\\evo\\\u9879\u76ee',
+            }, 'UNKNOWN', 'realpath-target-not-lexically-eligible'],
+            ['realpath diverges (alias expansion)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
+                lstatSync: () => ({ isSymbolicLink: () => false }),
+                realpathSync: () => 'C:\\evo\\elsewhere',
+            }, 'UNKNOWN', 'realpath-diverges-from-input'],
+            ['probe failure (EACCES)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', throwing('EACCES'), 'UNKNOWN', 'probe-failed:lstatSync:EACCES'],
+            ['probe failure (EPERM)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', throwing('EPERM'), 'UNKNOWN', 'probe-failed:lstatSync:EPERM'],
+            ['probe failure (EIO)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', throwing('EIO'), 'UNKNOWN', 'probe-failed:lstatSync:EIO'],
+            ['probe failure (ENOTSUP)', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', throwing('ENOTSUP'), 'UNKNOWN', 'probe-failed:lstatSync:ENOTSUP'],
+            ['unprobeable intermediate ancestor', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
+                lstatSync: (p) => {
+                    if (p === 'C:\\evo\\project') { const e = new Error('denied'); e.code = 'EACCES'; throw e; }
+                    return { isSymbolicLink: () => false };
+                },
+                realpathSync: (p) => p,
+            }, 'UNKNOWN', 'probe-failed:lstatSync:EACCES'],
+            ['nothing probes as existing', 'C:\\evo\\project\\.evo-lite\\zvec\\collection', {
+                lstatSync: () => undefined,
+                realpathSync: (p) => p,
+            }, 'UNKNOWN', 'no-existing-ancestor-to-probe'],
+        ];
+        console.log('   boundary sample                          verdict  layer     reason');
+        for (const [label, colPath, ops, expected, reasonFragment] of boundary) {
+            const result = zpc.classifyCollectionPath(colPath, { platform: 'win32', fsOps: ops });
+            console.log(`   ${label.padEnd(40)} ${String(result.verdict).padEnd(8)} ${String(result.layer).padEnd(9)} ${result.reason}`);
+            assert.strictEqual(result.verdict, expected, `${label}: expected ${expected}`);
+            assert.ok(result.reason.includes(reasonFragment), `${label}: reason should name "${reasonFragment}" (got "${result.reason}")`);
+            assert.notStrictEqual(result.verdict, 'UNSAFE', `${label}: UNSAFE is reserved and must not be produced (§5.2)`);
+        }
+        // The evaluator is exported and independently callable, so its own 8.3
+        // guard is asserted directly — on the composite path a literal short name
+        // never gets past Layer 1's character set.
+        const shortName = zpc.evaluateProfile('C:\\PROGRA~1\\evo\\zvec\\collection', clean);
+        assert.strictEqual(shortName.verdict, 'UNKNOWN', 'evaluateProfile rejects a literal 8.3 short name');
+        assert.ok(shortName.reason.includes('8dot3-short-name-alias-suspected'), '8.3 rejection is named as such');
+        console.log('✅ T-zwuc-T5-fail-closed passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
