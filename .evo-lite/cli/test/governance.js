@@ -11984,22 +11984,66 @@ async function runChildRuntimeTests() {
             load.calls = 0;
             return load;
         };
+        // Asserting that zvec is REACHED requires supplying supported-profile
+        // inputs. The loader-only form substitutes the loader and nothing else —
+        // platform, collection path and topology still come from the ambient
+        // runtime — so under it a Windows runner rooted at C:\Users\RUNNER~1\...
+        // correctly returns sqlite. That is the contract working, not a defect,
+        // which is why the matrix supplies its inputs instead of restricting the
+        // legacy form. Choice travels through options too: mixing an env var with
+        // explicit options would reintroduce exactly the hidden input being
+        // removed here.
+        const supported = {
+            platform: 'win32',
+            paths: {
+                rootPath: 'C:\\evo\\characterization\\zvec',
+                collectionPath: 'C:\\evo\\characterization\\zvec\\collection',
+            },
+            fsOps: {
+                lstatSync: () => ({ isSymbolicLink: () => false }),
+                realpathSync: (p) => p,
+            },
+        };
         try {
             // (a) The selection matrix, measured together with loader call counts.
             const matrix = [
-                { engine: 'zvec', loaded: class FakeZvecA {}, impl: 'zvec', degraded: false, loads: 1 },
-                { engine: 'zvec', loaded: null, impl: 'sqlite', degraded: true, loads: 1 },
-                { engine: 'sqlite-fts5-trigram', loaded: class FakeZvecB {}, impl: 'sqlite', degraded: false, loads: 0 },
+                { choice: 'zvec', loaded: class FakeZvecA {}, impl: 'zvec', degraded: false, loads: 1 },
+                { choice: 'zvec', loaded: null, impl: 'sqlite', degraded: true, loads: 1 },
+                { choice: 'sqlite-fts5-trigram', loaded: class FakeZvecB {}, impl: 'sqlite', degraded: false, loads: 0 },
             ];
             for (const row of matrix) {
-                process.env.EVO_LITE_MEMORY_ENGINE = row.engine;
                 const load = countingLoader(row.loaded);
-                const got = mi.resolveActiveImpl(load);
-                assert.strictEqual(got.choice, row.engine, `choice reflects ${row.engine}`);
-                assert.strictEqual(got.impl, row.impl, `${row.engine} + loader ${row.loaded ? 'available' : 'unavailable'} -> impl ${row.impl}`);
-                assert.strictEqual(got.degraded, row.degraded, `${row.engine} -> degraded ${row.degraded}`);
-                assert.strictEqual(load.calls, row.loads, `${row.engine} diagnosis loads zvec ${row.loads} time(s)`);
+                const got = mi.resolveActiveImpl({ ...supported, choice: row.choice, loadZvecIndex: load });
+                assert.strictEqual(got.choice, row.choice, `choice reflects ${row.choice}`);
+                assert.strictEqual(got.impl, row.impl, `${row.choice} + loader ${row.loaded ? 'available' : 'unavailable'} -> impl ${row.impl}`);
+                assert.strictEqual(got.degraded, row.degraded, `${row.choice} -> degraded ${row.degraded}`);
+                assert.strictEqual(load.calls, row.loads, `${row.choice} diagnosis loads zvec ${row.loads} time(s)`);
             }
+
+            // (a2) The complementary half. Same choice, same available dependency,
+            // only the path differs — so this block proves both directions rather
+            // than only the permissive one.
+            {
+                const load = countingLoader(class FakeZvecContained {});
+                const got = mi.resolveActiveImpl({
+                    ...supported,
+                    choice: 'zvec',
+                    loadZvecIndex: load,
+                    paths: {
+                        rootPath: 'C:\\evo\\\u9879\u76ee\\zvec',
+                        collectionPath: 'C:\\evo\\\u9879\u76ee\\zvec\\collection',
+                    },
+                });
+                assert.deepStrictEqual(got, { choice: 'zvec', impl: 'sqlite', degraded: true },
+                    'a contained path degrades even with the dependency available');
+                assert.strictEqual(load.calls, 0, 'and the loader is never reached (I1)');
+            }
+
+            // (a3) The legacy loader-only form still resolves. It is deliberately
+            // NOT asserted to yield zvec: ambient containment may veto it, and
+            // pinning that expectation is what made this test host-dependent.
+            const ambient = mi.resolveActiveImpl(() => null);
+            assert.strictEqual(typeof ambient.impl, 'string', 'the loader-only form remains supported');
 
             // (b) THE DUAL PATH, now collapsed (spec §6.1 → §6.2).
             //
