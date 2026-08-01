@@ -3,17 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: befedf1c9b51af280167729aae4ce49e9bb1a7e9
+> headSha: 201ba1a29e56d6ac4e6fb863ad45b1289de55ab7
 > upstreamSha: 
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-08-01T08:19:47.968Z
+> focusUpdatedAt: 2026-08-01T10:27:54.296Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[zvec-win-unicode-containment] Task 1–4 已实现并合入 main@befedf1；真实 Windows 非 ASCII 停止点 2 E2E 已通过（非 SAFE 路径下 choice=zvec / impl=sqlite / degraded=true / containment UNKNOWN，@zvec/zvec 与 memory-index-zvec 均未加载，zvec collection 与 sidecar 零创建，archive 与 recall 正常）。当前 focus 为 Task 5 native 入口收口：memory-ab selector bypass、memory-index-lock 裸 native require、全生产入口审计。Task 6 marker/recovery、Task 7 verify、Task 8 release enforcement 均未授权且未实现。正式发布与 Windows 非 ASCII rollout 继续阻断。[attp-hive-rollout] 独立保持 BLOCKED。
+Task 5 产品实现已合入 main@201ba1a，代码复审 ACCEPTED，但 closure 被 Windows CIM snapshot reliability defect 阻断：main push run 30694812371 的 windows/node24 在 attempt 1 与唯一授权的 attempt 2 连续在 T-lock-ident 达到 10 秒边界并返回 null。当前 focus 转为 [memory-lock-win-cim-snapshot-reliability] 根因调查（Phase 1 仅观测：区分 PowerShell 启动 / CIM 执行 / 命令退出 / stdout / 解析层，不做生产修复）；Task 6 marker/recovery、Task 7 verify、Task 8 release enforcement 仍未授权且未实现。正式发布与 Windows 非 ASCII rollout 继续阻断。[attp-hive-rollout] 独立保持 BLOCKED。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -22,11 +22,13 @@
 - [ ] [3d78] [attp-hive-rollout] Distribute the already-accepted ATTP runtime and invoke the idempotent takeover installer in selected child repositories through hive nurture. 独立 rollout 议题,不是 ATTP MVP 的一部分 —— MVP 已 ACCEPTED & CLOSED(spec:agent-takeover-trigger-protocol)。需要自己的范围/试点子仓/失败回滚策略/验收门。前置提醒:子仓装上守卫后项目外 Edit/Write 会被 deny;root-launch-only 限制同样适用。
 - [ ] [attp-lw-memory-identity] [attp-lw-memory-identity] RESIDUAL / blocked-upstream — waiting-host-contract。承载 spec:attp-linked-worktree-memory-identity(status: parked)。缺口:git linked worktree 中宿主对 transcript 用当前 worktree 身份、对 memory 用【主工作树】身份,两者不同源,且该映射在路径大小写维度上失稳(小写拼写启动时重定向消失,而 git 仍返回规范大小写)。PreToolUse 完整键集无任何 memory root 字段;Git identity 到 memory root 差一层未文档化且有损的 slug 编码(非 ASCII 塌成 '-',NTFS 上非单射);~/.claude.json 用户可编辑、无 slug 字段、同项目五种非规范拼写。证据 docs/validation/attp-guard-allowlist-step0c-worktree-memory-identity.md(终止分支 B ∧ C)。已正式排除:slug 重实现 / 目录扫描 / target 自证 / 注册表推断 / git common-dir 猜 slug / settings 或 receipt 配置额外根。当前守卫在该拓扑下 fail-closed 是正确行为,【不需要生产改动】。重新开启需宿主提供权威 memory identity(见 residual spec 的四条条件)。本条同时是 [attp-hive-rollout] 的解阻依据:A 目标子仓全为独立单工作树 / B rollout 增加 topology preflight / C 宿主提供权威 memory identity;「多数子仓可能不是 worktree」不构成解阻证据。
 - [ ] [zvec-win-unicode-containment] P0 / release-blocker — Windows 上部分非 ASCII Zvec collection 路径在 insertSync 触发 0xC0000409 STATUS_STACK_BUFFER_OVERRUN，进程 fail-fast 且不可捕获；0.5.0 与 0.6.0 同样复现，因此不归因于本次升级。阻断下一正式发布与 Windows 非 ASCII 子仓 rollout，不阻断已经完成的 0.6 正确性合并。范围仅为触发边界、预检、隔离、fail-closed 降级与恢复合同设计（path containment）；生产实现和子仓分发尚未授权。证据：docs/validation/zvec-06-phase0b-verdict.md。
+- [ ] [0020] [memory-lock-win-cim-snapshot-reliability] ACTIVE / release-gate reliability blocker — Windows GitHub runners 上 getProcessSnapshot(process.pid) 通过 powershell.exe + Get-CimInstance 获取自身进程快照时，main push run 30694812371 的 Windows Node 24 在 attempt 1 与唯一授权的 attempt 2 连续达到 10 秒边界并返回 null（实测 10.123s / 10.020s，与 execFileSync timeout: 10000 吻合），导致 T-lock-ident 阻断 release-gate。由 Backlog Ideas 的 parked residual 重新激活：重跑此前一直能掩盖它，本次掩盖失败。Task 5 产品代码已合入 main@201ba1a 且代码复审 ACCEPTED，但 closure 因 main gate 未通过而保持 blocked。调查必须先区分 PowerShell 启动、CIM 执行、命令退出、stdout 与解析层；禁止盲目增加 timeout、自动重试、跳过测试或把 null 视为 alive。目标是拆分确定性身份合同与 Windows CIM 集成探针。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [201ba1a] 2026-08-01 MemoryLockWinCimSnapshotReactivation: [memory-lock-win-cim-snapshot-reliability] 由 parked residual 重新激活为 active release-gate reliability b
 - [befedf1] 2026-08-01 ZvecWinUnicodeContainmentTask4Closure: [zvec-win-unicode-containment] Task 1–4 收口，运行时上下文对齐。 实现与合入：Task 1–3(判定层)经 PR #6 合入 main@a10dfd7；Task
 - [7628fdb] 2026-07-31 ZvecWinUnicodeContainmentDesignFreeze: 完成 [zvec-win-unicode-containment] Phase D 证据与设计冻结：固化 Windows 非 ASCII collection 路径 fail-fast 的有界证据矩阵
 - [c862181] 2026-07-31 SpecPortfolioAgingDisposition: 将 spec:provider-first-code-perception-foundation 从 adopted 调整为 parked，保留 umbrella 与 spawned-from 关系。
@@ -36,7 +38,6 @@
 - [b6ca7c7] 2026-07-27 governance-closure: [attp-guard-allowlist] 在支持拓扑限定下关闭。单工作树 / 独立项目副本拓扑已解决并完成真实验收(docs/validation/attp-guard-allowlist-acc
 - [1108e9d] 2026-07-26 governance-closure: ATTP (Agent Takeover Trigger Protocol) closure. spec:agent-takeover-trigger-protocol
 - [89cb3d7] 2026-07-23 governance-closure: [a177] mcp-zvec-lock closure. Final review Ready-to-merge:Yes (opus). Implementation 8db7a99..e1a7cc
-- [659984d] 2026-07-23 governance-closure: [a177] mcp-zvec-lock 设计+计划阶段收口。设计文档 docs/superpowers/specs/2026-07-23-mcp-zvec-lock-design.md:三层锁协调(
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
