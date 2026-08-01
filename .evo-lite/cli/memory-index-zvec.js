@@ -28,13 +28,17 @@ function loadZvec() {
 // collection. Self-contained: owns its collection dir + a sidecar id counter,
 // with no dependency on the SQLite raw_memory table.
 class ZvecMemoryIndex {
-    constructor() {
+    // options.paths — the {rootPath, collectionPath} snapshot the containment
+    // decision actually judged. The selector always supplies it, so the path
+    // opened here is the path that was classified, not a fresh derivation that
+    // could have moved in between. Callers that have not been routed through the
+    // decision yet (memory-ab, closed in Task 5) fall back to deriving it, which
+    // is the same single formula either way.
+    constructor(options = {}) {
         this._col = null;
         this._dirty = false;      // writes pending an FTS optimize
         this._exitHooked = false;
-        // Both values come from a single derivation, so a root from one
-        // evaluation can never be paired with a collection path from another.
-        const { rootPath, collectionPath } = zvecPaths();
+        const { rootPath, collectionPath } = options.paths || zvecPaths();
         this._dir = rootPath;
         this._colPath = collectionPath;
         this._idFile = path.join(this._dir, 'nextid.json');
