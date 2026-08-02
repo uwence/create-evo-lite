@@ -2556,6 +2556,103 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-snap-detail passed');
 
+        // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 4 —
+        // Every unavailable reason, through BOTH entries. Testing only
+        // diagnoseLockConflict proves the normal coordination flow does not
+        // self-heal; it says nothing about attemptSelfHeal, which is exported
+        // and can be called directly.
+        console.log('T-snap-failclosed. Every unavailable reason stays fail-closed at both entries ...');
+        {
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+            const REASONS = ['timeout', 'spawn-error', 'nonzero-exit', 'empty-output',
+                'parse-error', 'no-row', 'invalid-row'];
+            const detailOf = () => ({
+                platform: process.platform, elapsedMs: 1, timeoutMs: 10000, status: null, signal: null,
+                errorCode: null, errorMessage: null, stdoutBytes: 0, stderrBytes: 0, partialStdout: '',
+            });
+            // The seam returns the structured shape directly, which the frozen
+            // adaptation rules consume as-is. Injecting here is the only way to
+            // manufacture every reason without a real PowerShell.
+            const unavailableSeam = (reason) => ({ snapshotFn: () => ({ state: 'unavailable', reason, detail: detailOf() }) });
+
+            const mkDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'evo-snap-fc-'));
+            const writeOwner = (dir) => {
+                const owner = {
+                    schemaVersion: 1, leaseId: 'lease-fc', pid: 1234, ppid: 1,
+                    processStartedAt: '2026-08-02T00:00:00.000Z',
+                    entrypoint: path.join(WORKSPACE_ROOT, 'memory.js').replace(/\\/g, '/'),
+                    mode: 'mcp', access: 'write',
+                    projectRoot: WORKSPACE_ROOT.replace(/\\/g, '/'), createdAt: '2026-08-02T00:00:00.000Z',
+                };
+                fs.writeFileSync(path.join(dir, 'owner.json'), JSON.stringify(owner), 'utf8');
+                return owner;
+            };
+
+            for (const reason of REASONS) {
+                const dir = mkDir();
+                try {
+                    const owner = writeOwner(dir);
+
+                    // Entry 1 — the coordination flow.
+                    const diag = lock.diagnoseLockConflict(dir, {
+                        projectRoot: WORKSPACE_ROOT, seams: unavailableSeam(reason),
+                    });
+                    assert.strictEqual(diag.verdict, 'unknown', `${reason}: verdict must be unknown, got ${diag.verdict}`);
+                    assert.ok(/绝不自动终止/.test(diag.report.reason), `${reason}: the report must state it never terminates — ${diag.report.reason}`);
+                    assert.ok(diag.report.reason.includes(reason), `${reason}: the reason must reach the diagnostic text — ${diag.report.reason}`);
+                    assert.ok(fs.existsSync(path.join(dir, 'owner.json')), `${reason}: diagnosis must not delete the owner`);
+
+                    // Entry 2 — the exported self-heal, called DIRECTLY with a
+                    // verdict that would otherwise authorise a kill.
+                    const kills = [];
+                    const killFn = (pid, sig) => { kills.push([pid, sig]); };
+                    const orphaned = { verdict: 'orphaned-own-mcp', owner, snapshot: null, observedLeaseId: owner.leaseId };
+                    const heal = lock.attemptSelfHeal(dir, orphaned, {
+                        projectRoot: WORKSPACE_ROOT,
+                        seams: { ...unavailableSeam(reason), killFn },
+                    });
+                    assert.strictEqual(heal.healed, false, `${reason}: direct self-heal must refuse`);
+                    assert.strictEqual(kills.length, 0, `${reason}: no signal may be sent — got ${JSON.stringify(kills)}`);
+                    assert.ok(fs.existsSync(path.join(dir, 'owner.json')), `${reason}: self-heal must not delete the owner`);
+
+                    // The two platforms assert DIFFERENT things and neither may
+                    // claim the other's coverage. On win32 the identity recheck
+                    // actually runs; elsewhere attemptSelfHeal returns at its
+                    // platform gate, so the refusal is real but proves only that
+                    // gate. process.platform is never faked — that would
+                    // manufacture a green assertion for a path never executed.
+                    if (process.platform === 'win32') {
+                        assert.ok(/身份在复核时无法确认/.test(heal.reason),
+                            `${reason}: on win32 the refusal must come from the identity recheck, not a platform gate — ${heal.reason}`);
+                        assert.ok(heal.reason.includes(reason), `${reason}: the refusal must name the reason — ${heal.reason}`);
+                    } else {
+                        assert.ok(/unix 平台孤儿自愈默认关闭/.test(heal.reason),
+                            `${reason}: off win32 the refusal comes from the platform gate — ${heal.reason}`);
+                    }
+                } finally {
+                    fs.rmSync(dir, { recursive: true, force: true });
+                }
+            }
+
+            // Control: the refusal above must not be an artefact of the fixture.
+            // A dead holder still reaches its own distinct verdict.
+            {
+                const dir = mkDir();
+                try {
+                    writeOwner(dir);
+                    const diag = lock.diagnoseLockConflict(dir, {
+                        projectRoot: WORKSPACE_ROOT,
+                        seams: { snapshotFn: () => ({ alive: false, isNode: null, commandLine: null, ppid: null, ppidAlive: null, startedAt: null }) },
+                    });
+                    assert.strictEqual(diag.verdict, 'dead-holder',
+                        'positive control: a dead holder is still classified separately, so "unknown" above means something');
+                } finally {
+                    fs.rmSync(dir, { recursive: true, force: true });
+                }
+            }
+        }
+        console.log('✅ T-snap-failclosed passed');
+
         console.log('T-lock-orphan-refusal-matrix. Testing four-gate refusal — 11 cases, never killable ...');
         {
             const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
