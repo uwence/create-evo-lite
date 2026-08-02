@@ -6,7 +6,15 @@
 # It exists to answer one question: when getProcessSnapshot() returns null on a
 # Windows runner, where do the ten seconds go? The diagnostic runs at three
 # points so a slow-from-the-start runner can be told apart from one that only
-# degrades after the install and test load.
+# degrades after the install and test load:
+#
+#   clean-runner   before anything touches the machine
+#   after-install  after both installs
+#   after-tests    after the npm test process EXITS — this does not promise that
+#                  every test ran; the suite may have died early
+#
+# The steps below deliberately mirror release-gate's install sequence. A
+# diagnostic that installs differently measures a different machine.
 #
 # DELETE OR CONVERT THIS FILE when the investigation closes. It must not be left
 # attached to every pull request.
@@ -21,11 +29,12 @@ on:
     branches:
       - main
     paths:
+      # Evidence-document updates are deliberately NOT listed: they cannot change
+      # what the diagnostic measures, and should not cost two Windows runners.
       - scripts/diagnostics/memory-lock-cim-snapshot.js
       - .github/workflows/memory-lock-cim-diagnostic.yml
       - .evo-lite/cli/test/governance.js
       - templates/cli/test/governance.js
-      - docs/validation/memory-lock-win-cim-snapshot-reliability.md
 
   workflow_dispatch:
 
@@ -53,12 +62,19 @@ jobs:
       - name: diagnostic (clean runner)
         run: node scripts/diagnostics/memory-lock-cim-snapshot.js --label clean-runner
 
-      - name: npm ci
+      - name: Install root deps (reproducible)
         run: npm ci
 
-      - name: runtime npm ci
-        working-directory: .evo-lite
-        run: npm ci
+      # Must mirror release-gate's runtime test step exactly. The first version of
+      # this workflow ran a bare `npm ci` inside .evo-lite, which does not restore
+      # the shipped runtime manifest — the suite then died on a missing
+      # better-sqlite3, and the "after tests" checkpoint measured a machine that
+      # had never run the tests.
+      - name: restore and install shipped runtime dependencies
+        shell: bash
+        run: |
+          cp templates/runtime/package.json templates/runtime/package-lock.json .evo-lite/
+          npm ci --prefix .evo-lite
 
       # T2 — after installs. If the stall only appears here, the trigger is load
       # or state introduced by the install, not the runner image itself.
@@ -70,10 +86,13 @@ jobs:
       - name: npm test (failure preserved)
         id: suite
         continue-on-error: true
+        shell: bash
         run: npm test
 
-      # T3 — after the full test sequence, always, including when the suite died.
-      - name: diagnostic (after tests)
+      # T3 — after the suite ATTEMPT, always, including when the suite died early.
+      # This checkpoint means "the npm test process has exited"; it does not
+      # promise that every test ran.
+      - name: diagnostic (after the suite attempt)
         if: always()
         run: node scripts/diagnostics/memory-lock-cim-snapshot.js --label after-tests
 

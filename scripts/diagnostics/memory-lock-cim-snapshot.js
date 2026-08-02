@@ -151,6 +151,14 @@ const PS_BASE_ARGS = ['-NoProfile', '-NonInteractive', '-Command'];
 // D1 — an exact replica of the production command, same host, same flags, same
 // 10s budget. If only this one stalls, the fault is in what the production
 // query asks for, not in PowerShell or in the pid.
+//
+// D1 RUNS FIRST, and that ordering is load-bearing. The first run of this
+// script put D1 last, so it was warmed by three prior PowerShell invocations
+// while D2 absorbed the whole cold-start cost. The resulting "D2 > D3 > D4 > D1"
+// was pure execution order, not query cost — an order effect that would have
+// been read as evidence. In production, T-lock-ident's call IS the first
+// PowerShell invocation of the suite, so only a D1-first probe reproduces the
+// path being explained.
 function d1(pid, exe) {
     const script = `Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" | `
         + "Select-Object Name,ProcessId,ParentProcessId,CommandLine,"
@@ -204,6 +212,14 @@ function collect(options = {}) {
         osRelease: os.release(),
         runner: pick(RUNNER_KEYS),
         github: pick(GITHUB_KEYS),
+        // Recorded explicitly: elapsed times are only comparable against each
+        // other once the reader knows which probe paid the cold-start cost.
+        probeOrder: [
+            'D1_production_replica',
+            'D2_powershell_startup',
+            'D3_get_process_control',
+            'D4_cim_minimal',
+        ],
         probes: [],
         summary: {},
     };
@@ -219,11 +235,14 @@ function collect(options = {}) {
     if (options.includePwsh !== false) hosts.push({ exe: 'pwsh.exe', primary: false });
 
     for (const host of hosts) {
+        // D1 first — see the note on d1(). At the clean-runner checkpoint this
+        // makes D1 the script's very first powershell.exe invocation, matching
+        // production, where T-lock-ident is the suite's first PowerShell call.
         for (const probe of [
+            () => d1(pid, host.exe),
             () => d2(host.exe),
             () => d3(pid, host.exe),
             () => d4(pid, host.exe),
-            () => d1(pid, host.exe),
         ]) {
             let record;
             try {
@@ -245,6 +264,7 @@ function collect(options = {}) {
     const byId = id => primary.find(p => p.commandId === id) || null;
     const verdictOf = rec => (rec ? rec.classification : 'NOT_RUN');
     report.summary = {
+        probeOrder: report.probeOrder,
         D1_production_replica: verdictOf(byId('D1_production_replica')),
         D2_powershell_startup: verdictOf(byId('D2_powershell_startup')),
         D3_get_process_control: verdictOf(byId('D3_get_process_control')),
