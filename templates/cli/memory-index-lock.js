@@ -465,15 +465,29 @@ function diagnoseLockConflict(dir, ctx = {}) {
         };
     }
     const owner = rec.owner;
-    const snapshot = getProcessSnapshot(owner.pid, ctx.seams);
+    // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 3 —— 消费结构化
+    // 结果以拿到 reason。**闸的语义逐字不变**:reason 只进入诊断文本,不为任何
+    // 一条 kill 授权路径增加分支。
+    const result = getProcessSnapshotResult(owner.pid, ctx.seams);
+    const snapshot = result.state === 'unavailable' ? null : result.snapshot;
     // 闸①:已死 → 死持有者(无进程可杀,仅允许 CAS 清 stale owner)
-    if (snapshot && snapshot.alive === false) {
+    if (result.state === 'dead') {
         return {
             verdict: 'dead-holder', owner, snapshot, observedLeaseId: owner.leaseId,
             report: { ...base, reason: `holder pid ${owner.pid} 已退出,残留 stale owner(接管成功时将被原子覆盖,无需手动清理),可重试` },
         };
     }
-    // 快照不可得(查询失败/权限不足)→ unknown
+    // 快照不可得(查询失败/权限不足/超时…)→ unknown。
+    // 唯一的改进是把 reason 写进报告:同一句"无法确认"过去既可能是"这台机器
+    // 慢",也可能是"命令写错了",运维看不出区别。
+    if (result.state === 'unavailable') {
+        return {
+            verdict: 'unknown', owner, snapshot,
+            report: { ...base, reason: `无法确认 pid ${owner.pid} 的进程身份(${result.reason};查询失败、超时或权限不足),绝不自动终止` },
+        };
+    }
+    // 结构化结果为 alive 时字段已保证齐备;这一层保留为防御性检查,若未来
+    // 有调用方注入了自造的 alive 快照,仍按不可确认处理。
     if (!snapshot || snapshot.isNode == null || !snapshot.commandLine || !snapshot.startedAt) {
         return {
             verdict: 'unknown', owner, snapshot,
@@ -604,9 +618,15 @@ function attemptSelfHeal(dir, diag, ctx = {}) {
     const kill = (ctx.seams && typeof ctx.seams.killFn === 'function')
         ? ctx.seams.killFn
         : (pid, sig) => process.kill(pid, sig);
-    const recheck = getProcessSnapshot(owner.pid, ctx.seams);
-    if (recheck && recheck.alive === false) {
+    // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 3 —— 同样消费
+    // 结构化结果。这是**杀进程前的最后一次身份确认**,所以 reason 只用于把
+    // 中止原因说清楚,绝不新增任何"可以杀"的分支:unavailable 一律中止。
+    const recheckResult = getProcessSnapshotResult(owner.pid, ctx.seams);
+    const recheck = recheckResult.state === 'unavailable' ? null : recheckResult.snapshot;
+    if (recheckResult.state === 'dead') {
         // 诊断与自愈之间已自行退出 → 无进程可杀;owner 留给接管覆盖(P0-1)
+    } else if (recheckResult.state === 'unavailable') {
+        return { healed: false, reason: `自愈中止:pid ${owner.pid} 的身份在复核时无法确认(${recheckResult.reason}),绝不自动终止` };
     } else if (!recheck || !isExpectedMcpProcess(recheck, owner)) {
         // 窗口期内 PID 被复用或身份不再可确认 → 中止,绝不杀
         return { healed: false, reason: `自愈中止:pid ${owner.pid} 的身份在复核时不再成立(可能 PID 复用),绝不自动终止` };
