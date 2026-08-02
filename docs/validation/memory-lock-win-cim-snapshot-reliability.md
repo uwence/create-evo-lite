@@ -140,6 +140,42 @@ VM** and is not treated as one.
 The two captures differ in a way that matters: the immediate follow-up cost was
 5 511 ms in the first and 1 427 ms in the second.
 
+**Capture 3 — run `30749412658`, head `f9fae8b`, PR #12, docs-only**
+
+```text
+13:13:06.728   T-lock-ident banner
+13:13:16.747   assertion fails               -> the production call consumed 10.019 s
+```
+
+No Phase 1 instrumentation: that branch was cut from `main@a2a809f`, which
+predates it. Runner image `windows-2025-vs2026 / 20260728.188.1` — a *different*
+image from the two instrumented captures.
+
+This capture cannot narrow the PowerShell internals any further. What it does
+establish:
+
+```text
+the defect reproduces on a docs-only PR touching no code at all
+it is unrelated to the PR #11 instrumentation
+image 20260728.188.1 reproduces it too, not only 20260714.173.1
+release-gate uncertainty is now high enough to redden a design-document PR
+```
+
+### How the failing call may and may not be described
+
+Strictly:
+
+> The direct external manifestation of the failure is a **timeout**. There is no
+> evidence supporting a classification of `no-row`, `parse-error` or
+> `nonzero-exit`. The identical command succeeding afterwards shows that the
+> query and the PID still work *after* the reproduction — but the terminated
+> first call cannot be observed retroactively, so whether it had already
+> produced partial stdout is unknown.
+
+It must **not** be written as "the follow-up succeeded, therefore every other
+internal state of the first call is logically excluded". Succeeding later says
+nothing about what the killed process had already done.
+
 Healthy runners, corrected D1-first ordering (runs `30739094738` push and
 `30739096038` pull_request, 4 jobs × 3 checkpoints):
 
@@ -209,6 +245,8 @@ run 30739094738  all three       valid, D1-first
 run 30739096038  all three       valid, D1-first
 run 30739096026  failure-site diagnostic — capture 1
 run 30739383132  failure-site diagnostic — capture 2
+run 30749412658  capture 3, NO instrumentation (branch predates it) — timing
+                 only; usable for "it still reproduces", not for locating a layer
 ```
 
 ### A hypothesis of mine, falsified by this data
@@ -338,14 +376,17 @@ run 30739094738       diagnostic, push, 2/2 pass, D1-first data
 run 30739096038       diagnostic, pull_request, 2/2 pass, D1-first data
 run 30739096026       release-gate, pull_request, 4/5 — first instrumented reproduction
 run 30739383132       release-gate, pull_request, 4/5 — second instrumented reproduction
+run 30749412658       release-gate, pull_request, 4/5 — PR #12, docs-only, no
+                      instrumentation, image 20260728.188.1, ~10.019 s -> null
 
 CIM defect            active and unresolved
 Phase 1               accepted; PR #11 stays Draft, frozen at four commits,
                       as an evidence instrument rather than a change to merge
+Phase 2               A1 adopted, A2 deferred; D1-D6 frozen in the design
 ```
 
-`30694812371`, `30739096026` and `30739383132` are preserved as failure evidence
-and are not rerun.
+`30694812371`, `30739096026`, `30739383132` and `30749412658` are preserved as
+failure evidence and are not rerun.
 
 Both instrumented reproductions are `pull_request` runs. That closes the
 event-type question for good: the defect has now been observed on both event

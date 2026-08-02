@@ -1,7 +1,8 @@
 # [memory-lock-win-cim-snapshot-reliability] 确定性身份合同与外部查询可用性的分离 — 设计
 
 - 日期:2026-08-02
-- 状态:**设计草案 —— 仅设计授权,生产实现未授权**
+- 状态:**设计冻结候选,待复审 —— 生产实现未授权**
+- 本轮采纳:**A1(合同拆分 + CI 语义分离)**;**A2(timeout-only 有界重试)暂缓**
 - 议题来源:active backlog `[0020] [memory-lock-win-cim-snapshot-reliability]`
 - 证据:`docs/validation/memory-lock-win-cim-snapshot-reliability.md`
   (Phase 1 观测,两次带仪表化的完整复现)
@@ -41,8 +42,14 @@ release gate 反复失去首跑确定性的直接原因。
 健康 runner 首次调用:3 184–3 447 ms;预热后 190–462 ms
 ```
 
-**已排除**:查询语义错误、PID 不存在、JSON 解析失败、CIM 空行、非零退出、
-event 类型、Task 5 回归。
+**已排除(跨复现层面)**:event 类型、Task 5 回归 —— 三次复现横跨两种 event
+与两个 image,且同一产品内容多次全绿。
+
+**关于失败调用本身,措辞必须严格**:当前失败的**直接外部表现是 timeout**;
+没有证据支持把它归类为 `no-row`、`parse-error` 或 `nonzero-exit`。随后同一条
+命令成功,证明**查询与 PID 在复现之后仍可正常工作** —— 但**不能回溯观察**
+被终止的第一次调用是否已经产生部分 stdout。不得写成「随后成功,所以逻辑上
+排除了第一次调用的一切其他内部状态」。
 
 **未证明**:延迟落在 PowerShell 宿主启动还是 CIM provider;长尾的倍数与
 时长不稳定(5 511 vs 1 427,无稳定缩放因子);`pwsh` 冷态成本(从未作为
@@ -66,7 +73,30 @@ powershell 启动失败 / 超时 / 非零退出 / 空 stdout / JSON 解析失败
 
 ## 2. 三个候选方向
 
-### 2.1 方向 A —— 合同拆分 + 有界恢复(推荐)
+### 2.1 方向 A —— 合同拆分 + 有界恢复
+
+**A 必须拆成两半,且只有前一半在本轮采纳:**
+
+```text
+A1  合同拆分与 CI 语义分离      本轮 REQUIRED
+A2  timeout-only 有界重试        独立、可选、暂缓
+```
+
+理由:Phase 1 对 A1 的证据是充分的 —— 六种事件被折叠成一个 `null`,这是
+**结构性**缺陷,与长尾的具体形状无关。但对 A2,证据只够支持「值得评估」,
+不够支持「现在冻结策略」:
+
+```text
+只有三次复现（其中两次带仪表化）
+后续成功耗时 5 511 ms 与 1 427 ms —— 无稳定倍数
+不知道被杀死的第一次调用是否已产生部分 stdout
+没有长尾上界
+重试会影响锁冲突路径与杀进程前的身份复核路径
+```
+
+先修「不可区分」这个合同缺陷与 release-gate 语义;是否还需要用重试改善
+产品可用性,留到证据更充分时单独决定。**这样当前 10 秒生产预算保持不变,
+也不必在证据不足时武断选择 12 / 15 / 20 秒总预算。**
 
 把「结果」与「不可用原因」拆成结构化返回:
 
@@ -94,7 +124,12 @@ unavailable → 调用方仍视为 unknown / report-only → 绝不自动终止�
 这一点是本设计的不可协商项。拆分只增加**可观测性**,不增加任何"可以杀"
 的分支。
 
-在此基础上,评估一次**仅针对 `timeout`** 的有界重试:
+#### A2(暂缓,本轮不实施)
+
+以下内容记录**为什么将来若要重试只能这样重试**,而不是本轮要落地的东西。
+Phase 3A 的重试次数固定为 0。
+
+在合同拆分之上,可评估一次**仅针对 `timeout`** 的有界重试:
 
 ```text
 第 1 次 timeout
@@ -103,8 +138,9 @@ unavailable → 调用方仍视为 unknown / report-only → 绝不自动终止�
   → 第 2 次仍失败:unavailable / fail-closed
 ```
 
-**为什么只对 timeout**:两次复现中,超时后同一条命令**立即**成功
-(5 511 ms / 1 427 ms)。这是重试有效性的直接证据。而
+**为什么只对 timeout**:两次带仪表化的复现中,超时后同一条命令**立即**成功
+(5 511 ms / 1 427 ms)。这是重试**可能**有效的直接证据 —— 但只是两个样本,
+且倍数不稳定,不足以据此冻结一个总预算。而
 `parse-error`、`no-row`、`nonzero-exit`、`empty-output` 都是**语义性**
 结果 —— 重试它们是盲目重试,会把确定性缺陷伪装成偶发问题,正是本议题要
 消灭的东西。
@@ -155,10 +191,17 @@ Phase 1 数据也不支持它:健康首次调用 3.2–3.4 s,失败时 > 10 s,�
 若 Phase 3 决定需要,应先做一次**专门的冷态 transport 对照实验**,而不是
 在修复本议题时顺手替换。
 
-### 2.4 推荐
+### 2.4 结论
 
-采纳 **A**,并把 B 的 timeout 数值与 C 的 transport 选择都留在 A 的
-「设计冻结参数」里,而不是各自成为一次修改。
+```text
+采纳    A1  合同拆分 + CI 语义分离
+暂缓    A2  timeout-only 有界重试（Phase 3B 候选，需单独授权与总预算）
+不采纳  B   单纯增大 timeout（保留为对照记录）
+暂缓    C   更换 transport（需先做专门的冷态对照实验）
+```
+
+B 的 timeout 数值与 C 的 transport 选择都**不**在本轮冻结:改动它们各自需要
+自己的证据,把它们塞进 A1 只会让一次修改承担三种风险。
 
 ---
 
@@ -174,8 +217,8 @@ Phase 1 数据也不支持它:健康首次调用 3.2–3.4 s,失败时 > 10 s,�
 ```text
 成功快照                  → alive,字段齐备
 dead PID                  → dead
-首次 timeout → 第二次成功  → alive(若采纳有界重试)
 连续 timeout               → unavailable / timeout
+首次 timeout → 第二次成功  → 【Phase 3B 才需要】alive；3A 下不存在此路径
 spawn failure              → unavailable / spawn-error
 nonzero exit               → unavailable / nonzero-exit
 empty stdout               → unavailable / empty-output
@@ -218,17 +261,18 @@ attemptSelfHeal      → 绝不进入 kill 路径
 
 即:**放宽的只是"外部没回答"这一种情形**,不是放宽身份判定本身。
 
-### 3.3 长期观测方式(设计必须择一并说明理由)
+### 3.3 长期观测方式 —— 已决(见 D5)
+
+三个候选:
 
 ```text
 方案 1  保留一个低噪声独立 workflow（如 schedule + workflow_dispatch）
 方案 2  只保留 workflow_dispatch，按需取证
-方案 3  删除 PR 触发器，只把诊断脚本用于失败现场
+方案 3  删除 PR 触发器，只把诊断脚本用于失败现场      ← 采用
 ```
 
-**临时诊断 workflow 不得原样长期进入 main。** PR #11 里的那个是
-Phase 1 资产,带 `pull_request` 触发器,会附着到面向 main 的 PR 上;它必须
-在收口时删除或转为上述之一。
+**临时诊断 workflow 不得原样长期进入 main。** PR #11 里的那个是 Phase 1
+资产,带 `pull_request` 触发器,会附着到面向 main 的 PR 上。冻结结论见 D5。
 
 ---
 
@@ -236,9 +280,12 @@ Phase 1 资产,带 `pull_request` 触发器,会附着到面向 main 的 PR 上;�
 
 ```text
 I1  unavailable 绝不授权终止进程 —— 任何不确定一律 report-only
-I2  只有 timeout 可被重试;语义性失败一律不重试
-I3  重试必须有总时间硬顶,不得只写"重试一次"
+I2  Phase 3A 不重试(retry count = 0);若将来采纳 A2,只有 timeout 可被重试,
+    语义性失败一律不重试
+I3  若将来采纳 A2,重试必须有总时间硬顶,不得只写"重试一次"
 I4  owner sidecar 语义、CAS 删除、四道闸、backoff 阶梯均不改动
+I4b 空行/空输出绝不升级为 dead —— dead 在四道闸里可触发 stale owner 清理,
+    把不可确认当成确认已死会给它错误的权重(见 D2)
 I5  isExpectedMcpProcess 的判定条件不放宽(entrypoint 精确等值、
     startedAt 容差、mcp token)
 I6  确定性合同测试必须稳定阻断 release gate
@@ -248,42 +295,171 @@ I8  非 win32 路径行为不变
 
 ---
 
-## 5. 未决问题(Phase 3 实施计划必须先回答)
+## 5. 冻结的决定(D1–D6)
+
+上一稿把六件事留给「Phase 3 计划定夺」。其中至少四件不是实施顺序问题,
+而是设计决策 —— **计划不能代替设计做这些决定**。现全部冻结如下。
+
+### D1 — 结构化 API 与兼容面
+
+新增内部详细接口:
 
 ```text
-Q1  总时间预算定多少?锁冲突路径能接受的最坏阻塞是多少?
-Q2  重试是否同时适用于 diagnoseLockConflict 与 attemptSelfHeal 的复核调用?
-    (后者是杀进程前的最后一次身份确认,语义更敏感)
-Q3  snapshot 结构化返回是否需要保留旧的 null 返回作为兼容面?
-    ——【已实测,便于 Phase 3 直接定夺】生产调用点只有 2 处,均在
-    memory-index-lock.js 内:
-        :248  diagnoseLockConflict  —— 诊断入口
-        :387  attemptSelfHeal       —— 杀进程前的身份复核
-    两处紧随其后的判定都是 `!snapshot || snapshot.isNode == null || ...`
-    形态的"不可确认"分支,而不是对 `=== null` 的字面依赖。
-    测试侧有一处显式 `assert.strictEqual(..., null)`(governance.js:2282,
-    seam 抛错分支)。
-    因此爆炸半径小:兼容面可以做成"state 字段 + 保留 falsy 语义",
-    也可以直接改判定分支。**由 Phase 3 定夺,本文不预设。**
-Q4  真实集成探针如何在不"跳过 Windows"的前提下,把 unavailable 与
-    代码失败区分开?(候选:探针自身分两个断言块)
-Q5  长期观测方式三选一,以及诊断脚本是否需要进 templates 分发给子仓
-Q6  是否需要在 verify 输出中暴露 unavailable 计数,作为可用性可观测面
+getProcessSnapshotResult(pid, seams)
+
+→ { state: 'alive',       snapshot }
+→ { state: 'dead',        snapshot }
+→ { state: 'unavailable', reason, detail }
 ```
+
+**保留现有导出** `getProcessSnapshot(pid, seams)` 作为兼容 wrapper:
+
+```text
+alive / dead  → 返回旧 snapshot 对象
+unavailable   → 返回 null
+```
+
+理由:该函数是模块导出面。仅因为**当前仓内**只找到两个生产调用点,就破坏
+一个已导出的契约,对潜在消费者(子仓镜像、外部集成)没有正当理由。兼容
+wrapper 的成本接近零。
+
+内部两个生产调用点改用 `getProcessSnapshotResult()`,从而拿到 `reason`:
+
+```text
+memory-index-lock.js:248  diagnoseLockConflict
+memory-index-lock.js:387  attemptSelfHeal（杀进程前的身份复核）
+```
+
+### D2 — `dead` 与 `no-row` 的语义边界
+
+现有实现先执行 `pidAlive(pid)`;若进程明确不存在,**在调用 PowerShell 之前**
+就返回 `alive:false`。因此冻结为:
+
+```text
+pidAlive === false                    → dead
+pidAlive === true，随后 CIM 无行/空输出 → unavailable / no-row
+```
+
+**不得**仅凭空行把结果升级为 `dead`。空行可能是查询失败,也可能是 precheck
+与查询之间进程退出的竞态 —— 两者不可区分,fail-closed 是唯一正确处理。
+把它当成 `dead` 会让一个不可确认的状态获得"确认已死"的权重,而 `dead` 在
+四道闸里是可以触发 stale owner 清理的分支。
+
+### D3 — 本阶段不实施 retry
+
+```text
+Phase 3A:
+  retry count                 = 0
+  单次尝试预算                 = 10 000 ms（不变）
+  生产墙钟语义                 不变
+```
+
+A2(timeout-only 有界重试)保留为后续 Phase 3B 候选,**需单独授权并明确
+总预算**。这同时回答了上一稿的 Q1 与 Q2:
+
+```text
+Q1  本轮总预算不变
+Q2  diagnoseLockConflict 与 attemptSelfHeal 均不重试
+```
+
+### D4 — 真实 Windows 集成测试的 gate 政策
+
+**只有一种结果**可作为外部可用性事件而不使 release-gate 失败:
+
+```text
+unavailable / timeout
+```
+
+且此时必须同时成立:
+
+```text
+输出结构化诊断
+验证该结果被映射为 unknown / report-only
+验证未进入 kill 路径
+```
+
+以下一律**仍然打红**:
+
+```text
+unavailable / spawn-error      —— PowerShell 不存在或无法启动
+unavailable / nonzero-exit     —— 命令写错或宿主报错
+unavailable / empty-output     —— 契约变化
+unavailable / parse-error      —— JSON 结构变化
+unavailable / no-row           —— 查询语义问题
+成功返回但字段畸形
+错误进入 self-heal
+任何 fail-closed 违规
+```
+
+理由:当前**实证的**缺陷只有 timeout 一种。不能借本议题顺手把"PowerShell
+不存在""命令写错""JSON 结构变了"这些确定性问题一起降级 —— 那会把这次
+修复变成一张长期免死金牌。
+
+### D5 — 长期诊断资产:采用方案 3
+
+```text
+保留   诊断脚本
+保留   失败现场的结构化输出
+不保留 自动 diagnostic workflow
+```
+
+具体:
+
+```text
+PR #11 不合并
+Phase 3 分支按需带入诊断脚本与失败现场 instrumentation
+.github/workflows/memory-lock-cim-diagnostic.yml 不进 main
+不新增 schedule / PR / push 触发的诊断 workflow
+需要专项复现时，单独授权后按需运行
+```
+
+同时满足低噪声与可取证:失败现场仍会自动产出证据,但不为此常驻占用两台
+Windows runner。
+
+### D6 — 不增加 verify 的 unavailable 计数
+
+```text
+verify unavailable count:  OUT OF SCOPE
+```
+
+目前没有持久化采样、没有统计窗口、没有消费方。为一次**瞬时**外部查询增加
+用户可见的 verify 指标属于范围膨胀,且会诱导把偶发环境事件读成产品健康度
+下降。
 
 ---
 
+## 5.1 仍需实施阶段现场核实的细节
+
+只保留真正无法在设计期定夺的:
+
+```text
+E1  `detail` 字段的具体形状（elapsedMs / status / signal / errorCode /
+    stdout 字节数）—— 取决于实现时能从 execFileSync 稳定拿到哪些字段，
+    不影响任何安全语义
+E2  确定性 seam 测试如何注入九种结果 —— 现有 seams.snapshotFn 是否够用，
+    还是需要更低一层的 executor seam
+E3  真实集成探针在同一个测试内如何分成两个断言块（可用性块 vs 确定性块），
+    使 timeout 只放宽前者
+```
+
+这三条都是实现形态问题,不改变 D1–D6 的任何结论。
 ## 6. 范围声明
 
 ```text
-本文授权范围:           设计
+本文状态:               设计冻结候选，待复审
+本轮采纳:               A1（合同拆分 + CI 语义分离）
+本轮暂缓:               A2（timeout-only 有界重试）、B、C
 生产实现:               未授权
-Phase 3 实施计划:        未编写
+Phase 3A 实施计划:       未编写、未授权
+Phase 3B（retry）:      未授权，需单独证据与总预算
 Task 6–8:               未授权
 PR #11:                 保持 Draft，冻结，不合并
-诊断 workflow 去留:      待本设计复审时裁定
+诊断 workflow 去留:      已决 —— D5 方案 3，不进 main
 ```
 
 本设计不提出任何可直接落地的代码改动。它冻结的是**问题定义、候选方向的
-取舍理由、不变量与未决问题**;具体参数与实施顺序由 Phase 3 计划在获得
-单独授权后确定。
+取舍理由、不变量,以及 D1–D6 六项设计决定**。
+
+上一稿把 D1–D6 中至少四项留给「Phase 3 计划定夺」,那是错的:实施计划的
+职责是排顺序和定验收,不是替设计做架构决策。§5.1 只保留三条真正无法在
+设计期定夺的实现形态问题,它们不改变 D1–D6 的任何结论。
