@@ -93,6 +93,104 @@ with the different-worker evidence, the working hypothesis is:
 This is a hypothesis, not a conclusion. Phase 1 must locate the latency before
 anyone proposes a remedy.
 
+## Phase 1 results — the defect reproduced with instrumentation attached
+
+`release-gate` run `30739096026`, `pull_request`, windows-latest / node 24,
+runner `runnervmr7g38`, image `20260714.173.1`.
+
+### Observation (measured, not interpreted)
+
+```text
+08:06:25.368   T-lock-ident banner
+08:06:35.871   diagnostic D1 starts          -> the production call consumed 10.503 s
+08:06:43.603   assertion fails
+```
+
+`powershell.exe` invocations on that runner, in order:
+
+| # | caller | command | elapsed | result |
+|---|---|---|---|---|
+| 1 | production `getProcessSnapshot` | CIM production query | **> 10 000 ms** | killed at the timeout, `null` |
+| 2 | diagnostic D1 | **the identical command** | **5 510.9 ms** | OK, correct row for pid 2232 |
+| 3 | diagnostic D2 | `Write-Output "alive"` (no CIM) | 243.7 ms | OK |
+| 4 | diagnostic D3 | `Get-Process -Id` (no CIM) | 383.2 ms | OK |
+| 5 | diagnostic D4 | minimal CIM query | 344.0 ms | OK |
+| 6-9 | `pwsh.exe` comparison | all four | 269-352 ms | OK |
+
+Healthy runners, corrected D1-first ordering (runs `30739094738` push and
+`30739096038` pull_request, 4 jobs × 3 checkpoints):
+
+```text
+clean-runner    D1  3294 / 3311 / 3447 / 3184 ms      D2-D4  190-421 ms
+after-install   D1   309 -  401 ms                    D2-D4  207-350 ms
+after-tests     D1   329 -  462 ms                    D2-D4  204-365 ms
+```
+
+Original D2-first ordering, first invocation was a bare `Write-Output` with no
+CIM at all (run `30696641425`): **1 949 ms and 2 403 ms**.
+
+### Inference (supported by the above, still inference)
+
+**The dominant cost is first-invocation warm-up, not the CIM query itself.** The
+same command costs about ten times more as invocation #1 than as invocation #4:
+D1 is 3 184-3 447 ms cold and 309-462 ms warm. Warm CIM (D4, 344 ms) and warm
+non-CIM (D2, 244 ms) are the same order of magnitude, so a CIM query is not
+inherently expensive here.
+
+**Both layers appear to contribute to the cold cost.** Cold host startup *alone*
+— a first invocation doing no CIM — measured 1.9-2.4 s. Cold host *plus* CIM
+measured 3.2-3.4 s. The difference of roughly 0.8-1.4 s is attributable to CIM
+first-use on top of host startup. This is a cross-run comparison between two
+probe orderings, not a controlled experiment, and should be treated as
+indicative only.
+
+**The failure is the same curve, roughly three times slower, stretched over two
+invocations.** On the failing runner the first invocation exceeded 10 s and the
+second still took 5.5 s before the machine settled to ~300 ms. Nothing suggests a
+distinct failure mode; it looks like the tail of the same warm-up distribution.
+
+### Not established
+
+- **Why some runners warm up ~3x slower.** Image, region and worker vary; none
+  has been isolated.
+- **Which layer the production timeout belongs to.** The vocabulary asks for one
+  of `POWERSHELL_SPAWN_TIMEOUT` / `CIM_QUERY_TIMEOUT` /
+  `POWERSHELL_PARTIAL_STDOUT_TIMEOUT`, and this evidence does not settle it.
+  `getProcessSnapshot()` discards the timed-out command's streams, and the
+  diagnostic necessarily runs afterwards in a *new* process — so the production
+  call's own partial-output state remains unobservable. What is excluded is
+  everything else: `CIM_NO_ROW`, `JSON_PARSE_FAILURE`,
+  `PID_NOT_FOUND_DESPITE_ALIVE` and `POWERSHELL_NONZERO_EXIT` are all ruled out,
+  because the identical command succeeded seconds later with status 0 and the
+  correct row.
+- **Whether `pwsh` would be immune.** It was never measured as a first
+  invocation — every `pwsh` number above was taken after `powershell.exe` had
+  already warmed the machine. The `pwsh` figures say nothing about its cold cost.
+- **Any remedy.** Out of scope for Phase 1.
+
+### Checkpoint validity
+
+```text
+run 30696641425  clean-runner    data valid, ORDER-CONFOUNDED (D2 first)
+                 after-install   data valid, ORDER-CONFOUNDED
+                 after-tests     measurement valid, CHECKPOINT SEMANTICS INVALID
+                                 — npm test died on a missing better-sqlite3, so
+                                   this did not measure a post-suite machine;
+                                   excluded from causal conclusions
+run 30739094738  all three       valid, D1-first
+run 30739096038  all three       valid, D1-first
+run 30739096026  failure-site diagnostic — the decisive capture
+```
+
+### A hypothesis of mine, falsified by this data
+
+After the first ordering I wrote that PowerShell host startup dominates and CIM
+adds only 50-250 ms. That reading came from `D2 > D3 > D4 > D1` on a clean
+runner, which is exactly the probe execution order — an order effect, not a
+finding. With D1 first the picture inverts: the *first* call is expensive
+whatever it is, and CIM's own contribution is visible only by comparing the two
+orderings.
+
 ## Local baseline (healthy Windows host)
 
 `node scripts/diagnostics/memory-lock-cim-snapshot.js --label local-smoke`,
@@ -203,7 +301,21 @@ PR run 30693929859    first-attempt 5/5
 main@201ba1a          attempt 1 and 2 both 4/5, CIM defect on windows/node24
 main@a2a809f          first-attempt 5/5
 Task 5 closure        complete (qualified on the successor main)
+
+PR run 30696673451    release-gate first-attempt 5/5 — instrumentation itself is not a regression
+run 30696641425       diagnostic, FAILED on a missing better-sqlite3 (my workflow defect, not the CIM defect)
+run 30696673453       same defect, same cause
+run 30739094738       diagnostic, push, 2/2 pass, D1-first data
+run 30739096038       diagnostic, pull_request, 2/2 pass, D1-first data
+run 30739096026       release-gate, pull_request, 4/5 — windows/node24 reproduced the CIM defect
+                      WITH the failure-site diagnostic attached
+
 CIM defect            active and unresolved
 ```
 
-`30694812371` is preserved as failure evidence and is not rerun again.
+`30694812371` and `30739096026` are preserved as failure evidence and are not
+rerun.
+
+Note that `30739096026` is a `pull_request` run. It closes the event-type
+question for good: the defect has now been observed on both event types, and
+both event types have also passed.
