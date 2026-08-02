@@ -222,11 +222,20 @@ invocation exceeded the budget, and the same command succeeded shortly after.
   `POWERSHELL_PARTIAL_STDOUT_TIMEOUT`, and this evidence does not settle it.
   `getProcessSnapshot()` discards the timed-out command's streams, and the
   diagnostic necessarily runs afterwards in a *new* process — so the production
-  call's own partial-output state remains unobservable. What is excluded is
-  everything else: `CIM_NO_ROW`, `JSON_PARSE_FAILURE`,
-  `PID_NOT_FOUND_DESPITE_ALIVE` and `POWERSHELL_NONZERO_EXIT` are all ruled out,
-  because the identical command succeeded seconds later with status 0 and the
-  correct row.
+  call's own partial-output state remains unobservable.
+
+  Stated precisely, because an earlier draft of this bullet did not:
+
+  > The only terminal classification this failure supports is **timeout**.
+  > `no-row`, `parse-error` and `nonzero-exit` are not classifications the
+  > current logs support as the terminal state. But the later success **cannot
+  > retroactively prove** that the terminated first call never passed through
+  > those states internally, nor that it produced no partial stdout.
+
+  The earlier wording — "all ruled out, because the identical command succeeded
+  seconds later" — reintroduced exactly the reasoning withdrawn two paragraphs
+  above. Succeeding later describes the machine after the fact; it says nothing
+  about what the killed process had already done.
 - **Whether `pwsh` would be immune.** It was never measured as a first
   invocation — every `pwsh` number above was taken after `powershell.exe` had
   already warmed the machine. The `pwsh` figures say nothing about its cold cost.
@@ -334,13 +343,18 @@ not downgraded to a warning, does not skip Windows, and does not extend the
 timeout. CI stays honestly red; the log now says which layer is red.
 
 **On a schedule of three time points.** `.github/workflows/memory-lock-cim-diagnostic.yml`
-runs the diagnostic on a clean runner, after `npm ci`, and after the full test
-sequence, on windows-latest with node 22 and 24. `release-gate.yml` is untouched.
-The suite's exit code is preserved and re-applied so the diagnostic job does not
-paper over a failure.
+runs the diagnostic on a clean runner, after `npm ci`, and **after the suite
+attempt**, on windows-latest with node 22 and 24. `release-gate.yml` is
+untouched. The suite's exit code is preserved and re-applied so the diagnostic
+job does not paper over a failure.
 
-The workflow is a **temporary asset**. It must be deleted, or converted into a
-stable low-noise probe, before the investigation closes — it must not be left
+"After the suite attempt" is the precise name: it means the `npm test` process
+has exited. It does **not** promise that every test ran — the suite can die
+early, and in run `30696641425` it did.
+
+The workflow is a **temporary asset**. Per design decision D5 it is **not** to be
+merged into `main`; the diagnostic script and the failure-site output are kept,
+the automatic workflow is not. It must not be left
 attached to every pull request.
 
 ## Explicitly not done in Phase 1
@@ -378,6 +392,8 @@ run 30739096026       release-gate, pull_request, 4/5 — first instrumented rep
 run 30739383132       release-gate, pull_request, 4/5 — second instrumented reproduction
 run 30749412658       release-gate, pull_request, 4/5 — PR #12, docs-only, no
                       instrumentation, image 20260728.188.1, ~10.019 s -> null
+run 30750019232       release-gate, pull_request, first-attempt 5/5 — PR #12
+                      head 1c28467, docs-only, windows/node24 SUCCESS
 
 CIM defect            active and unresolved
 Phase 1               accepted; PR #11 stays Draft, frozen at four commits,
@@ -391,6 +407,16 @@ failure evidence and are not rerun.
 Both instrumented reproductions are `pull_request` runs. That closes the
 event-type question for good: the defect has now been observed on both event
 types, and both event types have also passed.
+
+**The strongest form of "unrelated to the code under test":** `30749412658` and
+`30750019232` are adjacent commits on the same branch, both docs-only. Product
+code, test code and workflows are byte-identical between them. One is red on
+windows/node24, the next is green. Nothing in the repository changed the
+outcome — and this also re-confirms that the tail is not persistent across runs.
+
+This closes the evidence ledger for the current failure mode. Further runs are
+recorded in the pull-request description, not by amending this document; only a
+**new failure type** warrants another evidence commit.
 
 ## Where this leaves Phase 2
 

@@ -1,7 +1,7 @@
 # [memory-lock-win-cim-snapshot-reliability] 确定性身份合同与外部查询可用性的分离 — 设计
 
 - 日期:2026-08-02
-- 状态:**设计冻结候选,待复审 —— 生产实现未授权**
+- 状态:**设计冻结 — ACCEPTED;生产实现未授权**
 - 本轮采纳:**A1(合同拆分 + CI 语义分离)**;**A2(timeout-only 有界重试)暂缓**
 - 议题来源:active backlog `[0020] [memory-lock-win-cim-snapshot-reliability]`
 - 证据:`docs/validation/memory-lock-win-cim-snapshot-reliability.md`
@@ -69,6 +69,16 @@ powershell 启动失败 / 超时 / 非零退出 / 空 stdout / JSON 解析失败
 上是对的,在**可诊断性**上是灾难:同一个 `null` 既可能是"这台 runner 慢",
 也可能是"我们把命令写错了"。
 
+**一处必须说准的现状**:畸形身份行(`invalid-row`)在当前实现里**并不**折叠
+成 `null`。`Name`/`CommandLine`/`StartedAt` 会被 `String(x || '')`、`|| null`
+一类的写法强制转换,于是返回一个**字段为空但结构完整**的 snapshot;真正拦住
+它的是下游 `diagnoseLockConflict` 里的
+`!snapshot.commandLine || !snapshot.startedAt` 分支。
+
+结果同样安全(→ unknown),但分类发生在**错误的层**:调用方拿到的是"看起来
+是个快照,只是字段是空的",而不是"这一行不可信"。A1 要做的正是把这个判断
+移进结果本身 —— 只有 `ProcessId` 缺失这一种畸形今天会走到 `null`。
+
 ---
 
 ## 2. 三个候选方向
@@ -102,18 +112,25 @@ A2  timeout-only 有界重试        独立、可选、暂缓
 
 ```text
 snapshot.state:
-  alive          进程存活且身份字段齐备
+  alive          进程存活且身份字段齐备且合法
   dead           进程确认不存在
-  unavailable    外部查询未能给出答案
+  unavailable    外部查询未能给出【可用的】答案
 
 snapshot.reason (仅 unavailable):
-  timeout
-  spawn-error
-  nonzero-exit
-  empty-output
-  parse-error
-  no-row
+  timeout        命令达到时间边界
+  spawn-error    host 无法启动
+  nonzero-exit   host 非零退出
+  empty-output   成功退出但 stdout 为空或只有空白
+  parse-error    非空 stdout 无法解析
+  no-row         可解析但没有结果行（null / 空数组 / 无行）
+  invalid-row    结果行存在，但身份字段缺失、类型非法或不匹配
 ```
+
+`invalid-row` 是本轮补上的**可表示性空洞**。上一稿的 taxonomy 里,
+「JSON 合法、行存在,但 `ProcessId` 不匹配 / `CommandLine` 非字符串 /
+`StartedAt` 不可解析」无处可去 —— 只能被伪装成 `alive`(把畸形数据当身份
+证据,危险)或折叠进 `no-row`(把"查到了但不可信"说成"没查到",与 D4 的
+gate 政策冲突)。两条路都错,所以它必须有自己的名字。
 
 **安全语义完全不变**:
 
@@ -224,6 +241,7 @@ nonzero exit               → unavailable / nonzero-exit
 empty stdout               → unavailable / empty-output
 parse failure              → unavailable / parse-error
 no CIM row                 → unavailable / no-row
+malformed identity row     → unavailable / invalid-row
 ```
 
 并且对**每一种** unavailable 验证:
@@ -254,7 +272,7 @@ attemptSelfHeal      → 绝不进入 kill 路径
 但以下情形**仍必须**打红 release gate:
 
 ```text
-查询成功却返回畸形数据
+查询成功却返回畸形数据（= invalid-row）
 错误地进入自愈路径
 违反 fail-closed 映射
 ```
@@ -286,6 +304,8 @@ I3  若将来采纳 A2,重试必须有总时间硬顶,不得只写"重试一次"
 I4  owner sidecar 语义、CAS 删除、四道闸、backoff 阶梯均不改动
 I4b 空行/空输出绝不升级为 dead —— dead 在四道闸里可触发 stale owner 清理,
     把不可确认当成确认已死会给它错误的权重(见 D2)
+I4c 畸形身份行绝不呈现为 alive —— 必须分类为 unavailable / invalid-row。
+    身份字段是杀进程决策的输入;字段非法不是"较差的证据",是【没有】证据
 I5  isExpectedMcpProcess 的判定条件不放宽(entrypoint 精确等值、
     startedAt 容差、mcp token)
 I6  确定性合同测试必须稳定阻断 release gate
@@ -330,20 +350,44 @@ memory-index-lock.js:248  diagnoseLockConflict
 memory-index-lock.js:387  attemptSelfHeal（杀进程前的身份复核）
 ```
 
-### D2 — `dead` 与 `no-row` 的语义边界
+### D2 — 判定优先级(穷尽且互斥)
 
 现有实现先执行 `pidAlive(pid)`;若进程明确不存在,**在调用 PowerShell 之前**
-就返回 `alive:false`。因此冻结为:
+就返回 `alive:false`。完整判定顺序冻结如下,**按序短路,第一个命中者为准**:
 
 ```text
-pidAlive === false                    → dead
-pidAlive === true，随后 CIM 无行/空输出 → unavailable / no-row
+1  pidAlive === false                      → dead
+2  命令达到时间边界                          → unavailable / timeout
+     即使已捕获到部分 stdout 仍然是 timeout；
+     部分输出只记录进 detail，不改变分类
+3  host 无法启动                            → unavailable / spawn-error
+4  host 非零退出                            → unavailable / nonzero-exit
+5  成功退出但 stdout 为空或只有空白           → unavailable / empty-output
+6  非空 stdout 无法解析                      → unavailable / parse-error
+7  可解析但没有结果行（null / 空数组 / 无行）  → unavailable / no-row
+8  结果行存在但身份字段无效或不完整            → unavailable / invalid-row
+9  合法且完整的结果                          → alive
 ```
 
-**不得**仅凭空行把结果升级为 `dead`。空行可能是查询失败,也可能是 precheck
-与查询之间进程退出的竞态 —— 两者不可区分,fail-closed 是唯一正确处理。
-把它当成 `dead` 会让一个不可确认的状态获得"确认已死"的权重,而 `dead` 在
-四道闸里是可以触发 stale owner 清理的分支。
+第 8 步的「无效或不完整」至少覆盖:
+
+```text
+ProcessId 缺失或与请求的 pid 不匹配
+Name 类型非法
+CommandLine 非字符串或不可用
+StartedAt 缺失或不可解析
+ParentProcessId 类型非法
+```
+
+两条不可协商的边界:
+
+**空行绝不升级为 `dead`。** 空行可能是查询失败,也可能是 precheck 与查询
+之间进程退出的竞态 —— 两者不可区分,fail-closed 是唯一正确处理。把它当成
+`dead` 会让一个不可确认的状态获得"确认已死"的权重,而 `dead` 在四道闸里是
+可以触发 stale owner 清理的分支。
+
+**畸形行绝不伪装成 `alive`。** 第 8 步必须在第 9 步之前:身份字段是杀进程
+决策的输入,一个字段非法的行不是"较差的身份证据",而是**没有**身份证据。
 
 ### D3 — 本阶段不实施 retry
 
@@ -386,10 +430,13 @@ unavailable / nonzero-exit     —— 命令写错或宿主报错
 unavailable / empty-output     —— 契约变化
 unavailable / parse-error      —— JSON 结构变化
 unavailable / no-row           —— 查询语义问题
-成功返回但字段畸形
+unavailable / invalid-row      —— 返回了行但身份字段不可信
 错误进入 self-heal
 任何 fail-closed 违规
 ```
+
+注意「成功返回但字段畸形」不再是一个游离于 taxonomy 之外的散条 —— 它就是
+`invalid-row`,与其余六种 reason 一样有名字、有 detail、有 gate 政策。
 
 理由:当前**实证的**缺陷只有 timeout 一种。不能借本议题顺手把"PowerShell
 不存在""命令写错""JSON 结构变了"这些确定性问题一起降级 —— 那会把这次
