@@ -2429,6 +2429,69 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-snap-classify passed');
 
+        // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 2 —
+        // partialStdout exists because the partial output of a timed-out query
+        // is the only clue it had started answering. But that stdout can carry
+        // the command line, i.e. paths and arguments, so it has to be cleaned
+        // BEFORE it is truncated: truncating first would cut a secret in half
+        // and let both halves escape the match.
+        console.log('T-snap-detail. Diagnostic payloads are sanitized before truncation ...');
+        {
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+            const SENTINEL = 'secret-sentinel-do-not-leak';
+
+            const carriers = [
+                `OPENAI_API_KEY=${SENTINEL}`,
+                `openai_api_key=${SENTINEL}`,
+                `--token ${SENTINEL}`,
+                `--key ${SENTINEL}`,
+                `--password ${SENTINEL}`,
+                `--secret ${SENTINEL}`,
+                `Authorization: Bearer ${SENTINEL}`,
+                `ghp_${SENTINEL}`,
+                `sk-${SENTINEL}`,
+                `SOME_TOKEN=${SENTINEL}`,
+                `PASSWORD=${SENTINEL}`,
+            ];
+            for (const carrier of carriers) {
+                const cleaned = lock.sanitizeStream(carrier);
+                assert.ok(!cleaned.includes(SENTINEL),
+                    `sanitizer must remove the value from ${JSON.stringify(carrier)} — got ${JSON.stringify(cleaned)}`);
+                assert.ok(cleaned.includes('<redacted>'), `redaction must be visible in ${JSON.stringify(cleaned)}`);
+            }
+            assert.strictEqual(lock.sanitizeStream('plain output with no secrets'), 'plain output with no secrets',
+                'ordinary text is untouched — over-redacting would destroy the diagnostic');
+
+            // Order matters: a secret straddling the truncation boundary must
+            // still be gone. Padding puts the carrier deep inside the elided
+            // middle, where a truncate-then-sanitize implementation would have
+            // dropped it from view but kept it in the retained tail.
+            const pad = 'x'.repeat(600);
+            const straddling = `${pad}OPENAI_API_KEY=${SENTINEL}${pad}`;
+            const processed = lock.truncateStream(lock.sanitizeStream(straddling));
+            assert.ok(!processed.includes(SENTINEL), 'sanitize must run before truncate');
+
+            // A throwing sanitizer must not fall back to the raw text.
+            const guarded = lock.safeStreamSample(`prefix ${SENTINEL}`, () => { throw new Error('sanitizer blew up'); });
+            assert.ok(!guarded.includes(SENTINEL), 'a failed sanitizer keeps nothing');
+            assert.match(guarded, /^<redacted:\d+ bytes>$/, `expected a byte-count placeholder, got ${guarded}`);
+
+            // End to end through the real classifier.
+            const run = lock.getProcessSnapshotResult(process.pid, {
+                pidAliveFn: () => true,
+                // A carrier form, not a bare sentinel: the sanitizer redacts
+                // recognized carriers, and must NOT redact arbitrary strings —
+                // over-redacting would destroy the diagnostic it exists to keep.
+                execFileSyncFn: () => { const e = new Error('injected'); e.code = 'ETIMEDOUT'; e.stdout = `partial output --token ${SENTINEL} trailing`; throw e; },
+            });
+            assert.strictEqual(run.reason, 'timeout');
+            assert.ok(!String(run.detail.partialStdout).includes(SENTINEL),
+                `detail.partialStdout leaked the sentinel: ${run.detail.partialStdout}`);
+            assert.ok(!JSON.stringify(run.detail).includes(SENTINEL), 'no detail field may carry the sentinel');
+            assert.ok(run.detail.stdoutBytes > 0, 'the byte count still reflects the real payload size');
+        }
+        console.log('✅ T-snap-detail passed');
+
         console.log('T-lock-orphan-refusal-matrix. Testing four-gate refusal — 11 cases, never killable ...');
         {
             const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));

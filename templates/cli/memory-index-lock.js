@@ -138,6 +138,38 @@ function pidAlive(pid) {
 const SNAPSHOT_TIMEOUT_MS = 10000;
 const STREAM_SAMPLE_BYTES = 400;
 
+// 确定性清洗。诊断流可能含命令行 —— 也就是路径与参数,其中可能带凭据。
+// 清洗必须发生在截断【之前】:先截断会把一个秘密切成两半,让两侧都逃过匹配。
+const SECRET_PATTERNS = [
+    // KEY=value / TOKEN=value / SECRET=value / PASSWORD=value(大小写不敏感)
+    /\b([A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*)\s*=\s*\S+/gi,
+    // --token <v> / --key <v> / --password <v> / --secret <v>
+    /(--(?:token|key|password|secret))(\s+|=)\S+/gi,
+    // Authorization: <v>
+    /(Authorization\s*:\s*)\S+(\s+\S+)?/gi,
+    // 已知前缀的连续非空白串
+    /\b(?:ghp_|gho_|sk-)\S+/gi,
+];
+
+function sanitizeStream(text) {
+    let s = String(text === undefined || text === null ? '' : text);
+    s = s.replace(SECRET_PATTERNS[0], (_m, name) => `${name}=<redacted>`);
+    s = s.replace(SECRET_PATTERNS[1], (_m, flag) => `${flag} <redacted>`);
+    s = s.replace(SECRET_PATTERNS[2], (_m, head) => `${head}<redacted>`);
+    s = s.replace(SECRET_PATTERNS[3], '<redacted>');
+    return s;
+}
+
+// 清洗失败时**不保留原文** —— 宁可丢掉诊断,也不泄露未经检查的字节。
+function safeStreamSample(text, sanitizer = sanitizeStream) {
+    const raw = String(text === undefined || text === null ? '' : text);
+    try {
+        return truncateStream(sanitizer(raw));
+    } catch (_) {
+        return `<redacted:${Buffer.byteLength(raw, 'utf8')} bytes>`;
+    }
+}
+
 // 首尾各保留一段。超时时的部分输出是判断"查询是否已开始应答"的唯一线索,
 // 但完整 stdout 可能很大,且可能含命令行(即路径与参数)。
 function truncateStream(text) {
@@ -181,7 +213,7 @@ function buildSnapshotDetail(run) {
         errorMessage: run.error && run.error.message ? String(run.error.message) : null,
         stdoutBytes: Buffer.byteLength(run.stdout || '', 'utf8'),
         stderrBytes: Buffer.byteLength(run.stderr || '', 'utf8'),
-        partialStdout: truncateStream(run.stdout),
+        partialStdout: safeStreamSample(run.stdout),
     };
 }
 
@@ -640,6 +672,8 @@ module.exports = {
     pidAlive,
     SNAPSHOT_TIMEOUT_MS,
     truncateStream,
+    sanitizeStream,
+    safeStreamSample,
     runSnapshotCommand,
     getProcessSnapshotResult,
     getProcessSnapshot,
