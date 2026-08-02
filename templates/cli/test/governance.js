@@ -2312,6 +2312,123 @@ async function runGovernanceTests() {
         }
         console.log('✅ T-lock-ident passed');
 
+        // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 1 —
+        // getProcessSnapshot folds six distinct events into one null, so a slow
+        // runner and a broken command are indistinguishable to the caller and to
+        // the gate. These cases pin the structured classification.
+        //
+        // Everything is produced through the execFileSyncFn seam, which carries
+        // the NATIVE contract: stdout on success, throw on failure. The
+        // classifier never sees a real PowerShell.
+        console.log('T-snap-classify. Structured snapshot classification — nine outcomes, seam-injected ...');
+        {
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+            const WIN = process.platform === 'win32';
+
+            // Platform-appropriate fixtures. The parse layer differs (JSON on
+            // win32, `ps` text elsewhere), so the same nine classifications are
+            // exercised with the stdout shape this platform actually produces.
+            const validRow = (pid) => (WIN
+                ? JSON.stringify({
+                    Name: 'node.exe', ProcessId: pid, ParentProcessId: 4242,
+                    CommandLine: 'node ./memory.js mcp', StartedAt: '2026-08-02T08:00:00.0000000Z',
+                })
+                : `4242 Sat Aug  2 08:00:00 2026 node ./memory.js mcp`);
+            const rowMissingPid = () => (WIN
+                ? JSON.stringify({ Name: 'node.exe', ParentProcessId: 4242, CommandLine: 'node x', StartedAt: '2026-08-02T08:00:00Z' })
+                : `notanumber Sat Aug  2 08:00:00 2026 node x`);
+            const rowBadStartedAt = (pid) => (WIN
+                ? JSON.stringify({ Name: 'node.exe', ProcessId: pid, ParentProcessId: 4242, CommandLine: 'node x', StartedAt: 'not-a-date' })
+                : `4242 not a real lstart here node x`);
+
+            const throws = (props) => () => { const e = new Error('injected'); Object.assign(e, props); throw e; };
+            const call = (execFileSyncFn, extra = {}) =>
+                lock.getProcessSnapshotResult(process.pid, { execFileSyncFn, pidAliveFn: () => true, ...extra });
+
+            assert.strictEqual(typeof lock.getProcessSnapshotResult, 'function', 'getProcessSnapshotResult is exported');
+
+            // 1. dead — decided before any command runs
+            const dead = lock.getProcessSnapshotResult(999999, {
+                pidAliveFn: () => false,
+                execFileSyncFn: () => { throw new Error('the command must not run once the pid is known absent'); },
+            });
+            assert.strictEqual(dead.state, 'dead', 'an absent pid is dead, and no command is issued');
+            assert.strictEqual(dead.detail, undefined, 'dead carries no detail — detail explains a missing answer');
+
+            // 2. timeout — ETIMEDOUT is the ONLY criterion
+            const t = call(throws({ code: 'ETIMEDOUT', status: null, signal: 'SIGTERM' }));
+            assert.strictEqual(t.state, 'unavailable');
+            assert.strictEqual(t.reason, 'timeout');
+
+            // SIGTERM alone must NOT be promoted to timeout: an external kill
+            // looks identical, and timeout is the one reason the gate forgives.
+            const sig = call(throws({ signal: 'SIGTERM', status: null }));
+            assert.strictEqual(sig.reason, 'nonzero-exit',
+                'SIGTERM without ETIMEDOUT is not a timeout — forgiving it would widen the only gate exemption');
+
+            // 3-4. spawn-error / nonzero-exit
+            assert.strictEqual(call(throws({ code: 'ENOENT' })).reason, 'spawn-error');
+            assert.strictEqual(call(throws({ status: 1 })).reason, 'nonzero-exit');
+
+            // 5-7. empty-output / parse-error / no-row
+            assert.strictEqual(call(() => '').reason, 'empty-output');
+            assert.strictEqual(call(() => '   \n  ').reason, 'empty-output', 'whitespace-only stdout is empty');
+            if (WIN) {
+                assert.strictEqual(call(() => 'not json at all').reason, 'parse-error');
+                assert.strictEqual(call(() => 'null').reason, 'no-row');
+                assert.strictEqual(call(() => '[]').reason, 'no-row');
+            }
+
+            // 8. invalid-row — a row exists but the identity is not trustworthy.
+            // It must never masquerade as alive: identity fields feed the kill
+            // decision, and an invalid field is no evidence, not weak evidence.
+            assert.strictEqual(call(() => rowMissingPid()).reason, 'invalid-row', 'missing/mistyped pid is invalid-row');
+            assert.strictEqual(call(() => rowBadStartedAt(process.pid)).reason, 'invalid-row', 'unparseable StartedAt is invalid-row');
+            if (WIN) {
+                const mismatched = JSON.stringify({
+                    Name: 'node.exe', ProcessId: process.pid + 1, ParentProcessId: 4242,
+                    CommandLine: 'node x', StartedAt: '2026-08-02T08:00:00Z',
+                });
+                assert.strictEqual(call(() => mismatched).reason, 'invalid-row', 'a row for a different pid is invalid-row');
+            }
+
+            // 9. alive
+            const ok = call(() => validRow(process.pid));
+            assert.strictEqual(ok.state, 'alive', `a complete valid row is alive: ${JSON.stringify(ok)}`);
+            assert.strictEqual(ok.snapshot.alive, true);
+            assert.strictEqual(ok.snapshot.isNode, true);
+            assert.ok(ok.snapshot.commandLine.length > 0);
+            assert.ok(!Number.isNaN(Date.parse(ok.snapshot.startedAt)));
+            assert.ok(Number.isInteger(ok.snapshot.ppid));
+            assert.strictEqual(ok.detail, undefined, 'alive carries no detail');
+
+            // detail is a FIXED key set — one extra key turns a contract into a
+            // suggestion, so the assertion is on the exact set.
+            const EXPECTED_DETAIL_KEYS = ['platform', 'elapsedMs', 'timeoutMs', 'status', 'signal',
+                'errorCode', 'errorMessage', 'stdoutBytes', 'stderrBytes', 'partialStdout'];
+            assert.deepStrictEqual(Object.keys(t.detail).sort(), [...EXPECTED_DETAIL_KEYS].sort(),
+                'detail must carry exactly the ten frozen keys');
+            assert.strictEqual(t.detail.timeoutMs, 10000, 'the production budget is unchanged at 10000ms');
+            assert.strictEqual(t.detail.errorCode, 'ETIMEDOUT');
+            assert.strictEqual(t.detail.signal, 'SIGTERM', 'signal is recorded but never used to infer timeout');
+
+            // legacy snapshotFn adaptation — four frozen rules
+            const legacyAlive = { alive: true, isNode: true, commandLine: 'node x', ppid: 1, ppidAlive: true, startedAt: '2026-08-02T08:00:00Z' };
+            assert.strictEqual(lock.getProcessSnapshotResult(1, { snapshotFn: () => legacyAlive }).state, 'alive');
+            assert.strictEqual(lock.getProcessSnapshotResult(1, { snapshotFn: () => ({ alive: false }) }).state, 'dead');
+            const fromNull = lock.getProcessSnapshotResult(1, { snapshotFn: () => null });
+            assert.strictEqual(fromNull.reason, 'invalid-row', 'a legacy null cannot be classified further than "unusable"');
+            assert.match(String(fromNull.detail.errorMessage), /legacy snapshotFn returned null/);
+            const fromThrow = lock.getProcessSnapshotResult(1, { snapshotFn: () => { throw new Error('boom'); } });
+            assert.strictEqual(fromThrow.reason, 'invalid-row');
+            assert.match(String(fromThrow.detail.errorMessage), /legacy snapshotFn threw/);
+            assert.deepStrictEqual(Object.keys(fromNull.detail).sort(), [...EXPECTED_DETAIL_KEYS].sort(),
+                'the legacy adaptation must not add a source field to detail');
+            const passthrough = lock.getProcessSnapshotResult(1, { snapshotFn: () => ({ state: 'unavailable', reason: 'timeout', detail: {} }) });
+            assert.strictEqual(passthrough.reason, 'timeout', 'a structured legacy return is consumed as-is');
+        }
+        console.log('✅ T-snap-classify passed');
+
         console.log('T-lock-orphan-refusal-matrix. Testing four-gate refusal — 11 cases, never killable ...');
         {
             const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));

@@ -123,55 +123,191 @@ function pidAlive(pid) {
     }
 }
 
-// 一次系统查询取回四道闸 + 时间戳所需的全部字段;失败/权限不足 → null,
-// 调用方一律按"不可确认"处理(绝不因此进入自愈)。
-function getProcessSnapshot(pid, seams = {}) {
-    if (seams && typeof seams.snapshotFn === 'function') {
-        try {
-            return seams.snapshotFn(pid);
-        } catch (_) {
-            return null;
-        }
-    }
-    const alive = pidAlive(pid);
-    if (!alive) {
-        return { alive: false, isNode: null, commandLine: null, ppid: null, ppidAlive: null, startedAt: null };
-    }
+// [memory-lock-win-cim-snapshot-reliability] Phase 3A — 结果分类。
+//
+// 这里原本把六种事件(spawn 失败 / 超时 / 非零退出 / 空 stdout / 解析失败 /
+// CIM 空行)全部折叠成同一个 `null`。安全上正确 —— 调用方一律按"不可确认"
+// 处理;可诊断性上是灾难 —— 同一个 null 既可能是"这台 runner 慢",也可能是
+// "我们把命令写错了",而 release gate 无从区分。
+//
+// 设计冻结:docs/superpowers/specs/2026-08-02-memory-lock-win-cim-snapshot-reliability-design.md
+// 实施计划:docs/superpowers/plans/2026-08-02-memory-lock-win-cim-snapshot-reliability.md
+//
+// Phase 3A 只做分类,**不做重试**,单次预算保持 10 000 ms 不变。
+
+const SNAPSHOT_TIMEOUT_MS = 10000;
+const STREAM_SAMPLE_BYTES = 400;
+
+// 首尾各保留一段。超时时的部分输出是判断"查询是否已开始应答"的唯一线索,
+// 但完整 stdout 可能很大,且可能含命令行(即路径与参数)。
+function truncateStream(text) {
+    const s = String(text || '');
+    if (s.length <= STREAM_SAMPLE_BYTES * 2) return s;
+    return `${s.slice(0, STREAM_SAMPLE_BYTES)}…[${s.length - STREAM_SAMPLE_BYTES * 2} more]…${s.slice(-STREAM_SAMPLE_BYTES)}`;
+}
+
+// 归一化器:**唯一**的 try/catch 所在。
+// 原生 execFileSync 的合同是「成功返回 stdout / 失败抛错」,错误上带
+// status、signal、stdout、stderr;code 只在 ENOENT、ETIMEDOUT 一类情形出现,
+// 非零退出时 code 为 undefined。分类器不应重复处理这两种形态。
+function runSnapshotCommand(exe, args, options, execFn) {
+    const t0 = process.hrtime.bigint();
+    const elapsed = () => Math.round((Number(process.hrtime.bigint() - t0) / 1e6) * 1000) / 1000;
     try {
-        if (process.platform === 'win32') {
-            const script = `Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" | Select-Object Name,ProcessId,ParentProcessId,CommandLine,@{n='StartedAt';e={$_.CreationDate.ToUniversalTime().ToString('o')}} | ConvertTo-Json`;
-            const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', timeout: 10000 });
-            const row = JSON.parse(out);
-            if (!row || !row.ProcessId) return null;
-            const ppid = Number(row.ParentProcessId);
-            return {
-                alive: true,
-                isNode: /node(\.exe)?$/i.test(String(row.Name || '')),
-                commandLine: String(row.CommandLine || ''),
-                ppid: Number.isInteger(ppid) ? ppid : null,
-                ppidAlive: Number.isInteger(ppid) ? pidAlive(ppid) : null,
-                startedAt: row.StartedAt || null,
-            };
-        }
-        const out = execFileSync('ps', ['-o', 'ppid=,lstart=,args=', '-p', String(Number(pid))], { encoding: 'utf8', timeout: 10000 });
-        const line = out.trim();
-        if (!line) return null;
-        const tokens = line.split(/\s+/);
-        const ppid = Number(tokens[0]);
-        const startedDate = new Date(tokens.slice(1, 6).join(' ')); // lstart 固定 5 段
-        const commandLine = tokens.slice(6).join(' ');
-        const first = (commandLine.split(/\s+/)[0] || '');
+        const stdout = execFn(exe, args, options);
+        return { status: 0, signal: null, stdout: String(stdout === undefined || stdout === null ? '' : stdout), stderr: '', error: null, elapsedMs: elapsed() };
+    } catch (err) {
         return {
+            status: err && err.status !== undefined ? err.status : null,
+            signal: err && err.signal !== undefined ? err.signal : null,
+            stdout: String((err && err.stdout) || ''),
+            stderr: String((err && err.stderr) || ''),
+            error: err || null,
+            elapsedMs: elapsed(),
+        };
+    }
+}
+
+// E1 冻结的**固定键集**,十项,一个不多。多出一个键就会让"固定键集"降格成
+// 建议。`alive` / `dead` 不携带 detail —— 它只用来解释"为什么没有可用答案"。
+function buildSnapshotDetail(run) {
+    return {
+        platform: process.platform,
+        elapsedMs: run.elapsedMs,
+        timeoutMs: SNAPSHOT_TIMEOUT_MS,
+        status: run.status,
+        signal: run.signal,
+        errorCode: (run.error && run.error.code) || null,
+        errorMessage: run.error && run.error.message ? String(run.error.message) : null,
+        stdoutBytes: Buffer.byteLength(run.stdout || '', 'utf8'),
+        stderrBytes: Buffer.byteLength(run.stderr || '', 'utf8'),
+        partialStdout: truncateStream(run.stdout),
+    };
+}
+
+function unavailable(reason, run, overrides = {}) {
+    return { state: 'unavailable', reason, detail: { ...buildSnapshotDetail(run), ...overrides } };
+}
+
+const EMPTY_RUN = { status: null, signal: null, stdout: '', stderr: '', error: null, elapsedMs: 0 };
+
+function snapshotCommand(pid) {
+    if (process.platform === 'win32') {
+        const script = `Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" | Select-Object Name,ProcessId,ParentProcessId,CommandLine,@{n='StartedAt';e={$_.CreationDate.ToUniversalTime().ToString('o')}} | ConvertTo-Json`;
+        return { exe: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', script] };
+    }
+    return { exe: 'ps', args: ['-o', 'ppid=,lstart=,args=', '-p', String(Number(pid))] };
+}
+
+// win32:JSON 行 → 身份字段。任一字段缺失/类型非法/pid 不匹配 → invalid-row。
+// 畸形行绝不呈现为 alive:身份字段是杀进程决策的输入,字段非法不是"较差的
+// 证据",是【没有】证据。
+function parseWin32Row(pid, run) {
+    let parsed;
+    try {
+        parsed = JSON.parse(run.stdout);
+    } catch (_) {
+        return unavailable('parse-error', run);
+    }
+    const row = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (!row || typeof row !== 'object') return unavailable('no-row', run);
+    const rowPid = Number(row.ProcessId);
+    if (!Number.isInteger(rowPid) || rowPid !== Number(pid)) return unavailable('invalid-row', run);
+    const ppid = Number(row.ParentProcessId);
+    if (!Number.isInteger(ppid)) return unavailable('invalid-row', run);
+    if (typeof row.Name !== 'string' || row.Name.length === 0) return unavailable('invalid-row', run);
+    if (typeof row.CommandLine !== 'string' || row.CommandLine.length === 0) return unavailable('invalid-row', run);
+    if (typeof row.StartedAt !== 'string' || Number.isNaN(Date.parse(row.StartedAt))) return unavailable('invalid-row', run);
+    return {
+        state: 'alive',
+        snapshot: {
+            alive: true,
+            isNode: /node(\.exe)?$/i.test(row.Name),
+            commandLine: row.CommandLine,
+            ppid,
+            ppidAlive: pidAlive(ppid),
+            startedAt: row.StartedAt,
+        },
+    };
+}
+
+// 非 win32:`ps -o ppid=,lstart=,args=` 的文本行。lstart 固定 5 段。
+function parsePosixRow(pid, run) {
+    const line = String(run.stdout || '').trim();
+    if (!line) return unavailable('no-row', run);
+    const tokens = line.split(/\s+/);
+    if (tokens.length < 7) return unavailable('invalid-row', run);
+    const ppid = Number(tokens[0]);
+    if (!Number.isInteger(ppid)) return unavailable('invalid-row', run);
+    const startedDate = new Date(tokens.slice(1, 6).join(' '));
+    if (Number.isNaN(startedDate.getTime())) return unavailable('invalid-row', run);
+    const commandLine = tokens.slice(6).join(' ');
+    if (!commandLine) return unavailable('invalid-row', run);
+    const first = commandLine.split(/\s+/)[0] || '';
+    return {
+        state: 'alive',
+        snapshot: {
             alive: true,
             isNode: /node/i.test(path.basename(first)),
             commandLine,
-            ppid: Number.isInteger(ppid) ? ppid : null,
-            ppidAlive: Number.isInteger(ppid) ? pidAlive(ppid) : null,
-            startedAt: Number.isNaN(startedDate.getTime()) ? null : startedDate.toISOString(),
-        };
-    } catch (_) {
-        return null;
+            ppid,
+            ppidAlive: pidAlive(ppid),
+            startedAt: startedDate.toISOString(),
+        },
+    };
+}
+
+// 旧 snapshotFn seam 到结构化结果的适配(设计冻结的四条规则)。
+// `timeout` 等真实分类【必须】经低层 executor seam 产生:旧 seam 不携带任何
+// 可区分这些情形的信息,猜测就是编造。
+function adaptLegacySnapshot(pid, snapshotFn) {
+    let legacy;
+    try {
+        legacy = snapshotFn(pid);
+    } catch (err) {
+        return unavailable('invalid-row', EMPTY_RUN, {
+            errorMessage: `legacy snapshotFn threw: ${err && err.message ? String(err.message) : 'unknown'}`,
+        });
     }
+    if (legacy && typeof legacy === 'object' && typeof legacy.state === 'string') return legacy;
+    if (legacy && typeof legacy === 'object' && legacy.alive === true) return { state: 'alive', snapshot: legacy };
+    if (legacy && typeof legacy === 'object' && legacy.alive === false) return { state: 'dead', snapshot: legacy };
+    return unavailable('invalid-row', EMPTY_RUN, { errorMessage: 'legacy snapshotFn returned null' });
+}
+
+// 九步优先级,按序短路,穷尽且互斥。
+function getProcessSnapshotResult(pid, seams = {}) {
+    if (seams && typeof seams.snapshotFn === 'function') {
+        return adaptLegacySnapshot(pid, seams.snapshotFn);
+    }
+    const isAlive = (seams && typeof seams.pidAliveFn === 'function') ? seams.pidAliveFn : pidAlive;
+    // 1. 进程确认不存在 —— 在发出任何命令之前
+    if (!isAlive(pid)) {
+        return { state: 'dead', snapshot: { alive: false, isNode: null, commandLine: null, ppid: null, ppidAlive: null, startedAt: null } };
+    }
+    const execFn = (seams && typeof seams.execFileSyncFn === 'function') ? seams.execFileSyncFn : execFileSync;
+    const { exe, args } = snapshotCommand(pid);
+    const run = runSnapshotCommand(exe, args, { encoding: 'utf8', timeout: SNAPSHOT_TIMEOUT_MS }, execFn);
+
+    // 2. 超时 —— ETIMEDOUT 是【唯一】判据。SIGTERM 单独不算:外部终止与子进程
+    //    自身信号退出同样表现为 SIGTERM,而 timeout 是唯一能不打红 gate 的
+    //    reason,把 SIGTERM 并进去等于悄悄扩大那条豁免。
+    if (run.error && run.error.code === 'ETIMEDOUT') return unavailable('timeout', run);
+    // 3. host 无法启动
+    if (run.error && run.error.code === 'ENOENT') return unavailable('spawn-error', run);
+    // 4. host 非零退出(含 SIGTERM 而无 ETIMEDOUT)
+    if (run.error || run.status !== 0) return unavailable('nonzero-exit', run);
+    // 5. 成功退出但 stdout 为空或只有空白
+    if (!String(run.stdout || '').trim()) return unavailable('empty-output', run);
+    // 6-9. 解析 / 空行 / 畸形行 / alive —— 由平台各自的解析层判定
+    return process.platform === 'win32' ? parseWin32Row(pid, run) : parsePosixRow(pid, run);
+}
+
+// 兼容 wrapper:导出面行为不变。alive/dead 返回旧 snapshot,unavailable 返回
+// null —— 既有调用方与测试对 `=== null` 的依赖原样保留。
+function getProcessSnapshot(pid, seams = {}) {
+    const result = getProcessSnapshotResult(pid, seams);
+    return result.state === 'unavailable' ? null : result.snapshot;
 }
 
 function normalizePath(p) {
@@ -502,6 +638,10 @@ module.exports = {
     clearOwner,
     readOwner,
     pidAlive,
+    SNAPSHOT_TIMEOUT_MS,
+    truncateStream,
+    runSnapshotCommand,
+    getProcessSnapshotResult,
     getProcessSnapshot,
     normalizePath,
     commandTokens,
