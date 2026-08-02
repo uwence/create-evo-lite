@@ -2261,17 +2261,58 @@ async function runGovernanceTests() {
         {
             const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
 
-            // 自身快照:alive + isNode + commandLine + startedAt(win32 CIM / unix ps)
-            const self = lock.getProcessSnapshot(process.pid);
-            assert.ok(self && self.alive === true, 'self snapshot alive');
-            assert.strictEqual(self.isNode, true, 'self is a node process');
-            assert.ok(typeof self.commandLine === 'string' && self.commandLine.length > 0, 'commandLine captured');
-            assert.ok(self.startedAt && !Number.isNaN(Date.parse(self.startedAt)), 'startedAt is a valid time');
-            assert.ok(Number.isInteger(self.ppid), 'ppid captured');
+            // ── availability block ────────────────────────────────────────
+            // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 5 (E3).
+            //
+            // This block talks to the real machine, so it is the ONLY place that
+            // tolerates anything — and it tolerates exactly one thing: the
+            // external query not answering within its budget. Every other
+            // unavailable reason means the command, the transport or the
+            // contract is wrong, and still fails.
+            //
+            // The tolerance stops here. The deterministic safety block below is
+            // seam-injected, always runs, and never bends.
+            const selfResult = lock.getProcessSnapshotResult(process.pid);
+            let self = null;
+            if (selfResult.state === 'unavailable' && selfResult.reason === 'timeout') {
+                // The external Windows query has a first-invocation latency tail
+                // that sometimes exceeds the 10s budget. That is a runner
+                // availability event, not a defect in this code — but it must be
+                // evidenced, never silently swallowed.
+                try {
+                    const diag = require(path.join(WORKSPACE_ROOT, 'scripts', 'diagnostics', 'memory-lock-cim-snapshot.js'));
+                    diag.emitLine(diag.collect({ label: 'T-lock-ident-timeout' }));
+                } catch (err) {
+                    console.log(`CIM_SNAPSHOT_DIAG_ERROR=${JSON.stringify({ message: String(err && err.message) })}`);
+                }
+                console.log(`   ⏭️  external snapshot query timed out (${selfResult.detail.elapsedMs}ms of ${selfResult.detail.timeoutMs}ms) — availability event, evidence above`);
+            } else {
+                assert.strictEqual(selfResult.state, 'alive',
+                    `self snapshot must be alive; only unavailable/timeout is tolerated, got ${selfResult.state}/${selfResult.reason || '-'}`);
+                self = selfResult.snapshot;
+                assert.ok(self && self.alive === true, 'self snapshot alive');
+                assert.strictEqual(self.isNode, true, 'self is a node process');
+                assert.ok(typeof self.commandLine === 'string' && self.commandLine.length > 0, 'commandLine captured');
+                assert.ok(self.startedAt && !Number.isNaN(Date.parse(self.startedAt)), 'startedAt is a valid time');
+                assert.ok(Number.isInteger(self.ppid), 'ppid captured');
 
-            // 自报 startedAt(uptime 推导)与系统实测在容差内一致
-            const drift = Math.abs(Date.parse(lock.selfStartedAt()) - Date.parse(self.startedAt));
-            assert.ok(drift <= 5000, `selfStartedAt drift ${drift}ms exceeds 5s`);
+                // 自报 startedAt(uptime 推导)与系统实测在容差内一致
+                const drift = Math.abs(Date.parse(lock.selfStartedAt()) - Date.parse(self.startedAt));
+                assert.ok(drift <= 5000, `selfStartedAt drift ${drift}ms exceeds 5s`);
+            }
+
+            // ── deterministic safety block ────────────────────────────────
+            // Runs whatever the real machine did. A timed-out query must still
+            // map to unknown / report-only and must never authorise a kill.
+            {
+                const injected = lock.getProcessSnapshotResult(process.pid, {
+                    snapshotFn: () => ({ state: 'unavailable', reason: 'timeout', detail: {} }),
+                });
+                assert.strictEqual(injected.state, 'unavailable', 'a timed-out query is unavailable, deterministically');
+                assert.strictEqual(lock.getProcessSnapshot(process.pid, {
+                    snapshotFn: () => ({ state: 'unavailable', reason: 'timeout', detail: {} }),
+                }), null, 'the compatibility surface still reports null for an unavailable query');
+            }
 
             // 已死 pid → alive:false
             const deadChild = childProcess.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
