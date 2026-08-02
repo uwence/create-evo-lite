@@ -2385,11 +2385,29 @@ async function runGovernanceTests() {
             assert.strictEqual(call(() => rowMissingPid()).reason, 'invalid-row', 'missing/mistyped pid is invalid-row');
             assert.strictEqual(call(() => rowBadStartedAt(process.pid)).reason, 'invalid-row', 'unparseable StartedAt is invalid-row');
             if (WIN) {
-                const mismatched = JSON.stringify({
-                    Name: 'node.exe', ProcessId: process.pid + 1, ParentProcessId: 4242,
-                    CommandLine: 'node x', StartedAt: '2026-08-02T08:00:00Z',
+                const row = (over) => JSON.stringify({
+                    Name: 'node.exe', ProcessId: process.pid, ParentProcessId: 4242,
+                    CommandLine: 'node x', StartedAt: '2026-08-02T08:00:00Z', ...over,
                 });
-                assert.strictEqual(call(() => mismatched).reason, 'invalid-row', 'a row for a different pid is invalid-row');
+                // A malformed identity row must NEVER reach alive: identity
+                // fields feed the kill decision, so an invalid field is no
+                // evidence rather than weak evidence.
+                for (const [label, stdout] of [
+                    ['different pid', row({ ProcessId: process.pid + 1 })],
+                    ['pid as string', row({ ProcessId: String(process.pid) })],
+                    ['ppid as string', row({ ParentProcessId: '4242' })],
+                    ['negative ppid', row({ ParentProcessId: -1 })],
+                    ['whitespace Name', row({ Name: '   ' })],
+                    ['whitespace CommandLine', row({ CommandLine: '   ' })],
+                    ['null CommandLine', row({ CommandLine: null })],
+                    // A precise ProcessId query returns one object. An array
+                    // with extra rows means the query did not mean what we think.
+                    ['non-empty array', `[${row()},{"unexpected":"extra"}]`],
+                    ['single-element array', `[${row()}]`],
+                ]) {
+                    assert.strictEqual(call(() => stdout).reason, 'invalid-row', `${label} must be invalid-row`);
+                }
+                assert.strictEqual(call(() => '[]').reason, 'no-row', 'an empty array is no-row, not invalid-row');
             }
 
             // 9. alive
@@ -2462,14 +2480,60 @@ async function runGovernanceTests() {
             assert.strictEqual(lock.sanitizeStream('plain output with no secrets'), 'plain output with no secrets',
                 'ordinary text is untouched — over-redacting would destroy the diagnostic');
 
-            // Order matters: a secret straddling the truncation boundary must
-            // still be gone. Padding puts the carrier deep inside the elided
-            // middle, where a truncate-then-sanitize implementation would have
-            // dropped it from view but kept it in the retained tail.
-            const pad = 'x'.repeat(600);
-            const straddling = `${pad}OPENAI_API_KEY=${SENTINEL}${pad}`;
-            const processed = lock.truncateStream(lock.sanitizeStream(straddling));
-            assert.ok(!processed.includes(SENTINEL), 'sanitize must run before truncate');
+            // Order test — through the PRODUCTION entry only.
+            //
+            // An earlier version called truncateStream(sanitizeStream(x)), which
+            // hardcodes the correct order into the test: safeStreamSample could
+            // be changed to truncate first and the assertion would still pass.
+            // It also put the carrier in the fully elided middle, so neither
+            // order would have shown the sentinel — a false positive twice over.
+            //
+            // This fixture is built so the tail window starts EXACTLY at the
+            // sentinel. Truncate-first therefore leaves a bare sentinel with its
+            // `KEY=` carrier cut away, unmatchable by any later sanitize pass;
+            // sanitize-first replaces the whole assignment before truncation.
+            const key = 'OPENAI_API_KEY=';
+            const suffix = 'z'.repeat(400 - Buffer.byteLength(SENTINEL, 'utf8'));
+            const boundary = `${'x'.repeat(600)}${key}${SENTINEL}${suffix}`;
+            const sample = lock.safeStreamSample(boundary);
+            assert.ok(!sample.includes(SENTINEL),
+                `safeStreamSample must sanitize BEFORE truncating — got ${JSON.stringify(sample)}`);
+
+            // Truncation budget is in UTF-8 BYTES, not UTF-16 code units.
+            const EXPECT_BYTES = 400;
+            for (const [label, unit] of [['han', '汉'], ['emoji', '🙂'], ['mixed', 'a汉🙂']]) {
+                const big = unit.repeat(2000);
+                const out = lock.truncateStream(big);
+                assert.ok(out.length < big.length, `${label}: oversized input must be truncated`);
+                assert.ok(!out.includes('�'), `${label}: truncation must not split a character`);
+                const [head, tail] = out.split(/…\[\d+ bytes omitted\]…/);
+                assert.ok(head !== undefined && tail !== undefined, `${label}: expected an elision marker in ${JSON.stringify(out.slice(0, 80))}`);
+                assert.ok(Buffer.byteLength(head, 'utf8') <= EXPECT_BYTES,
+                    `${label}: head is ${Buffer.byteLength(head, 'utf8')} bytes, budget is ${EXPECT_BYTES}`);
+                assert.ok(Buffer.byteLength(tail, 'utf8') <= EXPECT_BYTES,
+                    `${label}: tail is ${Buffer.byteLength(tail, 'utf8')} bytes, budget is ${EXPECT_BYTES}`);
+            }
+            assert.strictEqual(lock.truncateStream('汉'.repeat(10)), '汉'.repeat(10),
+                'input inside the budget is returned untouched');
+
+            // errorMessage must be sanitized too. A child-process error message
+            // can carry the executable and its arguments, so leaving it raw
+            // would defeat the sanitizer applied to stdout.
+            const msgLeak = lock.getProcessSnapshotResult(process.pid, {
+                pidAliveFn: () => true,
+                execFileSyncFn: () => { const e = new Error(`spawn failed --token ${SENTINEL}`); e.code = 'ENOENT'; throw e; },
+            });
+            assert.strictEqual(msgLeak.reason, 'spawn-error');
+            assert.ok(!String(msgLeak.detail.errorMessage).includes(SENTINEL),
+                `detail.errorMessage leaked the sentinel: ${msgLeak.detail.errorMessage}`);
+            assert.ok(!JSON.stringify(msgLeak.detail).includes(SENTINEL), 'no detail field may carry the sentinel');
+
+            const legacyLeak = lock.getProcessSnapshotResult(1, {
+                snapshotFn: () => { throw new Error(`boom OPENAI_API_KEY=${SENTINEL}`); },
+            });
+            assert.strictEqual(legacyLeak.reason, 'invalid-row');
+            assert.ok(!JSON.stringify(legacyLeak.detail).includes(SENTINEL),
+                `the legacy throw path leaked the sentinel: ${legacyLeak.detail.errorMessage}`);
 
             // A throwing sanitizer must not fall back to the raw text.
             const guarded = lock.safeStreamSample(`prefix ${SENTINEL}`, () => { throw new Error('sanitizer blew up'); });

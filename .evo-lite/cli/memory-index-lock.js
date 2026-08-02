@@ -161,6 +161,9 @@ function sanitizeStream(text) {
 }
 
 // 清洗失败时**不保留原文** —— 宁可丢掉诊断,也不泄露未经检查的字节。
+//
+// 顺序在这里,不在调用方:清洗必须先于截断。反过来会把一个秘密从它的载体
+// (`KEY=`、`--token`)上切开,剩下一段裸值,之后任何清洗都认不出来。
 function safeStreamSample(text, sanitizer = sanitizeStream) {
     const raw = String(text === undefined || text === null ? '' : text);
     try {
@@ -170,12 +173,35 @@ function safeStreamSample(text, sanitizer = sanitizeStream) {
     }
 }
 
-// 首尾各保留一段。超时时的部分输出是判断"查询是否已开始应答"的唯一线索,
-// 但完整 stdout 可能很大,且可能含命令行(即路径与参数)。
+// 按 UTF-8 **字节**预算取一段,且以 code point 为单位累计 —— 直接对
+// Buffer 切片再解码会把多字节字符切断,产生 U+FFFD。
+// String.length 是 UTF-16 code unit,不是字节:400 个汉字约 1200 字节,
+// 400 个 emoji 约 1600 字节,按字符切片会大幅超出冻结的字节预算。
+function takeBytes(s, budget, fromEnd) {
+    const chars = Array.from(s); // 按 code point 切分,不会拆开代理对
+    const seq = fromEnd ? chars.slice().reverse() : chars;
+    const out = [];
+    let bytes = 0;
+    for (const ch of seq) {
+        const b = Buffer.byteLength(ch, 'utf8');
+        if (bytes + b > budget) break;
+        bytes += b;
+        out.push(ch);
+    }
+    return fromEnd ? out.reverse().join('') : out.join('');
+}
+
+// 首尾各保留至多 STREAM_SAMPLE_BYTES 字节。超时时的部分输出是判断"查询是否
+// 已开始应答"的唯一线索,但完整 stdout 可能很大,且可能含命令行(即路径与
+// 参数)。
 function truncateStream(text) {
-    const s = String(text || '');
-    if (s.length <= STREAM_SAMPLE_BYTES * 2) return s;
-    return `${s.slice(0, STREAM_SAMPLE_BYTES)}…[${s.length - STREAM_SAMPLE_BYTES * 2} more]…${s.slice(-STREAM_SAMPLE_BYTES)}`;
+    const s = String(text === undefined || text === null ? '' : text);
+    const total = Buffer.byteLength(s, 'utf8');
+    if (total <= STREAM_SAMPLE_BYTES * 2) return s;
+    const head = takeBytes(s, STREAM_SAMPLE_BYTES, false);
+    const tail = takeBytes(s, STREAM_SAMPLE_BYTES, true);
+    const omitted = total - Buffer.byteLength(head, 'utf8') - Buffer.byteLength(tail, 'utf8');
+    return `${head}…[${omitted} bytes omitted]…${tail}`;
 }
 
 // 归一化器:**唯一**的 try/catch 所在。
@@ -210,15 +236,24 @@ function buildSnapshotDetail(run) {
         status: run.status,
         signal: run.signal,
         errorCode: (run.error && run.error.code) || null,
-        errorMessage: run.error && run.error.message ? String(run.error.message) : null,
+        // 同样过清洗与有界截断:child-process 的错误消息可能带上可执行文件、
+        // 参数或命令内容,原样写进 detail 会绕开 stdout 那一侧的清洗。
+        errorMessage: run.error && run.error.message ? safeStreamSample(String(run.error.message)) : null,
         stdoutBytes: Buffer.byteLength(run.stdout || '', 'utf8'),
         stderrBytes: Buffer.byteLength(run.stderr || '', 'utf8'),
         partialStdout: safeStreamSample(run.stdout),
     };
 }
 
-function unavailable(reason, run, overrides = {}) {
-    return { state: 'unavailable', reason, detail: { ...buildSnapshotDetail(run), ...overrides } };
+// 受限接口:只允许覆盖 errorMessage,且覆盖值同样经清洗。
+// 早先的写法接受自由 overrides 对象并 spread 进去 —— 那等于给"固定十键"
+// 留了一个随时可以悄悄加第十一个键的口子。
+function unavailable(reason, run, errorMessageOverride) {
+    const detail = buildSnapshotDetail(run);
+    if (errorMessageOverride !== undefined) {
+        detail.errorMessage = safeStreamSample(String(errorMessageOverride));
+    }
+    return { state: 'unavailable', reason, detail };
 }
 
 const EMPTY_RUN = { status: null, signal: null, stdout: '', stderr: '', error: null, elapsedMs: 0 };
@@ -241,14 +276,25 @@ function parseWin32Row(pid, run) {
     } catch (_) {
         return unavailable('parse-error', run);
     }
-    const row = Array.isArray(parsed) ? parsed[0] : parsed;
+    // 精确 ProcessId 查询正常返回**单个对象**。空数组 = 没查到;非空数组
+    // 意味着这条查询的语义与我们以为的不同 —— 静默取第 [0] 行会把一个
+    // 意料之外的结果集当成身份证据。
+    if (Array.isArray(parsed)) {
+        return unavailable(parsed.length === 0 ? 'no-row' : 'invalid-row', run);
+    }
+    const row = parsed;
     if (!row || typeof row !== 'object') return unavailable('no-row', run);
-    const rowPid = Number(row.ProcessId);
-    if (!Number.isInteger(rowPid) || rowPid !== Number(pid)) return unavailable('invalid-row', run);
-    const ppid = Number(row.ParentProcessId);
-    if (!Number.isInteger(ppid)) return unavailable('invalid-row', run);
-    if (typeof row.Name !== 'string' || row.Name.length === 0) return unavailable('invalid-row', run);
-    if (typeof row.CommandLine !== 'string' || row.CommandLine.length === 0) return unavailable('invalid-row', run);
+    // 严格类型:数字字段必须真的是数字。接受 "123" 这类数字字符串等于放宽
+    // 「ParentProcessId 类型非法 → invalid-row」这条冻结规则。
+    if (typeof row.ProcessId !== 'number' || !Number.isInteger(row.ProcessId) || row.ProcessId !== Number(pid)) {
+        return unavailable('invalid-row', run);
+    }
+    if (typeof row.ParentProcessId !== 'number' || !Number.isInteger(row.ParentProcessId) || row.ParentProcessId < 0) {
+        return unavailable('invalid-row', run);
+    }
+    // 空白字符串不是身份证据。只查 length === 0 会让 "   " 通过。
+    if (typeof row.Name !== 'string' || row.Name.trim().length === 0) return unavailable('invalid-row', run);
+    if (typeof row.CommandLine !== 'string' || row.CommandLine.trim().length === 0) return unavailable('invalid-row', run);
     if (typeof row.StartedAt !== 'string' || Number.isNaN(Date.parse(row.StartedAt))) return unavailable('invalid-row', run);
     return {
         state: 'alive',
@@ -256,17 +302,24 @@ function parseWin32Row(pid, run) {
             alive: true,
             isNode: /node(\.exe)?$/i.test(row.Name),
             commandLine: row.CommandLine,
-            ppid,
-            ppidAlive: pidAlive(ppid),
+            ppid: row.ParentProcessId,
+            ppidAlive: pidAlive(row.ParentProcessId),
             startedAt: row.StartedAt,
         },
     };
 }
 
 // 非 win32:`ps -o ppid=,lstart=,args=` 的文本行。lstart 固定 5 段。
+//
+// transport 天然不对称,这是实现级事实而非测试遗漏:
+//   parse-error  只在 win32 的 JSON transport 上可达（此处按文本解析）
+//   no-row       只在 win32 的 null / [] 上可达
+//   POSIX        空/纯空白 stdout 已在第 5 步判为 empty-output；
+//                非空但不符合 ps 行结构 → invalid-row
+// 因此这里【不再】保留一个 `if (!line) return no-row` 守卫:它永远不可达,
+// 只会制造「POSIX 也能产出 no-row」的错误印象。
 function parsePosixRow(pid, run) {
     const line = String(run.stdout || '').trim();
-    if (!line) return unavailable('no-row', run);
     const tokens = line.split(/\s+/);
     if (tokens.length < 7) return unavailable('invalid-row', run);
     const ppid = Number(tokens[0]);
@@ -297,14 +350,13 @@ function adaptLegacySnapshot(pid, snapshotFn) {
     try {
         legacy = snapshotFn(pid);
     } catch (err) {
-        return unavailable('invalid-row', EMPTY_RUN, {
-            errorMessage: `legacy snapshotFn threw: ${err && err.message ? String(err.message) : 'unknown'}`,
-        });
+        return unavailable('invalid-row', EMPTY_RUN,
+            `legacy snapshotFn threw: ${err && err.message ? String(err.message) : 'unknown'}`);
     }
     if (legacy && typeof legacy === 'object' && typeof legacy.state === 'string') return legacy;
     if (legacy && typeof legacy === 'object' && legacy.alive === true) return { state: 'alive', snapshot: legacy };
     if (legacy && typeof legacy === 'object' && legacy.alive === false) return { state: 'dead', snapshot: legacy };
-    return unavailable('invalid-row', EMPTY_RUN, { errorMessage: 'legacy snapshotFn returned null' });
+    return unavailable('invalid-row', EMPTY_RUN, 'legacy snapshotFn returned null');
 }
 
 // 九步优先级,按序短路,穷尽且互斥。
