@@ -187,6 +187,22 @@ function runSnapshotCommand(exe, args, options, execFn) {
 
 分类器**只消费** `runSnapshotCommand()` 的统一结果,绝不直接调用 execFn。
 
+### `timeout` 的唯一判据(冻结)
+
+```text
+err.code === 'ETIMEDOUT'                → timeout
+signal === 'SIGTERM' 但没有 ETIMEDOUT    → nonzero-exit
+```
+
+**`SIGTERM` 单独不能证明 timeout。** 外部终止、以及子进程自身因信号退出,
+同样表现为 `SIGTERM`。而 D4 里 `timeout` 是**唯一**能不打红 gate 的 reason ——
+把 `SIGTERM` 并进去等于悄悄扩大那条豁免,让"有人杀了这个进程"和"查询超时"
+共享同一张免死金牌。
+
+`signal`、`elapsedMs` 与部分输出仍照常记入 `detail`,但**不得据此推断
+timeout**。若将来发现某个受支持 Node 版本的真实 timeout 不提供 `ETIMEDOUT`,
+那需要**新证据 + 单独的设计修订**;Phase 3A 不做启发式推断。
+
 ### seam 优先级(冻结)
 
 ```text
@@ -200,9 +216,10 @@ execFileSyncFn  外部命令执行
 
 ```text
 dead          pidAliveFn → false
-timeout       execFileSyncFn throw，err.code = 'ETIMEDOUT'（或 signal = 'SIGTERM'）
+timeout       execFileSyncFn throw，err.code === 'ETIMEDOUT'  ← 唯一判据
 spawn-error   execFileSyncFn throw，err.code = 'ENOENT'
 nonzero-exit  execFileSyncFn throw，err.status = 1，无 code
+              也包括 signal === 'SIGTERM' 但无 ETIMEDOUT 的情形
 empty-output  execFileSyncFn 返回 ''
 parse-error   execFileSyncFn 返回 '<not json>'
 no-row        execFileSyncFn 返回 'null' 或 '[]'
@@ -219,7 +236,16 @@ alive         execFileSyncFn 返回合法完整行
 返回 legacy snapshot，alive === true  → { state:'alive', snapshot }
 返回 legacy snapshot，alive === false → { state:'dead',  snapshot }
 返回 null 或抛错                    → { state:'unavailable', reason:'invalid-row',
-                                       detail:{ ...固定键集，source:'snapshotFn' } }
+                                       detail:{ ...E1 的十个键，一个不多 } }
+```
+
+**不得增加 `source` 字段。** E1 把 `detail` 冻结为固定键集,这条适配规则的早期
+写法自己破坏了它 —— 一个"只多一个键"的例外会立刻让固定键集变成建议。来源
+信息写进已有的 `errorMessage`:
+
+```text
+snapshotFn 返回 null   → detail.errorMessage = 'legacy snapshotFn returned null'
+snapshotFn 抛错        → detail.errorMessage = 'legacy snapshotFn threw: <sanitized message>'
 ```
 
 **`timeout` 等真实分类必须经低层 executor seam 产生**,不得由 `snapshotFn`
@@ -252,8 +278,21 @@ fail-closed。它是 `module.exports` 的一部分。
 **一处会让该断言变空的陷阱**:`attemptSelfHeal` 第一句就是
 `if (process.platform !== 'win32') return { healed:false, ... }`。在 Linux 上
 断言会因**平台闸**而不是因**身份复核**通过 —— 结果对、理由错、覆盖为零。
-因此该用例必须让身份复核分支真正执行到:要么在 win32 上运行,要么显式构造
-使平台闸不短路的条件,并在断言消息里写明验证的是哪一条路径。
+
+处理方式是**两类平台各自独立断言**,而不是想办法让一台机器覆盖两条路径:
+
+```text
+Windows job    真正进入身份复核分支，验证 healed:false / kill 0 次 / owner 未删
+非 Windows job 只验证平台闸拒绝自愈，【不得】声称覆盖了身份复核分支
+```
+
+release-gate 同时含 Windows 与 Ubuntu,两条路径都会被真实执行。
+**禁止修改或伪造 `process.platform`** —— 那只会制造一条在真实平台上从未跑过
+的绿色断言。
+
+另外,`attemptSelfHeal` 会**重新取快照**(`getProcessSnapshot(owner.pid,
+ctx.seams)`),所以测试必须注入快照 seam;只注入 `killFn` 会让它落到真实
+PowerShell,九种 reason 一种也造不出来。
 
 ---
 
@@ -371,14 +410,35 @@ Produces:  T-snap-failclosed —— 每种 unavailable reason × 两个入口
 ```
 
 - [ ] Step 1 — 写失败测试 `T-snap-failclosed`:对**每一种** unavailable reason
-      断言 `diagnoseLockConflict → unknown/report-only`;并**分别**断言
-      `attemptSelfHeal(dir, orphanedDiag, { seams:{ killFn } })` 满足
-      `healed === false` / `killFn.calls === 0` / owner 文件仍存在
+      断言 `diagnoseLockConflict → unknown/report-only`;并**分别**断言直接调用
+      `attemptSelfHeal` 时仍 fail-closed。**必须注入快照 seam**,否则
+      `attemptSelfHeal` 内部的重新取快照会落到真实 PowerShell,九种 reason 一种
+      也造不出来:
+
+      ```js
+      attemptSelfHeal(dir, orphanedDiag, {
+          seams: {
+              snapshotFn: () => ({ state: 'unavailable', reason, detail: makeDetail() }),
+              killFn,
+          },
+      })
+      ```
+
+      断言 `healed === false` / `killFn.calls === 0` / owner 文件仍存在
 - [ ] Step 2 — `node .evo-lite/cli/test.js`  Expected: 直接自愈入口的断言失败或缺失
 - [ ] Step 3 — 补齐实现侧缺口(若有);本 Task 以测试为主,不放宽任何生产行为
 - [ ] Step 4 — `node .evo-lite/cli/test.js`  Expected: `✅ T-snap-failclosed passed`
-- [ ] Step 5 — 确认该用例**在非 win32 上不因平台闸而空过**:断言消息必须写明
-      验证的是身份复核路径,而非平台短路
+- [ ] Step 5 — **两类平台各自独立断言**,不得互相冒充覆盖:
+
+      ```text
+      Windows job    必须真正进入身份复核分支；对每种 unavailable reason 验证
+                     healed:false / kill 0 次 / owner 未删
+      非 Windows job 独立验证平台闸拒绝自愈；【不得】声称覆盖了 Windows 的
+                     身份复核分支
+      ```
+
+      release-gate 同时含 Windows 与 Ubuntu,两类合同都会被真实执行。
+      **禁止修改或伪造 `process.platform` 来绕过这一区分。**
 - [ ] Step 6 — `npm test` + `sync-runtime --check`
 - [ ] Step 7 — `git add` 两个文件 `&& git commit`
 
