@@ -666,7 +666,12 @@ async function memorize(text, options = {}) {
     const namespace = prepared.namespace;
 
     const richContent = buildRichContent(safeText, options);
-    const { id: rawMemoryId } = getMemoryIndex().upsert({
+    // [zvec-win-unicode-containment] Task 6 — the index seam. Recovery rebuilds
+    // write through a one-shot index that the shared selector must never hand
+    // out, so the target is a parameter rather than always the singleton.
+    // Omitted everywhere else, which keeps the ambient behaviour identical.
+    const index = options.index || getMemoryIndex();
+    const { id: rawMemoryId } = index.upsert({
         content: richContent,
         namespace,
         timestamp: options.timestamp || new Date().toISOString(),
@@ -1171,6 +1176,7 @@ async function ingestArchiveFile(filePath, type, sourceId, timestamp, options = 
         await memorize(chunk, {
             allowSecrets: options.allowSecrets,
             commitHash: sourceId,
+            index: options.index,
             namespace: options.namespace,
             silent: options.silent,
             skipQualityGuard: true,
@@ -1234,7 +1240,14 @@ async function archive(content, type = 'task', options = {}) {
     return { chunkCount: ingestion.inserted, filePath, namespace: preflightCheck.namespace };
 }
 
-async function syncIndexMemory() {
+// options.index — [zvec-win-unicode-containment] Task 6. A recovery rebuild has
+// to write into an index the shared selector deliberately refuses to hand out
+// (the marker is still on disk, so getMemoryIndex() returns SQLite by design).
+// Passing the target down beats the alternatives: swapping the global singleton
+// mid-rebuild leaves a window where any other caller gets the recovery index,
+// and clearing the marker first to make the singleton cooperate is exactly the
+// order §7.4 M0 forbids. Omitted everywhere else — ambient behaviour unchanged.
+async function syncIndexMemory(options = {}) {
     const rawDir = getRawMemoryDir();
     const vectDir = getIndexMemoryDir();
 
@@ -1269,7 +1282,7 @@ async function syncIndexMemory() {
             typeMatch ? typeMatch[1] : 'task',
             idMatch ? idMatch[1] : path.basename(file, '.md'),
             tsMatch ? tsMatch[1] : new Date().toISOString(),
-            { namespace: nsMatch ? nsMatch[1] : DEFAULT_NAMESPACE }
+            { index: options.index, namespace: nsMatch ? nsMatch[1] : DEFAULT_NAMESPACE }
         );
         if (!ingestion.marked) {
             console.warn(`⚠️ 跳过损坏档案 ${file}: ${ingestion.invalidReason}`);
