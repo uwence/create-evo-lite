@@ -418,6 +418,81 @@ This closes the evidence ledger for the current failure mode. Further runs are
 recorded in the pull-request description, not by amending this document; only a
 **new failure type** warrants another evidence commit.
 
+## Phase 3A — what was implemented
+
+Contract only. CI run numbers for the implementation branch live in its pull
+request, not here: recording them would mean a commit that triggers a run whose
+result then needs another commit, and the record would always trail the final
+head by one.
+
+### The classification
+
+```text
+1  pidAlive false                          -> dead            (no command is issued)
+2  err.code === 'ETIMEDOUT'                -> timeout         (the ONLY criterion)
+3  err.code === 'ENOENT'                   -> spawn-error
+4  any other error, or status !== 0        -> nonzero-exit    (incl. SIGTERM without ETIMEDOUT)
+5  clean exit, blank stdout                -> empty-output
+6  non-empty stdout that will not parse    -> parse-error
+7  parses, but no result row               -> no-row
+8  row present, identity field invalid     -> invalid-row
+9  complete and valid                      -> alive
+```
+
+`SIGTERM` alone is deliberately **not** a timeout: an external kill looks
+identical, and `timeout` is the one reason the gate forgives.
+
+Transport asymmetry, by construction rather than by test omission:
+
+```text
+parse-error   reachable only through the win32 JSON transport
+no-row        reachable only through win32 null / []
+posix         blank stdout -> empty-output; anything not matching the ps line
+              shape -> invalid-row
+```
+
+Every unavailable reason is covered independently of transport by the
+seam-injected fail-closed matrix.
+
+### The safety contract, unchanged
+
+`unavailable` still maps to `unknown` / report-only at both entries, and no
+reason value adds a path toward killing anything. `getProcessSnapshot` keeps its
+exported behaviour: the old snapshot for alive and dead, `null` for unavailable.
+
+### The CI contract — the actual point
+
+`T-lock-ident` is split into two blocks that cannot compensate for each other:
+
+```text
+availability block          talks to the real machine
+  alive                     -> strict field validation
+  unavailable / timeout     -> emit CIM_SNAPSHOT_DIAG, do NOT fail
+  any other reason          -> fail
+
+deterministic safety block  seam-injected, always runs
+  unavailable -> unknown / report-only, kill count 0, owner intact
+```
+
+Verified locally that the tolerance is narrow rather than nominal: with the
+result forced, `timeout` is tolerated and produces an eight-probe diagnostic,
+while `spawn-error`, `nonzero-exit`, `empty-output`, `parse-error`, `no-row` and
+`invalid-row` are each rejected.
+
+**Success is not the defect disappearing.** The external tail is still there and
+this repository cannot remove it. Success is that the same tail event no longer
+presents as a deterministic code failure. If `T-lock-ident` reddens on a
+`timeout` after this, the split did not take effect — an implementation defect,
+not an environment one.
+
+### Diagnostic asset
+
+`scripts/diagnostics/memory-lock-cim-snapshot.js` is extracted from PR #11 by
+path, not by cherry-picking its commits, because those commits also carry
+`.github/workflows/memory-lock-cim-diagnostic.yml`, which per design decision D5
+must never reach `main`. The script now runs from the failure site only; there is
+no automatic diagnostic workflow.
+
 ## Where this leaves Phase 2
 
 The question Phase 2 has to answer is not "how do we make PowerShell faster".

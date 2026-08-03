@@ -2261,17 +2261,61 @@ async function runGovernanceTests() {
         {
             const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
 
-            // 自身快照:alive + isNode + commandLine + startedAt(win32 CIM / unix ps)
-            const self = lock.getProcessSnapshot(process.pid);
-            assert.ok(self && self.alive === true, 'self snapshot alive');
-            assert.strictEqual(self.isNode, true, 'self is a node process');
-            assert.ok(typeof self.commandLine === 'string' && self.commandLine.length > 0, 'commandLine captured');
-            assert.ok(self.startedAt && !Number.isNaN(Date.parse(self.startedAt)), 'startedAt is a valid time');
-            assert.ok(Number.isInteger(self.ppid), 'ppid captured');
+            // ── availability block ────────────────────────────────────────
+            // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 5 (E3).
+            //
+            // This block talks to the real machine, so it is the ONLY place that
+            // tolerates anything — and it tolerates exactly one thing: the
+            // external query not answering within its budget. Every other
+            // unavailable reason means the command, the transport or the
+            // contract is wrong, and still fails.
+            //
+            // The tolerance stops here. The deterministic safety block below is
+            // seam-injected, always runs, and never bends.
+            const selfResult = lock.getProcessSnapshotResult(process.pid);
+            let self = null;
+            if (selfResult.state === 'unavailable' && selfResult.reason === 'timeout') {
+                // The external Windows query has a first-invocation latency tail
+                // that sometimes exceeds the 10s budget. That is a runner
+                // availability event, not a defect in this code — but it must be
+                // evidenced, never silently swallowed.
+                try {
+                    const diag = require(path.join(WORKSPACE_ROOT, 'scripts', 'diagnostics', 'memory-lock-cim-snapshot.js'));
+                    diag.emitLine(diag.collect({ label: 'T-lock-ident-timeout' }));
+                } catch (err) {
+                    // Same data boundary as the diagnostic itself: a require or
+                    // spawn failure message can carry paths and arguments, so it
+                    // goes through the production sanitizer before it is logged.
+                    console.log(`CIM_SNAPSHOT_DIAG_ERROR=${JSON.stringify({ message: lock.safeStreamSample(String(err && err.message)) })}`);
+                }
+                console.log(`   ⏭️  external snapshot query timed out (${selfResult.detail.elapsedMs}ms of ${selfResult.detail.timeoutMs}ms) — availability event, evidence above`);
+            } else {
+                assert.strictEqual(selfResult.state, 'alive',
+                    `self snapshot must be alive; only unavailable/timeout is tolerated, got ${selfResult.state}/${selfResult.reason || '-'}`);
+                self = selfResult.snapshot;
+                assert.ok(self && self.alive === true, 'self snapshot alive');
+                assert.strictEqual(self.isNode, true, 'self is a node process');
+                assert.ok(typeof self.commandLine === 'string' && self.commandLine.length > 0, 'commandLine captured');
+                assert.ok(self.startedAt && !Number.isNaN(Date.parse(self.startedAt)), 'startedAt is a valid time');
+                assert.ok(Number.isInteger(self.ppid), 'ppid captured');
 
-            // 自报 startedAt(uptime 推导)与系统实测在容差内一致
-            const drift = Math.abs(Date.parse(lock.selfStartedAt()) - Date.parse(self.startedAt));
-            assert.ok(drift <= 5000, `selfStartedAt drift ${drift}ms exceeds 5s`);
+                // 自报 startedAt(uptime 推导)与系统实测在容差内一致
+                const drift = Math.abs(Date.parse(lock.selfStartedAt()) - Date.parse(self.startedAt));
+                assert.ok(drift <= 5000, `selfStartedAt drift ${drift}ms exceeds 5s`);
+            }
+
+            // ── deterministic safety block ────────────────────────────────
+            // Runs whatever the real machine did. A timed-out query must still
+            // map to unknown / report-only and must never authorise a kill.
+            {
+                const injected = lock.getProcessSnapshotResult(process.pid, {
+                    snapshotFn: () => ({ state: 'unavailable', reason: 'timeout', detail: {} }),
+                });
+                assert.strictEqual(injected.state, 'unavailable', 'a timed-out query is unavailable, deterministically');
+                assert.strictEqual(lock.getProcessSnapshot(process.pid, {
+                    snapshotFn: () => ({ state: 'unavailable', reason: 'timeout', detail: {} }),
+                }), null, 'the compatibility surface still reports null for an unavailable query');
+            }
 
             // 已死 pid → alive:false
             const deadChild = childProcess.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
@@ -2311,6 +2355,513 @@ async function runGovernanceTests() {
             assert.strictEqual(lock.isExpectedMcpProcess(snapOf('node C:/tmp/x/memory.js mcp'), null), false);
         }
         console.log('✅ T-lock-ident passed');
+
+        // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 1 —
+        // getProcessSnapshot folds six distinct events into one null, so a slow
+        // runner and a broken command are indistinguishable to the caller and to
+        // the gate. These cases pin the structured classification.
+        //
+        // Everything is produced through the execFileSyncFn seam, which carries
+        // the NATIVE contract: stdout on success, throw on failure. The
+        // classifier never sees a real PowerShell.
+        console.log('T-snap-classify. Structured snapshot classification — nine outcomes, seam-injected ...');
+        {
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+            const WIN = process.platform === 'win32';
+
+            // Platform-appropriate fixtures. The parse layer differs (JSON on
+            // win32, `ps` text elsewhere), so the same nine classifications are
+            // exercised with the stdout shape this platform actually produces.
+            const validRow = (pid) => (WIN
+                ? JSON.stringify({
+                    Name: 'node.exe', ProcessId: pid, ParentProcessId: 4242,
+                    CommandLine: 'node ./memory.js mcp', StartedAt: '2026-08-02T08:00:00.0000000Z',
+                })
+                : `4242 Sat Aug  2 08:00:00 2026 node ./memory.js mcp`);
+            const rowMissingPid = () => (WIN
+                ? JSON.stringify({ Name: 'node.exe', ParentProcessId: 4242, CommandLine: 'node x', StartedAt: '2026-08-02T08:00:00Z' })
+                : `notanumber Sat Aug  2 08:00:00 2026 node x`);
+            const rowBadStartedAt = (pid) => (WIN
+                ? JSON.stringify({ Name: 'node.exe', ProcessId: pid, ParentProcessId: 4242, CommandLine: 'node x', StartedAt: 'not-a-date' })
+                : `4242 not a real lstart here node x`);
+
+            const throws = (props) => () => { const e = new Error('injected'); Object.assign(e, props); throw e; };
+            const call = (execFileSyncFn, extra = {}) =>
+                lock.getProcessSnapshotResult(process.pid, { execFileSyncFn, pidAliveFn: () => true, ...extra });
+
+            assert.strictEqual(typeof lock.getProcessSnapshotResult, 'function', 'getProcessSnapshotResult is exported');
+
+            // 1. dead — decided before any command runs
+            const dead = lock.getProcessSnapshotResult(999999, {
+                pidAliveFn: () => false,
+                execFileSyncFn: () => { throw new Error('the command must not run once the pid is known absent'); },
+            });
+            assert.strictEqual(dead.state, 'dead', 'an absent pid is dead, and no command is issued');
+            assert.strictEqual(dead.detail, undefined, 'dead carries no detail — detail explains a missing answer');
+
+            // 2. timeout — ETIMEDOUT is the ONLY criterion
+            const t = call(throws({ code: 'ETIMEDOUT', status: null, signal: 'SIGTERM' }));
+            assert.strictEqual(t.state, 'unavailable');
+            assert.strictEqual(t.reason, 'timeout');
+
+            // SIGTERM alone must NOT be promoted to timeout: an external kill
+            // looks identical, and timeout is the one reason the gate forgives.
+            const sig = call(throws({ signal: 'SIGTERM', status: null }));
+            assert.strictEqual(sig.reason, 'nonzero-exit',
+                'SIGTERM without ETIMEDOUT is not a timeout — forgiving it would widen the only gate exemption');
+
+            // 3-4. spawn-error / nonzero-exit
+            assert.strictEqual(call(throws({ code: 'ENOENT' })).reason, 'spawn-error');
+            assert.strictEqual(call(throws({ status: 1 })).reason, 'nonzero-exit');
+
+            // 5-7. empty-output / parse-error / no-row
+            assert.strictEqual(call(() => '').reason, 'empty-output');
+            assert.strictEqual(call(() => '   \n  ').reason, 'empty-output', 'whitespace-only stdout is empty');
+            if (WIN) {
+                assert.strictEqual(call(() => 'not json at all').reason, 'parse-error');
+                assert.strictEqual(call(() => 'null').reason, 'no-row');
+                assert.strictEqual(call(() => '[]').reason, 'no-row');
+            }
+
+            // 8. invalid-row — a row exists but the identity is not trustworthy.
+            // It must never masquerade as alive: identity fields feed the kill
+            // decision, and an invalid field is no evidence, not weak evidence.
+            assert.strictEqual(call(() => rowMissingPid()).reason, 'invalid-row', 'missing/mistyped pid is invalid-row');
+            assert.strictEqual(call(() => rowBadStartedAt(process.pid)).reason, 'invalid-row', 'unparseable StartedAt is invalid-row');
+            if (WIN) {
+                const row = (over) => JSON.stringify({
+                    Name: 'node.exe', ProcessId: process.pid, ParentProcessId: 4242,
+                    CommandLine: 'node x', StartedAt: '2026-08-02T08:00:00Z', ...over,
+                });
+                // A malformed identity row must NEVER reach alive: identity
+                // fields feed the kill decision, so an invalid field is no
+                // evidence rather than weak evidence.
+                for (const [label, stdout] of [
+                    ['different pid', row({ ProcessId: process.pid + 1 })],
+                    ['pid as string', row({ ProcessId: String(process.pid) })],
+                    ['ppid as string', row({ ParentProcessId: '4242' })],
+                    ['negative ppid', row({ ParentProcessId: -1 })],
+                    ['whitespace Name', row({ Name: '   ' })],
+                    ['whitespace CommandLine', row({ CommandLine: '   ' })],
+                    ['null CommandLine', row({ CommandLine: null })],
+                    // A precise ProcessId query returns one object. An array
+                    // with extra rows means the query did not mean what we think.
+                    ['non-empty array', `[${row()},{"unexpected":"extra"}]`],
+                    ['single-element array', `[${row()}]`],
+                ]) {
+                    assert.strictEqual(call(() => stdout).reason, 'invalid-row', `${label} must be invalid-row`);
+                }
+                assert.strictEqual(call(() => '[]').reason, 'no-row', 'an empty array is no-row, not invalid-row');
+            }
+
+            // 9. alive
+            const ok = call(() => validRow(process.pid));
+            assert.strictEqual(ok.state, 'alive', `a complete valid row is alive: ${JSON.stringify(ok)}`);
+            assert.strictEqual(ok.snapshot.alive, true);
+            assert.strictEqual(ok.snapshot.isNode, true);
+            assert.ok(ok.snapshot.commandLine.length > 0);
+            assert.ok(!Number.isNaN(Date.parse(ok.snapshot.startedAt)));
+            assert.ok(Number.isInteger(ok.snapshot.ppid));
+            assert.strictEqual(ok.detail, undefined, 'alive carries no detail');
+
+            // detail is a FIXED key set — one extra key turns a contract into a
+            // suggestion, so the assertion is on the exact set.
+            const EXPECTED_DETAIL_KEYS = ['platform', 'elapsedMs', 'timeoutMs', 'status', 'signal',
+                'errorCode', 'errorMessage', 'stdoutBytes', 'stderrBytes', 'partialStdout'];
+            assert.deepStrictEqual(Object.keys(t.detail).sort(), [...EXPECTED_DETAIL_KEYS].sort(),
+                'detail must carry exactly the ten frozen keys');
+            assert.strictEqual(t.detail.timeoutMs, 10000, 'the production budget is unchanged at 10000ms');
+            assert.strictEqual(t.detail.errorCode, 'ETIMEDOUT');
+            assert.strictEqual(t.detail.signal, 'SIGTERM', 'signal is recorded but never used to infer timeout');
+
+            // legacy snapshotFn adaptation — four frozen rules
+            const legacyAlive = { alive: true, isNode: true, commandLine: 'node x', ppid: 1, ppidAlive: true, startedAt: '2026-08-02T08:00:00Z' };
+            assert.strictEqual(lock.getProcessSnapshotResult(1, { snapshotFn: () => legacyAlive }).state, 'alive');
+            assert.strictEqual(lock.getProcessSnapshotResult(1, { snapshotFn: () => ({ alive: false }) }).state, 'dead');
+            const fromNull = lock.getProcessSnapshotResult(1, { snapshotFn: () => null });
+            assert.strictEqual(fromNull.reason, 'invalid-row', 'a legacy null cannot be classified further than "unusable"');
+            assert.match(String(fromNull.detail.errorMessage), /legacy snapshotFn returned null/);
+            const fromThrow = lock.getProcessSnapshotResult(1, { snapshotFn: () => { throw new Error('boom'); } });
+            assert.strictEqual(fromThrow.reason, 'invalid-row');
+            assert.match(String(fromThrow.detail.errorMessage), /legacy snapshotFn threw/);
+            assert.deepStrictEqual(Object.keys(fromNull.detail).sort(), [...EXPECTED_DETAIL_KEYS].sort(),
+                'the legacy adaptation must not add a source field to detail');
+            const passthrough = lock.getProcessSnapshotResult(1, { snapshotFn: () => ({ state: 'unavailable', reason: 'timeout', detail: {} }) });
+            assert.strictEqual(passthrough.reason, 'timeout', 'a structured legacy return is consumed as-is');
+        }
+        console.log('✅ T-snap-classify passed');
+
+        // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 2 —
+        // partialStdout exists because the partial output of a timed-out query
+        // is the only clue it had started answering. But that stdout can carry
+        // the command line, i.e. paths and arguments, so it has to be cleaned
+        // BEFORE it is truncated: truncating first would cut a secret in half
+        // and let both halves escape the match.
+        console.log('T-snap-detail. Diagnostic payloads are sanitized before truncation ...');
+        {
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+            const SENTINEL = 'secret-sentinel-do-not-leak';
+
+            const carriers = [
+                `OPENAI_API_KEY=${SENTINEL}`,
+                `openai_api_key=${SENTINEL}`,
+                `--token ${SENTINEL}`,
+                `--key ${SENTINEL}`,
+                `--password ${SENTINEL}`,
+                `--secret ${SENTINEL}`,
+                `Authorization: Bearer ${SENTINEL}`,
+                `ghp_${SENTINEL}`,
+                `sk-${SENTINEL}`,
+                `SOME_TOKEN=${SENTINEL}`,
+                `PASSWORD=${SENTINEL}`,
+            ];
+            for (const carrier of carriers) {
+                const cleaned = lock.sanitizeStream(carrier);
+                assert.ok(!cleaned.includes(SENTINEL),
+                    `sanitizer must remove the value from ${JSON.stringify(carrier)} — got ${JSON.stringify(cleaned)}`);
+                assert.ok(cleaned.includes('<redacted>'), `redaction must be visible in ${JSON.stringify(cleaned)}`);
+            }
+            assert.strictEqual(lock.sanitizeStream('plain output with no secrets'), 'plain output with no secrets',
+                'ordinary text is untouched — over-redacting would destroy the diagnostic');
+
+            // Order test — through the PRODUCTION entry only.
+            //
+            // An earlier version called truncateStream(sanitizeStream(x)), which
+            // hardcodes the correct order into the test: safeStreamSample could
+            // be changed to truncate first and the assertion would still pass.
+            // It also put the carrier in the fully elided middle, so neither
+            // order would have shown the sentinel — a false positive twice over.
+            //
+            // This fixture is built so the tail window starts EXACTLY at the
+            // sentinel. Truncate-first therefore leaves a bare sentinel with its
+            // `KEY=` carrier cut away, unmatchable by any later sanitize pass;
+            // sanitize-first replaces the whole assignment before truncation.
+            const key = 'OPENAI_API_KEY=';
+            const suffix = 'z'.repeat(400 - Buffer.byteLength(SENTINEL, 'utf8'));
+            const boundary = `${'x'.repeat(600)}${key}${SENTINEL}${suffix}`;
+            const sample = lock.safeStreamSample(boundary);
+            assert.ok(!sample.includes(SENTINEL),
+                `safeStreamSample must sanitize BEFORE truncating — got ${JSON.stringify(sample)}`);
+
+            // Truncation budget is in UTF-8 BYTES, not UTF-16 code units.
+            const EXPECT_BYTES = 400;
+            for (const [label, unit] of [['han', '汉'], ['emoji', '🙂'], ['mixed', 'a汉🙂']]) {
+                const big = unit.repeat(2000);
+                const out = lock.truncateStream(big);
+                assert.ok(out.length < big.length, `${label}: oversized input must be truncated`);
+                assert.ok(!out.includes('�'), `${label}: truncation must not split a character`);
+                const [head, tail] = out.split(/…\[\d+ bytes omitted\]…/);
+                assert.ok(head !== undefined && tail !== undefined, `${label}: expected an elision marker in ${JSON.stringify(out.slice(0, 80))}`);
+                assert.ok(Buffer.byteLength(head, 'utf8') <= EXPECT_BYTES,
+                    `${label}: head is ${Buffer.byteLength(head, 'utf8')} bytes, budget is ${EXPECT_BYTES}`);
+                assert.ok(Buffer.byteLength(tail, 'utf8') <= EXPECT_BYTES,
+                    `${label}: tail is ${Buffer.byteLength(tail, 'utf8')} bytes, budget is ${EXPECT_BYTES}`);
+            }
+            assert.strictEqual(lock.truncateStream('汉'.repeat(10)), '汉'.repeat(10),
+                'input inside the budget is returned untouched');
+
+            // errorMessage must be sanitized too. A child-process error message
+            // can carry the executable and its arguments, so leaving it raw
+            // would defeat the sanitizer applied to stdout.
+            const msgLeak = lock.getProcessSnapshotResult(process.pid, {
+                pidAliveFn: () => true,
+                execFileSyncFn: () => { const e = new Error(`spawn failed --token ${SENTINEL}`); e.code = 'ENOENT'; throw e; },
+            });
+            assert.strictEqual(msgLeak.reason, 'spawn-error');
+            assert.ok(!String(msgLeak.detail.errorMessage).includes(SENTINEL),
+                `detail.errorMessage leaked the sentinel: ${msgLeak.detail.errorMessage}`);
+            assert.ok(!JSON.stringify(msgLeak.detail).includes(SENTINEL), 'no detail field may carry the sentinel');
+
+            const legacyLeak = lock.getProcessSnapshotResult(1, {
+                snapshotFn: () => { throw new Error(`boom OPENAI_API_KEY=${SENTINEL}`); },
+            });
+            assert.strictEqual(legacyLeak.reason, 'invalid-row');
+            assert.ok(!JSON.stringify(legacyLeak.detail).includes(SENTINEL),
+                `the legacy throw path leaked the sentinel: ${legacyLeak.detail.errorMessage}`);
+
+            // A throwing sanitizer must not fall back to the raw text.
+            const guarded = lock.safeStreamSample(`prefix ${SENTINEL}`, () => { throw new Error('sanitizer blew up'); });
+            assert.ok(!guarded.includes(SENTINEL), 'a failed sanitizer keeps nothing');
+            assert.match(guarded, /^<redacted:\d+ bytes>$/, `expected a byte-count placeholder, got ${guarded}`);
+
+            // End to end through the real classifier.
+            const run = lock.getProcessSnapshotResult(process.pid, {
+                pidAliveFn: () => true,
+                // A carrier form, not a bare sentinel: the sanitizer redacts
+                // recognized carriers, and must NOT redact arbitrary strings —
+                // over-redacting would destroy the diagnostic it exists to keep.
+                execFileSyncFn: () => { const e = new Error('injected'); e.code = 'ETIMEDOUT'; e.stdout = `partial output --token ${SENTINEL} trailing`; throw e; },
+            });
+            assert.strictEqual(run.reason, 'timeout');
+            assert.ok(!String(run.detail.partialStdout).includes(SENTINEL),
+                `detail.partialStdout leaked the sentinel: ${run.detail.partialStdout}`);
+            assert.ok(!JSON.stringify(run.detail).includes(SENTINEL), 'no detail field may carry the sentinel');
+            assert.ok(run.detail.stdoutBytes > 0, 'the byte count still reflects the real payload size');
+        }
+        console.log('✅ T-snap-detail passed');
+
+        // [memory-lock-win-cim-snapshot-reliability] Phase 3A Task 4 —
+        // Every unavailable reason, through BOTH entries. Testing only
+        // diagnoseLockConflict proves the normal coordination flow does not
+        // self-heal; it says nothing about attemptSelfHeal, which is exported
+        // and can be called directly.
+        console.log('T-snap-failclosed. Every unavailable reason stays fail-closed at both entries ...');
+        {
+            const lock = require(path.join(CLI_DIR, 'memory-index-lock.js'));
+            const REASONS = ['timeout', 'spawn-error', 'nonzero-exit', 'empty-output',
+                'parse-error', 'no-row', 'invalid-row'];
+            const detailOf = () => ({
+                platform: process.platform, elapsedMs: 1, timeoutMs: 10000, status: null, signal: null,
+                errorCode: null, errorMessage: null, stdoutBytes: 0, stderrBytes: 0, partialStdout: '',
+            });
+            // The seam returns the structured shape directly, which the frozen
+            // adaptation rules consume as-is. Injecting here is the only way to
+            // manufacture every reason without a real PowerShell.
+            const unavailableSeam = (reason) => ({ snapshotFn: () => ({ state: 'unavailable', reason, detail: detailOf() }) });
+
+            const mkDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'evo-snap-fc-'));
+            const writeOwner = (dir) => {
+                const owner = {
+                    schemaVersion: 1, leaseId: 'lease-fc', pid: 1234, ppid: 1,
+                    processStartedAt: '2026-08-02T00:00:00.000Z',
+                    entrypoint: path.join(WORKSPACE_ROOT, 'memory.js').replace(/\\/g, '/'),
+                    mode: 'mcp', access: 'write',
+                    projectRoot: WORKSPACE_ROOT.replace(/\\/g, '/'), createdAt: '2026-08-02T00:00:00.000Z',
+                };
+                fs.writeFileSync(path.join(dir, 'owner.json'), JSON.stringify(owner), 'utf8');
+                return owner;
+            };
+
+            for (const reason of REASONS) {
+                const dir = mkDir();
+                try {
+                    const owner = writeOwner(dir);
+
+                    // Entry 1 — the coordination flow.
+                    const diag = lock.diagnoseLockConflict(dir, {
+                        projectRoot: WORKSPACE_ROOT, seams: unavailableSeam(reason),
+                    });
+                    assert.strictEqual(diag.verdict, 'unknown', `${reason}: verdict must be unknown, got ${diag.verdict}`);
+                    assert.ok(/绝不自动终止/.test(diag.report.reason), `${reason}: the report must state it never terminates — ${diag.report.reason}`);
+                    assert.ok(diag.report.reason.includes(reason), `${reason}: the reason must reach the diagnostic text — ${diag.report.reason}`);
+                    assert.ok(fs.existsSync(path.join(dir, 'owner.json')), `${reason}: diagnosis must not delete the owner`);
+
+                    // Entry 2 — the exported self-heal, called DIRECTLY with a
+                    // verdict that would otherwise authorise a kill.
+                    const kills = [];
+                    const killFn = (pid, sig) => { kills.push([pid, sig]); };
+                    const orphaned = { verdict: 'orphaned-own-mcp', owner, snapshot: null, observedLeaseId: owner.leaseId };
+                    const heal = lock.attemptSelfHeal(dir, orphaned, {
+                        projectRoot: WORKSPACE_ROOT,
+                        seams: { ...unavailableSeam(reason), killFn },
+                    });
+                    assert.strictEqual(heal.healed, false, `${reason}: direct self-heal must refuse`);
+                    assert.strictEqual(kills.length, 0, `${reason}: no signal may be sent — got ${JSON.stringify(kills)}`);
+                    assert.ok(fs.existsSync(path.join(dir, 'owner.json')), `${reason}: self-heal must not delete the owner`);
+
+                    // The two platforms assert DIFFERENT things and neither may
+                    // claim the other's coverage. On win32 the identity recheck
+                    // actually runs; elsewhere attemptSelfHeal returns at its
+                    // platform gate, so the refusal is real but proves only that
+                    // gate. process.platform is never faked — that would
+                    // manufacture a green assertion for a path never executed.
+                    if (process.platform === 'win32') {
+                        assert.ok(/身份在复核时无法确认/.test(heal.reason),
+                            `${reason}: on win32 the refusal must come from the identity recheck, not a platform gate — ${heal.reason}`);
+                        assert.ok(heal.reason.includes(reason), `${reason}: the refusal must name the reason — ${heal.reason}`);
+                    } else {
+                        assert.ok(/unix 平台孤儿自愈默认关闭/.test(heal.reason),
+                            `${reason}: off win32 the refusal comes from the platform gate — ${heal.reason}`);
+                    }
+                } finally {
+                    fs.rmSync(dir, { recursive: true, force: true });
+                }
+            }
+
+            // Control: the refusal above must not be an artefact of the fixture.
+            // A dead holder still reaches its own distinct verdict.
+            {
+                const dir = mkDir();
+                try {
+                    writeOwner(dir);
+                    const diag = lock.diagnoseLockConflict(dir, {
+                        projectRoot: WORKSPACE_ROOT,
+                        seams: { snapshotFn: () => ({ alive: false, isNode: null, commandLine: null, ppid: null, ppidAlive: null, startedAt: null }) },
+                    });
+                    assert.strictEqual(diag.verdict, 'dead-holder',
+                        'positive control: a dead holder is still classified separately, so "unknown" above means something');
+                } finally {
+                    fs.rmSync(dir, { recursive: true, force: true });
+                }
+            }
+        }
+        console.log('✅ T-snap-failclosed passed');
+
+        // [memory-lock-win-cim-snapshot-reliability] Phase 3A correction —
+        // The production `detail` is only half of the data boundary. The other
+        // half is the retained failure-site diagnostic, which prints error
+        // messages, stdout/stderr samples and — through D1's `CommandLine`
+        // projection — whole process command lines. T-snap-detail proves the
+        // production payload is clean; it proves nothing about the line the
+        // diagnostic actually emits. This test asserts the SERIALIZED text.
+        console.log('T-diag-boundary. Failure-site diagnostic output carries no secrets ...');
+        {
+            const diagPath = path.join(WORKSPACE_ROOT, 'scripts', 'diagnostics', 'memory-lock-cim-snapshot.js');
+            if (!fs.existsSync(diagPath)) {
+                // The diagnostic asset ships with the create-evo-lite repository,
+                // not with a scaffolded project. Absent here means there is no
+                // emitter to bound — the failure-site catch above already covers
+                // the missing-module case.
+                console.log('   ⏭️  diagnostic asset absent in this workspace — repository-only test');
+            } else {
+                const diag = require(diagPath);
+                const SENTINEL = 'secret-sentinel-do-not-leak';
+
+                // One record carrying all four documented leak paths.
+                const carrierErr = new Error(`Authorization: Bearer ${SENTINEL}`);
+                const record = diag.buildRecord({
+                    commandId: 'T_diag_boundary',
+                    hostExecutable: 'powershell.exe',
+                    arguments: ['-NoProfile', '-NonInteractive', '-Command'],
+                    startedAt: '2026-08-03T00:00:00.000Z',
+                    elapsedMs: 1234.5,
+                    timeoutMs: 10000,
+                    status: 0,
+                    signal: null,
+                    error: carrierErr,
+                    stdout: `--token ${SENTINEL}`,
+                    stderr: `OPENAI_API_KEY=${SENTINEL}`,
+                });
+                // The parse-failure message is injected through the parser seam.
+                // Relying on V8's own wording would make the test depend on the
+                // Node version — and V8 quotes only the first ~10 characters of
+                // the input, so a real message could pass by truncation rather
+                // than by redaction, which proves nothing.
+                const verdict = diag.classify({ record, stdout: `PASSWORD=${SENTINEL}` }, {
+                    json: true,
+                    cim: true,
+                    parseFn: () => { throw new Error(`PASSWORD=${SENTINEL}`); },
+                });
+                assert.strictEqual(verdict, diag.CLASS.JSON_PARSE_FAILURE, 'fixture must reach the parse-failure path');
+
+                for (const field of ['errorMessage', 'stdoutSample', 'stderrSample', 'jsonParse']) {
+                    const value = String(record[field]);
+                    assert.ok(!value.includes(SENTINEL), `${field} leaked the sentinel: ${value}`);
+                    assert.ok(value.includes('<redacted>'), `${field} must show the redaction, got ${JSON.stringify(value)}`);
+                }
+                assert.ok(record.stdoutBytes > 0 && record.stderrBytes > 0,
+                    'byte counts must still describe the real payload size');
+
+                const line = diag.serializeReport({
+                    schema: 'memory-lock-cim-snapshot-diagnostic@1',
+                    label: 'T-diag-boundary',
+                    probes: [record],
+                    summary: {},
+                });
+                assert.ok(!line.includes(SENTINEL), `the emitted line leaked the sentinel: ${line}`);
+                assert.ok(line.startsWith('CIM_SNAPSHOT_DIAG='), 'the emitted line keeps its greppable prefix');
+                const parsedLine = JSON.parse(line.slice('CIM_SNAPSHOT_DIAG='.length));
+                assert.strictEqual(parsedLine.probes[0].classification, undefined,
+                    'classify() returns the verdict; the caller attaches it');
+                assert.strictEqual(parsedLine.probes[0].stdoutBytes, record.stdoutBytes,
+                    'the line must stay parsable JSON with its evidence intact');
+
+                // Negative control: serializeReport performs NO redaction of its
+                // own — whole-line sanitizing would eat JSON delimiters. So the
+                // four fields above are genuine carriers, and the clean line is
+                // the sanitizer's doing, not the serializer's.
+                const rawLine = diag.serializeReport({
+                    probes: [{
+                        errorMessage: carrierErr.message,
+                        stdoutSample: `--token ${SENTINEL}`,
+                        stderrSample: `OPENAI_API_KEY=${SENTINEL}`,
+                        jsonParse: `failed: PASSWORD=${SENTINEL}`,
+                    }],
+                });
+                assert.ok(rawLine.includes(SENTINEL),
+                    'negative control failed: the serializer must not be what redacts, or this test proves nothing');
+
+                // UTF-8 byte budget on the diagnostic path, same rule as
+                // production: 400 bytes per end, never a split code point.
+                const bigRecord = diag.buildRecord({
+                    commandId: 'T_diag_bytes',
+                    hostExecutable: 'powershell.exe',
+                    arguments: [],
+                    startedAt: '2026-08-03T00:00:00.000Z',
+                    elapsedMs: 1,
+                    timeoutMs: 10000,
+                    status: 0,
+                    signal: null,
+                    error: null,
+                    stdout: '汉'.repeat(2000),
+                    stderr: '🙂'.repeat(2000),
+                });
+                for (const field of ['stdoutSample', 'stderrSample']) {
+                    const out = String(bigRecord[field]);
+                    assert.ok(!out.includes('�'), `${field}: truncation must not split a character`);
+                    const [head, tail] = out.split(/…\[\d+ bytes omitted\]…/);
+                    assert.ok(head !== undefined && tail !== undefined,
+                        `${field}: expected an elision marker in ${JSON.stringify(out.slice(0, 60))}`);
+                    assert.ok(Buffer.byteLength(head, 'utf8') <= 400,
+                        `${field}: head is ${Buffer.byteLength(head, 'utf8')} bytes, budget is 400`);
+                    assert.ok(Buffer.byteLength(tail, 'utf8') <= 400,
+                        `${field}: tail is ${Buffer.byteLength(tail, 'utf8')} bytes, budget is 400`);
+                }
+                assert.strictEqual(bigRecord.stdoutBytes, Buffer.byteLength('汉'.repeat(2000), 'utf8'),
+                    'the byte count describes the whole stream, not the sample');
+
+                // Timeout classification must not be broader than the frozen
+                // production contract: `timeout` is the ONE unavailable reason
+                // the gate tolerates, so diagnostic evidence may not reach it by
+                // an inference production would not make.
+                const mkRecord = over => diag.buildRecord(Object.assign({
+                    commandId: 'T_diag_class',
+                    hostExecutable: 'powershell.exe',
+                    arguments: [],
+                    startedAt: '2026-08-03T00:00:00.000Z',
+                    elapsedMs: 500,
+                    timeoutMs: 10000,
+                    status: 0,
+                    signal: null,
+                    error: null,
+                    stdout: 'ok',
+                    stderr: '',
+                }, over));
+
+                const etimedout = () => { const e = new Error('spawnSync ETIMEDOUT'); e.code = 'ETIMEDOUT'; return e; };
+
+                const timedOut = mkRecord({ error: etimedout(), status: null, signal: 'SIGTERM', elapsedMs: 10123, stdout: '' });
+                assert.strictEqual(diag.classify({ record: timedOut, stdout: '' }, { cim: true }), diag.CLASS.CIM_QUERY_TIMEOUT,
+                    'ETIMEDOUT is still a timeout');
+                const timedOutPlain = mkRecord({ error: etimedout(), status: null, signal: 'SIGTERM', elapsedMs: 10123, stdout: '' });
+                assert.strictEqual(diag.classify({ record: timedOutPlain, stdout: '' }, {}), diag.CLASS.POWERSHELL_SPAWN_TIMEOUT,
+                    'ETIMEDOUT without CIM is still a host timeout');
+
+                // An external SIGTERM inside the budget is a kill, not a timeout.
+                const killed = mkRecord({ status: null, signal: 'SIGTERM', elapsedMs: 500, stdout: '' });
+                assert.strictEqual(diag.classify({ record: killed, stdout: '' }, { cim: true }), diag.CLASS.POWERSHELL_NONZERO_EXIT,
+                    'SIGTERM without ETIMEDOUT must not be classified as a timeout');
+                assert.strictEqual(killed.boundaryExceeded, false, 'a kill inside the budget did not reach the boundary');
+
+                // Reaching the wall-clock budget without ETIMEDOUT is evidence,
+                // never a verdict.
+                const slow = mkRecord({ elapsedMs: 10123, status: 0, stdout: 'ok' });
+                assert.strictEqual(diag.classify({ record: slow, stdout: 'ok' }, {}), diag.CLASS.OK,
+                    'a slow but successful command is OK, not a timeout');
+                assert.strictEqual(slow.boundaryExceeded, true, 'the boundary crossing is still recorded as evidence');
+
+                // Partial stdout is evidence about a timeout, not a different
+                // terminal state — the label stays the production one.
+                const partial = mkRecord({ error: etimedout(), status: null, signal: 'SIGTERM', elapsedMs: 10123, stdout: 'half a row' });
+                const partialVerdict = diag.classify({ record: partial, stdout: 'half a row' }, { cim: true });
+                assert.strictEqual(partialVerdict, diag.CLASS.CIM_QUERY_TIMEOUT,
+                    'partial stdout must not change the timeout classification');
+                assert.notStrictEqual(partialVerdict, diag.CLASS.POWERSHELL_PARTIAL_STDOUT_TIMEOUT,
+                    'the partial-stdout class is retained vocabulary only, never emitted');
+                assert.strictEqual(partial.partialStdout, true, 'partial stdout is recorded as evidence');
+            }
+        }
+        console.log('✅ T-diag-boundary passed');
 
         console.log('T-lock-orphan-refusal-matrix. Testing four-gate refusal — 11 cases, never killable ...');
         {
