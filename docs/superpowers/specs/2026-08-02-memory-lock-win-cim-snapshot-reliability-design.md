@@ -1,7 +1,7 @@
 # [memory-lock-win-cim-snapshot-reliability] 确定性身份合同与外部查询可用性的分离 — 设计
 
 - 日期:2026-08-02
-- 状态:**设计冻结 — ACCEPTED;生产实现未授权**
+- 状态:**设计冻结 — ACCEPTED;Phase 3A 生产实现 COMPLETE / ACCEPTED / MERGED(main@d48108a)**
 - 本轮采纳:**A1(合同拆分 + CI 语义分离)**;**A2(timeout-only 有界重试)暂缓**
 - 议题来源:active backlog `[0020] [memory-lock-win-cim-snapshot-reliability]`
 - 证据:`docs/validation/memory-lock-win-cim-snapshot-reliability.md`
@@ -493,14 +493,14 @@ E3  真实集成探针在同一个测试内如何分成两个断言块（可用�
 ## 6. 范围声明
 
 ```text
-本文状态:               设计冻结候选，待复审
+设计冻结:               ACCEPTED
 本轮采纳:               A1（合同拆分 + CI 语义分离）
 本轮暂缓:               A2（timeout-only 有界重试）、B、C
-生产实现:               未授权
-Phase 3A 实施计划:       未编写、未授权
-Phase 3B（retry）:      未授权，需单独证据与总预算
+Phase 3A 生产实现:       COMPLETE / ACCEPTED / MERGED
+canonical merge:        main@d48108a（PR #14，main run 30779360735 首跑 5/5）
+A2 / Phase 3B 有界重试:  DEFERRED / NOT AUTHORIZED
 Task 6–8:               未授权
-PR #11:                 保持 Draft，冻结，不合并
+PR #11:                 已关闭，从未合并
 诊断 workflow 去留:      已决 —— D5 方案 3，不进 main
 ```
 

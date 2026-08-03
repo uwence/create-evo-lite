@@ -508,3 +508,47 @@ wrong is that a runner-availability event is indistinguishable, to both the
 caller and the gate, from a deterministic code failure.
 
 Design work is authorized; production changes are not.
+
+*(That was the state when Phase 1 closed. Superseded by the checkpoint below:
+the design was frozen, Phase 3A was authorized, implemented and merged.)*
+
+## Canonical main checkpoint — Phase 3A closed
+
+```text
+merge commit:        d48108a   (PR #14, real merge commit; parents 6920880 + dc016b3)
+main run:            30779360735
+attempt:             1
+result:              5/5 SUCCESS
+Windows / node 24:   alive path
+diagnostic:          CIM_SNAPSHOT_DIAG not emitted
+T-lock-ident block:  approximately 6.04 s
+PR #11:              closed, never merged
+```
+
+`T-lock-ident` completed through the alive path in approximately 6.04 seconds,
+below the unchanged 10-second budget. This is one in-budget sample and does not
+establish a latency trend or distribution shift. That the tail exists is already
+established by the two reproductions that exceeded ten seconds; it does not need
+— and cannot get — reconfirmation from a sample that stayed inside the budget.
+
+What this checkpoint does and does not settle:
+
+- **The natural timeout-success path has still not been observed on CI.** Every
+  real run so far — both PR runs and the main run — took the `alive` path, so
+  the tolerated branch has never been entered by an unforced event.
+- **Forced injection has settled the contract itself.** `timeout` is tolerated
+  and produces evidence; `spawn-error`, `nonzero-exit`, `empty-output`,
+  `parse-error`, `no-row` and `invalid-row` each still fail. Every unavailable
+  reason maps to `unknown` / report-only, kill count 0, owner intact.
+- **The external PowerShell/CIM latency tail is not solved** and cannot be
+  solved from this repository. It is retained as a parked residual.
+- **The in-repository defect is closed**: a latency tail no longer presents as a
+  deterministic release-gate failure.
+
+Phase 3B (bounded retry), raising the timeout, warming PowerShell and replacing
+the transport all remain unauthorized. Should a real `ETIMEDOUT` still redden
+`T-lock-ident` after this, that is an implementation defect in the split, not an
+environment event, and it reopens this issue rather than excusing it.
+
+No further documentation update will be made to record the CI run produced by
+this governance-closure commit; recording it would recurse.
