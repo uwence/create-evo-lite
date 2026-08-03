@@ -370,6 +370,49 @@ memorize(text, options = {})             // options.index 缺省 → getMemoryIn
 > 已核实：`rebuildLocalIndex()` 末行 `return true`，结构化结果属于 `syncIndexMemory()`。
 > **不得**为 marker 判定扩大 `rebuildLocalIndex()` 的公开返回面（M5）。
 
+#### 当前适配器限制 —— 不是语义合同
+
+已核实:`ZvecMemoryIndex.stats()` 经 `_allDocs()` 枚举,而后者是
+`querySync({ topk: MAX_ENUM })`,`MAX_ENUM = 1000`(`memory-index-zvec.js:19,142-146`,
+源码注释亦已写明超过该规模时 `stats` / `list` / `_maxId` 会**少计**)。
+
+这是**当前适配器的实现限制**,不是恢复状态机的语义边界 —— 所以它记录在这里,
+**不写进 spec §7.4 M5.2**。把 `1000` 固化进机制 Spec 会有两个后果:将来实现 pagination
+时还要改机制合同;而且容易被误读成「1000 条以内才是产品支持范围」。
+
+**M5.2 的精确相等仍然是权威。** Spec 侧保持后端无关的合同:无法证明精确计数 →
+recovery incomplete → marker 保留 → 非零退出。
+
+```text
+Current adapter limitation — not a semantic contract:
+
+ZvecMemoryIndex.stats() currently enumerates through
+_allDocs(topk=MAX_ENUM=1000).
+
+M5.2 exact equality remains authoritative.
+
+If an exact validator count cannot be established—including
+syncResult.chunks > 1000 under the current adapter—the recovery
+must fail with EVO_ZVEC_RECOVERY_INCOMPLETE, preserve the marker,
+close/reset all recovery indexes, and exit nonzero.
+
+Prohibited in Task 6:
+- clamp expected count to 1000
+- compare Math.min(syncResult.chunks, 1000)
+- skip count equality
+- downgrade mismatch to warning
+- clear marker after an inexact result
+- modify memory-index-zvec.js
+- add pagination or another counting API
+
+Pagination/exact-count expansion requires separate authorization.
+```
+
+**方向是安全的,但要说清代价**:archive 超过 1000 chunks 时,恢复会 fail-closed 卡住
+—— marker 保留、命令失败、无法切回 zvec。本仓当前 139 条记录,离上限尚远;子仓不一定。
+放宽比较会把这个「卡住」换成「静默地用一个不完整的索引清掉 marker」,那正是本任务
+存在的理由,所以宁可卡住。pagination / 精确计数扩展需要**单独授权**。
+
 #### TDD 步骤（九步，逐步 RED → GREEN）
 
 - [ ] **Step 1 (RED, characterization):** 先固化现状 —— 当前无 marker 概念时，
@@ -417,6 +460,7 @@ memorize(text, options = {})             // options.index 缺省 → getMemoryIn
 | 11 | SAFE recovery 完整成功 | build → close builder → **fresh validator 重开** → M5.2 四条 → close → 清 marker |
 | 11b | builder close 后 fresh reopen 失败 | marker **保留**；命令失败（这是 optimize/close 被吞掉的唯一外部证据） |
 | 11c | fresh validator `stats.count !== syncResult.chunks` | marker 保留；命令失败 |
+| 11d | `syncResult.chunks = 1001`，validator `stats.count/chunks = 1000`（MAX_ENUM 上界，**注入结果**，禁止真造 1001 条数据） | `EVO_ZVEC_RECOVERY_INCOMPLETE`；marker 保留；validator close；shared cache reset；命令失败 |
 | 12 | archive invalid / partial | marker 保留 |
 | 13 | rebuild 中途抛错 | marker 保留 |
 | 14 | marker clear 失败 | reset recovery index；marker 保留；命令失败 |
@@ -442,6 +486,44 @@ memorize(text, options = {})             // options.index 缺省 → getMemoryIn
       这条专门守 M3.1 —— 生产走的正是共享路径
 
 四条突变都要留下书面记录（哪条断言、什么消息），未验证的矩阵不算完成。
+
+#### 真实安全路径集成测试（必须，不得以 mock 替代）
+
+seam 注入能证明**决策**正确，但证明不了 fresh reopen 这件事本身 —— 一个全 mock 的
+验证器可以「重开成功」而真实 collection 根本没落盘。因此必须有一条走**真实
+`@zvec/zvec`** 的端到端用例。
+
+路径必须是 **ASCII 临时目录**；**不得**使用危险路径、**不得**设 `ZVEC_UNICODE_PROBE`、
+**不得**触发任何 native crash 实验。
+
+```text
+ 1. 建最小 raw_memory fixture
+ 2. 写入合法的 recovery-required marker
+ 3. 执行 recovery rebuild
+ 4. builder close
+ 5. fresh validator 真实 reopen
+ 6. stats 精确相等
+ 7. searchText no-match 探针返回数组
+ 8. validator close
+ 9. marker 已被清除
+10. 启动【第二个独立子进程】
+11. 正常 decision 得到 zvec
+12. recall / read 可用
+```
+
+第 10–12 步是这条用例不可替代的部分:只有另一个进程才能证明「持久化完成」。
+
+CI 覆盖要求:
+
+```text
+必须实际执行于  windows-latest / node 22
+                windows-latest / node 24
+Ubuntu 可同时运行
+不得因为是 Windows 就 skip
+依赖确实不可用 → 判为失败，不得把真实恢复成功路径降级为纯 mock
+```
+
+确定性 seam 矩阵仍必须在**全部**平台运行。
 
 #### Commit boundary
 
