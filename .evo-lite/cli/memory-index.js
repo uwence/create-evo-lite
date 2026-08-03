@@ -17,6 +17,9 @@ const { generateSnippet } = require('./memory-index-util');
 // native binding, or the containment decision would happen after the hazard.
 const { zvecPaths } = require('./zvec-collection-path');
 const { classifyCollectionPath } = require('./zvec-path-containment');
+const {
+    readContainmentState, writeContainmentState, clearContainmentState,
+} = require('./zvec-containment-state');
 
 const fs = require('fs');
 const path = require('path');
@@ -227,6 +230,8 @@ function collectDecisionInputs(options = {}) {
         fsOps: options.fsOps,
         paths: null,
         pathError: null,
+        markerDir: null,
+        marker: null,
     };
     if (options.paths) {
         inputs.paths = options.paths;
@@ -239,7 +244,43 @@ function collectDecisionInputs(options = {}) {
             inputs.pathError = err;
         }
     }
+
+    // The marker is READ here, in the input snapshot, so the resolver below can
+    // stay a pure function of its inputs (§7.4 M3.1). Reading it inside the
+    // resolver would make the one function that must be injectable and
+    // deterministic depend on the filesystem.
+    //
+    // It lives beside the db, NOT inside the zvec dir: a recovery rebuild
+    // discards that whole directory, and a debt record that a rebuild deletes
+    // records nothing.
+    inputs.markerDir = options.markerDir !== undefined ? options.markerDir : ambientMarkerDir();
+    inputs.marker = options.marker !== undefined
+        ? options.marker
+        : readContainmentState(inputs.markerDir, { fsOps: options.markerFsOps });
+
+    // A decision asked about an INJECTED path is a hypothetical: "what would you
+    // decide for this string?". Answering it must not mutate anything. Without
+    // this, a test that simulates a contained path would write a real marker
+    // into the ambient project and degrade it for good — the diagnostic would
+    // become the defect.
+    //
+    // Production never injects: sharedEngineDecision() always resolves ambient
+    // paths, so the marker contract is unchanged where it matters. A caller that
+    // genuinely wants to exercise the write passes markerDir explicitly.
+    inputs.markerPersistable = options.markerDir !== undefined
+        || (options.paths === undefined && options.collectionPath === undefined);
     return inputs;
+}
+
+// Where the marker lives: beside the db, NOT inside the zvec directory — a
+// recovery rebuild discards that whole directory, and a debt record a rebuild
+// deletes records nothing.
+function ambientMarkerDir() {
+    try {
+        return path.dirname(getDbPath());
+    } catch (_) {
+        return null;
+    }
 }
 
 // Fail-closed degradation must stay diagnosable. `code` covers environment
@@ -252,19 +293,35 @@ function errorTag(err) {
 
 function decisionKeyOf(inputs) {
     const colPath = inputs.paths ? inputs.paths.collectionPath : '<unresolvable>';
-    return `${inputs.choice} ${colPath} ${inputs.platform}`;
+    // The marker status is part of the key for the same reason the path is: a
+    // cached verdict about a state no longer in play is the direction that must
+    // never happen. resetMemoryIndex() already drops the cache, but recovery is
+    // not the only thing that can change the marker under a long-lived process.
+    const marker = inputs.marker ? inputs.marker.status : 'absent';
+    return `${inputs.choice} ${colPath} ${inputs.platform} ${marker}`;
 }
 
 function resolveEngineDecisionFromInputs(inputs) {
-    const base = { choice: inputs.choice, ZvecIndex: null, paths: inputs.paths, collectionPath: inputs.paths ? inputs.paths.collectionPath : null };
+    const base = {
+        choice: inputs.choice, ZvecIndex: null, paths: inputs.paths,
+        collectionPath: inputs.paths ? inputs.paths.collectionPath : null,
+        markerAction: 'none',
+    };
 
     if (inputs.choice !== 'zvec') {
+        // An explicit sqlite pin is a user decision, not a containment
+        // degradation, so it must not mint a trust debt (§7.4 M8). An existing
+        // marker still stands — pinning away and back is not a way to clear it.
         return { ...base, impl: 'sqlite', degraded: false, containment: null, reason: 'engine-choice' };
     }
     if (!inputs.paths) {
         // Cannot even name the path, so it cannot be classified. Fail closed.
+        // markerAction stays 'ensure-present' so the write layer converts an
+        // unrecordable debt into a coded failure rather than a quiet success
+        // (§7.4 M6.1).
         return {
             ...base, impl: 'sqlite', degraded: true, reason: 'containment',
+            markerAction: 'ensure-present',
             containment: {
                 verdict: 'UNKNOWN', layer: 'path',
                 reason: `path:collection-path-unresolvable:${errorTag(inputs.pathError)}`,
@@ -294,7 +351,29 @@ function resolveEngineDecisionFromInputs(inputs) {
     }
     if (containment.verdict !== 'SAFE') {
         // loadZvecIndex is deliberately NOT called on this branch.
-        return { ...base, impl: 'sqlite', degraded: true, containment, reason: 'containment' };
+        return {
+            ...base, impl: 'sqlite', degraded: true, containment, reason: 'containment',
+            markerAction: 'ensure-present',
+        };
+    }
+
+    // SAFE, but the debt may still be outstanding. A path that stopped being
+    // dangerous says nothing about the collection lying on it, so the marker —
+    // and only an explicit rebuild — decides when Zvec becomes available again
+    // (§7.3, §7.4 M3). loadZvecIndex is NOT called here either: there is no
+    // reason to load a binding this process has already decided not to use.
+    const markerStatus = inputs.marker ? inputs.marker.status : 'absent';
+    if (markerStatus !== 'absent') {
+        return {
+            ...base, impl: 'sqlite', degraded: true, containment,
+            reason: 'containment-recovery-pending',
+            recovery: {
+                required: true,
+                markerStatus,
+                markerPath: inputs.marker ? inputs.marker.markerPath : null,
+                reason: 'marker-not-cleared',
+            },
+        };
     }
 
     const ZvecIndex = inputs.loadZvecIndex();
@@ -308,8 +387,48 @@ function resolveEngineDecisionFromInputs(inputs) {
     };
 }
 
+// THE effect boundary (§7.4 M3.1).
+//
+// The resolver above is pure and only says what SHOULD be true of the marker.
+// This is the one place that makes it true. Both public entries route through
+// here, which is the whole point: sharedEngineDecision() calls the pure resolver
+// directly, so hanging the write on resolveEngineDecision() alone would let the
+// production path degrade without ever recording the debt — and the next time
+// the path looked SAFE, the untrusted collection would simply be reopened.
+//
+// Ordering is load-bearing: a decision is neither returned nor cached until the
+// marker is confirmed on disk. Caching first would leave a "successfully
+// degraded" verdict in memory that no file backs.
+function persistEngineDecision(inputs, provisional, seams = {}) {
+    if (!provisional || provisional.markerAction !== 'ensure-present') return provisional;
+    if (!inputs.markerPersistable) {
+        // Hypothetical decision about an injected path — see collectDecisionInputs.
+        // Recorded rather than silent, so "no marker was written" is observable.
+        provisional.markerPersisted = false;
+        provisional.markerSkipped = 'injected-path';
+        return provisional;
+    }
+    const write = seams.writeContainmentState || writeContainmentState;
+    // Throws coded EVO_ZVEC_CONTAINMENT_STATE_WRITE — including when the marker
+    // location itself is unresolvable (§7.4 M6.1). Deliberately NOT caught:
+    // returning a working sqlite instance here would be a silent fail-open.
+    const result = write(inputs.markerDir, {
+        collectionPath: provisional.collectionPath,
+        containment: provisional.containment,
+    }, { fsOps: seams.markerFsOps });
+    provisional.markerPersisted = true;
+    provisional.markerAlreadyPresent = !!(result && result.alreadyPresent);
+    provisional.markerPath = result && result.markerPath;
+    return provisional;
+}
+
 function resolveEngineDecision(options = {}) {
-    return resolveEngineDecisionFromInputs(collectDecisionInputs(options));
+    const inputs = collectDecisionInputs(options);
+    const provisional = resolveEngineDecisionFromInputs(inputs);
+    return persistEngineDecision(inputs, provisional, {
+        writeContainmentState: options.writeContainmentState,
+        markerFsOps: options.markerFsOps,
+    });
 }
 
 let active = null;
@@ -330,7 +449,11 @@ function sharedEngineDecision() {
     const inputs = collectDecisionInputs();
     const key = decisionKeyOf(inputs);
     if (!decision || decisionKey !== key) {
-        decision = resolveEngineDecisionFromInputs(inputs);
+        // persistEngineDecision BEFORE assigning: if the marker cannot be
+        // written this throws, and neither `decision` nor `decisionKey` is
+        // touched. A cached decision always has a marker behind it.
+        const persisted = persistEngineDecision(inputs, resolveEngineDecisionFromInputs(inputs));
+        decision = persisted;
         decisionKey = key;
     }
     return decision;
@@ -340,6 +463,64 @@ function sharedEngineDecision() {
 // Diagnostics (Task 7) consume this rather than recomputing.
 function peekEngineDecision() {
     return decision;
+}
+
+// The one-shot recovery decision (§7.4 M0/M4).
+//
+// While the marker is present the normal decision MUST yield sqlite — that is
+// what the marker is for — so recovery cannot use it. The other tempting route,
+// clearing the marker first and then rebuilding, is worse: a crash mid-rebuild
+// would leave a half-built collection that the next process happily opens.
+//
+// So recovery gets its own decision, used by exactly one caller, with the marker
+// still on disk the entire time. It is never cached and never reachable from
+// getMemoryIndex(). There is deliberately no "force" or "skipMarker" flag: a
+// boolean that bypasses the marker is the marker's only real failure mode.
+function resolveRecoveryRebuildDecision(options = {}) {
+    const inputs = collectDecisionInputs(options);
+    const normal = resolveEngineDecisionFromInputs(inputs);
+
+    if (inputs.choice !== 'zvec') {
+        return { eligible: false, reason: 'engine-choice', decision: null, markerDir: inputs.markerDir };
+    }
+    if (normal.reason !== 'containment-recovery-pending') {
+        // Covers "no debt to repay" (plain zvec) and "the path is still
+        // dangerous" (containment) alike: neither is a recovery.
+        return { eligible: false, reason: normal.reason, decision: null, markerDir: inputs.markerDir };
+    }
+    if (!normal.containment || normal.containment.verdict !== 'SAFE') {
+        return { eligible: false, reason: 'not-safe', decision: null, markerDir: inputs.markerDir };
+    }
+    const markerStatus = inputs.marker ? inputs.marker.status : 'absent';
+    if (markerStatus !== 'present' && markerStatus !== 'invalid') {
+        // 'unreadable' lands here on purpose. We can prove neither that the
+        // marker survives a failed rebuild nor that it could be cleared
+        // afterwards, so nothing destructive may start (§7.4 M2).
+        return { eligible: false, reason: `marker-${markerStatus}`, decision: null, markerDir: inputs.markerDir };
+    }
+
+    // Dependency is confirmed HERE — before the caller discards anything.
+    const ZvecIndex = inputs.loadZvecIndex();
+    if (!ZvecIndex) {
+        return { eligible: false, reason: 'dependency-unavailable', decision: null, markerDir: inputs.markerDir };
+    }
+    return {
+        eligible: true,
+        reason: 'recovery',
+        markerDir: inputs.markerDir,
+        markerStatus,
+        decision: {
+            choice: inputs.choice,
+            impl: 'zvec',
+            degraded: false,
+            ZvecIndex,
+            paths: inputs.paths,
+            collectionPath: inputs.paths ? inputs.paths.collectionPath : null,
+            containment: normal.containment,
+            reason: 'recovery-rebuild',
+            markerAction: 'none',
+        },
+    };
 }
 
 function instantiateFromDecision(d) {
@@ -360,6 +541,11 @@ function instantiateFromDecision(d) {
             // claims an existing collection was read, repaired or removed, and
             // nothing claims a recovery mechanism exists yet — it does not.
             console.warn(`⚠️ memory engine "zvec" is contained on this path (${d.containment && d.containment.reason}) — using SqliteFtsIndex instead. The existing collection, if any, was neither opened nor modified.`);
+        } else if (d.reason === 'containment-recovery-pending') {
+            // Deliberately worded as unfinished recovery, not as a fresh
+            // containment: the path is fine now, the collection is what is not
+            // trusted. Nothing here claims the old collection was inspected.
+            console.warn(`⚠️ this path is no longer contained, but a containment trust marker is still present (${d.recovery && d.recovery.markerStatus}) — staying on SqliteFtsIndex. Run \`mem rebuild\` to rebuild the Zvec collection from raw_memory; the existing collection is neither opened nor trusted.`);
         }
     }
     return new SqliteFtsIndex();
@@ -424,4 +610,8 @@ module.exports = {
     SqliteFtsIndex, getMemoryIndex, resetMemoryIndex, peekMemoryIndex,
     resolveEngine, resolveActiveImpl, selectEngine, DEFAULT_ENGINE_CHOICE,
     resolveEngineDecision, peekEngineDecision, instantiateFromDecision,
+    // [zvec-win-unicode-containment] Task 6
+    collectDecisionInputs, resolveEngineDecisionFromInputs, persistEngineDecision,
+    resolveRecoveryRebuildDecision,
+    readContainmentState, writeContainmentState, clearContainmentState,
 };

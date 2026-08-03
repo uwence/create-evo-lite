@@ -174,6 +174,11 @@ function writeContainmentState(dir, payload = {}, seams = {}) {
     }
 
     try {
+        // The marker lives beside the db, in our own runtime directory — which
+        // may not exist yet on a project that degrades before its first init.
+        // Creating it is plain Node fs on an ordinary directory; it is not the
+        // native path that crashes, so this is safe even on a contained path.
+        if (ops.mkdirSync) ops.mkdirSync(dir, { recursive: true });
         // 'wx' — create, fail if it exists. No stat-then-write, no retry.
         ops.writeFileSync(markerPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
         return { written: true, alreadyPresent: false, markerPath };
