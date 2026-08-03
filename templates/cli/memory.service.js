@@ -29,7 +29,10 @@ const {
     getTemplateRootDir,
     getWorkspaceRoot,
 } = require('./runtime');
-const { getMemoryIndex, resolveActiveImpl, resolveEngine, resetMemoryIndex } = require('./memory-index');
+const {
+    getMemoryIndex, resolveActiveImpl, resolveEngine, resetMemoryIndex,
+    resolveRecoveryRebuildDecision, clearContainmentState,
+} = require('./memory-index');
 
 const ACTIVE_CONTEXT_PATH = getActiveContextPath();
 const DB_PATH = getDbPath();
@@ -1702,6 +1705,159 @@ function formatEngineDegradationWarning(engineImpl) {
     ].join('\n');
 }
 
+const ERR_RECOVERY_INCOMPLETE = 'EVO_ZVEC_RECOVERY_INCOMPLETE';
+
+function recoveryFailure(reason, detail) {
+    const err = new Error(`Zvec 恢复未完成 (${reason})：containment marker 保留，引擎继续留在 SQLite。${detail ? ' ' + detail : ''}`);
+    err.code = ERR_RECOVERY_INCOMPLETE;
+    err.reason = reason;
+    return err;
+}
+
+/**
+ * [zvec-win-unicode-containment] Task 6 phase R — the ONLY path that clears the
+ * containment marker (spec §7.3.1, §7.4 M5).
+ *
+ * The publication order is the entire safety argument. Zvec persists on close:
+ * _finalizeSync() runs optimizeSync() when dirty and then closeSync(), and both
+ * of those swallow their errors. So anything measured on the builder proves only
+ * that THIS process can read what it just wrote — not that the next process can
+ * open it. The marker therefore survives until a SEPARATE index has reopened the
+ * collection from disk and answered a real query.
+ *
+ *   build → close builder → fresh validator reopen → verify → close → clear
+ *
+ * Clearing earlier — even one step earlier, right after the builder's own stats
+ * look right — would hand the next process a collection that optimize may have
+ * failed to finish, with nothing left on disk to say so.
+ */
+async function runContainmentRecoveryRebuild(recovery, files) {
+    const { decision, markerDir } = recovery;
+    const zvecDir = decision.paths.rootPath;
+
+    console.log('🔁 检测到 containment 恢复标记，且当前路径已判定为 SAFE。');
+    console.log('   将从 raw_memory 重建一个【全新】Zvec collection；旧 collection 直接丢弃，不打开、不读取、不修复。');
+
+    // Release whatever the degraded run left open before touching the directory.
+    try { getMemoryIndex().close(); } catch (_) {}
+    resetMemoryIndex();
+
+    // The discard. Permitted here and ONLY here (§7.3.1): during containment the
+    // same directory is untouchable. Discarding is not "opening, repairing or
+    // reusing" — nothing reads a byte of it, which is why it stays outside the
+    // untested boundary in spec §3.
+    if (fs.existsSync(zvecDir)) {
+        fs.rmSync(zvecDir, { recursive: true, force: true });
+        console.log('📦 旧 Zvec collection 已丢弃（未读取其内容）。');
+    }
+
+    // Full rebuild: drop the per-archive markers so every archive is re-ingested
+    // rather than skipped as already-indexed.
+    ensureDir(getIndexMemoryDir());
+    for (const file of files) {
+        const markerPath = path.join(getIndexMemoryDir(), file);
+        if (fs.existsSync(markerPath)) fs.unlinkSync(markerPath);
+    }
+
+    let builder = null;
+    let validator = null;
+    let syncResult = null;
+    try {
+        builder = new decision.ZvecIndex({ paths: decision.paths });
+        syncResult = await syncIndexMemory({ index: builder });
+
+        if (syncResult.invalid.length > 0) {
+            throw recoveryFailure('archive-invalid', `${syncResult.invalid.length} 个档案无法解析。`);
+        }
+        if (syncResult.skipped.length > 0) {
+            throw recoveryFailure('archive-skipped', `${syncResult.skipped.length} 个档案被跳过，全量重建不应跳过任何档案。`);
+        }
+        if (syncResult.files !== files.length) {
+            throw recoveryFailure('archive-count-mismatch', `期望 ${files.length} 个档案，实际重建 ${syncResult.files} 个。`);
+        }
+    } catch (err) {
+        try { if (builder) builder.close(); } catch (_) {}
+        resetMemoryIndex();
+        throw err.code === ERR_RECOVERY_INCOMPLETE ? err
+            : recoveryFailure('rebuild-threw', String(err && err.message));
+    }
+
+    // Close the builder FIRST — this is where optimize/finalize happens.
+    try {
+        builder.close();
+    } catch (err) {
+        resetMemoryIndex();
+        throw recoveryFailure('builder-close-failed', String(err && err.message));
+    }
+
+    // A brand-new index over the same judged paths: the external check on the
+    // two swallowed errors above.
+    try {
+        validator = new decision.ZvecIndex({ paths: decision.paths });
+        // spec M5.2 writes this as `engine === 'zvec'`; the adapter actually
+        // reports 'zvec-jieba-fts', so the check is the prefix. The intent is
+        // what matters: prove the thing that reopened is a Zvec index and not a
+        // SQLite fallback that would count rows quite happily.
+        if (typeof validator.engine !== 'string' || !validator.engine.startsWith('zvec')) {
+            throw recoveryFailure('validator-not-zvec', `验证器引擎为 ${validator.engine}。`);
+        }
+        const stats = validator.stats();
+        if (!stats || stats.count !== syncResult.chunks || stats.chunks !== syncResult.chunks) {
+            // Exact equality, deliberately. The adapter enumerates through
+            // topk=MAX_ENUM, so a collection past that bound reports short and
+            // lands here — recovery jams rather than clearing the marker over an
+            // index it cannot count. Widening this to a clamp or a minimum is
+            // prohibited; expanding the count needs its own authorization.
+            throw recoveryFailure('validator-count-mismatch',
+                `期望 ${syncResult.chunks} 个碎片，重开后读到 ${stats ? stats.count : 'null'}/${stats ? stats.chunks : 'null'}。`);
+        }
+        // stats() folds a failed query into an empty array, so a zero-archive
+        // recovery would otherwise "verify" against a dead query path. searchText
+        // is the real native query; the probe deliberately matches nothing.
+        const probe = validator.searchText('__evo_lite_recovery_read_probe_no_match__', { topK: 1, scope: 'all' });
+        if (!Array.isArray(probe)) {
+            throw recoveryFailure('validator-query-failed', '重开后的查询接口未返回结果集。');
+        }
+    } catch (err) {
+        try { if (validator) validator.close(); } catch (_) {}
+        resetMemoryIndex();
+        throw err.code === ERR_RECOVERY_INCOMPLETE ? err
+            : recoveryFailure('validator-reopen-failed', String(err && err.message));
+    }
+
+    try {
+        validator.close();
+    } catch (err) {
+        resetMemoryIndex();
+        throw recoveryFailure('validator-close-failed', String(err && err.message));
+    }
+
+    // Only now. The collection has been written, finalized, reopened by a
+    // different index, counted exactly and queried.
+    try {
+        clearContainmentState(markerDir);
+    } catch (err) {
+        // The new collection may stay on disk — it is verified and harmless.
+        // What must not happen is calling this a success: the marker is still
+        // there, so the next process still refuses Zvec, and that refusal has to
+        // be visible as a failed command rather than a silent inconsistency.
+        resetMemoryIndex();
+        throw recoveryFailure('marker-clear-failed', String(err && err.message));
+    }
+    resetMemoryIndex();
+
+    console.log(`✅ 恢复完成！共重建 ${syncResult.files} 个档案 / ${syncResult.chunks} 个语义碎片。`);
+    console.log('📋 Recovery Summary:');
+    console.log(`- source_archives: ${files.length}`);
+    console.log(`- rebuilt_archives: ${syncResult.files}`);
+    console.log(`- rebuilt_chunks: ${syncResult.chunks}`);
+    console.log('- fresh_reopen_verified: true');
+    console.log('- containment_marker: cleared');
+    console.log('💡 下一次命令才会重新选择 Zvec —— 本进程不切换引擎。');
+    appendLog('REBUILD_RECOVERY', `Recovered zvec from ${syncResult.files} files / ${syncResult.chunks} chunks; marker cleared.`);
+    return true;
+}
+
 async function rebuildLocalIndex() {
     const rawDir = getRawMemoryDir();
     if (!fs.existsSync(rawDir)) {
@@ -1718,6 +1874,21 @@ async function rebuildLocalIndex() {
     console.log('\n🧠 本地记忆索引重建管线 (Local Rebuild Pipeline) 🧠');
     console.log(`此操作将会从 ${files.length} 个原始记忆档案重建本地 FTS 索引。`);
 
+    // [zvec-win-unicode-containment] Task 6, phase R (spec §7.3.1).
+    //
+    // This is the ONLY thing that repays the containment debt, and it only ever
+    // runs because a human typed `mem rebuild`. Everything else — a path that
+    // quietly became SAFE again, a re-pin to zvec, a new process — leaves the
+    // marker exactly where it is.
+    const recovery = resolveRecoveryRebuildDecision();
+    if (recovery.eligible) {
+        return await runContainmentRecoveryRebuild(recovery, files);
+    }
+
+    // Phase U and every ordinary rebuild fall through here. Under containment
+    // the active impl is sqlite, so the branch below rebuilds SQLite only and
+    // never reaches the zvec discard — the old collection is not opened, not
+    // deleted, not repaired, and the marker survives untouched.
     const activeEngine = resolveActiveImpl();
     if (activeEngine.degraded) {
         console.log(formatEngineDegradationWarning(activeEngine));
@@ -2589,6 +2760,14 @@ module.exports = {
     readSessionEvents,
     recordSessionEvent,
     rebuildLocalIndex,
+    // [zvec-win-unicode-containment] Task 6 — exported so the failure modes can
+    // be asserted deterministically. rebuildLocalIndex() resolves the recovery
+    // decision itself (no injection point), and the cases that matter most are
+    // the ones a real run cannot stage: a fresh reopen that fails, a validator
+    // that counts short, the MAX_ENUM bound. Production still reaches this only
+    // through rebuildLocalIndex().
+    runContainmentRecoveryRebuild,
+    ERR_RECOVERY_INCOMPLETE,
     splitTrajectoryEntries,
     summarizeActiveContext,
     summarizeArchiveHealth,
