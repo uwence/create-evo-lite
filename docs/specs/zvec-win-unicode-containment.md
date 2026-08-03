@@ -362,8 +362,36 @@ decision**（M4）。
 - `createdAt` / `collectionPath` / `containment.layer` / `containment.reason` 为非空字符串；
 - `containment.verdict` 只接受 `UNKNOWN`，或未来一旦启用的 `UNSAFE`；
 - **首次成功写入后不得被后续判定覆盖** —— 保留最初的证据；
-- 原子写入：同目录临时文件 + `rename`；
+- **排他创建**（见 M1.1），不是 `tmp + rename`；
 - 不修改 `.gitignore`。
+
+#### M1.1 写入用排他创建，不用 `tmp + rename`
+
+第 4 版初稿同时要求「首次写入后不得覆盖」与「同目录临时文件 + `rename`」。这两条
+**不相容**：在多个平台上 `rename` 到已存在目标会**替换**目标。两个并发进程若都先观察到
+`absent`，后发布者会覆盖第一份 marker，与「首次证据保真」直接冲突 —— 而先 `stat` 再
+`rename` 只是把竞态窗口挪个位置，消不掉它。
+
+冻结为排他创建：
+
+```text
+以 wx / O_EXCL 打开 marker 路径
+EEXIST → { written: false, alreadyPresent: true }，绝不覆盖、绝不重试
+```
+
+**为什么不需要 `rename` 的原子性**：若进程在写入中途终止，残缺 JSON 会被下一次读取
+按 M2 分类为 `invalid`，而 `invalid` 与 `present` 一样 fail-closed —— 半个 marker
+和一个完整 marker 对正常路径的效果完全相同。因此这里优先保证的是**不覆盖**，
+而不是「要么全有要么全无」。
+
+T8 必须有并发负控（第 21 格）：
+
+```text
+两个 writer 同时首次写入
+  → 恰好一个 written=true
+  → 另一个 alreadyPresent=true
+  → 最终盘上内容等于第一个成功 writer 的内容
+```
 
 ### M2 marker 读取状态与损坏方向（fail-closed）
 
@@ -434,6 +462,39 @@ marker status !== 'absent'
 
 必须保证 `loadZvecIndex` 调用 = 0、Zvec 实例化 = 0、collection 打开 = 0。
 
+#### M3.1 纯 resolver 与副作用边界（承重）
+
+第 4 版初稿一边要求 `resolveEngineDecisionFromInputs()` **保持纯函数**，一边要求它在
+非 SAFE 时**写 marker**。同一个函数不可能两者兼得。
+
+更关键的是已核实的这条：`sharedEngineDecision()` **直接**调用
+`resolveEngineDecisionFromInputs(inputs)` 并缓存结果（`memory-index.js:329-337`）。因此
+若只给 `resolveEngineDecision()` 挂上写入逻辑，**生产共享路径会整条绕过 marker 写入** ——
+降级发生了，trust debt 却没被记录，下次路径变 SAFE 就直接重开旧 collection。
+
+冻结 effect boundary：
+
+```js
+resolveEngineDecisionFromInputs(inputs)
+  // 纯：无 FS 写入
+  -> provisional decision + markerAction: 'none' | 'ensure-present'
+
+persistEngineDecision(inputs, provisional, seams)
+  // 副作用：唯一写 marker 的地方
+  -> final decision
+  // ensure-present 失败 → throw（见 M6）
+```
+
+**两条入口都必须经过 `persistEngineDecision()`**：
+
+```text
+resolveEngineDecision()
+sharedEngineDecision()
+```
+
+且顺序固定：**只有 marker 确认存在之后，decision 才允许被返回或写入 shared cache**。
+先缓存再写盘，等于在写失败时把一个「已成功降级」的判断留在内存里。
+
 没有这个独立 reason，Task 7 的 `verify` 就无法区分「当前路径仍危险」与「路径已安全、
 只差一次 rebuild」—— 两者给用户的指引完全不同。
 
@@ -477,9 +538,69 @@ ingestArchiveFile(..., { index: recoveryIndex })
 > `getMemoryIndex().upsert(...)`。因此 Task 6 需要在 `memory.service.js` 内为这三个函数
 > 增加可选 `index` 参数，默认行为不变。
 
-### M5 恢复成功标准
+### M5 恢复成功标准与发布顺序
 
-仅凭 archive 计数不足 —— 还必须证明实际建立的确实是 Zvec。清除 marker 的全部条件：
+仅凭 archive 计数不足 —— 还必须证明实际建立的确实是 Zvec，**而且下一个进程能重新
+打开它**。
+
+#### M5.1 发布顺序（承重：清 marker 必须在 fresh reopen 之后）
+
+已核实：Zvec 的持久化关键动作发生在 `close()` —— `_finalizeSync()` 在 `_dirty` 时执行
+`optimizeSync()` 再 `closeSync()`，而**这两个调用的异常目前都被 `catch (_) {}` 吞掉**
+（`memory-index-zvec.js:104-126`）。因此在 close **之前**做的任何 stats / 读回，只能证明
+「当前进程内的 collection 可读」，**不能**证明下一个进程能重新打开并读到完整索引 ——
+optimize 或 close 失败时,builder 进程内的读取仍然会成功。
+
+冻结顺序：
+
+```text
+build recovery index（写入全部 chunk）
+  → close builder —— 触发 optimize / finalize
+  → 用【同一个 recovery decision.paths】新建一个 fresh validator index
+  → 重新打开 collection
+  → 对 fresh validator 执行 M5.2 的精确持久化验证
+  → close validator
+  → 【此时才】清除 marker
+  → reset
+```
+
+任一步失败：
+
+```text
+marker 保留
+命令以非零码失败
+正常 decision 继续阻止 Zvec
+```
+
+这**不要求**修改 `memory-index-zvec.js`：fresh reopen 本身就是对那两个被吞掉的
+finalize / close 错误的**外部**验证。
+
+#### M5.2 fresh validator 的精确验证
+
+已核实：`_allDocs()` 在 `querySync` 抛错时 `catch (_) { return []; }`，而 `stats()` 与
+`list()` 都建立在它之上。因此单看 `stats()` 或 `list()`，在空 archive 场景中
+**无法区分**「真正的空 collection」与「查询失败被折叠成 `[]`」。
+
+fresh validator 必须逐条断言（已核实 `stats()` 返回
+`{chunks, count, namespaces, first, last}`，两个键都存在）：
+
+```js
+validator.engine === 'zvec'
+
+const stats = validator.stats();
+stats.count  === syncResult.chunks
+stats.chunks === syncResult.chunks
+
+// searchText() 走真实 native query path，即使 archive 数为零，
+// 也能证明 fresh reopen 之后查询接口确实可用。
+const probe = validator.searchText(
+    '__evo_lite_recovery_read_probe_no_match__',
+    { topK: 1, scope: 'all' }
+);
+Array.isArray(probe)
+```
+
+#### M5.3 清除 marker 的全部条件
 
 ```text
  1. choice === 'zvec'
@@ -491,8 +612,8 @@ ingestArchiveFile(..., { index: recoveryIndex })
  7. sourceArchives === syncResult.files
  8. syncResult.invalid.length === 0
  9. syncResult.skipped.length === 0
-10. recovery index 的 engine === 'zvec'
-11. recovery index 的 stats / 读回校验成功
+10. builder 已 close（触发 optimize / finalize）
+11. fresh validator 重新打开成功，且 M5.2 四条断言全部成立
 ```
 
 全部成立才清 marker。
@@ -529,6 +650,27 @@ marker 清除失败
   → marker 仍然阻止正常 Zvec
   → 本次 rebuild 判定为不成功
 ```
+
+#### M6.1 collection path 无法解析时的合同
+
+现有 decision 已经支持 `paths === null`，返回
+`path:collection-path-unresolvable` 的 containment degradation；而 M1 的 schema 要求
+`collectionPath` 是非空字符串。这两者原本没有接口。
+
+冻结：
+
+```text
+collection path / marker 目录无法可靠解析
+  → 【不得】声称成功降级
+  → throw EVO_ZVEC_CONTAINMENT_STATE_WRITE
+  → detail.reason = 'collection-path-unresolvable'
+  → 不返回 SQLite 实例
+```
+
+理由与 M6 主条一致:**无法记录 trust debt 的位置时,允许本次「成功」就等于把未来的
+自动恢复交给一个没有任何记录的状态** —— 那正是 fail-open 的另一种形状。
+
+T8 第 20 格覆盖这条。
 
 错误码：
 
@@ -874,7 +1016,9 @@ spec 不能等实现完成才收编 —— 那期间 Portfolio 对这条 release
 ```
 Phase D 设计复审通过
   → adopt Spec（--independent）
-  → 提交证据、Spec、详细计划、IR plan
+  → 提交证据、Spec、详细计划
+     （第 4 版更正：不再另建 IR plan —— plan scan 本就扫描
+      docs/superpowers/plans/，另建一份只会造成同 id 重复登记）
   → context track / Meta-Commit
   → 【再单独授权生产实现】
   → 执行 Task 1–8
