@@ -14073,29 +14073,36 @@ async function runChildRuntimeTests() {
                 EVO_LITE_MEMORY_ENGINE: 'zvec',
             }, args);
 
-            // @zvec/zvec is an optionalDependency with no Linux prebuild, so it
-            // installs on the Windows runners and is genuinely absent on the
-            // Ubuntu ones. Windows is also where the defect this whole issue is
-            // about actually happens, so that is where the real path MUST run:
-            // a missing dependency there is a failure, never a skip, because
-            // substituting a mock would defeat the only test that proves the
-            // reopen. Elsewhere it skips out loud rather than reporting a
-            // contract failure for an environment fact.
-            // Wiring control first, on a MANDATORY dependency. Without it, a
-            // broken cwd/NODE_PATH looks identical to "the optional dependency
-            // is absent" — which is exactly how the previous head passed
-            // locally and failed on Windows CI. This separates "the child
-            // cannot resolve anything" from "@zvec/zvec is not installed".
+            // MODULE_NOT_FOUND is not evidence of platform unavailability until
+            // the mandatory wiring probe below has passed. The current
+            // release-gate matrix resolves @zvec/zvec on BOTH Windows and Ubuntu
+            // and executes this real recovery path on every job.
+            //
+            // Because @zvec/zvec is still an optionalDependency, a genuinely
+            // unavailable non-win32 platform may skip — but only for the
+            // narrowly recognized errors below. On win32 absence stays a hard
+            // failure: the Windows recovery path is mandatory for this contract,
+            // and substituting a mock would defeat the only test that proves the
+            // reopen.
+            //
+            // Wiring control first, on a MANDATORY dependency. A broken
+            // cwd/NODE_PATH previously produced MODULE_NOT_FOUND on both
+            // platform families: on Ubuntu that symptom was misread as genuine
+            // dependency absence and skipped, while on Windows it surfaced as a
+            // hard failure. The probe separates "the child cannot resolve
+            // anything" from "@zvec/zvec is not installed", so a wiring defect
+            // can never again pass itself off as an environment fact.
             const probeWiring = child(['-e', 'try { require("commander"); console.log("WIRING_OK"); } catch (e) { console.log("WIRING_BROKEN:" + (e.code || "ERR")); }']);
             assert.ok(probeWiring.stdout.includes('WIRING_OK'),
                 `the containment child cannot resolve the repository's own dependencies — cwd/NODE_PATH wiring is broken, not the optional dependency: ${probeWiring.stdout.trim()} ${probeWiring.stderr.trim()}`);
 
             const probeDep = child(['-e', 'try { require("@zvec/zvec"); console.log("HAVE_ZVEC"); } catch (e) { console.log("NO_ZVEC:" + (e.code || "ERR") + ":" + e.message); }']);
             const haveZvec = probeDep.stdout.includes('HAVE_ZVEC');
-            // The skip is narrow on purpose. Only a dependency that is genuinely
-            // absent — MODULE_NOT_FOUND, or a native binding with no prebuild for
-            // this platform — may skip, and only off win32. Any other error is a
-            // real failure: a broken fixture must not disguise itself as an
+            // The skip is narrow on purpose, and is a contingency rather than an
+            // expectation: every job in the current matrix loads the dependency
+            // and takes the real path. Only a recognizably unavailable
+            // dependency may skip, and only off win32. Any other error is a real
+            // failure — a broken fixture must not disguise itself as an
             // environment fact.
             const unavailable = /NO_ZVEC:(MODULE_NOT_FOUND|ERR_DLOPEN_FAILED)/.test(probeDep.stdout)
                 || /Cannot find module|no prebuild|prebuilt binary|was compiled against a different/i.test(probeDep.stdout);
