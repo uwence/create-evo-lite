@@ -3,22 +3,31 @@ id: plan:zvec-win-unicode-containment
 title: "Plan: Zvec Windows 非 ASCII 路径 containment"
 linkedSpec: spec:zvec-win-unicode-containment
 format: superpowers
-status: draft
+status: active
 ---
 
 # Zvec Windows Unicode Containment Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> ⛔ **本计划未获实施授权。** Phase D 只交付设计与计划；执行前必须先通过
-> spec §14 的实施授权门（含用户显式授权）。第 3 版，经三轮独立复审修订。
+> **阶段状态**（第 4 版）
+>
+> ```text
+> Tasks 1–5（AC1–AC4）  COMPLETE / ACCEPTED / MERGED
+> Task 6（AC5）          机制与计划补完已授权（仅文档）；生产实施未授权
+> Tasks 7–8（AC6/AC7）   未授权
+> Task 9（收口）          未授权
+> ```
+>
+> 逐任务授权，不再有全局横幅。执行任何**未授权**任务之前，必须先通过 spec §14 /
+> §14.1 的授权门（含用户显式授权）。
 
 ## 前置条件（执行 Task 1 之前必须已成立）
 
 ```
-[ ] spec:zvec-win-unicode-containment 已 adopted（--independent）
-[ ] 证据、Spec、详细计划、IR plan 已提交并完成 context track / Meta-Commit
-[ ] 生产实现已获【单独】授权
+[x] spec:zvec-win-unicode-containment 已 adopted（--independent）
+[x] 证据、Spec、详细计划、IR plan 已提交并完成 context track / Meta-Commit
+[x] 生产实现已获【单独】授权 —— 对 Tasks 1–5 成立；Task 6 需要单独的实施授权
 ```
 
 **adopt 不属于本计划**。它发生在 Phase D 治理闭环阶段、实施授权**之前**
@@ -41,33 +50,40 @@ GitHub Actions、`sync-runtime` 模板镜像。
 **运行时证据:** `docs/validation/zvec-win-unicode-path-matrix.md`
 **可复现 fixture:** `docs/validation/fixtures/zvec-win-unicode/`（默认拒绝执行）
 
-## Portfolio 落位决定（IR plan 已就位，adopt 在实施前的治理闭环执行）
+## Portfolio 落位决定（第 4 版重写：本文件是唯一 plan）
 
-已核实：`plan scan` 只扫描 `docs/specs/` 与 `docs/plans/`，**不扫 `docs/superpowers/plans/`**；
-spec 状态派生为 `linkedPlans.length === 0 → adopted`，否则 `active`
-（`spec-portfolio.js:213-219`）。
+> **第 3 版的承重错误**：那一版写「`plan scan` **不扫** `docs/superpowers/plans/`」，
+> 并据此新建了一份轻量 IR plan。实测 `plan-ir.json.sources` **两棵树都在**，本文件本身
+> 就已被扫描。于是两份文件携带同一个 `id: plan:zvec-win-unicode-containment`，IR 中
+> 出现**两条同 id 的 plan 记录**，派生的 `task:...-t1..t9` 同样重复 —— 之后的状态、
+> linkedFiles、progress 与 plan 选择都会依赖**扫描顺序**。
 
-因此若只保留本文件，adopt 后 spec 会被判为 **`adopted`（无计划）**，并在超过 agingDays 后
-触发 `aging-no-plan` —— 正是刚被 park 的 `provider-first` 那类警告。
-
-**决定**：
+**决定：删除轻量 IR plan，本文件是唯一 plan。**
 
 ```
 docs/specs/zvec-win-unicode-containment.md      ← mem spec adopt 归一化产出（--independent）
-docs/plans/zvec-win-unicode-containment.md      ← 新建，IR 可识别，带 linkedSpec + ### Task 结构
-docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分解
+docs/superpowers/plans/2026-07-31-...(本文件)    ← 唯一 plan，直接被 plan scan 识别
+docs/plans/zvec-win-unicode-containment.md      ← 已删除（重复登记）
 预期 Portfolio 状态：active（非 adopted）
 ```
 
-本文件 frontmatter 已带 `linkedSpec`，迁移/建立 IR plan 时直接沿用。
+既然扫描器已经读取本文件，IR 副本不提供任何额外能力；而给它另一个 id 会制造**两个
+独立生命周期**，治理负担反而更大。
+
+`spec` 状态派生为 `linkedPlans.length === 0 → adopted`，否则 `active`
+（`spec-portfolio.js:213-219`）；本文件 frontmatter 带 `linkedSpec`，因此 spec 仍为
+`active` 而非 `adopted`，不会触发 `aging-no-plan`。
 
 ## Global Constraints
 
 - **不得**实现危险字符黑名单；初始实现**不产生** `UNSAFE`（spec §5.2）。
 - **不得** `try/catch` 包裹 `insertSync`（spec F3）。
 - **不得**按长度判定（长度维度并未全域排除，spec F5）。
-- **不得**改变非 `win32` 平台行为（spec I9）。
+- **不得**改变非 `win32` 平台行为 —— **marker 不存在时**（spec I9，第 4 版收紧）。
+  marker 是 trust debt，跨平台继续有效（spec §7.4 M7）。
 - **不得**自动搬迁用户数据；**不得**路径转 SAFE 后自动复用旧 collection（spec §7.3）。
+  「不得删除旧 collection」**限定于 unsafe 阶段**；显式 recovery rebuild 的 discard
+  不属于「打开/修复/复用」（spec §7.3.1）。
 - **不得**在本轮修改 hive nurture（spec §8.4）。
 - `.evo-lite/cli/*` 与 `templates/cli/*` 必须**逐文件保持逻辑对齐**；新增受管 CLI 文件
   **必须登记进 `template-manifest.js` 的 `core-cli` family `files` 数组**（当前 107 项，
@@ -92,6 +108,8 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 | **`package.json` 无 `prepublishOnly`**（scripts 仅 `start`/`test`/`test:governance`） | `package.json` |
 | `core-cli` family 为显式 `files` 清单（107 项），含 `memory-ab.js`、`test/governance.js`、`memory.service.js` | `template-manifest.js` |
 | 实施前 `memory-index.js` / `memory-index-zvec.js` 的 live 与 template SHA256 一致 | 实测 |
+| **计划解析器只把 `- [x] **Step ...` 计为步骤**：`allSteps` / `doneSteps` 两个过滤器都要求字面 `**Step` 前缀，`status` 仅在 `allSteps.length > 0 && doneSteps.length === allSteps.length` 时才是 `implemented`。**普通 `- [x]` 勾选永远不会推进 task status**，R012 会一直报 0/N | `planning/parse-markdown.js:168-174` |
+| `plan scan` **确实**扫描 `docs/superpowers/plans/`（见上文第 4 版更正） | 实测 `plan-ir.json.sources` |
 
 ## File Structure
 
@@ -139,12 +157,12 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 - Test: `.evo-lite/cli/test/governance.js`
 - Sync: `templates/cli/test/governance.js`
 
-- [ ] 固化 `resolveActiveImpl` 现有行为：`choice=zvec`+可用 → `impl=zvec, degraded=false`；
+- [x] **Step 1:** 固化 `resolveActiveImpl` 现有行为：`choice=zvec`+可用 → `impl=zvec, degraded=false`；
       不可用 → `impl=sqlite, degraded=true`；`choice=sqlite` → `degraded=false`
-- [ ] **固化双路径事实**：断言 `getMemoryIndex()` 与 `resolveActiveImpl()` 各自触发一次
+- [x] **Step 2:** **固化双路径事实**：断言 `getMemoryIndex()` 与 `resolveActiveImpl()` 各自触发一次
       `loadZvecIndex`（用注入 seam 计数）——这条 characterization 是 Task 4 的 RED 前置
-- [ ] 用既有 `loadZvecIndex` 注入 seam 模拟不可用，不触碰模块系统
-- [ ] 确认全部在**当前 main** 上绿
+- [x] **Step 3:** 用既有 `loadZvecIndex` 注入 seam 模拟不可用，不触碰模块系统
+- [x] **Step 4:** 确认全部在**当前 main** 上绿
 
 **验收**：新增测试通过；生产文件零 diff。
 
@@ -158,14 +176,14 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 - Test: `.evo-lite/cli/test/governance.js`
 - Sync: `templates/cli/test/governance.js`
 
-- [ ] 新建 `zvec-path-containment.js`，导出 `classifyLexical(collectionPath, platform)`
+- [x] **Step 1:** 新建 `zvec-path-containment.js`，导出 `classifyLexical(collectionPath, platform)`
       → `'LEXICALLY_ELIGIBLE' | 'UNKNOWN'` + reason
-- [ ] `platform !== 'win32'` → 直接 eligible（spec I9）
-- [ ] 实现 spec §5.1 Layer 1 全部条件：本地盘符绝对路径、ASCII 字符集、
+- [x] **Step 2:** `platform !== 'win32'` → 直接 eligible（spec I9）
+- [x] **Step 3:** 实现 spec §5.1 Layer 1 全部条件：本地盘符绝对路径、ASCII 字符集、
       拒 `\\?\` / UNC / `\\.\` / `\??\`、拒保留设备名、拒尾随空格或点、
       拒 ADS、要求已规范化
-- [ ] **禁止** `require('@zvec/zvec')`、**禁止**任何 FS 访问（spec I4/I5）
-- [ ] T1 纯度测试：以模块加载计数 + FS 桩断言零访问
+- [x] **Step 4:** **禁止** `require('@zvec/zvec')`、**禁止**任何 FS 访问（spec I4/I5）
+- [x] **Step 5:** T1 纯度测试：以模块加载计数 + FS 桩断言零访问
 
 **验收**：T1 绿；模块不引入新依赖。
 
@@ -177,15 +195,15 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 - Test: `.evo-lite/cli/test/governance.js`
 - Sync: `templates/cli/test/governance.js`
 
-- [ ] 同模块导出 `evaluateProfile(collectionPath, fsOps)` → `'IN_PROFILE' | 'UNKNOWN'` + reason
-- [ ] 只读探查：祖先链无 reparse point（junction/symlink）；`realpath` 结果仍满足 Layer 1；
+- [x] **Step 1:** 同模块导出 `evaluateProfile(collectionPath, fsOps)` → `'IN_PROFILE' | 'UNKNOWN'` + reason
+- [x] **Step 2:** 只读探查：祖先链无 reparse point（junction/symlink）；`realpath` 结果仍满足 Layer 1；
       检出 8.3 短名别名即判 `UNKNOWN`
-- [ ] **探查失败（权限/IO/不支持）→ `UNKNOWN`**，不得当作通过（spec §5.1）
-- [ ] **禁止写盘**、禁止加载 zvec（spec I6）
-- [ ] 导出合成判定 `classifyCollectionPath()` → `SAFE` 仅当两层均通过
-- [ ] T2 只读性测试；T5 fail-closed 矩阵（UNC / `\\?\` / reparse / 尾随点 / 保留名 / 未知非 ASCII）
-- [ ] T3：崩溃 corpus 全部 `verdict !== 'SAFE'`（读 fixture corpus，**不执行 native**）
-- [ ] T4：supported profile 对照路径 → `SAFE`（防过度拦截）
+- [x] **Step 3:** **探查失败（权限/IO/不支持）→ `UNKNOWN`**，不得当作通过（spec §5.1）
+- [x] **Step 4:** **禁止写盘**、禁止加载 zvec（spec I6）
+- [x] **Step 5:** 导出合成判定 `classifyCollectionPath()` → `SAFE` 仅当两层均通过
+- [x] **Step 6:** T2 只读性测试；T5 fail-closed 矩阵（UNC / `\\?\` / reparse / 尾随点 / 保留名 / 未知非 ASCII）
+- [x] **Step 7:** T3：崩溃 corpus 全部 `verdict !== 'SAFE'`（读 fixture corpus，**不执行 native**）
+- [x] **Step 8:** T4：supported profile 对照路径 → `SAFE`（防过度拦截）
 
 **验收**：T1–T5 绿。
 
@@ -205,17 +223,17 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 - Test: `.evo-lite/cli/test/governance.js`
 - Sync: `templates/cli/test/governance.js`
 
-- [ ] 提取 `zvec-collection-path.js`：不依赖 zvec 地计算 collection 路径
+- [x] **Step 1:** 提取 `zvec-collection-path.js`：不依赖 zvec 地计算 collection 路径
       （**不得**从 `memory-index.js` 调用未导出的 `zvecRoot()`）
-- [ ] 新增 `resolveEngineDecision()`：读 choice → 算路径 → win32 上判定 →
+- [x] **Step 2:** 新增 `resolveEngineDecision()`：读 choice → 算路径 → win32 上判定 →
       非 `SAFE` 直接返回 sqlite decision（**且不调用 `loadZvecIndex()`**）→
       仅 `SAFE ∧ choice==='zvec'` 才允许调用
-- [ ] `resolveActiveImpl()` 与 `getMemoryIndex()`/`selectEngine()` **改为消费同一 decision**
-- [ ] **T6 零加载断言**：非 `SAFE` 路径下 `loadZvecIndex` 调用次数 = 0
+- [x] **Step 3:** `resolveActiveImpl()` 与 `getMemoryIndex()`/`selectEngine()` **改为消费同一 decision**
+- [x] **Step 4:** **T6 零加载断言**：非 `SAFE` 路径下 `loadZvecIndex` 调用次数 = 0
       （Task 1 的双路径 characterization 此时应从「各调用一次」翻转为「零次」）
-- [ ] 非 `SAFE` 时不创建 zvec 目录、不打开已有 collection
-- [ ] T9 平台隔离：非 win32 行为逐位不变
-- [ ] `templates/cli/` 同步；两个新文件登记进 `template-manifest.js`；`sync-runtime --check` in-sync
+- [x] **Step 5:** 非 `SAFE` 时不创建 zvec 目录、不打开已有 collection
+- [x] **Step 6:** T9 平台隔离：非 win32 行为逐位不变
+- [x] **Step 7:** `templates/cli/` 同步；两个新文件登记进 `template-manifest.js`；`sync-runtime --check` in-sync
 
 **验收**：T6/T9 绿；Task 1 中**非 containment 场景**的 characterization 仍全绿。
 
@@ -235,29 +253,212 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 - Test: `.evo-lite/cli/test/governance.js`
 - Sync: `templates/cli/test/governance.js`
 
-- [ ] `memory-ab`：非 `SAFE` → **拒绝执行并输出 containment 诊断**；
+- [x] **Step 1:** `memory-ab`：非 `SAFE` → **拒绝执行并输出 containment 诊断**；
       **不得**自动降级为 sqlite-vs-sqlite（那会把对比实验静默变成自比）
-- [ ] 走查并留证：`recall` / `remember` / `archive` / `track` / `sync` / `rebuild` / MCP
+- [x] **Step 2:** 走查并留证：`recall` / `remember` / `archive` / `track` / `sync` / `rebuild` / MCP
       是否全部消费同一 decision，不得假定它们都经由 `getMemoryIndex()`
-- [ ] `memory-index-lock.js:333` **静态、非 native 代码审查**（不跑崩溃实验），逐条书面结论：
+- [x] **Step 3:** `memory-index-lock.js:333` **静态、非 native 代码审查**（不跑崩溃实验），逐条书面结论：
       ①它是否只在已捕获的 Zvec error 之后执行；
       ②`UNKNOWN` 路径在此之前是否根本不会进入会产生 Zvec error 的调用；
       ③能否用**依赖注入**获得 `isZVecError` 从而彻底移除运行时裸 require（可行则优先采用）；
       ④若保留，须证明「加载 binding 本身」在支持矩阵内不访问 collection path
-- [ ] 全仓复查：不存在其他直接 `require('@zvec/zvec')` 或 `new ZvecMemoryIndex()` 的生产路径
-- [ ] T7 入口覆盖测试
+- [x] **Step 4:** 全仓复查：不存在其他直接 `require('@zvec/zvec')` 或 `new ZvecMemoryIndex()` 的生产路径
+- [x] **Step 5:** T7 入口覆盖测试
 
 **验收**：T7 绿；入口清单与 spec §6.3 一致。
 
 ### Task 6: 降级恢复状态机（AC5）
 
-- [ ] 首次 containment 降级 → 写入**非 Zvec** 的持久 degradation/trust marker
-- [ ] 路径转 `SAFE` 后**仍保持 sqlite**，提示执行 `mem rebuild`（不自动切回）
-- [ ] `mem rebuild`：从 `raw_memory` 重建**全新** collection → 验证成功 → 清除 marker
-- [ ] unsafe 期间 `rebuild` **只重建 SQLite**；不打开/不删除/不修复旧 collection
-- [ ] T8 状态机测试（含 marker 未清除时不得切回 zvec）
+> **授权状态**：机制与计划补完**已授权**（仅文档）；**生产实施未授权**。
+> 合同：spec §7.3 + §7.3.1 + §7.4 M0–M8。本任务不得偏离这些冻结项；
+> 若实施现场发现冻结项本身有误，**停止并上报**，不得在编码中静默改判。
 
-**验收**：T8 绿；`raw_memory` 全程未被触碰。
+**Files:**
+- Create: `.evo-lite/cli/zvec-containment-state.js`
+- Create: `templates/cli/zvec-containment-state.js`
+- Modify: `.evo-lite/cli/memory-index.js`
+- Sync: `templates/cli/memory-index.js`
+- Modify: `.evo-lite/cli/memory.service.js`
+- Sync: `templates/cli/memory.service.js`
+- Modify: `.evo-lite/cli/template-manifest.js`
+- Sync: `templates/cli/template-manifest.js`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
+
+**当前没有证据要求修改**（擅自扩大范围即为越界）：
+
+```text
+memory.js              verify 输出属于 Task 7
+memory-index-zvec.js   Task 5 已收口，recovery 走 index seam 注入
+.gitignore             marker 落在既有 .evo-lite/* 之下，不得新增 unignore 规则
+package.json           发布门属于 Task 8
+.github/**             证据 job 属于 Task 8
+```
+
+#### 承重前提（M0）：恢复不能使用正常 decision
+
+marker 存在时正常 decision 必须给出 sqlite —— 这正是 marker 的意义。于是：
+
+```text
+正常 decision + marker      → 仍是 sqlite → 根本建不出新 collection
+先清 marker → 再 rebuild    → 中途失败后，下次启动可能打开半成品 collection
+```
+
+两条都是错的。必须走 **one-shot recovery decision**，且 marker 全程留在盘上。
+
+#### Interfaces（签名冻结）
+
+新模块 `zvec-containment-state.js`：
+
+```js
+// 读：绝不抛错，把失败编码进 status（spec §7.4 M2）
+readContainmentState(dir, seams = {})
+  -> { status: 'absent' | 'present' | 'invalid' | 'unreadable',
+       markerPath: string,
+       state: object | null,     // status === 'present' 时才非空
+       errorCode: string | null } // EVO_ZVEC_CONTAINMENT_STATE_READ 系列
+
+// 写：【排他创建】(wx / O_EXCL)，首次写入即定稿，EEXIST → alreadyPresent，
+// 绝不覆盖、绝不重试（spec §7.4 M1.1）。不使用 tmp + rename —— rename 会替换目标。
+writeContainmentState(dir, { collectionPath, containment }, seams = {})
+  -> { written: boolean, alreadyPresent: boolean, markerPath: string }
+  throws EVO_ZVEC_CONTAINMENT_STATE_WRITE
+  // dir / collectionPath 不可靠解析 → 同样 throw，detail.reason =
+  // 'collection-path-unresolvable'（M6.1），不得降级为「成功」
+
+// 清：仅由 recovery 成功路径调用（M5 十一条全成立之后）
+clearContainmentState(dir, seams = {})
+  -> { cleared: boolean }
+  throws EVO_ZVEC_CONTAINMENT_STATE_CLEAR
+
+// 纯校验，供读路径与测试共用
+validateContainmentState(value) -> { valid: boolean, reason: string | null }
+```
+
+`memory-index.js` 新增：
+
+```js
+// 纯：marker 读取发生在 collectDecisionInputs()；本函数不做任何 FS 写入。
+// 新增 reason 'containment-recovery-pending'（M3）与 recovery 字段
+// {required, markerStatus, markerPath, reason}。
+resolveEngineDecisionFromInputs(inputs)
+  -> provisional decision + markerAction: 'none' | 'ensure-present'
+
+// 副作用边界（M3.1）：唯一写 marker 的地方。
+// 【必须】是 resolveEngineDecision() 与 sharedEngineDecision() 的共同出口 ——
+// 已核实 sharedEngineDecision() 直接调纯 resolver 并缓存（memory-index.js:329-337），
+// 只给 resolveEngineDecision() 挂写入会让生产共享路径整条绕过 marker。
+persistEngineDecision(inputs, provisional, seams = {}) -> final decision
+  // ensure-present 失败 → throw；decision 不得返回、不得进 shared cache
+
+// one-shot（M4）：不进 shared cache，不被 getMemoryIndex() 使用
+resolveRecoveryRebuildDecision(options = {}) -> decision | { eligible: false, reason }
+```
+
+`memory.service.js` 新增可选 index seam（**已核实目前不存在**）：
+
+```js
+syncIndexMemory(options = {})            // options.index 缺省 → getMemoryIndex()
+ingestArchiveFile(filePath, type, sourceId, timestamp, options = {})  // 透传 options.index
+memorize(text, options = {})             // options.index 缺省 → getMemoryIndex()
+```
+
+> 已核实：`syncIndexMemory()` 当前**无参数**；`ingestArchiveFile()` 只透传
+> `allowSecrets` / `namespace` / `silent` / `commitHash`；`memorize()` 直接调用
+> `getMemoryIndex().upsert(...)`。三处都要加可选参数，**默认行为不得改变**。
+
+> 已核实：`rebuildLocalIndex()` 末行 `return true`，结构化结果属于 `syncIndexMemory()`。
+> **不得**为 marker 判定扩大 `rebuildLocalIndex()` 的公开返回面（M5）。
+
+#### TDD 步骤（九步，逐步 RED → GREEN）
+
+- [ ] **Step 1 (RED, characterization):** 先固化现状 —— 当前无 marker 概念时，
+      `SAFE` 路径直接进 zvec；`rebuildLocalIndex()` 在 `impl === 'sqlite'` 时走 sqlite 分支、
+      `fs.rmSync(zvecDir)` 调用次数为 0。这两条是后续所有断言的基线，必须先在
+      **未改动的 main** 上绿
+- [ ] **Step 2:** 实现 `zvec-containment-state.js` 的读 / 校验 / **排他创建写** / 清除，
+      四类 status 与四个错误码齐全；`dir` 或 `collectionPath` 不可解析 → 按 M6.1 抛错；
+      登记进 `template-manifest.js` 的 `core-cli` family `files` 数组
+      （否则 `sync-runtime` 不镜像它）
+- [ ] **Step 3:** `collectDecisionInputs()` 读取 marker；
+      `resolveEngineDecisionFromInputs()` **保持纯函数**，只产出 provisional decision +
+      `markerAction`：非 SAFE → `'ensure-present'` + `reason='containment'`；
+      SAFE + marker → `'none'` + `reason='containment-recovery-pending'`。
+      两条分支的 `loadZvecIndex` 调用次数断言均为 **0**
+- [ ] **Step 4:** `persistEngineDecision()`（M3.1）—— 唯一写 marker 的地方。
+      断言 `resolveEngineDecision()` 与 `sharedEngineDecision()` **两条入口都经过它**，
+      且 marker 写入失败时 decision **既不返回也不进 shared cache**
+      （直接给 shared 路径注入写失败，验证它不会缓存出一个「已成功降级」的判断）
+- [ ] **Step 5:** `resolveRecoveryRebuildDecision()`；断言它不进 shared cache、
+      不被 `getMemoryIndex()` 使用、不接受任何布尔 bypass 参数
+- [ ] **Step 6:** `memory.service.js` 的三处 index seam；默认路径行为零变化的回归断言
+- [ ] **Step 7:** `rebuildLocalIndex()` 接入两阶段语义（spec §7.3.1）：
+      阶段 U 只重建 SQLite 且 marker 保留；阶段 R 按 **M5.1 发布顺序**
+      （build → close builder → fresh validator 重开 → M5.2 四条断言 → close validator
+      → 清 marker → reset），失败按 M6 退出
+- [ ] **Step 8:** 并发与 fail-closed 边界：双 writer 首次写入（第 21 格）、
+      path-unresolvable（第 20 格）
+- [ ] **Step 9:** T8 全状态矩阵 + 两个突变负控（见下），live 与 template 双份
+
+#### T8 状态矩阵（必须全部固定）
+
+| # | 场景 | 预期 |
+|---|---|---|
+| 1 | zvec + non-SAFE + marker absent | 写 marker；sqlite；`loadZvecIndex`=0 |
+| 2 | 同一 non-SAFE 再次运行 | **不覆盖**首次 marker（证据保真） |
+| 3 | SAFE + valid marker | `containment-recovery-pending`；sqlite；load=0 |
+| 4 | SAFE + invalid marker | 同上（损坏不等于 absent） |
+| 5 | SAFE + unreadable marker | recovery-pending；rebuild **拒绝触碰** zvec |
+| 6 | sqlite pin + marker absent | 不创建 marker |
+| 7 | sqlite pin + marker present | marker 保留；sqlite rebuild 不清它 |
+| 8 | 再 pin 回 zvec + SAFE | **不得**绕过 marker |
+| 9 | unsafe rebuild | 只重建 SQLite；旧 zvec 零触碰（`rmSync`=0，load=0） |
+| 10 | SAFE recovery + dependency absent | 在删除旧目录**之前**失败；marker 保留 |
+| 11 | SAFE recovery 完整成功 | build → close builder → **fresh validator 重开** → M5.2 四条 → close → 清 marker |
+| 11b | builder close 后 fresh reopen 失败 | marker **保留**；命令失败（这是 optimize/close 被吞掉的唯一外部证据） |
+| 11c | fresh validator `stats.count !== syncResult.chunks` | marker 保留；命令失败 |
+| 12 | archive invalid / partial | marker 保留 |
+| 13 | rebuild 中途抛错 | marker 保留 |
+| 14 | marker clear 失败 | reset recovery index；marker 保留；命令失败 |
+| 15 | marker write 失败 | **不得**返回「成功降级」的 SQLite 实例 |
+| 16 | marker 存在时普通 `getMemoryIndex()` | 永远拿不到 zvec |
+| 17 | one-shot recovery decision | 只能被 rebuild 使用，不污染 shared cache |
+| 18 | 非 win32 + marker absent | 原行为不变 |
+| 19 | 非 win32 + marker present | 仍需显式恢复（M7） |
+| 20 | collection path / marker 目录不可解析 | `EVO_ZVEC_CONTAINMENT_STATE_WRITE`，`reason='collection-path-unresolvable'`；**不返回 SQLite 实例**（M6.1） |
+| 21 | 两个 writer 并发首次写入 | 恰好一个 `written=true`，另一个 `alreadyPresent=true`；盘上内容 = 第一个成功者（M1.1） |
+
+#### 突变负控（证明矩阵不是空转）
+
+- [ ] **Step 10 (mutation A):** 让 `SAFE + marker` 允许调用 `loadZvecIndex` → T8 **必须**变红
+- [ ] **Step 11 (mutation B):** 把清 marker 提前到 rebuild 之前 → 「中途失败后 marker 仍在」的断言
+      **必须**变红
+- [ ] **Step 12 (mutation C):** 把清 marker 提前到 **fresh validator 重开之前**（即只用 builder
+      进程内的 stats 就判定成功）→ 第 11b 格**必须**变红。
+      这条专门守 M5.1：optimize / close 的异常被吞掉，builder 进程内读得到**不等于**
+      下一个进程打得开
+- [ ] **Step 13 (mutation D):** 只给 `resolveEngineDecision()` 加 marker 写入、让
+      `sharedEngineDecision()` 继续直调纯 resolver → 共享路径的 marker 断言**必须**变红。
+      这条专门守 M3.1 —— 生产走的正是共享路径
+
+四条突变都要留下书面记录（哪条断言、什么消息），未验证的矩阵不算完成。
+
+#### Commit boundary
+
+```text
+最多 5 个提交，一个任务阶段一个：
+  1. feat: add zvec containment state marker         （Step 2）
+  2. feat: gate engine decision on recovery marker    （Step 3–5）
+  3. refactor: thread an index seam through sync      （Step 6）
+  4. feat: recover zvec through explicit rebuild      （Step 7）
+  5. test: freeze the containment recovery matrix     （Step 1、8、9 与四条突变）
+禁止 amend / force push；Ready 与 merge 需另行授权。
+```
+
+**验收**：T8 二十一格（含 11b / 11c）全绿 + 四条突变负控各自验证过；
+`raw_memory` **仅被只读消费** —— 文件内容、mtime 与目录结构均不得修改
+（「不得触碰」与「从 raw_memory 重建」字面冲突，此处取前者的真实含义）；
+`sync-runtime --check` in-sync；live 与 template SHA256 逐对一致。
 
 ### Task 7: verify 诊断与恢复指引（AC6）
 
@@ -330,8 +531,9 @@ docs/superpowers/plans/2026-07-31-...(本文件)    ← 保留为详细任务分
 > **adopt 不在此处**。它已按 spec §13 前移到 Phase D 治理闭环、实施授权之前；
 > 本任务的前提是 spec **早已 adopted**。
 
-- [x] 建立 `docs/plans/zvec-win-unicode-containment.md`（IR 可识别，带 `linkedSpec`）
-      —— 已于 Phase D 复审阶段单独授权并完成，不占实施授权
+- [x] ~~建立 `docs/plans/zvec-win-unicode-containment.md`~~ —— **已作废并删除**。
+      它建立在「`plan scan` 不扫 `docs/superpowers/plans/`」这个错误前提上，实际造成
+      同 id 重复登记（见上文 Portfolio 落位决定）。本文件即唯一 plan
 - [ ] 推进 spec 状态至实施完成态；确认 Portfolio 仍为 **active** 直至收口
 - [ ] `sync-runtime --check` in-sync；live/template SHA256 一致
 - [ ] 上游上报：向 `@zvec/zvec` 提交最小复现（fixture 可直接作附件）
