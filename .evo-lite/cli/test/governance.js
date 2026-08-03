@@ -42,6 +42,38 @@ function createContainedZvecRoot(name) {
     };
 }
 
+// [zvec-win-unicode-containment] Task 6 — the ONE place that knows how to spawn
+// a child running this repository's runtime.
+//
+// It exists because hand-written spawns get exactly this wrong. A child given a
+// cwd outside the repository resolves modules from whatever happens to sit above
+// that directory — and on a developer machine that can be a stray user-level
+// node_modules, which silently satisfies @zvec/zvec and makes a broken
+// configuration look green until a runner disagrees. That is precisely how a
+// NODE_PATH pointing at .evo-lite/node_modules (where the optional dependency
+// does NOT live) survived local runs and failed on Windows CI.
+//
+// So: cwd is the repository root, matching every other child spawn in this file,
+// and NODE_PATH names BOTH module roots explicitly — <repo>/node_modules, where
+// the root install puts @zvec/zvec, and <repo>/.evo-lite/node_modules, where the
+// runtime install puts better-sqlite3.
+function spawnContainmentChild(envOverrides, args) {
+    return childProcess.spawnSync(process.execPath, args, {
+        encoding: 'utf8',
+        cwd: WORKSPACE_ROOT,
+        env: {
+            ...process.env,
+            EVO_LITE_SKIP_GIT_GUARD: '1',
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+            NODE_PATH: [
+                path.join(WORKSPACE_ROOT, 'node_modules'),
+                path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'),
+            ].join(path.delimiter),
+            ...envOverrides,
+        },
+    });
+}
+
 async function runGovernanceTests() {
     const { IS_CHILD_RUNTIME } = require('./harness');
     if (IS_CHILD_RUNTIME) {
@@ -14030,18 +14062,16 @@ async function runChildRuntimeTests() {
                 containment: { verdict: 'UNKNOWN', layer: 'lexical', reason: 'lexical:character-outside-supported-ascii-set' },
             });
 
-            const childEnv = {
-                ...process.env,
+            // Through the shared helper: an earlier version spawned with a cwd
+            // outside the repository and a NODE_PATH naming only
+            // .evo-lite/node_modules — where @zvec/zvec does not live. Locally a
+            // stray user-level node_modules satisfied it anyway; the Windows
+            // runner did not.
+            const child = (args) => spawnContainmentChild({
                 EVO_LITE_ROOT: runtimeRoot,
                 EVO_LITE_DB_PATH: anchor.dbPath,
-                EVO_LITE_SKIP_GIT_GUARD: '1',
-                EVO_LITE_SKIP_GIT_STATUS: '1',
                 EVO_LITE_MEMORY_ENGINE: 'zvec',
-                NODE_PATH: path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'),
-            };
-            const child = (args) => childProcess.spawnSync(process.execPath, args, {
-                encoding: 'utf8', env: childEnv, cwd: path.dirname(runtimeRoot),
-            });
+            }, args);
 
             // @zvec/zvec is an optionalDependency with no Linux prebuild, so it
             // installs on the Windows runners and is genuinely absent on the
@@ -14051,6 +14081,15 @@ async function runChildRuntimeTests() {
             // substituting a mock would defeat the only test that proves the
             // reopen. Elsewhere it skips out loud rather than reporting a
             // contract failure for an environment fact.
+            // Wiring control first, on a MANDATORY dependency. Without it, a
+            // broken cwd/NODE_PATH looks identical to "the optional dependency
+            // is absent" — which is exactly how the previous head passed
+            // locally and failed on Windows CI. This separates "the child
+            // cannot resolve anything" from "@zvec/zvec is not installed".
+            const probeWiring = child(['-e', 'try { require("commander"); console.log("WIRING_OK"); } catch (e) { console.log("WIRING_BROKEN:" + (e.code || "ERR")); }']);
+            assert.ok(probeWiring.stdout.includes('WIRING_OK'),
+                `the containment child cannot resolve the repository's own dependencies — cwd/NODE_PATH wiring is broken, not the optional dependency: ${probeWiring.stdout.trim()} ${probeWiring.stderr.trim()}`);
+
             const probeDep = child(['-e', 'try { require("@zvec/zvec"); console.log("HAVE_ZVEC"); } catch (e) { console.log("NO_ZVEC:" + (e.code || "ERR") + ":" + e.message); }']);
             const haveZvec = probeDep.stdout.includes('HAVE_ZVEC');
             // The skip is narrow on purpose. Only a dependency that is genuinely
@@ -14126,11 +14165,7 @@ console.log("RESULT" + JSON.stringify({ impl: a.impl, degraded: a.degraded, engi
         // would pass every test above and still record nothing where it counts.
         // Each case runs in its own process — the decision cache and the env are
         // both process-global.
-        const child = (env, src) => childProcess.spawnSync(process.execPath, ['-e', src], {
-            encoding: 'utf8',
-            env: { ...process.env, EVO_LITE_SKIP_GIT_GUARD: '1', EVO_LITE_SKIP_GIT_STATUS: '1', ...env },
-            cwd: WORKSPACE_ROOT,
-        });
+        const child = (env, src) => spawnContainmentChild(env, ['-e', src]);
         const MI = JSON.stringify(path.join(CLI_DIR, 'memory-index.js'));
 
         // 1. Ambient SAFE path + an outstanding marker: the shared entry must
