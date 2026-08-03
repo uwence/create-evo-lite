@@ -1,27 +1,44 @@
 'use strict';
-// [memory-lock-win-cim-snapshot-reliability] Phase 1 — observation only.
+// [memory-lock-win-cim-snapshot-reliability] Phase 3A retained failure-site
+// diagnostic — observation only.
 //
 // PURPOSE
-// getProcessSnapshot() folds six distinct failure modes into one `null`:
-// powershell spawn failure, timeout, nonzero exit, empty stdout, JSON parse
-// failure, and an empty CIM row. On Windows GitHub runners that null has twice
-// blocked the release gate at T-lock-ident, and the elapsed time (10.123s and
-// 10.020s) landed on the production execFileSync `timeout: 10000`. That tells
-// us the command reached its timeout — and nothing beyond that.
+// getProcessSnapshot() used to fold six distinct failure modes into one `null`.
+// Phase 3A replaced that with getProcessSnapshotResult()'s structured
+// classification, and `T-lock-ident` now tolerates exactly one of those
+// reasons — `timeout`, the external Windows query not answering within its
+// budget. This script is what makes that tolerance evidenced instead of silent:
+// when the tolerated event happens, the test emits one CIM_SNAPSHOT_DIAG line
+// saying WHERE those ten seconds went.
 //
-// This script does NOT fix anything and does NOT touch production behaviour.
-// It answers exactly one question: WHERE do those ten seconds go?
+// It is NOT wired to any automatic workflow. It is invoked at the failure site
+// and can be run by hand; nothing schedules it.
+//
+// What it does and does not do:
+//   - a timeout availability event does NOT fail T-lock-ident; this script's
+//     output is the evidence that accompanies it
+//   - every other unavailable reason still fails T-lock-ident, and this script
+//     changes nothing about that
+//   - it does NOT fix anything and does NOT touch production behaviour
 //
 // It never terminates a process, never opens a Zvec collection, never runs a
 // native fixture, and never changes CIM/WMI or system policy. It queries only
 // its own pid (or an explicitly passed one) and reads a whitelist of runner
 // identity variables — never the full environment.
+//
+// DATA BOUNDARY
+// This is a failure-site diagnostic: it captures error messages, stdout/stderr
+// samples and — through D1's `CommandLine` projection — whole process command
+// lines. Every one of those is a credential carrier. It therefore reuses the
+// production sanitizer and byte-budget truncator from memory-index-lock.js
+// rather than defining a second, unverified copy. Nothing reaches the emitted
+// line without passing through `safeStreamSample()`.
 
 const childProcess = require('child_process');
 const os = require('os');
+const { safeStreamSample } = require('../../.evo-lite/cli/memory-index-lock.js');
 
 const TIMEOUT_MS = 10000;               // the production boundary, deliberately unchanged
-const STREAM_SAMPLE = 400;              // bytes kept from each end of a stream
 
 // ---------------------------------------------------------------------------
 // Classification vocabulary — every probe result maps to exactly one of these.
@@ -31,6 +48,12 @@ const CLASS = {
     POWERSHELL_SPAWN_TIMEOUT: 'POWERSHELL_SPAWN_TIMEOUT',
     POWERSHELL_NONZERO_EXIT: 'POWERSHELL_NONZERO_EXIT',
     POWERSHELL_EMPTY_STDOUT: 'POWERSHELL_EMPTY_STDOUT',
+    // Retained for the Phase 1 taxonomy recorded in
+    // docs/validation/memory-lock-win-cim-snapshot-reliability.md, but no longer
+    // emitted as a classification: partial stdout is evidence about a timeout
+    // (`partialStdout: true`), not a different terminal state. Inferring a
+    // distinct class from it would be a broader inference than the frozen
+    // production contract makes.
     POWERSHELL_PARTIAL_STDOUT_TIMEOUT: 'POWERSHELL_PARTIAL_STDOUT_TIMEOUT',
     CIM_NO_ROW: 'CIM_NO_ROW',
     CIM_QUERY_TIMEOUT: 'CIM_QUERY_TIMEOUT',
@@ -53,10 +76,39 @@ function pick(keys) {
     return out;
 }
 
-function sample(buf) {
-    const text = String(buf === undefined || buf === null ? '' : buf);
-    if (text.length <= STREAM_SAMPLE * 2) return { prefix: text, suffix: '' };
-    return { prefix: text.slice(0, STREAM_SAMPLE), suffix: text.slice(-STREAM_SAMPLE) };
+// The single narrow door every free-text field goes through. `safeStreamSample`
+// sanitizes first and truncates second, on a UTF-8 byte budget that never
+// splits a code point — see memory-index-lock.js and T-snap-detail.
+function redact(value) {
+    if (value === undefined || value === null) return null;
+    return safeStreamSample(String(value));
+}
+
+// Pure record builder — no process is spawned here, so the serialization
+// boundary can be tested deterministically (T-diag-boundary).
+function buildRecord(input) {
+    const stdout = String(input.stdout === undefined || input.stdout === null ? '' : input.stdout);
+    const stderr = String(input.stderr === undefined || input.stderr === null ? '' : input.stderr);
+    const error = input.error || null;
+    const elapsedMs = typeof input.elapsedMs === 'number' ? Math.round(input.elapsedMs * 1000) / 1000 : null;
+    return {
+        commandId: input.commandId,
+        hostExecutable: input.hostExecutable,
+        arguments: input.arguments,
+        pid: process.pid,
+        startedAt: input.startedAt,
+        elapsedMs,
+        timeoutMs: input.timeoutMs === undefined ? TIMEOUT_MS : input.timeoutMs,
+        status: input.status === undefined ? null : input.status,
+        signal: input.signal === undefined ? null : input.signal,
+        errorCode: error ? (error.code || null) : null,
+        errorErrno: error ? (error.errno === undefined ? null : error.errno) : null,
+        errorMessage: error ? redact(error.message) : null,
+        stdoutBytes: Buffer.byteLength(stdout, 'utf8'),
+        stderrBytes: Buffer.byteLength(stderr, 'utf8'),
+        stdoutSample: redact(stdout),
+        stderrSample: redact(stderr),
+    };
 }
 
 // One measured execution. Every field the failure could hide behind is recorded
@@ -85,63 +137,78 @@ function runCommand(id, exe, args, options = {}) {
     }
     const elapsedMs = Number(process.hrtime.bigint() - t0) / 1e6;
 
-    const record = {
+    const record = buildRecord({
         commandId: id,
         hostExecutable: exe,
         arguments: args,
-        pid: process.pid,
         startedAt: startedAt.toISOString(),
-        elapsedMs: Math.round(elapsedMs * 1000) / 1000,
+        elapsedMs,
         timeoutMs: options.timeout === undefined ? TIMEOUT_MS : options.timeout,
         status,
         signal,
-        errorCode: error ? (error.code || null) : null,
-        errorErrno: error ? (error.errno === undefined ? null : error.errno) : null,
-        errorMessage: error ? String(error.message) : null,
-        stdoutBytes: Buffer.byteLength(stdout, 'utf8'),
-        stderrBytes: Buffer.byteLength(stderr, 'utf8'),
-        stdoutSample: sample(stdout),
-        stderrSample: sample(stderr),
-    };
+        error,
+        stdout,
+        stderr,
+    });
     return { record, stdout, stderr, status, signal, error };
 }
 
-// spawnSync reports a timeout kill as signal SIGTERM with error.code ETIMEDOUT
-// on most platforms; treat either as evidence of the boundary being hit.
-function timedOut(run) {
-    return run.record.errorCode === 'ETIMEDOUT'
-        || run.signal === 'SIGTERM'
-        || run.record.elapsedMs >= run.record.timeoutMs;
+// Timeout classification is aligned with the frozen production contract in
+// memory-index-lock.js: `ETIMEDOUT` and nothing else means timeout.
+//
+// `timeout` is the ONE unavailable reason T-lock-ident tolerates, so diagnostic
+// evidence must not reach it by a broader inference than production uses:
+//   - SIGTERM without ETIMEDOUT  -> POWERSHELL_NONZERO_EXIT (an external kill)
+//   - elapsed >= budget without ETIMEDOUT -> boundaryExceeded evidence only
+// An earlier version treated either of those as a timeout, which would have
+// widened exactly the one exemption in the gate.
+function timeoutEvidence(run) {
+    const rec = run.record;
+    return {
+        timedOut: rec.errorCode === 'ETIMEDOUT',
+        boundaryExceeded: typeof rec.elapsedMs === 'number'
+            && typeof rec.timeoutMs === 'number'
+            && rec.elapsedMs >= rec.timeoutMs,
+    };
 }
 
 function classify(run, opts = {}) {
     const { record } = run;
-    if (timedOut(run)) {
-        // A timeout with bytes already on stdout is a materially different fault
-        // from one with nothing: the query started answering and the process
-        // never exited.
-        if (record.stdoutBytes > 0) return CLASS.POWERSHELL_PARTIAL_STDOUT_TIMEOUT;
+    const parseFn = typeof opts.parseFn === 'function' ? opts.parseFn : JSON.parse;
+    const evidence = timeoutEvidence(run);
+    // Evidence, not classification. Recorded on every probe so a reader can see
+    // that the boundary was reached without the label claiming a timeout.
+    record.boundaryExceeded = evidence.boundaryExceeded;
+    record.partialStdout = record.stdoutBytes > 0;
+
+    if (evidence.timedOut) {
         return opts.cim ? CLASS.CIM_QUERY_TIMEOUT : CLASS.POWERSHELL_SPAWN_TIMEOUT;
     }
     if (record.errorCode) return CLASS.OTHER_WITH_EVIDENCE;
+    if (record.signal) return CLASS.POWERSHELL_NONZERO_EXIT;
     if (record.status !== 0) return CLASS.POWERSHELL_NONZERO_EXIT;
     if (record.stdoutBytes === 0) {
         return opts.cim ? CLASS.CIM_NO_ROW : CLASS.POWERSHELL_EMPTY_STDOUT;
     }
     if (!opts.json) return CLASS.OK;
     try {
-        const parsed = JSON.parse(run.stdout);
+        const parsed = parseFn(run.stdout);
         if (opts.cim) {
             const row = Array.isArray(parsed) ? parsed[0] : parsed;
             if (!row || row.ProcessId === undefined || row.ProcessId === null) {
                 return CLASS.PID_NOT_FOUND_DESPITE_ALIVE;
             }
-            record.rowProcessId = row.ProcessId;
+            // Only a plain integer is echoed back; anything else is described,
+            // never reproduced.
+            record.rowProcessId = Number.isInteger(row.ProcessId) ? row.ProcessId : null;
+            record.rowProcessIdType = typeof row.ProcessId;
         }
         record.jsonParse = 'ok';
         return CLASS.OK;
     } catch (err) {
-        record.jsonParse = `failed: ${err.message}`;
+        // The parser's message quotes the input it choked on — a direct leak
+        // path from stdout into the log.
+        record.jsonParse = `failed: ${redact(err && err.message)}`;
         return CLASS.JSON_PARSE_FAILURE;
     }
 }
@@ -251,7 +318,7 @@ function collect(options = {}) {
                 record = {
                     commandId: 'probe_threw',
                     hostExecutable: host.exe,
-                    errorMessage: String(err && err.message),
+                    errorMessage: redact(err && err.message),
                     classification: CLASS.OTHER_WITH_EVIDENCE,
                 };
             }
@@ -277,10 +344,20 @@ function collect(options = {}) {
     return report;
 }
 
+// The serialization boundary, exposed as a pure function so a test can inspect
+// the exact text that would reach the log without capturing real stdout.
+// It deliberately performs NO sanitization of its own: whole-line redaction
+// would eat JSON delimiters (`\S+` runs past a closing quote) and produce
+// unparsable output. The guarantee is field-level, established in buildRecord()
+// and classify().
+function serializeReport(report) {
+    return `CIM_SNAPSHOT_DIAG=${JSON.stringify(report)}`;
+}
+
 // Single-line structured output so it survives CI log interleaving and can be
 // grepped out of a job log without a parser.
 function emitLine(report) {
-    process.stdout.write(`CIM_SNAPSHOT_DIAG=${JSON.stringify(report)}\n`);
+    process.stdout.write(`${serializeReport(report)}\n`);
 }
 
 if (require.main === module) {
@@ -298,9 +375,19 @@ if (require.main === module) {
     } else {
         emitLine(report);
     }
-    // Observation only: this script never fails the build. The assertion it
-    // explains is the one that must stay red.
+    // Observation only: this script never fails the build, and never passes one
+    // either. It is evidence attached to a decision the test already made.
     process.exitCode = 0;
 }
 
-module.exports = { collect, emitLine, CLASS, RUNNER_KEYS, GITHUB_KEYS };
+module.exports = {
+    collect,
+    emitLine,
+    serializeReport,
+    buildRecord,
+    classify,
+    redact,
+    CLASS,
+    RUNNER_KEYS,
+    GITHUB_KEYS,
+};

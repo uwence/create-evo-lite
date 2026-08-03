@@ -2283,7 +2283,10 @@ async function runGovernanceTests() {
                     const diag = require(path.join(WORKSPACE_ROOT, 'scripts', 'diagnostics', 'memory-lock-cim-snapshot.js'));
                     diag.emitLine(diag.collect({ label: 'T-lock-ident-timeout' }));
                 } catch (err) {
-                    console.log(`CIM_SNAPSHOT_DIAG_ERROR=${JSON.stringify({ message: String(err && err.message) })}`);
+                    // Same data boundary as the diagnostic itself: a require or
+                    // spawn failure message can carry paths and arguments, so it
+                    // goes through the production sanitizer before it is logged.
+                    console.log(`CIM_SNAPSHOT_DIAG_ERROR=${JSON.stringify({ message: lock.safeStreamSample(String(err && err.message)) })}`);
                 }
                 console.log(`   ⏭️  external snapshot query timed out (${selfResult.detail.elapsedMs}ms of ${selfResult.detail.timeoutMs}ms) — availability event, evidence above`);
             } else {
@@ -2693,6 +2696,172 @@ async function runGovernanceTests() {
             }
         }
         console.log('✅ T-snap-failclosed passed');
+
+        // [memory-lock-win-cim-snapshot-reliability] Phase 3A correction —
+        // The production `detail` is only half of the data boundary. The other
+        // half is the retained failure-site diagnostic, which prints error
+        // messages, stdout/stderr samples and — through D1's `CommandLine`
+        // projection — whole process command lines. T-snap-detail proves the
+        // production payload is clean; it proves nothing about the line the
+        // diagnostic actually emits. This test asserts the SERIALIZED text.
+        console.log('T-diag-boundary. Failure-site diagnostic output carries no secrets ...');
+        {
+            const diagPath = path.join(WORKSPACE_ROOT, 'scripts', 'diagnostics', 'memory-lock-cim-snapshot.js');
+            if (!fs.existsSync(diagPath)) {
+                // The diagnostic asset ships with the create-evo-lite repository,
+                // not with a scaffolded project. Absent here means there is no
+                // emitter to bound — the failure-site catch above already covers
+                // the missing-module case.
+                console.log('   ⏭️  diagnostic asset absent in this workspace — repository-only test');
+            } else {
+                const diag = require(diagPath);
+                const SENTINEL = 'secret-sentinel-do-not-leak';
+
+                // One record carrying all four documented leak paths.
+                const carrierErr = new Error(`Authorization: Bearer ${SENTINEL}`);
+                const record = diag.buildRecord({
+                    commandId: 'T_diag_boundary',
+                    hostExecutable: 'powershell.exe',
+                    arguments: ['-NoProfile', '-NonInteractive', '-Command'],
+                    startedAt: '2026-08-03T00:00:00.000Z',
+                    elapsedMs: 1234.5,
+                    timeoutMs: 10000,
+                    status: 0,
+                    signal: null,
+                    error: carrierErr,
+                    stdout: `--token ${SENTINEL}`,
+                    stderr: `OPENAI_API_KEY=${SENTINEL}`,
+                });
+                // The parse-failure message is injected through the parser seam.
+                // Relying on V8's own wording would make the test depend on the
+                // Node version — and V8 quotes only the first ~10 characters of
+                // the input, so a real message could pass by truncation rather
+                // than by redaction, which proves nothing.
+                const verdict = diag.classify({ record, stdout: `PASSWORD=${SENTINEL}` }, {
+                    json: true,
+                    cim: true,
+                    parseFn: () => { throw new Error(`PASSWORD=${SENTINEL}`); },
+                });
+                assert.strictEqual(verdict, diag.CLASS.JSON_PARSE_FAILURE, 'fixture must reach the parse-failure path');
+
+                for (const field of ['errorMessage', 'stdoutSample', 'stderrSample', 'jsonParse']) {
+                    const value = String(record[field]);
+                    assert.ok(!value.includes(SENTINEL), `${field} leaked the sentinel: ${value}`);
+                    assert.ok(value.includes('<redacted>'), `${field} must show the redaction, got ${JSON.stringify(value)}`);
+                }
+                assert.ok(record.stdoutBytes > 0 && record.stderrBytes > 0,
+                    'byte counts must still describe the real payload size');
+
+                const line = diag.serializeReport({
+                    schema: 'memory-lock-cim-snapshot-diagnostic@1',
+                    label: 'T-diag-boundary',
+                    probes: [record],
+                    summary: {},
+                });
+                assert.ok(!line.includes(SENTINEL), `the emitted line leaked the sentinel: ${line}`);
+                assert.ok(line.startsWith('CIM_SNAPSHOT_DIAG='), 'the emitted line keeps its greppable prefix');
+                const parsedLine = JSON.parse(line.slice('CIM_SNAPSHOT_DIAG='.length));
+                assert.strictEqual(parsedLine.probes[0].classification, undefined,
+                    'classify() returns the verdict; the caller attaches it');
+                assert.strictEqual(parsedLine.probes[0].stdoutBytes, record.stdoutBytes,
+                    'the line must stay parsable JSON with its evidence intact');
+
+                // Negative control: serializeReport performs NO redaction of its
+                // own — whole-line sanitizing would eat JSON delimiters. So the
+                // four fields above are genuine carriers, and the clean line is
+                // the sanitizer's doing, not the serializer's.
+                const rawLine = diag.serializeReport({
+                    probes: [{
+                        errorMessage: carrierErr.message,
+                        stdoutSample: `--token ${SENTINEL}`,
+                        stderrSample: `OPENAI_API_KEY=${SENTINEL}`,
+                        jsonParse: `failed: PASSWORD=${SENTINEL}`,
+                    }],
+                });
+                assert.ok(rawLine.includes(SENTINEL),
+                    'negative control failed: the serializer must not be what redacts, or this test proves nothing');
+
+                // UTF-8 byte budget on the diagnostic path, same rule as
+                // production: 400 bytes per end, never a split code point.
+                const bigRecord = diag.buildRecord({
+                    commandId: 'T_diag_bytes',
+                    hostExecutable: 'powershell.exe',
+                    arguments: [],
+                    startedAt: '2026-08-03T00:00:00.000Z',
+                    elapsedMs: 1,
+                    timeoutMs: 10000,
+                    status: 0,
+                    signal: null,
+                    error: null,
+                    stdout: '汉'.repeat(2000),
+                    stderr: '🙂'.repeat(2000),
+                });
+                for (const field of ['stdoutSample', 'stderrSample']) {
+                    const out = String(bigRecord[field]);
+                    assert.ok(!out.includes('�'), `${field}: truncation must not split a character`);
+                    const [head, tail] = out.split(/…\[\d+ bytes omitted\]…/);
+                    assert.ok(head !== undefined && tail !== undefined,
+                        `${field}: expected an elision marker in ${JSON.stringify(out.slice(0, 60))}`);
+                    assert.ok(Buffer.byteLength(head, 'utf8') <= 400,
+                        `${field}: head is ${Buffer.byteLength(head, 'utf8')} bytes, budget is 400`);
+                    assert.ok(Buffer.byteLength(tail, 'utf8') <= 400,
+                        `${field}: tail is ${Buffer.byteLength(tail, 'utf8')} bytes, budget is 400`);
+                }
+                assert.strictEqual(bigRecord.stdoutBytes, Buffer.byteLength('汉'.repeat(2000), 'utf8'),
+                    'the byte count describes the whole stream, not the sample');
+
+                // Timeout classification must not be broader than the frozen
+                // production contract: `timeout` is the ONE unavailable reason
+                // the gate tolerates, so diagnostic evidence may not reach it by
+                // an inference production would not make.
+                const mkRecord = over => diag.buildRecord(Object.assign({
+                    commandId: 'T_diag_class',
+                    hostExecutable: 'powershell.exe',
+                    arguments: [],
+                    startedAt: '2026-08-03T00:00:00.000Z',
+                    elapsedMs: 500,
+                    timeoutMs: 10000,
+                    status: 0,
+                    signal: null,
+                    error: null,
+                    stdout: 'ok',
+                    stderr: '',
+                }, over));
+
+                const etimedout = () => { const e = new Error('spawnSync ETIMEDOUT'); e.code = 'ETIMEDOUT'; return e; };
+
+                const timedOut = mkRecord({ error: etimedout(), status: null, signal: 'SIGTERM', elapsedMs: 10123, stdout: '' });
+                assert.strictEqual(diag.classify({ record: timedOut, stdout: '' }, { cim: true }), diag.CLASS.CIM_QUERY_TIMEOUT,
+                    'ETIMEDOUT is still a timeout');
+                const timedOutPlain = mkRecord({ error: etimedout(), status: null, signal: 'SIGTERM', elapsedMs: 10123, stdout: '' });
+                assert.strictEqual(diag.classify({ record: timedOutPlain, stdout: '' }, {}), diag.CLASS.POWERSHELL_SPAWN_TIMEOUT,
+                    'ETIMEDOUT without CIM is still a host timeout');
+
+                // An external SIGTERM inside the budget is a kill, not a timeout.
+                const killed = mkRecord({ status: null, signal: 'SIGTERM', elapsedMs: 500, stdout: '' });
+                assert.strictEqual(diag.classify({ record: killed, stdout: '' }, { cim: true }), diag.CLASS.POWERSHELL_NONZERO_EXIT,
+                    'SIGTERM without ETIMEDOUT must not be classified as a timeout');
+                assert.strictEqual(killed.boundaryExceeded, false, 'a kill inside the budget did not reach the boundary');
+
+                // Reaching the wall-clock budget without ETIMEDOUT is evidence,
+                // never a verdict.
+                const slow = mkRecord({ elapsedMs: 10123, status: 0, stdout: 'ok' });
+                assert.strictEqual(diag.classify({ record: slow, stdout: 'ok' }, {}), diag.CLASS.OK,
+                    'a slow but successful command is OK, not a timeout');
+                assert.strictEqual(slow.boundaryExceeded, true, 'the boundary crossing is still recorded as evidence');
+
+                // Partial stdout is evidence about a timeout, not a different
+                // terminal state — the label stays the production one.
+                const partial = mkRecord({ error: etimedout(), status: null, signal: 'SIGTERM', elapsedMs: 10123, stdout: 'half a row' });
+                const partialVerdict = diag.classify({ record: partial, stdout: 'half a row' }, { cim: true });
+                assert.strictEqual(partialVerdict, diag.CLASS.CIM_QUERY_TIMEOUT,
+                    'partial stdout must not change the timeout classification');
+                assert.notStrictEqual(partialVerdict, diag.CLASS.POWERSHELL_PARTIAL_STDOUT_TIMEOUT,
+                    'the partial-stdout class is retained vocabulary only, never emitted');
+                assert.strictEqual(partial.partialStdout, true, 'partial stdout is recorded as evidence');
+            }
+        }
+        console.log('✅ T-diag-boundary passed');
 
         console.log('T-lock-orphan-refusal-matrix. Testing four-gate refusal — 11 cases, never killable ...');
         {
