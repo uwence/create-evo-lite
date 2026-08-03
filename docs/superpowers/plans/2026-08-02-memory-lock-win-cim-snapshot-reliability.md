@@ -338,17 +338,17 @@ Produces:  runSnapshotCommand(exe,args,options,execFn) → 归一结果
                                                   { state:'unavailable', reason, detail }
 ```
 
-- [x] Step 1 — 写失败测试 `T-snap-classify`,经 `execFileSyncFn` 注入九种情形,
+- [x] **Step 1** — 写失败测试 `T-snap-classify`,经 `execFileSyncFn` 注入九种情形,
       断言 `state` 与 `reason` 与 D2 九步优先级一致;先只写测试,不写实现
-- [x] Step 2 — `node .evo-lite/cli/test.js`
+- [x] **Step 2** — `node .evo-lite/cli/test.js`
       Expected: `getProcessSnapshotResult is not a function`
-- [x] Step 3 — 实现 `runSnapshotCommand`(唯一 try/catch)与
+- [x] **Step 3** — 实现 `runSnapshotCommand`(唯一 try/catch)与
       `getProcessSnapshotResult`;分类严格按 D2 短路;超时即使有部分 stdout 仍
       为 `timeout`,部分输出只进 `detail`
-- [x] Step 4 — `node .evo-lite/cli/test.js`  Expected: `✅ T-snap-classify passed`
-- [x] Step 5 — `node .evo-lite/cli/memory.js sync-runtime`
-- [x] Step 6 — `npm test`(EXIT 0)+ `node .evo-lite/cli/memory.js sync-runtime --check`
-- [x] Step 7 — `git add .evo-lite/cli/memory-index-lock.js templates/cli/memory-index-lock.js .evo-lite/cli/test/governance.js templates/cli/test/governance.js && git commit`
+- [x] **Step 4** — `node .evo-lite/cli/test.js`  Expected: `✅ T-snap-classify passed`
+- [x] **Step 5** — `node .evo-lite/cli/memory.js sync-runtime`
+- [x] **Step 6** — `npm test`(EXIT 0)+ `node .evo-lite/cli/memory.js sync-runtime --check`
+- [x] **Step 7** — `git add .evo-lite/cli/memory-index-lock.js templates/cli/memory-index-lock.js .evo-lite/cli/test/governance.js templates/cli/test/governance.js && git commit`
 
 ### Task 2: detail 的 sanitizer 与截断
 
@@ -365,17 +365,17 @@ Consumes:  归一结果的 stdout / stderr
 Produces:  detail（E1 固定键集），partialStdout = truncate(sanitize(raw))
 ```
 
-- [x] Step 1 — 写失败测试 `T-snap-detail`:注入含哨兵
+- [x] **Step 1** — 写失败测试 `T-snap-detail`:注入含哨兵
       `OPENAI_API_KEY=secret-sentinel` 与 `--token secret-sentinel` 的 stdout,
       断言 `detail.partialStdout` **不含** `secret-sentinel`;断言键集恰为 E1
       十项;断言 `alive`/`dead` 无 `detail`
-- [x] Step 2 — `node .evo-lite/cli/test.js`  Expected: 哨兵出现在 partialStdout,断言失败
-- [x] Step 3 — 实现 sanitizer(先清洗后截断;抛错则输出 `<redacted:N bytes>`)
+- [x] **Step 2** — `node .evo-lite/cli/test.js`  Expected: 哨兵出现在 partialStdout,断言失败
+- [x] **Step 3** — 实现 sanitizer(先清洗后截断;抛错则输出 `<redacted:N bytes>`)
       并接入 detail 构造
-- [x] Step 4 — `node .evo-lite/cli/test.js`  Expected: `✅ T-snap-detail passed`
-- [x] Step 5 — `node .evo-lite/cli/memory.js sync-runtime`
-- [x] Step 6 — `npm test` + `sync-runtime --check`
-- [x] Step 7 — `git add` 四个文件 `&& git commit`
+- [x] **Step 4** — `node .evo-lite/cli/test.js`  Expected: `✅ T-snap-detail passed`
+- [x] **Step 5** — `node .evo-lite/cli/memory.js sync-runtime`
+- [x] **Step 6** — `npm test` + `sync-runtime --check`
+- [x] **Step 7** — `git add` 四个文件 `&& git commit`
 
 ### Task 3: 兼容 wrapper 与调用点迁移
 
@@ -393,19 +393,19 @@ Produces:  getProcessSnapshot（行为不变的兼容 wrapper）
            diagnoseLockConflict / attemptSelfHeal 内部改用结构化结果
 ```
 
-- [x] Step 1 — 写失败测试 `T-snap-compat`:断言 `getProcessSnapshot` 对
+- [x] **Step 1** — 写失败测试 `T-snap-compat`:断言 `getProcessSnapshot` 对
       alive/dead 返回旧 snapshot、对每种 unavailable 返回 `null`;断言既有
       `assert.strictEqual(lock.getProcessSnapshot(1, { snapshotFn: () => { throw ... } }), null)`
       仍通过;断言 `snapshotFn` 四条适配规则
-- [x] Step 2 — `node .evo-lite/cli/test.js`  Expected: 适配规则相关断言失败
-- [x] Step 3 — 实现 wrapper 与适配;`:248` 与 `:387` 改用
+- [x] **Step 2** — `node .evo-lite/cli/test.js`  Expected: 适配规则相关断言失败
+- [x] **Step 3** — 实现 wrapper 与适配;`:248` 与 `:387` 改用
       `getProcessSnapshotResult()`;两处 `unknown`/report-only 分支语义**逐字
       不变**,只把 `reason` 加进诊断报告文本
-- [x] Step 4 — `node .evo-lite/cli/test.js`  Expected: `✅ T-snap-compat passed`
-- [x] Step 5 — `node .evo-lite/cli/memory.js sync-runtime`
-- [x] Step 6 — `npm test` + `sync-runtime --check`;确认 `T-lock-ident`、
+- [x] **Step 4** — `node .evo-lite/cli/test.js`  Expected: `✅ T-snap-compat passed`
+- [x] **Step 5** — `node .evo-lite/cli/memory.js sync-runtime`
+- [x] **Step 6** — `npm test` + `sync-runtime --check`;确认 `T-lock-ident`、
       `T-lock-owner`、a177 并发矩阵仍绿
-- [x] Step 7 — `git add` 四个文件 `&& git commit`
+- [x] **Step 7** — `git add` 四个文件 `&& git commit`
 
 ### Task 4: 确定性安全测试(含直接自愈入口)
 
@@ -420,7 +420,7 @@ Consumes:  seams（execFileSyncFn / pidAliveFn / killFn / writeOwnerFn）
 Produces:  T-snap-failclosed —— 每种 unavailable reason × 两个入口
 ```
 
-- [x] Step 1 — 写失败测试 `T-snap-failclosed`:对**每一种** unavailable reason
+- [x] **Step 1** — 写失败测试 `T-snap-failclosed`:对**每一种** unavailable reason
       断言 `diagnoseLockConflict → unknown/report-only`;并**分别**断言直接调用
       `attemptSelfHeal` 时仍 fail-closed。**必须注入快照 seam**,否则
       `attemptSelfHeal` 内部的重新取快照会落到真实 PowerShell,九种 reason 一种
@@ -436,10 +436,10 @@ Produces:  T-snap-failclosed —— 每种 unavailable reason × 两个入口
       ```
 
       断言 `healed === false` / `killFn.calls === 0` / owner 文件仍存在
-- [x] Step 2 — `node .evo-lite/cli/test.js`  Expected: 直接自愈入口的断言失败或缺失
-- [x] Step 3 — 补齐实现侧缺口(若有);本 Task 以测试为主,不放宽任何生产行为
-- [x] Step 4 — `node .evo-lite/cli/test.js`  Expected: `✅ T-snap-failclosed passed`
-- [x] Step 5 — **两类平台各自独立断言**,不得互相冒充覆盖:
+- [x] **Step 2** — `node .evo-lite/cli/test.js`  Expected: 直接自愈入口的断言失败或缺失
+- [x] **Step 3** — 补齐实现侧缺口(若有);本 Task 以测试为主,不放宽任何生产行为
+- [x] **Step 4** — `node .evo-lite/cli/test.js`  Expected: `✅ T-snap-failclosed passed`
+- [x] **Step 5** — **两类平台各自独立断言**,不得互相冒充覆盖:
 
       ```text
       Windows job    必须真正进入身份复核分支；对每种 unavailable reason 验证
@@ -450,8 +450,8 @@ Produces:  T-snap-failclosed —— 每种 unavailable reason × 两个入口
 
       release-gate 同时含 Windows 与 Ubuntu,两类合同都会被真实执行。
       **禁止修改或伪造 `process.platform` 来绕过这一区分。**
-- [x] Step 6 — `npm test` + `sync-runtime --check`
-- [x] Step 7 — `git add` 两个文件 `&& git commit`
+- [x] **Step 6** — `npm test` + `sync-runtime --check`
+- [x] **Step 7** — `git add` 两个文件 `&& git commit`
 
 ### Task 5: 真实 probe 拆分与诊断资产提取
 
@@ -468,18 +468,18 @@ Consumes:  真实 getProcessSnapshotResult(process.pid)
 Produces:  T-lock-ident 拆分为 availability block + deterministic safety block
 ```
 
-- [x] Step 1 — `git checkout f640755 -- scripts/diagnostics/memory-lock-cim-snapshot.js`;
+- [x] **Step 1** — `git checkout f640755 -- scripts/diagnostics/memory-lock-cim-snapshot.js`;
       `git status --short | grep -c "\.github/"` **必须为 0**
-- [x] Step 2 — 写失败测试:`T-lock-ident` 的 availability block 对
+- [x] **Step 2** — 写失败测试:`T-lock-ident` 的 availability block 对
       `unavailable/timeout` 通过、对其他 reason 失败;先注入非 timeout reason
       验证该块**确实会红**(否则宽容是空的)
-- [x] Step 3 — 实现拆分;timeout 分支输出 `CIM_SNAPSHOT_DIAG`(经同一 sanitizer)
-- [x] Step 4 — `node .evo-lite/cli/test.js`  Expected: 两块均 PASS
-- [x] Step 5 — `node .evo-lite/cli/memory.js sync-runtime`;更新证据文档
+- [x] **Step 3** — 实现拆分;timeout 分支输出 `CIM_SNAPSHOT_DIAG`(经同一 sanitizer)
+- [x] **Step 4** — `node .evo-lite/cli/test.js`  Expected: 两块均 PASS
+- [x] **Step 5** — `node .evo-lite/cli/memory.js sync-runtime`;更新证据文档
       (只写实现合同与本地验证,**不写**本 PR 的 CI run number)
-- [x] Step 6 — `npm test` + `sync-runtime --check`;逐对确认 live/template SHA 相同;
+- [x] **Step 6** — `npm test` + `sync-runtime --check`;逐对确认 live/template SHA 相同;
       确认禁改集 `git diff main..HEAD` 为空
-- [x] Step 7 — `git add` 上述文件 `&& git commit`
+- [x] **Step 7** — `git add` 上述文件 `&& git commit`
 
 ---
 
