@@ -13533,8 +13533,21 @@ async function runChildRuntimeTests() {
     {
         const mi = require(path.join(CLI_DIR, 'memory-index.js'));
         const st = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
-        const mk = (n) => fs.mkdtempSync(path.join(os.tmpdir(), `evo-t8b-${n}-`));
+        // Cells that need a SAFE path cannot use os.tmpdir(): on a Windows
+        // runner that is C:\Users\RUNNER~1\... , whose 8.3 form containment
+        // correctly refuses. A fixture anchored there would assert "recovery
+        // pending" for a reason that has nothing to do with the marker. So the
+        // base is the workspace anchor, and its verdict is VERIFIED, not assumed.
+        const safeBase = createContainedZvecRoot('zwuc-t8b');
+        if (!safeBase.safe) {
+            safeBase.cleanup();
+            throw new Error(`T8b needs a supported-profile anchor; got ${safeBase.containment.reason}. Move the checkout to an ASCII path.`);
+        }
+        const mk = (n) => fs.mkdtempSync(path.join(safeBase.base, `t8b-${n}-`));
         const UNSAFE = 'C:\\\u4e2d\u6587\\zvec\\collection';
+        // Baselines for the post-conditions below.
+        const ambientMarkerName = st.MARKER_FILE;
+        const ambientZvecExisted = fs.existsSync(path.join(WORKSPACE_ROOT, '.evo-lite', 'zvec'));
         const CONTAINMENT = { verdict: 'UNKNOWN', layer: 'lexical', reason: 'r' };
         class FakeZvec { get engine() { return 'zvec-jieba-fts'; } }
         const dirs = [];
@@ -13743,20 +13756,93 @@ async function runChildRuntimeTests() {
                 }).eligible, false, 'cell 17: no force/skip flag exists');
             }
 
-            // An injected path is a hypothetical question. Answering it must not
-            // write a marker into the ambient project — the diagnostic would
-            // otherwise degrade the very runtime it was asked about.
+            // An injected path is a hypothetical question, and answering it must
+            // touch the ambient project in NEITHER direction. Writing would
+            // degrade the very runtime the question was about; reading would
+            // answer a question about a hypothetical path using a real project's
+            // debt. Both are asserted at the filesystem, by counting calls
+            // against the marker file rather than by checking that the disk
+            // happens to look unchanged afterwards — "no net effect" and "never
+            // touched it" are different claims.
             {
-                const d = mi.resolveEngineDecision({
-                    choice: 'zvec', platform: 'win32', collectionPath: UNSAFE, loadZvecIndex: () => FakeZvec,
-                });
+                const markerCalls = { read: 0, write: 0, mkdir: 0, unlink: 0 };
+                const isMarker = (p) => String(p).endsWith(st.MARKER_FILE);
+                const real = {
+                    readFileSync: fs.readFileSync, writeFileSync: fs.writeFileSync,
+                    mkdirSync: fs.mkdirSync, unlinkSync: fs.unlinkSync,
+                };
+                fs.readFileSync = function (p, ...r) { if (isMarker(p)) markerCalls.read += 1; return real.readFileSync.call(fs, p, ...r); };
+                fs.writeFileSync = function (p, ...r) { if (isMarker(p)) markerCalls.write += 1; return real.writeFileSync.call(fs, p, ...r); };
+                fs.unlinkSync = function (p, ...r) { if (isMarker(p)) markerCalls.unlink += 1; return real.unlinkSync.call(fs, p, ...r); };
+                let d, safeInjected;
+                try {
+                    d = mi.resolveEngineDecision({
+                        choice: 'zvec', platform: 'win32', collectionPath: UNSAFE, loadZvecIndex: () => FakeZvec,
+                    });
+                    safeInjected = mi.resolveEngineDecision({
+                        choice: 'zvec', collectionPath: path.join(safeBase.base, 'hypothetical', 'zvec', 'collection'),
+                        loadZvecIndex: () => FakeZvec,
+                    });
+                } finally {
+                    Object.assign(fs, real);
+                }
                 assert.strictEqual(d.reason, 'containment');
                 assert.strictEqual(d.markerPersisted, false);
                 assert.strictEqual(d.markerSkipped, 'injected-path');
+                assert.strictEqual(safeInjected.reason, 'zvec',
+                    'a hypothetical SAFE path must not inherit the ambient project\'s debt');
+                assert.strictEqual(markerCalls.read, 0, `injected paths must not READ any marker (saw ${markerCalls.read})`);
+                assert.strictEqual(markerCalls.write, 0, `injected paths must not WRITE any marker (saw ${markerCalls.write})`);
+                assert.strictEqual(markerCalls.unlink, 0, `injected paths must not CLEAR any marker (saw ${markerCalls.unlink})`);
+
+                // Positive control: the same counters DO fire when the caller
+                // scopes a markerDir, so the three zeros above are a property of
+                // the injection rule and not of a broken spy.
+                const scoped = temp('spy-control');
+                const controlCalls = { read: 0, write: 0 };
+                fs.readFileSync = function (p, ...r) { if (isMarker(p)) controlCalls.read += 1; return real.readFileSync.call(fs, p, ...r); };
+                fs.writeFileSync = function (p, ...r) { if (isMarker(p)) controlCalls.write += 1; return real.writeFileSync.call(fs, p, ...r); };
+                try {
+                    mi.resolveEngineDecision({
+                        choice: 'zvec', platform: 'win32', collectionPath: UNSAFE,
+                        markerDir: scoped, loadZvecIndex: () => FakeZvec,
+                    });
+                } finally {
+                    Object.assign(fs, real);
+                }
+                assert.strictEqual(controlCalls.write, 1, 'control: a scoped markerDir does write exactly once');
+                assert.ok(controlCalls.read >= 1, 'control: and the decision reads the marker first');
+
+                // A marker SNAPSHOT shapes the verdict without granting writes.
+                const snapshotCalls = { write: 0 };
+                fs.writeFileSync = function (p, ...r) { if (isMarker(p)) snapshotCalls.write += 1; return real.writeFileSync.call(fs, p, ...r); };
+                let snap;
+                try {
+                    snap = mi.resolveEngineDecision({
+                        choice: 'zvec', platform: 'win32', collectionPath: UNSAFE,
+                        marker: { status: 'present', markerPath: null, state: null, errorCode: null, detail: null },
+                        loadZvecIndex: () => FakeZvec,
+                    });
+                } finally {
+                    Object.assign(fs, real);
+                }
+                assert.strictEqual(snap.markerPersisted, false,
+                    'supplying a marker snapshot must not acquire the right to write one');
+                assert.strictEqual(snapshotCalls.write, 0, 'and nothing reaches the disk');
             }
         } finally {
             for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+            safeBase.cleanup();
         }
+        // Post-conditions: the fixture is gone and the AMBIENT project is exactly
+        // as it was. A containment test that degrades the real runtime would be
+        // worse than no test at all.
+        assert.ok(!fs.existsSync(safeBase.base), 'the fixture anchor must be removed');
+        assert.ok(!fs.existsSync(path.join(WORKSPACE_ROOT, '.evo-lite', ambientMarkerName)),
+            'the ambient project must have no containment marker after this test');
+        assert.strictEqual(
+            fs.existsSync(path.join(WORKSPACE_ROOT, '.evo-lite', 'zvec')), ambientZvecExisted,
+            'the ambient zvec directory must be exactly as it was');
         console.log('✅ T-zwuc-T8b-gate passed');
     }
 
@@ -13957,11 +14043,30 @@ async function runChildRuntimeTests() {
                 encoding: 'utf8', env: childEnv, cwd: path.dirname(runtimeRoot),
             });
 
-            // A dependency that is genuinely missing is a FAILURE, not a skip:
-            // replacing the real recovery path with a mock would defeat the test.
-            const probeDep = child(['-e', 'try { require("@zvec/zvec"); console.log("HAVE_ZVEC"); } catch (e) { console.log("NO_ZVEC:" + e.message); }']);
-            assert.ok(probeDep.stdout.includes('HAVE_ZVEC'),
-                `the real recovery path needs @zvec/zvec; got ${probeDep.stdout.trim()}`);
+            // @zvec/zvec is an optionalDependency with no Linux prebuild, so it
+            // installs on the Windows runners and is genuinely absent on the
+            // Ubuntu ones. Windows is also where the defect this whole issue is
+            // about actually happens, so that is where the real path MUST run:
+            // a missing dependency there is a failure, never a skip, because
+            // substituting a mock would defeat the only test that proves the
+            // reopen. Elsewhere it skips out loud rather than reporting a
+            // contract failure for an environment fact.
+            const probeDep = child(['-e', 'try { require("@zvec/zvec"); console.log("HAVE_ZVEC"); } catch (e) { console.log("NO_ZVEC:" + (e.code || "ERR") + ":" + e.message); }']);
+            const haveZvec = probeDep.stdout.includes('HAVE_ZVEC');
+            // The skip is narrow on purpose. Only a dependency that is genuinely
+            // absent — MODULE_NOT_FOUND, or a native binding with no prebuild for
+            // this platform — may skip, and only off win32. Any other error is a
+            // real failure: a broken fixture must not disguise itself as an
+            // environment fact.
+            const unavailable = /NO_ZVEC:(MODULE_NOT_FOUND|ERR_DLOPEN_FAILED)/.test(probeDep.stdout)
+                || /Cannot find module|no prebuild|prebuilt binary|was compiled against a different/i.test(probeDep.stdout);
+            assert.ok(haveZvec || unavailable,
+                `@zvec/zvec failed to load for a reason that is not "unavailable": ${probeDep.stdout.trim()} ${probeDep.stderr.trim()}`);
+            assert.ok(haveZvec || process.platform !== 'win32',
+                `the real recovery path needs @zvec/zvec on win32 — that is where the defect lives; got ${probeDep.stdout.trim()}`);
+            if (!haveZvec) {
+                console.log(`   ⏭️  real-recovery case skipped: @zvec/zvec is an optional dependency with no prebuild here (${probeDep.stdout.trim()})`);
+            } else {
 
             // 1. While the marker stands, an independent process refuses zvec.
             const before = child(['-e', `
@@ -14003,6 +14108,7 @@ console.log("RESULT" + JSON.stringify({ impl: a.impl, degraded: a.degraded, engi
             assert.ok(String(afterJson.engine).startsWith('zvec'), `engine was ${afterJson.engine}`);
             assert.strictEqual(afterJson.count, ARCHIVES, `expected ${ARCHIVES} chunks after reopen, got ${afterJson.count}`);
             assert.ok(afterJson.hits > 0, 'the rebuilt collection answers a real query');
+            }
         } finally {
             anchor.cleanup();
             fs.rmSync(path.dirname(runtimeRoot), { recursive: true, force: true });
@@ -14085,6 +14191,39 @@ console.log("RESULT" + JSON.stringify({ impl: a.impl, degraded: a.degraded, reas
                 assert.strictEqual(json.impl, 'sqlite', 'a non-ASCII ambient path degrades');
                 assert.strictEqual(json.reason, 'containment');
                 assert.strictEqual(json.persisted, true, 'the SHARED path must have recorded the debt');
+
+                // The regression CI caught: writing the marker must not
+                // invalidate the decision that wrote it. An earlier version put
+                // the marker status in the cache key, so a contained decision
+                // resolved with the marker absent, persisted it, and the next
+                // consumer then saw a different key and built a SECOND decision —
+                // breaking the §6.1 guarantee Task 4 froze. Asserted on a
+                // degrading path specifically, because that is the only shape
+                // where the decision changes the state it is keyed on.
+                const identity = child({
+                    EVO_LITE_ROOT: runtimeRoot,
+                    EVO_LITE_MEMORY_ENGINE: 'zvec',
+                }, `
+const mi = require(${MI});
+mi.resetMemoryIndex();
+const nothing = mi.peekEngineDecision();
+mi.resolveActiveImpl();
+const first = mi.peekEngineDecision();
+mi.getMemoryIndex();
+const second = mi.peekEngineDecision();
+console.log("RESULT" + JSON.stringify({
+  cleared: nothing === null,
+  reason: first && first.reason,
+  persisted: first && first.markerPersisted,
+  same: first === second,
+}));
+`);
+                assert.strictEqual(identity.status, 0, `identity probe failed: ${identity.stderr}`);
+                const idJson = JSON.parse(identity.stdout.split('RESULT')[1]);
+                assert.strictEqual(idJson.cleared, true, 'resetMemoryIndex clears the decision');
+                assert.strictEqual(idJson.reason, 'containment', 'this probe must run on a degrading path');
+                assert.strictEqual(idJson.same, true,
+                    'a decision that writes the marker must NOT invalidate itself — diagnosis and instantiation still share ONE decision object');
 
                 const marker = st.readContainmentState(runtimeRoot);
                 assert.strictEqual(marker.status, 'present',

@@ -253,22 +253,47 @@ function collectDecisionInputs(options = {}) {
     // It lives beside the db, NOT inside the zvec dir: a recovery rebuild
     // discards that whole directory, and a debt record that a rebuild deletes
     // records nothing.
-    inputs.markerDir = options.markerDir !== undefined ? options.markerDir : ambientMarkerDir();
-    inputs.marker = options.marker !== undefined
-        ? options.marker
-        : readContainmentState(inputs.markerDir, { fsOps: options.markerFsOps });
-
     // A decision asked about an INJECTED path is a hypothetical: "what would you
-    // decide for this string?". Answering it must not mutate anything. Without
-    // this, a test that simulates a contained path would write a real marker
-    // into the ambient project and degrade it for good — the diagnostic would
-    // become the defect.
+    // decide for THIS string?". The marker belongs to the ambient project, not
+    // to that string, so for a hypothetical it applies in neither direction:
+    //
+    //   write — a test simulating a contained path would otherwise record a real
+    //           debt in the ambient project and degrade it for good; the
+    //           diagnostic would become the defect.
+    //   read  — a hypothetical about a SAFE path would otherwise inherit the
+    //           ambient project's debt and answer "recovery pending" about a
+    //           project it was never asked about.
     //
     // Production never injects: sharedEngineDecision() always resolves ambient
-    // paths, so the marker contract is unchanged where it matters. A caller that
-    // genuinely wants to exercise the write passes markerDir explicitly.
-    inputs.markerPersistable = options.markerDir !== undefined
-        || (options.paths === undefined && options.collectionPath === undefined);
+    // paths, so the contract is unchanged where it matters. A caller that wants
+    // the marker to participate passes markerDir explicitly, which scopes both
+    // the read and the write to that directory.
+    // Two separate questions, deliberately not one boolean:
+    //
+    //   markerApplies     — does a marker participate in this decision at all?
+    //   markerPersistable — may this decision WRITE one?
+    //
+    // Supplying a `marker` snapshot answers the first without granting the
+    // second: a caller can ask "what would you decide with this state?" without
+    // that question acquiring the right to touch a disk. Only an explicit
+    // markerDir — a directory the caller has scoped on purpose — grants writes.
+    const pathInjected = options.paths !== undefined || options.collectionPath !== undefined;
+    const markerContextExplicit = options.marker !== undefined || options.markerDir !== undefined;
+    inputs.markerApplies = !pathInjected || markerContextExplicit;
+    inputs.markerPersistable = !pathInjected || options.markerDir !== undefined;
+
+    inputs.markerDir = options.markerDir !== undefined ? options.markerDir
+        : (inputs.markerApplies ? ambientMarkerDir() : null);
+    if (options.marker !== undefined) {
+        inputs.marker = options.marker;
+    } else if (inputs.markerApplies) {
+        inputs.marker = readContainmentState(inputs.markerDir, { fsOps: options.markerFsOps });
+    } else {
+        // No debt is KNOWN for a path this runtime has never run on. 'absent' is
+        // the honest answer, not a convenient one — and crucially, nothing on
+        // disk was consulted to produce it.
+        inputs.marker = { status: 'absent', markerPath: null, state: null, errorCode: null, detail: null };
+    }
     return inputs;
 }
 
@@ -293,12 +318,21 @@ function errorTag(err) {
 
 function decisionKeyOf(inputs) {
     const colPath = inputs.paths ? inputs.paths.collectionPath : '<unresolvable>';
-    // The marker status is part of the key for the same reason the path is: a
-    // cached verdict about a state no longer in play is the direction that must
-    // never happen. resetMemoryIndex() already drops the cache, but recovery is
-    // not the only thing that can change the marker under a long-lived process.
-    const marker = inputs.marker ? inputs.marker.status : 'absent';
-    return `${inputs.choice} ${colPath} ${inputs.platform} ${marker}`;
+    // The marker status is deliberately NOT part of this key.
+    //
+    // An earlier version included it, on the theory that a cached verdict about a
+    // state no longer in play is the direction that must never happen. But the
+    // decision WRITES the marker: a contained path resolves with the marker
+    // absent, persists it, and the very next call then reads 'present' — a
+    // different key, a recomputed decision, and the §6.1 guarantee that
+    // diagnosis and instantiation share ONE decision object quietly broken. A
+    // key that the keyed operation itself invalidates is not a cache.
+    //
+    // Nothing is lost. The marker can only change under a live process in two
+    // ways: this process degrades (already reflected in the decision it just
+    // took) or a recovery clears it — and recovery calls resetMemoryIndex(),
+    // which drops the cache outright.
+    return `${inputs.choice} ${colPath} ${inputs.platform}`;
 }
 
 function resolveEngineDecisionFromInputs(inputs) {
@@ -404,6 +438,9 @@ function persistEngineDecision(inputs, provisional, seams = {}) {
     if (!inputs.markerPersistable) {
         // Hypothetical decision about an injected path — see collectDecisionInputs.
         // Recorded rather than silent, so "no marker was written" is observable.
+        // Note this is markerPersistable, not markerApplies: a caller may hand in
+        // a marker snapshot to shape the verdict without thereby earning the
+        // right to write one.
         provisional.markerPersisted = false;
         provisional.markerSkipped = 'injected-path';
         return provisional;
