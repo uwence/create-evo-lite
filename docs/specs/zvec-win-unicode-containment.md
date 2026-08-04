@@ -984,6 +984,78 @@ release 失败，且事务【已提交】
 
 `released === false` 的返回值同样必须被检查 —— 它和抛错一样是「锁没放掉」。
 
+### M5.5f stable publication-lock identity
+
+M5.5b 的锁路径由 `getIndexMemoryDir()` 的返回值直接派生。该函数不是纯 getter:它会把
+`vect_memory` 实时 rename 成 `index_memory`,并在 rename 失败时返回 legacy 路径。因此
+首次升级期间存在确定性交错:
+
+```text
+进程 A                                   进程 B
+
+看到 vect_memory 存在 / index_memory 不存在
+                                         看到 vect_memory 存在 / index_memory 不存在
+rename legacy → modern 成功 → 返回 modern
+                                         rename 失败 → catch → 返回 legacy
+
+锁 index_memory.publication.lock          锁 vect_memory.publication.lock
+```
+
+两个进程都认为自己持有「全局」锁。更糟的是 B 进入回调后会再次解析目录,此时 legacy 已
+不存在,于是 B 会**持 legacy 锁修改 modern marker set**。M5.5b/M5.5c 想关掉的窗口
+(archive 与 recovery 同时进入、sync 与 publication 同时改同一集合、rollback-failed、
+final manifest 之后源发生变化)会因此全部重新打开。
+
+冻结:
+
+```text
+publication lock 位于【不随 vect_memory/index_memory 迁移而改变】的位置
+legacy 与 modern 两个别名必须映射到【同一个】lock path
+迁移竞态不得形成两名 owner
+
+archiveLockPathFor(<root>/vect_memory) === archiveLockPathFor(<root>/index_memory)
+```
+
+`archiveLockPathFor(indexDir)` 的公开签名保留,但返回值必须由**共同父目录 + 固定文件名**
+构成,不得继续拼接 `indexDir + '.publication.lock'`。所有诊断与错误消息中的锁路径也必须
+经由该函数取得,不得就地拼接第二份真相。
+
+`runtime.js` 不在本轮可改范围内 —— 该修法不需要修改它。
+
+### M5.4b recovery-lease terminal reporting
+
+M5.5e 只覆盖了 publication lock。recovery lease 同样禁止按时间或 PID 回收,因此它的
+release 失败同样是持久 lockout:
+
+```text
+恢复在 marker 清除前失败
+  + lease unlink 遇到 EBUSY / EACCES,或返回 not-owner / unreadable
+
+containment marker: present
+recovery lease:     present
+命令报告:            只有原始恢复失败
+后续 rebuild:        永久 recovery-in-progress
+```
+
+冻结(非 quarantine 路径也必须检查返回值与异常):
+
+```text
+marker 尚未清除 + release 失败
+  → 保留原始 recovery failure（不得改写 reason）
+  → console.error + appendLog
+  → 明确说明同 generation 的后续恢复会被阻止
+
+marker 已成功清除 + release 失败
+  → recovery 仍算【成功】
+  → console.warn + appendLog
+  → 旧 generation 的残留 lease 无害,不得误报恢复失败
+
+release 返回 absent
+  → 释放目标已达成,视为无残留,不报告
+```
+
+`not-owner`、`unreadable` 与抛错都必须报告。空 catch 在此禁止。
+
 ### M6 失败语义
 
 任一失败：

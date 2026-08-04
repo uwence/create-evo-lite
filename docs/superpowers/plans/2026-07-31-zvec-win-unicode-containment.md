@@ -558,6 +558,32 @@ M5.5e  acquire 失败 → coded archive-marker-lock-failed；
        released=false 与抛错同等对待
 ```
 
+#### 第 8 版:锁的稳定身份与 lease 终态可见性（spec §7.4 M5.5f / M5.4b）
+
+```text
+P1-8  锁路径直接派生自 getIndexMemoryDir()，而该函数会实时把 vect_memory rename 成
+      index_memory，并在 rename 失败时【返回 legacy 路径】
+      → 首次升级期间 A 拿 modern 锁、B 拿 legacy 锁，两者都以为持有全局锁
+      → B 进回调后重新解析目录会拿到 modern，于是【持 legacy 锁改 modern marker set】
+      → M5.5b/M5.5c 关掉的窗口全部重新打开
+P2-2  recovery lease 的释放仍是 try { ... } catch (_) {}，也不检查 released === false
+      → marker 未清 + unlink EBUSY/EACCES/not-owner ⇒ 永久 recovery-in-progress，
+        而命令只报告原始恢复失败
+```
+
+修法要点:
+
+```text
+M5.5f  archiveLockPathFor(indexDir) 保留签名，但返回【共同父目录 + 固定文件名】；
+       archiveLockPathFor(vect_memory) === archiveLockPathFor(index_memory)；
+       诊断消息中的锁路径一律取自该函数，不得就地拼接 `${indexDir}.publication.lock`；
+       不修改 runtime.js
+M5.4b  非 quarantine 路径也必须检查 releaseRecoveryLease 的返回值与异常：
+       marker 未清 → console.error + appendLog，保留原始 failure reason；
+       marker 已清 → console.warn + appendLog，仍算成功；
+       absent → 释放目标已达成，不报告；not-owner / unreadable / 抛错 → 必须报告
+```
+
 #### T8f — 双 recovery 的 stale-eligibility 竞态（M5.4）
 
 确定性地制造 P1-1 的交错(注入暂停点,不靠时序侥幸):
@@ -637,6 +663,10 @@ SQLite 行数               不变
       → G5 或 G6 **必须**变红。守 M5.5c
 - [ ] **Step 19 (mutation J):** rollback-failed 后仍无条件释放 recovery lease
       → G7 **必须**变红。守 M5.5d
+- [ ] **Step 20 (mutation K):** 把锁路径恢复成 `` `${indexDir}.publication.lock` ``
+      → G9 **必须**变红。守 M5.5f
+- [ ] **Step 21 (mutation L):** recovery lease 释放退回空 catch / 忽略 released=false
+      → G10 **必须**变红。守 M5.4b
 
 #### T8g 再扩展 — source fence 与 quarantine（M5.5c / M5.5d / M5.5e）
 
@@ -660,6 +690,27 @@ G8  锁的终态报告
     → exclusive-create 抛 EACCES → recovery reason=archive-marker-lock-failed
     → 已提交后 release 失败 → 仍 success、marker absent、有可见 WARN/日志、
       保留的锁让后续 global sync fail-closed
+```
+
+#### T8g 再扩展 — 锁身份与 lease 终态（M5.5f / M5.4b）
+
+```text
+G9  legacy/modern 只能有一把锁
+    legacy = <root>/vect_memory，modern = <root>/index_memory
+    → archiveLockPathFor(legacy) === archiveLockPathFor(modern)
+    → A 经 legacy 取锁后，B 经 modern 取锁必须 archive-marker-busy
+    → A 释放后 B 才能取得
+    再加 migration-shaped 用例：首次解析返回 legacy、后续解析返回 modern，
+    整个 operation 仍始终受【同一个】lock 文件保护
+
+G10 recovery lease 终态
+    失败路径：恢复先以 validator/build 错误失败 + lease unlink 注入 EBUSY
+      → 原始 failure reason 不变；marker present；lease present；
+        console.error 与 memory.log 均有记录；
+        第二次 recovery 在 rm/builder 之前返回 recovery-in-progress
+    成功路径：marker 已清后 lease unlink 失败
+      → recovery success；marker absent；console.warn + memory.log；
+        不得改判为失败
 ```
 
 #### T8f 扩展 — 真实的 lease 所有权竞态（M5.4a）
