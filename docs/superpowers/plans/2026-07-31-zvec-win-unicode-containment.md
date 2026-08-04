@@ -504,6 +504,35 @@ manifest     文件名 + 内容 SHA-256；发布前重新核对；只比数量�
 | 20 | collection path / marker 目录不可解析 | `EVO_ZVEC_CONTAINMENT_STATE_WRITE`，`reason='collection-path-unresolvable'`；**不返回 SQLite 实例**（M6.1） |
 | 21 | 两个 writer 并发首次写入 | 恰好一个 `written=true`，另一个 `alreadyPresent=true`；盘上内容 = 第一个成功者（M1.1） |
 
+#### 第 6 版:所有权与发布仍不是完整事务（spec §7.4 M5.4a / M5.5a / M5.5b）
+
+第 5 版实现了 lease 与 staging 的**主体**,CI 五格首跑通过。全量复审发现**最后两层**
+仍然漏:
+
+```text
+P1-3  lease 的「CAS」实际是 read → unlink → write，跨进程不原子：
+      两个新 generation 获取者可以互相删掉对方刚写的 lease → 同代两个 owner；
+      而且【正常成功路径】就能让旧 owner 的 release 删掉新 generation 的 lease
+P1-4  发布事务的三条失败路径：回滚失败后 finally 无条件删 parked（原件永久丢失）；
+      已换位后删 parked 失败却报 archive-publish-failed（命令失败与盘面不符）；
+      发布成功但清 containment marker 失败 → SQLite 继续服役，账本却已被换成新集合
+P1-5  recovery lease 只隔离 recovery↔recovery，挡不住【正常 sync 闯入目录换位窗口】
+```
+
+修法要点:
+
+```text
+M5.4a  每个 generation 一个 lease 文件 zvec-containment-recovery.<fingerprint>.lease.json
+       获取 = 单次 wx；EEXIST = 同代进行中；【绝不删除或替换任何 lease】
+       所有权由文件名身份 + O_EXCL 保证，不再依赖读-改-写时序
+M5.5a  发布顺序：staging → 验证 → manifest → 取发布锁 → 锁内再校验 manifest
+       → park 原件 → 换位 → 清 containment marker → 释放锁 → 【此时才】删 parked
+       回滚失败 → 保留 parked 与锁，reason=archive-publish-rollback-failed，不删证据
+       已提交后删 parked 失败 → 仍算成功，保留备份并诊断，不得误报失败
+M5.5b  全局 archive-marker 锁：普通 sync、普通 archive 写入、recovery 最终换位共同遵守
+       recovery 构建 staging 时不取锁；不按时间回收；不可确认所有权时 fail-closed
+```
+
 #### T8f — 双 recovery 的 stale-eligibility 竞态（M5.4）
 
 确定性地制造 P1-1 的交错(注入暂停点,不靠时序侥幸):
@@ -575,6 +604,42 @@ SQLite 行数               不变
       → T8f 的 stale-eligibility 用例**必须**变红。守 M5.4
 - [ ] **Step 15 (mutation F):** 恢复期间直接写全局 archive marker（不走 staging）
       → T8g 的「逐字节相同」断言**必须**变红。守 M5.5
+- [ ] **Step 16 (mutation G):** 退回单一共享 lease 路径 + read/unlink 替换
+      → F1 或 F2 **必须**变红。守 M5.4a
+- [ ] **Step 17 (mutation H):** 清 marker 失败时不回滚 archive markers，
+      或 finally 无条件删除 parked → G1/G2 **必须**变红。守 M5.5a
+
+#### T8f 扩展 — 真实的 lease 所有权竞态（M5.4a）
+
+```text
+F1  旧 generation 的 lease 在场，B1 与 B2 同时获取新 generation
+    → 恰好一个 acquired=true，另一个 recovery-in-progress
+    → 两个 owner 绝不可同时成立
+F2  旧 owner 释放与新 owner 获取交错
+    → B 的 lease 仍在；A 不能删掉 B 的 lease
+F3  同 fingerprint 的 lease 内容损坏
+    → fail-closed；不删除；不开始任何破坏性动作
+```
+
+#### T8g 扩展 — 完整的发布回滚（M5.5a / M5.5b）
+
+初始 archive-marker 文件必须有**非空内容**,否则「旧集合」与「staging 的空文件」在
+逐字节比较下无法区分。
+
+```text
+G1  清 containment marker 失败
+    → containment marker 保留；全局 marker 目录逐字节相同；行数不变；
+      普通 sync 新增 0；staging 已删；回滚成功后 parked 已删
+G2  staging 换位失败【且】回滚也失败
+    → reason=archive-publish-rollback-failed；parked 原件完好；
+      finally 不得删除 parked；containment marker 保留；锁保持 fail-closed
+G3  正常 sync 与发布争锁（两个方向都要覆盖）
+    → recovery 撞上：archive-marker-busy，canonical 集合不变，marker 保留
+    → 正常 sync 撞上：不得创建新的 indexDir
+G4  已成功清除 containment marker 之后，删除 parked 备份失败
+    → 恢复仍算成功；canonical 新集合保留；下一个进程判定为 zvec；
+      保留 parked 备份；【不得】误报 archive-publish-failed
+```
 
 六条突变都要留下书面记录（哪条断言、什么消息），未验证的矩阵不算完成。
 

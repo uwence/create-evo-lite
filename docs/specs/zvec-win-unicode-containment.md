@@ -740,6 +740,146 @@ fresh reopen 验证成功之后
 自己也可能失败的回滚。发布采用目录级换位:staging 集合就绪后,先把现集合改名让位,
 再把 staging 改名就位,任一步失败则改回。
 
+### M5.4a lease 的所有权必须由文件名身份保证，而不是 read/unlink 时序
+
+M5.4 的第一版实现让所有 generation 共用一个 `zvec-containment-recovery.json`,于是
+「CAS」退化成 read → unlink → write,而这在跨进程下不是原子的:
+
+```text
+旧 generation A 的 lease 存在
+
+B1                         B2
+读到 lease A               读到 lease A
+判定与 generation B 不同    判定与 generation B 不同
+unlink A
+写入 lease B1
+                           unlink（实际删掉的是 B1）
+                           写入 lease B2
+
+→ B1 与 B2 都 acquired=true：同一 generation 出现两个 owner
+```
+
+释放路径同样危险,而且**正常成功路径**就能制造:
+
+```text
+旧 owner A                  新 generation B
+清除 containment marker
+                            新降级写入 marker B
+读取旧 lease
+                            删除 A、写入 lease B
+unlink lease path           ← 删掉的是 B 的 lease
+```
+
+冻结:**每个 generation 一个 lease 文件**。
+
+```text
+zvec-containment-recovery.<markerFingerprint>.lease.json
+```
+
+- 获取只允许**一次** `wx` / `O_EXCL`;
+- `EEXIST` 一律表示**同代 recovery in progress**;
+- 获取过程中**不得删除或替换任何 lease**;
+- 不同 generation 是不同文件,天然互不阻塞 —— 不需要「回收异代 lease」这个动作,
+  于是那条竞态从根上消失;
+- 同代 lease 内容 invalid / unreadable → **fail-closed**,且不得自动删除;
+- 释放同时按 **fingerprint(文件名)与 leaseId** 限定,owner 只删自己那一个;
+- 历史 generation 的孤儿 lease 可以留着,不影响当前 generation;
+- Task 6 **不**按时间或 PID 自动清理历史 lease。
+
+所有权由**文件名身份 + `O_EXCL`** 保证,不再依赖任何读-改-写的时序。
+
+### M5.5a 发布是一个事务，失败路径不得销毁唯一的原件
+
+第一版发布顺序里有三条未覆盖的失败路径,每条都会破坏 M5.5 承诺的「失败后逐字节不变」:
+
+```text
+1  staging 就位失败 → 回滚 rename 也失败
+   → 原件只存在于 parked 目录，而 finally 无条件删除 parked → 原账本永久丢失
+
+2  已完成换位后删除 parked 失败
+   → 函数报 archive-publish-failed，但 canonical 目录已经是新集合
+   → 「命令失败」与盘面事实不一致
+
+3  发布成功后清除 containment marker 失败
+   → 系统继续使用 SQLite，而它的 archive 账本已被 Zvec recovery 的新集合替换
+   → 新 marker 声称那些档案已索引；若旧 SQLite 并未真正包含它们，后续 sync 会跳过
+```
+
+冻结顺序:
+
+```text
+build staging
+→ fresh reopen 验证
+→ manifest 校验
+→ 获取【全局 archive-marker 发布锁】
+→ 在锁内【再次】manifest 校验
+→ park 原 archive-marker 目录
+→ 发布 staging 目录
+→ 清除 containment marker
+→ 释放发布锁
+→ 【此时才】删除 parked 备份
+```
+
+失败语义:
+
+```text
+清除 containment marker 失败
+  → 恢复原 archive-marker 目录
+  → containment marker 保留
+  → 命令失败
+
+发布回滚失败
+  → 保留 parked 原件
+  → 保留发布锁 / recovery lease
+  → reason = archive-publish-rollback-failed
+  → 【不得】删除证据
+  → 正常全局 sync 必须 fail-closed
+
+已提交成功之后删除 parked 备份失败
+  → 事务仍然算成功
+  → 保留这份无害的备份并输出诊断
+  → 【不得】误报 archive-publish-failed
+```
+
+第三条是最容易写错的方向:备份删不掉不影响任何正确性,把它当失败反而会让一次已经成功
+的恢复被报成失败,而 marker 已经清了。
+
+### M5.5b 全局 archive-marker 锁
+
+recovery lease 只隔离 recovery 与 recovery。它挡不住**正常 sync 闯进目录换位窗口**:
+
+```text
+Recovery                          Normal sync
+rename indexDir → parkedDir
+                                  发现 indexDir 不存在 → ensureDir → 开始写 marker
+rename stagingDir → indexDir  → EEXIST
+rollback parkedDir → indexDir → EEXIST
+finally 删除 parkedDir
+```
+
+一次交错同时破坏 staging、正常 sync 与原件。
+
+冻结:引入**全局 archive-marker 锁**,由以下路径**共同**遵守:
+
+```text
+普通 syncIndexMemory() 对全局 marker 集合的读取与写入
+普通 archive 写入全局 marker 的路径
+recovery 的最终目录换位与 containment-marker 清除
+```
+
+recovery **构建 staging 时不获取**该锁 —— staging 与全局集合无关,那段时间正常 sync
+应当照常工作。
+
+不得按时间自动回收该锁;无法确认所有权时 **fail-closed**。
+
+新增 reason:
+
+```text
+archive-marker-busy               发布锁被占用
+archive-publish-rollback-failed   回滚失败，原件保留，证据不得删除
+archive-marker-lock-failed        锁本身无法建立或状态不可确认
+```
+
 ### M6 失败语义
 
 任一失败：
