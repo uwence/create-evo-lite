@@ -443,6 +443,38 @@ Pagination/exact-count expansion requires separate authorization.
       path-unresolvable（第 20 格）
 - [ ] **Step 9:** T8 全状态矩阵 + 两个突变负控（见下），live 与 template 双份
 
+#### 事务合同（spec §7.4 M5.4 / M5.5，第 5 版新增）
+
+全量复审在已通过 CI 的实现上发现两个 P1 —— 两者都不是"某一步写错了",而是
+**恢复缺少事务边界**:
+
+```text
+P1-1  两个并发恢复：A 取到 eligible 后暂停，B 完整跑完并清掉 marker，
+      A 再醒来删除 B 刚验证过的 collection 并中途失败
+      → marker 已 absent + collection 是半成品 → 下一个进程直接开 Zvec
+      已核实窗口：rmSync 发生在 ZvecMemoryIndex.initialize()（即 openWithCoordination）
+      之前，构造函数只存路径，所以 Zvec 自己的锁盖不住
+
+P1-2  失败的恢复污染在役 SQLite 的账本：ingestArchiveFile() 无条件写【全局】
+      archive marker，与写入哪个 index 无关；恢复又在受保护 try 之前删掉它们
+      → 已写进 builder 的档案：marker 谎称 SQLite 已索引（漏）
+      → 未及写入的档案：marker 已删，下次 sync 重新 INSERT（重，upsert 无去重）
+```
+
+实现必须落实 M5.4(marker-generation-bound lease)与 M5.5(archive marker 事务化发布)。
+要点:
+
+```text
+lease        wx/O_EXCL；身份含 markerFingerprint（marker 字节的 SHA-256）
+             取得后【重新】判定，禁止沿用取 lease 前的 eligible
+             释放按 leaseId CAS；不得按时间清 stale lease
+             持有到 containment marker 清除完成之后
+staging      build/validate 期间 archive marker 写进隔离集合，
+             全局集合【从不就地修改】——"逐字节不变"由此保证，而不是靠回滚
+manifest     文件名 + 内容 SHA-256；发布前重新核对；只比数量是不够的
+发布         目录级换位：现集合改名让位 → staging 改名就位 → 失败则改回
+```
+
 #### T8 状态矩阵（必须全部固定）
 
 | # | 场景 | 预期 |
@@ -472,6 +504,61 @@ Pagination/exact-count expansion requires separate authorization.
 | 20 | collection path / marker 目录不可解析 | `EVO_ZVEC_CONTAINMENT_STATE_WRITE`，`reason='collection-path-unresolvable'`；**不返回 SQLite 实例**（M6.1） |
 | 21 | 两个 writer 并发首次写入 | 恰好一个 `written=true`，另一个 `alreadyPresent=true`；盘上内容 = 第一个成功者（M1.1） |
 
+#### T8f — 双 recovery 的 stale-eligibility 竞态（M5.4）
+
+确定性地制造 P1-1 的交错(注入暂停点,不靠时序侥幸):
+
+```text
+A 读到 eligible 后暂停
+B 取 lease → 重建 → 验证 → 清 marker → 释放 lease
+A 恢复执行
+```
+
+断言:
+
+```text
+A 必须在【任何 rmSync 之前】停止
+A rmSync 调用数        = 0
+A builder 构造数        = 0
+B 验证过的 collection    完整保留
+normal decision         = zvec
+```
+
+再覆盖反向:
+
+```text
+A 持有 lease 期间 B 启动
+→ B reason = recovery-in-progress
+→ B 破坏性调用数 = 0
+```
+
+#### T8g — archive marker 事务（M5.5）
+
+初始状态:
+
+```text
+SQLite 已含 A/B；archive marker A/B 存在；containment marker 存在
+```
+
+在 Zvec builder 写入 B 时注入异常,断言:
+
+```text
+containment marker        present
+archive marker 目录        与失败前【逐字节相同】
+SQLite 行数               不变
+随后一次普通 SQLite sync   新增 0 条（这条才真正证明账本没被污染）
+```
+
+再加 source mutation:
+
+```text
+恢复期间修改 / 新增 raw_memory 文件
+→ manifest mismatch
+→ recovery incomplete
+→ 不发布 archive marker
+→ 不清 containment marker
+```
+
 #### 突变负控（证明矩阵不是空转）
 
 - [ ] **Step 10 (mutation A):** 让 `SAFE + marker` 允许调用 `loadZvecIndex` → T8 **必须**变红
@@ -484,8 +571,12 @@ Pagination/exact-count expansion requires separate authorization.
 - [ ] **Step 13 (mutation D):** 只给 `resolveEngineDecision()` 加 marker 写入、让
       `sharedEngineDecision()` 继续直调纯 resolver → 共享路径的 marker 断言**必须**变红。
       这条专门守 M3.1 —— 生产走的正是共享路径
+- [ ] **Step 14 (mutation E):** 绕过 recovery lease（不取或不在取得后重新判定）
+      → T8f 的 stale-eligibility 用例**必须**变红。守 M5.4
+- [ ] **Step 15 (mutation F):** 恢复期间直接写全局 archive marker（不走 staging）
+      → T8g 的「逐字节相同」断言**必须**变红。守 M5.5
 
-四条突变都要留下书面记录（哪条断言、什么消息），未验证的矩阵不算完成。
+六条突变都要留下书面记录（哪条断言、什么消息），未验证的矩阵不算完成。
 
 #### 真实安全路径集成测试（必须，不得以 mock 替代）
 

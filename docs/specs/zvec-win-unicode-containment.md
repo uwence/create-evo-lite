@@ -626,6 +626,120 @@ Array.isArray(probe)
 > **Task 6 不得为此扩大 `rebuildLocalIndex()` 的公开返回面**；清 marker 的判定在函数
 > 内部使用该结构化结果完成。
 
+### M5.4 recovery lease（承重:序列化恢复）
+
+M5.1–M5.3 描述的是**一个**恢复的正确顺序。它们没有回答第二个问题:**同时有两个恢复
+时会怎样**。
+
+已核实的窗口:`runContainmentRecoveryRebuild()` 取到 eligible 快照后,直接
+`fs.rmSync(zvecDir)`,而 `ZvecMemoryIndex` 的构造函数只保存路径 ——
+真正的 `openWithCoordination()` 发生在 `initialize()`,即首次操作 collection 时。
+**目录删除发生在任何协调之前**,所以 Zvec 自己的锁盖不住这一段。
+
+于是存在这条合法交错:
+
+```text
+进程 A                          进程 B
+读到 marker，eligible
+  （暂停）
+                                读到同一 marker，eligible
+                                删除旧 collection、重建、fresh reopen 验证通过
+                                清除 marker，退出
+  （恢复执行）
+删除 B 刚刚验证过的 collection
+开始第二次重建 → 中途失败
+
+结果：containment marker = absent（B 清的）
+      collection        = A 留下的半成品
+      下一个进程        = SAFE + 无 marker → 直接打开 Zvec
+```
+
+这直接违反 AC5 最核心的不变量:**任何未完成的恢复,都不得让下一个进程自动进入 Zvec。**
+
+冻结:
+
+```text
+获取 recovery lease
+  → lease 身份【绑定当前 containment marker 的 fingerprint】
+  → 取得 lease 之后【重新】读 marker、重新解析 containment decision
+  → fingerprint / SAFE / choice / dependency 四项全部重新确认
+  → 才允许执行第一个 rm / unlink
+```
+
+约束:
+
+- 同一个 marker generation 只能有一个 recovery owner;
+- lease 用 `wx` / `O_EXCL` 创建;
+- lease 内容至少包含 `version` / `leaseId` / `pid` / `createdAt` / `markerFingerprint`;
+- 释放按 `leaseId` 做 CAS —— 只有自己写的那把才由自己删;
+- lease 存在且 fingerprint 与当前 marker 相同 → 第二个恢复返回
+  `EVO_ZVEC_RECOVERY_INCOMPLETE`,reason `recovery-in-progress`,**零破坏性调用**;
+- **不得**按时间自动删除「疑似 stale」的 lease —— 时间不是所有权的证据;
+- 属于**旧 marker generation** 的遗留 lease 不得阻塞未来的新 marker。这正是 lease
+  身份必须包含 fingerprint 的原因:marker 换代意味着上一次恢复要么完成(会释放
+  lease)、要么进程已死,两种情况下那把旧 lease 都不再代表活着的恢复;
+- 取得 lease **之后**必须重新判定,**禁止**沿用取 lease 之前的 stale `eligible`;
+- lease 一直持有到 containment marker 清除完成之后才释放。
+
+`markerFingerprint` 取 marker 文件字节的 SHA-256。它标识的是「哪一次降级」,不是
+「哪个时刻」。
+
+### M5.5 archive marker 的事务化发布（承重:失败的恢复不得污染在役 SQLite）
+
+已核实:`ingestArchiveFile()` 把 per-archive marker 写进**全局** `getIndexMemoryDir()`,
+**与写入的是哪个 index 无关** —— 注入 recovery builder 时也照写;而 `syncIndexMemory()`
+正是用这些 marker 判断跳过。当前实现又在受保护的 `try` **之前**就删掉了这些 marker,
+失败路径不恢复。
+
+于是一次失败的恢复会**双向**破坏仍在服役的 SQLite 账本:
+
+```text
+1. SQLite 已含档案 A、B；marker A、B 存在
+2. recovery 删除 marker A、B
+3. Zvec builder 写入 A 成功 → 全局 marker A 被重建
+4. 写入 B 时抛错 → marker B 不存在
+5. containment marker 保留，系统继续用原 SQLite
+6. 下一次 SQLite sync 看到 B 缺 marker → 再写一次 B
+```
+
+`SqliteFtsIndex.upsert()` 是无条件 `INSERT`,没有 archive/source 唯一性,所以第 6 步
+产生**重复记录**;而第 3 步产生相反的错误 —— 全局 marker 声称 A 已被 SQLite 索引,
+实际上 A 只进了那个随后被丢弃的 builder。
+
+即:现有的「失败 → marker 保留 → 引擎留在 SQLite」只保护了**引擎选择**,没有保护
+SQLite 赖以工作的**派生同步元数据**。
+
+冻结:
+
+```text
+build / validate 阶段
+  → 不读取全局 archive marker 来决定跳过
+  → 不修改全局 archive marker（写入隔离的 staging 集合）
+
+fresh reopen 验证成功之后
+  → 重新核对 raw_memory manifest 未发生变化
+  → 事务化发布新的 archive marker 集合
+  → 清除 containment marker
+
+任一步失败
+  → 全局 archive marker 集合逐字节不变
+  → containment marker 保留
+  → SQLite bookkeeping 不变
+```
+
+`raw_memory` manifest 至少覆盖:
+
+```text
+相对文件名
+文件内容的 SHA-256
+```
+
+**不得**只比较文件数量:数量相同而内容已改,恰恰是最需要挡住的那种。
+
+「逐字节不变」由**从不就地修改**保证,而不是由「失败后再恢复」保证 —— 后者需要一个
+自己也可能失败的回滚。发布采用目录级换位:staging 集合就绪后,先把现集合改名让位,
+再把 staging 改名就位,任一步失败则改回。
+
 ### M6 失败语义
 
 任一失败：
@@ -679,6 +793,16 @@ EVO_ZVEC_CONTAINMENT_STATE_WRITE
 EVO_ZVEC_CONTAINMENT_STATE_READ
 EVO_ZVEC_RECOVERY_INCOMPLETE
 EVO_ZVEC_CONTAINMENT_STATE_CLEAR
+```
+
+`EVO_ZVEC_RECOVERY_INCOMPLETE` 的 reason 集合新增(M5.4 / M5.5):
+
+```text
+recovery-in-progress        另一个恢复持有当前 marker generation 的 lease
+lease-acquire-failed        lease 无法创建（非 EEXIST）
+stale-eligibility           取得 lease 后重新判定不再成立
+manifest-changed            raw_memory 在恢复期间发生变化
+archive-publish-failed      archive marker 集合发布失败（已回退）
 ```
 
 ### M7 跨平台 trust debt
