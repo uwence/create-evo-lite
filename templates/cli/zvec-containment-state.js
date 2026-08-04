@@ -33,10 +33,12 @@
 // decision that must fail closed rather than crash: a marker that cannot be read
 // is treated as a marker that is there.
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const MARKER_FILE = 'zvec-containment-state.json';
+const LEASE_FILE = 'zvec-containment-recovery.lease.json';
 const SCHEMA_VERSION = 1;
 const STATE_RECOVERY_REQUIRED = 'recovery-required';
 
@@ -48,6 +50,7 @@ const ACCEPTED_VERDICTS = ['UNKNOWN', 'UNSAFE'];
 const ERR_READ = 'EVO_ZVEC_CONTAINMENT_STATE_READ';
 const ERR_WRITE = 'EVO_ZVEC_CONTAINMENT_STATE_WRITE';
 const ERR_CLEAR = 'EVO_ZVEC_CONTAINMENT_STATE_CLEAR';
+const ERR_RECOVERY_LEASE = 'EVO_ZVEC_RECOVERY_LEASE';
 
 function codedError(message, code, detail) {
     const err = new Error(message);
@@ -210,8 +213,154 @@ function clearContainmentState(dir, seams = {}) {
     }
 }
 
+// ─── recovery lease (§7.4 M5.4) ────────────────────────────────────────────
+//
+// M5.1–M5.3 describe how ONE recovery must be ordered. They say nothing about
+// two. Without a lease, both can hold an `eligible` snapshot, and the loser of
+// the race wakes up to delete the collection the winner just verified — after
+// the winner already cleared the marker. What is left is a half-built directory
+// with no debt recorded, which is precisely the state the marker exists to
+// prevent. Zvec's own coordination cannot help: the constructor only stores
+// paths, openWithCoordination happens in initialize(), and the rmSync lands
+// before either.
+//
+// The lease is bound to the marker GENERATION, not to a clock. Time is not
+// evidence of ownership, so a lease is never reclaimed for being old. It is
+// reclaimed only when it names a DIFFERENT generation — which can only happen
+// after some recovery cleared that marker, and a recovery that completed
+// released its lease. A mismatched lease is therefore the residue of a dead
+// process, not a live claim.
+
+/** SHA-256 of the marker bytes: "which degradation", not "which moment". */
+function computeMarkerFingerprint(dir, seams = {}) {
+    const ops = seams.fsOps || fs;
+    let markerPath;
+    try {
+        markerPath = markerPathFor(dir);
+    } catch (_) {
+        return null;
+    }
+    try {
+        return crypto.createHash('sha256').update(ops.readFileSync(markerPath)).digest('hex');
+    } catch (_) {
+        return null;
+    }
+}
+
+function leasePathFor(dir) {
+    if (typeof dir !== 'string' || dir.trim() === '') {
+        throw codedError('recovery lease directory is unresolvable', ERR_RECOVERY_LEASE,
+            { reason: 'collection-path-unresolvable' });
+    }
+    return path.join(dir, LEASE_FILE);
+}
+
+function readRecoveryLease(dir, seams = {}) {
+    const ops = seams.fsOps || fs;
+    let leasePath;
+    try { leasePath = leasePathFor(dir); } catch (_) { return { status: 'unreadable', lease: null, leasePath: null }; }
+    let raw;
+    try {
+        raw = ops.readFileSync(leasePath, 'utf8');
+    } catch (err) {
+        if (err && err.code === 'ENOENT') return { status: 'absent', lease: null, leasePath };
+        return { status: 'unreadable', lease: null, leasePath };
+    }
+    try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || !nonEmptyString(parsed.leaseId)) {
+            return { status: 'invalid', lease: null, leasePath };
+        }
+        return { status: 'present', lease: parsed, leasePath };
+    } catch (_) {
+        return { status: 'invalid', lease: null, leasePath };
+    }
+}
+
+/**
+ * @returns {{acquired: boolean, reason: string|null, leasePath: string,
+ *            lease: object|null, replacedGeneration: boolean}}
+ */
+function acquireRecoveryLease(dir, payload = {}, seams = {}) {
+    const ops = seams.fsOps || fs;
+    const leasePath = leasePathFor(dir);
+    const { leaseId, markerFingerprint } = payload;
+    if (!nonEmptyString(leaseId) || !nonEmptyString(markerFingerprint)) {
+        throw codedError('recovery lease needs a leaseId and a marker fingerprint', ERR_RECOVERY_LEASE,
+            { reason: 'lease-payload-invalid', leasePath });
+    }
+    const lease = {
+        version: SCHEMA_VERSION,
+        leaseId,
+        pid: process.pid,
+        createdAt: (seams.now ? seams.now() : new Date()).toISOString(),
+        markerFingerprint,
+    };
+    const write = () => ops.writeFileSync(leasePath, `${JSON.stringify(lease, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+
+    try {
+        write();
+        return { acquired: true, reason: null, leasePath, lease, replacedGeneration: false };
+    } catch (err) {
+        if (!err || err.code !== 'EEXIST') {
+            throw codedError(`recovery lease could not be acquired: ${(err && err.code) || 'ERROR'}`, ERR_RECOVERY_LEASE,
+                { reason: (err && err.code) || 'ERROR', leasePath });
+        }
+    }
+
+    const existing = readRecoveryLease(dir, seams);
+    const sameGeneration = existing.status === 'present'
+        && existing.lease.markerFingerprint === markerFingerprint;
+    if (sameGeneration) {
+        // A live claim on THIS debt. Never reclaimed on a timer.
+        return { acquired: false, reason: 'recovery-in-progress', leasePath, lease: existing.lease, replacedGeneration: false };
+    }
+    if (existing.status === 'unreadable') {
+        return { acquired: false, reason: 'lease-unreadable', leasePath, lease: null, replacedGeneration: false };
+    }
+
+    // Different generation (or unparsable): residue of a dead process. Replacing
+    // it is safe precisely because the generation changed — see the note above.
+    try {
+        ops.unlinkSync(leasePath);
+        write();
+    } catch (err) {
+        if (err && err.code === 'EEXIST') {
+            return { acquired: false, reason: 'recovery-in-progress', leasePath, lease: null, replacedGeneration: false };
+        }
+        throw codedError(`recovery lease could not be reclaimed: ${(err && err.code) || 'ERROR'}`, ERR_RECOVERY_LEASE,
+            { reason: (err && err.code) || 'ERROR', leasePath });
+    }
+    return { acquired: true, reason: null, leasePath, lease, replacedGeneration: true };
+}
+
+/** CAS on the lease id: only the owner may release. */
+function releaseRecoveryLease(dir, leaseId, seams = {}) {
+    const ops = seams.fsOps || fs;
+    const current = readRecoveryLease(dir, seams);
+    if (current.status === 'absent') return { released: false, reason: 'absent' };
+    if (current.status !== 'present' || current.lease.leaseId !== leaseId) {
+        return { released: false, reason: 'not-owner' };
+    }
+    try {
+        ops.unlinkSync(current.leasePath);
+        return { released: true, reason: null };
+    } catch (err) {
+        if (err && err.code === 'ENOENT') return { released: false, reason: 'absent' };
+        throw codedError(`recovery lease could not be released: ${(err && err.code) || 'ERROR'}`, ERR_RECOVERY_LEASE,
+            { reason: (err && err.code) || 'ERROR', leasePath: current.leasePath });
+    }
+}
+
 module.exports = {
     MARKER_FILE,
+    LEASE_FILE,
+    ERR_RECOVERY_LEASE,
+    computeMarkerFingerprint,
+    leasePathFor,
+    readRecoveryLease,
+    acquireRecoveryLease,
+    releaseRecoveryLease,
     SCHEMA_VERSION,
     STATE_RECOVERY_REQUIRED,
     ACCEPTED_VERDICTS,

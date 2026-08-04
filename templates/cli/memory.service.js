@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline/promises');
@@ -33,6 +34,11 @@ const {
     getMemoryIndex, resolveActiveImpl, resolveEngine, resetMemoryIndex,
     resolveRecoveryRebuildDecision, clearContainmentState,
 } = require('./memory-index');
+// The recovery lease (§7.4 M5.4) is consumed only here, so it is required
+// straight from the state module rather than widening memory-index's surface.
+const {
+    computeMarkerFingerprint, acquireRecoveryLease, releaseRecoveryLease,
+} = require('./zvec-containment-state');
 
 const ACTIVE_CONTEXT_PATH = getActiveContextPath();
 const DB_PATH = getDbPath();
@@ -1189,8 +1195,9 @@ async function ingestArchiveFile(filePath, type, sourceId, timestamp, options = 
         inserted += 1;
     }
 
-    ensureDir(getIndexMemoryDir());
-    fs.writeFileSync(path.join(getIndexMemoryDir(), path.basename(filePath)), '', 'utf8');
+    const markerDir = options.markerDir || getIndexMemoryDir();
+    ensureDir(markerDir);
+    fs.writeFileSync(path.join(markerDir, path.basename(filePath)), '', 'utf8');
     return {
         inserted,
         invalidReason: null,
@@ -1252,7 +1259,15 @@ async function archive(content, type = 'task', options = {}) {
 // order §7.4 M0 forbids. Omitted everywhere else — ambient behaviour unchanged.
 async function syncIndexMemory(options = {}) {
     const rawDir = getRawMemoryDir();
-    const vectDir = getIndexMemoryDir();
+    // options.markerDir — [zvec-win-unicode-containment] §7.4 M5.5. A recovery
+    // rebuild stages its per-archive markers in an isolated directory instead of
+    // mutating the global set, because the global set is the bookkeeping the
+    // STILL-SERVING SQLite index depends on. Touching it during a rebuild that
+    // may fail corrupts that index in both directions: archives that only
+    // reached the discarded builder come back marked as indexed, and archives
+    // that never got written lose their marker and are inserted again on the
+    // next sync. Omitted everywhere else — ambient behaviour unchanged.
+    const vectDir = options.markerDir || getIndexMemoryDir();
 
     if (!fs.existsSync(rawDir)) {
         return { files: 0, chunks: 0 };
@@ -1285,7 +1300,7 @@ async function syncIndexMemory(options = {}) {
             typeMatch ? typeMatch[1] : 'task',
             idMatch ? idMatch[1] : path.basename(file, '.md'),
             tsMatch ? tsMatch[1] : new Date().toISOString(),
-            { index: options.index, namespace: nsMatch ? nsMatch[1] : DEFAULT_NAMESPACE }
+            { index: options.index, markerDir: options.markerDir, namespace: nsMatch ? nsMatch[1] : DEFAULT_NAMESPACE }
         );
         if (!ingestion.marked) {
             console.warn(`⚠️ 跳过损坏档案 ${file}: ${ingestion.invalidReason}`);
@@ -1731,40 +1746,87 @@ function recoveryFailure(reason, detail) {
  * look right — would hand the next process a collection that optimize may have
  * failed to finish, with nothing left on disk to say so.
  */
-async function runContainmentRecoveryRebuild(recovery, files) {
+async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
     const { decision, markerDir } = recovery;
     const zvecDir = decision.paths.rootPath;
 
     console.log('🔁 检测到 containment 恢复标记，且当前路径已判定为 SAFE。');
     console.log('   将从 raw_memory 重建一个【全新】Zvec collection；旧 collection 直接丢弃，不打开、不读取、不修复。');
 
-    // Release whatever the degraded run left open before touching the directory.
-    try { getMemoryIndex().close(); } catch (_) {}
-    resetMemoryIndex();
-
-    // The discard. Permitted here and ONLY here (§7.3.1): during containment the
-    // same directory is untouchable. Discarding is not "opening, repairing or
-    // reusing" — nothing reads a byte of it, which is why it stays outside the
-    // untested boundary in spec §3.
-    if (fs.existsSync(zvecDir)) {
-        fs.rmSync(zvecDir, { recursive: true, force: true });
-        console.log('📦 旧 Zvec collection 已丢弃（未读取其内容）。');
+    // ── serialize (§7.4 M5.4) ─────────────────────────────────────────────
+    //
+    // Everything below is destructive, and `recovery` is a SNAPSHOT: between
+    // taking it and acting on it, another process can complete an entire
+    // recovery and clear the marker. Acting on a stale snapshot then deletes a
+    // collection someone else just verified, and a failure after that leaves a
+    // half-built directory with no debt recorded at all. So: take the lease
+    // first, then decide again — the eligibility that predates the lease is
+    // exactly what goes stale.
+    const fingerprint = computeMarkerFingerprint(markerDir);
+    if (!fingerprint) {
+        throw recoveryFailure('stale-eligibility', 'containment marker 已不存在，恢复资格在取得 lease 前就已失效。');
+    }
+    const leaseId = crypto.randomBytes(8).toString('hex');
+    let lease;
+    try {
+        lease = acquireRecoveryLease(markerDir, { leaseId, markerFingerprint: fingerprint });
+    } catch (err) {
+        throw recoveryFailure('lease-acquire-failed', String(err && err.message));
+    }
+    if (!lease.acquired) {
+        throw recoveryFailure(lease.reason === 'recovery-in-progress' ? 'recovery-in-progress' : 'lease-acquire-failed',
+            lease.reason === 'recovery-in-progress'
+                ? '另一个恢复正在处理同一个 containment marker；本次不做任何破坏性动作。'
+                : `无法取得 recovery lease (${lease.reason})。`);
     }
 
-    // Full rebuild: drop the per-archive markers so every archive is re-ingested
-    // rather than skipped as already-indexed.
-    ensureDir(getIndexMemoryDir());
-    for (const file of files) {
-        const markerPath = path.join(getIndexMemoryDir(), file);
-        if (fs.existsSync(markerPath)) fs.unlinkSync(markerPath);
-    }
+    let published = false;
+    const stagingDir = `${getIndexMemoryDir()}.recovery-${leaseId}`;
+    const parkedDir = `${getIndexMemoryDir()}.parked-${leaseId}`;
+    try {
+        // Re-decide UNDER the lease. A snapshot that was eligible a moment ago
+        // proves nothing now.
+        const recheck = (seams.resolveRecovery || resolveRecoveryRebuildDecision)();
+        if (!recheck || !recheck.eligible) {
+            throw recoveryFailure('stale-eligibility',
+                `取得 lease 后重新判定不再成立 (${recheck ? recheck.reason : 'no-decision'})，未做任何破坏性动作。`);
+        }
+        if (computeMarkerFingerprint(markerDir) !== fingerprint) {
+            throw recoveryFailure('stale-eligibility', 'containment marker 在取得 lease 期间发生变化。');
+        }
+
+        // The manifest the rebuild is about to consume. Re-checked before
+        // publication: a count is not enough, because the same number of files
+        // with different content is exactly the case worth catching.
+        const manifestBefore = seams.rawManifest ? seams.rawManifest() : rawMemoryManifest();
+
+        // Release whatever the degraded run left open before touching the directory.
+        try { getMemoryIndex().close(); } catch (_) {}
+        resetMemoryIndex();
+
+        // The discard. Permitted here and ONLY here (§7.3.1): during containment
+        // the same directory is untouchable. Discarding is not "opening,
+        // repairing or reusing" — nothing reads a byte of it, which is why it
+        // stays outside the untested boundary in spec §3.
+        if (fs.existsSync(zvecDir)) {
+            fs.rmSync(zvecDir, { recursive: true, force: true });
+            console.log('📦 旧 Zvec collection 已丢弃（未读取其内容）。');
+        }
+
+        // Staging, not mutation (§7.4 M5.5). The global archive-marker set is
+        // the SQLite index's bookkeeping and that index is still serving. It is
+        // not touched until the rebuild has been verified, so "byte-identical on
+        // failure" holds by construction rather than by a rollback that can fail
+        // on its own.
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+        ensureDir(stagingDir);
 
     let builder = null;
     let validator = null;
     let syncResult = null;
     try {
         builder = new decision.ZvecIndex({ paths: decision.paths });
-        syncResult = await syncIndexMemory({ index: builder });
+        syncResult = await syncIndexMemory({ index: builder, markerDir: stagingDir });
 
         if (syncResult.invalid.length > 0) {
             throw recoveryFailure('archive-invalid', `${syncResult.invalid.length} 个档案无法解析。`);
@@ -1832,30 +1894,86 @@ async function runContainmentRecoveryRebuild(recovery, files) {
         throw recoveryFailure('validator-close-failed', String(err && err.message));
     }
 
-    // Only now. The collection has been written, finalized, reopened by a
-    // different index, counted exactly and queried.
-    try {
-        clearContainmentState(markerDir);
-    } catch (err) {
-        // The new collection may stay on disk — it is verified and harmless.
-        // What must not happen is calling this a success: the marker is still
-        // there, so the next process still refuses Zvec, and that refusal has to
-        // be visible as a failed command rather than a silent inconsistency.
-        resetMemoryIndex();
-        throw recoveryFailure('marker-clear-failed', String(err && err.message));
-    }
-    resetMemoryIndex();
+        // The source must not have moved under the rebuild. Filenames plus
+        // content hashes: an archive edited in place keeps the count identical,
+        // which is exactly the case a count would miss.
+        const manifestAfter = seams.rawManifest ? seams.rawManifest() : rawMemoryManifest();
+        if (manifestAfter !== manifestBefore) {
+            throw recoveryFailure('manifest-changed',
+                'raw_memory 在恢复期间发生变化；不发布 archive marker，也不清除 containment marker。');
+        }
 
-    console.log(`✅ 恢复完成！共重建 ${syncResult.files} 个档案 / ${syncResult.chunks} 个语义碎片。`);
-    console.log('📋 Recovery Summary:');
-    console.log(`- source_archives: ${files.length}`);
-    console.log(`- rebuilt_archives: ${syncResult.files}`);
-    console.log(`- rebuilt_chunks: ${syncResult.chunks}`);
-    console.log('- fresh_reopen_verified: true');
-    console.log('- containment_marker: cleared');
-    console.log('💡 下一次命令才会重新选择 Zvec —— 本进程不切换引擎。');
-    appendLog('REBUILD_RECOVERY', `Recovered zvec from ${syncResult.files} files / ${syncResult.chunks} chunks; marker cleared.`);
-    return true;
+        // Publish by swapping directories, so the global set is replaced or left
+        // exactly as it was — never edited in place.
+        try {
+            const indexDir = getIndexMemoryDir();
+            ensureDir(indexDir);
+            fs.rmSync(parkedDir, { recursive: true, force: true });
+            fs.renameSync(indexDir, parkedDir);
+            try {
+                fs.renameSync(stagingDir, indexDir);
+            } catch (err) {
+                fs.renameSync(parkedDir, indexDir);       // put it back, byte for byte
+                throw err;
+            }
+            published = true;
+            fs.rmSync(parkedDir, { recursive: true, force: true });
+        } catch (err) {
+            throw recoveryFailure('archive-publish-failed', String(err && err.message));
+        }
+
+        // Only now. The collection has been written, finalized, reopened by a
+        // different index, counted exactly, queried, and its bookkeeping
+        // published.
+        try {
+            clearContainmentState(markerDir);
+        } catch (err) {
+            // The new collection may stay on disk — it is verified and harmless.
+            // What must not happen is calling this a success: the marker is still
+            // there, so the next process still refuses Zvec, and that refusal has
+            // to be visible as a failed command rather than a silent
+            // inconsistency.
+            resetMemoryIndex();
+            throw recoveryFailure('marker-clear-failed', String(err && err.message));
+        }
+        resetMemoryIndex();
+
+        console.log(`✅ 恢复完成！共重建 ${syncResult.files} 个档案 / ${syncResult.chunks} 个语义碎片。`);
+        console.log('📋 Recovery Summary:');
+        console.log(`- source_archives: ${files.length}`);
+        console.log(`- rebuilt_archives: ${syncResult.files}`);
+        console.log(`- rebuilt_chunks: ${syncResult.chunks}`);
+        console.log('- fresh_reopen_verified: true');
+        console.log('- archive_markers: published');
+        console.log('- containment_marker: cleared');
+        console.log('💡 下一次命令才会重新选择 Zvec —— 本进程不切换引擎。');
+        appendLog('REBUILD_RECOVERY', `Recovered zvec from ${syncResult.files} files / ${syncResult.chunks} chunks; marker cleared.`);
+        return true;
+    } finally {
+        // Staging never outlives the attempt, published or not.
+        if (!published) {
+            try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch (_) {}
+        }
+        try { fs.rmSync(parkedDir, { recursive: true, force: true }); } catch (_) {}
+        // CAS release: only the owner's lease is removed, so a lease another
+        // process legitimately holds is never taken away by this one.
+        try { releaseRecoveryLease(markerDir, leaseId); } catch (_) {}
+    }
+}
+
+/**
+ * Filenames plus content hashes of raw_memory. Compared before and after a
+ * recovery so a source that changed underneath the rebuild is caught — a count
+ * would not notice an archive edited in place.
+ */
+function rawMemoryManifest() {
+    const rawDir = getRawMemoryDir();
+    if (!fs.existsSync(rawDir)) return '';
+    return fs.readdirSync(rawDir)
+        .filter(file => file.endsWith('.md'))
+        .sort()
+        .map(file => `${file}:${crypto.createHash('sha256').update(fs.readFileSync(path.join(rawDir, file))).digest('hex')}`)
+        .join('\n');
 }
 
 async function rebuildLocalIndex() {
