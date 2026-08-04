@@ -41,6 +41,9 @@ const MARKER_FILE = 'zvec-containment-state.json';
 const LEASE_PREFIX = 'zvec-containment-recovery.';
 const LEASE_SUFFIX = '.lease.json';
 const ARCHIVE_LOCK_SUFFIX = '.publication.lock';
+// §7.4 M5.5f — a FIXED filename beside the index directory, never the index
+// directory's own name plus a suffix. See archiveLockPathFor().
+const ARCHIVE_LOCK_FILE = `index-memory${ARCHIVE_LOCK_SUFFIX}`;
 const SCHEMA_VERSION = 1;
 const STATE_RECOVERY_REQUIRED = 'recovery-required';
 
@@ -368,12 +371,21 @@ function releaseRecoveryLease(dir, markerFingerprint, leaseId, seams = {}) {
 // an instant, the sync recreates it, and the swap, the sync and the original set
 // are all broken together. This lock is what the normal paths and the final swap
 // share. Staging deliberately does not take it — staging touches nothing global.
+//
+// §7.4 M5.5f — the path is built from the index directory's PARENT plus a fixed
+// filename. Deriving it from the directory's own name looked equivalent and was
+// not: the caller resolves that name through getIndexMemoryDir(), which renames
+// vect_memory to index_memory in place and returns the LEGACY path when that
+// rename fails. During a first upgrade two processes therefore lock two
+// different files and both believe they hold the global lock — and the loser
+// re-resolves the directory inside its callback, so it mutates the modern
+// marker set while holding the legacy lock. One ledger, one lock file.
 function archiveLockPathFor(indexDir) {
     if (typeof indexDir !== 'string' || indexDir.trim() === '') {
         throw codedError('archive marker lock directory is unresolvable', ERR_ARCHIVE_LOCK,
             { reason: 'archive-marker-lock-failed' });
     }
-    return `${indexDir}${ARCHIVE_LOCK_SUFFIX}`;
+    return path.join(path.dirname(indexDir), ARCHIVE_LOCK_FILE);
 }
 
 function acquireArchiveMarkerLock(indexDir, holderId, seams = {}) {
@@ -405,15 +417,15 @@ function releaseArchiveMarkerLock(indexDir, holderId, seams = {}) {
     try {
         parsed = JSON.parse(ops.readFileSync(lockPath, 'utf8'));
     } catch (err) {
-        if (err && err.code === 'ENOENT') return { released: false, reason: 'absent' };
-        return { released: false, reason: 'unreadable' };
+        if (err && err.code === 'ENOENT') return { released: false, reason: 'absent', lockPath };
+        return { released: false, reason: 'unreadable', lockPath };
     }
-    if (!parsed || parsed.holderId !== holderId) return { released: false, reason: 'not-owner' };
+    if (!parsed || parsed.holderId !== holderId) return { released: false, reason: 'not-owner', lockPath };
     try {
         ops.unlinkSync(lockPath);
-        return { released: true, reason: null };
+        return { released: true, reason: null, lockPath };
     } catch (err) {
-        if (err && err.code === 'ENOENT') return { released: false, reason: 'absent' };
+        if (err && err.code === 'ENOENT') return { released: false, reason: 'absent', lockPath };
         throw codedError(`archive marker lock could not be released: ${(err && err.code) || 'ERROR'}`, ERR_ARCHIVE_LOCK,
             { reason: 'archive-marker-lock-failed', lockPath });
     }
@@ -424,6 +436,7 @@ module.exports = {
     LEASE_PREFIX,
     LEASE_SUFFIX,
     ARCHIVE_LOCK_SUFFIX,
+    ARCHIVE_LOCK_FILE,
     ERR_RECOVERY_LEASE,
     ERR_ARCHIVE_LOCK,
     archiveLockPathFor,

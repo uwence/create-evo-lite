@@ -14897,6 +14897,154 @@ async function runChildRuntimeTests() {
             fs.rmSync(st.archiveLockPathFor(indexDir), { force: true });
             disposeEnv(env);
         }
+        {
+            // G9 — §7.4 M5.5f. The lock path used to be the index directory's own
+            // name plus a suffix, and the caller resolves that name through
+            // getIndexMemoryDir(), which renames vect_memory to index_memory in
+            // place and returns the LEGACY path when the rename fails. Two
+            // processes could therefore lock two different files and both believe
+            // they held the global lock.
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-t8g-lockid-'));
+            const legacy = path.join(root, 'vect_memory');
+            const modern = path.join(root, 'index_memory');
+            const lockFiles = () => fs.readdirSync(root).filter(n => n.endsWith('.publication.lock'));
+
+            // Behaviour first, on purpose. Asserting archiveLockPathFor(legacy)
+            // === archiveLockPathFor(modern) up front would let a mutation die on
+            // a restatement of the implementation; what has to be pinned is that
+            // a second process cannot become a second owner.
+            const a = st.acquireArchiveMarkerLock(legacy, 'A');
+            assert.strictEqual(a.acquired, true, 'A takes the lock through the legacy name');
+            const b = st.acquireArchiveMarkerLock(modern, 'B');
+            assert.strictEqual(b.acquired, false, 'B must not get a second owner by resolving the modern name');
+            assert.strictEqual(b.reason, 'archive-marker-busy');
+            assert.deepStrictEqual(lockFiles(), [path.basename(st.archiveLockPathFor(modern))],
+                `exactly one lock file may exist for one ledger, found: ${lockFiles().join(', ')}`);
+
+            assert.strictEqual(st.releaseArchiveMarkerLock(legacy, 'A').released, true);
+            const b2 = st.acquireArchiveMarkerLock(modern, 'B');
+            assert.strictEqual(b2.acquired, true, 'and B may proceed only once A has released');
+
+            // The migration-shaped case: the directory resolves to legacy at the
+            // start of an operation and to modern by the end. The operation must
+            // still be guarded by the same lock file — release through the other
+            // alias has to find the lock B is actually holding.
+            const rel = st.releaseArchiveMarkerLock(legacy, 'B');
+            assert.strictEqual(rel.released, true,
+                `an operation whose directory name flipped mid-flight must still own its lock (reason=${rel.reason})`);
+            assert.deepStrictEqual(lockFiles(), [], 'and the one lock file is gone');
+            assert.strictEqual(st.archiveLockPathFor(legacy), st.archiveLockPathFor(modern),
+                'the legacy and modern aliases of one ledger must map to one lock path');
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+        {
+            // G10 — §7.4 M5.4b. The publication lock reports its terminals; the
+            // recovery lease used to swallow them. A lease that will not unlink
+            // before the marker is cleared parks that generation at
+            // recovery-in-progress forever, with nothing said about it.
+            const env = await stage('lease-terminal');
+            const realUnlink = fs.unlinkSync;
+            const patchLeaseUnlink = () => {
+                fs.unlinkSync = function patched(p, ...rest) {
+                    if (String(p).endsWith('.lease.json')) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+                    return realUnlink.call(fs, p, ...rest);
+                };
+            };
+
+            // (a) the recovery fails first, and the lease will not let go.
+            const errors = [];
+            const realError = console.error;
+            console.error = (...args) => { errors.push(args.join(' ')); };
+            let failure = null;
+            patchLeaseUnlink();
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: makeFake({ reportCount: 999 }), paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { failure = e; } finally { fs.unlinkSync = realUnlink; console.error = realError; }
+
+            assert.ok(failure && failure.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(failure.reason, 'validator-count-mismatch',
+                `the original failure must survive the lease terminal, got ${failure.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+            assert.ok(fs.readdirSync(env.runtimeRoot).some(n => n.endsWith('.lease.json')),
+                'fixture: the lease really is still on disk');
+            assert.ok(errors.some(l => l.includes('recovery lease 未能释放')),
+                `an unreleasable lease before the marker is cleared must be reported, got: ${errors.join(' | ')}`);
+            const log = fs.readFileSync(path.join(env.runtimeRoot, 'memory.log'), 'utf8');
+            assert.ok(log.includes('RECOVERY_LEASE_RELEASE_FAILED'), 'and recorded in memory.log');
+
+            // The generation is now stuck, and the stuck-ness must bite BEFORE
+            // anything destructive — that is the whole reason it is reported.
+            let builders = 0;
+            class Counting {
+                constructor() { builders += 1; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert() { return { id: 1 }; }
+                stats() { return { count: 0, chunks: 0, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() {}
+            }
+            let removals = 0;
+            const realRm = fs.rmSync;
+            fs.rmSync = function patched(...args) { removals += 1; return realRm.apply(fs, args); };
+            let second = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Counting, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { second = e; } finally { fs.rmSync = realRm; }
+            assert.strictEqual(second && second.reason, 'recovery-in-progress',
+                `a parked generation must refuse the next recovery, got ${second && second.reason}`);
+            assert.strictEqual(builders, 0, 'no builder may be constructed');
+            assert.strictEqual(removals, 0, 'and nothing may be removed');
+            disposeEnv(env);
+        }
+        {
+            // (b) the mirror image: the marker was cleared, so the recovery IS
+            // committed. The leftover lease belongs to a generation that no
+            // longer exists — harmless — and must not turn a success into a
+            // failure. It still has to be visible.
+            const env = await stage('lease-terminal-committed');
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            const warnings = [];
+            const realWarn = console.warn;
+            const realUnlink = fs.unlinkSync;
+            console.warn = (...args) => { warnings.push(args.join(' ')); };
+            fs.unlinkSync = function patched(p, ...rest) {
+                if (String(p).endsWith('.lease.json')) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+                return realUnlink.call(fs, p, ...rest);
+            };
+            let ok = null;
+            let err = null;
+            try {
+                ok = await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.unlinkSync = realUnlink; console.warn = realWarn; }
+
+            assert.strictEqual(err, null, `a committed recovery must not be reclassified as failed: ${err && err.reason}`);
+            assert.strictEqual(ok, true);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt was cleared');
+            assert.ok(warnings.some(l => l.includes('recovery lease 未能释放')),
+                `the leftover lease must still be visible, got: ${warnings.join(' | ')}`);
+            const log = fs.readFileSync(path.join(env.runtimeRoot, 'memory.log'), 'utf8');
+            assert.ok(log.includes('RECOVERY_LEASE_RELEASE_FAILED'), 'and recorded in memory.log');
+            disposeEnv(env);
+        }
         console.log('✅ T-zwuc-T8g-archive-transaction passed');
     }
 

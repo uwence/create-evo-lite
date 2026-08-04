@@ -38,7 +38,7 @@ const {
 // straight from the state module rather than widening memory-index's surface.
 const {
     computeMarkerFingerprint, acquireRecoveryLease, releaseRecoveryLease,
-    acquireArchiveMarkerLock, releaseArchiveMarkerLock,
+    acquireArchiveMarkerLock, releaseArchiveMarkerLock, archiveLockPathFor,
 } = require('./zvec-containment-state');
 
 // [zvec-win-unicode-containment] §7.4 M5.5b — every path that touches the GLOBAL
@@ -94,13 +94,53 @@ function reportArchiveLockRelease(indexDir, holderId, label, committed) {
     if (result && result.released) return true;
     // released === false counts the same as a throw: the lock is still there.
     const detail = thrown ? (thrown.message || 'ERROR') : `reason=${result ? result.reason : 'unknown'}`;
-    const message = `archive marker 锁未能释放 (${label}, ${detail})；后续对全局 archive marker 的操作会 fail-closed，直到人工清理 ${(result && result.lockPath) || indexDir + '.publication.lock'}`;
+    // The lock path is asked for, never re-derived here: a second copy of the
+    // "how is this path built" rule is a second thing to get wrong (§7.4 M5.5f).
+    let lockPath = (result && result.lockPath) || null;
+    if (!lockPath) {
+        try { lockPath = archiveLockPathFor(indexDir); } catch (_) { lockPath = `${indexDir} 旁的 publication lock`; }
+    }
+    const message = `archive marker 锁未能释放 (${label}, ${detail})；后续对全局 archive marker 的操作会 fail-closed，直到人工清理 ${lockPath}`;
     if (committed) {
         console.warn(`⚠️ ${message}`);
     } else {
         console.error(`❌ ${message}`);
     }
     appendLog('ARCHIVE_LOCK_RELEASE_FAILED', message);
+    return false;
+}
+
+/**
+ * §7.4 M5.4b — the recovery lease's terminal, mirroring reportArchiveLockRelease.
+ *
+ * `absent` is the release goal already met and stays quiet. Everything else —
+ * not-owner, unreadable, or a throw — means the lease file is still on disk, and
+ * this lease is never reclaimed on a timer or by PID. Before the marker is
+ * cleared that is a generation permanently stuck at recovery-in-progress; after
+ * it, the leftover belongs to a generation that no longer exists and is
+ * harmless, so it must not turn a committed recovery into a reported failure.
+ */
+function reportRecoveryLeaseRelease(markerDir, fingerprint, leaseId, committed) {
+    let result = null;
+    let thrown = null;
+    try {
+        result = releaseRecoveryLease(markerDir, fingerprint, leaseId);
+    } catch (err) {
+        thrown = err;
+    }
+    if (result && result.released) return true;
+    if (result && result.reason === 'absent') return true;
+    const detail = thrown ? (thrown.message || 'ERROR') : `reason=${result ? result.reason : 'unknown'}`;
+    const where = (thrown && thrown.leasePath) || `${markerDir} 下 generation ${fingerprint} 的 recovery lease`;
+    if (committed) {
+        const message = `恢复已成功（containment marker 已清除），但旧 generation 的 recovery lease 未能释放 (${detail})；该 generation 已不复存在，残留文件无害，可人工删除 ${where}`;
+        console.warn(`⚠️ ${message}`);
+        appendLog('RECOVERY_LEASE_RELEASE_FAILED', message);
+        return false;
+    }
+    const message = `recovery lease 未能释放 (${detail})；containment marker 仍在，同一 generation 的后续 rebuild 会一直返回 recovery-in-progress，直到人工清理 ${where}`;
+    console.error(`❌ ${message}`);
+    appendLog('RECOVERY_LEASE_RELEASE_FAILED', message);
     return false;
 }
 
@@ -2135,7 +2175,11 @@ async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
             console.error(`❌ 该 generation 已进入人工处置状态：recovery lease 与 publication lock 均保留，第二次恢复会在任何破坏性动作之前被拒绝。marker 目录：${markerDir}`);
             appendLog('ZVEC_RECOVERY_QUARANTINE', `generation ${fingerprint} retained lease ${leaseId} after a failed rollback`);
         } else {
-            try { releaseRecoveryLease(markerDir, fingerprint, leaseId); } catch (_) {}
+            // §7.4 M5.4b — the lease has no timeout either, so an empty catch
+            // here builds the same permanent lockout M5.5e closed on the
+            // publication lock: marker present + lease present, and the command
+            // reports nothing but the original failure.
+            reportRecoveryLeaseRelease(markerDir, fingerprint, leaseId, published === true);
         }
     }
 }
