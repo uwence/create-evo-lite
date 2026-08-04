@@ -14150,17 +14150,63 @@ async function runChildRuntimeTests() {
 
             // The lease is never reclaimed on a timer, and never released by a
             // non-owner: ownership is the leaseId, not elapsed time.
-            assert.strictEqual(st.releaseRecoveryLease(env.runtimeRoot, 'not-the-owner').released, false);
-            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot).status, 'present');
-            assert.strictEqual(st.releaseRecoveryLease(env.runtimeRoot, 'other-owner').released, true);
+            assert.strictEqual(st.releaseRecoveryLease(env.runtimeRoot, fingerprint, 'not-the-owner').released, false);
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, fingerprint).status, 'present');
+            assert.strictEqual(st.releaseRecoveryLease(env.runtimeRoot, fingerprint, 'other-owner').released, true);
 
-            // A lease left behind by a DIFFERENT marker generation is residue,
-            // not a claim: it must not block the current debt forever.
-            st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'ghost', markerFingerprint: 'a-different-generation' });
-            const reclaimed = st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'fresh', markerFingerprint: fingerprint });
-            assert.strictEqual(reclaimed.acquired, true, 'a lease from another generation is reclaimable');
-            assert.strictEqual(reclaimed.replacedGeneration, true);
-            st.releaseRecoveryLease(env.runtimeRoot, 'fresh');
+            // ── F1: two acquirers of a NEW generation, with an old lease present.
+            // The first implementation reclaimed a foreign-generation lease by
+            // unlinking it, so both acquirers could read the old one, both judge
+            // it reclaimable, and each delete what the other had just written —
+            // two owners of one generation. Per-generation filenames remove the
+            // reclaim step entirely, so this is now decided by O_EXCL alone.
+            st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'ghost', markerFingerprint: 'an-older-generation' });
+            const b1 = st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'B1', markerFingerprint: fingerprint });
+            const b2 = st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'B2', markerFingerprint: fingerprint });
+            assert.strictEqual([b1, b2].filter(r => r.acquired).length, 1,
+                'exactly one acquirer of a generation may win');
+            assert.strictEqual([b1, b2].filter(r => r.reason === 'recovery-in-progress').length, 1,
+                'the loser must see recovery-in-progress, not a second ownership');
+            const winner = b1.acquired ? 'B1' : 'B2';
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, fingerprint).lease.leaseId, winner,
+                'the winner\'s lease is what is on disk');
+            // The older generation's lease is untouched — nothing reclaims it,
+            // and it blocks nothing.
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, 'an-older-generation').status, 'present',
+                'a historic-generation lease is left alone');
+
+            // ── F2: the old owner's release must not reach the new generation.
+            // The ordinary success path produces this interleaving: A clears the
+            // marker, a new degradation writes a new one, B takes the new lease,
+            // and A's trailing release runs last.
+            const aRelease = st.releaseRecoveryLease(env.runtimeRoot, 'an-older-generation', 'ghost');
+            assert.strictEqual(aRelease.released, true, 'the old owner releases its OWN lease');
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, fingerprint).lease.leaseId, winner,
+                'and the new generation\'s lease is still there — an old owner cannot reach it');
+
+            // ── F3: a corrupt same-generation lease is still a claim.
+            st.releaseRecoveryLease(env.runtimeRoot, fingerprint, winner);
+            fs.writeFileSync(st.leasePathFor(env.runtimeRoot, fingerprint), '{ truncated', 'utf8');
+            const corrupt = st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'after-corrupt', markerFingerprint: fingerprint });
+            assert.strictEqual(corrupt.acquired, false, 'a corrupt same-generation lease must not be taken over');
+            assert.strictEqual(corrupt.reason, 'lease-unreadable');
+            assert.strictEqual(fs.readFileSync(st.leasePathFor(env.runtimeRoot, fingerprint), 'utf8'), '{ truncated',
+                'and it must not be deleted or rewritten');
+
+            // A recovery under that corrupt lease does nothing destructive.
+            fs.rmSync(env.paths.rootPath, { recursive: true, force: true });
+            fs.mkdirSync(env.paths.collectionPath, { recursive: true });
+            fs.writeFileSync(path.join(env.paths.rootPath, 'stale.txt'), 'untouched', 'utf8');
+            let corruptErr = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Counting, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { corruptErr = e; }
+            assert.ok(corruptErr && corruptErr.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.ok(fs.existsSync(path.join(env.paths.rootPath, 'stale.txt')),
+                'an unreadable lease must not permit a destructive recovery');
             disposeEnv(env);
         }
         {
@@ -14198,8 +14244,8 @@ async function runChildRuntimeTests() {
             assert.strictEqual(destructive.rm, 0, 'nothing may be deleted on a stale snapshot');
             assert.strictEqual(destructive.builders, 0, 'and nothing may be built');
             assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
-            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot).status, 'absent',
-                'and the lease is released even on the refusal path');
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, st.computeMarkerFingerprint(env.runtimeRoot)).status,
+                'absent', 'and the lease is released even on the refusal path');
             disposeEnv(env);
         }
         console.log('✅ T-zwuc-T8f-recovery-lease passed');
@@ -14363,6 +14409,231 @@ async function runChildRuntimeTests() {
             assert.deepStrictEqual(residue, [], `no staging or parked directory may survive: ${residue.join(', ')}`);
             disposeEnv(env);
         }
+        {
+            // G1 — publication succeeded, clearing the debt did not. Leaving it
+            // there is the worst of both worlds: SQLite keeps serving while its
+            // bookkeeping now describes the Zvec rebuild, so markers claim
+            // archives are indexed where they may not be and a later sync skips
+            // them. The original set must come back.
+            //
+            // The seeded markers carry CONTENT, so "byte-identical" can tell the
+            // original set apart from staging's empty files.
+            const env = await stage('clear-rollback');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            for (const f of fs.readdirSync(indexDir)) {
+                fs.writeFileSync(path.join(indexDir, f), `original-bookkeeping:${f}`, 'utf8');
+            }
+            const snapshot = () => fs.readdirSync(indexDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(indexDir, f), 'utf8')}`).join('\n');
+            const before = snapshot();
+            const rowsBefore = env.service.stats().count;
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            const realUnlink = fs.unlinkSync;
+            const markerPath = path.join(env.runtimeRoot, st.MARKER_FILE);
+            fs.unlinkSync = function patched(p, ...rest) {
+                if (String(p) === markerPath) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+                return realUnlink.call(fs, p, ...rest);
+            };
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.unlinkSync = realUnlink; }
+
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE, `expected a coded failure, got ${err && err.message}`);
+            assert.strictEqual(err.reason, 'marker-clear-failed', `reason was ${err.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+            assert.strictEqual(snapshot(), before,
+                'the ORIGINAL archive-marker set must be restored byte-for-byte when the debt cannot be cleared');
+            assert.strictEqual(env.service.stats().count, rowsBefore, 'no SQLite rows moved');
+            const sync = await env.service.syncIndexMemory();
+            assert.strictEqual(sync.files, 0, 'the restored bookkeeping still describes reality');
+            const leftovers = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.'));
+            assert.deepStrictEqual(leftovers, [],
+                'a successful rollback leaves neither staging nor a parked backup');
+            disposeEnv(env);
+        }
+        {
+            // G2 — publication AND rollback both fail. The original set now exists
+            // only in the parked directory, so it must survive: the evidence IS
+            // the data. An earlier version deleted it unconditionally in finally.
+            const env = await stage('rollback-fails');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            for (const f of fs.readdirSync(indexDir)) {
+                fs.writeFileSync(path.join(indexDir, f), `original-bookkeeping:${f}`, 'utf8');
+            }
+            const originals = fs.readdirSync(indexDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(indexDir, f), 'utf8')}`).join('\n');
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            // Both renames after the park fail: the swap, then the rollback.
+            const realRename = fs.renameSync;
+            let parks = 0;
+            fs.renameSync = function patched(from, to, ...rest) {
+                const f = String(from).replace(/\\/g, '/');
+                const t = String(to).replace(/\\/g, '/');
+                if (t.includes('.parked-')) { parks += 1; return realRename.call(fs, from, to, ...rest); }
+                if (f.includes('.recovery-') || f.includes('.parked-')) throw new Error('rename refused');
+                return realRename.call(fs, from, to, ...rest);
+            };
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.renameSync = realRename; }
+
+            assert.strictEqual(parks, 1, 'the fixture must have parked the original exactly once');
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(err.reason, 'archive-publish-rollback-failed', `reason was ${err.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+
+            const parked = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.parked-'));
+            assert.strictEqual(parked.length, 1, 'the parked original must SURVIVE a failed rollback');
+            const parkedDir = path.join(path.dirname(indexDir), parked[0]);
+            const preserved = fs.readdirSync(parkedDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(parkedDir, f), 'utf8')}`).join('\n');
+            assert.strictEqual(preserved, originals, 'and it must be the original set, byte for byte');
+
+            // The publication lock stays held so ordinary syncs fail closed
+            // rather than writing into a half-published state.
+            const lockPath = st.archiveLockPathFor(indexDir);
+            assert.ok(fs.existsSync(lockPath), 'the publication lock is retained after a failed rollback');
+            let syncErr = null;
+            try { await env.service.syncIndexMemory(); } catch (e) { syncErr = e; }
+            assert.ok(syncErr, 'an ordinary sync must fail closed while the set is half-published');
+            assert.strictEqual(syncErr.reason, 'archive-marker-busy', `sync failed for ${syncErr.reason}`);
+
+            fs.rmSync(lockPath, { force: true });
+            disposeEnv(env);
+        }
+        {
+            // G3 — an ordinary sync holding the lock blocks publication, and the
+            // recovery must not touch the canonical set. The recovery lease says
+            // nothing about this: it separates recovery from recovery only.
+            const env = await stage('lock-contention');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            const before = fs.readdirSync(indexDir).sort().join(',');
+
+            const held = st.acquireArchiveMarkerLock(indexDir, 'a-normal-sync');
+            assert.strictEqual(held.acquired, true);
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; }
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(err.reason, 'archive-marker-busy', `reason was ${err.reason}`);
+            assert.strictEqual(fs.readdirSync(indexDir).sort().join(','), before,
+                'the canonical set must be untouched while the lock is held elsewhere');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+
+            // The reverse direction: while the lock is held, an ordinary sync
+            // must fail closed rather than recreate the directory.
+            let syncErr = null;
+            try { await env.service.syncIndexMemory(); } catch (e) { syncErr = e; }
+            assert.ok(syncErr && syncErr.reason === 'archive-marker-busy',
+                'an ordinary sync must not proceed while publication holds the lock');
+
+            st.releaseArchiveMarkerLock(indexDir, 'a-normal-sync');
+            disposeEnv(env);
+        }
+        {
+            // G4 — committed, but the backup will not delete. That is an untidy
+            // disk, not a failed transaction: the marker is already cleared, so
+            // reporting failure would fail a recovery that actually succeeded.
+            const env = await stage('backup-cleanup');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            // Only the POST-COMMIT cleanup may fail. The publication block also
+            // pre-cleans a stale parked directory before it parks the original,
+            // and breaking that would test a different failure entirely — so the
+            // patch waits until the debt has actually been cleared.
+            const realRm = fs.rmSync;
+            fs.rmSync = function patched(target, opts) {
+                if (String(target).includes('.parked-')
+                    && st.readContainmentState(env.runtimeRoot).status === 'absent') {
+                    throw new Error('backup is busy');
+                }
+                return realRm.call(fs, target, opts);
+            };
+            let ok = null;
+            let err = null;
+            try {
+                ok = await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.rmSync = realRm; }
+
+            assert.strictEqual(err, null, `a committed recovery must not fail on backup cleanup: ${err && err.reason}`);
+            assert.strictEqual(ok, true, 'the recovery reports success');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt is cleared');
+            assert.deepStrictEqual(fs.readdirSync(indexDir).sort(), env.files.slice().sort(),
+                'the canonical set is the published one');
+            const retained = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.parked-'));
+            assert.strictEqual(retained.length, 1, 'the backup that would not delete is retained, not lost');
+            disposeEnv(env);
+        }
         console.log('✅ T-zwuc-T8g-archive-transaction passed');
     }
 
@@ -14456,7 +14727,7 @@ async function runChildRuntimeTests() {
             assert.ok(haveZvec || process.platform !== 'win32',
                 `the real recovery path needs @zvec/zvec on win32 — that is where the defect lives; got ${probeDep.stdout.trim()}`);
             if (!haveZvec) {
-                console.log(`   ⏭️  real-recovery case skipped: @zvec/zvec is an optional dependency with no prebuild here (${probeDep.stdout.trim()})`);
+                console.log(`   ⏭️  real-recovery case skipped: @zvec/zvec is unavailable on this platform/runtime (${probeDep.stdout.trim()})`);
             } else {
 
             // 1. While the marker stands, an independent process refuses zvec.

@@ -38,7 +38,9 @@ const fs = require('fs');
 const path = require('path');
 
 const MARKER_FILE = 'zvec-containment-state.json';
-const LEASE_FILE = 'zvec-containment-recovery.lease.json';
+const LEASE_PREFIX = 'zvec-containment-recovery.';
+const LEASE_SUFFIX = '.lease.json';
+const ARCHIVE_LOCK_SUFFIX = '.publication.lock';
 const SCHEMA_VERSION = 1;
 const STATE_RECOVERY_REQUIRED = 'recovery-required';
 
@@ -51,6 +53,7 @@ const ERR_READ = 'EVO_ZVEC_CONTAINMENT_STATE_READ';
 const ERR_WRITE = 'EVO_ZVEC_CONTAINMENT_STATE_WRITE';
 const ERR_CLEAR = 'EVO_ZVEC_CONTAINMENT_STATE_CLEAR';
 const ERR_RECOVERY_LEASE = 'EVO_ZVEC_RECOVERY_LEASE';
+const ERR_ARCHIVE_LOCK = 'EVO_ZVEC_ARCHIVE_MARKER_LOCK';
 
 function codedError(message, code, detail) {
     const err = new Error(message);
@@ -247,18 +250,35 @@ function computeMarkerFingerprint(dir, seams = {}) {
     }
 }
 
-function leasePathFor(dir) {
+// One lease file PER GENERATION (§7.4 M5.4a).
+//
+// A single shared path forced the acquire path into read → unlink → write, which
+// is not atomic across processes: two acquirers of a new generation each read the
+// old lease, each judge it reclaimable, and each unlink what the other just
+// wrote. The release path was worse, because the ORDINARY success path produced
+// it — an old owner clears the marker, a new degradation writes a new one, a new
+// owner takes the lease, and the old owner's trailing unlink deletes it.
+//
+// Putting the fingerprint in the filename removes the reclaim step altogether.
+// Different generations are different files, so they cannot block each other and
+// nothing ever has to be deleted to make room. Ownership then rests on O_EXCL
+// and a name, not on the ordering of a read and an unlink.
+function leasePathFor(dir, markerFingerprint) {
     if (typeof dir !== 'string' || dir.trim() === '') {
         throw codedError('recovery lease directory is unresolvable', ERR_RECOVERY_LEASE,
             { reason: 'collection-path-unresolvable' });
     }
-    return path.join(dir, LEASE_FILE);
+    if (!nonEmptyString(markerFingerprint)) {
+        throw codedError('recovery lease needs a marker fingerprint', ERR_RECOVERY_LEASE,
+            { reason: 'lease-payload-invalid' });
+    }
+    return path.join(dir, `${LEASE_PREFIX}${markerFingerprint}${LEASE_SUFFIX}`);
 }
 
-function readRecoveryLease(dir, seams = {}) {
+function readRecoveryLease(dir, markerFingerprint, seams = {}) {
     const ops = seams.fsOps || fs;
     let leasePath;
-    try { leasePath = leasePathFor(dir); } catch (_) { return { status: 'unreadable', lease: null, leasePath: null }; }
+    try { leasePath = leasePathFor(dir, markerFingerprint); } catch (_) { return { status: 'unreadable', lease: null, leasePath: null }; }
     let raw;
     try {
         raw = ops.readFileSync(leasePath, 'utf8');
@@ -283,12 +303,11 @@ function readRecoveryLease(dir, seams = {}) {
  */
 function acquireRecoveryLease(dir, payload = {}, seams = {}) {
     const ops = seams.fsOps || fs;
-    const leasePath = leasePathFor(dir);
     const { leaseId, markerFingerprint } = payload;
-    if (!nonEmptyString(leaseId) || !nonEmptyString(markerFingerprint)) {
-        throw codedError('recovery lease needs a leaseId and a marker fingerprint', ERR_RECOVERY_LEASE,
-            { reason: 'lease-payload-invalid', leasePath });
+    if (!nonEmptyString(leaseId)) {
+        throw codedError('recovery lease needs a leaseId', ERR_RECOVERY_LEASE, { reason: 'lease-payload-invalid' });
     }
+    const leasePath = leasePathFor(dir, markerFingerprint);
     const lease = {
         version: SCHEMA_VERSION,
         leaseId,
@@ -296,48 +315,38 @@ function acquireRecoveryLease(dir, payload = {}, seams = {}) {
         createdAt: (seams.now ? seams.now() : new Date()).toISOString(),
         markerFingerprint,
     };
-    const write = () => ops.writeFileSync(leasePath, `${JSON.stringify(lease, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
 
+    // ONE exclusive create. No stat, no unlink, no retry — every one of those
+    // reintroduces the window this design exists to close.
     try {
-        write();
-        return { acquired: true, reason: null, leasePath, lease, replacedGeneration: false };
-    } catch (err) {
-        if (!err || err.code !== 'EEXIST') {
-            throw codedError(`recovery lease could not be acquired: ${(err && err.code) || 'ERROR'}`, ERR_RECOVERY_LEASE,
-                { reason: (err && err.code) || 'ERROR', leasePath });
-        }
-    }
-
-    const existing = readRecoveryLease(dir, seams);
-    const sameGeneration = existing.status === 'present'
-        && existing.lease.markerFingerprint === markerFingerprint;
-    if (sameGeneration) {
-        // A live claim on THIS debt. Never reclaimed on a timer.
-        return { acquired: false, reason: 'recovery-in-progress', leasePath, lease: existing.lease, replacedGeneration: false };
-    }
-    if (existing.status === 'unreadable') {
-        return { acquired: false, reason: 'lease-unreadable', leasePath, lease: null, replacedGeneration: false };
-    }
-
-    // Different generation (or unparsable): residue of a dead process. Replacing
-    // it is safe precisely because the generation changed — see the note above.
-    try {
-        ops.unlinkSync(leasePath);
-        write();
+        ops.writeFileSync(leasePath, `${JSON.stringify(lease, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+        return { acquired: true, reason: null, leasePath, lease };
     } catch (err) {
         if (err && err.code === 'EEXIST') {
-            return { acquired: false, reason: 'recovery-in-progress', leasePath, lease: null, replacedGeneration: false };
+            // The file name already scopes this to the same generation, so EEXIST
+            // can only mean a live claim on THIS debt. A corrupt one is still a
+            // claim: fail closed rather than delete something we cannot read.
+            const existing = readRecoveryLease(dir, markerFingerprint, seams);
+            return {
+                acquired: false,
+                reason: existing.status === 'present' ? 'recovery-in-progress' : 'lease-unreadable',
+                leasePath,
+                lease: existing.lease,
+            };
         }
-        throw codedError(`recovery lease could not be reclaimed: ${(err && err.code) || 'ERROR'}`, ERR_RECOVERY_LEASE,
+        throw codedError(`recovery lease could not be acquired: ${(err && err.code) || 'ERROR'}`, ERR_RECOVERY_LEASE,
             { reason: (err && err.code) || 'ERROR', leasePath });
     }
-    return { acquired: true, reason: null, leasePath, lease, replacedGeneration: true };
 }
 
-/** CAS on the lease id: only the owner may release. */
-function releaseRecoveryLease(dir, leaseId, seams = {}) {
+/**
+ * Scoped to BOTH the generation (the filename) and the leaseId. An owner of an
+ * older generation therefore cannot reach a newer generation's lease at all —
+ * that deletion is not prevented by a check, it is unreachable by construction.
+ */
+function releaseRecoveryLease(dir, markerFingerprint, leaseId, seams = {}) {
     const ops = seams.fsOps || fs;
-    const current = readRecoveryLease(dir, seams);
+    const current = readRecoveryLease(dir, markerFingerprint, seams);
     if (current.status === 'absent') return { released: false, reason: 'absent' };
     if (current.status !== 'present' || current.lease.leaseId !== leaseId) {
         return { released: false, reason: 'not-owner' };
@@ -352,10 +361,74 @@ function releaseRecoveryLease(dir, leaseId, seams = {}) {
     }
 }
 
+// ─── global archive-marker publication lock (§7.4 M5.5b) ───────────────────
+//
+// The recovery lease separates recovery from recovery. It does nothing about a
+// NORMAL sync walking into the directory swap: the index directory vanishes for
+// an instant, the sync recreates it, and the swap, the sync and the original set
+// are all broken together. This lock is what the normal paths and the final swap
+// share. Staging deliberately does not take it — staging touches nothing global.
+function archiveLockPathFor(indexDir) {
+    if (typeof indexDir !== 'string' || indexDir.trim() === '') {
+        throw codedError('archive marker lock directory is unresolvable', ERR_ARCHIVE_LOCK,
+            { reason: 'archive-marker-lock-failed' });
+    }
+    return `${indexDir}${ARCHIVE_LOCK_SUFFIX}`;
+}
+
+function acquireArchiveMarkerLock(indexDir, holderId, seams = {}) {
+    const ops = seams.fsOps || fs;
+    const lockPath = archiveLockPathFor(indexDir);
+    if (!nonEmptyString(holderId)) {
+        throw codedError('archive marker lock needs a holder id', ERR_ARCHIVE_LOCK,
+            { reason: 'archive-marker-lock-failed', lockPath });
+    }
+    const body = { version: SCHEMA_VERSION, holderId, pid: process.pid, createdAt: new Date().toISOString() };
+    try {
+        ops.writeFileSync(lockPath, `${JSON.stringify(body, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+        return { acquired: true, reason: null, lockPath, holderId };
+    } catch (err) {
+        if (err && err.code === 'EEXIST') {
+            // Never reclaimed on a timer. A lock whose owner cannot be confirmed
+            // is a lock that is held.
+            return { acquired: false, reason: 'archive-marker-busy', lockPath, holderId: null };
+        }
+        throw codedError(`archive marker lock could not be acquired: ${(err && err.code) || 'ERROR'}`, ERR_ARCHIVE_LOCK,
+            { reason: 'archive-marker-lock-failed', lockPath });
+    }
+}
+
+function releaseArchiveMarkerLock(indexDir, holderId, seams = {}) {
+    const ops = seams.fsOps || fs;
+    const lockPath = archiveLockPathFor(indexDir);
+    let parsed = null;
+    try {
+        parsed = JSON.parse(ops.readFileSync(lockPath, 'utf8'));
+    } catch (err) {
+        if (err && err.code === 'ENOENT') return { released: false, reason: 'absent' };
+        return { released: false, reason: 'unreadable' };
+    }
+    if (!parsed || parsed.holderId !== holderId) return { released: false, reason: 'not-owner' };
+    try {
+        ops.unlinkSync(lockPath);
+        return { released: true, reason: null };
+    } catch (err) {
+        if (err && err.code === 'ENOENT') return { released: false, reason: 'absent' };
+        throw codedError(`archive marker lock could not be released: ${(err && err.code) || 'ERROR'}`, ERR_ARCHIVE_LOCK,
+            { reason: 'archive-marker-lock-failed', lockPath });
+    }
+}
+
 module.exports = {
     MARKER_FILE,
-    LEASE_FILE,
+    LEASE_PREFIX,
+    LEASE_SUFFIX,
+    ARCHIVE_LOCK_SUFFIX,
     ERR_RECOVERY_LEASE,
+    ERR_ARCHIVE_LOCK,
+    archiveLockPathFor,
+    acquireArchiveMarkerLock,
+    releaseArchiveMarkerLock,
     computeMarkerFingerprint,
     leasePathFor,
     readRecoveryLease,
