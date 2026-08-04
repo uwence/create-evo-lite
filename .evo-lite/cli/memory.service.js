@@ -50,18 +50,58 @@ async function withArchiveMarkerLock(label, fn) {
     const indexDir = getIndexMemoryDir();
     ensureDir(path.dirname(indexDir));
     const holderId = `${label}-${crypto.randomBytes(6).toString('hex')}`;
-    const lock = acquireArchiveMarkerLock(indexDir, holderId);
+    let lock;
+    try {
+        lock = acquireArchiveMarkerLock(indexDir, holderId);
+    } catch (err) {
+        // A lock that cannot even be created is not "no lock" — it is an
+        // unknown state, and this one is never reclaimed on a timer (§7.4 M5.5e).
+        const coded = new Error(`archive marker 锁无法建立：${err && err.message}`);
+        coded.code = ERR_RECOVERY_INCOMPLETE;
+        coded.reason = 'archive-marker-lock-failed';
+        throw coded;
+    }
     if (!lock.acquired) {
         const err = new Error('archive marker 集合正被另一个操作发布/更新，本次不做任何修改。');
         err.code = ERR_RECOVERY_INCOMPLETE;
         err.reason = 'archive-marker-busy';
         throw err;
     }
+    let released = false;
     try {
-        return await fn();
-    } finally {
-        try { releaseArchiveMarkerLock(indexDir, holderId); } catch (_) {}
+        const result = await fn();
+        released = reportArchiveLockRelease(indexDir, holderId, label, true);
+        return result;
+    } catch (err) {
+        if (!released) reportArchiveLockRelease(indexDir, holderId, label, false);
+        throw err;
     }
+}
+
+/**
+ * Releasing is never silent. This lock has no timeout, so a release that failed
+ * and was swallowed is a permanent lockout reported to the user as success —
+ * exactly the state that needs a human to see it.
+ */
+function reportArchiveLockRelease(indexDir, holderId, label, committed) {
+    let result = null;
+    let thrown = null;
+    try {
+        result = releaseArchiveMarkerLock(indexDir, holderId);
+    } catch (err) {
+        thrown = err;
+    }
+    if (result && result.released) return true;
+    // released === false counts the same as a throw: the lock is still there.
+    const detail = thrown ? (thrown.message || 'ERROR') : `reason=${result ? result.reason : 'unknown'}`;
+    const message = `archive marker 锁未能释放 (${label}, ${detail})；后续对全局 archive marker 的操作会 fail-closed，直到人工清理 ${(result && result.lockPath) || indexDir + '.publication.lock'}`;
+    if (committed) {
+        console.warn(`⚠️ ${message}`);
+    } else {
+        console.error(`❌ ${message}`);
+    }
+    appendLog('ARCHIVE_LOCK_RELEASE_FAILED', message);
+    return false;
 }
 
 const ACTIVE_CONTEXT_PATH = getActiveContextPath();
@@ -1247,9 +1287,8 @@ async function archive(content, type = 'task', options = {}) {
     }
     const safeContent = preflightCheck.content;
 
-    ensureDir(getRawMemoryDir());
-    ensureDir(getIndexMemoryDir());
-
+    // Everything above is computation. Nothing below touches the disk outside
+    // the lock (§7.4 M5.5c).
     const id = options.id || buildArchiveId();
     const timestamp = options.timestamp || new Date().toISOString();
     const filename = options.filename || buildArchiveFilename(timestamp, id);
@@ -1260,14 +1299,32 @@ async function archive(content, type = 'task', options = {}) {
         : `## 实现细节 (Implementation)\n${safeContent}\n\n## 架构决策 (Architecture)\n未记录\n`;
 
     const fileContent = `---\nid: "${id}"\ntimestamp: "${timestamp}"\ntype: "${type}"\nnamespace: "${preflightCheck.namespace ?? DEFAULT_NAMESPACE}"\ntags: []\n---\n\n${markdownBody}`;
-    fs.writeFileSync(filePath, fileContent, 'utf8');
 
-    // Writes a global archive marker, so it shares the publication lock (M5.5b).
-    const ingestion = await withArchiveMarkerLock('archive', () => ingestArchiveFile(filePath, type, id, timestamp, {
-        allowSecrets: true, // we already scanned upstream; archive body is safe by construction
-        namespace: preflightCheck.namespace,
-        silent: options.silent,
-    }));
+    // The source writer fence. All five mutating steps happen inside the lock:
+    // both directory creations, the raw write, the ingestion and the global
+    // marker write.
+    //
+    // Creating the index directory outside it used to let this command recreate
+    // the directory in the instant recovery had renamed it away, breaking the
+    // swap AND its rollback. Writing the raw archive outside it let a new
+    // archive land after recovery's in-lock manifest check, so the marker was
+    // cleared while raw_memory held something the fresh collection did not
+    // contain — the one thing AC5 forbids.
+    //
+    // External editors and git checkouts are of course not covered by a lock
+    // this process holds; the manifest check is what catches those. What is
+    // ruled out here is Evo-Lite's own command routing around Evo-Lite's own
+    // lock.
+    const ingestion = await withArchiveMarkerLock('archive', () => {
+        ensureDir(getRawMemoryDir());
+        ensureDir(getIndexMemoryDir());
+        fs.writeFileSync(filePath, fileContent, 'utf8');
+        return ingestArchiveFile(filePath, type, id, timestamp, {
+            allowSecrets: true, // we already scanned upstream; archive body is safe by construction
+            namespace: preflightCheck.namespace,
+            silent: options.silent,
+        });
+    });
     if (!ingestion.marked) {
         throw new Error(`归档生成后校验失败: ${ingestion.invalidReason}`);
     }
@@ -1814,6 +1871,7 @@ async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
     }
 
     let published = false;
+    let retainRecoveryLease = false;
     const stagingDir = `${getIndexMemoryDir()}.recovery-${leaseId}`;
     const parkedDir = `${getIndexMemoryDir()}.parked-${leaseId}`;
     try {
@@ -1949,7 +2007,14 @@ async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
         // bookkeeping.
         const indexDir = getIndexMemoryDir();
         const lockHolder = `recovery-${leaseId}`;
-        const lock = acquireArchiveMarkerLock(indexDir, lockHolder);
+        let lock;
+        try {
+            lock = acquireArchiveMarkerLock(indexDir, lockHolder);
+        } catch (err) {
+            // Not "no lock" — an unknown lock state, and this one is never
+            // reclaimed on a timer (§7.4 M5.5e).
+            throw recoveryFailure('archive-marker-lock-failed', String(err && err.message));
+        }
         if (!lock.acquired) {
             throw recoveryFailure('archive-marker-busy',
                 'archive marker 集合正被另一个操作占用；未发布任何内容，也未清除 containment marker。');
@@ -1977,6 +2042,7 @@ async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
                     // lock is deliberately left held so ordinary syncs fail closed
                     // instead of writing into a half-published state.
                     lockHeld = 'retained';
+                    retainRecoveryLease = true;
                     throw recoveryFailure('archive-publish-rollback-failed',
                         `发布与回滚都失败；原 archive marker 集合保留在 ${parkedDir}，发布锁保持占用以让普通 sync fail-closed。(${rollbackErr && rollbackErr.message})`);
                 }
@@ -1998,6 +2064,7 @@ async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
                     published = false;
                 } catch (restoreErr) {
                     lockHeld = 'retained';
+                    retainRecoveryLease = true;
                     resetMemoryIndex();
                     throw recoveryFailure('archive-publish-rollback-failed',
                         `containment marker 清除失败，且 archive marker 集合无法回滚；原件保留在 ${parkedDir}。(${restoreErr && restoreErr.message})`);
@@ -2014,7 +2081,12 @@ async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
                 : recoveryFailure('archive-publish-failed', String(err && err.message));
         } finally {
             if (lockHeld === true) {
-                try { releaseArchiveMarkerLock(indexDir, lockHolder); } catch (_) {}
+                // Never silent: a swallowed release failure on a lock with no
+                // timeout is a permanent lockout the command would report as
+                // success. `published` distinguishes the committed case, which
+                // stays a success with a warning rather than being reclassified
+                // as a failed recovery.
+                reportArchiveLockRelease(indexDir, lockHolder, 'recovery', published === true);
             }
         }
 
@@ -2052,7 +2124,19 @@ async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
         //
         // The lease is scoped to this generation's filename AND this leaseId, so
         // an owner of an older generation cannot reach a newer one's lease at all.
-        try { releaseRecoveryLease(markerDir, fingerprint, leaseId); } catch (_) {}
+        //
+        // On a failed rollback it is deliberately NOT released (§7.4 M5.5d).
+        // Retaining only the publication lock left the second recovery free to
+        // take this generation and get as far as deleting and rebuilding the
+        // collection before the global lock stopped it — after the damage. A
+        // generation parked for manual handling must not start a second
+        // destructive recovery at all.
+        if (retainRecoveryLease) {
+            console.error(`❌ 该 generation 已进入人工处置状态：recovery lease 与 publication lock 均保留，第二次恢复会在任何破坏性动作之前被拒绝。marker 目录：${markerDir}`);
+            appendLog('ZVEC_RECOVERY_QUARANTINE', `generation ${fingerprint} retained lease ${leaseId} after a failed rollback`);
+        } else {
+            try { releaseRecoveryLease(markerDir, fingerprint, leaseId); } catch (_) {}
+        }
     }
 }
 

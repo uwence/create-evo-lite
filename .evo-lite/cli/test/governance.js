@@ -14634,6 +14634,269 @@ async function runChildRuntimeTests() {
             assert.strictEqual(retained.length, 1, 'the backup that would not delete is retained, not lost');
             disposeEnv(env);
         }
+        {
+            // G5 — the source writer fence. archive() used to create the index
+            // directory and write the raw file BEFORE reaching the lock, so an
+            // ordinary archive could recreate the directory in the instant
+            // recovery had renamed it away — breaking the swap and its rollback.
+            // This asserts zero modification of BOTH protected domains.
+            const env = await stage('archive-fence');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            const rawDir = path.join(env.runtimeRoot, 'raw_memory');
+
+            // Simulate the middle of a publication: the lock is held and the
+            // index directory has been parked away.
+            const held = st.acquireArchiveMarkerLock(indexDir, 'a-publication');
+            assert.strictEqual(held.acquired, true);
+            fs.rmSync(indexDir, { recursive: true, force: true });
+
+            const snapshotRaw = () => fs.readdirSync(rawDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(rawDir, f), 'utf8').length}:${fs.statSync(path.join(rawDir, f)).mtimeMs}`)
+                .join('\n');
+            const rawBefore = snapshotRaw();
+            const rowsBefore = env.service.stats().count;
+
+            let err = null;
+            try {
+                await env.service.archive('a new archive written while a publication is mid-flight; long enough to clear the quality guard.', 'task', { silent: true });
+            } catch (e) { err = e; }
+
+            assert.ok(err, 'archive must refuse while the publication lock is held');
+            assert.strictEqual(err.reason, 'archive-marker-busy', `reason was ${err.reason}`);
+            assert.ok(!fs.existsSync(indexDir),
+                'archive must NOT recreate the index directory that a publication has parked away');
+            assert.strictEqual(snapshotRaw(), rawBefore,
+                'no raw archive may be written when the lock could not be taken');
+            assert.strictEqual(env.service.stats().count, rowsBefore, 'and nothing reached the index');
+
+            st.releaseArchiveMarkerLock(indexDir, 'a-publication');
+            disposeEnv(env);
+        }
+        {
+            // G6 — the same fence, at the moment that actually matters: after
+            // recovery's in-lock manifest check. An archive landing here would
+            // let the marker clear while raw_memory holds something the fresh
+            // collection does not contain.
+            const env = await stage('post-manifest-archive');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            const rawDir = path.join(env.runtimeRoot, 'raw_memory');
+            const rawBefore = fs.readdirSync(rawDir).sort().join(',');
+
+            let archiveErr = null;
+            let seen = 0;
+            class PausingBuilder {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = PausingBuilder.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') PausingBuilder.built = this.docs.length; }
+            }
+            PausingBuilder.built = 0;
+
+            // The pause point is the in-lock manifest check: the seam runs while
+            // the publication lock is held, which is exactly when a competing
+            // archive must be refused.
+            // Probe at EVERY manifest check rather than at a call index: which
+            // call sits inside the lock is an implementation detail, and an
+            // index-based fixture both tests the wrong moment and — as the first
+            // version of this test did — leaks a lock it did manage to take.
+            let manifestCalls = 0;
+            const refusedAt = [];
+            const rebuilt = await env.service.runContainmentRecoveryRebuild({
+                eligible: true, markerDir: env.runtimeRoot,
+                decision: { ZvecIndex: PausingBuilder, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+            }, env.files, {
+                resolveRecovery: () => ({ eligible: true, reason: 'recovery' }),
+                rawManifest: () => {
+                    manifestCalls += 1;
+                    const holder = `competing-archive-${manifestCalls}`;
+                    const probe = st.acquireArchiveMarkerLock(indexDir, holder);
+                    if (probe.acquired) {
+                        st.releaseArchiveMarkerLock(indexDir, holder);
+                        refusedAt.push(false);
+                    } else {
+                        refusedAt.push(true);
+                        archiveErr = 'refused';
+                    }
+                    return 'stable-manifest';
+                },
+            });
+
+            assert.strictEqual(rebuilt, true, 'the recovery completes');
+            assert.ok(refusedAt.includes(true),
+                'at least one manifest check must happen UNDER the lock — otherwise a competing archive could land after the final check');
+            assert.strictEqual(archiveErr, 'refused', 'and a competing archive is refused at that point');
+            assert.strictEqual(fs.readdirSync(rawDir).sort().join(','), rawBefore,
+                'no archive may land between the in-lock manifest check and the swap');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt is cleared');
+            disposeEnv(env);
+        }
+        {
+            // G7 — quarantine. After a failed rollback the generation is parked
+            // for a human, so a second recovery must not merely be stopped at the
+            // publication stage (by then the collection is already deleted and
+            // rebuilt) — it must be refused before any destructive step.
+            const env = await stage('quarantine');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            for (const f of fs.readdirSync(indexDir)) {
+                fs.writeFileSync(path.join(indexDir, f), `original-bookkeeping:${f}`, 'utf8');
+            }
+            const originals = fs.readdirSync(indexDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(indexDir, f), 'utf8')}`).join('\n');
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            const realRename = fs.renameSync;
+            fs.renameSync = function patched(from, to, ...rest) {
+                const f = String(from).replace(/\\/g, '/');
+                const t = String(to).replace(/\\/g, '/');
+                if (t.includes('.parked-')) return realRename.call(fs, from, to, ...rest);
+                if (f.includes('.recovery-') || f.includes('.parked-')) throw new Error('rename refused');
+                return realRename.call(fs, from, to, ...rest);
+            };
+            let first = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { first = e; } finally { fs.renameSync = realRename; }
+            assert.strictEqual(first && first.reason, 'archive-publish-rollback-failed');
+
+            const fingerprint = st.computeMarkerFingerprint(env.runtimeRoot);
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, fingerprint).status, 'present',
+                'the recovery lease is RETAINED after a failed rollback — the generation is parked for a human');
+
+            // The second recovery must stop before anything destructive.
+            const destructive = { rm: 0, builders: 0 };
+            const realRm = fs.rmSync;
+            fs.rmSync = function patched(target, opts) {
+                if (String(target).replace(/\\/g, '/').includes('/zvec')) destructive.rm += 1;
+                return realRm.call(fs, target, opts);
+            };
+            class Counting {
+                constructor() { destructive.builders += 1; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert() { return { id: 1 }; }
+                stats() { return { count: 0, chunks: 0, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() {}
+            }
+            let second = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Counting, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { second = e; } finally { fs.rmSync = realRm; }
+
+            assert.ok(second && second.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(second.reason, 'recovery-in-progress',
+                `a quarantined generation must refuse a second recovery outright, got ${second.reason}`);
+            assert.strictEqual(destructive.rm, 0, 'and delete nothing');
+            assert.strictEqual(destructive.builders, 0, 'and build nothing');
+
+            const parked = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.parked-'));
+            assert.strictEqual(parked.length, 1, 'the parked original is still there');
+            const parkedDir = path.join(path.dirname(indexDir), parked[0]);
+            assert.strictEqual(fs.readdirSync(parkedDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(parkedDir, f), 'utf8')}`).join('\n'), originals,
+                'and unchanged');
+            assert.ok(fs.existsSync(st.archiveLockPathFor(indexDir)), 'the publication lock is still held');
+
+            fs.rmSync(st.archiveLockPathFor(indexDir), { force: true });
+            st.releaseRecoveryLease(env.runtimeRoot, fingerprint, st.readRecoveryLease(env.runtimeRoot, fingerprint).lease.leaseId);
+            disposeEnv(env);
+        }
+        {
+            // G8 — terminal lock reporting. The lock has no timeout, so a
+            // release failure that is swallowed becomes a permanent lockout the
+            // command calls success.
+            const env = await stage('lock-terminal');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            // (a) acquire fails for a reason that is not EEXIST.
+            const realWrite = fs.writeFileSync;
+            fs.writeFileSync = function patched(p, ...rest) {
+                if (String(p).endsWith('.publication.lock')) { const e = new Error('denied'); e.code = 'EACCES'; throw e; }
+                return realWrite.call(fs, p, ...rest);
+            };
+            let acquireErr = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { acquireErr = e; } finally { fs.writeFileSync = realWrite; }
+            assert.ok(acquireErr && acquireErr.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(acquireErr.reason, 'archive-marker-lock-failed', `reason was ${acquireErr.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+
+            // (b) release fails AFTER the transaction committed. That stays a
+            // success — the marker is already cleared — but it must be visible,
+            // and the retained lock must make later global work fail closed.
+            seen = 0;
+            Healthy.built = 0;
+            const realUnlink = fs.unlinkSync;
+            fs.unlinkSync = function patched(p, ...rest) {
+                if (String(p).endsWith('.publication.lock')) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+                return realUnlink.call(fs, p, ...rest);
+            };
+            const logs = [];
+            const realWarn = console.warn;
+            console.warn = (...args) => { logs.push(args.join(' ')); };
+            let ok = null;
+            let err = null;
+            try {
+                ok = await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.unlinkSync = realUnlink; console.warn = realWarn; }
+
+            assert.strictEqual(err, null, `a committed recovery must not be reclassified as failed: ${err && err.reason}`);
+            assert.strictEqual(ok, true);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt was cleared');
+            assert.ok(logs.some(l => l.includes('archive marker 锁未能释放')),
+                `the release failure must be visible, got: ${logs.join(' | ')}`);
+            assert.ok(fs.existsSync(st.archiveLockPathFor(indexDir)), 'the lock is still on disk');
+            let syncErr = null;
+            try { await env.service.syncIndexMemory(); } catch (e) { syncErr = e; }
+            assert.ok(syncErr && syncErr.reason === 'archive-marker-busy',
+                'and later global work fails closed rather than proceeding under an unreleased lock');
+
+            fs.rmSync(st.archiveLockPathFor(indexDir), { force: true });
+            disposeEnv(env);
+        }
         console.log('✅ T-zwuc-T8g-archive-transaction passed');
     }
 
