@@ -880,6 +880,110 @@ archive-publish-rollback-failed   回滚失败，原件保留，证据不得删�
 archive-marker-lock-failed        锁本身无法建立或状态不可确认
 ```
 
+### M5.5c source writer fence
+
+M5.5b 把锁装在了 ingestion 与 marker 写入上,但 `archive()` 在取锁**之前**就已经改了两个
+受保护的域:`ensureDir(indexDir)` 与 raw archive 落盘。于是留下两条确定性竞态。
+
+```text
+竞态 A —— 重建正在换位的 indexDir
+
+Recovery                         archive()
+持有 publication lock
+rename indexDir → parkedDir
+                                 ensureDir(indexDir)   ← 锁外重建
+                                 写 raw archive
+                                 取锁 → busy
+rename staging → indexDir  → EEXIST
+rollback parked → indexDir → EEXIST
+```
+
+普通 archive 命令因此仍能制造出 M5.5b 本来要消除的 rollback-failed 状态。
+
+```text
+竞态 B —— 锁内 manifest 校验【之后】改动源
+
+Recovery                         archive()
+持有 publication lock
+锁内 manifest 校验通过
+                                 写入新的 raw archive  ← 锁外
+                                 取锁 → busy
+park / publish / clear marker
+
+结果：marker 已清；raw_memory 多出一个 archive；新 Zvec 不含它
+```
+
+这违反 AC5 的核心语义:**marker 只能在「已验证的 collection」与「恢复所消费的源快照」
+一致时清除**。
+
+冻结:**Evo-Lite 自己的 archive writer 必须在 publication lock 之内完成全部五项**:
+
+```text
+raw 目录创建
+index 目录创建
+raw archive 写盘
+index ingestion
+全局 archive marker 写入
+```
+
+锁未取得(busy 或建立失败)时,上述五项**全部零修改**。
+
+边界说明:外部编辑器、`git checkout`、人工改动**不受本进程的锁约束** —— manifest 校验仍然
+负责侦测那类外部变化。这条 fence 管的是「Evo-Lite 自己的命令不得绕过自己的锁,去制造一个
+最终校验之后的源变化」。
+
+### M5.5d quarantine ownership
+
+M5.5a 要求 rollback-failed 时保留 parked 原件与发布锁。第一版实现只保留了发布锁:外层
+`finally` 仍无条件释放 recovery lease。于是:
+
+```text
+publication lock:   保留
+recovery lease:     已释放      ← 第二个恢复可以重新取得同代 lease
+containment marker: 保留
+```
+
+第二个恢复因此能删除并重建 Zvec collection,一路走到最终发布阶段才被全局锁挡住 —— 但那时
+破坏已经发生。处于人工处置状态的 generation,**不应再开始第二次破坏性恢复**。
+
+冻结:
+
+```text
+archive-publish-rollback-failed
+  → parked 原件保留
+  → publication lock 保留
+  → 【当前 generation 的 recovery lease 保留】
+  → 第二个恢复在任何 rmSync / builder 构造【之前】返回 recovery-in-progress
+  → 不按时间或 PID 自动清理
+```
+
+### M5.5e lock terminal reporting
+
+锁禁止自动超时回收,因此**静默的 release 失败会造成持久 lockout**,而当前命令却声称正常
+完成。空 catch 在这里不是稳健,是把一个需要人工处置的状态藏起来。
+
+冻结:
+
+```text
+acquire 失败（非 EEXIST）
+  → recovery 返回 coded reason = archive-marker-lock-failed
+  → containment marker 保留
+  → 不发布
+
+release 失败，且事务【尚未提交】
+  → 保留原始失败原因
+  → 输出明确诊断
+  → 锁继续 fail-closed
+
+release 失败，且事务【已提交】
+  → 恢复仍算成功
+  → 输出明确 WARN + appendLog
+  → 【不得】静默
+  → 【不得】把一次已清 marker 的成功恢复改判为失败
+```
+
+`released === false` 的返回值同样必须被检查 —— 它和抛错一样是「锁没放掉」。
+
 ### M6 失败语义
 
 任一失败：

@@ -533,6 +533,31 @@ M5.5b  全局 archive-marker 锁：普通 sync、普通 archive 写入、recover
        recovery 构建 staging 时不取锁；不按时间回收；不可确认所有权时 fail-closed
 ```
 
+#### 第 7 版:source fence 与 quarantine 所有权（spec §7.4 M5.5c / M5.5d / M5.5e）
+
+```text
+P1-6  archive() 在取锁【之前】就 ensureDir(indexDir) 并把 raw archive 落盘
+      → 竞态 A：重建正在换位的 indexDir，普通 archive 仍能制造 rollback-failed
+      → 竞态 B：锁内 manifest 校验之后改源 → marker 被清，而新 Zvec 不含那个 archive
+P1-7  rollback-failed 时只保留了 publication lock，外层 finally 仍释放 recovery lease
+      → 第二个恢复可重新取得同代 lease 并删除/重建 collection，直到发布阶段才被挡
+P2-1  锁的 acquire 抛错未转成 coded reason；release 失败被空 catch 吞掉、
+      released=false 从不检查 → 静默的持久 lockout，命令却报成功
+```
+
+修法要点:
+
+```text
+M5.5c  archive() 的五项（raw 目录、index 目录、raw 落盘、ingestion、marker 写入）
+       全部移进锁内；锁未取得时零修改
+       边界：外部编辑器 / git checkout 不受本进程锁约束，那类变化由 manifest 校验负责
+M5.5d  rollback-failed 时【连同 recovery lease 一起保留】；
+       第二个恢复必须在任何 rmSync / builder 构造之前返回 recovery-in-progress
+M5.5e  acquire 失败 → coded archive-marker-lock-failed；
+       release 失败：未提交则保留原因并保持 fail-closed，已提交则 WARN + appendLog 但仍算成功；
+       released=false 与抛错同等对待
+```
+
 #### T8f — 双 recovery 的 stale-eligibility 竞态（M5.4）
 
 确定性地制造 P1-1 的交错(注入暂停点,不靠时序侥幸):
@@ -608,6 +633,34 @@ SQLite 行数               不变
       → F1 或 F2 **必须**变红。守 M5.4a
 - [ ] **Step 17 (mutation H):** 清 marker 失败时不回滚 archive markers，
       或 finally 无条件删除 parked → G1/G2 **必须**变红。守 M5.5a
+- [ ] **Step 18 (mutation I):** 把 archive 的 raw / indexDir 写入移回锁外
+      → G5 或 G6 **必须**变红。守 M5.5c
+- [ ] **Step 19 (mutation J):** rollback-failed 后仍无条件释放 recovery lease
+      → G7 **必须**变红。守 M5.5d
+
+#### T8g 再扩展 — source fence 与 quarantine（M5.5c / M5.5d / M5.5e）
+
+```text
+G5  锁被 recovery 持有、indexDir 暂时不存在时调用 archive()
+    → reason=archive-marker-busy
+    → indexDir 仍不存在；raw_memory 文件名/内容/mtime 全不变；
+      DB 行数不变；全局 marker 集合不变
+    专门防住 ensureDir(getIndexMemoryDir()) 与 fs.writeFileSync(filePath) 跑回锁外
+
+G6  recovery 在【锁内 manifest 校验之后】暂停，此时 archive() 竞争
+    → archive busy，raw 文件不得落盘
+    → 恢复继续后：success、source==rebuilt、marker cleared、新 Zvec 不缺 archive
+
+G7  rollback-failed 之后的完整 quarantine
+    → 当前 generation 的 recovery lease 仍在
+    → 第二个恢复 reason=recovery-in-progress，rmSync=0，builder=0
+    → parked 原件与 publication lock 均未变
+
+G8  锁的终态报告
+    → exclusive-create 抛 EACCES → recovery reason=archive-marker-lock-failed
+    → 已提交后 release 失败 → 仍 success、marker absent、有可见 WARN/日志、
+      保留的锁让后续 global sync fail-closed
+```
 
 #### T8f 扩展 — 真实的 lease 所有权竞态（M5.4a）
 
