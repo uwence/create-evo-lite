@@ -501,6 +501,34 @@ sharedEngineDecision()
 `resolveActiveImpl()` 的兼容返回面保持 `{ choice, impl, degraded }` 不变；
 Task 7 通过 `peekEngineDecision()` 消费 `reason` / `recovery`。
 
+##### 注入路径的 marker 语义(冻结)
+
+路径注入是**纯判定 seam**,不代表 ambient 项目身份。合同的 "非 SAFE → ensure-present"
+只对真实 ambient 路径成立;对合成路径字面执行,会让用合成路径(如 `C:\evo\项目\...`)
+做判定的测试与诊断在真实位置建 marker,甚至写进开发者仓库的 `.evo-lite/`,把一个从未降级
+的项目永久降级。
+
+```text
+ambient production path
+  → 正常读取 marker，并按需写入真实 marker
+
+注入 paths / collectionPath，且没有显式 markerDir
+  → 只是假设性判定
+  → 不读取 ambient marker
+  → 不写入 ambient marker
+  → 记录 markerSkipped: 'injected-path'
+
+显式 marker
+  → 仅作为输入快照参与判定
+  → 不因此获得写权限
+
+显式 markerDir
+  → 允许在该隔离目录中读取与写入
+```
+
+读与写必须分别判定:只栅栏住写、让注入路径继续读 ambient marker,会让一条假设性的 SAFE
+路径继承真实项目的债务。生产路径从不注入,因此在真正重要的地方合同未变。
+
 ### M4 one-shot recovery decision
 
 ```js
@@ -585,7 +613,9 @@ fresh validator 必须逐条断言（已核实 `stats()` 返回
 `{chunks, count, namespaces, first, last}`，两个键都存在）：
 
 ```js
-validator.engine === 'zvec'
+// Zvec engine-family identity check（不是字面相等）。
+typeof validator.engine === 'string'
+    && validator.engine.startsWith('zvec')
 
 const stats = validator.stats();
 stats.count  === syncResult.chunks
@@ -599,6 +629,19 @@ const probe = validator.searchText(
 );
 Array.isArray(probe)
 ```
+
+engine predicate 的语义(冻结):
+
+```text
+验证的是 Zvec engine family，不是某一个字面量
+当前具体 identifier 为 zvec-jieba-fts（适配器公开值）
+sqlite-fts5-trigram，或任何不以 zvec 开头的 identifier，必须失败
+```
+
+本版之前此处写作 `validator.engine === 'zvec'`。适配器从未公开过这个值,该断言**永远不可能
+成立**,字面执行会让每一次恢复都以 `validator-not-zvec` 失败。改动只针对 identifier 的匹配
+方式:精确计数、真实 native query、fresh reopen 三项要求一律不变 —— 这条断言存在的理由,
+是证明重开的是 Zvec 而不是会老老实实数行数的 SQLite fallback,该目的不受影响。
 
 #### M5.3 清除 marker 的全部条件
 

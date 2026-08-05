@@ -695,6 +695,28 @@ SQLite 行数               不变
       `migrateLegacyIndexMemoryDir()`，或把 migration 移回取锁之前
       → G11 **必须**因双目录 / marker 分裂 / 重复 row 变红。守 M5.5g
 
+#### 合同回写:两处实施期采用的语义（spec §7.4 M5.2 / M3.1）
+
+实施期作出、复审已接受、本轮正式写回 canonical contract 的两条判断。它们改的是合同**字面**，
+不是机制：
+
+```text
+① engine predicate —— Zvec engine-family identity check
+   原文 validator.engine === 'zvec' 永远不可能成立：适配器公开的是 zvec-jieba-fts。
+   字面执行会让每一次恢复都以 validator-not-zvec 失败。
+   改为 typeof === 'string' && startsWith('zvec')；
+   sqlite-fts5-trigram 或任何非 zvec 前缀仍必须失败。
+   精确计数、真实 native query、fresh reopen 三项要求不变。
+
+② 注入路径的 marker 语义 —— 路径注入是纯判定 seam，不是 ambient 项目身份
+   「非 SAFE → ensure-present」只对真实 ambient 路径成立。
+   注入 paths/collectionPath 且无显式 markerDir → 不读也不写 ambient marker，
+     记 markerSkipped: 'injected-path'；
+   显式 marker 只作输入快照，不因此获得写权限；
+   只有真实 ambient production path 或显式 markerDir 才允许 marker I/O。
+   读与写必须分别判定：只栅栏住写，会让假设性 SAFE 路径继承真实项目的债务。
+```
+
 #### T8g 再扩展 — source fence 与 quarantine（M5.5c / M5.5d / M5.5e）
 
 ```text
