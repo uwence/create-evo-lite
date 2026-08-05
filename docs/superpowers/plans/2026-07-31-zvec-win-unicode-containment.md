@@ -13,11 +13,16 @@ status: active
 > **阶段状态**（第 4 版）
 >
 > ```text
-> Tasks 1–5（AC1–AC4）  COMPLETE / ACCEPTED / MERGED
-> Task 6（AC5）          机制与计划补完已授权（仅文档）；生产实施未授权
-> Tasks 7–8（AC6/AC7）   未授权
-> Task 9（收口）          未授权
+> Tasks 1–6（AC1–AC5）  COMPLETE / MERGED
+> Task 7 Step 1（AC6）   COMPLETE —— 只读诊断合同冻结（spec §7.5 D0–D8），docs only
+> Task 7 Step 2（AC6）   AUTHORIZED / NOT YET IMPLEMENTED
+> Tasks 8–9（AC7/收口）  NOT AUTHORIZED
+> context closure       NOT AUTHORIZED
 > ```
+>
+> 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`；本计划下文 Task 6 段落与
+> 「前置条件」仍保留「Task 6 需要单独实施授权」的旧文字，那是尚未处理的历史残留，
+> **以本摘要为准**。此处修正不代表 Task 6 的逐 Step 回填或 mutation 历史导入。
 >
 > 逐任务授权，不再有全局横幅。执行任何**未授权**任务之前，必须先通过 spec §14 /
 > §14.1 的授权门（含用户显式授权）。
@@ -883,12 +888,69 @@ Ubuntu 可同时运行
 
 ### Task 7: verify 诊断与恢复指引（AC6）
 
-- [ ] `verify` 增加 containment 段：判定结果、原因、受影响路径、当前引擎、degraded 状态、marker 状态
-- [ ] 危险路径上已存在的 collection：只报告不打开，说明其内容未被读取
-- [ ] 输出**人工**恢复指引，不自动执行
-- [ ] 措辞不得暗示「已修复上游缺陷」，应说明这是 containment 降级
+> **授权状态**（2026-08-05）：
+> **Step 1（诊断合同冻结，docs only）COMPLETE** —— 合同冻结在 spec §7.5 D0–D8。
+> **Step 2（生产实施）AUTHORIZED** —— 严格消费已冻结的 D0–D8，**不得重新设计**。
+> 若实施现场发现冻结项本身有误，**停止并上报**，不得在编码中静默改判。
 
-**验收**：危险路径样本上 `verify` 可诊断且不崩溃。
+**Files:**（spec §7.5 D8；D1 的审计结论是诊断**不需要**改任何模块的导出面）
+- Modify: `.evo-lite/cli/memory.service.js`
+- Sync: `templates/cli/memory.service.js`
+- Test: `.evo-lite/cli/test/governance.js`
+- Sync: `templates/cli/test/governance.js`
+- Test: `.evo-lite/cli/test/integration.js`
+- Sync: `templates/cli/test/integration.js`
+- Create: `docs/validation/zvec-win-unicode-verify-diagnostics.md`
+
+**当前没有证据要求修改**（擅自扩大范围即为越界）：
+
+```text
+memory-index.js              peekEngineDecision 已导出于 :649，直接消费即可
+zvec-containment-state.js    readContainmentState 已导出于 :458，直接消费即可
+memory-index-zvec.js         Task 5 已收口
+runtime.js / memory.js / template-manifest.js / package.json / .github/**
+active_context.md / raw_memory/**      属 context closure，本轮 FROZEN
+```
+
+#### Step 1：诊断合同冻结（docs only）—— COMPLETE
+
+- [x] **裁定收法 A/B**：采纳 **B（verify 参与 ambient 判定）**，理由与被否决的 A 记入 §7.5 D0
+- [x] **审计数据来源**：核实 `peekEngineDecision()`（`memory-index.js:501`，导出 `:649`）与
+      `readContainmentState()`（`zvec-containment-state.js:118`，导出 `:458`）均已可用；
+      `memory.service.js` 已 require state 模块（`:40-43`）与 `getDbPath`（`:24`）→ **零导出面扩大**（D1）
+- [x] **审计 decision 覆盖面**：两处真实缺口 —— 非 SAFE 分支只有写入结果、无 marker 读取态；
+      显式 pin sqlite 分支完全不带 marker。故合同要求独立只读一次 marker（D2）
+- [x] **marker 四态呈现**与「一律不得建议删除、不得折叠进 present」（D3）
+- [x] **裁定「collection 未被打开」的可观测证据边界** —— verify 运行时**不能**证明，
+      只能报本进程 decision 事实；证明属测试层（D4）+ 九项零副作用计数（D4.1）
+- [x] **四种用户可见状态与 nextSteps**，钉死 `unsafe` 与 `recovery-pending` 不得共用文案（D5）
+- [x] **措辞禁令**（D6）与**承重负控 A–G 完整内联**（D7）+ 文件范围（D8）
+- [x] spec 测试矩阵新增 **T12 六条**；AC6 指向 §7.5；AC8 由 T1–T11 扩为 T1–T12
+
+#### Step 2：生产实施 —— AUTHORIZED
+
+- [ ] **Step 2.1（基线）**：先在未改产品代码的状态下跑并记录
+      `npm test` / `TEMP=RUNNER~1 npm test` / `sync-runtime --check`
+- [ ] **Step 2.2**：`verify` 增加 containment 段，数据来源**只允许**
+      `peekEngineDecision()` + 一次 `readContainmentState(path.dirname(getDbPath()))`；
+      **禁止**经 `resolveEngineDecision()` / `sharedEngineDecision()` /
+      `resolveRecoveryRebuildDecision()` / `getMemoryIndex()` 刷新诊断（D1）
+- [ ] **Step 2.3**：四态呈现与各自独立的 nextSteps（D5）；显式 pin sqlite 时仍单独显示尚存 marker
+- [ ] **Step 2.4**：措辞按 D4 边界与 D6 禁令 —— **不得**承诺 collection 内容未被读取，
+      **不得**在任何状态下建议删除 marker
+- [ ] **Step 2.5**：T12 六条（live + template 双份）
+- [ ] **Step 2.6**：承重负控 A–G 逐条施加并确认变红，按 D7 记录七项字段；
+      负控还原后再完整跑一次两种环境的绿色基线
+- [ ] **Step 2.7**：证据落成 `docs/validation/zvec-win-unicode-verify-diagnostics.md`，
+      区分「仓库可复现证据」与「人工结论」
+- [ ] **Step 2.8**：`templates/cli/` 同步；`sync-runtime --check` in-sync；三对 live/template 逐字节一致
+
+**验收**：`npm test` 与 `TEMP=RUNNER~1 npm test` 均 EXIT 0；`sync-runtime --check` EXIT 0；
+三对镜像逐字节一致；T12 全过；负控 A–G **7/7 effective**；
+危险路径样本上 `verify` 可诊断且不崩溃。
+
+**⛔ 停止点 3**：CI 首轮 gate（`pull_request` / attempt 1 / 5-of-5）完成后**硬停**，
+等待 Task 7 全量实现复审。不 Ready、不 merge、不进入 Task 8/9、不做 context closure。
 
 ### Task 8: 发布 enforcement point（AC7）
 
@@ -961,15 +1023,17 @@ Ubuntu 可同时运行
 - [ ] 在 `[attp-hive-rollout]` 登记「Windows 目标必须消费 containment decision 接口」的依赖
 - [ ] `mem commit` 闭环 + backlog `[zvec-win-unicode-containment]` 状态推进
 
-**⛔ 停止点 3**：治理闭环不得与实现任务一并执行，须复审 ACCEPTED 后单独授权。
+**⛔ 停止点 4**：治理闭环不得与实现任务一并执行，须复审 ACCEPTED 后单独授权。
 
 ---
 
-## 停止点（三处，均为硬停）
+## 停止点（四处，均为硬停）
 
 1. **Task 3 后** —— 判定层复审通过前不接入生产 seam。
 2. **Task 4 后** —— 真实 Windows 非 ASCII 路径端到端人工验收通过前不继续。
-3. **Task 9 前** —— 复审 ACCEPTED 前不做治理闭环。
+3. **Task 7 Step 2 的 CI 首跑后** —— 首轮 gate 完成即硬停，等待 Task 7 全量实现复审；
+   不执行 Ready、不 merge、不进入 Task 8/9、不做 context closure。
+4. **Task 9 前** —— 复审 ACCEPTED 前不做治理闭环。
 
 ## 范围外（本计划不做）
 
