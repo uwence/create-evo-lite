@@ -42,6 +42,38 @@ function createContainedZvecRoot(name) {
     };
 }
 
+// [zvec-win-unicode-containment] Task 6 — the ONE place that knows how to spawn
+// a child running this repository's runtime.
+//
+// It exists because hand-written spawns get exactly this wrong. A child given a
+// cwd outside the repository resolves modules from whatever happens to sit above
+// that directory — and on a developer machine that can be a stray user-level
+// node_modules, which silently satisfies @zvec/zvec and makes a broken
+// configuration look green until a runner disagrees. That is precisely how a
+// NODE_PATH pointing at .evo-lite/node_modules (where the optional dependency
+// does NOT live) survived local runs and failed on Windows CI.
+//
+// So: cwd is the repository root, matching every other child spawn in this file,
+// and NODE_PATH names BOTH module roots explicitly — <repo>/node_modules, where
+// the root install puts @zvec/zvec, and <repo>/.evo-lite/node_modules, where the
+// runtime install puts better-sqlite3.
+function spawnContainmentChild(envOverrides, args) {
+    return childProcess.spawnSync(process.execPath, args, {
+        encoding: 'utf8',
+        cwd: WORKSPACE_ROOT,
+        env: {
+            ...process.env,
+            EVO_LITE_SKIP_GIT_GUARD: '1',
+            EVO_LITE_SKIP_GIT_STATUS: '1',
+            NODE_PATH: [
+                path.join(WORKSPACE_ROOT, 'node_modules'),
+                path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'),
+            ].join(path.delimiter),
+            ...envOverrides,
+        },
+    });
+}
+
 async function runGovernanceTests() {
     const { IS_CHILD_RUNTIME } = require('./harness');
     if (IS_CHILD_RUNTIME) {
@@ -13437,6 +13469,2060 @@ async function runChildRuntimeTests() {
             fs.rmSync(base, { recursive: true, force: true });
         }
         console.log('✅ T-zwuc-no-collection-side-effects passed');
+    }
+
+    // ---------------------------------------------------------------------
+    // [zvec-win-unicode-containment] Task 6 — the recovery state machine.
+    //
+    // Task 4 stopped a dangerous path from reaching native. That leaves the
+    // other half: a path that stops being dangerous does NOT make the
+    // collection lying on it trustworthy. The marker carries that debt across
+    // processes, and only an explicit rebuild — verified by a SEPARATE index
+    // reopening the collection — is allowed to clear it.
+    // Contract: spec §7.3 / §7.3.1 / §7.4 M0–M8.
+    // ---------------------------------------------------------------------
+
+    console.log('T-zwuc-T8a-marker. The trust marker: first write wins, every read failure is fail-closed ...');
+    {
+        const st = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-t8a-'));
+        try {
+            const containment = { verdict: 'UNKNOWN', layer: 'lexical', reason: 'lexical:character-outside-supported-ascii-set' };
+            const collectionPath = path.join(dir, 'zvec', 'collection');
+
+            assert.strictEqual(st.readContainmentState(dir).status, 'absent', 'nothing there means absent');
+
+            const first = st.writeContainmentState(dir, { collectionPath, containment });
+            assert.deepStrictEqual([first.written, first.alreadyPresent], [true, false]);
+            const firstBytes = fs.readFileSync(first.markerPath, 'utf8');
+
+            // Exclusive create: a later degradation never rewrites the original
+            // evidence, and never retries its way past it.
+            const second = st.writeContainmentState(dir, {
+                collectionPath: 'C:\\somewhere\\else',
+                containment: { verdict: 'UNSAFE', layer: 'profile', reason: 'other' },
+            });
+            assert.deepStrictEqual([second.written, second.alreadyPresent], [false, true]);
+            assert.strictEqual(fs.readFileSync(first.markerPath, 'utf8'), firstBytes,
+                'the FIRST evidence must survive — this is why the write is exclusive-create and not tmp+rename');
+
+            const present = st.readContainmentState(dir);
+            assert.strictEqual(present.status, 'present');
+            assert.strictEqual(present.state.collectionPath, collectionPath);
+            assert.strictEqual(present.state.containment.reason, containment.reason);
+
+            // A truncated file is INVALID, never absent. Collapsing it to absent
+            // is precisely the fail-open the marker exists to prevent.
+            fs.writeFileSync(first.markerPath, '{"version":1,"state":"recovery-req', 'utf8');
+            const truncated = st.readContainmentState(dir);
+            assert.strictEqual(truncated.status, 'invalid');
+            assert.strictEqual(truncated.detail, 'json-parse-failed');
+
+            for (const [payload, why] of [
+                [{ version: 2, state: 'recovery-required', createdAt: 'x', collectionPath: 'y', containment }, 'version-mismatch'],
+                [{ version: 1, state: 'other', createdAt: 'x', collectionPath: 'y', containment }, 'state-unknown'],
+                [{ version: 1, state: 'recovery-required', createdAt: '', collectionPath: 'y', containment }, 'createdAt-missing'],
+                [{ version: 1, state: 'recovery-required', createdAt: 'x', collectionPath: '', containment }, 'collectionPath-missing'],
+                [{ version: 1, state: 'recovery-required', createdAt: 'x', collectionPath: 'y', containment: { verdict: 'SAFE', layer: 'l', reason: 'r' } }, 'verdict-unaccepted'],
+            ]) {
+                fs.writeFileSync(first.markerPath, JSON.stringify(payload), 'utf8');
+                const got = st.readContainmentState(dir);
+                assert.strictEqual(got.status, 'invalid', `${why}: must be invalid`);
+                assert.strictEqual(got.detail, why, `${why}: reason must survive to the caller`);
+            }
+
+            // A read that fails is its own status: we can prove neither that the
+            // marker survives a failed rebuild nor that it could be cleared.
+            const denied = st.readContainmentState(dir, {
+                fsOps: { readFileSync() { const e = new Error('denied'); e.code = 'EACCES'; throw e; } },
+            });
+            assert.strictEqual(denied.status, 'unreadable');
+            assert.strictEqual(denied.errorCode, st.ERR_READ);
+
+            // No location for the debt = coded failure, never a quiet success.
+            for (const badDir of [undefined, null, '', '   ']) {
+                assert.throws(() => st.writeContainmentState(badDir, { collectionPath, containment }),
+                    err => err.code === st.ERR_WRITE && err.detail.reason === 'collection-path-unresolvable',
+                    `unresolvable dir ${JSON.stringify(badDir)} must be a coded write failure`);
+            }
+            assert.throws(() => st.writeContainmentState(dir, { collectionPath: '', containment }),
+                err => err.code === st.ERR_WRITE && err.detail.reason === 'collection-path-unresolvable');
+
+            fs.writeFileSync(first.markerPath, firstBytes, 'utf8');
+            assert.strictEqual(st.clearContainmentState(dir).cleared, true);
+            assert.strictEqual(st.readContainmentState(dir).status, 'absent');
+            assert.strictEqual(st.clearContainmentState(dir).cleared, false, 'clearing an absent marker is not an error');
+            assert.throws(() => st.clearContainmentState(dir, {
+                fsOps: { unlinkSync() { const e = new Error('busy'); e.code = 'EBUSY'; throw e; } },
+            }), err => err.code === st.ERR_CLEAR);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+        console.log('✅ T-zwuc-T8a-marker passed');
+    }
+
+    console.log('T-zwuc-T8b-gate. The decision consults the marker: 21-cell state matrix ...');
+    {
+        const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+        const st = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
+        // Cells that need a SAFE path cannot use os.tmpdir(): on a Windows
+        // runner that is C:\Users\RUNNER~1\... , whose 8.3 form containment
+        // correctly refuses. A fixture anchored there would assert "recovery
+        // pending" for a reason that has nothing to do with the marker. So the
+        // base is the workspace anchor, and its verdict is VERIFIED, not assumed.
+        const safeBase = createContainedZvecRoot('zwuc-t8b');
+        if (!safeBase.safe) {
+            safeBase.cleanup();
+            throw new Error(`T8b needs a supported-profile anchor; got ${safeBase.containment.reason}. Move the checkout to an ASCII path.`);
+        }
+        const mk = (n) => fs.mkdtempSync(path.join(safeBase.base, `t8b-${n}-`));
+        const UNSAFE = 'C:\\\u4e2d\u6587\\zvec\\collection';
+        // Baselines for the post-conditions below.
+        const ambientMarkerName = st.MARKER_FILE;
+        const ambientZvecExisted = fs.existsSync(path.join(WORKSPACE_ROOT, '.evo-lite', 'zvec'));
+        const CONTAINMENT = { verdict: 'UNKNOWN', layer: 'lexical', reason: 'r' };
+        class FakeZvec { get engine() { return 'zvec-jieba-fts'; } }
+        const dirs = [];
+        const temp = (n) => { const d = mk(n); dirs.push(d); return d; };
+
+        try {
+            // 1 — non-SAFE writes the marker, stays sqlite, never loads.
+            {
+                const dir = temp('write');
+                let loads = 0;
+                const d = mi.resolveEngineDecision({
+                    choice: 'zvec', platform: 'win32', collectionPath: UNSAFE, markerDir: dir,
+                    loadZvecIndex: () => { loads += 1; return FakeZvec; },
+                });
+                assert.strictEqual(d.impl, 'sqlite');
+                assert.strictEqual(d.reason, 'containment');
+                assert.strictEqual(loads, 0, 'cell 1: a contained decision must never load the binding');
+                assert.strictEqual(d.markerPersisted, true);
+                const r = st.readContainmentState(dir);
+                assert.strictEqual(r.status, 'present', 'cell 1: the debt is recorded');
+                assert.strictEqual(r.state.collectionPath, UNSAFE, 'cell 1: the marker names the path it judged');
+
+                // 2 — degrading again never overwrites the first evidence.
+                const bytes = fs.readFileSync(r.markerPath, 'utf8');
+                const again = mi.resolveEngineDecision({
+                    choice: 'zvec', platform: 'win32', collectionPath: 'C:\\\u65e5\u672c\u8a9e\\zvec\\collection',
+                    markerDir: dir, loadZvecIndex: () => FakeZvec,
+                });
+                assert.strictEqual(again.markerAlreadyPresent, true);
+                assert.strictEqual(fs.readFileSync(r.markerPath, 'utf8'), bytes, 'cell 2: first evidence preserved');
+            }
+
+            // 3/4/5 — SAFE again, but the debt stands: present, invalid and
+            // unreadable all park on sqlite with zero loads.
+            for (const [cell, status, prep] of [
+                ['3', 'present', (dir, col) => st.writeContainmentState(dir, { collectionPath: col, containment: CONTAINMENT })],
+                ['4', 'invalid', (dir) => fs.writeFileSync(path.join(dir, st.MARKER_FILE), '{ broken', 'utf8')],
+            ]) {
+                const dir = temp(`pend${cell}`);
+                const col = path.join(dir, 'zvec', 'collection');
+                prep(dir, col);
+                let loads = 0;
+                const d = mi.resolveEngineDecision({
+                    choice: 'zvec', collectionPath: col, markerDir: dir,
+                    loadZvecIndex: () => { loads += 1; return FakeZvec; },
+                });
+                assert.strictEqual(d.containment.verdict, 'SAFE', `cell ${cell}: the path itself is fine now`);
+                assert.strictEqual(d.reason, 'containment-recovery-pending', `cell ${cell}`);
+                assert.strictEqual(d.impl, 'sqlite', `cell ${cell}`);
+                assert.strictEqual(d.degraded, true, `cell ${cell}`);
+                assert.strictEqual(d.ZvecIndex, null, `cell ${cell}`);
+                assert.strictEqual(loads, 0, `cell ${cell}: no reason to load a binding we have decided not to use`);
+                assert.strictEqual(d.recovery.markerStatus, status, `cell ${cell}`);
+                assert.strictEqual(d.recovery.required, true, `cell ${cell}`);
+            }
+            {
+                const dir = temp('unreadable');
+                let loads = 0;
+                const d = mi.resolveEngineDecision({
+                    choice: 'zvec', collectionPath: path.join(dir, 'zvec', 'collection'), markerDir: dir,
+                    markerFsOps: { readFileSync() { const e = new Error('x'); e.code = 'EACCES'; throw e; } },
+                    loadZvecIndex: () => { loads += 1; return FakeZvec; },
+                });
+                assert.strictEqual(d.reason, 'containment-recovery-pending', 'cell 5');
+                assert.strictEqual(d.recovery.markerStatus, 'unreadable', 'cell 5');
+                assert.strictEqual(loads, 0, 'cell 5');
+            }
+
+            // Control: SAFE with no marker is the untouched original behaviour.
+            {
+                const dir = temp('clean');
+                const d = mi.resolveEngineDecision({
+                    choice: 'zvec', collectionPath: path.join(dir, 'zvec', 'collection'),
+                    markerDir: dir, loadZvecIndex: () => FakeZvec,
+                });
+                assert.strictEqual(d.reason, 'zvec', 'control: no debt, no change');
+                assert.strictEqual(d.impl, 'zvec');
+                assert.strictEqual(d.recovery, undefined);
+            }
+
+            // 6/7/8 — an engine pin is intent, not a bypass and not a debt.
+            {
+                const dir = temp('pin');
+                const pinned = mi.resolveEngineDecision({
+                    choice: 'sqlite-fts5-trigram', platform: 'win32', collectionPath: UNSAFE, markerDir: dir,
+                });
+                assert.strictEqual(pinned.reason, 'engine-choice', 'cell 6');
+                assert.strictEqual(pinned.degraded, false, 'cell 6');
+                assert.strictEqual(st.readContainmentState(dir).status, 'absent',
+                    'cell 6: choosing sqlite is not a containment degradation, so it mints no debt');
+
+                st.writeContainmentState(dir, { collectionPath: 'x', containment: CONTAINMENT });
+                const col = path.join(dir, 'zvec', 'collection');
+                mi.resolveEngineDecision({ choice: 'sqlite-fts5-trigram', collectionPath: col, markerDir: dir });
+                assert.strictEqual(st.readContainmentState(dir).status, 'present',
+                    'cell 7: a sqlite pin must not clear an existing debt');
+
+                const back = mi.resolveEngineDecision({
+                    choice: 'zvec', collectionPath: col, markerDir: dir, loadZvecIndex: () => FakeZvec,
+                });
+                assert.strictEqual(back.reason, 'containment-recovery-pending',
+                    'cell 8: pinning back to zvec must not bypass the marker');
+            }
+
+            // 15 — a marker that cannot be written is a coded failure, and NOT a
+            // "successful degradation" that hands back a working SQLite index.
+            {
+                const dir = temp('failwrite');
+                assert.throws(() => mi.resolveEngineDecision({
+                    choice: 'zvec', platform: 'win32', collectionPath: UNSAFE, markerDir: dir,
+                    markerFsOps: { mkdirSync() {}, writeFileSync() { const e = new Error('no'); e.code = 'EACCES'; throw e; } },
+                }), err => err.code === st.ERR_WRITE, 'cell 15');
+            }
+
+            // 20 — no resolvable location for the debt: same coded failure.
+            assert.throws(() => mi.resolveEngineDecision({
+                choice: 'zvec', platform: 'win32', collectionPath: UNSAFE, markerDir: '',
+            }), err => err.code === st.ERR_WRITE && err.detail.reason === 'collection-path-unresolvable', 'cell 20');
+
+            // 21 — concurrent first writers: exactly one wins, and the loser
+            // does not clobber. Same-process double write exercises the same
+            // O_EXCL contract the two-process race relies on.
+            {
+                const dir = temp('race');
+                const results = [
+                    st.writeContainmentState(dir, { collectionPath: 'A', containment: CONTAINMENT }),
+                    st.writeContainmentState(dir, { collectionPath: 'B', containment: CONTAINMENT }),
+                ];
+                assert.strictEqual(results.filter(r => r.written).length, 1, 'cell 21: exactly one writer wins');
+                assert.strictEqual(results.filter(r => r.alreadyPresent).length, 1, 'cell 21: the other sees alreadyPresent');
+                assert.strictEqual(st.readContainmentState(dir).state.collectionPath, 'A',
+                    'cell 21: the content is the first writer\'s');
+            }
+
+            // 18/19 — the marker is trust debt, not a Windows character verdict.
+            // On linux an absent marker changes nothing; a present one still
+            // requires the explicit rebuild, or a project moved to WSL would
+            // silently reopen the untrusted collection (M7).
+            {
+                const dir = temp('linux');
+                const col = '/home/u/proj/.evo-lite/zvec/collection';
+                const clean = mi.resolveEngineDecision({
+                    choice: 'zvec', platform: 'linux', collectionPath: col, markerDir: dir,
+                    loadZvecIndex: () => FakeZvec,
+                });
+                assert.strictEqual(clean.impl, 'zvec', 'cell 18: unchanged on non-win32');
+                assert.strictEqual(clean.degraded, false, 'cell 18');
+
+                st.writeContainmentState(dir, { collectionPath: col, containment: CONTAINMENT });
+                let loads = 0;
+                const debted = mi.resolveEngineDecision({
+                    choice: 'zvec', platform: 'linux', collectionPath: col, markerDir: dir,
+                    loadZvecIndex: () => { loads += 1; return FakeZvec; },
+                });
+                assert.strictEqual(debted.reason, 'containment-recovery-pending',
+                    'cell 19: trust debt crosses platforms — otherwise moving to Linux launders it');
+                assert.strictEqual(loads, 0, 'cell 19');
+            }
+
+            // 16/17 — the one-shot recovery decision. Five preconditions, no
+            // cache, no boolean bypass.
+            {
+                const dir = temp('oneshot');
+                const col = path.join(dir, 'zvec', 'collection');
+                st.writeContainmentState(dir, { collectionPath: col, containment: CONTAINMENT });
+
+                const r = mi.resolveRecoveryRebuildDecision({
+                    choice: 'zvec', collectionPath: col, markerDir: dir, loadZvecIndex: () => FakeZvec,
+                });
+                assert.strictEqual(r.eligible, true, 'cell 17');
+                assert.strictEqual(r.decision.impl, 'zvec');
+                assert.strictEqual(r.decision.reason, 'recovery-rebuild');
+                assert.strictEqual(st.readContainmentState(dir).status, 'present',
+                    'cell 17: the marker stays on disk for the whole recovery');
+
+                // Ineligible in every direction that matters.
+                assert.strictEqual(mi.resolveRecoveryRebuildDecision({
+                    choice: 'zvec', collectionPath: col, markerDir: dir, loadZvecIndex: () => null,
+                }).reason, 'dependency-unavailable', 'dependency is checked BEFORE anything destructive');
+
+                assert.strictEqual(mi.resolveRecoveryRebuildDecision({
+                    choice: 'zvec', collectionPath: col, markerDir: dir, loadZvecIndex: () => FakeZvec,
+                    markerFsOps: { readFileSync() { const e = new Error('x'); e.code = 'EACCES'; throw e; } },
+                }).reason, 'marker-unreadable',
+                'an unreadable marker must not start a destructive recovery — it can be neither preserved nor cleared with confidence');
+
+                const cleanDir = temp('oneshot-clean');
+                const cleanCol = path.join(cleanDir, 'zvec', 'collection');
+                assert.strictEqual(mi.resolveRecoveryRebuildDecision({
+                    choice: 'zvec', collectionPath: cleanCol, markerDir: cleanDir, loadZvecIndex: () => FakeZvec,
+                }).eligible, false, 'no debt, no recovery');
+
+                assert.strictEqual(mi.resolveRecoveryRebuildDecision({
+                    choice: 'zvec', platform: 'win32', collectionPath: UNSAFE, markerDir: dir, loadZvecIndex: () => FakeZvec,
+                }).reason, 'containment', 'a still-dangerous path is not a recovery');
+
+                assert.strictEqual(mi.resolveRecoveryRebuildDecision({
+                    choice: 'sqlite-fts5-trigram', collectionPath: col, markerDir: dir, loadZvecIndex: () => FakeZvec,
+                }).reason, 'engine-choice');
+
+                // No flag may conjure a recovery. A boolean that bypasses the
+                // marker is the marker's only real failure mode.
+                assert.strictEqual(mi.resolveRecoveryRebuildDecision({
+                    choice: 'zvec', collectionPath: cleanCol, markerDir: cleanDir, loadZvecIndex: () => FakeZvec,
+                    force: true, skipMarker: true, ignoreMarker: true, recover: true,
+                }).eligible, false, 'cell 17: no force/skip flag exists');
+            }
+
+            // An injected path is a hypothetical question, and answering it must
+            // touch the ambient project in NEITHER direction. Writing would
+            // degrade the very runtime the question was about; reading would
+            // answer a question about a hypothetical path using a real project's
+            // debt. Both are asserted at the filesystem, by counting calls
+            // against the marker file rather than by checking that the disk
+            // happens to look unchanged afterwards — "no net effect" and "never
+            // touched it" are different claims.
+            {
+                const markerCalls = { read: 0, write: 0, mkdir: 0, unlink: 0 };
+                const isMarker = (p) => String(p).endsWith(st.MARKER_FILE);
+                const real = {
+                    readFileSync: fs.readFileSync, writeFileSync: fs.writeFileSync,
+                    mkdirSync: fs.mkdirSync, unlinkSync: fs.unlinkSync,
+                };
+                fs.readFileSync = function (p, ...r) { if (isMarker(p)) markerCalls.read += 1; return real.readFileSync.call(fs, p, ...r); };
+                fs.writeFileSync = function (p, ...r) { if (isMarker(p)) markerCalls.write += 1; return real.writeFileSync.call(fs, p, ...r); };
+                fs.unlinkSync = function (p, ...r) { if (isMarker(p)) markerCalls.unlink += 1; return real.unlinkSync.call(fs, p, ...r); };
+                let d, safeInjected;
+                try {
+                    d = mi.resolveEngineDecision({
+                        choice: 'zvec', platform: 'win32', collectionPath: UNSAFE, loadZvecIndex: () => FakeZvec,
+                    });
+                    safeInjected = mi.resolveEngineDecision({
+                        choice: 'zvec', collectionPath: path.join(safeBase.base, 'hypothetical', 'zvec', 'collection'),
+                        loadZvecIndex: () => FakeZvec,
+                    });
+                } finally {
+                    Object.assign(fs, real);
+                }
+                assert.strictEqual(d.reason, 'containment');
+                assert.strictEqual(d.markerPersisted, false);
+                assert.strictEqual(d.markerSkipped, 'injected-path');
+                assert.strictEqual(safeInjected.reason, 'zvec',
+                    'a hypothetical SAFE path must not inherit the ambient project\'s debt');
+                assert.strictEqual(markerCalls.read, 0, `injected paths must not READ any marker (saw ${markerCalls.read})`);
+                assert.strictEqual(markerCalls.write, 0, `injected paths must not WRITE any marker (saw ${markerCalls.write})`);
+                assert.strictEqual(markerCalls.unlink, 0, `injected paths must not CLEAR any marker (saw ${markerCalls.unlink})`);
+
+                // Positive control: the same counters DO fire when the caller
+                // scopes a markerDir, so the three zeros above are a property of
+                // the injection rule and not of a broken spy.
+                const scoped = temp('spy-control');
+                const controlCalls = { read: 0, write: 0 };
+                fs.readFileSync = function (p, ...r) { if (isMarker(p)) controlCalls.read += 1; return real.readFileSync.call(fs, p, ...r); };
+                fs.writeFileSync = function (p, ...r) { if (isMarker(p)) controlCalls.write += 1; return real.writeFileSync.call(fs, p, ...r); };
+                try {
+                    mi.resolveEngineDecision({
+                        choice: 'zvec', platform: 'win32', collectionPath: UNSAFE,
+                        markerDir: scoped, loadZvecIndex: () => FakeZvec,
+                    });
+                } finally {
+                    Object.assign(fs, real);
+                }
+                assert.strictEqual(controlCalls.write, 1, 'control: a scoped markerDir does write exactly once');
+                assert.ok(controlCalls.read >= 1, 'control: and the decision reads the marker first');
+
+                // A marker SNAPSHOT shapes the verdict without granting writes.
+                const snapshotCalls = { write: 0 };
+                fs.writeFileSync = function (p, ...r) { if (isMarker(p)) snapshotCalls.write += 1; return real.writeFileSync.call(fs, p, ...r); };
+                let snap;
+                try {
+                    snap = mi.resolveEngineDecision({
+                        choice: 'zvec', platform: 'win32', collectionPath: UNSAFE,
+                        marker: { status: 'present', markerPath: null, state: null, errorCode: null, detail: null },
+                        loadZvecIndex: () => FakeZvec,
+                    });
+                } finally {
+                    Object.assign(fs, real);
+                }
+                assert.strictEqual(snap.markerPersisted, false,
+                    'supplying a marker snapshot must not acquire the right to write one');
+                assert.strictEqual(snapshotCalls.write, 0, 'and nothing reaches the disk');
+            }
+        } finally {
+            for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+            safeBase.cleanup();
+        }
+        // Post-conditions: the fixture is gone and the AMBIENT project is exactly
+        // as it was. A containment test that degrades the real runtime would be
+        // worse than no test at all.
+        assert.ok(!fs.existsSync(safeBase.base), 'the fixture anchor must be removed');
+        assert.ok(!fs.existsSync(path.join(WORKSPACE_ROOT, '.evo-lite', ambientMarkerName)),
+            'the ambient project must have no containment marker after this test');
+        assert.strictEqual(
+            fs.existsSync(path.join(WORKSPACE_ROOT, '.evo-lite', 'zvec')), ambientZvecExisted,
+            'the ambient zvec directory must be exactly as it was');
+        console.log('✅ T-zwuc-T8b-gate passed');
+    }
+
+    console.log('T-zwuc-T8c-recovery-failclosed. Every recovery failure keeps the marker ...');
+    {
+        const st = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
+
+        // A ZvecIndex double. The first instance is the builder; `plan` decides
+        // how the SECOND — the fresh validator — behaves. That split is the
+        // point: the builder can be perfectly happy while the collection never
+        // reached disk, because optimize/close swallow their errors.
+        const makeFake = (plan) => {
+            let seen = 0;
+            class Fake {
+                constructor() {
+                    this.role = (seen += 1) === 1 ? 'builder' : 'validator';
+                    this.docs = [];
+                    if (this.role === 'validator' && plan.reopenThrows) throw new Error('reopen failed');
+                }
+                get engine() { return plan.engine === undefined ? 'zvec-jieba-fts' : plan.engine; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() {
+                    const n = plan.reportCount === undefined ? Fake.built : plan.reportCount;
+                    return { count: n, chunks: n, namespaces: {}, first: null, last: null };
+                }
+                searchText() { return plan.queryReturnsNonArray ? null : []; }
+                close() {
+                    if (this.role === 'builder') {
+                        Fake.built = this.docs.length;
+                        if (plan.builderCloseThrows) throw new Error('close failed');
+                    }
+                }
+            }
+            Fake.built = 0;
+            return Fake;
+        };
+
+        const stage = async (name) => {
+            const workspace = fs.mkdtempSync(path.join(os.tmpdir(), `evo-t8c-${name}-`));
+            const runtimeRoot = path.join(workspace, '.evo-lite');
+            fs.mkdirSync(path.join(runtimeRoot, 'raw_memory'), { recursive: true });
+            for (let n = 1; n <= 3; n += 1) {
+                fs.writeFileSync(path.join(runtimeRoot, 'raw_memory', `mem_2026-08-03_00-00-0${n}_t8c_000${n}.md`), [
+                    '---', `id: "t8c_000${n}"`, `timestamp: "2026-08-03T00:00:0${n}.000Z"`,
+                    'type: "task"', 'namespace: "prose"', 'tags: []', '---', '',
+                    '## 实现细节 (Implementation)', '',
+                    `recovery failure-mode fixture archive ${n}; long enough to clear the quality guard.`, '',
+                ].join('\n'), 'utf8');
+            }
+            // The ambient engine is irrelevant here — recovery runs against the
+            // injected double — and pinning sqlite keeps the fixture from opening
+            // a real collection on a path this test never classified.
+            const loaded = await bootstrapRuntime(runtimeRoot, { EVO_LITE_MEMORY_ENGINE: 'sqlite-fts5-trigram' });
+            const paths = {
+                rootPath: path.join(runtimeRoot, 'zvec'),
+                collectionPath: path.join(runtimeRoot, 'zvec', 'collection'),
+            };
+            fs.mkdirSync(paths.collectionPath, { recursive: true });
+            fs.writeFileSync(path.join(paths.rootPath, 'stale.txt'), 'pre-containment leftovers', 'utf8');
+            st.writeContainmentState(runtimeRoot, {
+                collectionPath: paths.collectionPath,
+                containment: { verdict: 'UNKNOWN', layer: 'lexical', reason: 'r' },
+            });
+            const files = fs.readdirSync(path.join(runtimeRoot, 'raw_memory')).filter(f => f.endsWith('.md'));
+            return { workspace, runtimeRoot, paths, files, service: loaded.service };
+        };
+
+        // The re-decide under the lease (§7.4 M5.4) consults the ambient runtime,
+        // which these fixtures deliberately pin to sqlite so nothing opens a real
+        // collection. The seam supplies the eligibility this block is not testing.
+        const stillEligible = { resolveRecovery: () => ({ eligible: true, reason: 'recovery' }) };
+
+        // A recovery that is blocked before its first destructive step never
+        // reaches the code that closes the ambient index, and Windows refuses to
+        // unlink an open sqlite file. Dispose explicitly rather than leaving the
+        // fixture behind.
+        const disposeEnv = (env) => {
+            const mi = require(path.join(CLI_DIR, 'memory-index.js'));
+            try { mi.getMemoryIndex().close(); } catch (_) {}
+            try { mi.resetMemoryIndex(); } catch (_) {}
+            try { fs.rmSync(env.workspace, { recursive: true, force: true }); } catch (_) {}
+        };
+
+        const cases = [
+            // 11b — the fresh reopen fails. This case exists ONLY because
+            // optimize/close swallow their errors; the builder saw nothing wrong.
+            ['11b fresh reopen fails', { reopenThrows: true }, 'validator-reopen-failed'],
+            // 11c — the reopened collection counts short of what was written.
+            ['11c validator counts short', { reportCount: 2 }, 'validator-count-mismatch'],
+            // 11d — the MAX_ENUM bound, injected rather than by generating 1001
+            // rows. stats() enumerates through topk=1000, so a larger collection
+            // reports short: recovery jams instead of clearing the marker over an
+            // index it cannot count exactly. Clamping this is prohibited.
+            ['11d MAX_ENUM bound reports short', { reportCount: 1000 }, 'validator-count-mismatch'],
+            // What reopened must be Zvec, not a SQLite fallback that would count
+            // rows perfectly happily.
+            ['validator is not zvec', { engine: 'sqlite-fts5-trigram' }, 'validator-not-zvec'],
+            // stats() folds a failed query into [], so the real native query path
+            // is probed separately.
+            ['native query path is dead', { queryReturnsNonArray: true }, 'validator-query-failed'],
+            ['builder close fails', { builderCloseThrows: true }, 'builder-close-failed'],
+        ];
+
+        for (const [label, plan, expectedReason] of cases) {
+            const env = await stage(label.split(' ')[0]);
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: makeFake(plan), paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; }
+            assert.ok(err, `${label}: must fail`);
+            assert.strictEqual(err.code, env.service.ERR_RECOVERY_INCOMPLETE, `${label}: ${err.message}`);
+            assert.strictEqual(err.reason, expectedReason, `${label}: reason was ${err.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present',
+                `${label}: THE MARKER MUST SURVIVE A FAILED RECOVERY`);
+            fs.rmSync(env.workspace, { recursive: true, force: true });
+        }
+
+        // Marker-clear failure is a failure even though the new collection is
+        // sound: the marker still blocks zvec, so the command must not pass.
+        {
+            const env = await stage('clear');
+            const realUnlink = fs.unlinkSync;
+            const markerPath = path.join(env.runtimeRoot, st.MARKER_FILE);
+            fs.unlinkSync = function patched(p, ...rest) {
+                if (String(p) === markerPath) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+                return realUnlink.call(fs, p, ...rest);
+            };
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: makeFake({}), paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.unlinkSync = realUnlink; }
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(err.reason, 'marker-clear-failed');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present',
+                'the marker still blocks zvec, so this cannot be reported as success');
+            fs.rmSync(env.workspace, { recursive: true, force: true });
+        }
+
+        // Positive control: with a well-behaved index the same routine DOES
+        // clear the marker — so "marker preserved" above means something.
+        {
+            const env = await stage('ok');
+            const okResult = await env.service.runContainmentRecoveryRebuild({
+                eligible: true, markerDir: env.runtimeRoot,
+                decision: { ZvecIndex: makeFake({}), paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+            }, env.files, stillEligible);
+            assert.strictEqual(okResult, true);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent',
+                'positive control: a verified recovery clears the marker');
+            assert.ok(!fs.existsSync(path.join(env.paths.rootPath, 'stale.txt')),
+                'the stale collection is discarded — without a byte of it being read');
+            fs.rmSync(env.workspace, { recursive: true, force: true });
+        }
+        console.log('✅ T-zwuc-T8c-recovery-failclosed passed');
+
+        console.log('T-zwuc-T8f-recovery-lease. Two recoveries cannot both act on one marker ...');
+        {
+            // The race M5.4 exists for. Both processes can hold an `eligible`
+            // snapshot; the loser wakes up and deletes the collection the winner
+            // just verified — after the winner already cleared the marker. What
+            // is left is a half-built directory with no debt recorded, which is
+            // the exact state the marker exists to prevent. Zvec's own
+            // coordination cannot help: the constructor only stores paths,
+            // openWithCoordination happens in initialize(), and the rmSync lands
+            // before either.
+            //
+            // Made deterministic by ORDERING rather than by timing: A's snapshot
+            // is taken first, B then runs to completion, and only then does A act.
+            const env = await stage('lease');
+            const destructive = { rm: 0, builders: 0 };
+            const realRm = fs.rmSync;
+            const countingRm = function patched(target, opts) {
+                if (String(target).replace(/\\/g, '/').includes('/zvec')) destructive.rm += 1;
+                return realRm.call(fs, target, opts);
+            };
+            // Same builder/validator split as T8c: the count the validator
+            // reports is what the BUILDER persisted at close, because a validator
+            // that reported its own (empty) instance would fail the count check
+            // for a reason that has nothing to do with this test.
+            const makeCounting = () => {
+                let seen = 0;
+                class F {
+                    constructor() {
+                        destructive.builders += 1;
+                        this.role = (seen += 1) === 1 ? 'builder' : 'validator';
+                        this.docs = [];
+                    }
+                    get engine() { return 'zvec-jieba-fts'; }
+                    upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                    stats() { return { count: F.built, chunks: F.built, namespaces: {}, first: null, last: null }; }
+                    searchText() { return []; }
+                    close() { if (this.role === 'builder') F.built = this.docs.length; }
+                }
+                F.built = 0;
+                return F;
+            };
+            const recoveryOf = (Index) => ({
+                eligible: true, markerDir: env.runtimeRoot,
+                decision: { ZvecIndex: Index, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+            });
+
+            // B — the winner — runs a complete recovery and clears the marker.
+            const bOk = await env.service.runContainmentRecoveryRebuild(
+                recoveryOf(makeCounting()), env.files, stillEligible);
+            assert.strictEqual(bOk, true, 'B completes');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'B cleared the debt');
+            // The fake builder never materializes a collection directory, so the
+            // listing is existence-tolerant. The load-bearing assertion is the
+            // rmSync counter below; this one corroborates that A left whatever B
+            // ended up with exactly as it was.
+            const listing = (d) => (fs.existsSync(d) ? fs.readdirSync(d).sort() : null);
+            const survivor = listing(env.paths.rootPath);
+
+            // A — holding the snapshot from before B ran — must stop before it
+            // touches anything, because its eligibility is now stale.
+            destructive.rm = 0;
+            destructive.builders = 0;
+            fs.rmSync = countingRm;
+            let aErr = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild(recoveryOf(makeCounting()), env.files, stillEligible);
+            } catch (e) { aErr = e; } finally { fs.rmSync = realRm; }
+            assert.ok(aErr, 'A must not proceed on a stale snapshot');
+            assert.strictEqual(aErr.code, env.service.ERR_RECOVERY_INCOMPLETE, aErr.message);
+            assert.strictEqual(aErr.reason, 'stale-eligibility', `A failed for ${aErr.reason}`);
+            assert.strictEqual(destructive.rm, 0, 'A must not have deleted anything');
+            assert.strictEqual(destructive.builders, 0, 'A must not have constructed a builder');
+            assert.deepStrictEqual(listing(env.paths.rootPath), survivor,
+                'the collection B verified must be exactly as B left it');
+            disposeEnv(env);
+        }
+        {
+            // The other direction: a live lease on the CURRENT marker generation
+            // blocks a second recovery outright, with nothing destructive done.
+            const env = await stage('lease-held');
+            const fingerprint = st.computeMarkerFingerprint(env.runtimeRoot);
+            assert.ok(fingerprint, 'the fixture marker must have a fingerprint');
+            const held = st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'other-owner', markerFingerprint: fingerprint });
+            assert.strictEqual(held.acquired, true);
+
+            const destructive = { rm: 0, builders: 0 };
+            const realRm = fs.rmSync;
+            fs.rmSync = function patched(target, opts) {
+                if (String(target).replace(/\\/g, '/').includes('/zvec')) destructive.rm += 1;
+                return realRm.call(fs, target, opts);
+            };
+            class Counting {
+                constructor() { destructive.builders += 1; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert() { return { id: 1 }; }
+                stats() { return { count: 0, chunks: 0, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() {}
+            }
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Counting, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.rmSync = realRm; }
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(err.reason, 'recovery-in-progress', `blocked recovery reported ${err.reason}`);
+            assert.strictEqual(destructive.rm, 0, 'a blocked recovery deletes nothing');
+            assert.strictEqual(destructive.builders, 0, 'a blocked recovery builds nothing');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'and the debt stands');
+
+            // The lease is never reclaimed on a timer, and never released by a
+            // non-owner: ownership is the leaseId, not elapsed time.
+            assert.strictEqual(st.releaseRecoveryLease(env.runtimeRoot, fingerprint, 'not-the-owner').released, false);
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, fingerprint).status, 'present');
+            assert.strictEqual(st.releaseRecoveryLease(env.runtimeRoot, fingerprint, 'other-owner').released, true);
+
+            // ── F1: two acquirers of a NEW generation, with an old lease present.
+            // The first implementation reclaimed a foreign-generation lease by
+            // unlinking it, so both acquirers could read the old one, both judge
+            // it reclaimable, and each delete what the other had just written —
+            // two owners of one generation. Per-generation filenames remove the
+            // reclaim step entirely, so this is now decided by O_EXCL alone.
+            st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'ghost', markerFingerprint: 'an-older-generation' });
+            const b1 = st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'B1', markerFingerprint: fingerprint });
+            const b2 = st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'B2', markerFingerprint: fingerprint });
+            assert.strictEqual([b1, b2].filter(r => r.acquired).length, 1,
+                'exactly one acquirer of a generation may win');
+            assert.strictEqual([b1, b2].filter(r => r.reason === 'recovery-in-progress').length, 1,
+                'the loser must see recovery-in-progress, not a second ownership');
+            const winner = b1.acquired ? 'B1' : 'B2';
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, fingerprint).lease.leaseId, winner,
+                'the winner\'s lease is what is on disk');
+            // The older generation's lease is untouched — nothing reclaims it,
+            // and it blocks nothing.
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, 'an-older-generation').status, 'present',
+                'a historic-generation lease is left alone');
+
+            // ── F2: the old owner's release must not reach the new generation.
+            // The ordinary success path produces this interleaving: A clears the
+            // marker, a new degradation writes a new one, B takes the new lease,
+            // and A's trailing release runs last.
+            const aRelease = st.releaseRecoveryLease(env.runtimeRoot, 'an-older-generation', 'ghost');
+            assert.strictEqual(aRelease.released, true, 'the old owner releases its OWN lease');
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, fingerprint).lease.leaseId, winner,
+                'and the new generation\'s lease is still there — an old owner cannot reach it');
+
+            // ── F3: a corrupt same-generation lease is still a claim.
+            st.releaseRecoveryLease(env.runtimeRoot, fingerprint, winner);
+            fs.writeFileSync(st.leasePathFor(env.runtimeRoot, fingerprint), '{ truncated', 'utf8');
+            const corrupt = st.acquireRecoveryLease(env.runtimeRoot, { leaseId: 'after-corrupt', markerFingerprint: fingerprint });
+            assert.strictEqual(corrupt.acquired, false, 'a corrupt same-generation lease must not be taken over');
+            assert.strictEqual(corrupt.reason, 'lease-unreadable');
+            assert.strictEqual(fs.readFileSync(st.leasePathFor(env.runtimeRoot, fingerprint), 'utf8'), '{ truncated',
+                'and it must not be deleted or rewritten');
+
+            // A recovery under that corrupt lease does nothing destructive.
+            fs.rmSync(env.paths.rootPath, { recursive: true, force: true });
+            fs.mkdirSync(env.paths.collectionPath, { recursive: true });
+            fs.writeFileSync(path.join(env.paths.rootPath, 'stale.txt'), 'untouched', 'utf8');
+            let corruptErr = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Counting, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { corruptErr = e; }
+            assert.ok(corruptErr && corruptErr.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.ok(fs.existsSync(path.join(env.paths.rootPath, 'stale.txt')),
+                'an unreadable lease must not permit a destructive recovery');
+            disposeEnv(env);
+        }
+        {
+            // The re-decide UNDER the lease, isolated. The case above stops at
+            // the fingerprint precondition — the marker is already gone by the
+            // time A wakes — so it never exercises the recheck at all, and a
+            // mutation that drops the recheck sails straight through it. Here the
+            // marker is still present and it is the re-evaluated DECISION that
+            // says no: engine re-pinned, path no longer SAFE, dependency gone.
+            const env = await stage('recheck');
+            const destructive = { rm: 0, builders: 0 };
+            const realRm = fs.rmSync;
+            fs.rmSync = function patched(target, opts) {
+                if (String(target).replace(/\\/g, '/').includes('/zvec')) destructive.rm += 1;
+                return realRm.call(fs, target, opts);
+            };
+            class Counting {
+                constructor() { destructive.builders += 1; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert() { return { id: 1 }; }
+                stats() { return { count: 0, chunks: 0, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() {}
+            }
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Counting, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, { resolveRecovery: () => ({ eligible: false, reason: 'containment' }) });
+            } catch (e) { err = e; } finally { fs.rmSync = realRm; }
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(err.reason, 'stale-eligibility',
+                `a snapshot that no longer holds must stop the recovery, got ${err.reason}`);
+            assert.strictEqual(destructive.rm, 0, 'nothing may be deleted on a stale snapshot');
+            assert.strictEqual(destructive.builders, 0, 'and nothing may be built');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, st.computeMarkerFingerprint(env.runtimeRoot)).status,
+                'absent', 'and the lease is released even on the refusal path');
+            disposeEnv(env);
+        }
+        console.log('✅ T-zwuc-T8f-recovery-lease passed');
+
+        console.log('T-zwuc-T8g-archive-transaction. A failed recovery leaves SQLite bookkeeping untouched ...');
+        {
+            // ingestArchiveFile writes its per-archive marker into the GLOBAL
+            // index directory regardless of which index received the rows, and
+            // syncIndexMemory skips on those markers. So a recovery that mutates
+            // them and then fails corrupts the bookkeeping of the SQLite index
+            // that is STILL SERVING — archives that only reached the discarded
+            // builder come back marked as indexed, and archives that never got
+            // written lose their marker and are inserted twice on the next sync,
+            // upsert being an unconditional INSERT.
+            const env = await stage('archive-tx');
+            // Resolved through the runtime, not guessed: the directory migrates
+            // from vect_memory to index_memory, and a hardcoded name would make
+            // this test silently watch the wrong place.
+            const indexDir = require(path.join(CLI_DIR, 'runtime.js')).getIndexMemoryDir();
+
+            // Ambient SQLite indexes the archives first — this is the state the
+            // recovery must not disturb.
+            const seeded = await env.service.syncIndexMemory();
+            assert.strictEqual(seeded.files, env.files.length, 'fixture: sqlite indexed every archive');
+            const rowsBefore = env.service.stats().count;
+            const snapshotDir = () => fs.readdirSync(indexDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(indexDir, f), 'utf8')}`).join('\n');
+            const markersBefore = snapshotDir();
+            assert.ok(markersBefore.length > 0, 'fixture: markers exist before the recovery');
+
+            // A builder that dies partway through ingestion.
+            let seen = 0;
+            class DyingBuilder {
+                constructor() { this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) {
+                    seen += 1;
+                    if (seen === 2) throw new Error('builder died mid-ingestion');
+                    this.docs.push(doc);
+                    return { id: this.docs.length };
+                }
+                stats() { return { count: this.docs.length, chunks: this.docs.length, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() {}
+            }
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: DyingBuilder, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; }
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE, `expected a coded failure, got ${err && err.message}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+            assert.strictEqual(snapshotDir(), markersBefore,
+                'the global archive-marker set must be BYTE-IDENTICAL after a failed recovery');
+            assert.strictEqual(env.service.stats().count, rowsBefore, 'no SQLite rows were added or lost');
+
+            // The claim that actually matters: the bookkeeping still describes
+            // reality, so an ordinary sync has nothing left to do. A polluted
+            // marker set would re-insert here and duplicate rows.
+            const after = await env.service.syncIndexMemory();
+            assert.strictEqual(after.files, 0, `a normal sync must add nothing, it added ${after.files}`);
+            assert.strictEqual(env.service.stats().count, rowsBefore, 'and the row count is still unchanged');
+
+            // No staging residue is left lying around either.
+            const residue = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.'));
+            assert.deepStrictEqual(residue, [], `staging directories must not survive: ${residue.join(', ')}`);
+            disposeEnv(env);
+        }
+        {
+            // Source mutation during the rebuild: filenames plus content hashes,
+            // so an archive edited in place is caught even though the count is
+            // identical.
+            const env = await stage('manifest');
+            const rawDir = path.join(env.runtimeRoot, 'raw_memory');
+            const victim = path.join(rawDir, fs.readdirSync(rawDir).filter(f => f.endsWith('.md'))[0]);
+            let mutated = false;
+            // Builder/validator split again: the validator must report what the
+            // BUILDER persisted, or the count check fires first and this case
+            // never reaches the manifest comparison it exists to test.
+            let seenInstances = 0;
+            class MutatingBuilder {
+                constructor() {
+                    this.role = (seenInstances += 1) === 1 ? 'builder' : 'validator';
+                    this.docs = [];
+                }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) {
+                    if (!mutated) {
+                        mutated = true;
+                        fs.appendFileSync(victim, '\nedited underneath the rebuild.\n', 'utf8');
+                    }
+                    this.docs.push(doc);
+                    return { id: this.docs.length };
+                }
+                stats() {
+                    const n = MutatingBuilder.built;
+                    return { count: n, chunks: n, namespaces: {}, first: null, last: null };
+                }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') MutatingBuilder.built = this.docs.length; }
+            }
+            MutatingBuilder.built = 0;
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: MutatingBuilder, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; }
+            assert.ok(mutated, 'fixture: the source really was changed mid-rebuild');
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(err.reason, 'manifest-changed', `expected manifest-changed, got ${err.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present',
+                'a source that moved under the rebuild must not clear the debt');
+            disposeEnv(env);
+        }
+        {
+            // The positive half, and the one that actually pins staging. The
+            // global marker set already covers every archive, so a rebuild that
+            // consulted it would skip all of them and fail with archive-skipped.
+            // Staging starts empty, so the rebuild sees work to do. Without this
+            // case, bypassing staging is invisible: the skip check trips first
+            // and the global set is never written, leaving "byte-identical"
+            // trivially true.
+            const env = await stage('staging-isolation');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+
+            const seeded = await env.service.syncIndexMemory();
+            assert.strictEqual(seeded.files, env.files.length, 'fixture: the global marker set covers every archive');
+            assert.strictEqual(fs.readdirSync(indexDir).length, env.files.length);
+
+            let seen = 0;
+            class HealthyBuilder {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() {
+                    const n = HealthyBuilder.built;
+                    return { count: n, chunks: n, namespaces: {}, first: null, last: null };
+                }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') HealthyBuilder.built = this.docs.length; }
+            }
+            HealthyBuilder.built = 0;
+
+            const ok = await env.service.runContainmentRecoveryRebuild({
+                eligible: true, markerDir: env.runtimeRoot,
+                decision: { ZvecIndex: HealthyBuilder, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+            }, env.files, stillEligible);
+            assert.strictEqual(ok, true,
+                'a rebuild must not consult the global marker set — every archive is work to be redone');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'a verified recovery clears the debt');
+            assert.deepStrictEqual(fs.readdirSync(indexDir).sort(), env.files.slice().sort(),
+                'the published set covers exactly the archives that were rebuilt');
+            const residue = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.'));
+            assert.deepStrictEqual(residue, [], `no staging or parked directory may survive: ${residue.join(', ')}`);
+            disposeEnv(env);
+        }
+        {
+            // G1 — publication succeeded, clearing the debt did not. Leaving it
+            // there is the worst of both worlds: SQLite keeps serving while its
+            // bookkeeping now describes the Zvec rebuild, so markers claim
+            // archives are indexed where they may not be and a later sync skips
+            // them. The original set must come back.
+            //
+            // The seeded markers carry CONTENT, so "byte-identical" can tell the
+            // original set apart from staging's empty files.
+            const env = await stage('clear-rollback');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            for (const f of fs.readdirSync(indexDir)) {
+                fs.writeFileSync(path.join(indexDir, f), `original-bookkeeping:${f}`, 'utf8');
+            }
+            const snapshot = () => fs.readdirSync(indexDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(indexDir, f), 'utf8')}`).join('\n');
+            const before = snapshot();
+            const rowsBefore = env.service.stats().count;
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            const realUnlink = fs.unlinkSync;
+            const markerPath = path.join(env.runtimeRoot, st.MARKER_FILE);
+            fs.unlinkSync = function patched(p, ...rest) {
+                if (String(p) === markerPath) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+                return realUnlink.call(fs, p, ...rest);
+            };
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.unlinkSync = realUnlink; }
+
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE, `expected a coded failure, got ${err && err.message}`);
+            assert.strictEqual(err.reason, 'marker-clear-failed', `reason was ${err.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+            assert.strictEqual(snapshot(), before,
+                'the ORIGINAL archive-marker set must be restored byte-for-byte when the debt cannot be cleared');
+            assert.strictEqual(env.service.stats().count, rowsBefore, 'no SQLite rows moved');
+            const sync = await env.service.syncIndexMemory();
+            assert.strictEqual(sync.files, 0, 'the restored bookkeeping still describes reality');
+            const leftovers = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.'));
+            assert.deepStrictEqual(leftovers, [],
+                'a successful rollback leaves neither staging nor a parked backup');
+            disposeEnv(env);
+        }
+        {
+            // G2 — publication AND rollback both fail. The original set now exists
+            // only in the parked directory, so it must survive: the evidence IS
+            // the data. An earlier version deleted it unconditionally in finally.
+            const env = await stage('rollback-fails');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            for (const f of fs.readdirSync(indexDir)) {
+                fs.writeFileSync(path.join(indexDir, f), `original-bookkeeping:${f}`, 'utf8');
+            }
+            const originals = fs.readdirSync(indexDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(indexDir, f), 'utf8')}`).join('\n');
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            // Both renames after the park fail: the swap, then the rollback.
+            const realRename = fs.renameSync;
+            let parks = 0;
+            fs.renameSync = function patched(from, to, ...rest) {
+                const f = String(from).replace(/\\/g, '/');
+                const t = String(to).replace(/\\/g, '/');
+                if (t.includes('.parked-')) { parks += 1; return realRename.call(fs, from, to, ...rest); }
+                if (f.includes('.recovery-') || f.includes('.parked-')) throw new Error('rename refused');
+                return realRename.call(fs, from, to, ...rest);
+            };
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.renameSync = realRename; }
+
+            assert.strictEqual(parks, 1, 'the fixture must have parked the original exactly once');
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(err.reason, 'archive-publish-rollback-failed', `reason was ${err.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+
+            const parked = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.parked-'));
+            assert.strictEqual(parked.length, 1, 'the parked original must SURVIVE a failed rollback');
+            const parkedDir = path.join(path.dirname(indexDir), parked[0]);
+            const preserved = fs.readdirSync(parkedDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(parkedDir, f), 'utf8')}`).join('\n');
+            assert.strictEqual(preserved, originals, 'and it must be the original set, byte for byte');
+
+            // The publication lock stays held so ordinary syncs fail closed
+            // rather than writing into a half-published state.
+            const lockPath = st.archiveLockPathFor(indexDir);
+            assert.ok(fs.existsSync(lockPath), 'the publication lock is retained after a failed rollback');
+            let syncErr = null;
+            try { await env.service.syncIndexMemory(); } catch (e) { syncErr = e; }
+            assert.ok(syncErr, 'an ordinary sync must fail closed while the set is half-published');
+            assert.strictEqual(syncErr.reason, 'archive-marker-busy', `sync failed for ${syncErr.reason}`);
+
+            fs.rmSync(lockPath, { force: true });
+            disposeEnv(env);
+        }
+        {
+            // G3 — an ordinary sync holding the lock blocks publication, and the
+            // recovery must not touch the canonical set. The recovery lease says
+            // nothing about this: it separates recovery from recovery only.
+            const env = await stage('lock-contention');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            const before = fs.readdirSync(indexDir).sort().join(',');
+
+            const held = st.acquireArchiveMarkerLock(indexDir, 'a-normal-sync');
+            assert.strictEqual(held.acquired, true);
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+            let err = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; }
+            assert.ok(err && err.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(err.reason, 'archive-marker-busy', `reason was ${err.reason}`);
+            assert.strictEqual(fs.readdirSync(indexDir).sort().join(','), before,
+                'the canonical set must be untouched while the lock is held elsewhere');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+
+            // The reverse direction: while the lock is held, an ordinary sync
+            // must fail closed rather than recreate the directory.
+            let syncErr = null;
+            try { await env.service.syncIndexMemory(); } catch (e) { syncErr = e; }
+            assert.ok(syncErr && syncErr.reason === 'archive-marker-busy',
+                'an ordinary sync must not proceed while publication holds the lock');
+
+            st.releaseArchiveMarkerLock(indexDir, 'a-normal-sync');
+            disposeEnv(env);
+        }
+        {
+            // G4 — committed, but the backup will not delete. That is an untidy
+            // disk, not a failed transaction: the marker is already cleared, so
+            // reporting failure would fail a recovery that actually succeeded.
+            const env = await stage('backup-cleanup');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            // Only the POST-COMMIT cleanup may fail. The publication block also
+            // pre-cleans a stale parked directory before it parks the original,
+            // and breaking that would test a different failure entirely — so the
+            // patch waits until the debt has actually been cleared.
+            const realRm = fs.rmSync;
+            fs.rmSync = function patched(target, opts) {
+                if (String(target).includes('.parked-')
+                    && st.readContainmentState(env.runtimeRoot).status === 'absent') {
+                    throw new Error('backup is busy');
+                }
+                return realRm.call(fs, target, opts);
+            };
+            let ok = null;
+            let err = null;
+            try {
+                ok = await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.rmSync = realRm; }
+
+            assert.strictEqual(err, null, `a committed recovery must not fail on backup cleanup: ${err && err.reason}`);
+            assert.strictEqual(ok, true, 'the recovery reports success');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt is cleared');
+            assert.deepStrictEqual(fs.readdirSync(indexDir).sort(), env.files.slice().sort(),
+                'the canonical set is the published one');
+            const retained = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.parked-'));
+            assert.strictEqual(retained.length, 1, 'the backup that would not delete is retained, not lost');
+            disposeEnv(env);
+        }
+        {
+            // G5 — the source writer fence. archive() used to create the index
+            // directory and write the raw file BEFORE reaching the lock, so an
+            // ordinary archive could recreate the directory in the instant
+            // recovery had renamed it away — breaking the swap and its rollback.
+            // This asserts zero modification of BOTH protected domains.
+            const env = await stage('archive-fence');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            const rawDir = path.join(env.runtimeRoot, 'raw_memory');
+
+            // Simulate the middle of a publication: the lock is held and the
+            // index directory has been parked away.
+            const held = st.acquireArchiveMarkerLock(indexDir, 'a-publication');
+            assert.strictEqual(held.acquired, true);
+            fs.rmSync(indexDir, { recursive: true, force: true });
+
+            const snapshotRaw = () => fs.readdirSync(rawDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(rawDir, f), 'utf8').length}:${fs.statSync(path.join(rawDir, f)).mtimeMs}`)
+                .join('\n');
+            const rawBefore = snapshotRaw();
+            const rowsBefore = env.service.stats().count;
+
+            let err = null;
+            try {
+                await env.service.archive('a new archive written while a publication is mid-flight; long enough to clear the quality guard.', 'task', { silent: true });
+            } catch (e) { err = e; }
+
+            assert.ok(err, 'archive must refuse while the publication lock is held');
+            assert.strictEqual(err.reason, 'archive-marker-busy', `reason was ${err.reason}`);
+            assert.ok(!fs.existsSync(indexDir),
+                'archive must NOT recreate the index directory that a publication has parked away');
+            assert.strictEqual(snapshotRaw(), rawBefore,
+                'no raw archive may be written when the lock could not be taken');
+            assert.strictEqual(env.service.stats().count, rowsBefore, 'and nothing reached the index');
+
+            st.releaseArchiveMarkerLock(indexDir, 'a-publication');
+            disposeEnv(env);
+        }
+        {
+            // G6 — the same fence, at the moment that actually matters: after
+            // recovery's in-lock manifest check. An archive landing here would
+            // let the marker clear while raw_memory holds something the fresh
+            // collection does not contain.
+            const env = await stage('post-manifest-archive');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            const rawDir = path.join(env.runtimeRoot, 'raw_memory');
+            const rawBefore = fs.readdirSync(rawDir).sort().join(',');
+
+            let archiveErr = null;
+            let seen = 0;
+            class PausingBuilder {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = PausingBuilder.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') PausingBuilder.built = this.docs.length; }
+            }
+            PausingBuilder.built = 0;
+
+            // The pause point is the in-lock manifest check: the seam runs while
+            // the publication lock is held, which is exactly when a competing
+            // archive must be refused.
+            // Probe at EVERY manifest check rather than at a call index: which
+            // call sits inside the lock is an implementation detail, and an
+            // index-based fixture both tests the wrong moment and — as the first
+            // version of this test did — leaks a lock it did manage to take.
+            let manifestCalls = 0;
+            const refusedAt = [];
+            const rebuilt = await env.service.runContainmentRecoveryRebuild({
+                eligible: true, markerDir: env.runtimeRoot,
+                decision: { ZvecIndex: PausingBuilder, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+            }, env.files, {
+                resolveRecovery: () => ({ eligible: true, reason: 'recovery' }),
+                rawManifest: () => {
+                    manifestCalls += 1;
+                    const holder = `competing-archive-${manifestCalls}`;
+                    const probe = st.acquireArchiveMarkerLock(indexDir, holder);
+                    if (probe.acquired) {
+                        st.releaseArchiveMarkerLock(indexDir, holder);
+                        refusedAt.push(false);
+                    } else {
+                        refusedAt.push(true);
+                        archiveErr = 'refused';
+                    }
+                    return 'stable-manifest';
+                },
+            });
+
+            assert.strictEqual(rebuilt, true, 'the recovery completes');
+            assert.ok(refusedAt.includes(true),
+                'at least one manifest check must happen UNDER the lock — otherwise a competing archive could land after the final check');
+            assert.strictEqual(archiveErr, 'refused', 'and a competing archive is refused at that point');
+            assert.strictEqual(fs.readdirSync(rawDir).sort().join(','), rawBefore,
+                'no archive may land between the in-lock manifest check and the swap');
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt is cleared');
+            disposeEnv(env);
+        }
+        {
+            // G7 — quarantine. After a failed rollback the generation is parked
+            // for a human, so a second recovery must not merely be stopped at the
+            // publication stage (by then the collection is already deleted and
+            // rebuilt) — it must be refused before any destructive step.
+            const env = await stage('quarantine');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+            for (const f of fs.readdirSync(indexDir)) {
+                fs.writeFileSync(path.join(indexDir, f), `original-bookkeeping:${f}`, 'utf8');
+            }
+            const originals = fs.readdirSync(indexDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(indexDir, f), 'utf8')}`).join('\n');
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            const realRename = fs.renameSync;
+            fs.renameSync = function patched(from, to, ...rest) {
+                const f = String(from).replace(/\\/g, '/');
+                const t = String(to).replace(/\\/g, '/');
+                if (t.includes('.parked-')) return realRename.call(fs, from, to, ...rest);
+                if (f.includes('.recovery-') || f.includes('.parked-')) throw new Error('rename refused');
+                return realRename.call(fs, from, to, ...rest);
+            };
+            let first = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { first = e; } finally { fs.renameSync = realRename; }
+            assert.strictEqual(first && first.reason, 'archive-publish-rollback-failed');
+
+            const fingerprint = st.computeMarkerFingerprint(env.runtimeRoot);
+            assert.strictEqual(st.readRecoveryLease(env.runtimeRoot, fingerprint).status, 'present',
+                'the recovery lease is RETAINED after a failed rollback — the generation is parked for a human');
+
+            // The second recovery must stop before anything destructive.
+            const destructive = { rm: 0, builders: 0 };
+            const realRm = fs.rmSync;
+            fs.rmSync = function patched(target, opts) {
+                if (String(target).replace(/\\/g, '/').includes('/zvec')) destructive.rm += 1;
+                return realRm.call(fs, target, opts);
+            };
+            class Counting {
+                constructor() { destructive.builders += 1; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert() { return { id: 1 }; }
+                stats() { return { count: 0, chunks: 0, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() {}
+            }
+            let second = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Counting, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { second = e; } finally { fs.rmSync = realRm; }
+
+            assert.ok(second && second.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(second.reason, 'recovery-in-progress',
+                `a quarantined generation must refuse a second recovery outright, got ${second.reason}`);
+            assert.strictEqual(destructive.rm, 0, 'and delete nothing');
+            assert.strictEqual(destructive.builders, 0, 'and build nothing');
+
+            const parked = fs.readdirSync(path.dirname(indexDir))
+                .filter(n => n.startsWith(path.basename(indexDir) + '.parked-'));
+            assert.strictEqual(parked.length, 1, 'the parked original is still there');
+            const parkedDir = path.join(path.dirname(indexDir), parked[0]);
+            assert.strictEqual(fs.readdirSync(parkedDir).sort()
+                .map(f => `${f}:${fs.readFileSync(path.join(parkedDir, f), 'utf8')}`).join('\n'), originals,
+                'and unchanged');
+            assert.ok(fs.existsSync(st.archiveLockPathFor(indexDir)), 'the publication lock is still held');
+
+            fs.rmSync(st.archiveLockPathFor(indexDir), { force: true });
+            st.releaseRecoveryLease(env.runtimeRoot, fingerprint, st.readRecoveryLease(env.runtimeRoot, fingerprint).lease.leaseId);
+            disposeEnv(env);
+        }
+        {
+            // G8 — terminal lock reporting. The lock has no timeout, so a
+            // release failure that is swallowed becomes a permanent lockout the
+            // command calls success.
+            const env = await stage('lock-terminal');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const indexDir = runtime.getIndexMemoryDir();
+            await env.service.syncIndexMemory();
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            // (a) acquire fails for a reason that is not EEXIST.
+            const realWrite = fs.writeFileSync;
+            fs.writeFileSync = function patched(p, ...rest) {
+                if (String(p).endsWith('.publication.lock')) { const e = new Error('denied'); e.code = 'EACCES'; throw e; }
+                return realWrite.call(fs, p, ...rest);
+            };
+            let acquireErr = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { acquireErr = e; } finally { fs.writeFileSync = realWrite; }
+            assert.ok(acquireErr && acquireErr.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(acquireErr.reason, 'archive-marker-lock-failed', `reason was ${acquireErr.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+
+            // (b) release fails AFTER the transaction committed. That stays a
+            // success — the marker is already cleared — but it must be visible,
+            // and the retained lock must make later global work fail closed.
+            seen = 0;
+            Healthy.built = 0;
+            const realUnlink = fs.unlinkSync;
+            fs.unlinkSync = function patched(p, ...rest) {
+                if (String(p).endsWith('.publication.lock')) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+                return realUnlink.call(fs, p, ...rest);
+            };
+            const logs = [];
+            const realWarn = console.warn;
+            console.warn = (...args) => { logs.push(args.join(' ')); };
+            let ok = null;
+            let err = null;
+            try {
+                ok = await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.unlinkSync = realUnlink; console.warn = realWarn; }
+
+            assert.strictEqual(err, null, `a committed recovery must not be reclassified as failed: ${err && err.reason}`);
+            assert.strictEqual(ok, true);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt was cleared');
+            assert.ok(logs.some(l => l.includes('archive marker 锁未能释放')),
+                `the release failure must be visible, got: ${logs.join(' | ')}`);
+            assert.ok(fs.existsSync(st.archiveLockPathFor(indexDir)), 'the lock is still on disk');
+            let syncErr = null;
+            try { await env.service.syncIndexMemory(); } catch (e) { syncErr = e; }
+            assert.ok(syncErr && syncErr.reason === 'archive-marker-busy',
+                'and later global work fails closed rather than proceeding under an unreleased lock');
+
+            fs.rmSync(st.archiveLockPathFor(indexDir), { force: true });
+            disposeEnv(env);
+        }
+        {
+            // G9 — §7.4 M5.5f. The lock path used to be the index directory's own
+            // name plus a suffix, and the caller resolves that name through
+            // getIndexMemoryDir(), which renames vect_memory to index_memory in
+            // place and returns the LEGACY path when the rename fails. Two
+            // processes could therefore lock two different files and both believe
+            // they held the global lock.
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-t8g-lockid-'));
+            const legacy = path.join(root, 'vect_memory');
+            const modern = path.join(root, 'index_memory');
+            const lockFiles = () => fs.readdirSync(root).filter(n => n.endsWith('.publication.lock'));
+
+            // Behaviour first, on purpose. Asserting archiveLockPathFor(legacy)
+            // === archiveLockPathFor(modern) up front would let a mutation die on
+            // a restatement of the implementation; what has to be pinned is that
+            // a second process cannot become a second owner.
+            const a = st.acquireArchiveMarkerLock(legacy, 'A');
+            assert.strictEqual(a.acquired, true, 'A takes the lock through the legacy name');
+            const b = st.acquireArchiveMarkerLock(modern, 'B');
+            assert.strictEqual(b.acquired, false, 'B must not get a second owner by resolving the modern name');
+            assert.strictEqual(b.reason, 'archive-marker-busy');
+            assert.deepStrictEqual(lockFiles(), [path.basename(st.archiveLockPathFor(modern))],
+                `exactly one lock file may exist for one ledger, found: ${lockFiles().join(', ')}`);
+
+            assert.strictEqual(st.releaseArchiveMarkerLock(legacy, 'A').released, true);
+            const b2 = st.acquireArchiveMarkerLock(modern, 'B');
+            assert.strictEqual(b2.acquired, true, 'and B may proceed only once A has released');
+
+            // The migration-shaped case: the directory resolves to legacy at the
+            // start of an operation and to modern by the end. The operation must
+            // still be guarded by the same lock file — release through the other
+            // alias has to find the lock B is actually holding.
+            const rel = st.releaseArchiveMarkerLock(legacy, 'B');
+            assert.strictEqual(rel.released, true,
+                `an operation whose directory name flipped mid-flight must still own its lock (reason=${rel.reason})`);
+            assert.deepStrictEqual(lockFiles(), [], 'and the one lock file is gone');
+            assert.strictEqual(st.archiveLockPathFor(legacy), st.archiveLockPathFor(modern),
+                'the legacy and modern aliases of one ledger must map to one lock path');
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+        {
+            // G10 — §7.4 M5.4b. The publication lock reports its terminals; the
+            // recovery lease used to swallow them. A lease that will not unlink
+            // before the marker is cleared parks that generation at
+            // recovery-in-progress forever, with nothing said about it.
+            const env = await stage('lease-terminal');
+            const realUnlink = fs.unlinkSync;
+            const patchLeaseUnlink = () => {
+                fs.unlinkSync = function patched(p, ...rest) {
+                    if (String(p).endsWith('.lease.json')) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+                    return realUnlink.call(fs, p, ...rest);
+                };
+            };
+
+            // (a) the recovery fails first, and the lease will not let go.
+            const errors = [];
+            const realError = console.error;
+            console.error = (...args) => { errors.push(args.join(' ')); };
+            let failure = null;
+            patchLeaseUnlink();
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: makeFake({ reportCount: 999 }), paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { failure = e; } finally { fs.unlinkSync = realUnlink; console.error = realError; }
+
+            assert.ok(failure && failure.code === env.service.ERR_RECOVERY_INCOMPLETE);
+            assert.strictEqual(failure.reason, 'validator-count-mismatch',
+                `the original failure must survive the lease terminal, got ${failure.reason}`);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'present', 'the debt stands');
+            assert.ok(fs.readdirSync(env.runtimeRoot).some(n => n.endsWith('.lease.json')),
+                'fixture: the lease really is still on disk');
+            assert.ok(errors.some(l => l.includes('recovery lease 未能释放')),
+                `an unreleasable lease before the marker is cleared must be reported, got: ${errors.join(' | ')}`);
+            const log = fs.readFileSync(path.join(env.runtimeRoot, 'memory.log'), 'utf8');
+            assert.ok(log.includes('RECOVERY_LEASE_RELEASE_FAILED'), 'and recorded in memory.log');
+
+            // The generation is now stuck, and the stuck-ness must bite BEFORE
+            // anything destructive — that is the whole reason it is reported.
+            let builders = 0;
+            class Counting {
+                constructor() { builders += 1; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert() { return { id: 1 }; }
+                stats() { return { count: 0, chunks: 0, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() {}
+            }
+            let removals = 0;
+            const realRm = fs.rmSync;
+            fs.rmSync = function patched(...args) { removals += 1; return realRm.apply(fs, args); };
+            let second = null;
+            try {
+                await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Counting, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { second = e; } finally { fs.rmSync = realRm; }
+            assert.strictEqual(second && second.reason, 'recovery-in-progress',
+                `a parked generation must refuse the next recovery, got ${second && second.reason}`);
+            assert.strictEqual(builders, 0, 'no builder may be constructed');
+            assert.strictEqual(removals, 0, 'and nothing may be removed');
+            disposeEnv(env);
+        }
+        {
+            // (b) the mirror image: the marker was cleared, so the recovery IS
+            // committed. The leftover lease belongs to a generation that no
+            // longer exists — harmless — and must not turn a success into a
+            // failure. It still has to be visible.
+            const env = await stage('lease-terminal-committed');
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            const warnings = [];
+            const realWarn = console.warn;
+            const realUnlink = fs.unlinkSync;
+            console.warn = (...args) => { warnings.push(args.join(' ')); };
+            fs.unlinkSync = function patched(p, ...rest) {
+                if (String(p).endsWith('.lease.json')) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+                return realUnlink.call(fs, p, ...rest);
+            };
+            let ok = null;
+            let err = null;
+            try {
+                ok = await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.unlinkSync = realUnlink; console.warn = realWarn; }
+
+            assert.strictEqual(err, null, `a committed recovery must not be reclassified as failed: ${err && err.reason}`);
+            assert.strictEqual(ok, true);
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt was cleared');
+            assert.ok(warnings.some(l => l.includes('recovery lease 未能释放')),
+                `the leftover lease must still be visible, got: ${warnings.join(' | ')}`);
+            const log = fs.readFileSync(path.join(env.runtimeRoot, 'memory.log'), 'utf8');
+            assert.ok(log.includes('RECOVERY_LEASE_RELEASE_FAILED'), 'and recorded in memory.log');
+            disposeEnv(env);
+        }
+        {
+            // G11a — §7.4 M5.5g, getter purity. Renaming the ledger is a WRITE to
+            // the set the publication lock protects. It used to sit behind
+            // getIndexMemoryDir(), so every caller — `verify`, health summaries,
+            // the inspector — could perform it.
+            const env = await stage('ledger-getter-purity');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const legacy = path.join(env.runtimeRoot, 'vect_memory');
+            const modern = path.join(env.runtimeRoot, 'index_memory');
+            fs.rmSync(modern, { recursive: true, force: true });
+            fs.mkdirSync(legacy, { recursive: true });
+            fs.writeFileSync(path.join(legacy, 'seeded.md'), 'ORIGINAL', 'utf8');
+            const before = fs.statSync(path.join(legacy, 'seeded.md'));
+
+            let renames = 0;
+            const realRename = fs.renameSync;
+            fs.renameSync = function patched(...args) { renames += 1; return realRename.apply(fs, args); };
+            let resolved;
+            try { resolved = runtime.getIndexMemoryDir(); } finally { fs.renameSync = realRename; }
+
+            assert.strictEqual(resolved, legacy, 'modern absent + legacy present must resolve to legacy');
+            assert.strictEqual(renames, 0, 'resolving the ledger must not rename anything');
+            assert.ok(fs.existsSync(legacy), 'legacy must still be there');
+            assert.ok(!fs.existsSync(modern), 'and modern must not have been created');
+            assert.deepStrictEqual(fs.readdirSync(legacy), ['seeded.md']);
+            assert.strictEqual(fs.readFileSync(path.join(legacy, 'seeded.md'), 'utf8'), 'ORIGINAL');
+            assert.strictEqual(fs.statSync(path.join(legacy, 'seeded.md')).mtimeMs, before.mtimeMs);
+
+            // and the frozen table's remaining rows
+            fs.mkdirSync(modern, { recursive: true });
+            assert.strictEqual(runtime.getIndexMemoryDir(), modern, 'both present must resolve to modern');
+            fs.rmSync(legacy, { recursive: true, force: true });
+            assert.strictEqual(runtime.getIndexMemoryDir(), modern, 'modern alone resolves to modern');
+            fs.rmSync(modern, { recursive: true, force: true });
+            assert.strictEqual(runtime.getIndexMemoryDir(), modern, 'neither present resolves to modern');
+            disposeEnv(env);
+        }
+        {
+            // G11b — a locked sync pinned to legacy, with an unlocked reader
+            // probing mid-transaction. The property under test is not "the
+            // reader saw the right thing", it is that NOBODY renames the ledger
+            // without holding the publication lock.
+            const env = await stage('ledger-locked-sync');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const legacy = path.join(env.runtimeRoot, 'vect_memory');
+            const modern = path.join(env.runtimeRoot, 'index_memory');
+            const lockPath = st.archiveLockPathFor(legacy);
+
+            // Seed a complete ledger, then put it back under the legacy name —
+            // the shape a first upgrade actually has.
+            const seeded = await env.service.syncIndexMemory();
+            assert.strictEqual(seeded.files, env.files.length, 'fixture: the ledger covers every archive');
+            fs.renameSync(modern, legacy);
+            assert.ok(!fs.existsSync(modern));
+
+            // One more archive, so this sync has work to do and a re-ingest of
+            // the already-marked three would be visible in the file count.
+            const extra = 'mem_2026-08-03_00-00-04_t8c_0004.md';
+            fs.writeFileSync(path.join(env.runtimeRoot, 'raw_memory', extra), [
+                '---', 'id: "t8c_0004"', 'timestamp: "2026-08-03T00:00:04.000Z"',
+                'type: "task"', 'namespace: "prose"', 'tags: []', '---', '',
+                '## 实现细节 (Implementation)', '',
+                'ledger migration fixture archive 4; long enough to clear the quality guard.', '',
+            ].join('\n'), 'utf8');
+
+            const attempts = [];
+            let injected = false;
+            const probes = [];
+            const realRename = fs.renameSync;
+            const realWrite = fs.writeFileSync;
+            fs.renameSync = function patched(from, to, ...rest) {
+                if (from === legacy && to === modern) {
+                    // Recorded with the lock state at the moment of the attempt.
+                    // A rename with no lock held is the defect, whoever did it.
+                    attempts.push({ lockHeld: fs.existsSync(lockPath) });
+                    if (!injected) {
+                        injected = true;
+                        const e = new Error('denied'); e.code = 'EPERM'; throw e;
+                    }
+                }
+                return realRename.call(fs, from, to, ...rest);
+            };
+            fs.writeFileSync = function patched(p, ...rest) {
+                const out = realWrite.call(fs, p, ...rest);
+                // The first marker write: the holder has read its work list and
+                // is committing it. This is where an unlocked reader used to
+                // rename the ledger out from under it.
+                if (probes.length === 0 && String(p).endsWith('.md') && path.dirname(String(p)).endsWith('memory')) {
+                    probes.push({
+                        health: env.service.summarizeArchiveHealth(),
+                        resolved: runtime.getIndexMemoryDir(),
+                        legacy: fs.existsSync(legacy),
+                        modern: fs.existsSync(modern),
+                    });
+                }
+                return out;
+            };
+            let result;
+            try { result = await env.service.syncIndexMemory(); } finally {
+                fs.renameSync = realRename; fs.writeFileSync = realWrite;
+            }
+
+            assert.ok(injected, 'fixture: the in-lock migration really was made to fail');
+            assert.ok(attempts.length > 0, 'fixture: a migration was actually attempted');
+            assert.deepStrictEqual(attempts.filter(a => !a.lockHeld), [],
+                'the ledger may only be renamed while the publication lock is held');
+            assert.strictEqual(probes.length, 1, 'fixture: the read-only probe ran mid-transaction');
+            assert.strictEqual(probes[0].modern, false, 'a read-only caller must not migrate the ledger');
+            assert.strictEqual(probes[0].resolved, legacy, 'and must resolve to the directory in service');
+
+            assert.strictEqual(result.files, 1,
+                `only the new archive is work; a transaction that re-read an empty ledger would redo all four (got ${result.files})`);
+            assert.ok(!fs.existsSync(modern), 'the transaction pinned legacy, so modern must not exist');
+            assert.strictEqual(fs.readdirSync(legacy).filter(f => f.endsWith('.md')).length, env.files.length + 1,
+                'and every marker landed in that one ledger');
+
+            // Once the lock is free, an ordinary sync may migrate — that is the
+            // only path allowed to.
+            const migrated = await env.service.syncIndexMemory();
+            assert.strictEqual(migrated.files, 0, 'nothing left to do');
+            assert.ok(fs.existsSync(modern) && !fs.existsSync(legacy), 'the migration happened under the lock');
+            assert.strictEqual(fs.readdirSync(modern).filter(f => f.endsWith('.md')).length, env.files.length + 1,
+                'and carried the complete marker set across');
+            disposeEnv(env);
+        }
+        {
+            // G11c — the same property on the publication transaction, where
+            // getting it wrong strands the verified ledger: park and publish land
+            // in legacy while the pure getter goes on serving the old modern
+            // directory. Marker cleared, wrong bookkeeping in service — AC5.
+            const env = await stage('ledger-recovery-pin');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const legacy = path.join(env.runtimeRoot, 'vect_memory');
+            const modern = path.join(env.runtimeRoot, 'index_memory');
+
+            const seeded = await env.service.syncIndexMemory();
+            assert.strictEqual(seeded.files, env.files.length);
+            for (const f of fs.readdirSync(modern)) fs.writeFileSync(path.join(modern, f), 'ORIGINAL', 'utf8');
+            fs.renameSync(modern, legacy);
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            let injected = false;
+            const probes = [];
+            const realRename = fs.renameSync;
+            fs.renameSync = function patched(from, to, ...rest) {
+                if (from === legacy && to === modern && !injected) {
+                    injected = true;
+                    const e = new Error('denied'); e.code = 'EPERM'; throw e;
+                }
+                if (probes.length === 0 && String(to).includes('.parked-')) {
+                    // The holder has pinned its active directory and is about to
+                    // park it. A read-only caller runs right here.
+                    probes.push({
+                        resolved: runtime.getIndexMemoryDir(),
+                        modern: fs.existsSync(modern),
+                    });
+                }
+                return realRename.call(fs, from, to, ...rest);
+            };
+            let ok = null;
+            let err = null;
+            try {
+                ok = await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.renameSync = realRename; }
+
+            assert.strictEqual(err, null, `the recovery must succeed: ${err && err.reason}`);
+            assert.strictEqual(ok, true);
+            assert.ok(injected, 'fixture: the in-lock migration really was made to fail');
+            assert.strictEqual(probes.length, 1, 'fixture: the read-only probe ran inside the publication');
+            assert.strictEqual(probes[0].modern, false, 'a read-only caller must not migrate mid-publication');
+            assert.strictEqual(probes[0].resolved, legacy, 'the pinned directory is the one in service');
+
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt was cleared');
+            const active = runtime.getIndexMemoryDir();
+            assert.strictEqual(active, legacy, 'the ledger in service is the one that was published');
+            assert.deepStrictEqual(fs.readdirSync(active).sort(), env.files.slice().sort(),
+                'and it holds exactly the rebuilt marker set');
+            // Freshly rebuilt markers are empty; the originals were seeded with
+            // content, so this tells the published ledger from the stranded one.
+            for (const f of fs.readdirSync(active)) {
+                assert.strictEqual(fs.readFileSync(path.join(active, f), 'utf8'), '',
+                    `${f} must come from the verified rebuild, not the pre-recovery ledger`);
+            }
+            const residue = fs.readdirSync(env.runtimeRoot).filter(n => n.includes('.recovery-') || n.includes('.parked-'));
+            assert.deepStrictEqual(residue, [], `no staging or parked directory may survive: ${residue.join(', ')}`);
+            disposeEnv(env);
+        }
+        console.log('✅ T-zwuc-T8g-archive-transaction passed');
+    }
+
+    console.log('T-zwuc-T8d-recovery-real. Real @zvec/zvec on an ASCII path, verified by a second process ...');
+    {
+        const st = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
+        // Seam injection proves the DECISION; it cannot prove the reopen. Only a
+        // separate process can show that what the builder wrote actually
+        // persisted — which is the entire reason the marker outlives the builder.
+        // ASCII path, real dependency, no probe env, no crash fixture.
+        const runtime = createTempRuntimeRoot('zwuc-recovery-real');
+        const runtimeRoot = runtime.runtimeRoot;
+        // os.tmpdir() on a Windows runner is an 8.3 short name, which containment
+        // correctly refuses — anchoring the collection there would make this test
+        // assert "no recovery" for a reason unrelated to what it is testing. So
+        // the db (and with it the collection and the marker) lives under the
+        // workspace, and the anchor is VERIFIED rather than assumed.
+        const anchor = createContainedZvecRoot('zwuc-recovery-real');
+        if (!anchor.safe) {
+            anchor.cleanup();
+            throw new Error(`cannot run the real recovery case: workspace anchor is not in the supported profile (${anchor.containment.reason}). Move the checkout to an ASCII path.`);
+        }
+        const markerDir = path.dirname(anchor.dbPath);
+        try {
+            const rawDir = path.join(runtimeRoot, 'raw_memory');
+            fs.mkdirSync(rawDir, { recursive: true });
+            const ARCHIVES = 3;
+            for (let n = 1; n <= ARCHIVES; n += 1) {
+                fs.writeFileSync(path.join(rawDir, `mem_2026-08-03_00-00-0${n}_real_000${n}.md`), [
+                    '---', `id: "real_000${n}"`, `timestamp: "2026-08-03T00:00:0${n}.000Z"`,
+                    'type: "task"', 'namespace: "prose"', 'tags: []', '---', '',
+                    '## 实现细节 (Implementation)', '',
+                    `recovery fixture archive number ${n}; long enough to clear the quality guard and produce one chunk.`, '',
+                ].join('\n'), 'utf8');
+            }
+
+            const collectionPath = path.join(markerDir, 'zvec', 'collection');
+            fs.mkdirSync(collectionPath, { recursive: true });
+            fs.writeFileSync(path.join(markerDir, 'zvec', 'stale.txt'), 'pre-containment leftovers', 'utf8');
+            st.writeContainmentState(markerDir, {
+                collectionPath,
+                containment: { verdict: 'UNKNOWN', layer: 'lexical', reason: 'lexical:character-outside-supported-ascii-set' },
+            });
+
+            // Through the shared helper: an earlier version spawned with a cwd
+            // outside the repository and a NODE_PATH naming only
+            // .evo-lite/node_modules — where @zvec/zvec does not live. Locally a
+            // stray user-level node_modules satisfied it anyway; the Windows
+            // runner did not.
+            const child = (args) => spawnContainmentChild({
+                EVO_LITE_ROOT: runtimeRoot,
+                EVO_LITE_DB_PATH: anchor.dbPath,
+                EVO_LITE_MEMORY_ENGINE: 'zvec',
+            }, args);
+
+            // MODULE_NOT_FOUND is not evidence of platform unavailability until
+            // the mandatory wiring probe below has passed. The current
+            // release-gate matrix resolves @zvec/zvec on BOTH Windows and Ubuntu
+            // and executes this real recovery path on every job.
+            //
+            // Because @zvec/zvec is still an optionalDependency, a genuinely
+            // unavailable non-win32 platform may skip — but only for the
+            // narrowly recognized errors below. On win32 absence stays a hard
+            // failure: the Windows recovery path is mandatory for this contract,
+            // and substituting a mock would defeat the only test that proves the
+            // reopen.
+            //
+            // Wiring control first, on a MANDATORY dependency. A broken
+            // cwd/NODE_PATH previously produced MODULE_NOT_FOUND on both
+            // platform families: on Ubuntu that symptom was misread as genuine
+            // dependency absence and skipped, while on Windows it surfaced as a
+            // hard failure. The probe separates "the child cannot resolve
+            // anything" from "@zvec/zvec is not installed", so a wiring defect
+            // can never again pass itself off as an environment fact.
+            const probeWiring = child(['-e', 'try { require("commander"); console.log("WIRING_OK"); } catch (e) { console.log("WIRING_BROKEN:" + (e.code || "ERR")); }']);
+            assert.ok(probeWiring.stdout.includes('WIRING_OK'),
+                `the containment child cannot resolve the repository's own dependencies — cwd/NODE_PATH wiring is broken, not the optional dependency: ${probeWiring.stdout.trim()} ${probeWiring.stderr.trim()}`);
+
+            const probeDep = child(['-e', 'try { require("@zvec/zvec"); console.log("HAVE_ZVEC"); } catch (e) { console.log("NO_ZVEC:" + (e.code || "ERR") + ":" + e.message); }']);
+            const haveZvec = probeDep.stdout.includes('HAVE_ZVEC');
+            // The skip is narrow on purpose, and is a contingency rather than an
+            // expectation: every job in the current matrix loads the dependency
+            // and takes the real path. Only a recognizably unavailable
+            // dependency may skip, and only off win32. Any other error is a real
+            // failure — a broken fixture must not disguise itself as an
+            // environment fact.
+            const unavailable = /NO_ZVEC:(MODULE_NOT_FOUND|ERR_DLOPEN_FAILED)/.test(probeDep.stdout)
+                || /Cannot find module|no prebuild|prebuilt binary|was compiled against a different/i.test(probeDep.stdout);
+            assert.ok(haveZvec || unavailable,
+                `@zvec/zvec failed to load for a reason that is not "unavailable": ${probeDep.stdout.trim()} ${probeDep.stderr.trim()}`);
+            assert.ok(haveZvec || process.platform !== 'win32',
+                `the real recovery path needs @zvec/zvec on win32 — that is where the defect lives; got ${probeDep.stdout.trim()}`);
+            if (!haveZvec) {
+                console.log(`   ⏭️  real-recovery case skipped: @zvec/zvec is unavailable on this platform/runtime (${probeDep.stdout.trim()})`);
+            } else {
+
+            // 1. While the marker stands, an independent process refuses zvec.
+            const before = child(['-e', `
+const mi = require(${JSON.stringify(path.join(CLI_DIR, 'memory-index.js'))});
+const a = mi.resolveActiveImpl();
+const d = mi.peekEngineDecision();
+console.log("RESULT" + JSON.stringify({ impl: a.impl, reason: d && d.reason }));
+`]);
+            assert.strictEqual(before.status, 0, `pre-recovery probe failed: ${before.stderr}`);
+            const beforeJson = JSON.parse(before.stdout.split('RESULT')[1]);
+            assert.strictEqual(beforeJson.impl, 'sqlite');
+            assert.strictEqual(beforeJson.reason, 'containment-recovery-pending');
+
+            // 2. The authorized recovery, through the real CLI.
+            const rebuilt = child([path.join(CLI_DIR, 'memory.js'), 'rebuild']);
+            assert.strictEqual(rebuilt.status, 0, `recovery rebuild exited ${rebuilt.status}: ${rebuilt.stdout}\n${rebuilt.stderr}`);
+            assert.ok(rebuilt.stdout.includes('fresh_reopen_verified: true'), 'the summary records the fresh reopen');
+            assert.ok(rebuilt.stdout.includes('containment_marker: cleared'));
+
+            // 3. Old collection discarded, debt cleared.
+            assert.ok(!fs.existsSync(path.join(markerDir, 'zvec', 'stale.txt')),
+                'the stale collection must have been discarded');
+            assert.strictEqual(st.readContainmentState(markerDir).status, 'absent',
+                'the marker clears only after a verified reopen');
+
+            // 4. A SECOND, independent process now gets zvec and can read it.
+            const after = child(['-e', `
+const mi = require(${JSON.stringify(path.join(CLI_DIR, 'memory-index.js'))});
+const a = mi.resolveActiveImpl();
+const idx = mi.getMemoryIndex();
+const stats = idx.stats();
+const hits = idx.searchText('recovery fixture archive', { topK: 5, scope: 'all' });
+console.log("RESULT" + JSON.stringify({ impl: a.impl, degraded: a.degraded, engine: idx.engine, count: stats.count, hits: hits.length }));
+`]);
+            assert.strictEqual(after.status, 0, `post-recovery probe failed: ${after.stderr}`);
+            const afterJson = JSON.parse(after.stdout.split('RESULT')[1]);
+            assert.strictEqual(afterJson.impl, 'zvec', `expected zvec after recovery, got ${afterJson.impl}`);
+            assert.strictEqual(afterJson.degraded, false);
+            assert.ok(String(afterJson.engine).startsWith('zvec'), `engine was ${afterJson.engine}`);
+            assert.strictEqual(afterJson.count, ARCHIVES, `expected ${ARCHIVES} chunks after reopen, got ${afterJson.count}`);
+            assert.ok(afterJson.hits > 0, 'the rebuilt collection answers a real query');
+            }
+        } finally {
+            anchor.cleanup();
+            fs.rmSync(path.dirname(runtimeRoot), { recursive: true, force: true });
+        }
+        console.log('✅ T-zwuc-T8d-recovery-real passed');
+    }
+
+    console.log('T-zwuc-T8e-shared-path. The PRODUCTION entry consults and records the marker ...');
+    {
+        const st = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
+        // Everything above reaches the decision through resolveEngineDecision(),
+        // which production does not use: getMemoryIndex() and resolveActiveImpl()
+        // go through sharedEngineDecision(), which calls the pure resolver
+        // directly and caches. A marker write wired only into the explicit entry
+        // would pass every test above and still record nothing where it counts.
+        // Each case runs in its own process — the decision cache and the env are
+        // both process-global.
+        const child = (env, src) => spawnContainmentChild(env, ['-e', src]);
+        const MI = JSON.stringify(path.join(CLI_DIR, 'memory-index.js'));
+
+        // 1. Ambient SAFE path + an outstanding marker: the shared entry must
+        //    park on sqlite. Runs on every platform.
+        {
+            const anchor = createContainedZvecRoot('zwuc-shared-pending');
+            const runtime = createTempRuntimeRoot('zwuc-shared-pending');
+            try {
+                if (!anchor.safe) throw new Error(`anchor not in profile: ${anchor.containment.reason}`);
+                st.writeContainmentState(path.dirname(anchor.dbPath), {
+                    collectionPath: anchor.paths.collectionPath,
+                    containment: { verdict: 'UNKNOWN', layer: 'lexical', reason: 'r' },
+                });
+                const res = child({
+                    EVO_LITE_ROOT: runtime.runtimeRoot,
+                    EVO_LITE_DB_PATH: anchor.dbPath,
+                    EVO_LITE_MEMORY_ENGINE: 'zvec',
+                }, `
+const mi = require(${MI});
+const a = mi.resolveActiveImpl();
+const d = mi.peekEngineDecision();
+console.log("RESULT" + JSON.stringify({ impl: a.impl, degraded: a.degraded, reason: d && d.reason, marker: d && d.recovery && d.recovery.markerStatus }));
+`);
+                assert.strictEqual(res.status, 0, `shared-path probe failed: ${res.stderr}`);
+                const json = JSON.parse(res.stdout.split('RESULT')[1]);
+                assert.strictEqual(json.impl, 'sqlite', 'the production entry must honour the marker');
+                assert.strictEqual(json.degraded, true);
+                assert.strictEqual(json.reason, 'containment-recovery-pending');
+                assert.strictEqual(json.marker, 'present');
+            } finally {
+                anchor.cleanup();
+                fs.rmSync(path.dirname(runtime.runtimeRoot), { recursive: true, force: true });
+            }
+        }
+
+        // 2. A real ambient degradation must RECORD the debt through the shared
+        //    entry. Only reachable on win32: elsewhere the platform gate makes
+        //    every path SAFE (I9), so there is no ambient degradation to record.
+        //    Nothing native is loaded on this branch by construction — that is
+        //    the containment guarantee — and the directory is an ordinary one.
+        if (process.platform === 'win32') {
+            const base = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-shared-'));
+            const workspace = path.join(base, '中文项目');
+            const runtimeRoot = path.join(workspace, '.evo-lite');
+            fs.mkdirSync(runtimeRoot, { recursive: true });
+            try {
+                const res = child({
+                    EVO_LITE_ROOT: runtimeRoot,
+                    EVO_LITE_MEMORY_ENGINE: 'zvec',
+                }, `
+const mi = require(${MI});
+const a = mi.resolveActiveImpl();
+const d = mi.peekEngineDecision();
+console.log("RESULT" + JSON.stringify({ impl: a.impl, degraded: a.degraded, reason: d && d.reason, persisted: d && d.markerPersisted }));
+`);
+                assert.strictEqual(res.status, 0, `ambient degradation probe failed: ${res.stderr}`);
+                const json = JSON.parse(res.stdout.split('RESULT')[1]);
+                assert.strictEqual(json.impl, 'sqlite', 'a non-ASCII ambient path degrades');
+                assert.strictEqual(json.reason, 'containment');
+                assert.strictEqual(json.persisted, true, 'the SHARED path must have recorded the debt');
+
+                // The regression CI caught: writing the marker must not
+                // invalidate the decision that wrote it. An earlier version put
+                // the marker status in the cache key, so a contained decision
+                // resolved with the marker absent, persisted it, and the next
+                // consumer then saw a different key and built a SECOND decision —
+                // breaking the §6.1 guarantee Task 4 froze. Asserted on a
+                // degrading path specifically, because that is the only shape
+                // where the decision changes the state it is keyed on.
+                const identity = child({
+                    EVO_LITE_ROOT: runtimeRoot,
+                    EVO_LITE_MEMORY_ENGINE: 'zvec',
+                }, `
+const mi = require(${MI});
+mi.resetMemoryIndex();
+const nothing = mi.peekEngineDecision();
+mi.resolveActiveImpl();
+const first = mi.peekEngineDecision();
+mi.getMemoryIndex();
+const second = mi.peekEngineDecision();
+console.log("RESULT" + JSON.stringify({
+  cleared: nothing === null,
+  reason: first && first.reason,
+  persisted: first && first.markerPersisted,
+  same: first === second,
+}));
+`);
+                assert.strictEqual(identity.status, 0, `identity probe failed: ${identity.stderr}`);
+                const idJson = JSON.parse(identity.stdout.split('RESULT')[1]);
+                assert.strictEqual(idJson.cleared, true, 'resetMemoryIndex clears the decision');
+                assert.strictEqual(idJson.reason, 'containment', 'this probe must run on a degrading path');
+                assert.strictEqual(idJson.same, true,
+                    'a decision that writes the marker must NOT invalidate itself — diagnosis and instantiation still share ONE decision object');
+
+                const marker = st.readContainmentState(runtimeRoot);
+                assert.strictEqual(marker.status, 'present',
+                    'the marker must exist on disk after a production-path degradation');
+                assert.ok(marker.state.collectionPath.includes('zvec'),
+                    'and it names the collection path that was judged');
+
+                // A second process must now find the debt and refuse to load.
+                const second = child({
+                    EVO_LITE_ROOT: runtimeRoot,
+                    EVO_LITE_MEMORY_ENGINE: 'zvec',
+                }, `
+const mi = require(${MI});
+const before = require('fs').readFileSync(${JSON.stringify(path.join(runtimeRoot, st.MARKER_FILE))}, 'utf8');
+mi.resolveActiveImpl();
+const after = require('fs').readFileSync(${JSON.stringify(path.join(runtimeRoot, st.MARKER_FILE))}, 'utf8');
+console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
+`);
+                assert.strictEqual(second.status, 0, second.stderr);
+                assert.strictEqual(JSON.parse(second.stdout.split('RESULT')[1]).unchanged, true,
+                    'a later process must not rewrite the first evidence');
+            } finally {
+                fs.rmSync(base, { recursive: true, force: true });
+            }
+        } else {
+            // Loud, not silent: the write half of this contract is only
+            // observable where an ambient degradation can happen at all.
+            console.log('   ⏭️  ambient-degradation half is win32-only (I9 makes every path SAFE elsewhere)');
+        }
+        console.log('✅ T-zwuc-T8e-shared-path passed');
     }
 
     // ---------------------------------------------------------------------

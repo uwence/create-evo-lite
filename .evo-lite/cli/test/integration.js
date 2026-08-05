@@ -1484,8 +1484,28 @@ async function runIntegrationTests() {
         const legacyIndexDir = path.join(legacyIndexRuntime.runtimeRoot, 'vect_memory');
         fs.mkdirSync(legacyIndexDir, { recursive: true });
         fs.writeFileSync(path.join(legacyIndexDir, 'legacy-marker.md'), '', 'utf8');
-        loadCli(legacyIndexRuntime.runtimeRoot);
+        // [zvec-win-unicode-containment] §7.4 M5.5g — this used to assert that a
+        // bare getIndexMemoryDir() performed the rename. Renaming the ledger is a
+        // WRITE to the global archive-marker set, so it belongs to the
+        // publication-lock owner alone: an unlocked reader that migrated it could
+        // do so in the middle of someone else's locked transaction. The two
+        // halves are now asserted separately — the getter only resolves, and a
+        // lock-taking command is what migrates.
+        const legacyLoaded = await bootstrapRuntime(legacyIndexRuntime.runtimeRoot);
         const legacyRuntimePaths = require(path.join(CLI_DIR, 'runtime.js'));
+
+        assert.strictEqual(
+            legacyRuntimePaths.getIndexMemoryDir(),
+            legacyIndexDir,
+            'resolving the ledger must be pure'
+        );
+        assert.ok(
+            !fs.existsSync(path.join(legacyIndexRuntime.runtimeRoot, 'index_memory')),
+            'a pure resolution must not create the modern directory'
+        );
+
+        await legacyLoaded.service.syncIndexMemory();
+
         const migratedIndexDir = legacyRuntimePaths.getIndexMemoryDir();
         assert.strictEqual(
             migratedIndexDir,

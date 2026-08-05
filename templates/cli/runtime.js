@@ -68,6 +68,11 @@ function getRawMemoryDir() {
     return path.join(getRuntimeRoot(), 'raw_memory');
 }
 
+// [zvec-win-unicode-containment] §7.4 M5.5g — renaming the ledger is a WRITE to
+// the global archive-marker set, so only the publication-lock owner may call
+// this. It used to sit behind getIndexMemoryDir(), which meant any caller —
+// including read-only paths like summarizeArchiveHealth() — could rename the
+// directory out from under a transaction that had already resolved and locked.
 function migrateLegacyIndexMemoryDir() {
     const modernDir = path.join(getRuntimeRoot(), 'index_memory');
     const legacyDir = path.join(getRuntimeRoot(), 'vect_memory');
@@ -88,8 +93,20 @@ function migrateLegacyIndexMemoryDir() {
     }
 }
 
+/**
+ * Pure resolution (§7.4 M5.5g). Reads the filesystem, never writes to it.
+ *
+ *   modern exists                  -> modern
+ *   modern absent, legacy present  -> legacy
+ *   neither                        -> modern
+ *   both                           -> modern
+ */
 function getIndexMemoryDir() {
-    return migrateLegacyIndexMemoryDir();
+    const modernDir = path.join(getRuntimeRoot(), 'index_memory');
+    const legacyDir = path.join(getRuntimeRoot(), 'vect_memory');
+    if (fs.existsSync(modernDir)) return modernDir;
+    if (fs.existsSync(legacyDir)) return legacyDir;
+    return modernDir;
 }
 
 function getVectMemoryDir() {

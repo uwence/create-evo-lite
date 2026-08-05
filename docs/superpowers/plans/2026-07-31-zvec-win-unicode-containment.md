@@ -370,6 +370,49 @@ memorize(text, options = {})             // options.index 缺省 → getMemoryIn
 > 已核实：`rebuildLocalIndex()` 末行 `return true`，结构化结果属于 `syncIndexMemory()`。
 > **不得**为 marker 判定扩大 `rebuildLocalIndex()` 的公开返回面（M5）。
 
+#### 当前适配器限制 —— 不是语义合同
+
+已核实:`ZvecMemoryIndex.stats()` 经 `_allDocs()` 枚举,而后者是
+`querySync({ topk: MAX_ENUM })`,`MAX_ENUM = 1000`(`memory-index-zvec.js:19,142-146`,
+源码注释亦已写明超过该规模时 `stats` / `list` / `_maxId` 会**少计**)。
+
+这是**当前适配器的实现限制**,不是恢复状态机的语义边界 —— 所以它记录在这里,
+**不写进 spec §7.4 M5.2**。把 `1000` 固化进机制 Spec 会有两个后果:将来实现 pagination
+时还要改机制合同;而且容易被误读成「1000 条以内才是产品支持范围」。
+
+**M5.2 的精确相等仍然是权威。** Spec 侧保持后端无关的合同:无法证明精确计数 →
+recovery incomplete → marker 保留 → 非零退出。
+
+```text
+Current adapter limitation — not a semantic contract:
+
+ZvecMemoryIndex.stats() currently enumerates through
+_allDocs(topk=MAX_ENUM=1000).
+
+M5.2 exact equality remains authoritative.
+
+If an exact validator count cannot be established—including
+syncResult.chunks > 1000 under the current adapter—the recovery
+must fail with EVO_ZVEC_RECOVERY_INCOMPLETE, preserve the marker,
+close/reset all recovery indexes, and exit nonzero.
+
+Prohibited in Task 6:
+- clamp expected count to 1000
+- compare Math.min(syncResult.chunks, 1000)
+- skip count equality
+- downgrade mismatch to warning
+- clear marker after an inexact result
+- modify memory-index-zvec.js
+- add pagination or another counting API
+
+Pagination/exact-count expansion requires separate authorization.
+```
+
+**方向是安全的,但要说清代价**:archive 超过 1000 chunks 时,恢复会 fail-closed 卡住
+—— marker 保留、命令失败、无法切回 zvec。本仓当前 139 条记录,离上限尚远;子仓不一定。
+放宽比较会把这个「卡住」换成「静默地用一个不完整的索引清掉 marker」,那正是本任务
+存在的理由,所以宁可卡住。pagination / 精确计数扩展需要**单独授权**。
+
 #### TDD 步骤（九步，逐步 RED → GREEN）
 
 - [ ] **Step 1 (RED, characterization):** 先固化现状 —— 当前无 marker 概念时，
@@ -400,6 +443,38 @@ memorize(text, options = {})             // options.index 缺省 → getMemoryIn
       path-unresolvable（第 20 格）
 - [ ] **Step 9:** T8 全状态矩阵 + 两个突变负控（见下），live 与 template 双份
 
+#### 事务合同（spec §7.4 M5.4 / M5.5，第 5 版新增）
+
+全量复审在已通过 CI 的实现上发现两个 P1 —— 两者都不是"某一步写错了",而是
+**恢复缺少事务边界**:
+
+```text
+P1-1  两个并发恢复：A 取到 eligible 后暂停，B 完整跑完并清掉 marker，
+      A 再醒来删除 B 刚验证过的 collection 并中途失败
+      → marker 已 absent + collection 是半成品 → 下一个进程直接开 Zvec
+      已核实窗口：rmSync 发生在 ZvecMemoryIndex.initialize()（即 openWithCoordination）
+      之前，构造函数只存路径，所以 Zvec 自己的锁盖不住
+
+P1-2  失败的恢复污染在役 SQLite 的账本：ingestArchiveFile() 无条件写【全局】
+      archive marker，与写入哪个 index 无关；恢复又在受保护 try 之前删掉它们
+      → 已写进 builder 的档案：marker 谎称 SQLite 已索引（漏）
+      → 未及写入的档案：marker 已删，下次 sync 重新 INSERT（重，upsert 无去重）
+```
+
+实现必须落实 M5.4(marker-generation-bound lease)与 M5.5(archive marker 事务化发布)。
+要点:
+
+```text
+lease        wx/O_EXCL；身份含 markerFingerprint（marker 字节的 SHA-256）
+             取得后【重新】判定，禁止沿用取 lease 前的 eligible
+             释放按 leaseId CAS；不得按时间清 stale lease
+             持有到 containment marker 清除完成之后
+staging      build/validate 期间 archive marker 写进隔离集合，
+             全局集合【从不就地修改】——"逐字节不变"由此保证，而不是靠回滚
+manifest     文件名 + 内容 SHA-256；发布前重新核对；只比数量是不够的
+发布         目录级换位：现集合改名让位 → staging 改名就位 → 失败则改回
+```
+
 #### T8 状态矩阵（必须全部固定）
 
 | # | 场景 | 预期 |
@@ -417,6 +492,7 @@ memorize(text, options = {})             // options.index 缺省 → getMemoryIn
 | 11 | SAFE recovery 完整成功 | build → close builder → **fresh validator 重开** → M5.2 四条 → close → 清 marker |
 | 11b | builder close 后 fresh reopen 失败 | marker **保留**；命令失败（这是 optimize/close 被吞掉的唯一外部证据） |
 | 11c | fresh validator `stats.count !== syncResult.chunks` | marker 保留；命令失败 |
+| 11d | `syncResult.chunks = 1001`，validator `stats.count/chunks = 1000`（MAX_ENUM 上界，**注入结果**，禁止真造 1001 条数据） | `EVO_ZVEC_RECOVERY_INCOMPLETE`；marker 保留；validator close；shared cache reset；命令失败 |
 | 12 | archive invalid / partial | marker 保留 |
 | 13 | rebuild 中途抛错 | marker 保留 |
 | 14 | marker clear 失败 | reset recovery index；marker 保留；命令失败 |
@@ -427,6 +503,165 @@ memorize(text, options = {})             // options.index 缺省 → getMemoryIn
 | 19 | 非 win32 + marker present | 仍需显式恢复（M7） |
 | 20 | collection path / marker 目录不可解析 | `EVO_ZVEC_CONTAINMENT_STATE_WRITE`，`reason='collection-path-unresolvable'`；**不返回 SQLite 实例**（M6.1） |
 | 21 | 两个 writer 并发首次写入 | 恰好一个 `written=true`，另一个 `alreadyPresent=true`；盘上内容 = 第一个成功者（M1.1） |
+
+#### 第 6 版:所有权与发布仍不是完整事务（spec §7.4 M5.4a / M5.5a / M5.5b）
+
+第 5 版实现了 lease 与 staging 的**主体**,CI 五格首跑通过。全量复审发现**最后两层**
+仍然漏:
+
+```text
+P1-3  lease 的「CAS」实际是 read → unlink → write，跨进程不原子：
+      两个新 generation 获取者可以互相删掉对方刚写的 lease → 同代两个 owner；
+      而且【正常成功路径】就能让旧 owner 的 release 删掉新 generation 的 lease
+P1-4  发布事务的三条失败路径：回滚失败后 finally 无条件删 parked（原件永久丢失）；
+      已换位后删 parked 失败却报 archive-publish-failed（命令失败与盘面不符）；
+      发布成功但清 containment marker 失败 → SQLite 继续服役，账本却已被换成新集合
+P1-5  recovery lease 只隔离 recovery↔recovery，挡不住【正常 sync 闯入目录换位窗口】
+```
+
+修法要点:
+
+```text
+M5.4a  每个 generation 一个 lease 文件 zvec-containment-recovery.<fingerprint>.lease.json
+       获取 = 单次 wx；EEXIST = 同代进行中；【绝不删除或替换任何 lease】
+       所有权由文件名身份 + O_EXCL 保证，不再依赖读-改-写时序
+M5.5a  发布顺序：staging → 验证 → manifest → 取发布锁 → 锁内再校验 manifest
+       → park 原件 → 换位 → 清 containment marker → 释放锁 → 【此时才】删 parked
+       回滚失败 → 保留 parked 与锁，reason=archive-publish-rollback-failed，不删证据
+       已提交后删 parked 失败 → 仍算成功，保留备份并诊断，不得误报失败
+M5.5b  全局 archive-marker 锁：普通 sync、普通 archive 写入、recovery 最终换位共同遵守
+       recovery 构建 staging 时不取锁；不按时间回收；不可确认所有权时 fail-closed
+```
+
+#### 第 7 版:source fence 与 quarantine 所有权（spec §7.4 M5.5c / M5.5d / M5.5e）
+
+```text
+P1-6  archive() 在取锁【之前】就 ensureDir(indexDir) 并把 raw archive 落盘
+      → 竞态 A：重建正在换位的 indexDir，普通 archive 仍能制造 rollback-failed
+      → 竞态 B：锁内 manifest 校验之后改源 → marker 被清，而新 Zvec 不含那个 archive
+P1-7  rollback-failed 时只保留了 publication lock，外层 finally 仍释放 recovery lease
+      → 第二个恢复可重新取得同代 lease 并删除/重建 collection，直到发布阶段才被挡
+P2-1  锁的 acquire 抛错未转成 coded reason；release 失败被空 catch 吞掉、
+      released=false 从不检查 → 静默的持久 lockout，命令却报成功
+```
+
+修法要点:
+
+```text
+M5.5c  archive() 的五项（raw 目录、index 目录、raw 落盘、ingestion、marker 写入）
+       全部移进锁内；锁未取得时零修改
+       边界：外部编辑器 / git checkout 不受本进程锁约束，那类变化由 manifest 校验负责
+M5.5d  rollback-failed 时【连同 recovery lease 一起保留】；
+       第二个恢复必须在任何 rmSync / builder 构造之前返回 recovery-in-progress
+M5.5e  acquire 失败 → coded archive-marker-lock-failed；
+       release 失败：未提交则保留原因并保持 fail-closed，已提交则 WARN + appendLog 但仍算成功；
+       released=false 与抛错同等对待
+```
+
+#### 第 8 版:锁的稳定身份与 lease 终态可见性（spec §7.4 M5.5f / M5.4b）
+
+```text
+P1-8  锁路径直接派生自 getIndexMemoryDir()，而该函数会实时把 vect_memory rename 成
+      index_memory，并在 rename 失败时【返回 legacy 路径】
+      → 首次升级期间 A 拿 modern 锁、B 拿 legacy 锁，两者都以为持有全局锁
+      → B 进回调后重新解析目录会拿到 modern，于是【持 legacy 锁改 modern marker set】
+      → M5.5b/M5.5c 关掉的窗口全部重新打开
+P2-2  recovery lease 的释放仍是 try { ... } catch (_) {}，也不检查 released === false
+      → marker 未清 + unlink EBUSY/EACCES/not-owner ⇒ 永久 recovery-in-progress，
+        而命令只报告原始恢复失败
+```
+
+修法要点:
+
+```text
+M5.5f  archiveLockPathFor(indexDir) 保留签名，但返回【共同父目录 + 固定文件名】；
+       archiveLockPathFor(vect_memory) === archiveLockPathFor(index_memory)；
+       诊断消息中的锁路径一律取自该函数，不得就地拼接 `${indexDir}.publication.lock`；
+       不修改 runtime.js
+M5.4b  非 quarantine 路径也必须检查 releaseRecoveryLease 的返回值与异常：
+       marker 未清 → console.error + appendLog，保留原始 failure reason；
+       marker 已清 → console.warn + appendLog，仍算成功；
+       absent → 释放目标已达成，不报告；not-owner / unreadable / 抛错 → 必须报告
+```
+
+#### 第 9 版:legacy migration 也必须受同一把锁约束（spec §7.4 M5.5g）
+
+```text
+P1-9  锁的身份稳定了，被保护的目录本身却仍会在锁外改名。
+      getIndexMemoryDir() 就地执行 vect_memory → index_memory，任何调用者都能触发，
+      包括 summarizeArchiveHealth() 这样的【只读】路径；
+      而锁包装器在【取锁之前】调用它，archive/sync/rebuild 又在事务内重新解析。
+      → 普通 sync：ensureDir(legacy) 重建空目录、从空集合算 skipped、
+        重复插入 SQLite、marker 却写到 modern —— 一次事务用了两个 ledger identity
+      → recovery：park/publish 落在 legacy，marker 清除后 getter 返回 modern，
+        刚验证并发布的那一份被搁死 —— 直接违反 AC5
+```
+
+修法要点:
+
+```text
+M5.5g  getIndexMemoryDir() 变为纯解析（modern 优先，其次 legacy，都无则 modern）；
+       migrateLegacyIndexMemoryDir() 保留为显式 writer，只有 publication-lock owner 可调用；
+       withArchiveMarkerLock 先用纯计算的 anchor 取锁，取锁后才 migrate，
+       并把唯一 activeIndexDir 传给回调；
+       archive / sync / rebuild / recovery publication 全程使用该 activeIndexDir，
+       事务内不得再调用 ambient getter
+```
+
+#### T8f — 双 recovery 的 stale-eligibility 竞态（M5.4）
+
+确定性地制造 P1-1 的交错(注入暂停点,不靠时序侥幸):
+
+```text
+A 读到 eligible 后暂停
+B 取 lease → 重建 → 验证 → 清 marker → 释放 lease
+A 恢复执行
+```
+
+断言:
+
+```text
+A 必须在【任何 rmSync 之前】停止
+A rmSync 调用数        = 0
+A builder 构造数        = 0
+B 验证过的 collection    完整保留
+normal decision         = zvec
+```
+
+再覆盖反向:
+
+```text
+A 持有 lease 期间 B 启动
+→ B reason = recovery-in-progress
+→ B 破坏性调用数 = 0
+```
+
+#### T8g — archive marker 事务（M5.5）
+
+初始状态:
+
+```text
+SQLite 已含 A/B；archive marker A/B 存在；containment marker 存在
+```
+
+在 Zvec builder 写入 B 时注入异常,断言:
+
+```text
+containment marker        present
+archive marker 目录        与失败前【逐字节相同】
+SQLite 行数               不变
+随后一次普通 SQLite sync   新增 0 条（这条才真正证明账本没被污染）
+```
+
+再加 source mutation:
+
+```text
+恢复期间修改 / 新增 raw_memory 文件
+→ manifest mismatch
+→ recovery incomplete
+→ 不发布 archive marker
+→ 不清 containment marker
+```
 
 #### 突变负控（证明矩阵不是空转）
 
@@ -440,8 +675,194 @@ memorize(text, options = {})             // options.index 缺省 → getMemoryIn
 - [ ] **Step 13 (mutation D):** 只给 `resolveEngineDecision()` 加 marker 写入、让
       `sharedEngineDecision()` 继续直调纯 resolver → 共享路径的 marker 断言**必须**变红。
       这条专门守 M3.1 —— 生产走的正是共享路径
+- [ ] **Step 14 (mutation E):** 绕过 recovery lease（不取或不在取得后重新判定）
+      → T8f 的 stale-eligibility 用例**必须**变红。守 M5.4
+- [ ] **Step 15 (mutation F):** 恢复期间直接写全局 archive marker（不走 staging）
+      → T8g 的「逐字节相同」断言**必须**变红。守 M5.5
+- [ ] **Step 16 (mutation G):** 退回单一共享 lease 路径 + read/unlink 替换
+      → F1 或 F2 **必须**变红。守 M5.4a
+- [ ] **Step 17 (mutation H):** 清 marker 失败时不回滚 archive markers，
+      或 finally 无条件删除 parked → G1/G2 **必须**变红。守 M5.5a
+- [ ] **Step 18 (mutation I):** 把 archive 的 raw / indexDir 写入移回锁外
+      → G5 或 G6 **必须**变红。守 M5.5c
+- [ ] **Step 19 (mutation J):** rollback-failed 后仍无条件释放 recovery lease
+      → G7 **必须**变红。守 M5.5d
+- [ ] **Step 20 (mutation K):** 把锁路径恢复成 `` `${indexDir}.publication.lock` ``
+      → G9 **必须**变红。守 M5.5f
+- [ ] **Step 21 (mutation L):** recovery lease 释放退回空 catch / 忽略 released=false
+      → G10 **必须**变红。守 M5.4b
+- [ ] **Step 22 (mutation M):** 把 `getIndexMemoryDir()` 恢复为隐式调用
+      `migrateLegacyIndexMemoryDir()`，或把 migration 移回取锁之前
+      → G11 **必须**因双目录 / marker 分裂 / 重复 row 变红。守 M5.5g
 
-四条突变都要留下书面记录（哪条断言、什么消息），未验证的矩阵不算完成。
+#### 合同回写:两处实施期采用的语义（spec §7.4 M5.2 / M3.1）
+
+实施期作出、复审已接受、本轮正式写回 canonical contract 的两条判断。它们改的是合同**字面**，
+不是机制：
+
+```text
+① engine predicate —— Zvec engine-family identity check
+   原文 validator.engine === 'zvec' 永远不可能成立：适配器公开的是 zvec-jieba-fts。
+   字面执行会让每一次恢复都以 validator-not-zvec 失败。
+   改为 typeof === 'string' && startsWith('zvec')；
+   sqlite-fts5-trigram 或任何非 zvec 前缀仍必须失败。
+   精确计数、真实 native query、fresh reopen 三项要求不变。
+
+② 注入路径的 marker 语义 —— 路径注入是纯判定 seam，不是 ambient 项目身份
+   「非 SAFE → ensure-present」只对真实 ambient 路径成立。
+   注入 paths/collectionPath 且无显式 markerDir → 不读也不写 ambient marker，
+     记 markerSkipped: 'injected-path'；
+   显式 marker 只作输入快照，不因此获得写权限；
+   只有真实 ambient production path 或显式 markerDir 才允许 marker I/O。
+   读与写必须分别判定：只栅栏住写，会让假设性 SAFE 路径继承真实项目的债务。
+```
+
+#### T8g 再扩展 — source fence 与 quarantine（M5.5c / M5.5d / M5.5e）
+
+```text
+G5  锁被 recovery 持有、indexDir 暂时不存在时调用 archive()
+    → reason=archive-marker-busy
+    → indexDir 仍不存在；raw_memory 文件名/内容/mtime 全不变；
+      DB 行数不变；全局 marker 集合不变
+    专门防住 ensureDir(getIndexMemoryDir()) 与 fs.writeFileSync(filePath) 跑回锁外
+
+G6  recovery 在【锁内 manifest 校验之后】暂停，此时 archive() 竞争
+    → archive busy，raw 文件不得落盘
+    → 恢复继续后：success、source==rebuilt、marker cleared、新 Zvec 不缺 archive
+
+G7  rollback-failed 之后的完整 quarantine
+    → 当前 generation 的 recovery lease 仍在
+    → 第二个恢复 reason=recovery-in-progress，rmSync=0，builder=0
+    → parked 原件与 publication lock 均未变
+
+G8  锁的终态报告
+    → exclusive-create 抛 EACCES → recovery reason=archive-marker-lock-failed
+    → 已提交后 release 失败 → 仍 success、marker absent、有可见 WARN/日志、
+      保留的锁让后续 global sync fail-closed
+```
+
+#### T8g 再扩展 — 锁身份与 lease 终态（M5.5f / M5.4b）
+
+```text
+G9  legacy/modern 只能有一把锁
+    legacy = <root>/vect_memory，modern = <root>/index_memory
+    → archiveLockPathFor(legacy) === archiveLockPathFor(modern)
+    → A 经 legacy 取锁后，B 经 modern 取锁必须 archive-marker-busy
+    → A 释放后 B 才能取得
+    再加 migration-shaped 用例：首次解析返回 legacy、后续解析返回 modern，
+    整个 operation 仍始终受【同一个】lock 文件保护
+
+G10 recovery lease 终态
+    失败路径：恢复先以 validator/build 错误失败 + lease unlink 注入 EBUSY
+      → 原始 failure reason 不变；marker present；lease present；
+        console.error 与 memory.log 均有记录；
+        第二次 recovery 在 rm/builder 之前返回 recovery-in-progress
+    成功路径：marker 已清后 lease unlink 失败
+      → recovery success；marker absent；console.warn + memory.log；
+        不得改判为失败
+```
+
+#### T8g 再扩展 — legacy migration 的串行化（M5.5g）
+
+G9 证明了「只有一把锁」，但没有覆盖「已经只有一把锁，仍有人不取这把锁就迁移整个受保护
+目录」。G11 补的是这一层。
+
+```text
+G11a  getter 纯度
+      初始：legacy 存在、modern 不存在
+      → getIndexMemoryDir() 返回 legacy
+      → legacy 仍在、modern 仍不存在、目录名/内容/mtime 均未变
+      → renameSync 调用数 = 0
+
+G11b  持锁 sync 与只读探针
+      A 取得 publication lock；锁内 migration 第一次被注入失败，因此固定用 legacy；
+      A 读完 marker set 后暂停；B 调用 summarizeArchiveHealth() / getIndexMemoryDir()
+      → B 不得迁移 legacy
+      → A 完成后只有一个有效 ledger，新旧 marker 全在同一目录
+      → SQLite 不出现重复 row
+      A 释放后再跑一次正常持锁 sync
+      → 允许 migration legacy → modern
+      → modern 含完整 marker set，legacy 不再存在
+
+G11c  recovery publication 使用 pinned directory
+      在锁内固定 active dir 后暂停，再跑只读 getter
+      → 只读路径不发生 migration
+      → park / publish / rollback 全部使用同一 active dir
+      → 成功后 marker cleared，且此后纯 getter 返回的 ledger
+        正是刚发布并验证过的那一份
+```
+
+#### T8f 扩展 — 真实的 lease 所有权竞态（M5.4a）
+
+```text
+F1  旧 generation 的 lease 在场，B1 与 B2 同时获取新 generation
+    → 恰好一个 acquired=true，另一个 recovery-in-progress
+    → 两个 owner 绝不可同时成立
+F2  旧 owner 释放与新 owner 获取交错
+    → B 的 lease 仍在；A 不能删掉 B 的 lease
+F3  同 fingerprint 的 lease 内容损坏
+    → fail-closed；不删除；不开始任何破坏性动作
+```
+
+#### T8g 扩展 — 完整的发布回滚（M5.5a / M5.5b）
+
+初始 archive-marker 文件必须有**非空内容**,否则「旧集合」与「staging 的空文件」在
+逐字节比较下无法区分。
+
+```text
+G1  清 containment marker 失败
+    → containment marker 保留；全局 marker 目录逐字节相同；行数不变；
+      普通 sync 新增 0；staging 已删；回滚成功后 parked 已删
+G2  staging 换位失败【且】回滚也失败
+    → reason=archive-publish-rollback-failed；parked 原件完好；
+      finally 不得删除 parked；containment marker 保留；锁保持 fail-closed
+G3  正常 sync 与发布争锁（两个方向都要覆盖）
+    → recovery 撞上：archive-marker-busy，canonical 集合不变，marker 保留
+    → 正常 sync 撞上：不得创建新的 indexDir
+G4  已成功清除 containment marker 之后，删除 parked 备份失败
+    → 恢复仍算成功；canonical 新集合保留；下一个进程判定为 zvec；
+      保留 parked 备份；【不得】误报 archive-publish-failed
+```
+
+六条突变都要留下书面记录（哪条断言、什么消息），未验证的矩阵不算完成。
+
+#### 真实安全路径集成测试（必须，不得以 mock 替代）
+
+seam 注入能证明**决策**正确，但证明不了 fresh reopen 这件事本身 —— 一个全 mock 的
+验证器可以「重开成功」而真实 collection 根本没落盘。因此必须有一条走**真实
+`@zvec/zvec`** 的端到端用例。
+
+路径必须是 **ASCII 临时目录**；**不得**使用危险路径、**不得**设 `ZVEC_UNICODE_PROBE`、
+**不得**触发任何 native crash 实验。
+
+```text
+ 1. 建最小 raw_memory fixture
+ 2. 写入合法的 recovery-required marker
+ 3. 执行 recovery rebuild
+ 4. builder close
+ 5. fresh validator 真实 reopen
+ 6. stats 精确相等
+ 7. searchText no-match 探针返回数组
+ 8. validator close
+ 9. marker 已被清除
+10. 启动【第二个独立子进程】
+11. 正常 decision 得到 zvec
+12. recall / read 可用
+```
+
+第 10–12 步是这条用例不可替代的部分:只有另一个进程才能证明「持久化完成」。
+
+CI 覆盖要求:
+
+```text
+必须实际执行于  windows-latest / node 22
+                windows-latest / node 24
+Ubuntu 可同时运行
+不得因为是 Windows 就 skip
+依赖确实不可用 → 判为失败，不得把真实恢复成功路径降级为纯 mock
+```
+
+确定性 seam 矩阵仍必须在**全部**平台运行。
 
 #### Commit boundary
 
