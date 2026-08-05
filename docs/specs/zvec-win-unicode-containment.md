@@ -1056,6 +1056,88 @@ release 返回 absent
 
 `not-owner`、`unreadable` 与抛错都必须报告。空 catch 在此禁止。
 
+### M5.5g serialized ledger migration
+
+M5.5f 稳定了**锁的身份**,却没有约束**被锁保护的目录本身会改名**。`getIndexMemoryDir()`
+仍会就地执行 `vect_memory → index_memory`,而且任何调用者都能触发它 —— 包括
+`summarizeArchiveHealth()` 这样的只读路径。锁包装器又在取锁**之前**调用它。
+
+于是仍存在确定性交错:
+
+```text
+进程 A：普通 sync                         进程 B：verify / health 只读
+
+getIndexMemoryDir()
+  rename 暂时失败 → 返回 legacy
+取得固定 publication lock
+vectDir = legacy
+                                          summarizeArchiveHealth()
+                                          getIndexMemoryDir()
+                                          rename legacy → modern 成功
+
+ensureDir(legacy) 重新建出空目录
+从空 legacy marker set 计算 skipped
+把已有档案再次插入 SQLite
+ingestArchiveFile() 又重新解析 → marker 写到 modern
+```
+
+一次事务内用了两个 ledger identity:SQLite 重复插入,legacy 被重建,marker 落在 modern。
+
+恢复路径后果更重。publication 也在取锁前解析并缓存 `indexDir`:
+
+```text
+锁前解析 → legacy
+取得 publication lock
+                                          锁外 migrate legacy → modern
+ensureDir(legacy) 重新建出空目录
+park 空 legacy → publish staging → legacy
+clear containment marker
+
+此后 getIndexMemoryDir() 看到 modern 已存在 → 用旧 modern ledger
+刚发布并验证过的那一份被搁死在 legacy
+```
+
+盘面变成 marker 已清、在役 bookkeeping 却不是经过验证并发布的那一份 —— 直接违反 AC5。
+
+冻结:
+
+```text
+getIndexMemoryDir() 必须是纯解析：不得 rename、不得 mkdir、不得任何写入
+
+vect_memory → index_memory 是对全局 archive-marker ledger 的写操作，
+  必须【只在持有 publication lock 时】执行
+
+持锁操作必须在锁内完成 migration/resolve，
+  并把最终 activeIndexDir 固定传给整个事务
+
+事务内禁止再次通过 ambient getter 重新解析 marker 目录
+```
+
+纯 getter 的解析规则(冻结):
+
+```text
+modern 存在                  → modern
+modern 不存在且 legacy 存在   → legacy
+两者都不存在                 → modern
+两者都存在                   → modern
+```
+
+`migrateLegacyIndexMemoryDir()` 保留为**显式 writer**,只有 publication-lock 的持有者可以
+调用它。
+
+锁包装器的顺序因此固定为:
+
+```text
+纯计算出固定 lock anchor
+取得 publication lock
+  → migrateLegacyIndexMemoryDir() → 唯一 activeIndexDir
+  → fn(activeIndexDir)
+释放 publication lock
+```
+
+`archive` / `sync` / 普通 `rebuild` / recovery publication 的删除、枚举、park、swap、
+rollback、marker 写入,一律使用这一个传入的 `activeIndexDir`。
+
 ### M6 失败语义
 
 任一失败：

@@ -584,6 +584,30 @@ M5.4b  非 quarantine 路径也必须检查 releaseRecoveryLease 的返回值与
        absent → 释放目标已达成，不报告；not-owner / unreadable / 抛错 → 必须报告
 ```
 
+#### 第 9 版:legacy migration 也必须受同一把锁约束（spec §7.4 M5.5g）
+
+```text
+P1-9  锁的身份稳定了，被保护的目录本身却仍会在锁外改名。
+      getIndexMemoryDir() 就地执行 vect_memory → index_memory，任何调用者都能触发，
+      包括 summarizeArchiveHealth() 这样的【只读】路径；
+      而锁包装器在【取锁之前】调用它，archive/sync/rebuild 又在事务内重新解析。
+      → 普通 sync：ensureDir(legacy) 重建空目录、从空集合算 skipped、
+        重复插入 SQLite、marker 却写到 modern —— 一次事务用了两个 ledger identity
+      → recovery：park/publish 落在 legacy，marker 清除后 getter 返回 modern，
+        刚验证并发布的那一份被搁死 —— 直接违反 AC5
+```
+
+修法要点:
+
+```text
+M5.5g  getIndexMemoryDir() 变为纯解析（modern 优先，其次 legacy，都无则 modern）；
+       migrateLegacyIndexMemoryDir() 保留为显式 writer，只有 publication-lock owner 可调用；
+       withArchiveMarkerLock 先用纯计算的 anchor 取锁，取锁后才 migrate，
+       并把唯一 activeIndexDir 传给回调；
+       archive / sync / rebuild / recovery publication 全程使用该 activeIndexDir，
+       事务内不得再调用 ambient getter
+```
+
 #### T8f — 双 recovery 的 stale-eligibility 竞态（M5.4）
 
 确定性地制造 P1-1 的交错(注入暂停点,不靠时序侥幸):
@@ -667,6 +691,9 @@ SQLite 行数               不变
       → G9 **必须**变红。守 M5.5f
 - [ ] **Step 21 (mutation L):** recovery lease 释放退回空 catch / 忽略 released=false
       → G10 **必须**变红。守 M5.4b
+- [ ] **Step 22 (mutation M):** 把 `getIndexMemoryDir()` 恢复为隐式调用
+      `migrateLegacyIndexMemoryDir()`，或把 migration 移回取锁之前
+      → G11 **必须**因双目录 / marker 分裂 / 重复 row 变红。守 M5.5g
 
 #### T8g 再扩展 — source fence 与 quarantine（M5.5c / M5.5d / M5.5e）
 
@@ -711,6 +738,36 @@ G10 recovery lease 终态
     成功路径：marker 已清后 lease unlink 失败
       → recovery success；marker absent；console.warn + memory.log；
         不得改判为失败
+```
+
+#### T8g 再扩展 — legacy migration 的串行化（M5.5g）
+
+G9 证明了「只有一把锁」，但没有覆盖「已经只有一把锁，仍有人不取这把锁就迁移整个受保护
+目录」。G11 补的是这一层。
+
+```text
+G11a  getter 纯度
+      初始：legacy 存在、modern 不存在
+      → getIndexMemoryDir() 返回 legacy
+      → legacy 仍在、modern 仍不存在、目录名/内容/mtime 均未变
+      → renameSync 调用数 = 0
+
+G11b  持锁 sync 与只读探针
+      A 取得 publication lock；锁内 migration 第一次被注入失败，因此固定用 legacy；
+      A 读完 marker set 后暂停；B 调用 summarizeArchiveHealth() / getIndexMemoryDir()
+      → B 不得迁移 legacy
+      → A 完成后只有一个有效 ledger，新旧 marker 全在同一目录
+      → SQLite 不出现重复 row
+      A 释放后再跑一次正常持锁 sync
+      → 允许 migration legacy → modern
+      → modern 含完整 marker set，legacy 不再存在
+
+G11c  recovery publication 使用 pinned directory
+      在锁内固定 active dir 后暂停，再跑只读 getter
+      → 只读路径不发生 migration
+      → park / publish / rollback 全部使用同一 active dir
+      → 成功后 marker cleared，且此后纯 getter 返回的 ledger
+        正是刚发布并验证过的那一份
 ```
 
 #### T8f 扩展 — 真实的 lease 所有权竞态（M5.4a）
