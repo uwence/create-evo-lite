@@ -15526,6 +15526,241 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
     }
 
     // ---------------------------------------------------------------------
+    // [zvec-win-unicode-containment] Task 7 / AC6 — T12 verify diagnostics.
+    //
+    // Six cases from spec §7.5. The states are driven through EVO_LITE_DB_PATH
+    // (which moves both the collection path AND the ambient marker dir, since the
+    // marker lives beside the db) plus a marker written directly with the state
+    // module. Nothing here injects a path into the decision: production verify
+    // resolves ambient paths, and a diagnostic proven only against an injected
+    // path would prove nothing about production (§7.4 M3.1).
+    // ---------------------------------------------------------------------
+    console.log('T12. Testing verify containment diagnostics — four states, wording, zero side effects ...');
+    {
+        const stateMod = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
+
+        // One place that runs verify against a chosen db path + marker setup.
+        const runVerify = async (label, { dbDir, marker, pinSqlite }) => {
+            const runtime = createTempRuntimeRoot(`t12-${label}`);
+            fs.mkdirSync(dbDir, { recursive: true });
+            const dbPath = path.join(dbDir, 'memory.db');
+            if (marker === 'valid') {
+                stateMod.writeContainmentState(dbDir, {
+                    collectionPath: path.join(dbDir, 'index_memory', 'zvec'),
+                    containment: { verdict: 'UNKNOWN', layer: 'path', reason: 'path:test-fixture' },
+                });
+            } else if (marker === 'invalid') {
+                // Well-formed JSON, invalid against the schema — this must NOT be
+                // reported as an ordinary `present`.
+                fs.writeFileSync(stateMod.markerPathFor(dbDir), JSON.stringify({ nonsense: true }), 'utf8');
+            }
+            // The engine choice is pinned EXPLICITLY rather than left to discovery.
+            // Earlier tests in this suite leave EVO_LITE_MEMORY_ENGINE set, and
+            // resolveEngine() reads that env first (memory-index.js:180) — an
+            // inherited 'sqlite-fts5-trigram' silently turns every case into the
+            // engine-choice branch and the state assertions stop testing anything.
+            const env = {
+                EVO_LITE_SKIP_GIT_STATUS: '1',
+                EVO_LITE_DB_PATH: dbPath,
+                EVO_LITE_MEMORY_ENGINE: pinSqlite ? 'sqlite-fts5-trigram' : 'zvec',
+            };
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, env);
+            let report;
+            const output = await captureConsole(async () => { report = await loaded.service.verify(); });
+            // verify's ENTITY-STORE section (not the containment section) calls
+            // getMemoryIndex(), which on a SAFE anchor really does open the zvec
+            // collection and take its LOCK. Release it here: a leaked LOCK under
+            // .zwuc-live outlives this test and surfaces as an unrelated lock
+            // refusal several tests later.
+            try { require(path.join(CLI_DIR, 'memory-index.js')).resetMemoryIndex(); } catch (_) {}
+            return { report, output, dbDir, runtime };
+        };
+
+        const FORBIDDEN_WORDING = [
+            '从未被读取', '内容确认完整', '上游缺陷已经修复', '上游缺陷已修复',
+            '路径问题已经修复', '已自动恢复',
+        ];
+        const assertWording = (output, caseName) => {
+            for (const banned of FORBIDDEN_WORDING) {
+                assert.ok(!output.includes(banned),
+                    `${caseName}: verify output must not contain the banned claim "${banned}" — §7.5 D6 forbids it because verify cannot证实 global history, only this process's behaviour`);
+            }
+            // ③ No state may ever RECOMMEND deleting the marker. Prohibitive
+            // phrasing ("do not delete it") is required in the damaged state, so
+            // the assertion targets recommending verbs, not the word 删除 itself.
+            for (const advice of ['建议删除', '请删除', '可以删除', '直接删除', '删除后重试']) {
+                assert.ok(!output.includes(advice),
+                    `${caseName}: guidance must never recommend deleting the marker ("${advice}") — deleting an unreadable marker disguises an unknown state as no-debt, the exact fail-open §7.4 M2 exists to prevent`);
+            }
+            assert.ok(!output.includes('clearContainmentState'),
+                `${caseName}: clearContainmentState must never appear in user-facing guidance (§7.5 D3)`);
+        };
+
+        // --- case 1: normal — SAFE anchor, no marker -----------------------
+        {
+            const anchor = createContainedZvecRoot('t12-normal');
+            try {
+                const { report, output } = await runVerify('normal', { dbDir: anchor.base });
+                assert.strictEqual(report.containment.state, 'normal',
+                    'a SAFE anchor with no marker carries no containment trust debt');
+                assert.strictEqual(report.containment.marker.status, 'absent', 'no marker was written');
+                assertWording(output, 'normal');
+            } finally { anchor.cleanup(); }
+        }
+
+        // --- case 2: recovery-pending — SAFE anchor + valid marker ---------
+        {
+            const anchor = createContainedZvecRoot('t12-recovery');
+            try {
+                const { report, output } = await runVerify('recovery', { dbDir: anchor.base, marker: 'valid' });
+                if (anchor.safe) {
+                    assert.strictEqual(report.containment.state, 'recovery-pending',
+                        `a SAFE path whose marker is still present is recovery-pending: the path stopped being dangerous, the debt did not clear — got ${JSON.stringify(report.containment)}`);
+                    assert.ok(output.includes('显式 rebuild'),
+                        'recovery-pending must point at an explicit rebuild — that is the one action that can clear this state');
+                    assert.ok(!output.includes('迁移到受支持'),
+                        'recovery-pending must NOT reuse the unsafe remediation: the path is already supported, so migrating is not the fix (§7.5 D5 / control G)');
+                }
+                assert.strictEqual(report.containment.marker.status, 'present', 'the valid marker reads back as present');
+                assertWording(output, 'recovery-pending');
+            } finally { anchor.cleanup(); }
+        }
+
+        // --- case 3: marker-damaged — invalid marker outranks everything ---
+        {
+            const anchor = createContainedZvecRoot('t12-damaged');
+            try {
+                const { report, output } = await runVerify('damaged', { dbDir: anchor.base, marker: 'invalid' });
+                assert.strictEqual(report.containment.state, 'marker-damaged',
+                    'a schema-invalid marker must surface as marker-damaged, never folded into present (§7.5 D3 / control F)');
+                assert.strictEqual(report.containment.marker.status, 'invalid', 'status is the read status, not the write result');
+                assert.ok(output.includes('人工'),
+                    'a damaged marker must route to manual handling');
+                assert.ok(!output.includes('显式 rebuild'),
+                    'a damaged marker must NOT recommend rebuild: its content is untrusted, so the debt cannot be reasoned about yet');
+                assertWording(output, 'marker-damaged');
+            } finally { anchor.cleanup(); }
+        }
+
+        // --- case 4: debt-under-pin — explicit sqlite pin must not hide debt
+        {
+            const anchor = createContainedZvecRoot('t12-pin');
+            try {
+                const { report, output } = await runVerify('pin', { dbDir: anchor.base, marker: 'valid', pinSqlite: true });
+                assert.strictEqual(report.containment.marker.status, 'present',
+                    'an explicit sqlite pin never clears an existing marker (§7.4 M8)');
+                assert.notStrictEqual(report.containment.state, 'normal',
+                    'an outstanding containment debt must stay visible under an explicit pin — a pin is a user preference, not a debt payment (§7.5 D2)');
+                assertWording(output, 'debt-under-pin');
+            } finally { anchor.cleanup(); }
+        }
+
+        // --- case 5: unsafe — non-ASCII path (win32 only) ------------------
+        if (process.platform === 'win32') {
+            const unsafeBase = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-t12-不安全-'));
+            try {
+                const { report, output } = await runVerify('unsafe', { dbDir: unsafeBase });
+                assert.strictEqual(report.containment.state, 'unsafe',
+                    'a non-ASCII collection path degrades under containment and must be reported as unsafe');
+                assert.ok(output.includes('迁移'),
+                    'unsafe must point at migrating to a supported path');
+                assert.ok(!output.includes('显式 rebuild'),
+                    'unsafe must NOT recommend rebuild: rebuilding onto the same unsupported path is pure waste (§7.5 D5 / control G)');
+                assertWording(output, 'unsafe');
+            } finally {
+                // Same treatment as createContainedZvecRoot's cleanup: the sqlite
+                // handle can still be open when the case ends, and a temp-dir EBUSY
+                // must not be reported as a containment failure.
+                try { fs.rmSync(unsafeBase, { recursive: true, force: true }); } catch (_) {}
+            }
+        } else {
+            console.log('   ⏭️ T12 unsafe case skipped (non-win32: containment classifies every path eligible)');
+        }
+
+        // --- case 6: zero side effects, measured on the SECTION alone -------
+        //
+        // Measured against buildContainmentDiagnostics() rather than verify():
+        // verify's entity-store section legitimately opens the active index, so a
+        // count taken across the whole command is dominated by behaviour §7.5 does
+        // not govern and would stay green under every mutation of this section.
+        {
+            const anchor = createContainedZvecRoot('t12-side-effects');
+            try {
+                const markerPath = stateMod.markerPathFor(anchor.base);
+                const collectionDir = anchor.paths.collectionPath;
+                // Establish the ambient decision the way production does — but via
+                // resolveActiveImpl() alone, which decides WITHOUT instantiating an
+                // index. Running full verify() here would open the collection in
+                // its entity-store section, and this case would then be asserting
+                // against a directory that already exists no matter what the
+                // containment section does.
+                // A marker must EXIST for "the section does not clear it" to be an
+                // observable property: deleting a marker that was never there is
+                // indistinguishable from leaving it alone.
+                stateMod.writeContainmentState(anchor.base, {
+                    collectionPath: collectionDir,
+                    containment: { verdict: 'UNKNOWN', layer: 'path', reason: 'path:test-fixture' },
+                });
+                const runtime = createTempRuntimeRoot('t12-side-effects');
+                const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                    EVO_LITE_SKIP_GIT_STATUS: '1',
+                    EVO_LITE_DB_PATH: path.join(anchor.base, 'memory.db'),
+                    EVO_LITE_MEMORY_ENGINE: 'zvec',
+                });
+                const svc = loaded.service;
+                const idxMod = require(path.join(CLI_DIR, 'memory-index.js'));
+                idxMod.resetMemoryIndex();
+                idxMod.resolveActiveImpl();
+                // The load-bearing precondition: a decision exists, an INDEX does
+                // not. Asserting on peekMemoryIndex() rather than on the collection
+                // directory is deliberate — whether instantiating writes a directory
+                // depends on which engine the decision picked, so a filesystem check
+                // silently passes when the mutation instantiates a SQLite index.
+                assert.strictEqual(idxMod.peekMemoryIndex(), null,
+                    'precondition: no index instance may exist before the containment section runs');
+                const markerBefore = fs.existsSync(markerPath);
+                assert.ok(markerBefore,
+                    'precondition: the marker fixture must be on disk, otherwise control C cannot observe a clear');
+
+                const Module = require('module');
+                const originalLoad = Module._load;
+                let zvecLoads = 0;
+                Module._load = function (request, ...rest) {
+                    if (request === '@zvec/zvec') zvecLoads += 1;
+                    return originalLoad.call(this, request, ...rest);
+                };
+                let diag;
+                try {
+                    diag = svc.buildContainmentDiagnostics();
+                } finally {
+                    Module._load = originalLoad;
+                }
+
+                assert.strictEqual(zvecLoads, 0,
+                    'the containment section must not load @zvec/zvec — diagnosing a path suspected of crashing the native binding must never be the thing that loads it (§7.5 D4.1, control A)');
+                assert.strictEqual(idxMod.peekMemoryIndex(), null,
+                    'the containment section must not instantiate ANY index — it reads a decision and a marker, nothing else (§7.5 D4.1, control B)');
+                assert.ok(!fs.existsSync(collectionDir),
+                    'the containment section must not create or open the collection directory (§7.5 D4.1, control B)');
+                assert.strictEqual(fs.existsSync(markerPath), markerBefore,
+                    'the containment section must neither mint nor clear a marker (§7.5 D4.1, control C)');
+                assert.ok(diag.processObservation,
+                    'the process observation must be present — it is the ONLY thing verify may claim about the collection (§7.5 D4)');
+                assert.strictEqual(diag.processObservation.instantiatedCollection, false,
+                    'the containment section must never instantiate a collection');
+            } finally { anchor.cleanup(); }
+        }
+
+        // Leave no env behind. loadCli() clears a fixed list of EVO_LITE_* keys but
+        // not these two, and an inherited EVO_LITE_MEMORY_ENGINE is exactly what
+        // silently defeated this test's own assertions before it was pinned.
+        delete process.env.EVO_LITE_MEMORY_ENGINE;
+        delete process.env.EVO_LITE_DB_PATH;
+
+        console.log('✅ T12 verify containment diagnostics passed');
+    }
+
+    // ---------------------------------------------------------------------
     // [zvec-win-unicode-containment] Task 5 — native entry containment.
     // Task 4 routed the SELECTOR through the containment decision. Two
     // production entries still reached the binding around it: memory-ab opened
