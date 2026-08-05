@@ -26,6 +26,7 @@ const {
     getOfflineMemoriesPath,
     getRawMemoryDir,
     getIndexMemoryDir,
+    migrateLegacyIndexMemoryDir,
     getTemplateCliDir,
     getTemplateRootDir,
     getWorkspaceRoot,
@@ -46,9 +47,19 @@ const {
 // from recovery; it does nothing about a normal sync walking into the directory
 // swap, finding the index directory gone for an instant, recreating it, and
 // breaking the swap, the sync and the original set together.
+//
+// §7.4 M5.5g — the anchor is resolved with the PURE getter, and the lock path
+// only depends on its parent directory, so both aliases produce the same lock
+// before anything has been renamed. The migration is a write to the very set
+// this lock protects, so it happens INSIDE the lock, once, and the resulting
+// activeIndexDir is handed to the callback. Nothing in the transaction may ask
+// the ambient getter again: a reader that migrates the ledger mid-transaction
+// used to leave the holder writing markers into one directory while it had
+// computed its work list from another.
 async function withArchiveMarkerLock(label, fn) {
-    const indexDir = getIndexMemoryDir();
-    ensureDir(path.dirname(indexDir));
+    const anchor = getIndexMemoryDir();
+    const indexDir = anchor;
+    ensureDir(path.dirname(anchor));
     const holderId = `${label}-${crypto.randomBytes(6).toString('hex')}`;
     let lock;
     try {
@@ -69,7 +80,9 @@ async function withArchiveMarkerLock(label, fn) {
     }
     let released = false;
     try {
-        const result = await fn();
+        // The one place the ledger is allowed to be renamed.
+        const activeIndexDir = migrateLegacyIndexMemoryDir();
+        const result = await fn(activeIndexDir);
         released = reportArchiveLockRelease(indexDir, holderId, label, true);
         return result;
     } catch (err) {
@@ -1355,12 +1368,13 @@ async function archive(content, type = 'task', options = {}) {
     // this process holds; the manifest check is what catches those. What is
     // ruled out here is Evo-Lite's own command routing around Evo-Lite's own
     // lock.
-    const ingestion = await withArchiveMarkerLock('archive', () => {
+    const ingestion = await withArchiveMarkerLock('archive', (activeIndexDir) => {
         ensureDir(getRawMemoryDir());
-        ensureDir(getIndexMemoryDir());
+        ensureDir(activeIndexDir);
         fs.writeFileSync(filePath, fileContent, 'utf8');
         return ingestArchiveFile(filePath, type, id, timestamp, {
             allowSecrets: true, // we already scanned upstream; archive body is safe by construction
+            markerDir: activeIndexDir,   // §7.4 M5.5g — pinned, never re-resolved
             namespace: preflightCheck.namespace,
             silent: options.silent,
         });
@@ -1384,7 +1398,10 @@ async function syncIndexMemory(options = {}) {
     // for the whole rebuild would block ordinary work for no reason. Everything
     // else does (M5.5b). options.lockHeld is for callers that already hold it.
     if (options.markerDir || options.lockHeld) return syncIndexMemoryInner(options);
-    return withArchiveMarkerLock('sync', () => syncIndexMemoryInner(options));
+    // §7.4 M5.5g — the directory the lock resolved is pinned into the call, so
+    // the inner sync cannot re-resolve it through the ambient getter.
+    return withArchiveMarkerLock('sync',
+        (activeIndexDir) => syncIndexMemoryInner({ ...options, markerDir: activeIndexDir }));
 }
 
 async function syncIndexMemoryInner(options = {}) {
@@ -1430,7 +1447,9 @@ async function syncIndexMemoryInner(options = {}) {
             typeMatch ? typeMatch[1] : 'task',
             idMatch ? idMatch[1] : path.basename(file, '.md'),
             tsMatch ? tsMatch[1] : new Date().toISOString(),
-            { index: options.index, markerDir: options.markerDir, namespace: nsMatch ? nsMatch[1] : DEFAULT_NAMESPACE }
+            // vectDir, not options.markerDir: the marker write must land in the
+            // SAME directory this sync read its work list from (§7.4 M5.5g).
+            { index: options.index, markerDir: vectDir, namespace: nsMatch ? nsMatch[1] : DEFAULT_NAMESPACE }
         );
         if (!ingestion.marked) {
             console.warn(`⚠️ 跳过损坏档案 ${file}: ${ingestion.invalidReason}`);
@@ -2061,20 +2080,27 @@ async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
         }
         let lockHeld = true;
         let parkedHolds = false;      // parked holds the ONLY copy of the original
+        // §7.4 M5.5g — resolve the ledger ONCE, inside the lock, and park,
+        // publish and roll back against that one directory. Resolving before the
+        // lock let an unlocked reader migrate vect_memory to index_memory in
+        // between, after which this transaction published its verified staging
+        // into the abandoned legacy name while the pure getter went on serving
+        // the old modern directory — marker cleared, wrong ledger in service.
+        const activeIndexDir = migrateLegacyIndexMemoryDir();
         try {
             if ((seams.rawManifest ? seams.rawManifest() : rawMemoryManifest()) !== manifestBefore) {
                 throw recoveryFailure('manifest-changed', 'raw_memory 在取得发布锁期间发生变化。');
             }
 
-            ensureDir(indexDir);
+            ensureDir(activeIndexDir);
             fs.rmSync(parkedDir, { recursive: true, force: true });
-            fs.renameSync(indexDir, parkedDir);
+            fs.renameSync(activeIndexDir, parkedDir);
             parkedHolds = true;
             try {
-                fs.renameSync(stagingDir, indexDir);
+                fs.renameSync(stagingDir, activeIndexDir);
             } catch (err) {
                 try {
-                    fs.renameSync(parkedDir, indexDir);   // put it back, byte for byte
+                    fs.renameSync(parkedDir, activeIndexDir);   // put it back, byte for byte
                     parkedHolds = false;
                 } catch (rollbackErr) {
                     // Both directions failed. The original set now exists ONLY in
@@ -2098,8 +2124,8 @@ async function runContainmentRecoveryRebuild(recovery, files, seams = {}) {
                 // its bookkeeping describes the Zvec rebuild. Put the original
                 // set back, then fail.
                 try {
-                    fs.rmSync(indexDir, { recursive: true, force: true });
-                    fs.renameSync(parkedDir, indexDir);
+                    fs.rmSync(activeIndexDir, { recursive: true, force: true });
+                    fs.renameSync(parkedDir, activeIndexDir);
                     parkedHolds = false;
                     published = false;
                 } catch (restoreErr) {
@@ -2267,15 +2293,17 @@ async function rebuildLocalIndex() {
     // Clearing the markers and refilling them is ONE operation on the global set
     // (M5.5b), so the lock covers both — dropping them and then contending for
     // the lock would leave the set empty for however long the wait lasted.
-    const result = await withArchiveMarkerLock('rebuild', async () => {
-        ensureDir(getIndexMemoryDir());
+    const result = await withArchiveMarkerLock('rebuild', async (activeIndexDir) => {
+        ensureDir(activeIndexDir);
         for (const file of files) {
-            const markerPath = path.join(getIndexMemoryDir(), file);
+            const markerPath = path.join(activeIndexDir, file);
             if (fs.existsSync(markerPath)) {
                 fs.unlinkSync(markerPath);
             }
         }
-        return syncIndexMemory({ lockHeld: true });
+        // markerDir, not just lockHeld: the deletions above and the refill below
+        // must land in the same directory (§7.4 M5.5g).
+        return syncIndexMemory({ lockHeld: true, markerDir: activeIndexDir });
     });
     console.log(`✅ 重建完成！共处理 ${result.files} 个档案 / ${result.chunks} 个语义碎片。`);
     console.log('📋 Rebuild Summary:');

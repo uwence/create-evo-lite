@@ -15045,6 +15045,206 @@ async function runChildRuntimeTests() {
             assert.ok(log.includes('RECOVERY_LEASE_RELEASE_FAILED'), 'and recorded in memory.log');
             disposeEnv(env);
         }
+        {
+            // G11a — §7.4 M5.5g, getter purity. Renaming the ledger is a WRITE to
+            // the set the publication lock protects. It used to sit behind
+            // getIndexMemoryDir(), so every caller — `verify`, health summaries,
+            // the inspector — could perform it.
+            const env = await stage('ledger-getter-purity');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const legacy = path.join(env.runtimeRoot, 'vect_memory');
+            const modern = path.join(env.runtimeRoot, 'index_memory');
+            fs.rmSync(modern, { recursive: true, force: true });
+            fs.mkdirSync(legacy, { recursive: true });
+            fs.writeFileSync(path.join(legacy, 'seeded.md'), 'ORIGINAL', 'utf8');
+            const before = fs.statSync(path.join(legacy, 'seeded.md'));
+
+            let renames = 0;
+            const realRename = fs.renameSync;
+            fs.renameSync = function patched(...args) { renames += 1; return realRename.apply(fs, args); };
+            let resolved;
+            try { resolved = runtime.getIndexMemoryDir(); } finally { fs.renameSync = realRename; }
+
+            assert.strictEqual(resolved, legacy, 'modern absent + legacy present must resolve to legacy');
+            assert.strictEqual(renames, 0, 'resolving the ledger must not rename anything');
+            assert.ok(fs.existsSync(legacy), 'legacy must still be there');
+            assert.ok(!fs.existsSync(modern), 'and modern must not have been created');
+            assert.deepStrictEqual(fs.readdirSync(legacy), ['seeded.md']);
+            assert.strictEqual(fs.readFileSync(path.join(legacy, 'seeded.md'), 'utf8'), 'ORIGINAL');
+            assert.strictEqual(fs.statSync(path.join(legacy, 'seeded.md')).mtimeMs, before.mtimeMs);
+
+            // and the frozen table's remaining rows
+            fs.mkdirSync(modern, { recursive: true });
+            assert.strictEqual(runtime.getIndexMemoryDir(), modern, 'both present must resolve to modern');
+            fs.rmSync(legacy, { recursive: true, force: true });
+            assert.strictEqual(runtime.getIndexMemoryDir(), modern, 'modern alone resolves to modern');
+            fs.rmSync(modern, { recursive: true, force: true });
+            assert.strictEqual(runtime.getIndexMemoryDir(), modern, 'neither present resolves to modern');
+            disposeEnv(env);
+        }
+        {
+            // G11b — a locked sync pinned to legacy, with an unlocked reader
+            // probing mid-transaction. The property under test is not "the
+            // reader saw the right thing", it is that NOBODY renames the ledger
+            // without holding the publication lock.
+            const env = await stage('ledger-locked-sync');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const legacy = path.join(env.runtimeRoot, 'vect_memory');
+            const modern = path.join(env.runtimeRoot, 'index_memory');
+            const lockPath = st.archiveLockPathFor(legacy);
+
+            // Seed a complete ledger, then put it back under the legacy name —
+            // the shape a first upgrade actually has.
+            const seeded = await env.service.syncIndexMemory();
+            assert.strictEqual(seeded.files, env.files.length, 'fixture: the ledger covers every archive');
+            fs.renameSync(modern, legacy);
+            assert.ok(!fs.existsSync(modern));
+
+            // One more archive, so this sync has work to do and a re-ingest of
+            // the already-marked three would be visible in the file count.
+            const extra = 'mem_2026-08-03_00-00-04_t8c_0004.md';
+            fs.writeFileSync(path.join(env.runtimeRoot, 'raw_memory', extra), [
+                '---', 'id: "t8c_0004"', 'timestamp: "2026-08-03T00:00:04.000Z"',
+                'type: "task"', 'namespace: "prose"', 'tags: []', '---', '',
+                '## 实现细节 (Implementation)', '',
+                'ledger migration fixture archive 4; long enough to clear the quality guard.', '',
+            ].join('\n'), 'utf8');
+
+            const attempts = [];
+            let injected = false;
+            const probes = [];
+            const realRename = fs.renameSync;
+            const realWrite = fs.writeFileSync;
+            fs.renameSync = function patched(from, to, ...rest) {
+                if (from === legacy && to === modern) {
+                    // Recorded with the lock state at the moment of the attempt.
+                    // A rename with no lock held is the defect, whoever did it.
+                    attempts.push({ lockHeld: fs.existsSync(lockPath) });
+                    if (!injected) {
+                        injected = true;
+                        const e = new Error('denied'); e.code = 'EPERM'; throw e;
+                    }
+                }
+                return realRename.call(fs, from, to, ...rest);
+            };
+            fs.writeFileSync = function patched(p, ...rest) {
+                const out = realWrite.call(fs, p, ...rest);
+                // The first marker write: the holder has read its work list and
+                // is committing it. This is where an unlocked reader used to
+                // rename the ledger out from under it.
+                if (probes.length === 0 && String(p).endsWith('.md') && path.dirname(String(p)).endsWith('memory')) {
+                    probes.push({
+                        health: env.service.summarizeArchiveHealth(),
+                        resolved: runtime.getIndexMemoryDir(),
+                        legacy: fs.existsSync(legacy),
+                        modern: fs.existsSync(modern),
+                    });
+                }
+                return out;
+            };
+            let result;
+            try { result = await env.service.syncIndexMemory(); } finally {
+                fs.renameSync = realRename; fs.writeFileSync = realWrite;
+            }
+
+            assert.ok(injected, 'fixture: the in-lock migration really was made to fail');
+            assert.ok(attempts.length > 0, 'fixture: a migration was actually attempted');
+            assert.deepStrictEqual(attempts.filter(a => !a.lockHeld), [],
+                'the ledger may only be renamed while the publication lock is held');
+            assert.strictEqual(probes.length, 1, 'fixture: the read-only probe ran mid-transaction');
+            assert.strictEqual(probes[0].modern, false, 'a read-only caller must not migrate the ledger');
+            assert.strictEqual(probes[0].resolved, legacy, 'and must resolve to the directory in service');
+
+            assert.strictEqual(result.files, 1,
+                `only the new archive is work; a transaction that re-read an empty ledger would redo all four (got ${result.files})`);
+            assert.ok(!fs.existsSync(modern), 'the transaction pinned legacy, so modern must not exist');
+            assert.strictEqual(fs.readdirSync(legacy).filter(f => f.endsWith('.md')).length, env.files.length + 1,
+                'and every marker landed in that one ledger');
+
+            // Once the lock is free, an ordinary sync may migrate — that is the
+            // only path allowed to.
+            const migrated = await env.service.syncIndexMemory();
+            assert.strictEqual(migrated.files, 0, 'nothing left to do');
+            assert.ok(fs.existsSync(modern) && !fs.existsSync(legacy), 'the migration happened under the lock');
+            assert.strictEqual(fs.readdirSync(modern).filter(f => f.endsWith('.md')).length, env.files.length + 1,
+                'and carried the complete marker set across');
+            disposeEnv(env);
+        }
+        {
+            // G11c — the same property on the publication transaction, where
+            // getting it wrong strands the verified ledger: park and publish land
+            // in legacy while the pure getter goes on serving the old modern
+            // directory. Marker cleared, wrong bookkeeping in service — AC5.
+            const env = await stage('ledger-recovery-pin');
+            const runtime = require(path.join(CLI_DIR, 'runtime.js'));
+            const legacy = path.join(env.runtimeRoot, 'vect_memory');
+            const modern = path.join(env.runtimeRoot, 'index_memory');
+
+            const seeded = await env.service.syncIndexMemory();
+            assert.strictEqual(seeded.files, env.files.length);
+            for (const f of fs.readdirSync(modern)) fs.writeFileSync(path.join(modern, f), 'ORIGINAL', 'utf8');
+            fs.renameSync(modern, legacy);
+
+            let seen = 0;
+            class Healthy {
+                constructor() { this.role = (seen += 1) === 1 ? 'builder' : 'validator'; this.docs = []; }
+                get engine() { return 'zvec-jieba-fts'; }
+                upsert(doc) { this.docs.push(doc); return { id: this.docs.length }; }
+                stats() { const n = Healthy.built; return { count: n, chunks: n, namespaces: {}, first: null, last: null }; }
+                searchText() { return []; }
+                close() { if (this.role === 'builder') Healthy.built = this.docs.length; }
+            }
+            Healthy.built = 0;
+
+            let injected = false;
+            const probes = [];
+            const realRename = fs.renameSync;
+            fs.renameSync = function patched(from, to, ...rest) {
+                if (from === legacy && to === modern && !injected) {
+                    injected = true;
+                    const e = new Error('denied'); e.code = 'EPERM'; throw e;
+                }
+                if (probes.length === 0 && String(to).includes('.parked-')) {
+                    // The holder has pinned its active directory and is about to
+                    // park it. A read-only caller runs right here.
+                    probes.push({
+                        resolved: runtime.getIndexMemoryDir(),
+                        modern: fs.existsSync(modern),
+                    });
+                }
+                return realRename.call(fs, from, to, ...rest);
+            };
+            let ok = null;
+            let err = null;
+            try {
+                ok = await env.service.runContainmentRecoveryRebuild({
+                    eligible: true, markerDir: env.runtimeRoot,
+                    decision: { ZvecIndex: Healthy, paths: env.paths, impl: 'zvec', reason: 'recovery-rebuild' },
+                }, env.files, stillEligible);
+            } catch (e) { err = e; } finally { fs.renameSync = realRename; }
+
+            assert.strictEqual(err, null, `the recovery must succeed: ${err && err.reason}`);
+            assert.strictEqual(ok, true);
+            assert.ok(injected, 'fixture: the in-lock migration really was made to fail');
+            assert.strictEqual(probes.length, 1, 'fixture: the read-only probe ran inside the publication');
+            assert.strictEqual(probes[0].modern, false, 'a read-only caller must not migrate mid-publication');
+            assert.strictEqual(probes[0].resolved, legacy, 'the pinned directory is the one in service');
+
+            assert.strictEqual(st.readContainmentState(env.runtimeRoot).status, 'absent', 'the debt was cleared');
+            const active = runtime.getIndexMemoryDir();
+            assert.strictEqual(active, legacy, 'the ledger in service is the one that was published');
+            assert.deepStrictEqual(fs.readdirSync(active).sort(), env.files.slice().sort(),
+                'and it holds exactly the rebuilt marker set');
+            // Freshly rebuilt markers are empty; the originals were seeded with
+            // content, so this tells the published ledger from the stranded one.
+            for (const f of fs.readdirSync(active)) {
+                assert.strictEqual(fs.readFileSync(path.join(active, f), 'utf8'), '',
+                    `${f} must come from the verified rebuild, not the pre-recovery ledger`);
+            }
+            const residue = fs.readdirSync(env.runtimeRoot).filter(n => n.includes('.recovery-') || n.includes('.parked-'));
+            assert.deepStrictEqual(residue, [], `no staging or parked directory may survive: ${residue.join(', ')}`);
+            disposeEnv(env);
+        }
         console.log('✅ T-zwuc-T8g-archive-transaction passed');
     }
 
