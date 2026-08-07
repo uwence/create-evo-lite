@@ -63,10 +63,17 @@ function defaultPlanStates(root, specPath) {
     const planIds = resolveLinkedPlanIds(parsed, planIr);
 
     const plans = planIds.map(id => defaultPlanState(root, id));
-    // A declared plan we cannot locate is not the same as a spec with no plans:
-    // apply must refuse rather than close a spec whose linked plans it could not
-    // all resolve. Readiness is untouched — that stays criteria-only.
-    const unresolvedPlanIds = plans.filter(p => !p.found).map(p => p.planId);
+    // A linked plan the transaction cannot act on is not the same as a spec with
+    // no plans: apply must refuse rather than close a spec whose linked plans it
+    // could not all resolve. Readiness is untouched — that stays criteria-only.
+    //
+    // Two ways to be unactionable, and `found` alone only catches the first:
+    //   - no record in the planning IR
+    //   - a record with no sourcePath, so there is no file to mutate
+    // The second is the dangerous one. `found: true` made it look resolved while
+    // apply's `!!p.planPath` filter silently dropped it, producing exactly the
+    // half-closed state this guards against: spec done, that plan untouched.
+    const unresolvedPlanIds = plans.filter(p => !p.found || !p.planPath).map(p => p.planId);
     return { planIds, plans, unresolvedPlanIds };
 }
 

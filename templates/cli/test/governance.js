@@ -1370,53 +1370,92 @@ async function runGovernanceTests() {
                             ],
                         },
                     }),
-                    // Fails only after both plans and the spec have been written,
-                    // and records what was on disk at that moment. Without this
-                    // the case passes vacuously: if apply never touches the plans,
-                    // "the plans are unchanged afterwards" is trivially true and
-                    // the test goes green BECAUSE the defect is present.
                     backfillFn: (r) => {
-                        midApply.a = fs.readFileSync(path.join(r, 'docs', 'a.md'), 'utf8');
-                        midApply.b = fs.readFileSync(path.join(r, 'docs', 'b.md'), 'utf8');
-                        throw new Error('induced mid-apply failure');
+                        fs.mkdirSync(path.join(r, '.evo-lite', 'generated', 'planning'), { recursive: true });
+                        fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'archive-evidence.json'), '{"backfilled":true}\n');
                     },
-                    scanFn: () => {},
+                    scanFn: (r) => fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), '{"rescanned":true}\n'),
+                    // The failure has to land AFTER `git add`, otherwise the
+                    // index-rollback assertion below is vacuous: staged is still
+                    // empty and there is nothing to un-stage. Writing the
+                    // "applied" journal is the last step of the transaction, so
+                    // throwing there means plans, spec, generated artifacts and
+                    // the index have all already been touched.
+                    //
+                    // The disk snapshot at that moment is the positive control:
+                    // without it, "the plans are unchanged afterwards" is
+                    // trivially true whenever apply never touched them, and the
+                    // case goes green BECAUSE the defect is present.
+                    writeJournalFn: (jp, payload) => {
+                        if (payload.status !== 'applied') return;
+                        midApply.a = fs.readFileSync(path.join(root, 'docs', 'a.md'), 'utf8');
+                        midApply.b = fs.readFileSync(path.join(root, 'docs', 'b.md'), 'utf8');
+                        midApply.spec = fs.readFileSync(specPath, 'utf8');
+                        midApply.arch = fs.existsSync(path.join(root, '.evo-lite', 'generated', 'planning', 'archive-evidence.json'));
+                        midApply.staged = staged.slice();
+                        throw new Error('induced late failure after staging');
+                    },
                 });
 
+                // Positive controls first: prove the transaction really had
+                // something to undo.
                 assert.ok(midApply.a && /status: done/.test(midApply.a),
                     'positive control: plan A must actually have been mutated before the failure, otherwise the rollback assertions below prove nothing');
                 assert.ok(midApply.b && /status: done/.test(midApply.b),
                     'positive control: plan B must actually have been mutated before the failure');
-                assert.strictEqual(result.applied, false, 'a mid-apply failure must not report applied');
+                assert.ok(midApply.spec && /status: done/.test(midApply.spec),
+                    'positive control: the spec must have been mutated before the failure');
+                assert.strictEqual(midApply.arch, true,
+                    'positive control: generated artifacts must have been written before the failure');
+                assert.ok(midApply.staged && midApply.staged.length >= 3,
+                    `positive control: the failure must land AFTER git add, or the index-rollback assertion is vacuous; staged at failure=${JSON.stringify(midApply.staged)}`);
+
+                assert.strictEqual(result.applied, false, 'a late failure must not report applied');
                 assert.ok(result.aborted, 'the result must say it aborted');
                 assert.strictEqual(fs.readFileSync(path.join(root, 'docs', 'a.md'), 'utf8'), aBody,
                     'plan A must be restored — a half-applied closure is worse than none');
                 assert.strictEqual(fs.readFileSync(path.join(root, 'docs', 'b.md'), 'utf8'), bBody, 'plan B must be restored');
                 assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specBody, 'the spec must be restored');
-                for (const rel of staged) {
+                assert.strictEqual(fs.existsSync(path.join(root, '.evo-lite', 'generated', 'planning', 'archive-evidence.json')), false,
+                    'generated artifacts that did not exist before the transaction must be removed by rollback');
+                assert.ok(midApply.staged.length > 0 && unstaged.length > 0,
+                    'the index must actually be reset, not merely left alone');
+                for (const rel of midApply.staged) {
                     assert.ok(unstaged.some(u => u.replace(/\\/g, '/') === rel.replace(/\\/g, '/')),
-                        `everything staged must be unstaged on rollback; staged=${JSON.stringify(staged)} unstaged=${JSON.stringify(unstaged)}`);
+                        `everything staged must be unstaged on rollback; staged=${JSON.stringify(midApply.staged)} unstaged=${JSON.stringify(unstaged)}`);
                 }
             });
 
-            // R7 — a declared plan that cannot be located. Readiness is still
-            // criteria-only, so this stays READY; but apply must refuse rather
-            // than close a spec whose linked plans it could not all resolve.
-            score('R7', () => {
-                const root = mkRoot('r7');
+            // R7 — a linked plan the transaction cannot act on. Readiness is
+            // still criteria-only, so this stays READY; but apply must refuse
+            // rather than close a spec whose linked plans it could not all
+            // resolve. Two ways a plan can be unactionable, and both must
+            // fail closed:
+            //
+            //   a) no record in the planning IR at all
+            //   b) a record exists but carries no sourcePath, so there is no
+            //      file to mutate
+            //
+            // (b) is the sharper one: the record's mere existence made the plan
+            // look resolved, while apply's `!!p.planPath` filter silently
+            // dropped it — spec done, that plan untouched. Exactly the silent
+            // half-close this task exists to remove.
+            const r7Case = (label, irPlans, specBody, expectUnresolved) => {
+                const root = mkRoot(`r7${label}`);
                 fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
                 fs.writeFileSync(path.join(root, 'docs', 'a.md'), '---\nid: plan:a\nstatus: active\n---\n\n# A\n\n- [ ] one\n');
-                writeIr(root, [{ id: 'plan:a', linkedSpec: 'spec:t', sourcePath: 'docs/a.md', status: 'active', taskIds: [] }]);
-                const specPath = specWith(root, 'spec.md', [], ['## Linked Plans', '', '- plan:a', '- plan:missing']);
+                writeIr(root, irPlans);
+                const specPath = specWith(root, 'spec.md', [], specBody);
 
                 const preview = closePreview.previewClose(specPath, {
                     root, statusFn: () => [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }] });
                 assert.strictEqual(preview.readiness, 'READY',
                     'criteria-all-PASS remains the sole readiness gate — plan hygiene must not become an acceptance criterion');
-                assert.deepStrictEqual(preview.plan.unresolvedPlanIds, ['plan:missing'],
-                    'preview must name the plan it could not resolve');
+                assert.deepStrictEqual(preview.plan.unresolvedPlanIds, expectUnresolved,
+                    `preview must name the plan it cannot act on; got ${JSON.stringify(preview.plan)}`);
 
-                const before = fs.readFileSync(specPath, 'utf8');
+                const specBefore = fs.readFileSync(specPath, 'utf8');
+                const planBefore = fs.readFileSync(path.join(root, 'docs', 'a.md'), 'utf8');
                 const result = applyClose(specPath, {
                     root,
                     now: '2026-08-07T00:00:00.000Z',
@@ -1427,9 +1466,27 @@ async function runGovernanceTests() {
                 });
                 assert.strictEqual(result.applied, false, 'apply must refuse when a linked plan is unresolved');
                 assert.strictEqual(result.refused, 'plan-resolution-incomplete',
-                    `refusal must be its own transaction-safety reason, not a readiness verdict; got ${JSON.stringify(result).slice(0, 200)}`);
-                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), before, 'a refused apply must write nothing');
-            });
+                    `refusal must be its own transaction-safety reason, not a readiness verdict; got ${JSON.stringify(result).slice(0, 220)}`);
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specBefore, 'a refused apply must not touch the spec');
+                assert.strictEqual(fs.readFileSync(path.join(root, 'docs', 'a.md'), 'utf8'), planBefore,
+                    'a refused apply must not touch the resolvable plan either — all or nothing');
+            };
+
+            // R7a — the linked plan has no record in the IR.
+            score('R7a', () => r7Case('a',
+                [{ id: 'plan:a', linkedSpec: 'spec:t', sourcePath: 'docs/a.md', status: 'active', taskIds: [] }],
+                ['## Linked Plans', '', '- plan:a', '- plan:missing'],
+                ['plan:missing']));
+
+            // R7b — the record exists but has no sourcePath: found, yet there is
+            // nothing to mutate.
+            score('R7b', () => r7Case('b',
+                [
+                    { id: 'plan:a', linkedSpec: 'spec:t', sourcePath: 'docs/a.md', status: 'active', taskIds: [] },
+                    { id: 'plan:b', linkedSpec: 'spec:t', status: 'active', taskIds: [] },
+                ],
+                ['## Linked Plans', '', '- plan:a', '- plan:b'],
+                ['plan:b']));
 
             try {
                 const passed = rows.filter(r => r.ok).length;
