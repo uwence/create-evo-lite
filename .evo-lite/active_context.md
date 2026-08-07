@@ -13,13 +13,13 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[zvec-win-unicode-containment] Tasks 1-8（AC1-AC7）已全部交付、复审 ACCEPTED 并合入 main@c2eb784。AC7 发布门已生效：prepublishOnly -> release-preflight 现场重建 Spec Portfolio registry，本仓 npm publish 目前被自己的 active + releaseBlocking:true containment spec 阻断，这是预期 enforcement 而非故障。下一步仅为 Task 9（收口）的 kickoff / baseline audit，且 Task 9 与 context closure 当前仍未授权。[memory-lock-win-cim-snapshot-reliability] 保持 parked residual。
+[zvec-win-unicode-containment] Tasks 1-8（AC1-AC7）与 Task 9A/9B 已完成并合入 main@59efcf7；上游已报 alibaba/zvec#665。Task 9C 是当前唯一授权的收口阶段：在 [attp-hive-rollout] 登记「Windows 目标必须消费 containment decision 接口」的依赖，并同步运行时焦点。Task 9D 与 context closure 仍未授权。AC7 发布门继续按 active + releaseBlocking:true 预期阻断本仓发布。[memory-lock-win-cim-snapshot-reliability] 保持 parked residual。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
 
 <!-- BEGIN_BACKLOG -->
-- [ ] [3d78] [attp-hive-rollout] Distribute the already-accepted ATTP runtime and invoke the idempotent takeover installer in selected child repositories through hive nurture. 独立 rollout 议题,不是 ATTP MVP 的一部分 —— MVP 已 ACCEPTED & CLOSED(spec:agent-takeover-trigger-protocol)。需要自己的范围/试点子仓/失败回滚策略/验收门。前置提醒:子仓装上守卫后项目外 Edit/Write 会被 deny;root-launch-only 限制同样适用。
+- [ ] [3d78] [attp-hive-rollout] Distribute the already-accepted ATTP runtime and invoke the idempotent takeover installer in selected child repositories through hive nurture. 独立 rollout 议题,不是 ATTP MVP 的一部分 —— MVP 已 ACCEPTED & CLOSED(spec:agent-takeover-trigger-protocol)。需要自己的范围/试点子仓/失败回滚策略/验收门。前置提醒:子仓装上守卫后项目外 Edit/Write 会被 deny;root-launch-only 限制同样适用。新增前置依赖(spec:zvec-win-unicode-containment §12,Task 9C 登记):Windows 目标子仓必须在分发前调用 [zvec-win-unicode-containment] 的 containment decision 接口;判定非 SAFE 时拒绝分发并给出结构化原因,不得静默跳过。该依赖未满足前不得执行对应的 Windows rollout。
 - [ ] [attp-lw-memory-identity] [attp-lw-memory-identity] RESIDUAL / blocked-upstream — waiting-host-contract。承载 spec:attp-linked-worktree-memory-identity(status: parked)。缺口:git linked worktree 中宿主对 transcript 用当前 worktree 身份、对 memory 用【主工作树】身份,两者不同源,且该映射在路径大小写维度上失稳(小写拼写启动时重定向消失,而 git 仍返回规范大小写)。PreToolUse 完整键集无任何 memory root 字段;Git identity 到 memory root 差一层未文档化且有损的 slug 编码(非 ASCII 塌成 '-',NTFS 上非单射);~/.claude.json 用户可编辑、无 slug 字段、同项目五种非规范拼写。证据 docs/validation/attp-guard-allowlist-step0c-worktree-memory-identity.md(终止分支 B ∧ C)。已正式排除:slug 重实现 / 目录扫描 / target 自证 / 注册表推断 / git common-dir 猜 slug / settings 或 receipt 配置额外根。当前守卫在该拓扑下 fail-closed 是正确行为,【不需要生产改动】。重新开启需宿主提供权威 memory identity(见 residual spec 的四条条件)。本条同时是 [attp-hive-rollout] 的解阻依据:A 目标子仓全为独立单工作树 / B rollout 增加 topology preflight / C 宿主提供权威 memory identity;「多数子仓可能不是 worktree」不构成解阻证据。
 - [ ] [zvec-win-unicode-containment] P0 / release-blocker — Windows 上部分非 ASCII Zvec collection 路径在 insertSync 触发 0xC0000409 STATUS_STACK_BUFFER_OVERRUN，进程 fail-fast 且不可捕获；0.5.0 与 0.6.0 同样复现，因此不归因于本次升级。阻断下一正式发布与 Windows 非 ASCII 子仓 rollout，不阻断已经完成的 0.6 正确性合并。范围仅为触发边界、预检、隔离、fail-closed 降级与恢复合同设计（path containment）；生产实现和子仓分发尚未授权。证据：docs/validation/zvec-06-phase0b-verdict.md。
 <!-- END_BACKLOG -->
