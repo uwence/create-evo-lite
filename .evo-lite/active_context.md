@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[zvec-win-unicode-containment] 仍是当前 release blocker。Tasks 1–5 已完成；Tasks 6–8 仍未授权。下一步仅进行 Task 6 marker/recovery 范围与授权复审。[memory-lock-win-cim-snapshot-reliability] 已从 active blocker 关闭，仅保留为外部延迟 parked residual。
+[zvec-win-unicode-containment] Tasks 1-8（AC1-AC7）已全部交付、复审 ACCEPTED 并合入 main@c2eb784。AC7 发布门已生效：prepublishOnly -> release-preflight 现场重建 Spec Portfolio registry，本仓 npm publish 目前被自己的 active + releaseBlocking:true containment spec 阻断，这是预期 enforcement 而非故障。下一步仅为 Task 9（收口）的 kickoff / baseline audit，且 Task 9 与 context closure 当前仍未授权。[memory-lock-win-cim-snapshot-reliability] 保持 parked residual。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
