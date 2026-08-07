@@ -277,4 +277,32 @@ function parsePlanFile(filePath) {
     };
 }
 
-module.exports = { parseSpecFile, parsePlanFile, parseFrontmatter, extractTasks, parseSuperPowersPlan };
+// The single relation algorithm for "which plans belong to this spec".
+//
+// It lives here because both consumers already depend on this module, and
+// because having two of them is precisely the defect this closes: Spec Portfolio
+// resolved three sources while closure read only frontmatter.linkedPlan, so the
+// two official mechanisms could disagree about whether a spec had a linked plan
+// at all. Anything that needs this answer must call THIS function rather than
+// re-deriving it.
+//
+// planIr is passed in rather than read here so this stays a pure function and
+// this module acquires no filesystem dependency.
+function resolveLinkedPlanIds(parsedSpec, planIr) {
+    if (!parsedSpec || !parsedSpec.id) return [];
+    // Declared: body "## Linked Plans", falling back to frontmatter linkedPlan
+    // (parseSpecFile already applies that precedence).
+    const ids = new Set(parsedSpec.linkedPlans || []);
+    // Reverse: any plan whose linkedSpec points back at this spec.
+    const plans = (planIr && Array.isArray(planIr.plans)) ? planIr.plans : [];
+    for (const plan of plans) {
+        if (plan && plan.id && plan.linkedSpec === parsedSpec.id) ids.add(plan.id);
+    }
+    // Sorted so preview actions and warnings are stable across runs.
+    return Array.from(ids).sort();
+}
+
+module.exports = {
+    parseSpecFile, parsePlanFile, parseFrontmatter, extractTasks, parseSuperPowersPlan,
+    resolveLinkedPlanIds,
+};
