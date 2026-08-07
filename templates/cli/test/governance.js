@@ -15603,19 +15603,43 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
             traceT12(`${cn} bootstrap begin`);
             const loaded = await bootstrapRuntime(runtime.runtimeRoot, env);
             traceT12(`${cn} bootstrap complete`);
+            // bootstrapRuntime() calls initDB(), which opens the module-level
+            // better-sqlite3 connection. Keep the real handle so teardown can be
+            // PROVEN rather than assumed.
+            const database = loaded.db.getDb();
             let report;
-            traceT12(`${cn} verify begin`);
-            const output = await captureConsole(async () => { report = await loaded.service.verify(); });
-            traceT12(`${cn} verify returned`);
-            // verify's ENTITY-STORE section (not the containment section) calls
-            // getMemoryIndex(), which on a SAFE anchor really does open the zvec
-            // collection and take its LOCK. Release it here: a leaked LOCK under
-            // .zwuc-live outlives this test and surfaces as an unrelated lock
-            // refusal several tests later.
-            traceT12(`${cn} reset begin`);
-            try { require(path.join(CLI_DIR, 'memory-index.js')).resetMemoryIndex(); } catch (_) {}
-            traceT12(`${cn} reset complete`);
-            return { report, output, dbDir, runtime };
+            let output;
+            try {
+                traceT12(`${cn} verify begin`);
+                output = await captureConsole(async () => { report = await loaded.service.verify(); });
+                traceT12(`${cn} verify returned`);
+                return { report, output, dbDir, runtime };
+            } finally {
+                // Teardown must also run on the throwing path: a case that fails an
+                // assertion must not hand the next one an open database.
+                //
+                // verify's ENTITY-STORE section (not the containment section) calls
+                // getMemoryIndex(), which on a SAFE anchor really does open the zvec
+                // collection and take its LOCK. resetMemoryIndex() releases that —
+                // a leaked LOCK under .zwuc-live outlives this test and surfaces as
+                // an unrelated lock refusal several tests later.
+                traceT12(`${cn} reset begin`);
+                try { require(path.join(CLI_DIR, 'memory-index.js')).resetMemoryIndex(); } catch (_) {}
+                traceT12(`${cn} reset complete`);
+                // resetMemoryIndex() does NOT close the SQLite connection initDB
+                // opened — that is a separate module-level handle living INSIDE the
+                // directory the caller deletes recursively straight afterwards.
+                // Leaving it open is an illegal teardown shape that production never
+                // performs: nothing in production removes a project's database
+                // directory while the same process still holds the database open.
+                traceT12(`${cn} db close begin`);
+                loaded.db.closeDb();
+                traceT12(`${cn} db close complete`);
+                // Not wrapped in try/catch: if the handle is somehow still open, that
+                // fact must surface here rather than at an unrelated rmSync later.
+                assert.strictEqual(database.open, false,
+                    `${cn}: the bootstrapRuntime database must be closed BEFORE its runtime directory is deleted`);
+            }
         };
 
         const FORBIDDEN_WORDING = [
@@ -15751,6 +15775,8 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         {
             traceT12('zero-side-effects fixture begin');
             const anchor = createContainedZvecRoot('t12-side-effects');
+            let database6 = null;
+            let closeDb6 = null;
             try {
                 const markerPath = stateMod.markerPathFor(anchor.base);
                 const collectionDir = anchor.paths.collectionPath;
@@ -15777,6 +15803,11 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     EVO_LITE_MEMORY_ENGINE: 'zvec',
                 });
                 traceT12('zero-side-effects bootstrap complete');
+                // Same rule as runVerify: this case bootstraps its own runtime, so it
+                // owns that database handle too. An ASCII collection path does not
+                // make the open handle legal — the teardown shape is what matters.
+                database6 = loaded.db.getDb();
+                closeDb6 = loaded.db.closeDb;
                 const svc = loaded.service;
                 const idxMod = require(path.join(CLI_DIR, 'memory-index.js'));
                 traceT12('zero-side-effects reset begin');
@@ -15828,6 +15859,18 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     'the containment section must never instantiate a collection');
                 traceT12('zero-side-effects assertions complete');
             } finally {
+                // Order is load-bearing: release the index, close the database, prove
+                // it is closed, and only then delete the directory that contains it.
+                traceT12('zero-side-effects reset begin');
+                try { require(path.join(CLI_DIR, 'memory-index.js')).resetMemoryIndex(); } catch (_) {}
+                traceT12('zero-side-effects reset complete');
+                if (closeDb6) {
+                    traceT12('zero-side-effects db close begin');
+                    closeDb6();
+                    traceT12('zero-side-effects db close complete');
+                    assert.strictEqual(database6.open, false,
+                        'zero-side-effects: the bootstrapRuntime database must be closed BEFORE its runtime directory is deleted');
+                }
                 traceT12('zero-side-effects cleanup begin');
                 anchor.cleanup();
                 traceT12('zero-side-effects cleanup complete');
