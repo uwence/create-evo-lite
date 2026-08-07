@@ -31,6 +31,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'inspector.js',
             'recall-rules.js',
             'spec-portfolio.js',
+            'release-preflight.js',
             'template-manifest.js',
             'test.js',
             'test/harness.js',
