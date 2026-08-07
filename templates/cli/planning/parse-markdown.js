@@ -67,11 +67,93 @@ function parseTaskAttrs(lines) {
     return { linkedFiles, verify, acceptance, evidence };
 }
 
+// --- Tracked checkbox scanner: the single semantic source ---
+//
+// "Is this line a machine-closable tracked checkbox" had three different answers:
+// the parser's task/step recognition, preview's `/^- \[ \] /gm` count, and
+// apply's `/- \[ \] /g` rewrite — unanchored and global, so it also rewrote
+// indented children, prose, and literals inside fenced code. Every consumer now
+// asks this scanner instead.
+//
+// Fence state is why exporting the two predicates would not have sufficed: a
+// documented example of a step matches the grammar character for character, and
+// only knowing you are inside a fence tells them apart.
+const ORDINARY_TASK_CHECKBOX_RE = /^[-*]\s+\[([ xX])\]\s+\[task:([^\]]+)\]\s+(.+)$/;
+const SUPERPOWERS_STEP_CHECKBOX_RE = /^-\s+\[([ xX])\]\s+\*\*Step/;
+// ``` or ~~~, three or more, optionally indented — the opener may carry an info
+// string, the closer may not.
+const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
+
+function scanTrackedPlanCheckboxes(content) {
+    const lines = String(content == null ? '' : content).split(/\r?\n/);
+    const checkboxes = [];
+    let fence = null; // the marker char run that opened the current fence
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const fenceMatch = line.match(FENCE_RE);
+        if (fenceMatch) {
+            const marker = fenceMatch[1];
+            if (fence === null) {
+                fence = marker[0].repeat(3);
+            } else if (marker[0] === fence[0] && marker.length >= fence.length) {
+                fence = null;
+            }
+            continue;
+        }
+        if (fence !== null) continue; // inside a fence: documentation, not work
+
+        const ord = line.match(ORDINARY_TASK_CHECKBOX_RE);
+        if (ord) {
+            checkboxes.push({ lineIndex: i, checked: ord[1] !== ' ', kind: 'task', taskId: `task:${ord[2]}` });
+            continue;
+        }
+        const sp = line.match(SUPERPOWERS_STEP_CHECKBOX_RE);
+        if (sp) {
+            checkboxes.push({ lineIndex: i, checked: sp[1] !== ' ', kind: 'step', taskId: null });
+        }
+    }
+    return { checkboxes };
+}
+
+// Rewrites ONLY the lines the scanner identified, in place, by line index —
+// never by pattern replacement over the whole document. Returns the real number
+// of lines changed so preview and apply cannot disagree about it.
+function markTrackedPlanCheckboxesDone(content, scanResult) {
+    const text = String(content == null ? '' : content);
+    const scan = scanResult || scanTrackedPlanCheckboxes(text);
+    const targets = scan.checkboxes.filter(c => !c.checked);
+    if (targets.length === 0) return { content: text, changedCount: 0 };
+
+    const lines = text.split(/\r?\n/);
+    let changedCount = 0;
+    for (const c of targets) {
+        const line = lines[c.lineIndex];
+        if (typeof line !== 'string') continue;
+        // Only the checkbox itself; the rest of the line is left untouched.
+        const next = line.replace(/^(\s*[-*]\s+)\[ \]/, '$1[x]');
+        if (next !== line) { lines[c.lineIndex] = next; changedCount++; }
+    }
+    // Preserve the document's original newline style.
+    const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+    return { content: lines.join(eol), changedCount };
+}
+
+// Tracked unchecked count — what preview must report and apply must perform.
+function countTrackedUncheckedBoxes(content) {
+    return scanTrackedPlanCheckboxes(content).checkboxes.filter(c => !c.checked).length;
+}
+
 function extractTasks(body) {
     const tasks = [];
     const lines = body.split(/\r?\n/);
     let currentPhase = null;
     let i = 0;
+    // Same scanner the mutation uses, so the parser cannot recognise a task the
+    // rewriter would skip, or vice versa. A fenced example of a task line is
+    // documentation here too.
+    const trackedLines = new Set(scanTrackedPlanCheckboxes(body).checkboxes
+        .filter(c => c.kind === 'task').map(c => c.lineIndex));
 
     while (i < lines.length) {
         const line = lines[i];
@@ -83,7 +165,7 @@ function extractTasks(body) {
             continue;
         }
 
-        const cbMatch = line.match(/^[-*]\s+\[([ xX])\]\s+\[task:([^\]]+)\]\s+(.+)$/);
+        const cbMatch = trackedLines.has(i) ? line.match(ORDINARY_TASK_CHECKBOX_RE) : null;
         if (cbMatch) {
             const continuations = [];
             let j = i + 1;
@@ -165,8 +247,13 @@ function extractSuperPowersTasks(content, planSlug) {
                 j++;
             }
 
-            const allSteps = sectionLines.filter(l => /^-\s+\[[xX ]\]\s+\*\*Step/.test(l));
-            const doneSteps = sectionLines.filter(l => /^-\s+\[[xX]\]\s+\*\*Step/.test(l));
+            // Scanned, not pattern-matched: a step shown inside a fenced example
+            // is documentation, and counting it would make the task look
+            // incomplete forever while the rewriter correctly leaves it alone.
+            const sectionScan = scanTrackedPlanCheckboxes(sectionLines.join('\n')).checkboxes
+                .filter(c => c.kind === 'step');
+            const allSteps = sectionScan;
+            const doneSteps = sectionScan.filter(c => c.checked);
             const filesHeadLine = sectionLines.find(l => /^\*\*Files:\*\*/.test(l.trim()));
             const readOnly = !!(filesHeadLine && /read[-\s]only|no\s+edits/i.test(filesHeadLine));
             const status = allSteps.length > 0 && doneSteps.length === allSteps.length
@@ -305,4 +392,5 @@ function resolveLinkedPlanIds(parsedSpec, planIr) {
 module.exports = {
     parseSpecFile, parsePlanFile, parseFrontmatter, extractTasks, parseSuperPowersPlan,
     resolveLinkedPlanIds,
+    scanTrackedPlanCheckboxes, markTrackedPlanCheckboxesDone, countTrackedUncheckedBoxes,
 };

@@ -1044,7 +1044,13 @@ async function runGovernanceTests() {
                 ].join('\n'));
                 const planRel = 'docs/p.md';
                 const planAbs = path.join(root, planRel);
-                fs.writeFileSync(planAbs, '# P\n\n- [ ] Step one\n- [ ] Step two\n');
+                // Real superpowers grammar. The original fixture used
+                // `- [ ] Step one`, which matches neither tracked grammar, and
+                // asserted it was flipped anyway — encoding the unanchored
+                // global replace as the expected contract. Closure now only
+                // rewrites checkboxes the parser recognises as tracked work.
+                const PLAN_BODY = '# P\n\n### Task 1: do it\n\n- [ ] **Step 1:** one\n- [ ] **Step 2:** two\n';
+                fs.writeFileSync(planAbs, PLAN_BODY);
 
                 const staged = [];
                 const result = applyClose(specPath, {
@@ -1058,7 +1064,9 @@ async function runGovernanceTests() {
                 });
 
                 assert.strictEqual(result.applied, true, 'READY → applied');
-                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'), '# P\n\n- [x] Step one\n- [x] Step two\n', 'all checkboxes flipped');
+                assert.strictEqual(fs.readFileSync(planAbs, 'utf8'),
+                    '# P\n\n### Task 1: do it\n\n- [x] **Step 1:** one\n- [x] **Step 2:** two\n',
+                    'all tracked checkboxes flipped');
                 assert.ok(/^status: done$/m.test(fs.readFileSync(specPath, 'utf8')), 'spec status set to done');
                 assert.ok(fs.existsSync(path.join(root, '.evo-lite', 'generated', 'planning', 'archive-evidence.json')), 'R008 backfill ran');
                 assert.ok(fs.existsSync(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json')), 'IR rescan ran');
@@ -1089,7 +1097,10 @@ async function runGovernanceTests() {
                 fs.writeFileSync(specPath, specBefore);
                 const planRel = 'docs/p.md';
                 const planAbs = path.join(root, planRel);
-                const planBefore = '# P\n\n- [ ] Step one\n- [ ] Step two\n';
+                // Real superpowers grammar, same reason as T41: the old fixture
+                // matched neither tracked grammar and only ever "worked" under
+                // the unanchored global replace.
+                const planBefore = '# P\n\n### Task 1: do it\n\n- [ ] **Step 1:** one\n- [ ] **Step 2:** two\n';
                 fs.writeFileSync(planAbs, planBefore);
 
                 const result = applyClose(specPath, {
@@ -1299,8 +1310,8 @@ async function runGovernanceTests() {
                 fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
                 const specPath = path.join(root, 'spec.md');
                 fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', '---', '', '# T', ''].join('\n'));
-                fs.writeFileSync(path.join(root, 'docs', 'a.md'), '---\nid: plan:a\nstatus: active\n---\n\n# A\n\n- [ ] one\n');
-                fs.writeFileSync(path.join(root, 'docs', 'b.md'), '---\nid: plan:b\nstatus: draft\n---\n\n# B\n\n- [ ] one\n');
+                fs.writeFileSync(path.join(root, 'docs', 'a.md'), '---\nid: plan:a\nstatus: active\n---\n\n# A\n\n### Task 1: a\n\n- [ ] **Step 1:** one\n');
+                fs.writeFileSync(path.join(root, 'docs', 'b.md'), '---\nid: plan:b\nstatus: draft\n---\n\n# B\n\n### Task 1: b\n\n- [ ] **Step 1:** one\n');
 
                 const staged = [];
                 const result = applyClose(specPath, {
@@ -1342,8 +1353,8 @@ async function runGovernanceTests() {
                 fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
                 const specPath = path.join(root, 'spec.md');
                 const specBody = ['---', 'id: spec:t', 'status: draft', '---', '', '# T', ''].join('\n');
-                const aBody = '---\nid: plan:a\nstatus: active\n---\n\n# A\n\n- [ ] one\n';
-                const bBody = '---\nid: plan:b\nstatus: active\n---\n\n# B\n\n- [ ] one\n';
+                const aBody = '---\nid: plan:a\nstatus: active\n---\n\n# A\n\n### Task 1: a\n\n- [ ] **Step 1:** one\n';
+                const bBody = '---\nid: plan:b\nstatus: active\n---\n\n# B\n\n### Task 1: b\n\n- [ ] **Step 1:** one\n';
                 fs.writeFileSync(specPath, specBody);
                 fs.writeFileSync(path.join(root, 'docs', 'a.md'), aBody);
                 fs.writeFileSync(path.join(root, 'docs', 'b.md'), bBody);
@@ -2007,7 +2018,10 @@ async function runGovernanceTests() {
                 fs.writeFileSync(specPath, specBefore);
                 const planRel = 'docs/p.md';
                 const planAbs = path.join(root, planRel);
-                const planBefore = '# P\n\n- [ ] Step one\n- [ ] Step two\n';
+                // Real superpowers grammar, same reason as T41: the old fixture
+                // matched neither tracked grammar and only ever "worked" under
+                // the unanchored global replace.
+                const planBefore = '# P\n\n### Task 1: do it\n\n- [ ] **Step 1:** one\n- [ ] **Step 2:** two\n';
                 fs.writeFileSync(planAbs, planBefore);
                 const result = applyClose(specPath, {
                     root, now: '2026-06-28T00:00:00.000Z',
@@ -2039,7 +2053,7 @@ async function runGovernanceTests() {
                 const specPath = path.join(root, 'spec.md');
                 fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n'));
                 const planRel = 'docs/p.md';
-                fs.writeFileSync(path.join(root, planRel), '# P\n\n- [ ] One\n');
+                fs.writeFileSync(path.join(root, planRel), '# P\n\n### Task 1: do it\n\n- [ ] **Step 1:** One\n');
                 const lockPath = path.join(root, '.evo-lite', 'verification', 'close.lock');
                 const now = '2026-06-28T12:00:00.000Z';
                 const okOpts = {
@@ -2107,7 +2121,7 @@ async function runGovernanceTests() {
                 const specPath = path.join(root, 'spec.md');
                 fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', 'linkedPlan: plan:t', '---', '', '# T', ''].join('\n'));
                 const planRel = 'docs/p.md';
-                fs.writeFileSync(path.join(root, planRel), '---\nid: plan:t\nstatus: draft\n---\n\n# P\n\n- [ ] One\n');
+                fs.writeFileSync(path.join(root, planRel), '---\nid: plan:t\nstatus: draft\n---\n\n# P\n\n### Task 1: do it\n\n- [ ] **Step 1:** One\n');
                 const warning = { kind: 'tasks-incomplete', message: '1 of 2 linked tasks are not implemented — closing will mark the spec done anyway' };
                 const r = applyClose(specPath, {
                     root, now: '2026-06-28T12:00:00.000Z',
@@ -2201,7 +2215,7 @@ async function runGovernanceTests() {
                 fs.writeFileSync(specPath, specPrior);
                 const planRel = 'docs/p.md';
                 const planAbs = path.join(root, planRel);
-                const planPrior = ['---', 'id: plan:t', 'status: draft', '---', '', '# P', '', '- [ ] One', ''].join('\n');
+                const planPrior = ['---', 'id: plan:t', 'status: draft', '---', '', '# P', '', '### Task 1: do it', '', '- [ ] **Step 1:** One', ''].join('\n');
                 fs.writeFileSync(planAbs, planPrior);
                 const resetCalls = [];
                 const r = applyClose(specPath, {
