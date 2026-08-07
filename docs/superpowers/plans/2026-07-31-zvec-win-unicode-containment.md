@@ -3,7 +3,7 @@ id: plan:zvec-win-unicode-containment
 title: "Plan: Zvec Windows 非 ASCII 路径 containment"
 linkedSpec: spec:zvec-win-unicode-containment
 format: superpowers
-status: active
+status: done
 ---
 
 # Zvec Windows Unicode Containment Implementation Plan
@@ -18,10 +18,12 @@ status: active
 > Task 7（AC6）          ACCEPTED / MERGED（PR #17 → merge commit 985b638，审查 head ac3445c）
 > Task 8（AC7）          ACCEPTED / MERGED（PR #18 → merge commit c2eb784，审查 head 42c054e）
 > FOCUS 锚点 resync      MERGED（PR #19 → merge commit 04fd869）
-> Task 9（收口）          CLOSEOUT PROCEDURE AUTHORIZED / EXECUTION NOT YET AUTHORIZED
->                       分 9A–9D 逐段授权；当前仅 9A（docs-only）
+> Task 9A（收口程序冻结）  MERGED（PR #20 → merge commit a56ae21）
+> Task 9B（上游上报）      MERGED（PR #21 → merge commit 59efcf7）—— alibaba/zvec#665
+> Task 9C（依赖登记）      MERGED（PR #22 → merge commit 6e855eb）
+> Task 9D（生命周期关闭）  由 PR #23 承载；base main@6e855eb
 > context closure       NOT AUTHORIZED
-> baseline              main@04fd869
+> baseline              main@6e855eb
 > ```
 >
 > 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`，Task 7 已合入 `main@985b638`；
@@ -74,15 +76,17 @@ GitHub Actions、`sync-runtime` 模板镜像。
 docs/specs/zvec-win-unicode-containment.md      ← mem spec adopt 归一化产出（--independent）
 docs/superpowers/plans/2026-07-31-...(本文件)    ← 唯一 plan，直接被 plan scan 识别
 docs/plans/zvec-win-unicode-containment.md      ← 已删除（重复登记）
-预期 Portfolio 状态：active（非 adopted）
+实施期预期 Portfolio 状态：active（非 adopted）；Task 9D lifecycle close 后为 shipped
 ```
 
 既然扫描器已经读取本文件，IR 副本不提供任何额外能力；而给它另一个 id 会制造**两个
 独立生命周期**，治理负担反而更大。
 
 `spec` 状态派生为 `linkedPlans.length === 0 → adopted`，否则 `active`
-（`spec-portfolio.js:213-219`）；本文件 frontmatter 带 `linkedSpec`，因此 spec 仍为
-`active` 而非 `adopted`，不会触发 `aging-no-plan`。
+（`spec-portfolio.js:213-219`）；本文件 frontmatter 带 `linkedSpec`，因此**在实施期**
+该 spec 派生为 `active` 而非 `adopted`，不会触发 `aging-no-plan`。
+Task 9D 收口后 frontmatter 为 `status: done`，派生态先于上述分支命中 `shipped`，
+这一实施期判断不再适用。
 
 ## Global Constraints
 
@@ -1137,9 +1141,9 @@ shipped + releaseBlocking:true   →  CLEAR
 
 **9A — closeout procedure re-freeze（docs-only）**
 
-- [ ] 同步 spec / plan 顶部阶段摘要至真实状态与 `main@04fd869`
-- [ ] 用本节固化 kickoff audit 的裁定
-- [ ] 普通 git commit → Draft PR → 首轮 `pull_request` CI → 硬停
+- [x] 同步 spec / plan 顶部阶段摘要至真实状态与 `main@04fd869`
+- [x] 用本节固化 kickoff audit 的裁定
+- [x] 普通 git commit → Draft PR → 首轮 `pull_request` CI → 硬停（PR #20 → main@a56ae21）
 
 **9B — 上游上报（外部写操作，单独授权）—— DONE 2026-08-07**
 
@@ -1190,26 +1194,30 @@ shipped + releaseBlocking:true   →  CLEAR
 
 **9C — runtime governance dependency 登记（窄改 active_context）**
 
-- [ ] 在 `[attp-hive-rollout]` 登记「Windows 目标必须消费 containment decision 接口」的依赖
+- [x] 在 `[attp-hive-rollout]` 登记「Windows 目标必须消费 containment decision 接口」的依赖
       —— 该依赖目前**只**写在 spec §12，`[attp-hive-rollout]` 自己的 backlog 条目没有它
-- [ ] FOCUS 必要同步
-- [ ] **仍禁止**：`context track` / `archive` / META / trajectory / `mem commit`
+- [x] FOCUS 必要同步（经 `mem context focus`；FOCUS 有 CLI path，不得手改）
+- [x] **仍禁止**：`context track` / `archive` / META / trajectory / `mem commit` —— 已遵守（PR #22 → main@6e855eb）
 
-**9D — 受控人工关闭（最后一步）**
+**9D — 受控人工关闭（最后一步）—— 执行于 2026-08-07，基线 `main@6e855eb`**
 
-前置门必须**同时**成立：
+前置门必须**同时**成立。逐条机械核验结果：
 
 ```text
-Tasks 1–8                ACCEPTED / MERGED
-9A                       已合并
-9B upstream issue URL    已存在
-9C dependency 登记        已完成
-worktree                 clean
+Tasks 1–8                ACCEPTED / MERGED   PR #16 / #17 / #18
+9A                       MERGED              PR #20 → main@a56ae21
+9B upstream issue URL    存在                https://github.com/alibaba/zvec/issues/665（OPEN）
+9C dependency 登记        MERGED              PR #22 → main@6e855eb
+worktree                 clean               0 changes
 sync-runtime --check     EXIT 0
-live/template SHA pairs  identical
-registry.errors          0
+live/template SHA pairs  identical           sync-always 124/124，diverged 0
+registry.errors          0                   blockers=1，15/15 计数守恒
 release-preflight BEFORE BLOCKED
 ```
+
+> `copy-on-init` 家族的 `.agents/rules/architecture.md` 与 `evo-lite.md` 两对哈希不同，
+> **属设计预期**（脚手架播种一次后由项目自有、从不 nurture），不属于本门的判据；
+> `sync-runtime --check` 也只强制 `sync-always` 范围。
 
 然后事务顺序：
 
@@ -1224,6 +1232,31 @@ release-preflight BEFORE BLOCKED
 8  release-preflight → CLEAR
 9  npm test / test:governance / sync-runtime --check
 10 Draft PR + CI + 全量 closeout 复审
+```
+
+**9D 收口结果（机器判定，PR #23 / head 承载）**
+
+```text
+before   state=active    releaseBlocking=true   blockers=1   errors=0   VERDICT=BLOCKED
+after    state=shipped   releaseBlocking=true   blockers=0   errors=0   VERDICT=CLEAR
+         counts 15/15 守恒；linkedPlans=[plan:zvec-win-unicode-containment]，notDonePlans=[]
+
+npm test                  EXIT 0
+npm run test:governance   EXIT 0
+sync-runtime --check      EXIT 0
+npm publish --dry-run     EXIT 0   —— 本地新鲜证据，非 workflow 的独立 job
+```
+
+> `npm publish --dry-run` 这一条是**本地**执行的证据。当前 `release-gate.yml` 的
+> containment job 用的是合成 fixture 证明 BLOCKED / CLEAR 两个方向，**不**对本仓真实
+> 发布路径跑 dry-run，所以不得表述为「CI 证明了 publish dry-run」。
+
+**授权顺序记录（不追认，也不倒写历史）**
+
+```text
+9D candidate 首次产出时，durable 记录（base main@6e855eb 的 runtime FOCUS 与
+spec/plan 顶部摘要）仍写着 Task 9D FROZEN；`main` 未发生任何改动。
+复审随后授权对保留下来的 Draft candidate 进行 review / rework。
 ```
 
 #### 9.3 已知债：不在 Task 9 范围，逐条留档不修
