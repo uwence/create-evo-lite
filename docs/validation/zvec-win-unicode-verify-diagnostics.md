@@ -54,11 +54,15 @@ containment 判为非 SAFE，是最容易暴露诊断段副作用的环境。
 
 ```text
 memory.service.js    e7a0f1075012d407e37c14b148a824ec91ae90c35708390304a229700a488c22
-test/governance.js   96ac89dff0933f42c54fe48823531e342bd76142c48e3860b88464f3c7e4c5e0
+test/governance.js   66a1873b2a3703f2ef6019f96be2a6f6cc4f2b29a20f177ae840aa389bb0bbb4
 test/integration.js  530b5471bdf72bb8070f60e48c08fe040572cf2eadc0a339dceb078a401929c2
 ```
 
 三对镜像均为 `MIRROR-IDENTICAL`。
+
+> `test/governance.js` 的哈希在 §8 的 teardown 修正中变化过一次
+> （`96ac89df…` → `66a1873b…`）。`memory.service.js` 与 `test/integration.js`
+> 自 `57979db` 起逐字节未变 —— 这是「§8 是测试夹具修正、不是产品改动」的可复核依据。
 
 ---
 
@@ -175,3 +179,131 @@ context closure   未授权
 后者是关于全局历史的断言，`verify` 没有任何证据能支持它。测试层能证明的也只是
 非 SAFE 路径下 `loadZvecIndex` 调用次数为 0（Task 4 的 T6、Task 6 的 T8b），
 那是关于**进程行为**的性质，不是关于 collection 生命史的性质。
+
+---
+
+## 8. Windows Node 24 的 CI 失败 —— T12 teardown 缺陷（非产品缺陷）
+
+### 8.1 三次 CI gate
+
+```text
+31005837322  head 57979db  pull_request attempt 1  4/5  windows-latest/node 24 FAILED
+31012656035  head 73a9131  pull_request attempt 1  4/5  windows-latest/node 24 FAILED
+31137819249  head d5d1216  pull_request attempt 1  5/5  ALL PASS
+```
+
+前两条永久保留为失败证据，**均未 rerun**。三次都是 `pull_request` / attempt 1；
+每次新 SHA 触发的是新 gate，不是对旧 run 的重跑。
+
+失败格固定为 **windows-latest / node 24**：Microsoft Windows Server 2025，
+runner image `win25-vs2026/20260728.188`，OS build `10.0.26100`，node `v24.18.0`，
+npm `11.16.0`。ubuntu 的 node 20/22/24 与 windows/node 22 三次全绿。
+
+### 8.2 精确失败边界
+
+首轮（`31005837322`）只能看到 `T12` 打印 banner 后进程消失，无 JS 断言、无栈、无 stderr，
+GitHub step 报 `exit code 127`。第二轮加入同步 checkpoint
+（`fs.writeSync(2, ...)`，因为被 native fail-fast 终止的进程不会 flush stdout 缓冲，
+`console.log` 无法标记最后存活位置）后，边界被钉死：
+
+```text
+13:59:27.4912124  [T12-TRACE] suite begin
+13:59:28.9210553  [T12-TRACE] unsafe cleanup begin      ← 最后一条完整 checkpoint
+                  （预期但从未出现：unsafe cleanup complete）
+13:59:29.2867341  ##[error]Process completed with exit code 127
+
+T12 存活 1.795 s；最后 checkpoint 到死亡 0.366 s
+```
+
+两条 checkpoint 之间只有一行代码：
+
+```js
+try { fs.rmSync(unsafeBase, { recursive: true, force: true }); } catch (_) {}
+```
+
+`unsafeBase` 是 `fs.mkdtempSync(path.join(os.tmpdir(), 'evo-t12-不安全-'))`。
+同一行在 windows/node 22 上耗时 **0.2 ms** 并正常完成
+（`17.8558617 → 17.8560729`），随后 case 6 全部 checkpoint 正常走完。
+
+**它被 `try/catch (_) {}` 包裹却仍然终止了进程** —— JS 异常不可能穿过该捕获，
+所以这是进程级终止，不是可捕获的错误。
+
+### 8.3 为什么这是测试 teardown 缺陷，不是产品 containment 缺陷
+
+失败发生时，被测代码已经全部成功执行完毕：
+
+```text
+unsafe verify begin → verify returned      verify() 正常返回
+unsafe reset begin  → reset complete       resetMemoryIndex() 完成
+unsafe assertions complete                 containment 状态断言全部通过
+unsafe cleanup begin → ✗                   死在测试自己的临时目录删除
+```
+
+机制上：`bootstrapRuntime()` 调用 `initDB()`，后者打开模块级 `better-sqlite3` 连接。
+`resetMemoryIndex()` 只释放 memory-index 实例与它可能持有的 zvec LOCK，
+**不触及那个 SQLite 句柄** —— 而该句柄正位于测试随后递归删除的目录内。
+
+**生产不存在这种形状**：没有任何生产路径会在同进程仍持有项目数据库时，
+递归删除该数据库所在目录。这是测试夹具自己制造的生命周期。
+
+佐证：本套件的其它测试早已在 teardown 中调用 `closeDb()`
+（`test/governance.js` 中 `anchored.db.closeDb()`、`loaded.db.closeDb()`、
+`require('db.js').closeDb()` 等多处）。**T12 是唯一遗漏该步骤的测试。**
+
+六个 case 全都缺这一步；Windows/node 24 只是在 `unsafe` 的 cleanup 上把它暴露出来。
+因此修正应用于全部六个，而不只是那一个。
+
+### 8.4 修正内容（仅测试夹具）
+
+`runVerify()` 保存 `loaded.db.getDb()` 返回的真实句柄，并在 `finally` 中按序执行：
+
+```text
+verify returned → resetMemoryIndex() → closeDb() → 断言 database.open === false
+               → 返回给调用方 → 外层断言 → 目录删除
+```
+
+放在 `finally` 意味着抛出路径同样执行 —— 断言失败的 case 不得把一个仍打开的数据库
+交给下一个 case。`database.open` 断言**刻意不包 try/catch**：句柄若仍打开，
+必须在此暴露，而不是在之后某个无关的 `rmSync` 上。
+
+case 6 自行 `bootstrapRuntime()`，同样持有句柄，按
+`Module._load restored → reset → closeDb → 证明已关闭 → anchor.cleanup` 收口。
+ASCII 的 collection 路径不会让一个未关闭的句柄变得合法 —— 决定性的是 teardown 形状。
+
+**未改动**：`fs.rmSync` 调用本身、目录清理的存在、case 顺序与数量、fixture 与 marker
+内容、`bootstrapRuntime`/`verify`/`reset` 调用次数、engine choice、断言、timeout、
+try/catch 边界、同进程执行模式；没有子进程隔离、retry、sleep、延迟到进程退出、
+平台跳过，也没有改动产品的数据库生命周期。产品文件相对 `57979db` 逐字节未变。
+
+### 8.5 本地复现结果（阴性）
+
+Windows 11 build `10.0.26200` + node `v24.18.0` + npm `11.16.0`，
+两处 `node_modules` 全部删除后清洁安装（未复用 node 22 的 native 模块）：
+
+```text
+node ./.evo-lite/cli/test.js        EXIT 0
+npm test                           EXIT 0
+TEMP=RUNNER~1 npm test             EXIT 0
+Git Bash（CI 用 shell: bash）       EXIT 0
+node 22.22.2 控制组（同工作树同安装流程）  EXIT 0
+WER / Application Error            0 条记录
+```
+
+**本地从未复现**，因此拿不到 faulting module 或 exception code。已排除的变量：
+node 24 本身、npm 11 包装层、npm 11 的 allow-scripts 行为
+（zvec binding 经 `@zvec/bindings-win32-x64` optional dependency 分发，
+不依赖 install script，node 24 下 `require` 成功）、Git Bash vs PowerShell、
+8.3 短名 TEMP、复用 node 22 native 模块。
+
+### 8.6 仍未证明（不得写成已归因事实）
+
+```text
+具体 NTSTATUS（exit 127 与 0xC0000409 相容，但不足以推定）
+faulting module
+由 Node、better-sqlite3 还是 Windows 内部执行了 fail-fast
+Windows Server 2025 / build 26100 与 Windows 11 / 26200 之间的确切差异
+```
+
+可以陈述的是：**在删除临时 runtime 目录前关闭 T12 自己打开的 SQLite 连接后，
+同一矩阵格从连续两次失败转为通过。** 这支持「未关闭句柄的非法 teardown 形状」
+这一根因假设，但不构成对上述四项的证明。

@@ -15535,47 +15535,11 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
     // resolves ambient paths, and a diagnostic proven only against an injected
     // path would prove nothing about production (§7.4 M3.1).
     // ---------------------------------------------------------------------
-    // [zvec-win-unicode-containment] Task 7 — diagnostic instrumentation only.
-    //
-    // Run 31005837322 died INSIDE this test on windows-latest / node 24 with exit
-    // 127 and no JS assertion, stack or stderr. Node 24.18.0 on Windows 11 with the
-    // same npm 11.16.0, the same clean-installed deps, Git Bash, and a RUNNER~1
-    // short TEMP does NOT reproduce it. These checkpoints exist so the only machine
-    // that can reproduce it reports where it dies.
-    //
-    // fs.writeSync(2, ...) is synchronous and unbuffered; console.log is neither.
-    // When a process is terminated by a native fail-fast, whatever is still sitting
-    // in the stdout buffer never reaches the log, so console.log cannot mark the
-    // last position reached. Nothing else here changes: same case order, same
-    // fixtures, same bootstrap/verify/reset counts, same assertions, same process.
-    const traceT12 = (stage) => { try { fs.writeSync(2, `[T12-TRACE] ${stage}\n`); } catch (_) {} };
-    traceT12('suite begin');
-    {
-        let osVersion = 'n/a';
-        try { osVersion = os.version(); } catch (_) { /* not on every Node */ }
-        traceT12(`env node=${process.version} platform=${process.platform} arch=${process.arch} `
-            + `release=${os.release()} osVersion=${osVersion} pid=${process.pid} `
-            + `shortTemp=${/RUNNER~1/i.test(process.env.TEMP || '')}`);
-    }
     console.log('T12. Testing verify containment diagnostics — four states, wording, zero side effects ...');
     {
         const stateMod = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
-        // Canonical case names for the trace. The `label` values are left untouched
-        // because they feed createTempRuntimeRoot's directory name — renaming them
-        // would change the paths under test, which is exactly what must not move.
-        const TRACE_NAME = {
-            normal: 'normal',
-            recovery: 'recovery-pending',
-            damaged: 'marker-damaged',
-            pin: 'debt-under-pin',
-            unsafe: 'unsafe',
-            'side-effects': 'zero-side-effects',
-        };
-
         // One place that runs verify against a chosen db path + marker setup.
         const runVerify = async (label, { dbDir, marker, pinSqlite }) => {
-            const cn = TRACE_NAME[label] || label;
-            traceT12(`${cn} fixture begin`);
             const runtime = createTempRuntimeRoot(`t12-${label}`);
             fs.mkdirSync(dbDir, { recursive: true });
             const dbPath = path.join(dbDir, 'memory.db');
@@ -15599,10 +15563,7 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 EVO_LITE_DB_PATH: dbPath,
                 EVO_LITE_MEMORY_ENGINE: pinSqlite ? 'sqlite-fts5-trigram' : 'zvec',
             };
-            traceT12(`${cn} fixture complete`);
-            traceT12(`${cn} bootstrap begin`);
             const loaded = await bootstrapRuntime(runtime.runtimeRoot, env);
-            traceT12(`${cn} bootstrap complete`);
             // bootstrapRuntime() calls initDB(), which opens the module-level
             // better-sqlite3 connection. Keep the real handle so teardown can be
             // PROVEN rather than assumed.
@@ -15610,9 +15571,7 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
             let report;
             let output;
             try {
-                traceT12(`${cn} verify begin`);
                 output = await captureConsole(async () => { report = await loaded.service.verify(); });
-                traceT12(`${cn} verify returned`);
                 return { report, output, dbDir, runtime };
             } finally {
                 // Teardown must also run on the throwing path: a case that fails an
@@ -15623,22 +15582,18 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 // collection and take its LOCK. resetMemoryIndex() releases that —
                 // a leaked LOCK under .zwuc-live outlives this test and surfaces as
                 // an unrelated lock refusal several tests later.
-                traceT12(`${cn} reset begin`);
                 try { require(path.join(CLI_DIR, 'memory-index.js')).resetMemoryIndex(); } catch (_) {}
-                traceT12(`${cn} reset complete`);
                 // resetMemoryIndex() does NOT close the SQLite connection initDB
                 // opened — that is a separate module-level handle living INSIDE the
                 // directory the caller deletes recursively straight afterwards.
                 // Leaving it open is an illegal teardown shape that production never
                 // performs: nothing in production removes a project's database
                 // directory while the same process still holds the database open.
-                traceT12(`${cn} db close begin`);
                 loaded.db.closeDb();
-                traceT12(`${cn} db close complete`);
                 // Not wrapped in try/catch: if the handle is somehow still open, that
                 // fact must surface here rather than at an unrelated rmSync later.
                 assert.strictEqual(database.open, false,
-                    `${cn}: the bootstrapRuntime database must be closed BEFORE its runtime directory is deleted`);
+                    `${label}: the bootstrapRuntime database must be closed BEFORE its runtime directory is deleted`);
             }
         };
 
@@ -15671,11 +15626,8 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     'a SAFE anchor with no marker carries no containment trust debt');
                 assert.strictEqual(report.containment.marker.status, 'absent', 'no marker was written');
                 assertWording(output, 'normal');
-                traceT12('normal assertions complete');
             } finally {
-                traceT12('normal cleanup begin');
                 anchor.cleanup();
-                traceT12('normal cleanup complete');
             }
         }
 
@@ -15694,11 +15646,8 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 }
                 assert.strictEqual(report.containment.marker.status, 'present', 'the valid marker reads back as present');
                 assertWording(output, 'recovery-pending');
-                traceT12('recovery-pending assertions complete');
             } finally {
-                traceT12('recovery-pending cleanup begin');
                 anchor.cleanup();
-                traceT12('recovery-pending cleanup complete');
             }
         }
 
@@ -15715,11 +15664,8 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 assert.ok(!output.includes('显式 rebuild'),
                     'a damaged marker must NOT recommend rebuild: its content is untrusted, so the debt cannot be reasoned about yet');
                 assertWording(output, 'marker-damaged');
-                traceT12('marker-damaged assertions complete');
             } finally {
-                traceT12('marker-damaged cleanup begin');
                 anchor.cleanup();
-                traceT12('marker-damaged cleanup complete');
             }
         }
 
@@ -15733,11 +15679,8 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 assert.notStrictEqual(report.containment.state, 'normal',
                     'an outstanding containment debt must stay visible under an explicit pin — a pin is a user preference, not a debt payment (§7.5 D2)');
                 assertWording(output, 'debt-under-pin');
-                traceT12('debt-under-pin assertions complete');
             } finally {
-                traceT12('debt-under-pin cleanup begin');
                 anchor.cleanup();
-                traceT12('debt-under-pin cleanup complete');
             }
         }
 
@@ -15753,14 +15696,11 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 assert.ok(!output.includes('显式 rebuild'),
                     'unsafe must NOT recommend rebuild: rebuilding onto the same unsupported path is pure waste (§7.5 D5 / control G)');
                 assertWording(output, 'unsafe');
-                traceT12('unsafe assertions complete');
             } finally {
                 // Same treatment as createContainedZvecRoot's cleanup: the sqlite
                 // handle can still be open when the case ends, and a temp-dir EBUSY
                 // must not be reported as a containment failure.
-                traceT12('unsafe cleanup begin');
                 try { fs.rmSync(unsafeBase, { recursive: true, force: true }); } catch (_) {}
-                traceT12('unsafe cleanup complete');
             }
         } else {
             console.log('   ⏭️ T12 unsafe case skipped (non-win32: containment classifies every path eligible)');
@@ -15773,7 +15713,6 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         // count taken across the whole command is dominated by behaviour §7.5 does
         // not govern and would stay green under every mutation of this section.
         {
-            traceT12('zero-side-effects fixture begin');
             const anchor = createContainedZvecRoot('t12-side-effects');
             let database6 = null;
             let closeDb6 = null;
@@ -15793,16 +15732,12 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     collectionPath: collectionDir,
                     containment: { verdict: 'UNKNOWN', layer: 'path', reason: 'path:test-fixture' },
                 });
-                traceT12('zero-side-effects marker fixture complete');
                 const runtime = createTempRuntimeRoot('t12-side-effects');
-                traceT12('zero-side-effects fixture complete');
-                traceT12('zero-side-effects bootstrap begin');
                 const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
                     EVO_LITE_SKIP_GIT_STATUS: '1',
                     EVO_LITE_DB_PATH: path.join(anchor.base, 'memory.db'),
                     EVO_LITE_MEMORY_ENGINE: 'zvec',
                 });
-                traceT12('zero-side-effects bootstrap complete');
                 // Same rule as runVerify: this case bootstraps its own runtime, so it
                 // owns that database handle too. An ASCII collection path does not
                 // make the open handle legal — the teardown shape is what matters.
@@ -15810,12 +15745,8 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 closeDb6 = loaded.db.closeDb;
                 const svc = loaded.service;
                 const idxMod = require(path.join(CLI_DIR, 'memory-index.js'));
-                traceT12('zero-side-effects reset begin');
                 idxMod.resetMemoryIndex();
-                traceT12('zero-side-effects reset complete');
-                traceT12('zero-side-effects resolveActiveImpl begin');
                 idxMod.resolveActiveImpl();
-                traceT12('zero-side-effects resolveActiveImpl complete');
                 // The load-bearing precondition: a decision exists, an INDEX does
                 // not. Asserting on peekMemoryIndex() rather than on the collection
                 // directory is deliberate — whether instantiating writes a directory
@@ -15834,15 +15765,11 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     if (request === '@zvec/zvec') zvecLoads += 1;
                     return originalLoad.call(this, request, ...rest);
                 };
-                traceT12('zero-side-effects Module._load patched');
                 let diag;
                 try {
-                    traceT12('zero-side-effects buildContainmentDiagnostics begin');
                     diag = svc.buildContainmentDiagnostics();
-                    traceT12('zero-side-effects buildContainmentDiagnostics returned');
                 } finally {
                     Module._load = originalLoad;
-                    traceT12('zero-side-effects Module._load restored');
                 }
 
                 assert.strictEqual(zvecLoads, 0,
@@ -15857,23 +15784,16 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     'the process observation must be present — it is the ONLY thing verify may claim about the collection (§7.5 D4)');
                 assert.strictEqual(diag.processObservation.instantiatedCollection, false,
                     'the containment section must never instantiate a collection');
-                traceT12('zero-side-effects assertions complete');
             } finally {
                 // Order is load-bearing: release the index, close the database, prove
                 // it is closed, and only then delete the directory that contains it.
-                traceT12('zero-side-effects reset begin');
                 try { require(path.join(CLI_DIR, 'memory-index.js')).resetMemoryIndex(); } catch (_) {}
-                traceT12('zero-side-effects reset complete');
                 if (closeDb6) {
-                    traceT12('zero-side-effects db close begin');
                     closeDb6();
-                    traceT12('zero-side-effects db close complete');
                     assert.strictEqual(database6.open, false,
                         'zero-side-effects: the bootstrapRuntime database must be closed BEFORE its runtime directory is deleted');
                 }
-                traceT12('zero-side-effects cleanup begin');
                 anchor.cleanup();
-                traceT12('zero-side-effects cleanup complete');
             }
         }
 
@@ -15883,7 +15803,6 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         delete process.env.EVO_LITE_MEMORY_ENGINE;
         delete process.env.EVO_LITE_DB_PATH;
 
-        traceT12('suite complete');
         console.log('✅ T12 verify containment diagnostics passed');
     }
 
