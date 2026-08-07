@@ -1147,6 +1147,305 @@ async function runGovernanceTests() {
             console.log('✅ T43 close-commands --apply wiring');
         }
 
+        // ---------------------------------------------------------------------
+        // T-closure-relation (R1–R7) — linked-plan resolution parity + multi-plan
+        // atomic closure.
+        //
+        // The defect these guard: Spec Portfolio resolves a spec's plans from
+        // three sources (body "## Linked Plans", frontmatter linkedPlan, and
+        // plan-ir entries whose linkedSpec points back), while previewClose read
+        // only fm.linkedPlan. Six of fifteen specs in this repository are linked
+        // by a source previewClose could not see, so closure silently skipped
+        // their plans entirely.
+        //
+        // It survived because every existing close test injects planStateFn and
+        // therefore never executes the real resolver — the same blind spot shape
+        // as the ci-1 slicing debt. R1/R2 deliberately call the production
+        // resolver with no stub.
+        //
+        // Scored as a matrix so one RED case cannot hide the other six.
+        // ---------------------------------------------------------------------
+        console.log('T-closure-relation. Testing linked-plan resolution parity + multi-plan atomic closure (R1–R7) ...');
+        {
+            const parseMarkdown = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown'));
+            const closePreview = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+
+            const rows = [];
+            const score = (id, fn) => {
+                try { fn(); rows.push({ id, ok: true, detail: null }); } catch (e) {
+                    rows.push({ id, ok: false, detail: e && e.message ? e.message : String(e) });
+                }
+            };
+
+            const roots = [];
+            const mkRoot = (name) => {
+                const r = fs.mkdtempSync(path.join(os.tmpdir(), `evo-closure-rel-${name}-`));
+                roots.push(r);
+                return r;
+            };
+            const writeIr = (root, plans) => {
+                const dir = path.join(root, '.evo-lite', 'generated', 'planning');
+                fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(path.join(dir, 'plan-ir.json'), JSON.stringify({
+                    version: 'evo-plan-ir@1', specs: [], plans, tasks: [], warnings: [],
+                }, null, 2));
+            };
+            const CRITERIA = '{ "criteria": [ { "id": "ac-1", "description": "x", "dependsOn": ["index.js"], "verifier": { "type": "command", "params": { "cmd": "x" } } } ] }';
+            const specWith = (root, name, frontmatterExtra, bodyExtra) => {
+                const p = path.join(root, name);
+                fs.writeFileSync(p, [
+                    '---', 'id: spec:t', 'status: draft', ...frontmatterExtra, '---', '',
+                    '# T', '', ...bodyExtra, '',
+                    '## Acceptance Criteria', '', '```json', CRITERIA, '```', '',
+                ].join('\n'));
+                return p;
+            };
+
+            // R1 — a spec that declares its plan in the body section only. The
+            // production resolver must see it; fm.linkedPlan is absent.
+            score('R1', () => {
+                const root = mkRoot('r1');
+                const specPath = specWith(root, 'spec.md', [], ['## Linked Plans', '', '- plan:alpha']);
+                const parsed = parseMarkdown.parseSpecFile(specPath);
+                assert.strictEqual(typeof parseMarkdown.resolveLinkedPlanIds, 'function',
+                    'parse-markdown must export resolveLinkedPlanIds so portfolio and closure share ONE relation algorithm');
+                const ids = parseMarkdown.resolveLinkedPlanIds(parsed, { plans: [] });
+                assert.deepStrictEqual(ids, ['plan:alpha'],
+                    'a body-declared "## Linked Plans" entry must resolve; previewClose read only fm.linkedPlan and missed it');
+            });
+
+            // R2 — a spec that declares nothing; the link exists only as a
+            // plan-ir back-reference. This is how the containment spec was
+            // linked, and closure could not see it at all.
+            score('R2', () => {
+                const root = mkRoot('r2');
+                const specPath = specWith(root, 'spec.md', [], []);
+                const parsed = parseMarkdown.parseSpecFile(specPath);
+                const ids = parseMarkdown.resolveLinkedPlanIds(parsed, {
+                    plans: [{ id: 'plan:beta', linkedSpec: 'spec:t', sourcePath: 'docs/b.md' }],
+                });
+                assert.deepStrictEqual(ids, ['plan:beta'],
+                    'a plan-ir linkedSpec back-reference must resolve — the portfolio already honours it');
+            });
+
+            // R3 — union of all three sources, deduplicated and deterministically
+            // ordered. Non-determinism here would make preview actions unstable.
+            score('R3', () => {
+                const root = mkRoot('r3');
+                const specPath = specWith(root, 'spec.md', ['linkedPlan: plan:ignored-when-body-present'],
+                    ['## Linked Plans', '', '- plan:zeta', '- plan:alpha']);
+                const parsed = parseMarkdown.parseSpecFile(specPath);
+                const ids = parseMarkdown.resolveLinkedPlanIds(parsed, {
+                    plans: [
+                        { id: 'plan:alpha', linkedSpec: 'spec:t' },
+                        { id: 'plan:mid', linkedSpec: 'spec:t' },
+                        { id: 'plan:other', linkedSpec: 'spec:elsewhere' },
+                    ],
+                });
+                assert.deepStrictEqual(ids, ['plan:alpha', 'plan:mid', 'plan:zeta'],
+                    'union of body + reverse, deduplicated, sorted; plans linked to another spec must not leak in');
+            });
+
+            // R4 — every incomplete plan gets its own attributable warning, and
+            // all three preview exits carry the same multi-plan shape. Getting
+            // this right only on the READY path would create a fresh structural
+            // fork of exactly the kind this task exists to remove.
+            score('R4', () => {
+                const root = mkRoot('r4');
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                fs.writeFileSync(path.join(root, 'docs', 'a.md'), '# A\n\n- [ ] one\n');
+                fs.writeFileSync(path.join(root, 'docs', 'b.md'), '# B\n\n- [ ] one\n- [ ] two\n');
+                writeIr(root, [
+                    { id: 'plan:a', linkedSpec: 'spec:t', sourcePath: 'docs/a.md', status: 'active', taskIds: ['t1', 't2'] },
+                    { id: 'plan:b', linkedSpec: 'spec:t', sourcePath: 'docs/b.md', status: 'draft', taskIds: ['t3', 't4'] },
+                ]);
+                assert.strictEqual(typeof closePreview.defaultPlanStates, 'function',
+                    'close-preview must expose a collection-level resolver; the singular primitive cannot represent N plans');
+
+                const withCriteria = (name, criteria) => {
+                    const p = path.join(root, name);
+                    fs.writeFileSync(p, [
+                        '---', 'id: spec:t', 'status: draft', '---', '', '# T', '',
+                        '## Acceptance Criteria', '', '```json', criteria, '```', '',
+                    ].join('\n'));
+                    return p;
+                };
+                const ready = closePreview.previewClose(withCriteria('ready.md', CRITERIA), {
+                    root, statusFn: () => [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }] });
+                const blocked = closePreview.previewClose(withCriteria('blocked.md', CRITERIA), {
+                    root, statusFn: () => [{ criterionId: 'ac-1', verdict: 'STALE', detail: 'd' }] });
+                const none = closePreview.previewClose(withCriteria('none.md', '{ "criteria": [] }'), {
+                    root, statusFn: () => [] });
+
+                for (const [label, r] of [['READY', ready], ['BLOCKED', blocked], ['NO-CONTRACT', none]]) {
+                    assert.ok(r.plan && Array.isArray(r.plan.plans),
+                        `${label} must carry the same multi-plan collection shape (plan.plans[]) — partial migration is a new fork`);
+                    assert.deepStrictEqual(r.plan.planIds, ['plan:a', 'plan:b'],
+                        `${label} must resolve both linked plans`);
+                }
+
+                const texts = ready.warnings.map(w => w.message).join('\n');
+                assert.ok(/plan:a/.test(texts) && /plan:b/.test(texts),
+                    `each incomplete plan needs its own attributable warning; got:\n${texts}`);
+                const actions = ready.actions.join('\n');
+                assert.ok(/docs\/a\.md/.test(actions) && /docs\/b\.md/.test(actions),
+                    `actions must name every file apply would touch, not an aggregate; got:\n${actions}`);
+            });
+
+            // R5 — both plans mutated, spec mutated, every mutated source staged.
+            score('R5', () => {
+                const root = mkRoot('r5');
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', '---', '', '# T', ''].join('\n'));
+                fs.writeFileSync(path.join(root, 'docs', 'a.md'), '---\nid: plan:a\nstatus: active\n---\n\n# A\n\n- [ ] one\n');
+                fs.writeFileSync(path.join(root, 'docs', 'b.md'), '---\nid: plan:b\nstatus: draft\n---\n\n# B\n\n- [ ] one\n');
+
+                const staged = [];
+                const result = applyClose(specPath, {
+                    root,
+                    now: '2026-08-07T00:00:00.000Z',
+                    exec: (args) => { if (args[0] === 'add') staged.push(...args.slice(1)); return ''; },
+                    previewFn: () => ({
+                        readiness: 'READY', blockers: [], warnings: [],
+                        plan: {
+                            planIds: ['plan:a', 'plan:b'],
+                            unresolvedPlanIds: [],
+                            plans: [
+                                { planId: 'plan:a', found: true, planPath: 'docs/a.md', planStatus: 'active', tasksTotal: 1, tasksImplemented: 0, uncheckedBoxes: 1 },
+                                { planId: 'plan:b', found: true, planPath: 'docs/b.md', planStatus: 'draft', tasksTotal: 1, tasksImplemented: 1, uncheckedBoxes: 1 },
+                            ],
+                        },
+                    }),
+                    backfillFn: (r) => { fs.mkdirSync(path.join(r, '.evo-lite', 'generated', 'planning'), { recursive: true }); fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'archive-evidence.json'), '{}\n'); },
+                    scanFn: (r) => fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), '{}\n'),
+                });
+
+                assert.strictEqual(result.applied, true, `READY multi-plan must apply; got ${JSON.stringify(result).slice(0, 300)}`);
+                for (const rel of ['docs/a.md', 'docs/b.md']) {
+                    const txt = fs.readFileSync(path.join(root, rel), 'utf8');
+                    assert.ok(/status: done/.test(txt), `${rel} must be set done — skipping any linked plan is the original defect`);
+                    assert.ok(!/- \[ \] /.test(txt), `${rel} must have its checkboxes flipped`);
+                }
+                assert.ok(/status: done/.test(fs.readFileSync(specPath, 'utf8')), 'spec must be set done');
+                for (const rel of ['docs/a.md', 'docs/b.md', 'spec.md']) {
+                    assert.ok(staged.some(s => s.replace(/\\/g, '/') === rel), `${rel} must be staged; staged=${JSON.stringify(staged)}`);
+                }
+            });
+
+            // R6 — all-or-nothing. A failure after the first plan is already
+            // written must leave nothing behind: "plan A done, plan B failed,
+            // spec rolled back" is the worst possible outcome.
+            score('R6', () => {
+                const root = mkRoot('r6');
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                const specBody = ['---', 'id: spec:t', 'status: draft', '---', '', '# T', ''].join('\n');
+                const aBody = '---\nid: plan:a\nstatus: active\n---\n\n# A\n\n- [ ] one\n';
+                const bBody = '---\nid: plan:b\nstatus: active\n---\n\n# B\n\n- [ ] one\n';
+                fs.writeFileSync(specPath, specBody);
+                fs.writeFileSync(path.join(root, 'docs', 'a.md'), aBody);
+                fs.writeFileSync(path.join(root, 'docs', 'b.md'), bBody);
+
+                const staged = [];
+                const unstaged = [];
+                const midApply = {};
+                const result = applyClose(specPath, {
+                    root,
+                    now: '2026-08-07T00:00:00.000Z',
+                    exec: (args) => {
+                        if (args[0] === 'add') staged.push(...args.slice(1));
+                        if (args[0] === 'reset') unstaged.push(...args.slice(2));
+                        return '';
+                    },
+                    previewFn: () => ({
+                        readiness: 'READY', blockers: [], warnings: [],
+                        plan: {
+                            planIds: ['plan:a', 'plan:b'],
+                            unresolvedPlanIds: [],
+                            plans: [
+                                { planId: 'plan:a', found: true, planPath: 'docs/a.md', planStatus: 'active', tasksTotal: 1, tasksImplemented: 1, uncheckedBoxes: 1 },
+                                { planId: 'plan:b', found: true, planPath: 'docs/b.md', planStatus: 'active', tasksTotal: 1, tasksImplemented: 1, uncheckedBoxes: 1 },
+                            ],
+                        },
+                    }),
+                    // Fails only after both plans and the spec have been written,
+                    // and records what was on disk at that moment. Without this
+                    // the case passes vacuously: if apply never touches the plans,
+                    // "the plans are unchanged afterwards" is trivially true and
+                    // the test goes green BECAUSE the defect is present.
+                    backfillFn: (r) => {
+                        midApply.a = fs.readFileSync(path.join(r, 'docs', 'a.md'), 'utf8');
+                        midApply.b = fs.readFileSync(path.join(r, 'docs', 'b.md'), 'utf8');
+                        throw new Error('induced mid-apply failure');
+                    },
+                    scanFn: () => {},
+                });
+
+                assert.ok(midApply.a && /status: done/.test(midApply.a),
+                    'positive control: plan A must actually have been mutated before the failure, otherwise the rollback assertions below prove nothing');
+                assert.ok(midApply.b && /status: done/.test(midApply.b),
+                    'positive control: plan B must actually have been mutated before the failure');
+                assert.strictEqual(result.applied, false, 'a mid-apply failure must not report applied');
+                assert.ok(result.aborted, 'the result must say it aborted');
+                assert.strictEqual(fs.readFileSync(path.join(root, 'docs', 'a.md'), 'utf8'), aBody,
+                    'plan A must be restored — a half-applied closure is worse than none');
+                assert.strictEqual(fs.readFileSync(path.join(root, 'docs', 'b.md'), 'utf8'), bBody, 'plan B must be restored');
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specBody, 'the spec must be restored');
+                for (const rel of staged) {
+                    assert.ok(unstaged.some(u => u.replace(/\\/g, '/') === rel.replace(/\\/g, '/')),
+                        `everything staged must be unstaged on rollback; staged=${JSON.stringify(staged)} unstaged=${JSON.stringify(unstaged)}`);
+                }
+            });
+
+            // R7 — a declared plan that cannot be located. Readiness is still
+            // criteria-only, so this stays READY; but apply must refuse rather
+            // than close a spec whose linked plans it could not all resolve.
+            score('R7', () => {
+                const root = mkRoot('r7');
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                fs.writeFileSync(path.join(root, 'docs', 'a.md'), '---\nid: plan:a\nstatus: active\n---\n\n# A\n\n- [ ] one\n');
+                writeIr(root, [{ id: 'plan:a', linkedSpec: 'spec:t', sourcePath: 'docs/a.md', status: 'active', taskIds: [] }]);
+                const specPath = specWith(root, 'spec.md', [], ['## Linked Plans', '', '- plan:a', '- plan:missing']);
+
+                const preview = closePreview.previewClose(specPath, {
+                    root, statusFn: () => [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }] });
+                assert.strictEqual(preview.readiness, 'READY',
+                    'criteria-all-PASS remains the sole readiness gate — plan hygiene must not become an acceptance criterion');
+                assert.deepStrictEqual(preview.plan.unresolvedPlanIds, ['plan:missing'],
+                    'preview must name the plan it could not resolve');
+
+                const before = fs.readFileSync(specPath, 'utf8');
+                const result = applyClose(specPath, {
+                    root,
+                    now: '2026-08-07T00:00:00.000Z',
+                    exec: () => '',
+                    previewFn: () => preview,
+                    backfillFn: () => { throw new Error('backfill must never run when apply refuses'); },
+                    scanFn: () => { throw new Error('scan must never run when apply refuses'); },
+                });
+                assert.strictEqual(result.applied, false, 'apply must refuse when a linked plan is unresolved');
+                assert.strictEqual(result.refused, 'plan-resolution-incomplete',
+                    `refusal must be its own transaction-safety reason, not a readiness verdict; got ${JSON.stringify(result).slice(0, 200)}`);
+                assert.strictEqual(fs.readFileSync(specPath, 'utf8'), before, 'a refused apply must write nothing');
+            });
+
+            try {
+                const passed = rows.filter(r => r.ok).length;
+                console.log(`   R1–R7: ${passed}/${rows.length}`);
+                for (const r of rows.filter(x => !x.ok)) console.log(`      ✗ ${r.id} — ${r.detail}`);
+                const failed = rows.filter(r => !r.ok);
+                assert.strictEqual(failed.length, 0,
+                    `closure relation parity matrix failed ${failed.length} case(s): ${failed.map(f => f.id).join(', ')}`);
+                console.log('✅ T-closure-relation R1–R7 passed');
+            } finally {
+                for (const r of roots) {
+                    try { fs.rmSync(r, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+                }
+            }
+        }
+
         console.log('T44. Testing applyClose defaultScan/defaultBackfill call planning with the real signature ...');
         {
             // Regression: T41 injects scanFn, masking the real defaultScan. The live --apply
