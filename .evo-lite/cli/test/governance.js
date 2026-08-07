@@ -15550,7 +15550,10 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         // TIME, installed before it is loaded. A forbidden call is then counted even
         // if the code puts everything back afterwards — which is the property D4.1
         // actually froze.
-        const installCallCounters = ({ failZvecLoad = false } = {}) => {
+        const FS_WRITE_FNS = ['writeFileSync', 'appendFileSync', 'openSync', 'renameSync',
+            'unlinkSync', 'rmSync', 'rmdirSync', 'mkdirSync', 'copyFileSync', 'createWriteStream'];
+
+        const installCallCounters = ({ failZvecLoad = false, markerPath = null, indexDir = null } = {}) => {
             const Module = require('module');
             const originalLoad = Module._load;
             const calls = Object.create(null);
@@ -15561,6 +15564,10 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 'zvec-containment-state': ['readContainmentState', 'writeContainmentState',
                     'clearContainmentState', 'acquireRecoveryLease', 'acquireArchiveMarkerLock'],
             };
+            const norm = (p) => { try { return path.resolve(String(p)); } catch (_) { return String(p); } };
+            const markerAbs = markerPath ? norm(markerPath) : null;
+            const indexAbs = indexDir ? norm(indexDir) : null;
+
             Module._load = function (request, parent, ...rest) {
                 if (request === '@zvec/zvec') {
                     bump('zvec.require');
@@ -15571,6 +15578,57 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     }
                 }
                 const mod = originalLoad.call(this, request, parent, ...rest);
+
+                // Direct filesystem writes. Wrapping only the marker API would leave
+                // `fs.writeFileSync(markerPath, sameBytes)` uncounted — a real write
+                // that no API counter and no end-state check can see (§7.5 D4.1).
+                if (request === 'fs' && (markerAbs || indexAbs)) {
+                    return new Proxy(mod, {
+                        get(target, prop) {
+                            if (FS_WRITE_FNS.includes(prop) && typeof target[prop] === 'function') {
+                                return (...args) => {
+                                    // openSync only counts when opened for writing.
+                                    const writing = prop !== 'openSync'
+                                        || (args[1] === undefined ? false : /[wa+]/.test(String(args[1])));
+                                    if (writing) {
+                                        const p = norm(args[0]);
+                                        if (markerAbs && p === markerAbs) bump('fs.markerWrite');
+                                        if (indexAbs && (p === indexAbs || p.startsWith(indexAbs + path.sep))) bump('fs.indexWrite');
+                                    }
+                                    return target[prop](...args);
+                                };
+                            }
+                            return target[prop];
+                        },
+                    });
+                }
+
+                // Zvec index class. D4.1 lists constructor / open / read-query as
+                // three separate properties; counting only getMemoryIndex proves the
+                // upstream entry, not these three downstream behaviours.
+                if (/memory-index-zvec(\.js)?$/.test(request) && mod && typeof mod.ZvecMemoryIndex === 'function') {
+                    const Orig = mod.ZvecMemoryIndex;
+                    const Wrapped = new Proxy(Orig, {
+                        construct(target, args, newTarget) {
+                            bump('zvec.construct');
+                            const inst = Reflect.construct(target, args, newTarget);
+                            return new Proxy(inst, {
+                                get(t, k) {
+                                    if (typeof t[k] === 'function') {
+                                        if (k === 'initialize') return (...a) => { bump('zvec.open'); return t[k](...a); };
+                                        if (k === 'query' || k === 'querySync' || k === 'stats' || k === 'list') {
+                                            return (...a) => { bump('zvec.query'); return t[k](...a); };
+                                        }
+                                    }
+                                    const v = t[k];
+                                    return typeof v === 'function' ? v.bind(t) : v;
+                                },
+                            });
+                        },
+                    });
+                    return { ...mod, ZvecMemoryIndex: Wrapped };
+                }
+
                 for (const [name, fns] of Object.entries(WATCH)) {
                     if (request === `./${name}` || request.endsWith(`${name}.js`)) {
                         const wrapped = { ...mod };
@@ -15590,6 +15648,25 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 reset: () => { for (const k of Object.keys(calls)) delete calls[k]; },
                 restore: () => { Module._load = originalLoad; },
             };
+        };
+
+        // Test-side access to a module-private function, WITHOUT widening the
+        // product's export surface. §7.5 D1/D4.1 forbid adding a production testing
+        // API, and "this file may be modified" is not permission to export from it.
+        // The source is compiled a second time with a bridge appended; the shipped
+        // module.exports is untouched. Dependencies still resolve through
+        // Module._load, so the counters installed above wrap this copy too, and
+        // memory-index comes from the same cache entry — hence the same decision.
+        const loadServiceWithTestBridge = () => {
+            const Module = require('module');
+            const servicePath = path.join(CLI_DIR, 'memory.service.js');
+            const src = fs.readFileSync(servicePath, 'utf8');
+            const bridged = `${src}\nmodule.exports.__testBuildContainmentDiagnostics = buildContainmentDiagnostics;\n`;
+            const m = new Module(servicePath, null);
+            m.filename = servicePath;
+            m.paths = Module._nodeModulePaths(path.dirname(servicePath));
+            m._compile(bridged, servicePath);
+            return m.exports;
         };
 
         // One place that runs verify against a chosen db path + marker setup.
@@ -15793,11 +15870,23 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         // not govern and would stay green under every mutation of this section.
         {
             const anchor = createContainedZvecRoot('t12-side-effects');
+            const runtime6 = createTempRuntimeRoot('t12-side-effects');
+            // raw_memory must be non-empty for the REAL rebuild entry to get past its
+            // own precondition — rebuildLocalIndex() returns early when it is missing
+            // or empty, which would make control C2 pass for the wrong reason.
+            fs.mkdirSync(path.join(runtime6.runtimeRoot, 'raw_memory'), { recursive: true });
+            fs.writeFileSync(path.join(runtime6.runtimeRoot, 'raw_memory', 'mem_t12_fixture.md'),
+                '---\ntype: task\n---\n\nT12 rebuild-path fixture.\n', 'utf8');
             let database6 = null;
             let closeDb6 = null;
             // Installed BEFORE bootstrapRuntime so that memory.service.js destructures
-            // the counted bindings when it is (re)loaded.
-            const counters = installCallCounters();
+            // the counted bindings when it is (re)loaded. Both filesystem paths resolve
+            // against the RUNTIME root (getRawMemoryDir/getIndexMemoryDir do), not the
+            // db anchor.
+            const counters = installCallCounters({
+                markerPath: stateMod.markerPathFor(anchor.base),
+                indexDir: path.join(runtime6.runtimeRoot, 'index_memory'),
+            });
             try {
                 const markerPath = stateMod.markerPathFor(anchor.base);
                 const collectionDir = anchor.paths.collectionPath;
@@ -15814,8 +15903,7 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     collectionPath: collectionDir,
                     containment: { verdict: 'UNKNOWN', layer: 'path', reason: 'path:test-fixture' },
                 });
-                const runtime = createTempRuntimeRoot('t12-side-effects');
-                const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                const loaded = await bootstrapRuntime(runtime6.runtimeRoot, {
                     EVO_LITE_SKIP_GIT_STATUS: '1',
                     EVO_LITE_DB_PATH: path.join(anchor.base, 'memory.db'),
                     EVO_LITE_MEMORY_ENGINE: 'zvec',
@@ -15825,7 +15913,10 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 // make the open handle legal — the teardown shape is what matters.
                 database6 = loaded.db.getDb();
                 closeDb6 = loaded.db.closeDb;
-                const svc = loaded.service;
+                // NOT loaded.service: buildContainmentDiagnostics is module-private
+                // and must stay that way (§7.5 D1). This compiles a second copy with
+                // a test-only bridge appended, leaving the shipped exports untouched.
+                const svc = loadServiceWithTestBridge();
                 const idxMod = require(path.join(CLI_DIR, 'memory-index.js'));
                 idxMod.resetMemoryIndex();
                 idxMod.resolveActiveImpl();
@@ -15843,7 +15934,11 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 // Everything above was setup. Zero the counters so what follows
                 // measures the containment section ALONE.
                 counters.reset();
-                const diag = svc.buildContainmentDiagnostics();
+                assert.strictEqual(typeof svc.__testBuildContainmentDiagnostics, 'function',
+                    'the test bridge must expose the private function; the product export surface must NOT (§7.5 D1)');
+                assert.strictEqual(typeof loaded.service.buildContainmentDiagnostics, 'undefined',
+                    'buildContainmentDiagnostics must NOT be part of the shipped module.exports — adding a production testing API is forbidden by §7.5 D1/D4.1');
+                const diag = svc.__testBuildContainmentDiagnostics();
 
                 // --- D4.1 forbidden calls, counted at call level ------------
                 // Checked BEFORE the positive controls on purpose. A forbidden call
@@ -15857,15 +15952,31 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 // the broad ones first would make every such mutation report the
                 // broad assertion and leave its own property looking unguarded.
                 const forbidden = [
-                    ['memory-index.resolveRecoveryRebuildDecision', 'entering recovery / rebuild semantics', 'control C2'],
+                    // D4.1 #7 rebuild — the real rebuild path enters through this.
+                    ['memory-index.resolveRecoveryRebuildDecision', 'entering the rebuild path', 'control C2'],
+                    ['fs.indexWrite', 'writing the index directory (rebuild side effect)', 'control C2'],
+                    // D4.1 #8/#9 ownership
                     ['zvec-containment-state.acquireRecoveryLease', 'recovery lease acquisition', 'control C3'],
                     ['zvec-containment-state.acquireArchiveMarkerLock', 'archive publication lock write', 'control C4'],
+                    // D4.1 #5/#6 marker write & clear. fs.markerWrite catches a direct
+                    // write that bypasses the marker API entirely — including one that
+                    // writes back identical bytes, which no API counter and no
+                    // end-state check can see.
+                    ['fs.markerWrite', 'direct filesystem write to the marker', 'control C1b'],
                     ['memory-index.clearContainmentState', 'marker clear', 'control C1'],
                     ['zvec-containment-state.clearContainmentState', 'marker clear', 'control C1'],
                     ['zvec-containment-state.writeContainmentState', 'marker write', 'control C1'],
                     ['memory-index.resolveEngineDecision', 'marker write via the decision path', 'control C1'],
                     ['memory-index.resolveActiveImpl', 'marker write via the shared ambient path', 'control C1'],
-                    ['memory-index.getMemoryIndex', 'index construction / collection open / read', 'control B'],
+                    // D4.1 #2/#3/#4 — three separate downstream behaviours, counted
+                    // separately from the upstream entry that usually reaches them.
+                    // Ordered query → open → construct: a query implies an open which
+                    // implies a construct, so the narrowest observation must be
+                    // checked first or every one of them would report "construct".
+                    ['zvec.query', 'collection read / query', 'control B4'],
+                    ['zvec.open', 'collection open', 'control B3'],
+                    ['zvec.construct', 'Zvec index construction', 'control B2'],
+                    ['memory-index.getMemoryIndex', 'index acquisition (upstream entry)', 'control B'],
                     ['zvec.require', 'Zvec native require', 'control A'],
                 ];
                 for (const [key, what, control] of forbidden) {

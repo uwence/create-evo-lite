@@ -3328,12 +3328,6 @@ module.exports = {
     archive,
     buildArchiveFilename,
     buildArchiveId,
-    // [zvec-win-unicode-containment] §7.5 D4.1 — exported so the zero-side-effect
-    // counts can be measured on the containment section ALONE. Measuring them
-    // across the whole of verify() proves nothing: the entity-store section
-    // legitimately opens the active index, so any count taken there is dominated
-    // by behaviour this contract does not govern.
-    buildContainmentDiagnostics,
     buildTakeoverRecall,
     commitWithContext,
     detectKindHeuristic,
