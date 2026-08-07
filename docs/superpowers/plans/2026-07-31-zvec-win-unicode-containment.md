@@ -18,10 +18,12 @@ status: done
 > Task 7（AC6）          ACCEPTED / MERGED（PR #17 → merge commit 985b638，审查 head ac3445c）
 > Task 8（AC7）          ACCEPTED / MERGED（PR #18 → merge commit c2eb784，审查 head 42c054e）
 > FOCUS 锚点 resync      MERGED（PR #19 → merge commit 04fd869）
-> Task 9（收口）          CLOSEOUT PROCEDURE AUTHORIZED / EXECUTION NOT YET AUTHORIZED
->                       分 9A–9D 逐段授权；当前仅 9A（docs-only）
+> Task 9A（收口程序冻结）  MERGED（PR #20 → merge commit a56ae21）
+> Task 9B（上游上报）      MERGED（PR #21 → merge commit 59efcf7）—— alibaba/zvec#665
+> Task 9C（依赖登记）      MERGED（PR #22 → merge commit 6e855eb）
+> Task 9D（生命周期关闭）  由 PR #23 承载；base main@6e855eb
 > context closure       NOT AUTHORIZED
-> baseline              main@04fd869
+> baseline              main@6e855eb
 > ```
 >
 > 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`，Task 7 已合入 `main@985b638`；
@@ -1228,6 +1230,31 @@ release-preflight BEFORE BLOCKED
 8  release-preflight → CLEAR
 9  npm test / test:governance / sync-runtime --check
 10 Draft PR + CI + 全量 closeout 复审
+```
+
+**9D 收口结果（机器判定，PR #23 / head 承载）**
+
+```text
+before   state=active    releaseBlocking=true   blockers=1   errors=0   VERDICT=BLOCKED
+after    state=shipped   releaseBlocking=true   blockers=0   errors=0   VERDICT=CLEAR
+         counts 15/15 守恒；linkedPlans=[plan:zvec-win-unicode-containment]，notDonePlans=[]
+
+npm test                  EXIT 0
+npm run test:governance   EXIT 0
+sync-runtime --check      EXIT 0
+npm publish --dry-run     EXIT 0   —— 本地新鲜证据，非 workflow 的独立 job
+```
+
+> `npm publish --dry-run` 这一条是**本地**执行的证据。当前 `release-gate.yml` 的
+> containment job 用的是合成 fixture 证明 BLOCKED / CLEAR 两个方向，**不**对本仓真实
+> 发布路径跑 dry-run，所以不得表述为「CI 证明了 publish dry-run」。
+
+**授权顺序记录（不追认，也不倒写历史）**
+
+```text
+9D candidate 首次产出时，durable 记录（base main@6e855eb 的 runtime FOCUS 与
+spec/plan 顶部摘要）仍写着 Task 9D FROZEN；`main` 未发生任何改动。
+复审随后授权对保留下来的 Draft candidate 进行 review / rework。
 ```
 
 #### 9.3 已知债：不在 Task 9 范围，逐条留档不修

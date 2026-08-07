@@ -16,18 +16,22 @@ relationMode: independent
 > Task 7（AC6）          ACCEPTED / MERGED（PR #17 → merge commit 985b638）
 > Task 8（AC7）          ACCEPTED / MERGED（PR #18 → merge commit c2eb784）
 > FOCUS 锚点 resync      MERGED（PR #19 → merge commit 04fd869）
-> Task 9（收口）          CLOSEOUT PROCEDURE AUTHORIZED / EXECUTION NOT YET AUTHORIZED
+> Task 9A（收口程序冻结）  MERGED（PR #20 → merge commit a56ae21）
+> Task 9B（上游上报）      MERGED（PR #21 → merge commit 59efcf7）
+> Task 9C（依赖登记）      MERGED（PR #22 → merge commit 6e855eb）
+> Task 9D（生命周期关闭）  由 PR #23 承载；base main@6e855eb
 > context closure       NOT AUTHORIZED
-> baseline              main@04fd869
 > ```
 >
 > 上表是**人工阶段摘要**。Tasks 1–8（AC1–AC7）全部交付、经外部复审 ACCEPTED 并已合入；
-> `main` 基线依次推进 `bc3ee2f → 985b638 → c2eb784 → 04fd869`。
+> `main` 基线依次推进 `bc3ee2f → 985b638 → c2eb784 → 04fd869 → a56ae21 → 59efcf7 → 6e855eb`。
 > 最终审查 head：Task 7 = `ac3445c`，Task 8 = `42c054e`。
+> 上游已报 `alibaba/zvec#665`。
 >
-> **AC7 的发布门现在是生效的**：本仓 `npm publish` 会被本 spec 自己阻断，因为它
-> `active` 且 `releaseBlocking: true`（§8.2.2）。这是 enforcement 正常工作，不是故障；
-> 解除它是 Task 9 的生命周期收口，而不是把 gate 关掉。
+> **AC7 证明的是 lifecycle enforcement，不是 gate removal。** `releaseBlocking: true`
+> 全程保留、从未删除也未改 `false`；Task 9D 只把 lifecycle 由 `active` 推进到 `shipped`，
+> release-preflight 随之由 `BLOCKED` 转为 `CLEAR`（§8.2.2 的 `done/shipped → ALLOW` 行）。
+> 门仍在，只是这个 spec 不再欠它。
 >
 > 本次仅同步授权与阶段状态，**§8.2 / §8.3 等冻结合同语义未改动**。这不代表 Task 6 的
 > 逐 Step 回填、mutation 历史导入或 spec 终态推进 —— 那些仍属未处理项。
@@ -1965,7 +1969,9 @@ Tasks 1–5（AC1–AC4）  实施授权已给出；已交付、已复审 ACCEPT
 Task 6（AC5）          已交付、已复审 ACCEPTED、已合入（PR #16 → main@bc3ee2f）
 Task 7（AC6）          已交付、已复审 ACCEPTED、已合入（PR #17 → main@985b638）
 Task 8（AC7）          已交付、已复审 ACCEPTED、已合入（PR #18 → main@c2eb784）
-Task 9（收口）          收口程序已冻结并授权；执行分 9A–9D 逐段授权，当前仅 9A
+Task 9（收口）          收口程序已冻结；执行分 9A–9D 逐段授权
+                      9A → PR #20 / a56ae21，9B → PR #21 / 59efcf7，9C → PR #22 / 6e855eb
+                      9D（生命周期关闭）由 PR #23 承载，base main@6e855eb
 context closure       未授权
 ```
 
