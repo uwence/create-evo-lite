@@ -16081,6 +16081,446 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
     }
 
     // ---------------------------------------------------------------------
+    // [zvec-win-unicode-containment] Task 8 / AC7 — release enforcement point.
+    //
+    // T10 covers the frozen blocker-derivation semantics (spec §8.2.2 /
+    // §8.2.2.0 / §8.2.2.1). T11 covers the registry-health fail-open regression
+    // line (§8.2.3.1). Two supplemental cases cover the CI evidence contract
+    // (§8.3).
+    //
+    // Scored as a matrix instead of aborting on the first failure: the frozen
+    // acceptance criterion is literally "T10 10/10, T11 4/4, supplemental 2/2",
+    // and a run that stops at case 1 cannot report that. Every case still
+    // carries its own message; the closing assert names each case that failed.
+    //
+    // The enforcement point is exercised as a PROCESS, never as a return value.
+    // "buildSpecRegistry returned an object with an empty blockers array" is not
+    // the property under test — "npm publish was actually stopped" is. Two cases
+    // therefore drive a real `npm publish --dry-run`; the rest spawn the real
+    // release-preflight binary and read its exit code. Neither is a unit test of
+    // a pure function, which is what §8.2.3.1 warns against.
+    // ---------------------------------------------------------------------
+    {
+        const T8_PREFLIGHT_LIVE = path.join(CLI_DIR, 'release-preflight.js');
+        const T8_PREFLIGHT_TPL = path.join(TEMPLATE_CLI_DIR, 'release-preflight.js');
+
+        const scored = { T10: [], T11: [], supplemental: [] };
+        const score = (bucket, id, fn) => {
+            try {
+                fn();
+                scored[bucket].push({ id, ok: true, detail: null });
+            } catch (e) {
+                scored[bucket].push({ id, ok: false, detail: e && e.message ? e.message : String(e) });
+            }
+        };
+
+        const specDoc = (frontmatterLines) => [
+            '---', ...frontmatterLines, '---', '', '# Fixture Spec', '',
+        ].join('\n');
+
+        // A fixture project root: docs/specs + a planning IR + an active_context.
+        // Deliberately NOT createTempRuntimeRoot(): these cases need a bare
+        // project shape, and the release contract must not depend on a fully
+        // scaffolded runtime being present.
+        const makeProject = (name, opts = {}) => {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), `evo-lite-t8-${name}-`));
+            if (opts.specsDirIsFile) {
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                fs.writeFileSync(path.join(root, 'docs', 'specs'), 'not a directory', 'utf8');
+            } else {
+                fs.mkdirSync(path.join(root, 'docs', 'specs'), { recursive: true });
+                for (const [file, body] of Object.entries(opts.specs || {})) {
+                    writeText(path.join(root, 'docs', 'specs', file), body);
+                }
+            }
+            writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [],
+                plans: opts.plans || [],
+                tasks: [],
+                warnings: [],
+            }, null, 2));
+            writeText(path.join(root, '.evo-lite', 'active_context.md'),
+                opts.focus || '## FOCUS\n\nnothing notable.\n');
+            if (opts.staleRegistry) {
+                writeText(path.join(root, '.evo-lite', 'generated', 'spec-registry.json'),
+                    JSON.stringify(opts.staleRegistry, null, 2));
+            }
+            if (opts.publishable) {
+                writeText(path.join(root, 'index.js'), 'module.exports = {};\n');
+                writeText(path.join(root, 'package.json'), JSON.stringify({
+                    name: `t8-fixture-${name}`,
+                    version: '1.0.0',
+                    main: 'index.js',
+                    scripts: {
+                        prepublishOnly: `node ${JSON.stringify(T8_PREFLIGHT_LIVE.split(path.sep).join('/'))}`,
+                    },
+                }, null, 2));
+            }
+            return root;
+        };
+
+        // The enforcement point as a process. Exit code is the verdict; a
+        // release-preflight that merely "did not throw" is explicitly NOT a pass
+        // (§8.2.3.1).
+        const runPreflight = (cwd) => {
+            const r = childProcess.spawnSync(process.execPath, [T8_PREFLIGHT_LIVE], {
+                cwd, encoding: 'utf8', timeout: 120000,
+            });
+            return { status: r.status, out: `${r.stdout || ''}${r.stderr || ''}` };
+        };
+
+        const runPublishDryRun = (cwd) => {
+            const r = childProcess.spawnSync('npm', ['publish', '--dry-run'], {
+                cwd, encoding: 'utf8', shell: true, timeout: 300000,
+                env: { ...process.env, npm_config_registry: 'https://registry.npmjs.org/' },
+            });
+            return { status: r.status, out: `${r.stdout || ''}${r.stderr || ''}` };
+        };
+
+        // A non-zero exit is NOT by itself evidence that the gate worked. Before
+        // release-preflight.js existed, every "must block" case passed simply
+        // because MODULE_NOT_FOUND also exits non-zero — the tests were green for
+        // a reason that had nothing to do with the property under test.
+        //
+        // So the verdict must be spoken, not inferred: preflight emits a machine
+        // line, and a case only counts when preflight actually ran AND voted the
+        // expected way AND the exit code agrees with its own vote. A crashed or
+        // missing binary produces no verdict and therefore fails every case.
+        const VERDICT_RE = /\[release-preflight\]\s+VERDICT=(BLOCKED|CLEAR)\b/;
+        const verdictOf = (res) => {
+            const m = VERDICT_RE.exec(res.out);
+            return m ? m[1] : null;
+        };
+        const expectBlocked = (res, msg) => {
+            assert.strictEqual(verdictOf(res), 'BLOCKED',
+                `${msg} — release-preflight must run and vote BLOCKED; a non-zero exit from a missing or crashed binary is not a verdict. exit=${res.status}\n${res.out.slice(-500)}`);
+            assert.notStrictEqual(res.status, 0, `${msg} — a BLOCKED verdict must exit non-zero, got ${res.status}`);
+        };
+        const expectClear = (res, msg) => {
+            assert.strictEqual(verdictOf(res), 'CLEAR',
+                `${msg} — release-preflight must run and vote CLEAR. exit=${res.status}\n${res.out.slice(-500)}`);
+            assert.strictEqual(res.status, 0, `${msg} — a CLEAR verdict must exit 0, got ${res.status}`);
+        };
+
+        const BLOCKER_TRUE = 'releaseBlocking: true';
+        const WAIVER = [
+            'releaseBlockDisposition: waived',
+            'releaseBlockReason: Risk accepted for a documented one-time release',
+            'releaseBlockReviewedAt: 2026-07-31',
+        ];
+        const ACTIVE_PLAN = [{ id: 'plan:x', status: 'active', linkedSpec: 'spec:x', sourcePath: 'docs/plans/x.md' }];
+
+        console.log('T10. Testing release-blocking preflight derivation — ten frozen cases ...');
+
+        // T10-1 — adopted/active blocker stops a REAL publish.
+        // Both states are covered: `active` goes through npm so the lifecycle
+        // wiring itself is proven, `adopted` through the binary directly.
+        score('T10', 'T10-1', () => {
+            const activeRoot = makeProject('t10-1-active', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: draft', BLOCKER_TRUE]) },
+                plans: ACTIVE_PLAN,
+                publishable: true,
+            });
+            expectBlocked(runPublishDryRun(activeRoot),
+                'an active spec with releaseBlocking:true must stop a real npm publish (§8.2.2)');
+
+            const adoptedRoot = makeProject('t10-1-adopted', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: draft', BLOCKER_TRUE]) },
+            });
+            expectBlocked(runPreflight(adoptedRoot),
+                'an adopted spec with releaseBlocking:true must fail preflight (§8.2.2)');
+        });
+
+        // T10-2 — parked blocker WITHOUT a waiver still blocks. Park means
+        // "deferred", not "the risk evaporated".
+        score('T10', 'T10-2', () => {
+            const root = makeProject('t10-2', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: parked', BLOCKER_TRUE]) },
+            });
+            expectBlocked(runPreflight(root),
+                'parked + releaseBlocking:true with no waiver must still BLOCK (§8.2.2)');
+        });
+
+        // T10-3 — parked + all three waiver fields valid releases the gate, and
+        // does so through a REAL publish so the pass direction is proven too.
+        score('T10', 'T10-3', () => {
+            const root = makeProject('t10-3', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: parked', BLOCKER_TRUE, ...WAIVER]) },
+                publishable: true,
+            });
+            expectClear(runPublishDryRun(root),
+                'parked + a complete valid waiver must allow a real npm publish (§8.2.2.1)');
+        });
+
+        // T10-4 — done/shipped never blocks.
+        score('T10', 'T10-4', () => {
+            const root = makeProject('t10-4', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: done', BLOCKER_TRUE]) },
+            });
+            expectClear(runPreflight(root),
+                'a done spec must not block regardless of releaseBlocking (§8.2.2)');
+        });
+
+        // T10-5 — absent or explicitly false is simply not a blocker. This is
+        // the ONLY lenient direction the contract allows.
+        score('T10', 'T10-5', () => {
+            const absent = makeProject('t10-5-absent', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: draft']) },
+                plans: ACTIVE_PLAN,
+            });
+            expectClear(runPreflight(absent), 'a missing releaseBlocking field must not block');
+
+            const explicitFalse = makeProject('t10-5-false', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: draft', 'releaseBlocking: false']) },
+                plans: ACTIVE_PLAN,
+            });
+            expectClear(runPreflight(explicitFalse), 'releaseBlocking: false must not block');
+        });
+
+        // T10-6 — every non-canonical scalar is a schema error, never a silent
+        // false. parseFrontmatter is not a YAML parser: it keeps the raw string,
+        // quotes included, so `"true"` arrives as `"\"true\""` and must NOT be
+        // leniently unquoted (§8.2.2.0). A typo must not disarm the gate.
+        score('T10', 'T10-6', () => {
+            for (const raw of ['ture', 'yes', '1', 'True', 'TRUE', '"true"', "'true'"]) {
+                const root = makeProject(`t10-6-${raw.replace(/\W/g, '_')}`, {
+                    specs: { 'x.md': specDoc(['id: spec:x', 'status: draft', `releaseBlocking: ${raw}`]) },
+                    plans: ACTIVE_PLAN,
+                });
+                expectBlocked(runPreflight(root),
+                    `releaseBlocking: ${raw} is not a canonical scalar and must be a schema error, not a silent false (§8.2.2.0)`);
+            }
+        });
+
+        // T10-7 — a waiver that is illegal or incomplete leaves the BLOCK in
+        // place. Each row removes or corrupts exactly one field so no row can
+        // pass for a neighbouring reason.
+        score('T10', 'T10-7', () => {
+            const rows = [
+                ['missing disposition', WAIVER.slice(1)],
+                ['missing reason', [WAIVER[0], WAIVER[2]]],
+                ['missing reviewedAt', WAIVER.slice(0, 2)],
+                ['empty reason', [WAIVER[0], 'releaseBlockReason:   ', WAIVER[2]]],
+                ['non-canonical disposition', ['releaseBlockDisposition: Waived', WAIVER[1], WAIVER[2]]],
+                ['quoted disposition', ['releaseBlockDisposition: "waived"', WAIVER[1], WAIVER[2]]],
+                ['free-text disposition', ['releaseBlockDisposition: accepted-by-me', WAIVER[1], WAIVER[2]]],
+                ['malformed date', [WAIVER[0], WAIVER[1], 'releaseBlockReviewedAt: 31-07-2026']],
+                // Passes the regex but is not a real calendar date — the
+                // round-trip check is the only thing that catches this.
+                ['non-existent date', [WAIVER[0], WAIVER[1], 'releaseBlockReviewedAt: 2026-02-31']],
+                ['quoted date', [WAIVER[0], WAIVER[1], 'releaseBlockReviewedAt: "2026-07-31"']],
+            ];
+            for (const [label, waiver] of rows) {
+                const root = makeProject(`t10-7-${label.replace(/\W/g, '_')}`, {
+                    specs: { 'x.md': specDoc(['id: spec:x', 'status: parked', BLOCKER_TRUE, ...waiver]) },
+                });
+                expectBlocked(runPreflight(root),
+                    `waiver rejected for "${label}" must keep the BLOCK in place (§8.2.2.1)`);
+            }
+        });
+
+        // T10-8 — a waiver cannot rescue an in-flight issue. Ship it or park it
+        // deliberately; do not wave it through while it is still being worked.
+        score('T10', 'T10-8', () => {
+            const adopted = makeProject('t10-8-adopted', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: draft', BLOCKER_TRUE, ...WAIVER]) },
+            });
+            expectBlocked(runPreflight(adopted),
+                'a complete waiver must NOT release an adopted blocker (§8.2.2.1)');
+
+            const active = makeProject('t10-8-active', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: draft', BLOCKER_TRUE, ...WAIVER]) },
+                plans: ACTIVE_PLAN,
+            });
+            expectBlocked(runPreflight(active),
+                'a complete waiver must NOT release an active blocker (§8.2.2.1)');
+        });
+
+        // T10-9 — prose is not a gate. The words must be present and loud, so a
+        // regression that starts scanning free text is caught rather than
+        // silently accepted.
+        score('T10', 'T10-9', () => {
+            const root = makeProject('t10-9', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: draft']) },
+                plans: ACTIVE_PLAN,
+                focus: [
+                    '## FOCUS', '',
+                    '[zvec-win-unicode-containment] is a release-blocker and a P0.',
+                    'This backlog item is BLOCKED and critical; release-blocking work continues.',
+                    '',
+                ].join('\n'),
+            });
+            expectClear(runPreflight(root),
+                'natural-language "release-blocker" in FOCUS must produce no machine blocker (§8.2)');
+        });
+
+        // T10-10 — the generated registry is never the publish-time truth. A
+        // stale file that claims everything is clean must lose to what is
+        // actually on disk right now.
+        score('T10', 'T10-10', () => {
+            const root = makeProject('t10-10', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: draft', BLOCKER_TRUE]) },
+                plans: ACTIVE_PLAN,
+                staleRegistry: {
+                    version: 'evo-spec-registry@2',
+                    generatedAt: '2020-01-01T00:00:00.000Z',
+                    agingDays: 14,
+                    specs: [],
+                    blockers: [],
+                    errors: [],
+                    source: { directoryReadable: true, discoveredFileCount: 0, parsedSpecCount: 0 },
+                },
+            });
+            expectBlocked(runPreflight(root),
+                'a stale spec-registry.json claiming no blockers must lose to the on-disk state (§8.2.3)');
+        });
+
+        console.log('T11. Testing registry health — the fail-open regression line ...');
+
+        // T11-1 — the load-bearing one. A release-blocking spec whose
+        // frontmatter loses its id currently returns null from parseSpecFile and
+        // is skipped by `continue`, so it vanishes from the registry and the
+        // publish is released. The direction of the corruption is exactly the
+        // direction of disarming the gate.
+        score('T11', 'T11-1', () => {
+            const broken = [
+                '---',
+                'id spec:x',
+                'status: draft',
+                BLOCKER_TRUE,
+                '---',
+                '',
+                '# Broken frontmatter, still a release-blocking spec',
+                '',
+            ].join('\n');
+            const root = makeProject('t11-1', { specs: { 'broken.md': broken } });
+            const specPortfolio = require(path.join(CLI_DIR, 'spec-portfolio'));
+            const registry = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.ok(Array.isArray(registry.errors),
+                'registry must carry an errors array (§8.2.3.1); degradation cannot be signalled by not throwing');
+            const named = registry.errors.filter(e => String(e && e.path || e).includes('broken.md'));
+            assert.ok(named.length > 0,
+                `a spec that failed to parse must appear in registry.errors WITH its path, not vanish (§8.2.3.1); errors=${JSON.stringify(registry.errors)}`);
+            expectBlocked(runPreflight(root),
+                'an unparseable release-blocking spec must fail preflight');
+        });
+
+        // T11-2 — "no specs" and "could not read the specs" must not be the same
+        // observation. docs/specs is created as a FILE so readdirSync raises
+        // ENOTDIR on every platform, which is the portable way to reach the
+        // catch branch that currently returns [].
+        score('T11', 'T11-2', () => {
+            const root = makeProject('t11-2', { specsDirIsFile: true });
+            const specPortfolio = require(path.join(CLI_DIR, 'spec-portfolio'));
+            const registry = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.ok(registry.source && registry.source.directoryReadable === false,
+                'an unreadable docs/specs must be reported as directoryReadable:false (§8.2.3.1)');
+            assert.ok(Array.isArray(registry.errors) && registry.errors.length > 0,
+                'an unreadable docs/specs must produce at least one error, not an empty spec set');
+            expectBlocked(runPreflight(root),
+                'an unreadable docs/specs must fail preflight');
+        });
+
+        // T11-3 — count conservation is the backstop. Even a future degradation
+        // path that forgets to push an error still shows up as a file that was
+        // discovered and never parsed.
+        score('T11', 'T11-3', () => {
+            const root = makeProject('t11-3', {
+                specs: {
+                    'good.md': specDoc(['id: spec:x', 'status: done']),
+                    // Discovered as a *.md under docs/specs, but carries no
+                    // spec id, so it can never become a registry entry.
+                    'not-a-spec.md': '# Just a note someone dropped in docs/specs\n',
+                },
+            });
+            const specPortfolio = require(path.join(CLI_DIR, 'spec-portfolio'));
+            const registry = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.ok(registry.source, 'registry.source must exist (§8.2.3.1)');
+            assert.strictEqual(registry.source.discoveredFileCount, 2, 'both *.md files are discovered');
+            assert.strictEqual(registry.source.parsedSpecCount, 1, 'only one of them parses into a spec');
+            expectBlocked(runPreflight(root),
+                'discoveredFileCount !== parsedSpecCount must fail preflight');
+        });
+
+        // T11-4 — the pass condition is a conjunction, and each conjunct must be
+        // load-bearing on its own. A clean project passes; breaking exactly one
+        // conjunct at a time must flip it to fail.
+        score('T11', 'T11-4', () => {
+            const clean = makeProject('t11-4-clean', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: done', BLOCKER_TRUE]) },
+            });
+            const specPortfolio = require(path.join(CLI_DIR, 'spec-portfolio'));
+            const registry = specPortfolio.buildSpecRegistry(clean, { write: false });
+            assert.strictEqual(registry.errors.length, 0, 'clean fixture has no errors');
+            assert.strictEqual(registry.blockers.length, 0, 'clean fixture has no blockers');
+            assert.strictEqual(registry.source.discoveredFileCount, registry.source.parsedSpecCount,
+                'clean fixture conserves counts');
+            expectClear(runPreflight(clean), 'all three conjuncts satisfied -> pass');
+
+            const blockerOnly = makeProject('t11-4-blocker', {
+                specs: { 'x.md': specDoc(['id: spec:x', 'status: draft', BLOCKER_TRUE]) },
+            });
+            expectBlocked(runPreflight(blockerOnly), 'blockers non-empty alone -> fail');
+
+            const errorOnly = makeProject('t11-4-error', {
+                specs: {
+                    'x.md': specDoc(['id: spec:x', 'status: done']),
+                    'orphan.md': '# no id here\n',
+                },
+            });
+            expectBlocked(runPreflight(errorOnly), 'errors non-empty alone -> fail');
+        });
+
+        console.log('T10/T11-ci. Testing the CI evidence contract ...');
+
+        // Supplemental 1 — release-gate.yml must carry a containment evidence
+        // job. Without it a containment regression lands green (§8.3).
+        score('supplemental', 'ci-1', () => {
+            const wf = fs.readFileSync(path.join(WORKSPACE_ROOT, '.github', 'workflows', 'release-gate.yml'), 'utf8');
+            assert.ok(/containment/i.test(wf),
+                'release-gate.yml must carry a containment contract evidence job (§8.3)');
+            assert.ok(/release-preflight|prepublish/i.test(wf),
+                'the evidence job must exercise the release enforcement point, not merely mention containment');
+        });
+
+        // Supplemental 2 — and it must NOT arm the crash probe. The fixture
+        // kills the process by design; a gate that runs it on every PR stops
+        // being a gate and starts being an outage.
+        score('supplemental', 'ci-2', () => {
+            const wf = fs.readFileSync(path.join(WORKSPACE_ROOT, '.github', 'workflows', 'release-gate.yml'), 'utf8');
+            assert.ok(!/ZVEC_UNICODE_PROBE\s*[:=]\s*['"]?1/.test(wf),
+                'the crash probe must stay opt-in; release-gate.yml must not set ZVEC_UNICODE_PROBE=1 (§8.3)');
+            const manifest = fs.readFileSync(path.join(CLI_DIR, 'template-manifest.js'), 'utf8');
+            assert.ok(!/zvec-win-unicode.*fixture|fixtures\/zvec-win-unicode/.test(manifest),
+                'the crash fixture must not be registered in template-manifest.js (§8.3)');
+        });
+
+        // --- scoreboard ---------------------------------------------------
+        const mirrorsExist = fs.existsSync(T8_PREFLIGHT_LIVE) && fs.existsSync(T8_PREFLIGHT_TPL);
+        const lines = [];
+        for (const bucket of ['T10', 'T11', 'supplemental']) {
+            const rows = scored[bucket];
+            const passed = rows.filter(r => r.ok).length;
+            lines.push(`   ${bucket}: ${passed}/${rows.length}`);
+            for (const r of rows.filter(x => !x.ok)) lines.push(`      ✗ ${r.id} — ${r.detail}`);
+        }
+        console.log(lines.join('\n'));
+
+        assert.ok(mirrorsExist,
+            'release-preflight.js must exist in BOTH .evo-lite/cli and templates/cli (§8.2.4)');
+        assert.strictEqual(
+            fs.readFileSync(T8_PREFLIGHT_LIVE, 'utf8'),
+            fs.readFileSync(T8_PREFLIGHT_TPL, 'utf8'),
+            'release-preflight.js live and template mirrors must be byte-identical');
+
+        const failed = [...scored.T10, ...scored.T11, ...scored.supplemental].filter(r => !r.ok);
+        assert.strictEqual(failed.length, 0,
+            `Task 8 / AC7 acceptance matrix failed ${failed.length} case(s): ${failed.map(f => f.id).join(', ')}`);
+        console.log('✅ T10 10/10 + T11 4/4 + supplemental 2/2 passed');
+    }
+
+    // ---------------------------------------------------------------------
     // [zvec-win-unicode-containment] Task 5 — native entry containment.
     // Task 4 routed the SELECTOR through the containment decision. Two
     // production entries still reached the binding around it: memory-ab opened
