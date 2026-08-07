@@ -15526,6 +15526,561 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
     }
 
     // ---------------------------------------------------------------------
+    // [zvec-win-unicode-containment] Task 7 / AC6 — T12 verify diagnostics.
+    //
+    // Eight cases from spec §7.5. The states are driven through EVO_LITE_DB_PATH
+    // (which moves both the collection path AND the ambient marker dir, since the
+    // marker lives beside the db) plus a marker written directly with the state
+    // module. Nothing here injects a path into the decision: production verify
+    // resolves ambient paths, and a diagnostic proven only against an injected
+    // path would prove nothing about production (§7.4 M3.1).
+    // ---------------------------------------------------------------------
+    console.log('T12. Testing verify containment diagnostics — five states, wording, zero side effects ...');
+    {
+        const stateMod = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
+        // [zvec-win-unicode-containment] §7.5 D4.1 — CALL-LEVEL side-effect counters.
+        //
+        // End-state inference cannot establish "count = 0". create→release leaves no
+        // lease file; overwriting a marker with identical bytes leaves the same hash
+        // and possibly the same mtime; a rebuild that restores the same shape leaves
+        // the same directory fingerprint. Each of those passes a filesystem check
+        // while having performed the forbidden action.
+        //
+        // So the counters wrap the bindings memory.service.js destructures AT REQUIRE
+        // TIME, installed before it is loaded. A forbidden call is then counted even
+        // if the code puts everything back afterwards — which is the property D4.1
+        // actually froze.
+        const FS_WRITE_FNS = ['writeFileSync', 'appendFileSync', 'openSync', 'renameSync',
+            'unlinkSync', 'rmSync', 'rmdirSync', 'mkdirSync', 'copyFileSync', 'createWriteStream'];
+
+        const installCallCounters = ({ failZvecLoad = false, markerPath = null, indexDir = null } = {}) => {
+            const Module = require('module');
+            const originalLoad = Module._load;
+            const calls = Object.create(null);
+            const bump = (k) => { calls[k] = (calls[k] || 0) + 1; };
+            const WATCH = {
+                'memory-index': ['getMemoryIndex', 'resolveActiveImpl', 'resolveEngineDecision',
+                    'resolveRecoveryRebuildDecision', 'clearContainmentState', 'peekEngineDecision'],
+                'zvec-containment-state': ['readContainmentState', 'writeContainmentState',
+                    'clearContainmentState', 'acquireRecoveryLease', 'acquireArchiveMarkerLock'],
+            };
+            const norm = (p) => { try { return path.resolve(String(p)); } catch (_) { return String(p); } };
+            const markerAbs = markerPath ? norm(markerPath) : null;
+            const indexAbs = indexDir ? norm(indexDir) : null;
+
+            Module._load = function (request, parent, ...rest) {
+                if (request === '@zvec/zvec') {
+                    bump('zvec.require');
+                    if (failZvecLoad) {
+                        const err = new Error("Cannot find module '@zvec/zvec'");
+                        err.code = 'MODULE_NOT_FOUND';
+                        throw err;
+                    }
+                }
+                const mod = originalLoad.call(this, request, parent, ...rest);
+
+                // Direct filesystem writes. Wrapping only the marker API would leave
+                // `fs.writeFileSync(markerPath, sameBytes)` uncounted — a real write
+                // that no API counter and no end-state check can see (§7.5 D4.1).
+                if (request === 'fs' && (markerAbs || indexAbs)) {
+                    return new Proxy(mod, {
+                        get(target, prop) {
+                            if (FS_WRITE_FNS.includes(prop) && typeof target[prop] === 'function') {
+                                return (...args) => {
+                                    // openSync only counts when opened for writing.
+                                    const writing = prop !== 'openSync'
+                                        || (args[1] === undefined ? false : /[wa+]/.test(String(args[1])));
+                                    if (writing) {
+                                        const p = norm(args[0]);
+                                        if (markerAbs && p === markerAbs) bump('fs.markerWrite');
+                                        if (indexAbs && (p === indexAbs || p.startsWith(indexAbs + path.sep))) bump('fs.indexWrite');
+                                    }
+                                    return target[prop](...args);
+                                };
+                            }
+                            return target[prop];
+                        },
+                    });
+                }
+
+                // Zvec index class. D4.1 lists constructor / open / read-query as
+                // three separate properties; counting only getMemoryIndex proves the
+                // upstream entry, not these three downstream behaviours.
+                if (/memory-index-zvec(\.js)?$/.test(request) && mod && typeof mod.ZvecMemoryIndex === 'function') {
+                    const Orig = mod.ZvecMemoryIndex;
+                    const Wrapped = new Proxy(Orig, {
+                        construct(target, args, newTarget) {
+                            bump('zvec.construct');
+                            const inst = Reflect.construct(target, args, newTarget);
+                            return new Proxy(inst, {
+                                get(t, k) {
+                                    if (typeof t[k] === 'function') {
+                                        if (k === 'initialize') return (...a) => { bump('zvec.open'); return t[k](...a); };
+                                        if (k === 'query' || k === 'querySync' || k === 'stats' || k === 'list') {
+                                            return (...a) => { bump('zvec.query'); return t[k](...a); };
+                                        }
+                                    }
+                                    const v = t[k];
+                                    return typeof v === 'function' ? v.bind(t) : v;
+                                },
+                            });
+                        },
+                    });
+                    return { ...mod, ZvecMemoryIndex: Wrapped };
+                }
+
+                for (const [name, fns] of Object.entries(WATCH)) {
+                    if (request === `./${name}` || request.endsWith(`${name}.js`)) {
+                        const wrapped = { ...mod };
+                        for (const fn of fns) {
+                            if (typeof mod[fn] === 'function') {
+                                wrapped[fn] = (...args) => { bump(`${name}.${fn}`); return mod[fn](...args); };
+                            }
+                        }
+                        return wrapped;
+                    }
+                }
+                return mod;
+            };
+            return {
+                calls,
+                count: (k) => calls[k] || 0,
+                reset: () => { for (const k of Object.keys(calls)) delete calls[k]; },
+                restore: () => { Module._load = originalLoad; },
+            };
+        };
+
+        // Test-side access to a module-private function, WITHOUT widening the
+        // product's export surface. §7.5 D1/D4.1 forbid adding a production testing
+        // API, and "this file may be modified" is not permission to export from it.
+        // The source is compiled a second time with a bridge appended; the shipped
+        // module.exports is untouched. Dependencies still resolve through
+        // Module._load, so the counters installed above wrap this copy too, and
+        // memory-index comes from the same cache entry — hence the same decision.
+        const loadServiceWithTestBridge = () => {
+            const Module = require('module');
+            const servicePath = path.join(CLI_DIR, 'memory.service.js');
+            const src = fs.readFileSync(servicePath, 'utf8');
+            const bridged = `${src}\nmodule.exports.__testBuildContainmentDiagnostics = buildContainmentDiagnostics;\n`;
+            const m = new Module(servicePath, null);
+            m.filename = servicePath;
+            m.paths = Module._nodeModulePaths(path.dirname(servicePath));
+            m._compile(bridged, servicePath);
+            return m.exports;
+        };
+
+        // One place that runs verify against a chosen db path + marker setup.
+        const runVerify = async (label, { dbDir, marker, pinSqlite }) => {
+            const runtime = createTempRuntimeRoot(`t12-${label}`);
+            fs.mkdirSync(dbDir, { recursive: true });
+            const dbPath = path.join(dbDir, 'memory.db');
+            if (marker === 'valid') {
+                stateMod.writeContainmentState(dbDir, {
+                    collectionPath: path.join(dbDir, 'index_memory', 'zvec'),
+                    containment: { verdict: 'UNKNOWN', layer: 'path', reason: 'path:test-fixture' },
+                });
+            } else if (marker === 'invalid') {
+                // Well-formed JSON, invalid against the schema — this must NOT be
+                // reported as an ordinary `present`.
+                fs.writeFileSync(stateMod.markerPathFor(dbDir), JSON.stringify({ nonsense: true }), 'utf8');
+            }
+            // The engine choice is pinned EXPLICITLY rather than left to discovery.
+            // Earlier tests in this suite leave EVO_LITE_MEMORY_ENGINE set, and
+            // resolveEngine() reads that env first (memory-index.js:180) — an
+            // inherited 'sqlite-fts5-trigram' silently turns every case into the
+            // engine-choice branch and the state assertions stop testing anything.
+            const env = {
+                EVO_LITE_SKIP_GIT_STATUS: '1',
+                EVO_LITE_DB_PATH: dbPath,
+                EVO_LITE_MEMORY_ENGINE: pinSqlite ? 'sqlite-fts5-trigram' : 'zvec',
+            };
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, env);
+            // bootstrapRuntime() calls initDB(), which opens the module-level
+            // better-sqlite3 connection. Keep the real handle so teardown can be
+            // PROVEN rather than assumed.
+            const database = loaded.db.getDb();
+            let report;
+            let output;
+            try {
+                output = await captureConsole(async () => { report = await loaded.service.verify(); });
+                return { report, output, dbDir, runtime };
+            } finally {
+                // Teardown must also run on the throwing path: a case that fails an
+                // assertion must not hand the next one an open database.
+                //
+                // verify's ENTITY-STORE section (not the containment section) calls
+                // getMemoryIndex(), which on a SAFE anchor really does open the zvec
+                // collection and take its LOCK. resetMemoryIndex() releases that —
+                // a leaked LOCK under .zwuc-live outlives this test and surfaces as
+                // an unrelated lock refusal several tests later.
+                try { require(path.join(CLI_DIR, 'memory-index.js')).resetMemoryIndex(); } catch (_) {}
+                // resetMemoryIndex() does NOT close the SQLite connection initDB
+                // opened — that is a separate module-level handle living INSIDE the
+                // directory the caller deletes recursively straight afterwards.
+                // Leaving it open is an illegal teardown shape that production never
+                // performs: nothing in production removes a project's database
+                // directory while the same process still holds the database open.
+                loaded.db.closeDb();
+                // Not wrapped in try/catch: if the handle is somehow still open, that
+                // fact must surface here rather than at an unrelated rmSync later.
+                assert.strictEqual(database.open, false,
+                    `${label}: the bootstrapRuntime database must be closed BEFORE its runtime directory is deleted`);
+            }
+        };
+
+        const FORBIDDEN_WORDING = [
+            '从未被读取', '内容确认完整', '上游缺陷已经修复', '上游缺陷已修复',
+            '路径问题已经修复', '已自动恢复',
+            // §7.5 D6 (re-freeze): debt and engine are separate dimensions. Saying
+            // the engine "runs normally" inside a debt verdict re-merges them — and
+            // is simply false under a sqlite pin or an unavailable binding.
+            '当前引擎按正常判定运行',
+        ];
+        const assertWording = (output, caseName) => {
+            for (const banned of FORBIDDEN_WORDING) {
+                assert.ok(!output.includes(banned),
+                    `${caseName}: verify output must not contain the banned claim "${banned}" — §7.5 D6 forbids it because verify cannot证实 global history, only this process's behaviour`);
+            }
+            // ③ No state may ever RECOMMEND deleting the marker. Prohibitive
+            // phrasing ("do not delete it") is required in the damaged state, so
+            // the assertion targets recommending verbs, not the word 删除 itself.
+            for (const advice of ['建议删除', '请删除', '可以删除', '直接删除', '删除后重试']) {
+                assert.ok(!output.includes(advice),
+                    `${caseName}: guidance must never recommend deleting the marker ("${advice}") — deleting an unreadable marker disguises an unknown state as no-debt, the exact fail-open §7.4 M2 exists to prevent`);
+            }
+            assert.ok(!output.includes('clearContainmentState'),
+                `${caseName}: clearContainmentState must never appear in user-facing guidance (§7.5 D3)`);
+        };
+
+        // --- case 1: normal — SAFE anchor, no marker -----------------------
+        {
+            const anchor = createContainedZvecRoot('t12-normal');
+            try {
+                const { report, output } = await runVerify('normal', { dbDir: anchor.base });
+                assert.strictEqual(report.containment.state, 'no-debt',
+                    'a SAFE anchor with no marker carries no containment trust debt');
+                assert.strictEqual(report.containment.marker.status, 'absent', 'no marker was written');
+                assertWording(output, 'no-debt');
+            } finally {
+                anchor.cleanup();
+            }
+        }
+
+        // --- case 2: recovery-pending — SAFE anchor + valid marker ---------
+        {
+            const anchor = createContainedZvecRoot('t12-recovery');
+            try {
+                const { report, output } = await runVerify('recovery', { dbDir: anchor.base, marker: 'valid' });
+                if (anchor.safe) {
+                    assert.strictEqual(report.containment.state, 'recovery-pending',
+                        `a SAFE path whose marker is still present is recovery-pending: the path stopped being dangerous, the debt did not clear — got ${JSON.stringify(report.containment)}`);
+                    assert.ok(output.includes('显式 rebuild'),
+                        'recovery-pending must point at an explicit rebuild — that is the one action that can clear this state');
+                    assert.ok(!output.includes('迁移到受支持'),
+                        'recovery-pending must NOT reuse the unsafe remediation: the path is already supported, so migrating is not the fix (§7.5 D5 / control G)');
+                }
+                assert.strictEqual(report.containment.marker.status, 'present', 'the valid marker reads back as present');
+                assertWording(output, 'recovery-pending');
+            } finally {
+                anchor.cleanup();
+            }
+        }
+
+        // --- case 3: marker-damaged — invalid marker outranks everything ---
+        {
+            const anchor = createContainedZvecRoot('t12-damaged');
+            try {
+                const { report, output } = await runVerify('damaged', { dbDir: anchor.base, marker: 'invalid' });
+                assert.strictEqual(report.containment.state, 'marker-damaged',
+                    'a schema-invalid marker must surface as marker-damaged, never folded into present (§7.5 D3 / control F)');
+                assert.strictEqual(report.containment.marker.status, 'invalid', 'status is the read status, not the write result');
+                assert.ok(output.includes('人工'),
+                    'a damaged marker must route to manual handling');
+                assert.ok(!output.includes('显式 rebuild'),
+                    'a damaged marker must NOT recommend rebuild: its content is untrusted, so the debt cannot be reasoned about yet');
+                assertWording(output, 'marker-damaged');
+            } finally {
+                anchor.cleanup();
+            }
+        }
+
+        // --- case 4: debt-under-pin — explicit sqlite pin must not hide debt
+        {
+            const anchor = createContainedZvecRoot('t12-pin');
+            try {
+                const { report, output } = await runVerify('pin', { dbDir: anchor.base, marker: 'valid', pinSqlite: true });
+                assert.strictEqual(report.containment.marker.status, 'present',
+                    'an explicit sqlite pin never clears an existing marker (§7.4 M8)');
+                // Precise, not `!== no-debt`: the re-frozen D5 names this state.
+                assert.strictEqual(report.containment.state, 'debt-under-pin',
+                    'an outstanding debt under an explicit pin is its own state — a pin is a user preference, not a debt payment (§7.5 D5 row 4)');
+                assert.strictEqual(report.containment.engine.reason, 'engine-choice',
+                    'the pin branch reports engine-choice, and says nothing about the path');
+                assert.strictEqual(report.containment.verdict, null,
+                    'the pin branch returns before classification, so the DECISION carries no containment verdict — which is exactly why the marker record below must be shown');
+                // §7.5 D3 — on this branch the marker is the ONLY thing that can
+                // explain the debt, so every recorded field must be present.
+                assert.ok(report.containment.marker.recordedCollectionPath,
+                    'debt-under-pin must expose which collection the debt was recorded against (§7.5 D3)');
+                assert.ok(report.containment.marker.recordedContainment,
+                    'debt-under-pin must expose the containment record stored in the marker (§7.5 D3)');
+                assert.strictEqual(report.containment.marker.recordedContainment.verdict, 'UNKNOWN',
+                    'the marker-recorded verdict must be surfaced verbatim');
+                assert.strictEqual(report.containment.marker.recordedContainment.layer, 'path',
+                    'the marker-recorded layer must be surfaced verbatim');
+                assert.ok(/test-fixture/.test(report.containment.marker.recordedContainment.reason || ''),
+                    'the marker-recorded reason must be surfaced verbatim');
+                assert.ok(output.includes('containment marker 原始记录'),
+                    'the CLI output must separate the marker record from the current decision (§7.5 D3)');
+                assert.ok(output.includes(report.containment.marker.recordedCollectionPath),
+                    'the recorded collection path must actually reach the operator, not just the report object');
+                assertWording(output, 'debt-under-pin');
+            } finally {
+                anchor.cleanup();
+            }
+        }
+
+        // --- case 5: unsafe — non-ASCII path (win32 only) ------------------
+        if (process.platform === 'win32') {
+            const unsafeBase = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-t12-不安全-'));
+            try {
+                const { report, output } = await runVerify('unsafe', { dbDir: unsafeBase });
+                assert.strictEqual(report.containment.state, 'unsafe',
+                    'a non-ASCII collection path degrades under containment and must be reported as unsafe');
+                assert.ok(output.includes('迁移'),
+                    'unsafe must point at migrating to a supported path');
+                assert.ok(!output.includes('显式 rebuild'),
+                    'unsafe must NOT recommend rebuild: rebuilding onto the same unsupported path is pure waste (§7.5 D5 / control G)');
+                assertWording(output, 'unsafe');
+            } finally {
+                // Same treatment as createContainedZvecRoot's cleanup: the sqlite
+                // handle can still be open when the case ends, and a temp-dir EBUSY
+                // must not be reported as a containment failure.
+                try { fs.rmSync(unsafeBase, { recursive: true, force: true }); } catch (_) {}
+            }
+        } else {
+            console.log('   ⏭️ T12 unsafe case skipped (non-win32: containment classifies every path eligible)');
+        }
+
+        // --- case 6: zero side effects, measured on the SECTION alone -------
+        //
+        // Measured against buildContainmentDiagnostics() rather than verify():
+        // verify's entity-store section legitimately opens the active index, so a
+        // count taken across the whole command is dominated by behaviour §7.5 does
+        // not govern and would stay green under every mutation of this section.
+        {
+            const anchor = createContainedZvecRoot('t12-side-effects');
+            const runtime6 = createTempRuntimeRoot('t12-side-effects');
+            // raw_memory must be non-empty for the REAL rebuild entry to get past its
+            // own precondition — rebuildLocalIndex() returns early when it is missing
+            // or empty, which would make control C2 pass for the wrong reason.
+            fs.mkdirSync(path.join(runtime6.runtimeRoot, 'raw_memory'), { recursive: true });
+            fs.writeFileSync(path.join(runtime6.runtimeRoot, 'raw_memory', 'mem_t12_fixture.md'),
+                '---\ntype: task\n---\n\nT12 rebuild-path fixture.\n', 'utf8');
+            let database6 = null;
+            let closeDb6 = null;
+            // Installed BEFORE bootstrapRuntime so that memory.service.js destructures
+            // the counted bindings when it is (re)loaded.
+            //
+            // Both watched paths resolve against the DB ANCHOR, not the runtime root:
+            // the marker lives beside the db (markerPathFor(anchor.base)) and the Zvec
+            // tree is zvecPaths(dbPath).rootPath === dirname(dbPath)/zvec. Watching
+            // runtimeRoot/index_memory instead would monitor a directory the Zvec
+            // engine never writes to, so fs.indexWrite could never fire and would
+            // silently stop being a guard.
+            const counters = installCallCounters({
+                markerPath: stateMod.markerPathFor(anchor.base),
+                indexDir: anchor.paths.rootPath,
+            });
+            try {
+                const markerPath = stateMod.markerPathFor(anchor.base);
+                const collectionDir = anchor.paths.collectionPath;
+                // Establish the ambient decision the way production does — but via
+                // resolveActiveImpl() alone, which decides WITHOUT instantiating an
+                // index. Running full verify() here would open the collection in
+                // its entity-store section, and this case would then be asserting
+                // against a directory that already exists no matter what the
+                // containment section does.
+                // A marker must EXIST for "the section does not clear it" to be an
+                // observable property: deleting a marker that was never there is
+                // indistinguishable from leaving it alone.
+                stateMod.writeContainmentState(anchor.base, {
+                    collectionPath: collectionDir,
+                    containment: { verdict: 'UNKNOWN', layer: 'path', reason: 'path:test-fixture' },
+                });
+                const loaded = await bootstrapRuntime(runtime6.runtimeRoot, {
+                    EVO_LITE_SKIP_GIT_STATUS: '1',
+                    EVO_LITE_DB_PATH: path.join(anchor.base, 'memory.db'),
+                    EVO_LITE_MEMORY_ENGINE: 'zvec',
+                });
+                // Same rule as runVerify: this case bootstraps its own runtime, so it
+                // owns that database handle too. An ASCII collection path does not
+                // make the open handle legal — the teardown shape is what matters.
+                database6 = loaded.db.getDb();
+                closeDb6 = loaded.db.closeDb;
+                // NOT loaded.service: buildContainmentDiagnostics is module-private
+                // and must stay that way (§7.5 D1). This compiles a second copy with
+                // a test-only bridge appended, leaving the shipped exports untouched.
+                const svc = loadServiceWithTestBridge();
+                const idxMod = require(path.join(CLI_DIR, 'memory-index.js'));
+                idxMod.resetMemoryIndex();
+                idxMod.resolveActiveImpl();
+                // The load-bearing precondition: a decision exists, an INDEX does
+                // not. Asserting on peekMemoryIndex() rather than on the collection
+                // directory is deliberate — whether instantiating writes a directory
+                // depends on which engine the decision picked, so a filesystem check
+                // silently passes when the mutation instantiates a SQLite index.
+                assert.strictEqual(idxMod.peekMemoryIndex(), null,
+                    'precondition: no index instance may exist before the containment section runs');
+                const markerBefore = fs.existsSync(markerPath);
+                assert.ok(markerBefore,
+                    'precondition: the marker fixture must be on disk, otherwise control C cannot observe a clear');
+
+                // Everything above was setup. Zero the counters so what follows
+                // measures the containment section ALONE.
+                counters.reset();
+                assert.strictEqual(typeof svc.__testBuildContainmentDiagnostics, 'function',
+                    'the test bridge must expose the private function; the product export surface must NOT (§7.5 D1)');
+                assert.strictEqual(typeof loaded.service.buildContainmentDiagnostics, 'undefined',
+                    'buildContainmentDiagnostics must NOT be part of the shipped module.exports — adding a production testing API is forbidden by §7.5 D1/D4.1');
+                const diag = svc.__testBuildContainmentDiagnostics();
+
+                // --- D4.1 forbidden calls, counted at call level ------------
+                // Checked BEFORE the positive controls on purpose. A forbidden call
+                // often perturbs the legitimate counts too (getMemoryIndex re-reads
+                // the marker, for instance), so asserting the positive controls first
+                // would make every such mutation report the control's message instead
+                // of the property it was written to guard.
+                // Ordered most-specific first. Several forbidden actions transitively
+                // trigger a broader one (resolveRecoveryRebuildDecision loads the
+                // native binding; getMemoryIndex re-reads the marker), so checking
+                // the broad ones first would make every such mutation report the
+                // broad assertion and leave its own property looking unguarded.
+                const forbidden = [
+                    // D4.1 #7 rebuild — the real rebuild path enters through this.
+                    ['memory-index.resolveRecoveryRebuildDecision', 'entering the rebuild path', 'control C2'],
+                    ['fs.indexWrite', 'writing the Zvec collection tree (rebuild side effect)', 'control C2'],
+                    // D4.1 #8/#9 ownership
+                    ['zvec-containment-state.acquireRecoveryLease', 'recovery lease acquisition', 'control C3'],
+                    ['zvec-containment-state.acquireArchiveMarkerLock', 'archive publication lock write', 'control C4'],
+                    // D4.1 #5/#6 marker write & clear. fs.markerWrite catches a direct
+                    // write that bypasses the marker API entirely — including one that
+                    // writes back identical bytes, which no API counter and no
+                    // end-state check can see.
+                    ['fs.markerWrite', 'direct filesystem write to the marker', 'control C1b'],
+                    ['memory-index.clearContainmentState', 'marker clear', 'control C1'],
+                    ['zvec-containment-state.clearContainmentState', 'marker clear', 'control C1'],
+                    ['zvec-containment-state.writeContainmentState', 'marker write', 'control C1'],
+                    ['memory-index.resolveEngineDecision', 'marker write via the decision path', 'control C1'],
+                    ['memory-index.resolveActiveImpl', 'marker write via the shared ambient path', 'control C1'],
+                    // D4.1 #2/#3/#4 — three separate downstream behaviours, counted
+                    // separately from the upstream entry that usually reaches them.
+                    // Ordered query → open → construct: a query implies an open which
+                    // implies a construct, so the narrowest observation must be
+                    // checked first or every one of them would report "construct".
+                    ['zvec.query', 'collection read / query', 'control B4'],
+                    ['zvec.open', 'collection open', 'control B3'],
+                    ['zvec.construct', 'Zvec index construction', 'control B2'],
+                    ['memory-index.getMemoryIndex', 'index acquisition (upstream entry)', 'control B'],
+                    ['zvec.require', 'Zvec native require', 'control A'],
+                ];
+                for (const [key, what, control] of forbidden) {
+                    assert.strictEqual(counters.count(key), 0,
+                        `the containment section must not perform: ${what} (§7.5 D4.1, ${control}) — observed ${counters.count(key)} call(s) to ${key}`);
+                }
+
+                // --- positive controls -------------------------------------
+                // Without these, "every forbidden counter is 0" would also hold if the
+                // instrumentation silently failed to attach. These two prove the
+                // counters are live and wired to the code actually under test, so the
+                // zeros above mean something.
+                assert.strictEqual(counters.count('memory-index.peekEngineDecision'), 1,
+                    'positive control: the containment section must read the decision exactly once — if this is 0 the counters are not attached and every zero above is meaningless');
+                assert.strictEqual(counters.count('zvec-containment-state.readContainmentState'), 1,
+                    'positive control: the containment section must take exactly one marker snapshot (§7.5 D2) — not zero, and not a second read for output (§7.5 D3)');
+
+                // --- filesystem corroboration (auxiliary, NOT the proof) ----
+                assert.strictEqual(idxMod.peekMemoryIndex(), null,
+                    'no index instance may exist after the containment section (§7.5 D4.1, control B)');
+                assert.ok(!fs.existsSync(collectionDir),
+                    'auxiliary: the collection directory must not appear (§7.5 D4.1, control B)');
+                assert.strictEqual(fs.existsSync(markerPath), markerBefore,
+                    'auxiliary: marker existence must be unchanged — note this alone cannot prove write count 0, which is why the call counters above are authoritative');
+                assert.ok(diag.processObservation,
+                    'the process observation must be present — it is the ONLY thing verify may claim about the collection (§7.5 D4)');
+                assert.strictEqual(diag.processObservation.instantiatedCollection, false,
+                    'the containment section must never instantiate a collection');
+            } finally {
+                // Order is load-bearing: release the index, close the database, prove
+                // it is closed, and only then delete the directory that contains it.
+                try { require(path.join(CLI_DIR, 'memory-index.js')).resetMemoryIndex(); } catch (_) {}
+                if (closeDb6) {
+                    closeDb6();
+                    assert.strictEqual(database6.open, false,
+                        'zero-side-effects: the bootstrapRuntime database must be closed BEFORE its runtime directory is deleted');
+                }
+                counters.restore();
+                anchor.cleanup();
+            }
+        }
+
+        // --- case 7: no-debt under an explicit sqlite pin -------------------
+        //
+        // §7.5 D5 re-freeze: `state` describes DEBT, `engine` describes the engine.
+        // The first version's `normal` required impl === 'zvec', so this combination
+        // had nowhere to go and silently fell through to it.
+        {
+            const anchor = createContainedZvecRoot('t12-pin-nodebt');
+            try {
+                const { report, output } = await runVerify('pin-nodebt', { dbDir: anchor.base, pinSqlite: true });
+                assert.strictEqual(report.containment.state, 'no-debt',
+                    'an explicit sqlite pin with no marker carries no containment debt — the pin is an engine choice, not a debt (§7.5 D5 row 5)');
+                assert.strictEqual(report.containment.engine.reason, 'engine-choice',
+                    'the engine dimension must still report the pin');
+                assert.strictEqual(report.containment.engine.impl, 'sqlite',
+                    'no-debt must not imply the engine is zvec');
+                assert.strictEqual(report.containment.marker.status, 'absent', 'no marker exists');
+                assertWording(output, 'no-debt-under-pin');
+            } finally { anchor.cleanup(); }
+        }
+
+        // --- case 8: no-debt when the binding is unavailable ----------------
+        //
+        // Same dimension-separation point from the other side: a SAFE path with no
+        // marker, but @zvec/zvec cannot load. defaultLoadZvecIndex() swallows that
+        // and returns null, so the decision is sqlite/dependency-unavailable — and
+        // there is still no containment debt.
+        {
+            const anchor = createContainedZvecRoot('t12-nodep');
+            // failZvecLoad must be installed before bootstrapRuntime loads the CLI.
+            const counters = installCallCounters({ failZvecLoad: true });
+            try {
+                const { report, output } = await runVerify('nodep', { dbDir: anchor.base });
+                assert.strictEqual(report.containment.state, 'no-debt',
+                    'an unavailable binding is not a containment debt (§7.5 D5 row 5)');
+                assert.strictEqual(report.containment.engine.impl, 'sqlite',
+                    'the engine degraded to sqlite');
+                assert.strictEqual(report.containment.engine.reason, 'dependency-unavailable',
+                    'the engine dimension must name the real cause, which is NOT containment');
+                assert.strictEqual(report.containment.marker.status, 'absent',
+                    'a missing binding must never mint a containment marker (§7.4 M8 keeps debt and engine choice separate)');
+                assertWording(output, 'no-debt-dependency-unavailable');
+            } finally {
+                counters.restore();
+                anchor.cleanup();
+            }
+        }
+
+        // Leave no env behind. loadCli() clears a fixed list of EVO_LITE_* keys but
+        // not these two, and an inherited EVO_LITE_MEMORY_ENGINE is exactly what
+        // silently defeated this test's own assertions before it was pinned.
+        delete process.env.EVO_LITE_MEMORY_ENGINE;
+        delete process.env.EVO_LITE_DB_PATH;
+
+        console.log('✅ T12 verify containment diagnostics passed');
+    }
+
+    // ---------------------------------------------------------------------
     // [zvec-win-unicode-containment] Task 5 — native entry containment.
     // Task 4 routed the SELECTOR through the containment decision. Two
     // production entries still reached the binding around it: memory-ab opened

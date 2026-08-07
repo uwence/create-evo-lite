@@ -34,12 +34,19 @@ const {
 const {
     getMemoryIndex, resolveActiveImpl, resolveEngine, resetMemoryIndex,
     resolveRecoveryRebuildDecision, clearContainmentState,
+    // [zvec-win-unicode-containment] §7.5 D1 — diagnostics READ the decision this
+    // process already took; they never ask for a new one.
+    peekEngineDecision,
 } = require('./memory-index');
 // The recovery lease (§7.4 M5.4) is consumed only here, so it is required
 // straight from the state module rather than widening memory-index's surface.
+// §7.5 D1 reuses that same pattern for the diagnostic marker read: both
+// readContainmentState and ERR_READ are ALREADY exported (:458, :453), so the
+// diagnostic costs zero interface expansion.
 const {
     computeMarkerFingerprint, acquireRecoveryLease, releaseRecoveryLease,
     acquireArchiveMarkerLock, releaseArchiveMarkerLock, archiveLockPathFor,
+    readContainmentState, ERR_READ,
 } = require('./zvec-containment-state');
 
 // [zvec-win-unicode-containment] §7.4 M5.5b — every path that touches the GLOBAL
@@ -1869,6 +1876,200 @@ function formatEngineDegradationWarning(engineImpl) {
     ].join('\n');
 }
 
+/**
+ * [zvec-win-unicode-containment] §7.5 — read-only containment diagnostics (AC6).
+ *
+ * Data comes from exactly two places (§7.5 D1) and nothing else:
+ *
+ *   peekEngineDecision()    the decision this process ALREADY took
+ *   readContainmentState()  ONE read-only ambient marker snapshot
+ *
+ * resolveEngineDecision(), sharedEngineDecision(), resolveRecoveryRebuildDecision()
+ * and getMemoryIndex() are all forbidden here: each of them may re-decide, load the
+ * native binding, write a marker, take a lease, or enter recovery semantics.
+ * Diagnosis must never become the thing that changes what it is diagnosing.
+ *
+ * The marker read is NOT redundant with the decision (§7.5 D2). The decision carries
+ * no PRE-WRITE read-state on the non-SAFE branch — the marker write is an exclusive
+ * create, so a pre-existing marker only ever surfaces as `markerAlreadyPresent`,
+ * which cannot tell 'present' from 'invalid' or 'unreadable'. And under an explicit
+ * sqlite pin the decision carries no marker information at all (it returns before
+ * classification runs), while §7.4 M8 requires that an existing marker still stands.
+ * Closing those two gaps is the whole reason this function reads the marker itself.
+ */
+function containmentMarkerDir() {
+    // Mirrors memory-index's module-private ambientMarkerDir(): beside the db, never
+    // inside the zvec dir — a recovery rebuild discards that directory, and a debt
+    // record a rebuild deletes records nothing. Not imported: §7.5 D8 puts
+    // memory-index.js on the do-not-touch list, and widening its exports to share
+    // three lines would be exactly the interface expansion the audit ruled
+    // unnecessary.
+    try {
+        return path.dirname(getDbPath());
+    } catch (_) {
+        return null;
+    }
+}
+
+function buildContainmentDiagnostics() {
+    const decision = peekEngineDecision();
+    const markerDir = containmentMarkerDir();
+    // readContainmentState never throws (§7.4 M2): failures are encoded into status.
+    // The only uncovered case is an unresolvable db path, handled here in the same
+    // fail-closed direction rather than by pretending the marker is absent.
+    const marker = markerDir
+        ? readContainmentState(markerDir)
+        : {
+            status: 'unreadable', markerPath: null, state: null,
+            errorCode: ERR_READ, detail: 'db-path-unresolvable',
+        };
+
+    const reason = decision ? decision.reason : null;
+    const containment = (decision && decision.containment) || null;
+
+    // §7.5 D5 (re-frozen 2026-08-07). state describes CONTAINMENT DEBT ONLY — never
+    // whether the engine happens to be zvec. Those are two independent dimensions,
+    // and folding them together is what left `pin + marker absent` and
+    // `dependency-unavailable + marker absent` with nowhere to go in the first
+    // version. The engine facts live in `engine` below.
+    //
+    // Order is load-bearing: a damaged marker outranks every other state, because
+    // "the debt exists but its content cannot be trusted" is the one thing that
+    // must never be presented as something milder.
+    let state;
+    if (marker.status === 'invalid' || marker.status === 'unreadable') {
+        state = 'marker-damaged';
+    } else if (reason === 'containment') {
+        state = 'unsafe';
+    } else if (reason === 'containment-recovery-pending') {
+        state = 'recovery-pending';
+    } else if (marker.status === 'present') {
+        // §7.4 M8 + §7.5 D2/D5 row 4: an explicit sqlite pin never mints a marker,
+        // but it never clears one either. On a SAFE path a present marker has
+        // already been classified as containment-recovery-pending above, so
+        // anything reaching here came from the choice !== 'zvec' branch — which
+        // returns before classification runs and therefore cannot assert whether
+        // the path is supported.
+        state = 'debt-under-pin';
+    } else {
+        // marker absent. Says nothing about the engine: impl may be zvec, or sqlite
+        // under an explicit pin, or sqlite because the binding is unavailable.
+        state = 'no-debt';
+    }
+
+    return {
+        state,
+        engine: decision
+            ? { choice: decision.choice, impl: decision.impl, degraded: decision.degraded, reason }
+            : null,
+        verdict: containment ? containment.verdict : null,
+        layer: containment ? containment.layer : null,
+        containmentReason: containment ? containment.reason : null,
+        collectionPath: decision ? (decision.collectionPath || null) : null,
+        marker: {
+            status: marker.status,
+            markerPath: marker.markerPath || null,
+            errorCode: marker.errorCode || null,
+            detail: marker.detail || null,
+            // §7.5 D3 — what the MARKER recorded, as distinct from what this process
+            // just decided. Under debt-under-pin these are the only fields that can
+            // explain the debt at all: the pin branch returns containment: null
+            // before classification runs, so the decision knows nothing about it.
+            // Both come from the single snapshot taken above; no second read.
+            recordedCollectionPath: (marker.state && marker.state.collectionPath) || null,
+            recordedContainment: (marker.state && marker.state.containment)
+                ? {
+                    verdict: marker.state.containment.verdict || null,
+                    layer: marker.state.containment.layer || null,
+                    reason: marker.state.containment.reason || null,
+                }
+                : null,
+        },
+        // §7.5 D4 — what this process did, NOT what was ever done to the collection.
+        processObservation: decision
+            ? { loadedZvecBinding: decision.ZvecIndex !== null, instantiatedCollection: false }
+            : null,
+    };
+}
+
+function logContainmentDiagnostics(diag, log, pushNextStep) {
+    if (!diag) return;
+    if (diag.state === 'no-debt') {
+        // §7.5 D5/D6: state speaks about DEBT only. Asserting the engine is "running
+        // normally" here would re-merge the two dimensions D5 just separated — and
+        // it would be wrong under an explicit sqlite pin or an unavailable binding.
+        log('🧭 [Containment]: 当前没有未清偿的 containment trust debt。');
+        return;
+    }
+
+    log('🧭 [Containment]: 检测到 containment 状态，以下为只读诊断（不改变任何状态）。');
+
+    // Layer 1 — what THIS process decided (§7.5 D3).
+    log('   当前判定:');
+    if (diag.engine) {
+        log(`     choice=${diag.engine.choice} impl=${diag.engine.impl} degraded=${diag.engine.degraded} reason=${diag.engine.reason || '-'}`);
+    }
+    if (diag.verdict) {
+        log(`     containment verdict=${diag.verdict} layer=${diag.layer || '-'} reason=${diag.containmentReason || '-'}`);
+    }
+    if (diag.collectionPath) {
+        log(`     collectionPath=${diag.collectionPath}`);
+    }
+
+    // Layer 2 — what the MARKER recorded. Deliberately not merged with layer 1: one
+    // is a fact about this process, the other is a historical record on disk, and
+    // under debt-under-pin only the latter can explain the debt.
+    log('   containment marker 原始记录:');
+    log(`     status=${diag.marker.status}${diag.marker.markerPath ? ` path=${diag.marker.markerPath}` : ''}`);
+    if (diag.marker.recordedCollectionPath) {
+        log(`     recordedCollectionPath=${diag.marker.recordedCollectionPath}`);
+    }
+    if (diag.marker.recordedContainment) {
+        const rc = diag.marker.recordedContainment;
+        log(`     recorded verdict=${rc.verdict || '-'} layer=${rc.layer || '-'} reason=${rc.reason || '-'}`);
+    }
+    if (diag.marker.errorCode) {
+        log(`     读取失败: code=${diag.marker.errorCode} detail=${diag.marker.detail || '-'}`);
+    }
+
+    if (diag.processObservation) {
+        // The exact wording permitted by §7.5 D4. It speaks ONLY about this process.
+        log('   本次 verify 进程未加载 Zvec native binding，也未实例化或打开该 collection。');
+    }
+
+    // §7.5 D5 — every state gets its OWN remediation. unsafe and recovery-pending
+    // must never share this text: on an unsupported path a rebuild is pure waste,
+    // because whatever it rebuilds lands on the same unsupported path.
+    // Each remediation is BOTH logged and queued. Logging is what makes it
+    // unconditional: report.nextSteps is only printed when nothing else raised an
+    // alert, so a containment hint that lived only there would disappear on
+    // exactly the degraded machines that need it.
+    const REMEDIATION = {
+        unsafe: {
+            headline: '   ⚠️ 路径本身不受支持（containment 降级，不是上游修复）。',
+            step: 'containment: 当前路径不受支持，继续使用 SQLite；请先把项目迁移到受支持的 ASCII 路径（spec §5.1）后重新执行 verify。此状态下执行 rebuild 无效 —— 重建出的 collection 仍落在同一条不受支持的路径上。',
+        },
+        'recovery-pending': {
+            headline: '   ⚠️ 路径已恢复，但 containment 债尚未清偿。',
+            step: 'containment: 路径已 SAFE 但 marker 仍在，继续使用 SQLite；请人工执行显式 rebuild，重建并经 fresh validator 重开验证通过后 marker 才会被清除。',
+        },
+        'marker-damaged': {
+            headline: '   ⚠️ marker 存在但内容不可信（fail-closed），不会被当作普通 present 处理。',
+            step: 'containment: marker 处于 invalid/unreadable 状态，请人工检查该 marker 文件、其权限与内容；在人工判明之前不要删除它，也不要执行自动 rebuild。',
+        },
+        'debt-under-pin': {
+            headline: '   ⚠️ 当前为显式 SQLite pin，但仍存在未清偿的 containment 债。',
+            step: 'containment: 存在未清偿的 containment marker，且当前显式 pin 为 sqlite（该分支不做路径判定，因此无法断言路径是否受支持）。要清债需先取消 pin 回到 zvec，并在受支持路径上人工执行显式 rebuild。',
+        },
+    };
+    const remediation = REMEDIATION[diag.state];
+    if (remediation) {
+        log(remediation.headline);
+        log(`   ➡️ ${remediation.step}`);
+        pushNextStep(remediation.step);
+    }
+}
+
 const ERR_RECOVERY_INCOMPLETE = 'EVO_ZVEC_RECOVERY_INCOMPLETE';
 
 function recoveryFailure(reason, detail) {
@@ -2346,6 +2547,7 @@ async function verify(options = {}) {
         bootstrapPending: false,
         bootstrapSteps: [],
         configuration: null,
+        containment: null,
         contextStatus: 'unknown',
         entityStore: 'unknown',
         git: 'unknown',
@@ -2620,6 +2822,26 @@ async function verify(options = {}) {
     if (engineImpl.degraded) {
         log(formatEngineDegradationWarning(engineImpl));
     }
+
+    // [zvec-win-unicode-containment] §7.5 — containment diagnostics, read-only.
+    //
+    // Deliberately placed AFTER resolveActiveImpl(): that call routes through
+    // sharedEngineDecision(), so by this point the ambient decision exists and
+    // peekEngineDecision() is guaranteed non-null. That ordering is what makes
+    // remedy B work (§7.5 D0) — verify reads the decision every command already
+    // makes, rather than minting a second, synthetic one.
+    //
+    // The marker this process may have written above is the SAME debt memorize or
+    // recall would have written; it is not caused by diagnosing (§7.5 D0).
+    report.containment = buildContainmentDiagnostics();
+    logContainmentDiagnostics(report.containment, log, pushNextStep);
+    // Deliberately NOT setting report.hasAlerts here. verify only prints its
+    // nextSteps list when hasAlerts is false (see the tail of this function), so
+    // flagging containment as an alert would suppress the very remediation this
+    // section just queued — and would also swallow every unrelated governance
+    // hint on any machine whose temp dir is an 8.3 short name. The containment
+    // state and its remediation are therefore logged directly above, which is
+    // what makes them unconditional.
 
     const safetyState = getSafetyState();
     const lastBlockSummary = safetyState.lastBlock

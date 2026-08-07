@@ -2139,6 +2139,62 @@ async function runIntegrationTests() {
             console.log('✅ SB self-brick regression (hard-brick + feature-brick) passed');
         }
 
+        // [zvec-win-unicode-containment] Task 7 / AC6 — T12⑥ through the REAL CLI.
+        //
+        // governance's T12 drives service.verify() in-process. This drives the
+        // published entry the way an operator does, because the thing AC6 promises
+        // is that `mem verify` stays usable on a machine where containment has
+        // engaged — and an operator never calls service.verify().
+        console.log('T-zwuc-T12-cli. Testing verify containment diagnostics survive the real CLI entry ...');
+        {
+            // A non-ASCII runtime root is the whole point on win32; elsewhere the
+            // classifier reports every path eligible, so the case degenerates into
+            // "verify still runs", which is still worth asserting.
+            const base = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-t12cli-诊断-'));
+            try {
+                const runtimeRoot = path.join(base, '.evo-lite');
+                fs.mkdirSync(runtimeRoot, { recursive: true });
+                fs.copyFileSync(TEMPLATE_CONTEXT_PATH, path.join(runtimeRoot, 'active_context.md'));
+                const run = childProcess.spawnSync(
+                    process.execPath,
+                    [path.join(CLI_DIR, 'memory.js'), 'verify'],
+                    {
+                        encoding: 'utf8',
+                        cwd: WORKSPACE_ROOT,
+                        env: {
+                            ...process.env,
+                            EVO_LITE_ROOT: runtimeRoot,
+                            EVO_LITE_DB_PATH: path.join(base, 'memory.db'),
+                            EVO_LITE_MEMORY_ENGINE: 'zvec',
+                            EVO_LITE_CACHE_DIR: SHARED_CACHE_DIR,
+                            EVO_LITE_SKIP_GIT_GUARD: '1',
+                            EVO_LITE_SKIP_GIT_STATUS: '1',
+                            NODE_PATH: [
+                                path.join(WORKSPACE_ROOT, 'node_modules'),
+                                path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'),
+                            ].join(path.delimiter),
+                        },
+                    });
+                const out = `${run.stdout || ''}${run.stderr || ''}`;
+                assert.strictEqual(run.status, 0,
+                    `verify must exit 0 on a containment-engaged runtime — a diagnostic that crashes on the machine it exists to diagnose is worthless — got ${run.status}: ${out.slice(-600)}`);
+                assert.ok(out.includes('[Containment]'),
+                    `verify must always emit the containment section, including when there is no debt — got: ${out.slice(-600)}`);
+                for (const banned of ['从未被读取', '内容确认完整', '上游缺陷已修复', '已自动恢复',
+                    '当前引擎按正常判定运行']) {
+                    assert.ok(!out.includes(banned),
+                        `CLI verify output must not contain the banned claim "${banned}" (spec §7.5 D6)`);
+                }
+                if (process.platform === 'win32') {
+                    assert.ok(/containment|Containment/.test(out),
+                        'on win32 a non-ASCII runtime must produce a containment diagnosis');
+                }
+            } finally {
+                try { fs.rmSync(base, { recursive: true, force: true }); } catch (_) {}
+            }
+            console.log('✅ T-zwuc-T12-cli verify containment diagnostics via CLI passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);

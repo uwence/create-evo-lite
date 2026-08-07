@@ -11,11 +11,16 @@ relationMode: independent
 > **阶段状态**（第 4 版）：
 >
 > ```text
-> Tasks 1–5（AC1–AC4）  COMPLETE / ACCEPTED / MERGED
-> Task 6（AC5）          机制与计划补完已授权；生产实施未授权
-> Tasks 7–8（AC6/AC7）   未授权
-> Task 9（收口）          未授权
+> Tasks 1–6（AC1–AC5）  COMPLETE / MERGED
+> Task 7 Step 1（AC6）   RE-FROZEN 2026-08-07 —— 五态模型闭合 D2×M8×D5 冲突（§7.5）
+> Task 7 Step 2（AC6）   CHANGES REQUIRED —— 复审裁定，返工中
+> Tasks 8–9（AC7/收口）  NOT AUTHORIZED
+> context closure       NOT AUTHORIZED
 > ```
+>
+> 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`；本文此前声称「Task 6 生产实施
+> 未授权」与该事实矛盾，故作此最小修正。这不代表 Task 6 的逐 Step 回填、mutation 历史
+> 导入或 spec 终态推进 —— 那些仍属未处理项。
 >
 > 本文冻结合同与边界。§7.4 是第 4 版新增的**恢复机制冻结**（marker 载体、损坏方向、
 > decision reason、one-shot recovery decision、失败语义、跨平台 trust debt），
@@ -1281,6 +1286,335 @@ pin 或环境变量重新选择 zvec
 即：`memory-engine.json` 或 `EVO_LITE_MEMORY_ENGINE=zvec` 只能表达**用户意图**，
 不能充当 trust marker 的 bypass。**切换 pin 永远不能清除 marker。**
 
+## 7.5 只读诊断合同冻结（Task 7 Step 1 / AC6）
+
+本节冻结 `verify` 的 containment 诊断合同。**仅合同，不含实现授权。**
+D1–D3 的每条事实都经 2026-08-05 的代码审计核实，行号随核实一并记录
+（审计基线 `main@bc3ee2f`）。本节**自包含**：执行它不需要引用任何其他证据文件。
+
+### D0 承重裁定：verify 参与 ambient 判定（收法 B）
+
+**已裁定，不得在编码中改判。**
+
+冲突是真实的：`verify()`（`memory.service.js:2330`）在 `:2618` 调 `resolveActiveImpl()`，
+该路径经 `sharedEngineDecision()` → `persistEngineDecision()` —— 即 §7.4 M3.1 中**唯一**
+写 marker 的地方。因此在一台路径刚变成非 SAFE 的机器上，若 `verify` 是此后第一条被执行的
+命令，**是 verify 记下了这笔债**。
+
+```text
+收法 A（已否决）  verify 纯旁观，只用 peekEngineDecision()
+收法 B（采纳）    verify 走的就是每条命令都走的 ambient decision
+```
+
+否决 A 的理由有两条，第二条是审计新增的：
+
+1. `peekEngineDecision()`（`memory-index.js:501`）返回的是模块级 `decision` 变量，
+   **只有本进程已做过判定时才非 null**。而 verify 通常是进程里第一条命令 ——
+   A 会让最需要诊断的时刻恰好无话可说。
+2. 为使 A 可用，只能扩大 `peekEngineDecision()` 的返回面，或让 verify 自行重算
+   （后者又回到写 marker）。**前者直接触发「不扩大产品接口」的限定**，两条限定互相打架。
+
+因此合同措辞固定为：
+
+```text
+不得因【诊断本身】引入 ambient 路径之外的 marker I/O。
+verify 写的 marker 与 memorize / recall 写的是同一笔债，不是诊断造成的。
+```
+
+`resolveActiveImpl()` 在生产中并非 verify 专有：`rebuildLocalIndex()` 内 `:2259`
+是第二个调用点。ambient 铸造是常态路径，这正是 B 成立的前提。
+
+### D1 数据来源：零导出面扩大（审计结论）
+
+诊断所需的两个来源**都已经导出**，实现轮次只需在 `memory.service.js` 现有的 require
+列表里消费它们，**不新增任何模块导出**：
+
+```text
+peekEngineDecision()     memory-index.js:501，已导出于 :649
+                         收法 B 下 verify 走过 :2618，故此处必然非 null
+readContainmentState()   zvec-containment-state.js:118，已导出于 :458
+                         memory.service.js 已 require 该模块（:40-43）
+marker 目录               path.dirname(getDbPath())
+                         getDbPath 已导入（:24），DB_PATH 已存在（:161）
+```
+
+直接从 state 模块消费而不扩大 `memory-index` 的导出面，与 `:38-39` 既有注释所记的
+recovery lease 处理方式是同一模式。
+
+> **这不构成接口扩大**：导出面逐字节不变，改变的只是 `memory.service.js` 消费了哪些
+> 已有导出。「除非审计证明现有导出面无法完成只读诊断，否则不扩大产品接口」的限定
+> 因此得到满足 —— 审计的结论是**够用**。
+>
+> 若实施中发现导出面确实不足，**不得现场扩大接口**：硬停并提交具体不可实现路径。
+
+诊断段**只允许**组合上述两个来源。**禁止**通过下列入口"刷新诊断"，因为它们可能重新判定、
+加载依赖、写 marker、取得 lease 或进入恢复语义：
+
+```text
+resolveEngineDecision()
+sharedEngineDecision()
+resolveRecoveryRebuildDecision()
+getMemoryIndex()
+```
+
+### D2 为什么必须独立读一次 marker（decision 的覆盖缺口）
+
+`peekEngineDecision()` 返回的 decision **不含 `inputs.marker`**。marker 的读取态只在
+一个分支被部分透传，实测覆盖矩阵：
+
+| 场景 | decision 中的 marker 信息 | 诊断是否够用 |
+|---|---|---|
+| 非 SAFE（`ensure-present`） | `markerPersisted` / `markerAlreadyPresent` / `markerPath` | ❌ 只有写入结果，**没有写入前的读取态** |
+| SAFE + marker 非 absent | `recovery.{required,markerStatus,markerPath,reason}` | ✅ 完整 |
+| SAFE + marker absent | 无 marker 字段 | ✅ 无债，正确 |
+| 显式 pin sqlite（M8） | 无 marker 字段 | ❌ M8 规定「marker 保留」，诊断却拿不到它 |
+| 注入路径（M3.1） | `markerSkipped: 'injected-path'` | ✅ 按设计不参与 |
+
+两处 ❌ 是真实缺口：
+
+- **非 SAFE 分支**：`writeContainmentState` 是排他创建，`EEXIST` 只会得到
+  `alreadyPresent`，诊断**无法区分「marker 正常存在」与「marker 损坏 / 不可读」**。
+- **pin sqlite 分支**：用户 pin 走之后跑 verify，将看不到仍未清偿的 containment 债。
+
+**因此合同要求**：verify 除消费 decision 外，**必须独立调用 `readContainmentState()`
+取一次权威只读快照**。这是 ambient 路径内的纯读，不违反 D0。
+
+显式 `choice=sqlite` 时，即便当前并未 degraded，**也必须单独显示尚存的 marker**；
+不得因为用户 pin 而掩盖债务。
+
+### D3 marker 四态的呈现（且不得建议自动删除）
+
+`readContainmentState()` 的 `status` 是封闭四值，逐一都要有可见呈现：
+
+```text
+absent      无债
+present     有债；显示 markerPath 与 state 中的 collectionPath / containment
+invalid     schema 或字段不合法 → 人工处置
+unreadable  IO / 权限 / 路径不可解析 → 人工处置；显示 errorCode 与 detail
+```
+
+**`present` 的呈现要求是承重的，不是可选的。** 诊断必须把 marker `state` 里记录的
+`collectionPath` 与 `containment { verdict, layer, reason }` **原样呈现给用户**，
+且必须与「本进程当前 decision」分层显示，不得混为一谈：
+
+```text
+当前判定
+  choice / impl / degraded / reason
+  当前 containment verdict / layer / reason（decision 有才显示）
+
+containment marker 原始记录
+  status / markerPath
+  recordedCollectionPath
+  recorded verdict / layer / reason
+```
+
+这一条在 `debt-under-pin` 下尤其承重：`resolveEngineDecisionFromInputs()` 在
+`choice !== 'zvec'` 时**直接返回 `containment: null`**（§7.4 M8 分支在分类之前就返回），
+所以那条路径上唯一能说明「这笔债针对哪个 collection、当初为何产生」的信息，
+**全部只存在于 marker 里**。不显示它，等于让操作者拿着一笔无法追溯来由的债。
+
+呈现所用的数据必须来自 D2 已经取得的**那一次** marker snapshot；不得为了输出再读第二次。
+
+**`invalid` 与 `unreadable` 一律不得建议删除 marker，也不得折叠成普通 `present`。**
+二者都是「债的存在已知、内容不可信」，删除等于把未知状态伪装成无债 —— 正是 §7.4 M2
+fail-closed 方向要防的。诊断只报告并指引人工检查 marker 文件、权限或内容；
+`clearContainmentState` 不得出现在任何 verify 建议文案里。
+
+### D4 「collection 未被打开」用什么可观测证据表达
+
+**诚实边界：`verify` 在运行时无法证明这件事，合同不得要求它假装能。**
+
+verify 可报告的是本进程 decision 的可观测事实：
+
+```text
+decision.impl === 'sqlite'
+decision.ZvecIndex === null
+decision.reason ∈ { 'containment', 'containment-recovery-pending' }
+```
+
+真正的证明属于测试层 —— 非 `SAFE` 路径下 `loadZvecIndex` 调用次数为 0（Task 4 的 T6、
+Task 6 的 T8b 已经钉住）。合同因此区分两句话：
+
+```text
+允许："本次 verify 进程未加载 Zvec native binding，也未实例化或打开该 collection。"
+禁止："该 collection 从未被读取。"   ← verify 无从证实，属于 D6 禁令
+```
+
+诊断只能说明**本次进程行为**与**当前 containment 状态**，不能证明全局历史事实。
+
+### D4.1 副作用要求（可计数，供 T12 与负控断言）
+
+执行 `verify` 时必须保持：
+
+```text
+Zvec native require count:       0
+Zvec index constructor count:    0
+collection open count:           0
+collection read/query count:     0
+marker write count:              0
+marker clear count:              0
+rebuild count:                   0
+recovery lease acquisition:      0
+archive publication lock write:  0
+```
+
+`verify` 的其余健康检查可继续读取无关信息，但 **containment 段自身**不得引入上述副作用。
+
+**每一项都必须有 call-level 的可证伪 guard（2026-08-07 re-freeze）。**
+验收标准是一句话：
+
+> 若 containment 段真的执行了一次被禁止的动作，**即使它随后把现场恢复原样，测试仍必须变红。**
+
+因此 **end-state inference 不得作为主要证明**：
+
+```text
+marker hash + mtime 未变        ⇏ write count = 0   （覆写回相同 bytes 即可绕过）
+目录指纹未变                    ⇏ rebuild count = 0 （重建成相同形状即可绕过）
+lease 文件最终不存在            ⇏ acquire count = 0 （create → release 终态相同）
+lock 文件最终不存在             ⇏ lock write = 0    （同上）
+```
+
+正确做法是**测试侧 instrumentation**：在 `memory.service.js` 被加载**之前**拦截模块解析，
+给它将要解构的依赖套上计数代理，从而统计真实调用次数。文件系统层面的哈希/指纹
+可以保留为**辅助佐证**，但不得充当调用计数的替代。
+
+若某一项确实无法通过测试侧 instrumentation 建立可证伪 guard，
+**停止并上报**——不得为测试便利扩大产品接口（不新增 production testing API，
+不改 `memory-index.js` / `zvec-containment-state.js`，不新增依赖）。
+对确实无法直接代理的项（如模块内部私有函数），允许改由**专属 mutation** 证明：
+把被禁止的调用插入 containment 段后，必须稳定命中其专属断言。
+
+### D5 五种 containment 状态与 nextSteps（2026-08-07 局部 re-freeze）
+
+> **本节经复审局部重开并重新冻结。** 第 1 版只列四态，且把 `normal` 的判据写成
+> 「marker absent **且** `impl==='zvec'`」—— 它在一个状态里同时表达了**两个独立维度**：
+> 「有没有 containment trust debt」与「当前引擎是不是 zvec」。于是
+> `pin sqlite + marker absent` 与 `dependency-unavailable + marker absent`
+> 两种真实组合在四态模型里无处可去。
+>
+> 同时 D2 要求显式 pin **不得掩盖**既有 marker，而 §7.4 M8 又允许
+> `pin + marker present` 继续以 sqlite 正常运行 —— 四态模型无法同时满足这两条。
+> **这是合同自身的缺口。** 实现遇到它时必须停止并上报，不得现场补设计。
+
+**`containment.state` 是封闭五值，只表达 containment trust debt，不表达引擎是否为 zvec。**
+判据自上而下，首个命中者胜：
+
+| # | 状态 | 判据 | nextSteps 必须说 |
+|---|---|---|---|
+| 1 | `marker-damaged` | marker `invalid` / `unreadable` | fail-closed；不得折叠成普通 `present`；**不得**建议删除或自动 rebuild；提示人工检查 marker 文件、权限与内容 |
+| 2 | `unsafe` | `reason === 'containment'` | 继续使用 SQLite；**不允许** recovery rebuild；先迁移到受支持路径（§5.1）后重新 verify |
+| 3 | `recovery-pending` | `reason === 'containment-recovery-pending'` | 继续使用 SQLite；人工执行显式 rebuild；重建并经 fresh validator 重开验证通过后 marker 才会被清除 |
+| 4 | `debt-under-pin` | marker `present`，且当前为显式 sqlite pin（`reason === 'engine-choice'`） | 债仍在；该分支不做路径判定，故无法断言路径是否受支持；要清债需先取消 pin 回到 zvec，并在受支持路径上人工执行显式 rebuild |
+| 5 | `no-debt` | marker `absent` | **仅**表示当前没有未清偿的 containment trust debt |
+
+> 判据 4 的实现兜底可写作「marker `present` 且未命中 1–3」：在 SAFE 路径上
+> `marker present` 必然已由 `resolveEngineDecisionFromInputs()` 归入
+> `containment-recovery-pending`（§7.4 M3），因此走到该档的 `present` 只可能来自
+> `choice !== 'zvec'` 的 pin 分支。两种写法语义等价，兜底写法更 fail-safe。
+
+**引擎状态由独立的 `engine.{choice, impl, degraded, reason}` 表达，与 `state` 不得再合并。**
+因此下列三种情况必须都报 `no-debt`，而各自的引擎事实互不相同：
+
+```text
+pin sqlite + marker absent
+    state = no-debt   engine.impl = sqlite   engine.reason = engine-choice
+SAFE + binding unavailable + marker absent
+    state = no-debt   engine.impl = sqlite   engine.reason = dependency-unavailable
+SAFE + zvec available + marker absent
+    state = no-debt   engine.impl = zvec     engine.reason = zvec
+```
+
+`no-debt` 的文案**禁止**出现「当前引擎按正常判定运行」这类把两个维度重新粘回去的表述
+（见 D6）。它只能陈述「没有未清偿的 containment trust debt」。
+
+`unsafe` 与 `recovery-pending` 的区别是本节最容易做错的一处：前者跑 rebuild 纯属浪费
+（路径仍不受支持，重建出的 collection 一样不可用），后者才是 rebuild 能解决的。
+**两者的 nextSteps 不得共用同一段模板。**
+
+### D6 措辞禁令
+
+```text
+禁止："该 collection 从未被读取"
+禁止："该 collection 内容确认完整"
+禁止："上游缺陷已经修复"
+禁止："路径问题已经修复"
+禁止："系统已自动恢复"
+禁止：把 containment 说成"错误"（它是设计内的 fail-closed 结果）
+禁止：在任何状态下建议删除 marker
+禁止：在 no-debt 文案中断言引擎状态（如"当前引擎按正常判定运行"）——
+      debt 与 engine 是两个独立维度，D5 刚把它们拆开，文案不得再粘回去
+```
+
+### D7 承重负控 A–G（实现轮次逐条验证）
+
+七条完整内联，实施时不得依据实现方便重新解释：
+
+```text
+A   verify 加载 @zvec/zvec
+    → native-load guard 必须变红
+B   verify 实例化或打开 collection
+    → constructor/open guard 必须变红
+C1  verify 清 marker
+    → marker-clear guard 必须变红
+C2  verify 自动触发 rebuild
+    → rebuild guard 必须变红
+C3  verify 取得 recovery ownership / lease（或 archive publication lock）
+    → ownership guard 必须变红
+D   输出声称上游缺陷已修复或 collection 已修复
+    → wording contract 必须变红
+E   SAFE + marker present 未显示 recovery-pending
+    → state/nextSteps assertion 必须变红
+F   invalid / unreadable 被折叠成普通 present
+    → marker-status assertion 必须变红
+G   unsafe 与 recovery-pending 共用同一段 nextSteps
+    → state-specific remediation assertion 必须变红
+```
+
+> 第 1 版把 C 写成「清 marker、自动 rebuild 或取得恢复所有权」三合一，实施时只施加了
+> 清 marker 一种，另外两种性质因而从未被证伪过。编号在此拆开，**编号本身不是合同，
+> 守护性质才是**；实施可按需继续扩展（B2、C4…），但每条性质都必须各自有 mutation。
+
+纪律：突变负控只在**完整绿色基线**上运行，逐条按 SHA-256 还原并与 template 镜像比对，
+突变态下绝不中断。**基线红时不得以「仍然非零」判定突变有效。**
+
+每条负控必须记录：
+
+```text
+mutation ID
+guard property（守护的性质）
+target file
+exact mutation point / 周边 hunk
+施加的具体变化
+expected guard
+observed relevant assertion（原文）
+guardHit
+exit code
+baseline SHA-256 / mutated SHA-256 / restored SHA-256
+restored live SHA-256 / restored template SHA-256 / mirror-identical
+```
+
+证据落成 `docs/validation/zvec-win-unicode-verify-diagnostics.md`，
+**不得只留在 PR 正文或 gitignored 装置里。** 验收标准是：**任何后来的 reviewer
+仅凭仓库内的 durable evidence 就能重建每一条负控究竟改了什么、由哪条断言捕获**，
+而不需要访问 harness 文件。只写「C2 auto rebuild → failed」不满足该标准。
+
+### D8 文件范围（实现轮次）
+
+```text
+可改：.evo-lite/cli/memory.service.js        templates/cli/memory.service.js
+      .evo-lite/cli/test/governance.js       templates/cli/test/governance.js
+      .evo-lite/cli/test/integration.js      templates/cli/test/integration.js
+
+新增：docs/validation/zvec-win-unicode-verify-diagnostics.md
+
+不得改：memory-index.js / zvec-containment-state.js / memory-index-zvec.js /
+        runtime.js / memory.js / template-manifest.js / package.json /
+        .github/** / .evo-lite/active_context.md / .evo-lite/raw_memory/**
+```
+
+`memory-index.js` 与 `zvec-containment-state.js` 进入"不得改"清单，正是 D1 结论的直接
+后果：诊断不需要它们改任何一行。
+
 ## 8. 两道 gate（职责分离 + 真实 enforcement point）
 
 ### 8.1 现状事实
@@ -1522,6 +1856,7 @@ live/template 合同测试                见 §9 T10
 | T9 平台隔离 | 非 win32 行为逐位不变 |
 | T10 blocker 派生 | ①`adopted`/`active` blocker → prepublish **fail**；②`parked` blocker 无 waiver → **fail**；③`parked` blocker + 三项齐全的合法 waiver → pass；④`done` spec → pass；⑤字段缺失/`false` → 不影响 publish；⑥**原始值非 `"true"`/`"false"`（`ture` / `yes` / `1` / 带引号 `"true"`）→ schema error → fail**（§8.2.2.0）；⑦disposition 非法或不完整（缺 reason / 缺日期 / 非 `waived` 原始字面量 / 日期 round-trip 失败如 `2026-02-31`）→ **保持 fail**；⑧`adopted`/`active` blocker **不可**被 waiver 放行；⑨**FOCUS 自然语言含 "release-blocker" 字样 → 不产生任何机器判断**；⑩**stale `spec-registry.json` 与现场结果冲突时以现场为准** |
 | T11 **registry health**（fail-open 回归防线） | ①**损坏一个 release-blocking spec 的 frontmatter → 该文件不得静默消失**：必须进 `registry.errors`（含路径）且 prepublish **fail**；②`docs/specs` 不可读 → `errors` + fail；③`discoveredFileCount !== parsedSpecCount` → fail；④放行条件是 `errors.length === 0 && blockers.length === 0`，**不是**「调用未抛异常」 |
+| T12 **verify 诊断状态矩阵**（§7.5） | ①**五态**各自呈现且互不折叠：`no-debt` / `unsafe` / `recovery-pending` / `marker-damaged` / `debt-under-pin`（`invalid` 与 `unreadable` **不得**折叠进 `present`）；②`unsafe` 与 `recovery-pending` 的 nextSteps **不共用模板**——前者指向迁移受支持路径且不允许 rebuild、后者指向显式 rebuild；③任何状态下**不出现**删除 marker 的建议；④文案不含 D6 禁令中的任何表述，既**不承诺** collection 内容未被读取（D4 边界），也**不在 `no-debt` 中断言引擎状态**；⑤诊断段满足 D4.1 九项零副作用，且每项均由 **call-level 计数**（而非终态推断）守护；⑥危险路径样本上 `verify` 可诊断且不崩溃；⑦**债与引擎两维度分离**：`pin+marker absent` 与 `dependency-unavailable+marker absent` 均为 `no-debt` 且各自 `engine.reason` 正确；⑧`debt-under-pin` 下 marker 原始 `collectionPath` 与 `containment{verdict,layer,reason}` 全部可见（D3） |
 
 ## 10. 明确排除项
 
@@ -1547,9 +1882,9 @@ live/template 合同测试                见 §9 T10
 | AC3 | 单一 `resolveEngineDecision()`；诊断与实例化消费同一决策；非 `SAFE` 时 `loadZvecIndex` 调用次数 = 0（§6.2，T6） |
 | AC4 | 全部 native 入口收口，含 `memory-ab`（非 `SAFE` 拒绝执行而非自动降级）与 §6.4 完整消费面（T7） |
 | AC5 | 降级复用既有 sqlite 通道并附 containment 原因；§7.3 恢复状态机 + §7.3.1 阶段限定 + §7.4 M1–M8 机制完整实现（T8） |
-| AC6 | `verify` 报告 containment 状态与人工恢复指引；危险路径上已存在的 collection 只报告不打开 |
+| AC6 | `verify` 报告 containment 状态与人工恢复指引；危险路径上已存在的 collection 只报告不打开；合同冻结于 §7.5 D0–D8（T12） |
 | AC7 | `spec-portfolio.js` registry 输出 `releaseBlocking`（按 §8.2.2.0 严格原始值解释）、waiver schema、`errors` 与 `source` 计数，并按 §8.2.2 派生 blockers；发布阻断落在 `prepublishOnly`/release-preflight，放行条件为 `errors.length === 0 && blockers.length === 0`；`release-gate.yml` 提供合同证据且**回归时 PR 变红**（§8.2.1–§8.3，T10/T11） |
-| AC8 | T1–T11 固化为常驻合同测试（live + template 双份）；崩溃 corpus 测试不实际触发崩溃 |
+| AC8 | T1–T12 固化为常驻合同测试（live + template 双份）；崩溃 corpus 测试不实际触发崩溃 |
 
 > **计量说明（如实表述）**：上表为**人工合同计数** —— AC 8 项，实施计划分为 3 个 Phase。
 > 这**不是** Portfolio intake 的实测指标。已实测：本 spec 的 AC 用 Markdown 表格书写，
