@@ -15,14 +15,17 @@ status: active
 > ```text
 > Tasks 1–6（AC1–AC5）  COMPLETE / MERGED
 > Task 7 Step 1（AC6）   RE-FROZEN 2026-08-07 —— 五态模型闭合 D2×M8×D5 冲突
-> Task 7 Step 2（AC6）   CHANGES REQUIRED —— 复审裁定，返工中
-> Tasks 8–9（AC7/收口）  NOT AUTHORIZED
+> Task 7 Step 2（AC6）   ACCEPTED / MERGED 2026-08-07（PR #17，merge commit 985b638）
+> Task 8（AC7）          IMPLEMENTATION AUTHORIZED 2026-08-07
+> Task 9（收口）          NOT AUTHORIZED
 > context closure       NOT AUTHORIZED
+> baseline              main@985b638（Task 7 最终审查 head = ac3445c）
 > ```
 >
-> 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`；本计划下文 Task 6 段落与
-> 「前置条件」仍保留「Task 6 需要单独实施授权」的旧文字，那是尚未处理的历史残留，
-> **以本摘要为准**。此处修正不代表 Task 6 的逐 Step 回填或 mutation 历史导入。
+> 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`，Task 7 已合入 `main@985b638`；
+> 本计划下文 Task 6 段落与「前置条件」仍保留「Task 6 需要单独实施授权」的旧文字，
+> 那是尚未处理的历史残留，**以本摘要为准**。此处修正不代表 Task 6 的逐 Step 回填或
+> mutation 历史导入，也不改动 Task 8 的冻结设计。
 >
 > 逐任务授权，不再有全局横幅。执行任何**未授权**任务之前，必须先通过 spec §14 /
 > §14.1 的授权门（含用户显式授权）。
