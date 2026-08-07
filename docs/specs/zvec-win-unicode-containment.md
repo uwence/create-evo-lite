@@ -1,6 +1,6 @@
 ---
 id: spec:zvec-win-unicode-containment
-status: adopted
+status: done
 created: 2026-07-31
 releaseBlocking: true
 relationMode: independent

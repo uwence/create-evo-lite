@@ -3,7 +3,7 @@ id: plan:zvec-win-unicode-containment
 title: "Plan: Zvec Windows 非 ASCII 路径 containment"
 linkedSpec: spec:zvec-win-unicode-containment
 format: superpowers
-status: active
+status: done
 ---
 
 # Zvec Windows Unicode Containment Implementation Plan
@@ -1137,9 +1137,9 @@ shipped + releaseBlocking:true   →  CLEAR
 
 **9A — closeout procedure re-freeze（docs-only）**
 
-- [ ] 同步 spec / plan 顶部阶段摘要至真实状态与 `main@04fd869`
-- [ ] 用本节固化 kickoff audit 的裁定
-- [ ] 普通 git commit → Draft PR → 首轮 `pull_request` CI → 硬停
+- [x] 同步 spec / plan 顶部阶段摘要至真实状态与 `main@04fd869`
+- [x] 用本节固化 kickoff audit 的裁定
+- [x] 普通 git commit → Draft PR → 首轮 `pull_request` CI → 硬停（PR #20 → main@a56ae21）
 
 **9B — 上游上报（外部写操作，单独授权）—— DONE 2026-08-07**
 
@@ -1190,26 +1190,30 @@ shipped + releaseBlocking:true   →  CLEAR
 
 **9C — runtime governance dependency 登记（窄改 active_context）**
 
-- [ ] 在 `[attp-hive-rollout]` 登记「Windows 目标必须消费 containment decision 接口」的依赖
+- [x] 在 `[attp-hive-rollout]` 登记「Windows 目标必须消费 containment decision 接口」的依赖
       —— 该依赖目前**只**写在 spec §12，`[attp-hive-rollout]` 自己的 backlog 条目没有它
-- [ ] FOCUS 必要同步
-- [ ] **仍禁止**：`context track` / `archive` / META / trajectory / `mem commit`
+- [x] FOCUS 必要同步（经 `mem context focus`；FOCUS 有 CLI path，不得手改）
+- [x] **仍禁止**：`context track` / `archive` / META / trajectory / `mem commit` —— 已遵守（PR #22 → main@6e855eb）
 
-**9D — 受控人工关闭（最后一步）**
+**9D — 受控人工关闭（最后一步）—— 执行于 2026-08-07，基线 `main@6e855eb`**
 
-前置门必须**同时**成立：
+前置门必须**同时**成立。逐条机械核验结果：
 
 ```text
-Tasks 1–8                ACCEPTED / MERGED
-9A                       已合并
-9B upstream issue URL    已存在
-9C dependency 登记        已完成
-worktree                 clean
+Tasks 1–8                ACCEPTED / MERGED   PR #16 / #17 / #18
+9A                       MERGED              PR #20 → main@a56ae21
+9B upstream issue URL    存在                https://github.com/alibaba/zvec/issues/665（OPEN）
+9C dependency 登记        MERGED              PR #22 → main@6e855eb
+worktree                 clean               0 changes
 sync-runtime --check     EXIT 0
-live/template SHA pairs  identical
-registry.errors          0
+live/template SHA pairs  identical           sync-always 124/124，diverged 0
+registry.errors          0                   blockers=1，15/15 计数守恒
 release-preflight BEFORE BLOCKED
 ```
+
+> `copy-on-init` 家族的 `.agents/rules/architecture.md` 与 `evo-lite.md` 两对哈希不同，
+> **属设计预期**（脚手架播种一次后由项目自有、从不 nurture），不属于本门的判据；
+> `sync-runtime --check` 也只强制 `sync-always` 范围。
 
 然后事务顺序：
 
