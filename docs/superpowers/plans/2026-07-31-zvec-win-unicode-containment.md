@@ -1141,24 +1141,40 @@ shipped + releaseBlocking:true   →  CLEAR
 - [ ] 用本节固化 kickoff audit 的裁定
 - [ ] 普通 git commit → Draft PR → 首轮 `pull_request` CI → 硬停
 
-**9B — 上游上报（外部写操作，单独授权）**
+**9B — 上游上报（外部写操作，单独授权）—— DONE 2026-08-07**
 
-- [ ] 目标为 **`alibaba/zvec`** —— `@zvec/zvec` 0.6.0 的 `bugs.url` 指向它；
+> **durable issue URL**：<https://github.com/alibaba/zvec/issues/665>
+> `alibaba/zvec#665`，OPEN，创建于 2026-08-07T16:07:21Z。
+
+- [x] 目标为 **`alibaba/zvec`** —— `@zvec/zvec` 0.6.0 的 `bugs.url` 指向它；
       `zvec-ai/zvec-node` 只是 Node binding 源码仓，不是 bug tracker
-- [ ] **新建 issue，不并入 `alibaba/zvec#626`**。#626（2026-07-28，仍 open）现象相关但
+- [x] **新建 issue，不并入 `alibaba/zvec#626`**。#626（2026-07-28，仍 open）现象相关但
       并非同一故障：它是 Python binding、可捕获的 `RuntimeError`
       （"No mapping for the Unicode character exists in the target multi-byte code page"）；
       本议题是 Node `insertSync` 的 `0xC0000409` / `STATUS_STACK_BUFFER_OVERRUN`
-      进程级 fail-fast，JS `try/catch` 拿不到控制权。新 issue 中注明 `Possibly related: #626`
-      并说明这一实质差异
-- [ ] 资产：`docs/validation/fixtures/zvec-win-unicode/`
+      进程级 fail-fast，JS `try/catch` 拿不到控制权。#665 开头即注明
+      `Possibly related: #626` 并说明这一实质差异
+- [x] 资产：`docs/validation/fixtures/zvec-win-unicode/`
       （`README.md` / `probe-runner.js` / `probe-child.js` / `corpus.json` 135 样本 /
-      `results-summary.json` 四轮逐样本判定 + 原始结果 sha256）
-- [ ] **可声称**：0.5.0 与 0.6.0 同样复现，故不归因于版本升级；binding 由父进程以
-      绝对路径注入，已排除混版测量
-- [ ] **不可声称**：触发条件已收敛（§3.1 明确未收敛）；任何路径「安全」
-      （fixture README：它记录观测，不证明任何路径安全）；非 Windows 平台有无同类边界（未测）
-- [ ] 产出 durable issue URL → 硬停
+      `results-summary.json` 四轮逐样本判定 + 原始结果 sha256）。
+      **精确表述**：#665 逐文件**列出并说明**了这些资产，并提出可附件上传或对上游
+      fixtures 目录开 PR —— **文件本身尚未上传**，等上游选择投递方式
+- [x] **可声称**：0.5.0 与 0.6.0 同样复现，故不归因于版本升级；binding 由父进程以
+      绝对路径注入，已排除混版测量。
+      **发出前逐条回到原始工件核实**：两版逐行对照表在
+      `docs/validation/zvec-06-phase0b-verdict.md` §8 —— **不在 fixture 里**
+      （fixture 的 R1–R4 全部是 0.6.0）；混版排除的依据是同文件「测量方法更正
+      （2026-07-31）」，早先探针在 `os.tmpdir()` 裸 require 命中了游离的用户级
+      `node_modules`(0.5.0)，修复后两版各重测、七行逐行相同
+- [x] 另补两条 fixture 已有、原清单未列但承重的证据：
+      **R4 长度控制实验 `anyFlip: false`**（7 segment × 24 档 padding，
+      总路径 108..134 字符跨度零翻转 → 不是长度效应）；
+      **`虜-golf`**（一个汉字 + ASCII、8 字节仍硬崩 → 也不是单纯字符集）
+- [x] **不可声称**：触发条件已收敛（§3.1 明确未收敛）；任何路径「安全」
+      （fixture README：它记录观测，不证明任何路径安全）；非 Windows 平台有无同类边界（未测）。
+      三条在 #665 中**全部以否定形式出现**，无任何正面主张；另额外声明位置维度
+      只比较了两个位置
+- [x] 产出 durable issue URL → 硬停
 
 **9C — runtime governance dependency 登记（窄改 active_context）**
 
