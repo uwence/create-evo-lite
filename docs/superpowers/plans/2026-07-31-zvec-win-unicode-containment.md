@@ -76,15 +76,17 @@ GitHub Actions、`sync-runtime` 模板镜像。
 docs/specs/zvec-win-unicode-containment.md      ← mem spec adopt 归一化产出（--independent）
 docs/superpowers/plans/2026-07-31-...(本文件)    ← 唯一 plan，直接被 plan scan 识别
 docs/plans/zvec-win-unicode-containment.md      ← 已删除（重复登记）
-预期 Portfolio 状态：active（非 adopted）
+实施期预期 Portfolio 状态：active（非 adopted）；Task 9D lifecycle close 后为 shipped
 ```
 
 既然扫描器已经读取本文件，IR 副本不提供任何额外能力；而给它另一个 id 会制造**两个
 独立生命周期**，治理负担反而更大。
 
 `spec` 状态派生为 `linkedPlans.length === 0 → adopted`，否则 `active`
-（`spec-portfolio.js:213-219`）；本文件 frontmatter 带 `linkedSpec`，因此 spec 仍为
-`active` 而非 `adopted`，不会触发 `aging-no-plan`。
+（`spec-portfolio.js:213-219`）；本文件 frontmatter 带 `linkedSpec`，因此**在实施期**
+该 spec 派生为 `active` 而非 `adopted`，不会触发 `aging-no-plan`。
+Task 9D 收口后 frontmatter 为 `status: done`，派生态先于上述分支命中 `shipped`，
+这一实施期判断不再适用。
 
 ## Global Constraints
 

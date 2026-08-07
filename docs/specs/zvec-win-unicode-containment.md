@@ -33,8 +33,9 @@ relationMode: independent
 > release-preflight 随之由 `BLOCKED` 转为 `CLEAR`（§8.2.2 的 `done/shipped → ALLOW` 行）。
 > 门仍在，只是这个 spec 不再欠它。
 >
-> 本次仅同步授权与阶段状态，**§8.2 / §8.3 等冻结合同语义未改动**。这不代表 Task 6 的
-> 逐 Step 回填、mutation 历史导入或 spec 终态推进 —— 那些仍属未处理项。
+> 本次除 lifecycle frontmatter 由 `adopted` → `done` 与阶段状态同步外，
+> **§8.2 / §8.3 等冻结合同语义未改动**。Task 6 的逐 Step 回填与 mutation 历史导入
+> 仍属未处理的历史债，不在本次收口范围内。
 >
 > 本文冻结合同与边界。§7.4 是第 4 版新增的**恢复机制冻结**（marker 载体、损坏方向、
 > decision reason、one-shot recovery decision、失败语义、跨平台 trust debt），
