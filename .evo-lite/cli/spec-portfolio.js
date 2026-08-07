@@ -346,7 +346,25 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         const blocking = parseReleaseBlocking(frontmatter);
         if (blocking.error) errors.push({ path: relSpecPath, reason: blocking.error });
         const waiver = parseReleaseWaiver(frontmatter);
-        for (const e of waiver.errors) errors.push({ path: relSpecPath, reason: e });
+
+        // Waiver schema errors are raised ONLY where a waiver can actually do
+        // something: a release-blocking spec that is parked (§8.2.2.1).
+        //
+        // Validating it everywhere made the fields load-bearing in states the
+        // frozen table says are ALLOW. A shipped spec that still carries waiver
+        // metadata from when it was parked would fail preflight on an incomplete
+        // waiver even though deriveBlocker() correctly returns no blocker —
+        // release-preflight treats any registry error as a refusal, so the
+        // stale, inapplicable metadata kept the release locked.
+        //
+        // adopted/active are deliberately excluded too: there the block is
+        // unconditional and a waiver cannot lift it, so reporting the waiver as
+        // malformed would suggest that fixing it would help. The blocker's own
+        // reason says the true thing instead.
+        const waiverIsLoadBearing = blocking.value && state === 'parked';
+        if (waiverIsLoadBearing) {
+            for (const e of waiver.errors) errors.push({ path: relSpecPath, reason: e });
+        }
 
         specs.push({
             id: parsed.id,

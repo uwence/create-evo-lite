@@ -111,8 +111,10 @@ function main() {
     ]);
 }
 
+// No exports on purpose. The enforcement point is a PROCESS — npm runs it and
+// reads its exit code — and every test drives it that way. Exporting evaluate()
+// would create an interface surface nothing consumes and everything would then
+// have to keep compatible.
 if (require.main === module) {
     main();
 }
-
-module.exports = { evaluate };

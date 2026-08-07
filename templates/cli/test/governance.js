@@ -16122,8 +16122,14 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         // Deliberately NOT createTempRuntimeRoot(): these cases need a bare
         // project shape, and the release contract must not depend on a fully
         // scaffolded runtime being present.
+        // Every fixture root this block creates is registered and removed in the
+        // finally below. The pre-existing createTempRuntimeRoot() leak is a
+        // separate, frozen debt and is not touched here — but Task 8 must not
+        // add a second source of the same accumulation.
+        const fixtureRoots = [];
         const makeProject = (name, opts = {}) => {
             const root = fs.mkdtempSync(path.join(os.tmpdir(), `evo-lite-t8-${name}-`));
+            fixtureRoots.push(root);
             if (opts.specsDirIsFile) {
                 fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
                 fs.writeFileSync(path.join(root, 'docs', 'specs'), 'not a directory', 'utf8');
@@ -16253,13 +16259,46 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 'parked + a complete valid waiver must allow a real npm publish (§8.2.2.1)');
         });
 
-        // T10-4 — done/shipped never blocks.
+        // T10-4 — done/shipped never blocks. "Never" has to include the case
+        // where waiver metadata is still lying around from when the spec was
+        // parked: a shipped spec must not stay locked by fields that, per
+        // §8.2.2.1, do not apply to it at all. The first version of this case
+        // only covered the bare form and so proved nothing about "never".
         score('T10', 'T10-4', () => {
-            const root = makeProject('t10-4', {
+            const bare = makeProject('t10-4-bare', {
                 specs: { 'x.md': specDoc(['id: spec:x', 'status: done', BLOCKER_TRUE]) },
             });
-            expectClear(runPreflight(root),
+            expectClear(runPreflight(bare),
                 'a done spec must not block regardless of releaseBlocking (§8.2.2)');
+
+            // Waiver validation is only load-bearing for parked. On a shipped
+            // spec these fields are inert history, and an incomplete one must
+            // not be able to hold the release.
+            const staleWaiver = makeProject('t10-4-stale-waiver', {
+                specs: {
+                    'x.md': specDoc([
+                        'id: spec:x', 'status: done', BLOCKER_TRUE,
+                        'releaseBlockDisposition: waived',
+                        'releaseBlockReason: leftover from when this was parked',
+                        // releaseBlockReviewedAt deliberately absent
+                    ]),
+                },
+            });
+            expectClear(runPreflight(staleWaiver),
+                'a done spec carrying leftover incomplete waiver metadata must still be ALLOW — the waiver does not apply to done/shipped (§8.2.2 / §8.2.2.1)');
+
+            const garbageWaiver = makeProject('t10-4-garbage-waiver', {
+                specs: {
+                    'x.md': specDoc([
+                        'id: spec:x', 'status: done', BLOCKER_TRUE,
+                        'releaseBlockDisposition: Waived',
+                        'releaseBlockReason:   ',
+                        'releaseBlockReviewedAt: 2026-02-31',
+                    ]),
+                },
+            });
+            expectClear(runPreflight(garbageWaiver),
+                'even wholly invalid waiver metadata must not block a done spec (§8.2.2)');
         });
 
         // T10-5 — absent or explicitly false is simply not a blocker. This is
@@ -16476,12 +16515,24 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
 
         // Supplemental 1 — release-gate.yml must carry a containment evidence
         // job. Without it a containment regression lands green (§8.3).
+        // The first version matched /containment/i and /release-preflight/i
+        // anywhere in the file, so deleting the whole job and leaving the words
+        // in a header comment would have kept it green. It has to key on the job
+        // actually existing and actually doing the work.
         score('supplemental', 'ci-1', () => {
-            const wf = fs.readFileSync(path.join(WORKSPACE_ROOT, '.github', 'workflows', 'release-gate.yml'), 'utf8');
-            assert.ok(/containment/i.test(wf),
-                'release-gate.yml must carry a containment contract evidence job (§8.3)');
-            assert.ok(/release-preflight|prepublish/i.test(wf),
-                'the evidence job must exercise the release enforcement point, not merely mention containment');
+            const wfPath = path.join(WORKSPACE_ROOT, '.github', 'workflows', 'release-gate.yml');
+            const wf = fs.readFileSync(wfPath, 'utf8');
+            assert.ok(/^ {2}containment-contract:$/m.test(wf),
+                'release-gate.yml must declare a `containment-contract:` job (§8.3) — a mention in a comment is not a job');
+            const job = wf.slice(wf.search(/^ {2}containment-contract:$/m));
+            assert.ok(/^\s+name: containment \+ release enforcement contract evidence$/m.test(job),
+                'the job must keep its contract name so a regression is legible in the checks list');
+            assert.ok(/npm run test:governance/.test(job),
+                'the job must run the governance suite, which is where T10/T11/T12 live');
+            assert.ok(/release-preflight\.js/.test(job),
+                'the job must exercise the real release enforcement binary');
+            assert.ok(/VERDICT=BLOCKED/.test(job) && /VERDICT=CLEAR/.test(job),
+                'the job must assert BOTH directions — a gate that only ever blocks is not a gate');
         });
 
         // Supplemental 2 — and it must NOT arm the crash probe. The fixture
@@ -16497,27 +16548,37 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         });
 
         // --- scoreboard ---------------------------------------------------
-        const mirrorsExist = fs.existsSync(T8_PREFLIGHT_LIVE) && fs.existsSync(T8_PREFLIGHT_TPL);
-        const lines = [];
-        for (const bucket of ['T10', 'T11', 'supplemental']) {
-            const rows = scored[bucket];
-            const passed = rows.filter(r => r.ok).length;
-            lines.push(`   ${bucket}: ${passed}/${rows.length}`);
-            for (const r of rows.filter(x => !x.ok)) lines.push(`      ✗ ${r.id} — ${r.detail}`);
+        // Every case body runs inside score(), which captures its failure, so
+        // the only throws reachable from here are the closing assertions — and
+        // those are inside the try, so the fixtures are removed either way.
+        try {
+            const mirrorsExist = fs.existsSync(T8_PREFLIGHT_LIVE) && fs.existsSync(T8_PREFLIGHT_TPL);
+            const lines = [];
+            for (const bucket of ['T10', 'T11', 'supplemental']) {
+                const rows = scored[bucket];
+                const passed = rows.filter(r => r.ok).length;
+                lines.push(`   ${bucket}: ${passed}/${rows.length}`);
+                for (const r of rows.filter(x => !x.ok)) lines.push(`      ✗ ${r.id} — ${r.detail}`);
+            }
+            console.log(lines.join('\n'));
+
+            assert.ok(mirrorsExist,
+                'release-preflight.js must exist in BOTH .evo-lite/cli and templates/cli (§8.2.4)');
+            assert.strictEqual(
+                fs.readFileSync(T8_PREFLIGHT_LIVE, 'utf8'),
+                fs.readFileSync(T8_PREFLIGHT_TPL, 'utf8'),
+                'release-preflight.js live and template mirrors must be byte-identical');
+
+            const failed = [...scored.T10, ...scored.T11, ...scored.supplemental].filter(r => !r.ok);
+            assert.strictEqual(failed.length, 0,
+                `Task 8 / AC7 acceptance matrix failed ${failed.length} case(s): ${failed.map(f => f.id).join(', ')}`);
+            console.log('✅ T10 10/10 + T11 4/4 + supplemental 2/2 passed');
+        } finally {
+            for (const root of fixtureRoots) {
+                try { fs.rmSync(root, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+            }
+            fixtureRoots.length = 0;
         }
-        console.log(lines.join('\n'));
-
-        assert.ok(mirrorsExist,
-            'release-preflight.js must exist in BOTH .evo-lite/cli and templates/cli (§8.2.4)');
-        assert.strictEqual(
-            fs.readFileSync(T8_PREFLIGHT_LIVE, 'utf8'),
-            fs.readFileSync(T8_PREFLIGHT_TPL, 'utf8'),
-            'release-preflight.js live and template mirrors must be byte-identical');
-
-        const failed = [...scored.T10, ...scored.T11, ...scored.supplemental].filter(r => !r.ok);
-        assert.strictEqual(failed.length, 0,
-            `Task 8 / AC7 acceptance matrix failed ${failed.length} case(s): ${failed.map(f => f.id).join(', ')}`);
-        console.log('✅ T10 10/10 + T11 4/4 + supplemental 2/2 passed');
     }
 
     // ---------------------------------------------------------------------
