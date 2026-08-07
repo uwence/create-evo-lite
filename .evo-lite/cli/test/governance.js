@@ -1522,6 +1522,234 @@ async function runGovernanceTests() {
             }
         }
 
+        // ---------------------------------------------------------------------
+        // T-checkbox-scope (R1–R8) — one semantic source for "is this line a
+        // machine-closable tracked checkbox".
+        //
+        // Three definitions existed. The parser recognised tracked work
+        // (`[task:id]` for ordinary plans, `**Step` for superpowers plans),
+        // preview counted `/^- \[ \] /gm`, and apply rewrote `/- \[ \] /g` —
+        // unanchored and global. So apply rewrote prose, code-fence examples and
+        // test-fixture string literals that merely contained the characters.
+        // Turning `- [ ] no label line` into `- [x] no label line` inside an
+        // assertion silently changes what that assertion means.
+        //
+        // Every negative case here is paired with a positive control: proving
+        // "the wrong thing did not change" is worthless if nothing changed at
+        // all. That is the trap R6 of the previous debt fell into twice.
+        // ---------------------------------------------------------------------
+        console.log('T-checkbox-scope. Testing tracked-checkbox scanning and precise mutation (R1–R8) ...');
+        {
+            const pm = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'parse-markdown'));
+            const { applyClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-apply'));
+            const cp = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+
+            const rows = [];
+            const score = (id, fn) => {
+                try { fn(); rows.push({ id, ok: true, detail: null }); } catch (e) {
+                    rows.push({ id, ok: false, detail: e && e.message ? e.message : String(e) });
+                }
+            };
+            const roots = [];
+            const mkRoot = (n) => { const r = fs.mkdtempSync(path.join(os.tmpdir(), `evo-cbscope-${n}-`)); roots.push(r); return r; };
+
+            const FENCE = '```';
+            // Both plan grammars, each with a real target and decoys that merely
+            // look like one. A fixture without decoys cannot fail.
+            const ORDINARY_PLAN = [
+                '---', 'id: plan:ord', 'status: active', '---', '',
+                '# Ordinary', '',
+                '### Phase 1', '',
+                '- [ ] [task:ord-1] real tracked task',        // R1 target
+                '- [ ] ordinary prose item, not a task',       // R3 decoy
+                '  - [ ] indented child item',                 // R4 decoy
+                'prose mentioning - [ ] example inline',       // R5 decoy
+                '', FENCE,
+                '- [ ] [task:fake] fenced example',            // R6 decoy
+                '- [ ] **Step 9:** fenced example',            // R6 decoy
+                FENCE, '',
+            ].join('\n');
+            const SUPERPOWERS_PLAN = [
+                '---', 'id: plan:sp', 'status: active', '---', '',
+                '# Superpowers', '',
+                '### Task 1: do the thing', '',
+                '- [ ] **Step 1:** real tracked step',         // R2 target
+                '- [ ] ordinary prose item, not a step',       // R3 decoy
+                '  - [ ] indented child item',                 // R4 decoy
+                'prose mentioning - [ ] example inline',       // R5 decoy
+                '', FENCE,
+                '- [ ] **Step 7:** fenced example',            // R6 decoy
+                '- [ ] [task:fake] fenced example',            // R6 decoy
+                FENCE, '',
+            ].join('\n');
+
+            const DECOYS = [
+                '- [ ] ordinary prose item, not a task',
+                '- [ ] ordinary prose item, not a step',
+                '  - [ ] indented child item',
+                'prose mentioning - [ ] example inline',
+                '- [ ] [task:fake] fenced example',
+                '- [ ] **Step 9:** fenced example',
+                '- [ ] **Step 7:** fenced example',
+            ];
+            const assertDecoysIntact = (out, label) => {
+                for (const d of DECOYS) {
+                    if (!out.includes(d) && (ORDINARY_PLAN.includes(d) || SUPERPOWERS_PLAN.includes(d))) {
+                        // Only assert decoys that were present in this fixture.
+                        continue;
+                    }
+                }
+                for (const d of DECOYS) {
+                    const src = label === 'ordinary' ? ORDINARY_PLAN : SUPERPOWERS_PLAN;
+                    if (!src.includes(d)) continue;
+                    assert.ok(out.includes(d),
+                        `${label}: decoy line must survive byte-identical: ${JSON.stringify(d)}`);
+                }
+            };
+
+            const mark = (content) => {
+                assert.strictEqual(typeof pm.markTrackedPlanCheckboxesDone, 'function',
+                    'parse-markdown must own the mutation so parser, preview and apply share ONE definition of a tracked checkbox');
+                return pm.markTrackedPlanCheckboxesDone(content);
+            };
+
+            // R1 — ordinary plan: the [task:id] checkbox is the target.
+            score('R1', () => {
+                const r = mark(ORDINARY_PLAN);
+                assert.ok(r.content.includes('- [x] [task:ord-1] real tracked task'),
+                    'the tracked task checkbox must be marked done');
+                assert.ok(r.changedCount > 0, 'positive control: something must actually change');
+            });
+
+            // R2 — superpowers plan: the **Step checkbox is the target.
+            score('R2', () => {
+                const r = mark(SUPERPOWERS_PLAN);
+                assert.ok(r.content.includes('- [x] **Step 1:** real tracked step'),
+                    'the tracked step checkbox must be marked done');
+                assert.ok(r.changedCount > 0, 'positive control: something must actually change');
+            });
+
+            // R3 — a line-start checkbox that is not tracked work stays put.
+            score('R3', () => {
+                for (const [label, src] of [['ordinary', ORDINARY_PLAN], ['superpowers', SUPERPOWERS_PLAN]]) {
+                    const r = mark(src);
+                    assert.ok(r.changedCount > 0, `${label}: positive control — the tracked line must have changed`);
+                    assert.ok(/- \[ \] ordinary prose item/.test(r.content),
+                        `${label}: a plain checkbox is not tracked work and must remain unchecked`);
+                }
+            });
+
+            // R4 — indented children are not tracked work either.
+            score('R4', () => {
+                for (const [label, src] of [['ordinary', ORDINARY_PLAN], ['superpowers', SUPERPOWERS_PLAN]]) {
+                    const r = mark(src);
+                    assert.ok(r.changedCount > 0, `${label}: positive control`);
+                    assert.ok(r.content.includes('  - [ ] indented child item'),
+                        `${label}: an indented child checkbox must remain unchecked`);
+                }
+            });
+
+            // R5 — the literal appearing mid-line in prose. The old regex was
+            // unanchored, so this was rewritten too.
+            score('R5', () => {
+                for (const [label, src] of [['ordinary', ORDINARY_PLAN], ['superpowers', SUPERPOWERS_PLAN]]) {
+                    const r = mark(src);
+                    assert.ok(r.changedCount > 0, `${label}: positive control`);
+                    assert.ok(r.content.includes('prose mentioning - [ ] example inline'),
+                        `${label}: an inline literal is documentation, not a checkbox`);
+                }
+            });
+
+            // R6 — fenced code. These lines match the tracked grammar EXACTLY,
+            // which is the point: only fence state can tell them apart.
+            score('R6', () => {
+                for (const [label, src] of [['ordinary', ORDINARY_PLAN], ['superpowers', SUPERPOWERS_PLAN]]) {
+                    const r = mark(src);
+                    assert.ok(r.changedCount > 0, `${label}: positive control`);
+                    assert.ok(r.content.includes('- [ ] [task:fake] fenced example'),
+                        `${label}: a fenced example must not be rewritten even though it matches the grammar`);
+                    assert.ok(/- \[ \] \*\*Step [79]:\*\* fenced example/.test(r.content),
+                        `${label}: a fenced step example must not be rewritten`);
+                }
+                // And the parser must not count fenced examples as real work.
+                assert.strictEqual(typeof pm.scanTrackedPlanCheckboxes, 'function',
+                    'parse-markdown must expose the scanner so every consumer asks the same question');
+                const scan = pm.scanTrackedPlanCheckboxes(SUPERPOWERS_PLAN);
+                assert.strictEqual(scan.checkboxes.length, 1,
+                    `only the one real step is tracked; got ${JSON.stringify(scan.checkboxes)}`);
+            });
+
+            // R7 — the anti-vacuity case. Exactly the tracked lines change and
+            // nothing else does, asserted on the same file at once.
+            score('R7', () => {
+                for (const [label, src] of [['ordinary', ORDINARY_PLAN], ['superpowers', SUPERPOWERS_PLAN]]) {
+                    const r = mark(src);
+                    assert.strictEqual(r.changedCount, 1,
+                        `${label}: exactly one tracked checkbox exists in this fixture; got ${r.changedCount}`);
+                    assertDecoysIntact(r.content, label);
+                    const before = src.split(/\r?\n/);
+                    const after = r.content.split(/\r?\n/);
+                    assert.strictEqual(before.length, after.length, `${label}: line count must not change`);
+                    const diff = before.map((l, i) => (l === after[i] ? null : i)).filter(i => i !== null);
+                    assert.strictEqual(diff.length, 1,
+                        `${label}: exactly one line may differ; differing lines=${JSON.stringify(diff.map(i => [before[i], after[i]]))}`);
+                }
+            });
+
+            // R8 — preview and apply must agree. If preview promises N flips and
+            // apply performs a different number, the semantics have forked again.
+            score('R8', () => {
+                const root = mkRoot('r8');
+                fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, ['---', 'id: spec:t', 'status: draft', '---', '', '# T', ''].join('\n'));
+                const planRel = 'docs/sp.md';
+                fs.writeFileSync(path.join(root, planRel), SUPERPOWERS_PLAN);
+
+                const state = cp.defaultPlanState(root, 'plan:sp');
+                // The count preview shows must be the tracked count, not every
+                // line that happens to contain the literal.
+                const irDir = path.join(root, '.evo-lite', 'generated', 'planning');
+                fs.mkdirSync(irDir, { recursive: true });
+                fs.writeFileSync(path.join(irDir, 'plan-ir.json'), JSON.stringify({
+                    version: 'evo-plan-ir@1', specs: [], tasks: [],
+                    plans: [{ id: 'plan:sp', linkedSpec: 'spec:t', sourcePath: planRel, status: 'active', taskIds: [] }],
+                }, null, 2));
+                const st = cp.defaultPlanState(root, 'plan:sp');
+                assert.strictEqual(st.uncheckedBoxes, 1,
+                    `preview must count only tracked unchecked checkboxes; got ${st.uncheckedBoxes} (state=${JSON.stringify(state)})`);
+
+                const result = applyClose(specPath, {
+                    root,
+                    now: '2026-08-07T00:00:00.000Z',
+                    exec: () => '',
+                    previewFn: () => ({ readiness: 'READY', blockers: [], warnings: [],
+                        plan: { planIds: ['plan:sp'], unresolvedPlanIds: [],
+                            plans: [{ planId: 'plan:sp', found: true, planPath: planRel, planStatus: 'active', tasksTotal: 1, tasksImplemented: 0, uncheckedBoxes: st.uncheckedBoxes }] } }),
+                    backfillFn: (r) => { fs.mkdirSync(path.join(r, '.evo-lite', 'generated', 'planning'), { recursive: true }); fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'archive-evidence.json'), '{}\n'); },
+                    scanFn: (r) => fs.writeFileSync(path.join(r, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), '{}\n'),
+                });
+                assert.strictEqual(result.applied, true, `apply must succeed; got ${JSON.stringify(result).slice(0, 300)}`);
+                const out = fs.readFileSync(path.join(root, planRel), 'utf8');
+                assert.ok(out.includes('- [x] **Step 1:** real tracked step'), 'apply must flip the tracked step');
+                assertDecoysIntact(out, 'superpowers');
+                assert.ok(result.actions.some(a => /flip 1 checkbox/.test(a)),
+                    `the action must report the real changed count; got ${JSON.stringify(result.actions)}`);
+            });
+
+            try {
+                const passed = rows.filter(r => r.ok).length;
+                console.log(`   R1–R8: ${passed}/${rows.length}`);
+                for (const r of rows.filter(x => !x.ok)) console.log(`      ✗ ${r.id} — ${r.detail}`);
+                const failed = rows.filter(r => !r.ok);
+                assert.strictEqual(failed.length, 0,
+                    `checkbox scope matrix failed ${failed.length} case(s): ${failed.map(f => f.id).join(', ')}`);
+                console.log('✅ T-checkbox-scope R1–R8 passed');
+            } finally {
+                for (const r of roots) { try { fs.rmSync(r, { recursive: true, force: true }); } catch (_) { /* best effort */ } }
+            }
+        }
+
         console.log('T44. Testing applyClose defaultScan/defaultBackfill call planning with the real signature ...');
         {
             // Regression: T41 injects scanFn, masking the real defaultScan. The live --apply
