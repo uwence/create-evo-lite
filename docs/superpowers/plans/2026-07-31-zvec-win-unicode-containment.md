@@ -14,8 +14,8 @@ status: active
 >
 > ```text
 > Tasks 1–6（AC1–AC5）  COMPLETE / MERGED
-> Task 7 Step 1（AC6）   COMPLETE —— 只读诊断合同冻结（spec §7.5 D0–D8），docs only
-> Task 7 Step 2（AC6）   AUTHORIZED / NOT YET IMPLEMENTED
+> Task 7 Step 1（AC6）   RE-FROZEN 2026-08-07 —— 五态模型闭合 D2×M8×D5 冲突
+> Task 7 Step 2（AC6）   CHANGES REQUIRED —— 复审裁定，返工中
 > Tasks 8–9（AC7/收口）  NOT AUTHORIZED
 > context closure       NOT AUTHORIZED
 > ```
@@ -888,10 +888,18 @@ Ubuntu 可同时运行
 
 ### Task 7: verify 诊断与恢复指引（AC6）
 
-> **授权状态**（2026-08-05）：
-> **Step 1（诊断合同冻结，docs only）COMPLETE** —— 合同冻结在 spec §7.5 D0–D8。
-> **Step 2（生产实施）AUTHORIZED** —— 严格消费已冻结的 D0–D8，**不得重新设计**。
-> 若实施现场发现冻结项本身有误，**停止并上报**，不得在编码中静默改判。
+> **授权状态**（2026-08-07 复审后更新）：
+> **Step 1 RE-FROZEN** —— §7.5 局部重开，D5 由四态改为五态（`no-debt` / `unsafe` /
+> `recovery-pending` / `marker-damaged` / `debt-under-pin`），闭合 D2 × §7.4 M8 × D5
+> 的内部冲突；D3 明确 `present` 必须呈现 marker 原始记录；D4.1 要求 call-level 计数；
+> D7 把 C 拆为 C1/C2/C3 并规定 durable evidence 格式。
+> **Step 2 CHANGES REQUIRED** —— 首轮实现被复审退回，返工中。
+>
+> ⚠️ **本轮退回的首要原因是流程，不是设计**：首轮实现发现 D5 未覆盖
+> 「pin sqlite + marker present」组合后，**现场补设计了第五状态并继续推进到 CI**，
+> 而计划要求的是「发现冻结项本身有误 → 停止并上报」。设计方向后被复审采纳，
+> 但裁定权本应留在复审。若返工中再次发现 re-freeze 后的合同仍无法覆盖某个组合，
+> **立即在该点停止**，不得先做成 commit 再请求追认。
 
 **Files:**（spec §7.5 D8；D1 的审计结论是诊断**不需要**改任何模块的导出面）
 - Modify: `.evo-lite/cli/memory.service.js`
@@ -945,8 +953,27 @@ active_context.md / raw_memory/**      属 context closure，本轮 FROZEN
       区分「仓库可复现证据」与「人工结论」
 - [ ] **Step 2.8**：`templates/cli/` 同步；`sync-runtime --check` in-sync；三对 live/template 逐字节一致
 
+#### Step 2 返工项（2026-08-07 复审 CHANGES REQUIRED）
+
+首轮实现（`51fc7d6`…`1cea66b`，CI 5/5）被退回，四项发现：
+
+- [ ] **R1（BLOCKER）** 采纳 re-frozen 五态：`normal` → `no-debt`，正式实现
+      `debt-under-pin`；修掉两处错误兜底 —— `pin+marker absent` 与
+      `dependency-unavailable+marker absent` 此前都被压成 `normal`，而旧 `normal`
+      的判据含 `impl==='zvec'`
+- [ ] **R2（BLOCKER）** D3：report 与 CLI 输出补 marker 原始记录
+      `recordedCollectionPath` + `recordedContainment{verdict,layer,reason}`，
+      并与「当前判定」分层显示；复用 D2 已取得的那一次 snapshot，不再读第二次
+- [ ] **R3（BLOCKER）** D4.1 九项改为 **call-level 计数** guard（测试侧模块拦截），
+      终态哈希/指纹降为辅助佐证；补 mutation C2（auto rebuild）、C3（recovery
+      ownership / lease）
+- [ ] **R4（IMPORTANT）** validation 增 durable appendix，逐条转录 A–G+ 的
+      mutation point / hunk / 施加变化 / 观察到的断言 / 三段 SHA-256 / 镜像哈希
+- [ ] 重跑本地 gates（node 24 三项 + sync-runtime + node 22），新 head SHA 触发
+      新的 `pull_request / attempt 1`；旧失败 run 不 rerun
+
 **验收**：`npm test` 与 `TEMP=RUNNER~1 npm test` 均 EXIT 0；`sync-runtime --check` EXIT 0；
-三对镜像逐字节一致；T12 全过；负控 A–G **7/7 effective**；
+三对镜像逐字节一致；T12 八条全过；负控 A–G+ 全部 effective 且 guardHit 命中各自性质；
 危险路径样本上 `verify` 可诊断且不崩溃。
 
 **⛔ 停止点 3**：CI 首轮 gate（`pull_request` / attempt 1 / 5-of-5）完成后**硬停**，
