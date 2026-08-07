@@ -15528,14 +15528,14 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
     // ---------------------------------------------------------------------
     // [zvec-win-unicode-containment] Task 7 / AC6 — T12 verify diagnostics.
     //
-    // Six cases from spec §7.5. The states are driven through EVO_LITE_DB_PATH
+    // Eight cases from spec §7.5. The states are driven through EVO_LITE_DB_PATH
     // (which moves both the collection path AND the ambient marker dir, since the
     // marker lives beside the db) plus a marker written directly with the state
     // module. Nothing here injects a path into the decision: production verify
     // resolves ambient paths, and a diagnostic proven only against an injected
     // path would prove nothing about production (§7.4 M3.1).
     // ---------------------------------------------------------------------
-    console.log('T12. Testing verify containment diagnostics — four states, wording, zero side effects ...');
+    console.log('T12. Testing verify containment diagnostics — five states, wording, zero side effects ...');
     {
         const stateMod = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
         // [zvec-win-unicode-containment] §7.5 D4.1 — CALL-LEVEL side-effect counters.
@@ -15880,12 +15880,17 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
             let database6 = null;
             let closeDb6 = null;
             // Installed BEFORE bootstrapRuntime so that memory.service.js destructures
-            // the counted bindings when it is (re)loaded. Both filesystem paths resolve
-            // against the RUNTIME root (getRawMemoryDir/getIndexMemoryDir do), not the
-            // db anchor.
+            // the counted bindings when it is (re)loaded.
+            //
+            // Both watched paths resolve against the DB ANCHOR, not the runtime root:
+            // the marker lives beside the db (markerPathFor(anchor.base)) and the Zvec
+            // tree is zvecPaths(dbPath).rootPath === dirname(dbPath)/zvec. Watching
+            // runtimeRoot/index_memory instead would monitor a directory the Zvec
+            // engine never writes to, so fs.indexWrite could never fire and would
+            // silently stop being a guard.
             const counters = installCallCounters({
                 markerPath: stateMod.markerPathFor(anchor.base),
-                indexDir: path.join(runtime6.runtimeRoot, 'index_memory'),
+                indexDir: anchor.paths.rootPath,
             });
             try {
                 const markerPath = stateMod.markerPathFor(anchor.base);
@@ -15954,7 +15959,7 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 const forbidden = [
                     // D4.1 #7 rebuild — the real rebuild path enters through this.
                     ['memory-index.resolveRecoveryRebuildDecision', 'entering the rebuild path', 'control C2'],
-                    ['fs.indexWrite', 'writing the index directory (rebuild side effect)', 'control C2'],
+                    ['fs.indexWrite', 'writing the Zvec collection tree (rebuild side effect)', 'control C2'],
                     // D4.1 #8/#9 ownership
                     ['zvec-containment-state.acquireRecoveryLease', 'recovery lease acquisition', 'control C3'],
                     ['zvec-containment-state.acquireArchiveMarkerLock', 'archive publication lock write', 'control C4'],

@@ -36,27 +36,42 @@
 
 ## 2. 命令与退出码
 
+下式中的 `<ABS-SHORT>` 指一条**绝对**短名路径，本地实跑用的是
+`C:\Users\uwenc\AppData\Local\Temp\RUNNER~1`。
+
 ```text
 基线（未改产品代码，Commit 1 之后）
-  npm test                          EXIT 0
-  TEMP=RUNNER~1 npm test            EXIT 0
-  sync-runtime --check              EXIT 0
+  npm test                              EXIT 0
+  TEMP=<ABS-SHORT> npm test             EXIT 0
+  sync-runtime --check                  EXIT 0
 
-实施完成后
-  npm test                          EXIT 0
-  TEMP=RUNNER~1 npm test            EXIT 0
-  sync-runtime --check              EXIT 0
-  T12 八条                           全过
-  T-zwuc-T12-cli                     过
-  mutations A–I（16 条）              16/16 effective，16/16 guardHit
+实施完成后 —— node 22
+  npm test                              EXIT 0
+  TEMP=<ABS-SHORT> npm test             EXIT 0
+
+实施完成后 —— node 24
+  node ./.evo-lite/cli/test.js          EXIT 0
+  npm test                              EXIT 0
+  TEMP=<ABS-SHORT> npm test             EXIT 0
+  sync-runtime --check                  EXIT 0
+
+  T12 八条                               全过
+  T-zwuc-T12-cli                         过
+  mutations A–I（16 条）                  16/16 effective，16/16 guardHit
+  residue scan                           clean
 ```
 
-`TEMP` 必须是**绝对**短名路径。用相对值（如裸 `RUNNER~1`）会让 `os.tmpdir()` 落在
-项目内部，`non-project dir throws` 那条断言随之不再成立 —— 那是调用方式的错，
-不是基线的错。
-
-`TEMP=RUNNER~1` 是 Windows runner 的真实短名形状，必须一并跑 —— 该路径本身会被
+`TEMP` 之所以必须一并跑：短名路径是 Windows runner 的真实形状，该路径本身会被
 containment 判为非 SAFE，是最容易暴露诊断段副作用的环境。
+
+> **⚠️ 记法更正。** 本文件早先版本把这一项写成 `TEMP=RUNNER~1 npm test`，那是
+> **historical notation，不是可照抄的命令**。裸 `RUNNER~1` 是相对路径，会让
+> `os.tmpdir()` 落在项目内部，`non-project dir throws` 那条断言随之不再成立 ——
+> 表现为一次与产品无关的红。必须用绝对路径。
+>
+> **node 24 的前置条件**：`better-sqlite3` 的原生模块按 ABI 编译（node 22 = 127，
+> node 24 = 137），换版本跑之前需 `npm rebuild better-sqlite3`，跑完再编译回去。
+> `.evo-lite/node_modules` 是 gitignored，不进提交。
 
 ---
 
@@ -64,7 +79,7 @@ containment 判为非 SAFE，是最容易暴露诊断段副作用的环境。
 
 ```text
 memory.service.js    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
-test/governance.js   8db43582fc704e4f97d11c717b09f731355b96999df3c44a836c88323921343e
+test/governance.js   d430b18ac0657e91251c1e3fe883776ac9babfd1a4eb7ba87d998a034d23f1b9
 test/integration.js  44f79c622d5b5376c55a8c467bc6200a29487a9fdc617a571fe959f4f56a48bf
 ```
 
@@ -84,7 +99,7 @@ test/integration.js  44f79c622d5b5376c55a8c467bc6200a29487a9fdc617a571fe959f4f56
 > ⚠️ **本节是第 1 轮的历史记录，不再是当前证据。** 2026-08-07 的复审判定本轮
 > 负控存在可证伪性缺口（详见 §9.3）：九项零副作用里只有四项有 guard，且
 > `marker write count = 0` 用「文件存在性未变」替代 —— **覆写检测不到**。
-> 当前有效的负控是 A–I 共 12 条，逐条 durable 记录见 **Appendix A**。
+> 当前有效的负控是 A–I 共 16 条，逐条 durable 记录见 **Appendix A**。
 > 本节保留，因为它记录了第 1 轮真实发生过什么，包括下面 F 的 guardHit 教训。
 
 纪律：每条突变都施加在**完整绿色基线**上；施加后 `npm test` 必须非零；随后还原并按
@@ -142,9 +157,14 @@ SHA-256 证明回到基线且与 template 镜像一致；**突变态下不开始
 落盘取决于 decision 选中的引擎，突变实例化 SQLite 索引时该断言静默通过（突变 B 第一次
 运行确实 ineffective）。
 
-修正：导出 `buildContainmentDiagnostics()`，对**该段单独**测量 —— 用 `Module._load` 钩
-`@zvec/zvec` 计数，并断言 `peekMemoryIndex()` 调用前后均为 `null`。跨整个 `verify()`
-测量没有意义：实体库段合法地打开活动索引，任何在那里取的计数都被本合同不管辖的行为淹没。
+修正：对**该段单独**测量 —— 用 `Module._load` 钩 `@zvec/zvec` 计数，并断言
+`peekMemoryIndex()` 调用前后均为 `null`。跨整个 `verify()` 测量没有意义：实体库段
+合法地打开活动索引，任何在那里取的计数都被本合同不管辖的行为淹没。
+
+> **⚠️ 本节的第一版方案已被 §10.1 取代。** 当时是**导出**
+> `buildContainmentDiagnostics()` 来取得单独测量的入口 —— 那是一个只为测试存在的
+> 产品导出，第 2 轮复审判为越界并已撤销。现在的入口是测试侧 `Module.prototype._compile`
+> 桥接，产品导出面零新增。本节保留原文以记录当时真实发生过什么。
 
 同理，控制 C 需要 marker **确实存在**才能观察到"未被清除"——删除一个本不存在的 marker
 与不动它无法区分。case 6 因此先写入 marker fixture。
@@ -173,9 +193,23 @@ getDbPath()              memory.service.js 已导入 :24
 `memory-index.js` 与 `zvec-containment-state.js` 在本分支**零改动**，可由
 `git diff --name-only bc3ee2f..HEAD` 复核。
 
-唯一新增的导出是 `memory.service.js` 自身的 `buildContainmentDiagnostics`，用途是让
-D4.1 的零副作用计数能对该段单独测量（见 5.2）。`memory.service.js` 属于 §7.5 D8 的
-可改清单。
+**本分支零新增导出。** `memory.service.js` 的 `module.exports` 块与 `bc3ee2f`
+（Task 7 开始前）**逐字节相同**，可由下式复核：
+
+```bash
+git show bc3ee2f:.evo-lite/cli/memory.service.js   # 取其 module.exports = { … };
+git show HEAD:.evo-lite/cli/memory.service.js      # 同上，diff 应为空
+```
+
+D4.1 的零副作用计数需要对诊断段**单独**测量，其入口不是产品导出，而是测试侧桥接 ——
+`test/governance.js` 以 `Module.prototype._compile` 按源码加载服务模块，并在编译文本
+尾部追加一行 `module.exports.__testBuildContainmentDiagnostics = buildContainmentDiagnostics;`。
+该 bridge 只存在于测试自己构造的那个 module 实例上；测试另外断言正式加载的
+`loaded.service.buildContainmentDiagnostics === undefined`，使「产品导出面未被扩大」
+本身成为一条会红的断言，而不是一句人工结论。
+
+> 第 1 轮曾**导出**该函数以取得测量入口，第 2 轮复审判为越界（允许修改某个文件
+> ≠ 允许扩大它的产品接口）并撤销。经过见 §5.2 与 §10.1。
 
 ---
 
@@ -597,8 +631,55 @@ H  effective  guardHit  mutated c6b899e2…  restored 2f6d1b5c…
 I  effective  guardHit  mutated d1c2201f…  restored 2f6d1b5c…
 ```
 
-A–C4 十条的 `baselineSha` 与本轮干净基线逐字节相同，按裁定保留、不要求重跑；
+A–C4 的 `baselineSha` 与本轮干净基线逐字节相同，按裁定保留、不要求重跑；
 但它们跑在事务化 runner 之前，Appendix A 的 `txn` 列如实记为 `no`。
+
+`C2` 是例外：§12 的 closeout 修正了它那条附加 guard 的监视根，因此又单跑了一次，
+`txn` 转为 `yes`（`mutated 8f4353e2… / restored 2f6d1b5c…`，仍 effective + guardHit）。
+
+---
+
+## 12. Closeout（2026-08-07，第 3 轮复审后）
+
+第 3 轮复审判定 **Task 7 产品实现与 AC6 合同 ACCEPTED，无新 functional BLOCKER**，
+但要求先做一次 evidence hygiene closeout —— 证据文档与测试注释里留有几处与最终实现
+**自相矛盾**的旧表述。授权范围严格限于以下四项，不含产品重新设计、不改 spec、
+不碰 `memory-index` / `zvec-containment-state` / runtime / harness。
+
+| 项 | 处置 |
+|---|---|
+| §5.2 / §6 | §5.2 标明其第一版方案已被 §10.1 supersede；§6 由「唯一新增的导出是…」改为「零新增导出 + `_compile` test bridge」，并给出可复核命令 |
+| §2 | 当前门改为 `TEMP=<ABS-SHORT>`；旧的 `TEMP=RUNNER~1` 明确标为 historical notation |
+| T12 注释 / banner | `Six cases` → `Eight cases`；banner `four states` → `five states` |
+| `fs.indexWrite` 监视根 | `runtimeRoot/index_memory` → `anchor.paths.rootPath`，同步 template，修正注释 |
+
+### 12.1 `fs.indexWrite` 监视根为什么是错的
+
+`zvecPaths(dbPath).rootPath === dirname(dbPath)/zvec`，即 case 6 下应为
+`anchor.base/zvec`。原先监视 `runtimeRoot/index_memory` —— **那是 Zvec 引擎根本不会
+写入的目录**，因此 `fs.indexWrite` 永远不可能开火，等于一条静默失效的 guard，
+而注释还声称 Zvec 路径也由 runtime root 决定。
+
+这不推翻 C2：C2 的承重负控走的是真实 `rebuildLocalIndex()` 入口，
+guardHit 命中 `memory-index.resolveRecoveryRebuildDecision`。修正后重跑确认仍
+effective + guardHit。
+
+> **⚠️ 仍未证明的部分，不得写成已闭环。** `fs.indexWrite` 现在监视的是 Zvec 引擎
+> 确实会写入的目录，但它在 forbidden 列表中排在
+> `memory-index.resolveRecoveryRebuildDecision` **之后**，而任何进入 rebuild 的突变
+> 都会先触发后者。因此本轮**没有**任何一条负控能让 `fs.indexWrite` 单独变红 ——
+> 它比修正前更有针对性，但**仍是一条未被独立证伪的附加 guard**。
+> 要证伪它需要一条「绕开 `resolveRecoveryRebuildDecision` 直接写 Zvec 树」的新突变，
+> 那超出 closeout 授权范围。
+
+### 12.2 本轮未做的事
+
+```text
+产品源码            零改动（memory.service.js 仍为 2f6d1b5c…）
+spec                未改
+16 条 mutation      未要求重跑；仅 C2 因监视根修正单跑一次确认
+createTempRuntimeRoot cleanup debt   VALID FOLLOW-UP，本次明确不修
+```
 
 ---
 
@@ -617,7 +698,7 @@ B3    yes        yes       yes              no   admissible
 B4    yes        yes       yes              no   admissible
 C1    yes        yes       yes              no   admissible
 C1b   yes        yes       yes              no   admissible
-C2    yes        yes       yes              no   admissible
+C2    yes        yes       yes              yes  admissible
 C3    yes        yes       yes              no   admissible
 C4    yes        yes       yes              no   admissible
 D     yes        yes       yes              yes  admissible
@@ -902,7 +983,7 @@ baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a
 mutated   sha256    8f4353e2b7bd4f81785b869dd804c15c70f67a7bf85c8a2288130633aa18c74e
 restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
 restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
-baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+baseline verified   yes (transactional runner: PRE + RESTORE 四重校验)
 evidence            admissible
 ```
 
