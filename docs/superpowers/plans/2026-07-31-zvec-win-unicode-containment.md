@@ -1168,8 +1168,20 @@ shipped + releaseBlocking:true   →  CLEAR
       `node_modules`(0.5.0)，修复后两版各重测、七行逐行相同
 - [x] 另补两条 fixture 已有、原清单未列但承重的证据：
       **R4 长度控制实验 `anyFlip: false`**（7 segment × 24 档 padding，
-      总路径 108..134 字符跨度零翻转 → 不是长度效应）；
-      **`虜-golf`**（一个汉字 + ASCII、8 字节仍硬崩 → 也不是单纯字符集）
+      总路径约 108..134 字符跨度零翻转）；
+      **`虜-golf`**（一个汉字 + ASCII、8 字节仍硬崩）
+- [x] **上游措辞收窄（2026-08-07 复审 R1）**：#665 初版有两处推论超出 canonical
+      证据边界，已改并线上复核。**这两条越界表述不得再出现在任何对外文本里**：
+      - `Not a length effect.` → 现为
+        **`No simple length threshold, within the range actually tested.`**
+        R4 只排除了**已测区间内**的简单长度阈值，**不**证明长度在测试空间之外永不起作用
+      - `"provably safe" collapses to "ASCII only" on Windows` → **删除**。
+        它与同篇的 `No path is claimed to be safe` 自相矛盾，且把 §5.1 的
+        **有界 supported profile** 压缩成了「ASCII 即安全」。现改为陈述这是一条
+        **containment policy 而非安全性证明**，并列出 profile 的其余必要条件
+        （本地盘符绝对路径 / 无 UNC・device・NT namespace / 无保留设备名段 /
+        段无尾随空格或点 / 已规范化 / 祖先链无 reparse point / realpath 仍满足全部条件 /
+        无 8.3 短名别名），profile 之外一律判 UNKNOWN 并拒绝
 - [x] **不可声称**：触发条件已收敛（§3.1 明确未收敛）；任何路径「安全」
       （fixture README：它记录观测，不证明任何路径安全）；非 Windows 平台有无同类边界（未测）。
       三条在 #665 中**全部以否定形式出现**，无任何正面主张；另额外声明位置维度
