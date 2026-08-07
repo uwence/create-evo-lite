@@ -102,19 +102,38 @@ function applyClose(specPath, opts = {}) {
             blockers: preview.blockers || [], note: preview.note };
     }
 
-    const specText = fs.readFileSync(specPath, 'utf8');
-    const fm = parseFrontmatter(specText).frontmatter || {};
     const plan = preview.plan || {};
 
-    // Build target list (every file --apply may overwrite).
-    const planNeedsMutation = !!plan.planPath &&
-        (plan.uncheckedBoxes > 0 || (plan.planStatus && plan.planStatus !== 'done'));
-    const planAbs = planNeedsMutation ? path.join(root, plan.planPath) : null;
+    // Gate 3: every declared linked plan must have been resolved. This is a
+    // transaction-safety gate like dirty-tree and the lock, NOT a readiness
+    // verdict — acceptance readiness stays criteria-only. But closing a spec
+    // while one of its linked plans could not even be located would leave a
+    // half-closed governance state that no rollback can describe.
+    const unresolved = Array.isArray(plan.unresolvedPlanIds) ? plan.unresolvedPlanIds : [];
+    if (unresolved.length) {
+        return { applied: false, refused: 'plan-resolution-incomplete', readiness: preview.readiness,
+            unresolvedPlanIds: unresolved,
+            message: `linked plan(s) not found in the planning IR: ${unresolved.join(', ')} — refusing a partial closure` };
+    }
+
+    const specText = fs.readFileSync(specPath, 'utf8');
+    const fm = parseFrontmatter(specText).frontmatter || {};
+
+    // Build target list (every file --apply may overwrite). ALL linked plans that
+    // need mutation go in the same batch: closing a spec means closing every plan
+    // that belongs to it, and "plan A done, plan B untouched, spec done" is the
+    // silent half-transaction this task exists to remove.
+    const planStates = Array.isArray(plan.plans)
+        ? plan.plans
+        : (plan.planPath || plan.planId ? [plan] : []);
+    const planMutations = planStates
+        .filter(p => !!p.planPath && (p.uncheckedBoxes > 0 || (p.planStatus && p.planStatus !== 'done')))
+        .map(p => ({ ...p, abs: path.join(root, p.planPath) }));
     const willSetStatus = fm.status !== 'done';
     const archPath = path.join(root, '.evo-lite', 'generated', 'planning', 'archive-evidence.json');
     const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
     const targets = [];
-    if (planAbs) targets.push(planAbs);
+    for (const m of planMutations) targets.push(m.abs);
     if (willSetStatus) targets.push(specPath);
     targets.push(archPath, irPath);
 
@@ -128,13 +147,17 @@ function applyClose(specPath, opts = {}) {
     const actions = [];
     let staged = [];
     try {
-        if (planAbs) {
-            let txt = fs.readFileSync(planAbs, 'utf8');
-            if (plan.uncheckedBoxes > 0) txt = txt.replace(/- \[ \] /g, '- [x] ');
-            fs.writeFileSync(planAbs, setStatusDone(txt));
-            actions.push(plan.uncheckedBoxes > 0
-                ? `flip ${plan.uncheckedBoxes} checkbox(es) + set plan status: done in ${plan.planPath}`
-                : `set plan status: done in ${plan.planPath}`);
+        for (const m of planMutations) {
+            let txt = fs.readFileSync(m.abs, 'utf8');
+            // Known debt: this replacement is intentionally unchanged. It flips
+            // EVERY unchecked box in the file, and multi-plan closure now applies
+            // it to N plans atomically rather than one. Parser-scoped checkbox
+            // mutation is a separate closure-model change and is not in scope here.
+            if (m.uncheckedBoxes > 0) txt = txt.replace(/- \[ \] /g, '- [x] ');
+            fs.writeFileSync(m.abs, setStatusDone(txt));
+            actions.push(m.uncheckedBoxes > 0
+                ? `flip ${m.uncheckedBoxes} checkbox(es) + set ${m.planId} status: done in ${m.planPath}`
+                : `set ${m.planId} status: done in ${m.planPath}`);
         }
         if (willSetStatus) {
             fs.writeFileSync(specPath, setStatusDone(specText));
@@ -146,7 +169,7 @@ function applyClose(specPath, opts = {}) {
         // Stage tracked source (plan + spec) INSIDE the txn so a git-add failure rolls
         // back too. archPath/irPath are gitignored regenerated artifacts — journaled for
         // rollback but never `git add`-ed (git refuses ignored paths and would fail).
-        const sourceTargets = [planAbs, willSetStatus ? specPath : null].filter(Boolean);
+        const sourceTargets = [...planMutations.map(m => m.abs), willSetStatus ? specPath : null].filter(Boolean);
         staged = sourceTargets.filter(p => fs.existsSync(p)).map(p => path.relative(root, p).replace(/\\/g, '/'));
         if (staged.length) exec(['add', ...staged]);
         writeJournalFn(journalPath, Object.assign({}, journal, { status: 'applied', actions, staged }));

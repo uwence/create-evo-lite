@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { parseSpecFile, parseFrontmatter } = require('./planning/parse-markdown');
+const { parseSpecFile, parseFrontmatter, resolveLinkedPlanIds } = require('./planning/parse-markdown');
 const { getWorkspaceRoot } = require('./runtime');
 
 const SIZE_THRESHOLDS = Object.freeze({ acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 });
@@ -297,13 +297,10 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         const { frontmatter, body } = parseFrontmatter(content);
         const relSpecPath = path.relative(projectRoot, absPath).replace(/\\/g, '/');
 
-        // Bidirectional linked-plan resolution: spec-declared linkedPlans UNION
-        // plans in plan-ir whose linkedSpec points back at this spec.
-        const linkedSet = new Set(parsed.linkedPlans || []);
-        for (const plan of ir.plans) {
-            if (plan && plan.linkedSpec === parsed.id && plan.id) linkedSet.add(plan.id);
-        }
-        const linkedPlans = Array.from(linkedSet).sort();
+        // Shared relation algorithm — see resolveLinkedPlanIds. This union used
+        // to be inlined here, which is how closure ended up with a narrower
+        // second implementation of the same question.
+        const linkedPlans = resolveLinkedPlanIds(parsed, ir);
 
         // A referenced plan absent from plan-ir is conservatively treated as not-done.
         const notDonePlans = linkedPlans.filter(planId => {
