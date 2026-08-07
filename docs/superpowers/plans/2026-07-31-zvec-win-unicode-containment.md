@@ -931,49 +931,71 @@ active_context.md / raw_memory/**      属 context closure，本轮 FROZEN
 - [x] **marker 四态呈现**与「一律不得建议删除、不得折叠进 present」（D3）
 - [x] **裁定「collection 未被打开」的可观测证据边界** —— verify 运行时**不能**证明，
       只能报本进程 decision 事实；证明属测试层（D4）+ 九项零副作用计数（D4.1）
-- [x] **四种用户可见状态与 nextSteps**，钉死 `unsafe` 与 `recovery-pending` 不得共用文案（D5）
-- [x] **措辞禁令**（D6）与**承重负控 A–G 完整内联**（D7）+ 文件范围（D8）
-- [x] spec 测试矩阵新增 **T12 六条**；AC6 指向 §7.5；AC8 由 T1–T11 扩为 T1–T12
+- [x] **五种用户可见状态与 nextSteps**（`no-debt` / `unsafe` / `recovery-pending` /
+      `marker-damaged` / `debt-under-pin`），钉死 `unsafe` 与 `recovery-pending` 不得共用文案，
+      且 `no-debt` 文案不得断言引擎状态（D5，2026-08-07 re-freeze）
+- [x] **措辞禁令**（D6）与**承重负控 A–I 完整内联**（D7，C1/C2/C3/C4 拆分 + durable 证据格式）
+      + 文件范围（D8）
+- [x] spec 测试矩阵新增 **T12 八条**；AC6 指向 §7.5；AC8 由 T1–T11 扩为 T1–T12
 
 #### Step 2：生产实施 —— AUTHORIZED
 
-- [ ] **Step 2.1（基线）**：先在未改产品代码的状态下跑并记录
+- [x] **Step 2.1（基线）**：先在未改产品代码的状态下跑并记录
       `npm test` / `TEMP=RUNNER~1 npm test` / `sync-runtime --check`
-- [ ] **Step 2.2**：`verify` 增加 containment 段，数据来源**只允许**
+- [x] **Step 2.2**：`verify` 增加 containment 段，数据来源**只允许**
       `peekEngineDecision()` + 一次 `readContainmentState(path.dirname(getDbPath()))`；
       **禁止**经 `resolveEngineDecision()` / `sharedEngineDecision()` /
       `resolveRecoveryRebuildDecision()` / `getMemoryIndex()` 刷新诊断（D1）
-- [ ] **Step 2.3**：四态呈现与各自独立的 nextSteps（D5）；显式 pin sqlite 时仍单独显示尚存 marker
-- [ ] **Step 2.4**：措辞按 D4 边界与 D6 禁令 —— **不得**承诺 collection 内容未被读取，
+- [x] **Step 2.3**：五态呈现与各自独立的 nextSteps（D5）；显式 pin sqlite 且 marker 尚存 →
+      `debt-under-pin`，单独显示尚存 marker
+- [x] **Step 2.4**：措辞按 D4 边界与 D6 禁令 —— **不得**承诺 collection 内容未被读取，
       **不得**在任何状态下建议删除 marker
-- [ ] **Step 2.5**：T12 六条（live + template 双份）
-- [ ] **Step 2.6**：承重负控 A–G 逐条施加并确认变红，按 D7 记录七项字段；
+- [x] **Step 2.5**：T12 八条（live + template 双份）
+- [x] **Step 2.6**：承重负控 A–I 逐条施加并确认变红，按 D7 记录七项字段；
       负控还原后再完整跑一次两种环境的绿色基线
-- [ ] **Step 2.7**：证据落成 `docs/validation/zvec-win-unicode-verify-diagnostics.md`，
+- [x] **Step 2.7**：证据落成 `docs/validation/zvec-win-unicode-verify-diagnostics.md`，
       区分「仓库可复现证据」与「人工结论」
-- [ ] **Step 2.8**：`templates/cli/` 同步；`sync-runtime --check` in-sync；三对 live/template 逐字节一致
+- [x] **Step 2.8**：`templates/cli/` 同步；`sync-runtime --check` in-sync；三对 live/template 逐字节一致
 
 #### Step 2 返工项（2026-08-07 复审 CHANGES REQUIRED）
 
 首轮实现（`51fc7d6`…`1cea66b`，CI 5/5）被退回，四项发现：
 
-- [ ] **R1（BLOCKER）** 采纳 re-frozen 五态：`normal` → `no-debt`，正式实现
+- [x] **R1（BLOCKER）** 采纳 re-frozen 五态：`normal` → `no-debt`，正式实现
       `debt-under-pin`；修掉两处错误兜底 —— `pin+marker absent` 与
       `dependency-unavailable+marker absent` 此前都被压成 `normal`，而旧 `normal`
       的判据含 `impl==='zvec'`
-- [ ] **R2（BLOCKER）** D3：report 与 CLI 输出补 marker 原始记录
+- [x] **R2（BLOCKER）** D3：report 与 CLI 输出补 marker 原始记录
       `recordedCollectionPath` + `recordedContainment{verdict,layer,reason}`，
       并与「当前判定」分层显示；复用 D2 已取得的那一次 snapshot，不再读第二次
-- [ ] **R3（BLOCKER）** D4.1 九项改为 **call-level 计数** guard（测试侧模块拦截），
+- [x] **R3（BLOCKER）** D4.1 九项改为 **call-level 计数** guard（测试侧模块拦截），
       终态哈希/指纹降为辅助佐证；补 mutation C2（auto rebuild）、C3（recovery
       ownership / lease）
-- [ ] **R4（IMPORTANT）** validation 增 durable appendix，逐条转录 A–G+ 的
+- [x] **R4（IMPORTANT）** validation 增 durable appendix，逐条转录 A–I 的
       mutation point / hunk / 施加变化 / 观察到的断言 / 三段 SHA-256 / 镜像哈希
+
+#### Step 2 第 2 轮返工项（2026-08-07 复审 CHANGES REQUIRED）
+
+第 1 轮的 R1/R2/R4 判为实质闭环；剩余问题集中在 D4.1 的证明机制与由此产生的一次接口越界。
+
+- [x] **R5（BLOCKER）** 撤销为测试而加的产品导出 —— `buildContainmentDiagnostics`
+      从 `module.exports` 移除。允许修改某个文件 ≠ 允许扩大它的产品接口。
+      改由测试侧 `Module.prototype._compile` 桥接注入 `__testBuildContainmentDiagnostics`，
+      产品导出面逐字节回到 Task 7 开始前
+- [x] **R6（BLOCKER）** 补足 D4.1 的三处证明缺口：`C1b`（以 fs 直写 marker、字节相同，
+      末态无差异）、`B2`/`B3`/`B4`（构造 / `initialize()` / `stats()` 分别独立守护，
+      不再折叠成一条）、`C2` 改为调用真实 `rebuildLocalIndex()` 而非决策 helper。
+      负控总数 12 → **16**
+- [x] **R7（IMPORTANT）** plan 机械同步 re-frozen 合同：四态→五态、T12 六条→八条、A–G→A–I
+- [x] **R8（装置，非产品）** mutation runner 事务化 —— crash recovery 移入下一次启动的
+      PRE（`SIGKILL` 下不存在进程内兜底）；residue 检测由手写 pattern 改为按干净基线
+      派生的**出现次数**比对（G 的特判随之删除）；每条跑完清理 temp runtime root。
+      事故与旧 E/F 的 `inadmissible` 处置见 validation §11
 - [ ] 重跑本地 gates（node 24 三项 + sync-runtime + node 22），新 head SHA 触发
       新的 `pull_request / attempt 1`；旧失败 run 不 rerun
 
-**验收**：`npm test` 与 `TEMP=RUNNER~1 npm test` 均 EXIT 0；`sync-runtime --check` EXIT 0；
-三对镜像逐字节一致；T12 八条全过；负控 A–G+ 全部 effective 且 guardHit 命中各自性质；
+**验收**：`npm test` 与 `TEMP=<绝对短名路径> npm test` 均 EXIT 0；`sync-runtime --check` EXIT 0；
+三对镜像逐字节一致；T12 八条全过；负控 A–I 全部 effective 且 guardHit 命中各自性质；
 危险路径样本上 `verify` 可诊断且不崩溃。
 
 **⛔ 停止点 3**：CI 首轮 gate（`pull_request` / attempt 1 / 5-of-5）完成后**硬停**，

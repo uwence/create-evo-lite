@@ -16,10 +16,15 @@
 ```text
 仓库可复现证据 —— 任何人在本仓库重跑即可得到
   tests        T12 八条（governance）+ T-zwuc-T12-cli（integration）
-  mutations    承重负控 A–I 共 12 条，12/12 effective，12/12 命中各自的守护断言
-               逐条 patch 与三段哈希见 Appendix A
+  mutations    承重负控 A–I 共 16 条，16/16 effective，16/16 命中各自的守护断言
+               逐条 patch、三段哈希与基线校验状态见 Appendix A
   hashes       三对 live/template SHA-256 逐对一致
   command exits npm test ×2 环境、sync-runtime --check
+
+镜像一致不是完整性证据 —— live SHA == template SHA 只证明 mirror consistency。
+  runner 会把变异同步写进镜像，被污染的基线同样镜像一致（§11 是它的反例）。
+  真正的还原条件是四项同时成立：live == 已知干净基线、template == 已知干净基线、
+  live == template、residue scan clean。
 
 人工结论 —— 基于审计与阅读，不由测试自动证明
   本轮未修改任何模块的导出面（memory-index.js / zvec-containment-state.js 零改动）
@@ -43,8 +48,12 @@
   sync-runtime --check              EXIT 0
   T12 八条                           全过
   T-zwuc-T12-cli                     过
-  mutations A–I（12 条）              12/12 effective，12/12 guardHit
+  mutations A–I（16 条）              16/16 effective，16/16 guardHit
 ```
+
+`TEMP` 必须是**绝对**短名路径。用相对值（如裸 `RUNNER~1`）会让 `os.tmpdir()` 落在
+项目内部，`non-project dir throws` 那条断言随之不再成立 —— 那是调用方式的错，
+不是基线的错。
 
 `TEMP=RUNNER~1` 是 Windows runner 的真实短名形状，必须一并跑 —— 该路径本身会被
 containment 判为非 SAFE，是最容易暴露诊断段副作用的环境。
@@ -54,17 +63,19 @@ containment 判为非 SAFE，是最容易暴露诊断段副作用的环境。
 ## 3. 最终文件哈希（SHA-256，live 与 template 逐对一致）
 
 ```text
-memory.service.js    9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-test/governance.js   c0b880f877cde483ccbc75a723b3164256819f0d7944968183504dbe4144dffd
+memory.service.js    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+test/governance.js   8db43582fc704e4f97d11c717b09f731355b96999df3c44a836c88323921343e
 test/integration.js  44f79c622d5b5376c55a8c467bc6200a29487a9fdc617a571fe959f4f56a48bf
 ```
 
-三对镜像均为 `MIRROR-IDENTICAL`。
+三对镜像均为 `MIRROR-IDENTICAL`。`memory.service.js` 的 `2f6d1b5c…` 同时是本轮
+16 条负控共同的 known-clean baseline（§11）。
 
 > **哈希演进**：`memory.service.js` 在 §8 的 teardown 调查全程逐字节未变
 > （`e7a0f107…`），这是「§8 是测试夹具修正、不是产品改动」的可复核依据；
 > 它在 §9 的复审返工中才首次改变（`e7a0f107…` → `9d409b4e…`），
-> 因为那一轮才动了产品的状态模型与输出。
+> 因为那一轮才动了产品的状态模型与输出；`§10` 的第 2 轮返工再改一次
+> （`9d409b4e…` → `2f6d1b5c…`），那次只做了一件事 —— 移除为测试而加的导出。
 
 ---
 
@@ -435,361 +446,770 @@ Windows/node24       复审裁定 CLOSED，本轮未再追查
 
 ---
 
-## Appendix A — 承重负控 A–I 逐条 durable 记录
+## 10. 第 2 轮全量复审返工（2026-08-07，CHANGES REQUIRED）
 
-本附录满足 §7.5 D7 的要求：**任何后来的 reviewer 仅凭本仓库内容，即可重建每一条
-负控究竟改了什么、由哪条断言捕获**，无需访问 gitignored 的 harness。
+第 2 轮范围明显收敛：§9 的 BLOCKER 1/2 与 IMPORTANT 4 判为实质闭环，剩余问题集中在
+**D4.1 的证明机制**、由此产生的**一次接口越界**，以及 plan 的 re-freeze 同步不完整。
 
-全部 12 条在同一绿色基线上逐条施加、逐条还原；一次只施加一条，突变态下不开始下一条。
-`guardHit` 单独记录，用于证明红点落在**该条自己守护的性质**上，而非无关的偶发失败。
+### 10.1 BLOCKER 1 —— 为了测试而扩大了产品接口
+
+为了单独测量诊断段的零副作用计数，实现把 `buildContainmentDiagnostics` 加进了
+`memory.service.js` 的 `module.exports`。裁定：**允许修改某个文件 ≠ 允许扩大它的产品接口**。
+Task 7 的边界写明「不新增生产测试 API、不扩大产品导出面」，而这正是一个只为测试存在的导出。
+
+**修正**：从 `module.exports` 移除该函数，改由测试侧桥接 —— `test/governance.js` 用
+`Module.prototype._compile` 以源码加载服务模块，并在编译文本尾部追加一行
+`module.exports.__testBuildContainmentDiagnostics = buildContainmentDiagnostics;`。
+产品导出面因此逐字节回到改动前，而诊断段仍可被单独测量。
+
+### 10.2 BLOCKER 2 —— D4.1 九项零副作用的三处证明缺口
+
+裁定接受「用调用级计数取代末态反推」的方向，但指出末态反推本身有三处不可证伪：
 
 ```text
-总计 12 条，effective 12/12，guardHit 12/12
-目标文件      .evo-lite/cli/memory.service.js
-镜像文件      templates/cli/memory.service.js
-baseline sha  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
+2.1  marker 直写可被绕过        以 fs 直接覆写 marker、字节相同，末态无差异
+2.2  B 未分别证明 构造 / 打开 / 读查询   三者被折叠成一条断言
+2.3  C2 测的是决策而非真实 rebuild      测了决策 helper，没测产品 rebuild 入口
 ```
+
+**修正**：改用 `Module._load` 拦截做调用级计数（在目标模块加载前安装，因此解构出来的
+绑定也被包住），并把负控拆细 —— `C1b` 直写 marker、`B2`/`B3`/`B4` 分别对应构造 /
+`initialize()` / `stats()`、`C2` 改为调用真实的 `rebuildLocalIndex()`。负控总数由 12 增至 16。
+
+### 10.3 IMPORTANT 3 —— plan 未同步 re-freeze 后的合同
+
+plan 仍写着四态、T12 六条、负控 A–G，而合同已改为五态、T12 八条、A–I。已机械同步。
+
+### 10.4 本轮结果
+
+```text
+T12                  八条 case 全过
+mutations A–I        16 条，16/16 effective，16/16 guardHit（见 Appendix A）
+产品改动             memory.service.js 9d409b4e… → 2f6d1b5c…（移除该导出）
+未触碰               memory-index.js / zvec-containment-state.js
+产品导出面           逐字节回到 Task 7 开始前的状态
+```
+
+---
+
+## 11. mutation 装置事故：被污染的基线（2026-08-07）
+
+本节记录的是**验证装置的事务性缺陷**，不是产品逻辑缺陷。它必须留档，因为它证明了
+一件比它本身更重要的事：**在没有 baseline-integrity guard 的前提下，
+「12/12 effective、12/12 guardHit」这个数字不能独立作为可信证据。**
+
+### 11.1 发生了什么
+
+一次 `C4 → D → E` 的批处理在 D 施加变异后、还原之前被中断。旧 runner 只在正常路径还原，
+进程被杀就没有兜底，于是 `memory.service.js` 停在 D 的变异态。随后 E、F 在这个被污染的
+文件上跑完并被记为 effective。
+
+### 11.2 为什么当时没被发现
+
+事故后的排查用了一组**手写**的残留模式（`acquireArchiveMarkerLock`、
+`rebuildLocalIndex().catch`、`new M.ZvecMemoryIndex` 等），而 D 不新增语句、只替换一行
+字符串文案，恰好不在这组模式里，于是被判为「无残留」。
+
+同时被误当作证据的还有一条：
+
+```text
+live SHA == template SHA
+```
+
+这只证明 **mirror consistency**，不证明 **baseline integrity** —— runner 本来就把变异
+同步写进镜像，被污染的基线同样是镜像一致的。这次事故正是它的反例。
+
+### 11.3 事后如何被坐实
+
+`mutations-task7-results.json` 里本来就带着证明：A–C4 记录的 `baselineSha` 是
+`2f6d1b5c…`（干净基线），而 E、F 记录的是 `5509ea6c…`。重跑 D 时 runner 打印的
+`MUT D applied: 5509ea6c…` 与之逐字节相同 —— 污染链条由此闭环。
+
+### 11.4 旧 E/F 的处置
+
+不静默覆盖。两条旧记录在结果文件中标为：
+
+```text
+evidenceStatus       inadmissible
+inadmissibleReason   contaminated baseline: inherited mutation D residue from an
+                     interrupted run; baselineSha 5509ea6c… is the D-mutated file,
+                     not the clean baseline.
+```
+
+重跑后的记录带 `supersedes` 字段引用它。**旧 E/F 不是失败的负控，而是证据不可采信**
+—— 这个区别必须保留，删除历史会丢掉它。
+
+### 11.5 装置加固
+
+**A. 还原不再依赖上一次进程的收尾。** `try/finally` 覆盖普通异常，`SIGINT` 可以处理，
+但 `SIGKILL` 与宿主进程死亡下不存在任何进程内兜底。因此 crash recovery 放在
+**下一次启动的 preflight**：
+
+```text
+run-mutations-task7.js <ID>
+  PRE      从 task7-baseline/ 快照 recover-if-dirty
+           再证明 live == template == known-clean SHA 且 residue scan clean
+           任何一项不成立 -> 拒绝施加变异，exit 2
+  MUTATE   施加恰好一条；证明 mutated SHA != baseline SHA
+  TEST     整套；期望非零；期望红点落在专属断言（guardHit）
+  RESTORE  立即还原，再做同样的四重校验；不成立 -> exit 3
+  CLEANUP  清掉本次留下的 temp runtime root
+```
+
+快照只能由 `--adopt-baseline` **显式**采纳，且采纳时校验 16 条锚点各出现恰好一次 ——
+隐式采纳磁盘上的现状，正是变异文件变成「基线」的路径。
+
+**B. 手写 residue pattern 已废弃。** 检测改为按**出现次数**比对，逐 mutation、
+锚点（`from`）与替换（`to`）各一条不变量，期望值从干净基线字节**派生**而非手写：
+
+```text
+mutation id + 变异点 + from 片段 + to 片段 + 干净基线下的期望出现次数
+```
+
+这同时解决了 G 的假阳性 —— G 的替换文本本就合法地存在于 `unsafe` 那条 remediation 里，
+它在干净基线下的期望次数就是 1，残留表现为 2，不需要任何特判。v1 里为 G 加的特判已删除。
+
+**C. 检测器本身做了负控。** 它上一轮漏掉了 D，所以不能只靠「这次写对了」：
+
+```text
+D  （上次漏掉的）  caught: residue D/anchor + D/replacement
+G  （上次假阳性）  caught: residue G/anchor + G/replacement，无特判
+B  （插入型）      caught: residue B/replacement（锚点仍在，符合设计）
+干净态             clean
+```
+
+**D. temp root 累积。** `createTempRuntimeRoot()` 从不清理，约 30 轮全量跑累计出
+112,054 个目录，使后续每次 `mkdtempSync` 逐步变慢，最终表现为「套件卡住」。
+runner 现在每条变异跑完即清理。**这仍是夹具的既有缺陷，不在 Task 7 授权范围内修改，
+留作已知债。**
+
+### 11.6 本轮重跑
+
+D、E、F、G、H、I 六条，逐条 **1 mutation / 1 full suite / 1 restore verification**，
+不再批处理；每条 PRE 与 RESTORE 均打印四重校验结果，见 Appendix A 的 `txn` 列。
+
+```text
+D  effective  guardHit  mutated 5509ea6c…  restored 2f6d1b5c…
+E  effective  guardHit  mutated 59c90665…  restored 2f6d1b5c…
+F  effective  guardHit  mutated ed3723a9…  restored 2f6d1b5c…
+G  effective  guardHit  mutated 496988bd…  restored 2f6d1b5c…
+H  effective  guardHit  mutated c6b899e2…  restored 2f6d1b5c…
+I  effective  guardHit  mutated d1c2201f…  restored 2f6d1b5c…
+```
+
+A–C4 十条的 `baselineSha` 与本轮干净基线逐字节相同，按裁定保留、不要求重跑；
+但它们跑在事务化 runner 之前，Appendix A 的 `txn` 列如实记为 `no`。
+
+---
+
+## Appendix A — 承重负控 A–I 逐条 durable 记录
+
+每条记录由 `.evo-lite/generated/run-mutations-task7.js` 直接转写，未经手工编辑。
+字段含义见 spec §7.5 D7。`txn` 表示该条是在事务化 runner 下跑的 ——
+即 PRE 阶段以快照证明基线干净、RESTORE 阶段四重校验回到基线（见 §10）。
+
+```text
+id    effective  guardHit  baseline==clean  txn  evidence
+A     yes        yes       yes              no   admissible
+B     yes        yes       yes              no   admissible
+B2    yes        yes       yes              no   admissible
+B3    yes        yes       yes              no   admissible
+B4    yes        yes       yes              no   admissible
+C1    yes        yes       yes              no   admissible
+C1b   yes        yes       yes              no   admissible
+C2    yes        yes       yes              no   admissible
+C3    yes        yes       yes              no   admissible
+C4    yes        yes       yes              no   admissible
+D     yes        yes       yes              yes  admissible
+E     yes        yes       yes              yes  admissible
+F     yes        yes       yes              yes  admissible
+G     yes        yes       yes              yes  admissible
+H     yes        yes       yes              yes  admissible
+I     yes        yes       yes              yes  admissible
+```
+
+共 16 条，16/16 effective，16/16 命中各自的守护断言。
 
 ### A
 
-- **guard property**：containment section must not load @zvec/zvec (D4.1 #1)
-- **mutation point**：buildContainmentDiagnostics() first statement
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：containment section must not load @zvec/zvec (D4.1 #1)
+- 变异点：`.evo-lite/cli/memory.service.js` — buildContainmentDiagnostics() first statement
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
-- function buildContainmentDiagnostics() {
--     const decision = peekEngineDecision();
-+ function buildContainmentDiagnostics() {
-+     try { require('@zvec/zvec'); } catch (_) {}
-+     const decision = peekEngineDecision();
+    function buildContainmentDiagnostics() {
+        const decision = peekEngineDecision();
+
+改为：
+
+    function buildContainmentDiagnostics() {
+        try { require('@zvec/zvec'); } catch (_) {}
+        const decision = peekEngineDecision();
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    4caa9fd0408c16ae0fe5ed01d0cbcbe17ff450e55e5ff0f0dd0dde7ebe2b8501
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 the containment section must not perform: Zvec native require (§7.5 D4.1, control A) — observed 1 call(s) to zvec.require
 ```
 
-```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   7eddf05f2faeeab077054bbb7ef571eaa6feb821ddda2ad2ff1f03c6ea24690c
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
-```
-
 ### B
 
-- **guard property**：containment section must not construct an index / open the collection (D4.1 #2-4)
-- **mutation point**：before `const reason = ...` in buildContainmentDiagnostics()
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：containment section must not construct an index / open the collection (D4.1 #2-4)
+- 变异点：`.evo-lite/cli/memory.service.js` — before `const reason = ...` in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--     const reason = decision ? decision.reason : null;
-+     try { getMemoryIndex(); } catch (_) {}
-+     const reason = decision ? decision.reason : null;
-```
+        const reason = decision ? decision.reason : null;
 
-observed relevant assertion：
+改为：
 
-```text
-the containment section must not perform: index construction / collection open / read (§7.5 D4.1, control B) — observed 1 call(s) to memory-index.getMemoryIndex
-```
+        try { getMemoryIndex(); } catch (_) {}
+        const reason = decision ? decision.reason : null;
+
+结果：
 
 ```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   f1281710d560960c8b238aeb4884ef9e3aeae1d079814c70afb092d291b61c75
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    f37e8d101db39e74b89dd6b3c3c0930b941de672e7fb73afb7400faf4c3cdd11
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
+```
+
+观察到的守护断言：
+
+```text
+the containment section must not perform: index acquisition (upstream entry) (§7.5 D4.1, control B) — observed 1 call(s) to memory-index.getMemoryIndex
+```
+
+### B2
+
+- 守护性质：containment section must not construct a Zvec index (D4.1 #2)
+- 变异点：`.evo-lite/cli/memory.service.js` — before `const reason = ...` in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
+
+原文：
+
+        const reason = decision ? decision.reason : null;
+
+改为：
+
+        if (marker.status === 'present') { try { const M = require('./memory-index-zvec'); new M.ZvecMemoryIndex({}); } catch (_) {} }
+        const reason = decision ? decision.reason : null;
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    7a79c577be0cac632410efac61535d00424531eaa010bc481ffc1e5bc17283d1
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
+```
+
+观察到的守护断言：
+
+```text
+the containment section must not perform: Zvec index construction (§7.5 D4.1, control B2) — observed 1 call(s) to zvec.construct
+```
+
+### B3
+
+- 守护性质：containment section must not open the collection (D4.1 #3)
+- 变异点：`.evo-lite/cli/memory.service.js` — before `const reason = ...` in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
+
+原文：
+
+        const reason = decision ? decision.reason : null;
+
+改为：
+
+        if (marker.status === 'present') { try { const M = require('./memory-index-zvec'); new M.ZvecMemoryIndex({}).initialize(); } catch (_) {} }
+        const reason = decision ? decision.reason : null;
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    aa56f06dea95abb5229f7e252c598e6c9467455bb22aa01ca5fe7468536286be
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
+```
+
+观察到的守护断言：
+
+```text
+the containment section must not perform: collection open (§7.5 D4.1, control B3) — observed 1 call(s) to zvec.open
+```
+
+### B4
+
+- 守护性质：containment section must not read/query the collection (D4.1 #4)
+- 变异点：`.evo-lite/cli/memory.service.js` — before `const reason = ...` in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
+
+原文：
+
+        const reason = decision ? decision.reason : null;
+
+改为：
+
+        if (marker.status === 'present') { try { const M = require('./memory-index-zvec'); new M.ZvecMemoryIndex({}).stats(); } catch (_) {} }
+        const reason = decision ? decision.reason : null;
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    33073341fb9746030da671f64a2578a26e55dee0f6740d2dfba5eadebf1ba4d3
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
+```
+
+观察到的守护断言：
+
+```text
+the containment section must not perform: collection read / query (§7.5 D4.1, control B4) — observed 1 call(s) to zvec.query
 ```
 
 ### C1
 
-- **guard property**：containment section must not clear the marker (D4.1 #6)
-- **mutation point**：before `const reason = ...` in buildContainmentDiagnostics()
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：containment section must not clear the marker (D4.1 #6)
+- 变异点：`.evo-lite/cli/memory.service.js` — before `const reason = ...` in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--     const reason = decision ? decision.reason : null;
-+     try { clearContainmentState(markerDir); } catch (_) {}
-+     const reason = decision ? decision.reason : null;
+        const reason = decision ? decision.reason : null;
+
+改为：
+
+        try { clearContainmentState(markerDir); } catch (_) {}
+        const reason = decision ? decision.reason : null;
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    054995b705cc34cf498f4880aa6b7d2701a4326c796ffc3aa63f39503b4a3e46
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 the containment section must not perform: marker clear (§7.5 D4.1, control C1) — observed 1 call(s) to memory-index.clearContainmentState
 ```
 
+### C1b
+
+- 守护性质：containment section must not write the marker directly via fs, even with identical bytes (D4.1 #5)
+- 变异点：`.evo-lite/cli/memory.service.js` — before `const reason = ...` in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
+
+原文：
+
+        const reason = decision ? decision.reason : null;
+
+改为：
+
+        try { fs.writeFileSync(marker.markerPath, fs.readFileSync(marker.markerPath)); } catch (_) {}
+        const reason = decision ? decision.reason : null;
+
+结果：
+
 ```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   874cf7c8ff51dfd584481300cf2e0fa34217dd9a75e140c13c87c1f2e9e8f554
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    80a17f98f7755a4f211feffea6ecd12c4253a82f6db7ce8f57918e583a054d36
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
+```
+
+观察到的守护断言：
+
+```text
+the containment section must not perform: direct filesystem write to the marker (§7.5 D4.1, control C1b) — observed 1 call(s) to fs.markerWrite
 ```
 
 ### C2
 
-- **guard property**：containment section must not enter recovery / rebuild semantics (D4.1 #7)
-- **mutation point**：before `const reason = ...` in buildContainmentDiagnostics()
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：containment section must not enter the real rebuild path (D4.1 #7)
+- 变异点：`.evo-lite/cli/memory.service.js` — before `const reason = ...` in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--     const reason = decision ? decision.reason : null;
-+     try { resolveRecoveryRebuildDecision(); } catch (_) {}
-+     const reason = decision ? decision.reason : null;
-```
+        const reason = decision ? decision.reason : null;
 
-observed relevant assertion：
+改为：
 
-```text
-the containment section must not perform: entering recovery / rebuild semantics (§7.5 D4.1, control C2) — observed 1 call(s) to memory-index.resolveRecoveryRebuildDecision
-```
+        if (marker.status === 'present') { try { rebuildLocalIndex().catch(() => {}); } catch (_) {} }
+        const reason = decision ? decision.reason : null;
+
+结果：
 
 ```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   d783b120c04ce42d5729e9e012545b2ec8bf155bf8682be9c7c7eded8c3ac110
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    8f4353e2b7bd4f81785b869dd804c15c70f67a7bf85c8a2288130633aa18c74e
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
+```
+
+观察到的守护断言：
+
+```text
+the containment section must not perform: entering the rebuild path (§7.5 D4.1, control C2) — observed 2 call(s) to memory-index.resolveRecoveryRebuildDecision
 ```
 
 ### C3
 
-- **guard property**：containment section must not acquire recovery ownership / lease (D4.1 #8)
-- **mutation point**：before `const reason = ...` in buildContainmentDiagnostics()
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：containment section must not acquire recovery ownership / lease (D4.1 #8)
+- 变异点：`.evo-lite/cli/memory.service.js` — before `const reason = ...` in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--     const reason = decision ? decision.reason : null;
-+     try { acquireRecoveryLease(markerDir, { generation: 1 }); } catch (_) {}
-+     const reason = decision ? decision.reason : null;
+        const reason = decision ? decision.reason : null;
+
+改为：
+
+        if (marker.status === 'present') { try { acquireRecoveryLease(markerDir, { generation: 1 }); } catch (_) {} }
+        const reason = decision ? decision.reason : null;
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    0e50671b403ad4ba11dad5c256e47e4d219c08d8bd874fc0e531e32acfd590f3
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 the containment section must not perform: recovery lease acquisition (§7.5 D4.1, control C3) — observed 1 call(s) to zvec-containment-state.acquireRecoveryLease
 ```
 
-```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   60882f43bd11e2c19439ced01633aabdb2fa5dc27a63e88950ba9be4e8a803e6
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
-```
-
 ### C4
 
-- **guard property**：containment section must not write the archive publication lock (D4.1 #9)
-- **mutation point**：before `const reason = ...` in buildContainmentDiagnostics()
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：containment section must not write the archive publication lock (D4.1 #9)
+- 变异点：`.evo-lite/cli/memory.service.js` — before `const reason = ...` in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--     const reason = decision ? decision.reason : null;
-+     try { acquireArchiveMarkerLock(markerDir); } catch (_) {}
-+     const reason = decision ? decision.reason : null;
+        const reason = decision ? decision.reason : null;
+
+改为：
+
+        if (marker.status === 'present') { try { acquireArchiveMarkerLock(markerDir); } catch (_) {} }
+        const reason = decision ? decision.reason : null;
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    c76dc75aca5ba80020e514464256bec65c74a93c667538ba219ef35e71e9b1ee
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   no (pre-transactional runner; baselineSha 与干净基线逐字节相同)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 the containment section must not perform: archive publication lock write (§7.5 D4.1, control C4) — observed 1 call(s) to zvec-containment-state.acquireArchiveMarkerLock
 ```
 
-```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   d8da8fe0d0f2123a8a3d1d2c21210ef759cebc6c36524d41593eef1848664230
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
-```
-
 ### D
 
-- **guard property**：output must not claim the upstream defect or the collection is fixed (D6)
-- **mutation point**：no-debt branch of logContainmentDiagnostics()
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：output must not claim the upstream defect or the collection is fixed (D6)
+- 变异点：`.evo-lite/cli/memory.service.js` — no-debt branch of logContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--         log('🧭 [Containment]: 当前没有未清偿的 containment trust debt。');
-+         log('🧭 [Containment]: 上游缺陷已修复，该 collection 内容确认完整。');
+            log('🧭 [Containment]: 当前没有未清偿的 containment trust debt。');
+
+改为：
+
+            log('🧭 [Containment]: 上游缺陷已修复，该 collection 内容确认完整。');
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    5509ea6c96b562db4ec7177dd00fed25edf05201eb521ec93d41049dab82691d
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   yes (transactional runner: PRE + RESTORE 四重校验)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 no-debt: verify output must not contain the banned claim "内容确认完整" — §7.5 D6 forbids it because verify cannot证实 global history, only this process's behaviour
 ```
 
-```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   a251d8e82bf3a25df6e0888a21f11ad669e1d20deba421f32bbcd9bd08d0498d
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
-```
-
 ### E
 
-- **guard property**：SAFE + marker present must report recovery-pending (D5 row 3)
-- **mutation point**：state selection chain in buildContainmentDiagnostics()
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：SAFE + marker present must report recovery-pending (D5 row 3)
+- 变异点：`.evo-lite/cli/memory.service.js` — state selection chain in buildContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--     } else if (reason === 'containment-recovery-pending') {
--         state = 'recovery-pending';
-+     } else if (reason === 'containment-recovery-pending') {
-+         state = 'no-debt';
+        } else if (reason === 'containment-recovery-pending') {
+            state = 'recovery-pending';
+
+改为：
+
+        } else if (reason === 'containment-recovery-pending') {
+            state = 'no-debt';
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    59c906656b7844c4e2e1bafb0523f9f46281fe3b3e731c6fa4b74d24d95adad9
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   yes (transactional runner: PRE + RESTORE 四重校验)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 a SAFE path whose marker is still present is recovery-pending: the path stopped being dangerous, the debt did not clear — got {"state":"no-debt","engine":{"choice":"zvec","impl":"sqlite","degraded":true,"reason":"containment-recovery-pending"},"verdict":"SAFE","layer":"both","containmentReason":"sup
 ```
 
+取代的旧记录（provenance，不静默覆盖）：
+
 ```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   58294e4240a6c2fcd64847d0585c47809c8445eb28f0416d48dc4038ebd95694
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
+evidenceStatus  inadmissible
+baselineSha     5509ea6c96b562db4ec7177dd00fed25edf05201eb521ec93d41049dab82691d
+reason          contaminated baseline: inherited mutation D residue from an interrupted run; baselineSha 5509ea6c96b562db is the D-mutated file, not the clean baseline. Not a failed control — evidence inadmissible, rerun required.
 ```
 
 ### F
 
-- **guard property**：invalid/unreadable must not be folded into present (D3 / D5 row 1)
-- **mutation point**：first branch of the state selection chain
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：invalid/unreadable must not be folded into present (D3 / D5 row 1)
+- 变异点：`.evo-lite/cli/memory.service.js` — first branch of the state selection chain
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--     if (marker.status === 'invalid' || marker.status === 'unreadable') {
--         state = 'marker-damaged';
-+     if (false) {
-+         state = 'marker-damaged';
+        if (marker.status === 'invalid' || marker.status === 'unreadable') {
+            state = 'marker-damaged';
+
+改为：
+
+        if (false) {
+            state = 'marker-damaged';
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    ed3723a94f759901f16c91ee734e1457537e5d467e56bf0585d14c331321c5f9
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   yes (transactional runner: PRE + RESTORE 四重校验)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 a schema-invalid marker must surface as marker-damaged, never folded into present (§7.5 D3 / control F)
 ```
 
+取代的旧记录（provenance，不静默覆盖）：
+
 ```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   06e273364f75f8f62a7a9c8763cefbd934244371e836097b6bfe21e598421a97
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
+evidenceStatus  inadmissible
+baselineSha     5509ea6c96b562db4ec7177dd00fed25edf05201eb521ec93d41049dab82691d
+reason          contaminated baseline: inherited mutation D residue from an interrupted run; baselineSha 5509ea6c96b562db is the D-mutated file, not the clean baseline. Not a failed control — evidence inadmissible, rerun required.
 ```
 
 ### G
 
-- **guard property**：unsafe and recovery-pending must not share remediation text (D5)
-- **mutation point**：REMEDIATION table in logContainmentDiagnostics()
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：unsafe and recovery-pending must not share remediation text (D5)
+- 变异点：`.evo-lite/cli/memory.service.js` — REMEDIATION table in logContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--             step: 'containment: 路径已 SAFE 但 marker 仍在，继续使用 SQLite；请人工执行显式 rebuild，重建并经 fresh validator 重开验证通过后 marker 才会被清除。',
-+             step: 'containment: 当前路径不受支持，继续使用 SQLite；请先把项目迁移到受支持的 ASCII 路径（spec §5.1）后重新执行 verify。此状态下执行 rebuild 无效 —— 重建出的 collection 仍落在同一条不受支持的路径上。',
+                step: 'containment: 路径已 SAFE 但 marker 仍在，继续使用 SQLite；请人工执行显式 rebuild，重建并经 fresh validator 重开验证通过后 marker 才会被清除。',
+
+改为：
+
+                step: 'containment: 当前路径不受支持，继续使用 SQLite；请先把项目迁移到受支持的 ASCII 路径（spec §5.1）后重新执行 verify。此状态下执行 rebuild 无效 —— 重建出的 collection 仍落在同一条不受支持的路径上。',
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    496988bdb244548cf10703731ce7fb2852ab4ffdd206577956982ce5966ccc23
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   yes (transactional runner: PRE + RESTORE 四重校验)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 recovery-pending must point at an explicit rebuild — that is the one action that can clear this state
 ```
 
-```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   ec3459822aac7bc0639dfbc0a85e66e5a51c265f5782edaec2fdccea92c97198
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
-```
-
 ### H
 
-- **guard property**：re-frozen D5: no-debt must not re-couple the engine dimension
-- **mutation point**：final else of the state selection chain
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：re-frozen D5: no-debt must not re-couple the engine dimension
+- 变异点：`.evo-lite/cli/memory.service.js` — final else of the state selection chain
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--     } else {
--         // marker absent. Says nothing about the engine: impl may be zvec, or sqlite
--         // under an explicit pin, or sqlite because the binding is unavailable.
--         state = 'no-debt';
-+     } else {
-+         state = (decision && decision.impl === 'zvec') ? 'no-debt' : 'engine-degraded';
+        } else {
+            // marker absent. Says nothing about the engine: impl may be zvec, or sqlite
+            // under an explicit pin, or sqlite because the binding is unavailable.
+            state = 'no-debt';
+
+改为：
+
+        } else {
+            state = (decision && decision.impl === 'zvec') ? 'no-debt' : 'engine-degraded';
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    c6b899e2ba773bb5910cc64f4dfad11c3922e467aaba095dcd098e4dff750cfb
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   yes (transactional runner: PRE + RESTORE 四重校验)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 an explicit sqlite pin with no marker carries no containment debt — the pin is an engine choice, not a debt (§7.5 D5 row 5)
 ```
 
-```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   34706c450466953d8253881d31a711b748b958fe799508a02ff428e960d2bdcb
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
-```
-
 ### I
 
-- **guard property**：D3: the marker record must reach the operator, not just the report
-- **mutation point**：marker layer of logContainmentDiagnostics()
-- **exit code**：1（非零 = effective）　**guardHit**：yes　**捕获断言总数**：2
+- 守护性质：D3: the marker record must reach the operator, not just the report
+- 变异点：`.evo-lite/cli/memory.service.js` — marker layer of logContainmentDiagnostics()
+- 镜像：`templates/cli/memory.service.js`（逐字节同步施加与还原）
 
-施加的具体变化：
+原文：
 
-```diff
--     if (diag.marker.recordedCollectionPath) {
--         log(`     recordedCollectionPath=${diag.marker.recordedCollectionPath}`);
--     }
-+     if (false) {
-+         log(`     recordedCollectionPath=${diag.marker.recordedCollectionPath}`);
-+     }
+        if (diag.marker.recordedCollectionPath) {
+            log(`     recordedCollectionPath=${diag.marker.recordedCollectionPath}`);
+        }
+
+改为：
+
+        if (false) {
+            log(`     recordedCollectionPath=${diag.marker.recordedCollectionPath}`);
+        }
+
+结果：
+
+```text
+exit                1  (expected non-zero)
+guardHit            true
+assertions captured 2
+baseline  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+mutated   sha256    d1c2201fdbce7ec42a9622c2446f71ab6a592b17833e9f629ad4f2cf0a0b44e1
+restored  sha256    2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e
+restored mirror     2f6d1b5c3f72722154f499ec24b9c606d06f4e9d37f53daa66e32f9ade0a009e  MIRROR-IDENTICAL
+baseline verified   yes (transactional runner: PRE + RESTORE 四重校验)
+evidence            admissible
 ```
 
-observed relevant assertion：
+观察到的守护断言：
 
 ```text
 the recorded collection path must actually reach the operator, not just the report object
-```
-
-```text
-baseline SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mutated  SHA-256   47c176b60b4bd48b4b0b4de0f1452da9629d6e109d0458bd2f9d67fb4905a9cd
-restored SHA-256   9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-restored template  9d409b4eac19210d149c4401b5cf398c7535cc0301a06e4ae1ef6a14e532ca0a
-mirror-identical   true
 ```
