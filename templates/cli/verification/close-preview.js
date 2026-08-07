@@ -110,9 +110,13 @@ function previewClose(specPath, opts = {}) {
                 message: `${p.planId} — ${p.tasksTotal - p.tasksImplemented} of ${p.tasksTotal} linked tasks are not implemented — closing will mark the spec done anyway` });
         }
     }
+    // One wording for both routes to unresolvable — a missing IR record and a
+    // record without a sourcePath. Naming only the first would be false for the
+    // second, and a refusal that misstates its own cause sends the operator
+    // looking in the wrong place.
     for (const id of planState.unresolvedPlanIds) {
         warnings.push({ kind: 'linked-plan-unresolved', planId: id,
-            message: `${id} — declared as a linked plan but not found in the planning IR; apply cannot execute an atomic closure` });
+            message: `${id} — linked plan cannot be resolved to an actionable source file; apply cannot execute an atomic closure` });
     }
 
     // Every file apply would touch is named. An aggregate count would leave a

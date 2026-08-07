@@ -113,7 +113,11 @@ function applyClose(specPath, opts = {}) {
     if (unresolved.length) {
         return { applied: false, refused: 'plan-resolution-incomplete', readiness: preview.readiness,
             unresolvedPlanIds: unresolved,
-            message: `linked plan(s) not found in the planning IR: ${unresolved.join(', ')} — refusing a partial closure` };
+            // Covers both routes: no IR record at all, and a record carrying no
+            // sourcePath. Claiming "not found in the planning IR" would be false
+            // for the second, where the record exists and is simply not
+            // actionable.
+            message: `linked plan(s) cannot be resolved to mutable source files: ${unresolved.join(', ')} — refusing a partial closure` };
     }
 
     const specText = fs.readFileSync(specPath, 'utf8');

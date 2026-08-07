@@ -1454,6 +1454,21 @@ async function runGovernanceTests() {
                 assert.deepStrictEqual(preview.plan.unresolvedPlanIds, expectUnresolved,
                     `preview must name the plan it cannot act on; got ${JSON.stringify(preview.plan)}`);
 
+                // The refusal reason has to hold for BOTH routes. Saying "not
+                // found in the planning IR" is simply false for R7b, where the
+                // record is right there and only its sourcePath is missing — a
+                // machine refusal that misstates its own cause sends the operator
+                // looking in the wrong place.
+                const previewWarning = (preview.warnings || [])
+                    .filter(w => w.kind === 'linked-plan-unresolved')
+                    .map(w => w.message).join('\n');
+                assert.ok(previewWarning.includes(expectUnresolved[0]),
+                    `preview must warn about ${expectUnresolved[0]}; got ${JSON.stringify(preview.warnings)}`);
+                assert.ok(!/not found in the planning IR/i.test(previewWarning),
+                    `the preview warning must not claim the record is absent — that is false when only sourcePath is missing; got: ${previewWarning}`);
+                assert.ok(/resolve|actionable|source file/i.test(previewWarning),
+                    `the preview warning must describe resolvability, which covers both routes; got: ${previewWarning}`);
+
                 const specBefore = fs.readFileSync(specPath, 'utf8');
                 const planBefore = fs.readFileSync(path.join(root, 'docs', 'a.md'), 'utf8');
                 const result = applyClose(specPath, {
@@ -1467,6 +1482,10 @@ async function runGovernanceTests() {
                 assert.strictEqual(result.applied, false, 'apply must refuse when a linked plan is unresolved');
                 assert.strictEqual(result.refused, 'plan-resolution-incomplete',
                     `refusal must be its own transaction-safety reason, not a readiness verdict; got ${JSON.stringify(result).slice(0, 220)}`);
+                assert.ok(!/not found in the planning IR/i.test(result.message || ''),
+                    `the refusal message must not claim the record is absent — false for a record that exists without sourcePath; got: ${result.message}`);
+                assert.ok(/resolve|actionable|source file/i.test(result.message || ''),
+                    `the refusal message must state what actually failed: the plan could not be resolved to something mutable; got: ${result.message}`);
                 assert.strictEqual(fs.readFileSync(specPath, 'utf8'), specBefore, 'a refused apply must not touch the spec');
                 assert.strictEqual(fs.readFileSync(path.join(root, 'docs', 'a.md'), 'utf8'), planBefore,
                     'a refused apply must not touch the resolvable plan either — all or nothing');
