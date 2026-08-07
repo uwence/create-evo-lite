@@ -672,6 +672,48 @@ effective + guardHit。
 > 要证伪它需要一条「绕开 `resolveRecoveryRebuildDecision` 直接写 Zvec 树」的新突变，
 > 那超出 closeout 授权范围。
 
+### 12.1a 上述残留已关闭（2026-08-07，`fs.indexWrite` 独立证伪）
+
+上面那段 ⚠️ 的判断**只对了一半**，后续审计推翻了它的一处前提。
+
+**它并非只是「排位靠后」，而是排位太靠前。** 实测 `new ZvecMemoryIndex(paths)` 不写盘，
+`initialize()` 才写；而 `fs.indexWrite` 当时排在 forbidden 列表**第 2 位**，
+在 `zvec.query` / `zvec.open` / `zvec.construct` **之前**。于是：
+
+```text
+突变 B3（initialize）  报的是  writing the Zvec collection tree … control C2
+                       而不是  collection open … control B3
+```
+
+也就是说它不只是「自己没被证伪」，还在**冒领 B3 / B4 的红点** ——
+正是那段排序注释本身要防止的失效模式。
+
+**收口（A + B）**：
+
+```text
+A  fs.indexWrite 移到 zvec.* 之后（它是广义 fs 观测，不是最具体的）
+B  新增负控 C2b：绕开 resolveRecoveryRebuildDecision 与全部 Zvec API，
+   经 zvecPaths() 直接对 Zvec 树做一次 JS fs 写
+```
+
+修正后四条各自命中专属断言：
+
+```text
+B3   collection open                          observed 1 call(s) to zvec.open
+B4   collection read / query                  observed 1 call(s) to zvec.query
+C2   entering the rebuild path                observed 2 call(s) to resolveRecoveryRebuildDecision
+C2b  direct filesystem write into the tree    observed 2 call(s) to fs.indexWrite
+```
+
+`fs.indexWrite` 至此**已被独立证伪**，负控总数 16 → 17。
+
+> **仍然成立的边界，不得因此被掩盖**：它只观测 **JS 层**的写。实测
+> `initialize()` 在磁盘上产生 33 个条目，其中经 `require('fs')` 的只有 5 次
+> （两次 `mkdirSync`、`owner.json` 的 tmp+rename、`nextid.json`）；
+> 其余 28 个由 native binding 直接写入，JS 层看不见。
+> 因此它的正确描述始终是「产品代码直写 Zvec 树的观测」，
+> **不是**「Zvec 树写入的完整证明」。
+
 ### 12.2 本轮未做的事
 
 ```text
