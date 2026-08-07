@@ -3,17 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 6780911e9d09356683fdb188bfcc7574f4d3b2a9
-> upstreamSha: d48108a7521654168816673d8449e362bce72814
-> ahead: 1
+> headSha: 78a792e8f5e925f07432dda531055e0e2ec554ea
+> upstreamSha: 78a792e8f5e925f07432dda531055e0e2ec554ea
+> ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-08-03T02:56:33.983Z
+> focusUpdatedAt: 2026-08-07T17:55:44.425Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[zvec-win-unicode-containment] Tasks 1-8（AC1-AC7）与 Task 9A/9B 已完成并合入 main@59efcf7；上游已报 alibaba/zvec#665。Task 9C 是当前唯一授权的收口阶段：在 [attp-hive-rollout] 登记「Windows 目标必须消费 containment decision 接口」的依赖，并同步运行时焦点。Task 9D 与 context closure 仍未授权。AC7 发布门继续按 active + releaseBlocking:true 预期阻断本仓发布。[memory-lock-win-cim-snapshot-reliability] 保持 parked residual。
+[zvec-win-unicode-containment] 已收口：AC1-AC7 全部交付并合入 main@78a792e，spec 为 shipped，registry blockers=0，release-preflight VERDICT=CLEAR。releaseBlocking:true 全程保留 —— 证明的是 lifecycle enforcement 而非 gate removal。上游已报 alibaba/zvec#665（触发规则未收敛，profile 外一律 UNKNOWN）。当前无 active release blocker；下一步由新议题决定。[attp-hive-rollout] 仍 BLOCKED，其 Windows 分发前置依赖已在 backlog 登记。[attp-lw-memory-identity] 与 [memory-lock-win-cim-snapshot-reliability] 保持 parked residual。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -21,12 +21,12 @@
 <!-- BEGIN_BACKLOG -->
 - [ ] [3d78] [attp-hive-rollout] Distribute the already-accepted ATTP runtime and invoke the idempotent takeover installer in selected child repositories through hive nurture. 独立 rollout 议题,不是 ATTP MVP 的一部分 —— MVP 已 ACCEPTED & CLOSED(spec:agent-takeover-trigger-protocol)。需要自己的范围/试点子仓/失败回滚策略/验收门。前置提醒:子仓装上守卫后项目外 Edit/Write 会被 deny;root-launch-only 限制同样适用。新增前置依赖(spec:zvec-win-unicode-containment §12,Task 9C 登记):Windows 目标子仓必须在分发前调用 [zvec-win-unicode-containment] 的 containment decision 接口;判定非 SAFE 时拒绝分发并给出结构化原因,不得静默跳过。该依赖未满足前不得执行对应的 Windows rollout。
 - [ ] [attp-lw-memory-identity] [attp-lw-memory-identity] RESIDUAL / blocked-upstream — waiting-host-contract。承载 spec:attp-linked-worktree-memory-identity(status: parked)。缺口:git linked worktree 中宿主对 transcript 用当前 worktree 身份、对 memory 用【主工作树】身份,两者不同源,且该映射在路径大小写维度上失稳(小写拼写启动时重定向消失,而 git 仍返回规范大小写)。PreToolUse 完整键集无任何 memory root 字段;Git identity 到 memory root 差一层未文档化且有损的 slug 编码(非 ASCII 塌成 '-',NTFS 上非单射);~/.claude.json 用户可编辑、无 slug 字段、同项目五种非规范拼写。证据 docs/validation/attp-guard-allowlist-step0c-worktree-memory-identity.md(终止分支 B ∧ C)。已正式排除:slug 重实现 / 目录扫描 / target 自证 / 注册表推断 / git common-dir 猜 slug / settings 或 receipt 配置额外根。当前守卫在该拓扑下 fail-closed 是正确行为,【不需要生产改动】。重新开启需宿主提供权威 memory identity(见 residual spec 的四条条件)。本条同时是 [attp-hive-rollout] 的解阻依据:A 目标子仓全为独立单工作树 / B rollout 增加 topology preflight / C 宿主提供权威 memory identity;「多数子仓可能不是 worktree」不构成解阻证据。
-- [ ] [zvec-win-unicode-containment] P0 / release-blocker — Windows 上部分非 ASCII Zvec collection 路径在 insertSync 触发 0xC0000409 STATUS_STACK_BUFFER_OVERRUN，进程 fail-fast 且不可捕获；0.5.0 与 0.6.0 同样复现，因此不归因于本次升级。阻断下一正式发布与 Windows 非 ASCII 子仓 rollout，不阻断已经完成的 0.6 正确性合并。范围仅为触发边界、预检、隔离、fail-closed 降级与恢复合同设计（path containment）；生产实现和子仓分发尚未授权。证据：docs/validation/zvec-06-phase0b-verdict.md。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [78a792e] 2026-08-07 ZvecWinUnicodeContainmentClosure: [zvec-win-unicode-containment] P0 / release-blocker 收口。AC1-AC7 全部交付并合入 main@78a792e。 问题：Windows 上部分非
 - [6780911] 2026-08-03 MemoryLockWinCimSnapshotReliabilityClosure: Phase 3A 已通过 PR #14 合入 main@d48108a。实现 getProcessSnapshotResult 结构化分类、兼容 wrapper、两个生产调用点 fail-closed
 - [201ba1a] 2026-08-01 MemoryLockWinCimSnapshotReactivation: [memory-lock-win-cim-snapshot-reliability] 由 parked residual 重新激活为 active release-gate reliability b
 - [befedf1] 2026-08-01 ZvecWinUnicodeContainmentTask4Closure: [zvec-win-unicode-containment] Task 1–4 收口，运行时上下文对齐。 实现与合入：Task 1–3(判定层)经 PR #6 合入 main@a10dfd7；Task
@@ -36,7 +36,6 @@
 - [b181245] 2026-07-28 feature-completion: [c482] Wiki UX debt closed across three phases. 32911e0 wraps the architecture SVG in a natural-widt
 - [c466344] 2026-07-28 bug-fix: [57b0] trajectory entry single-line invariant closed. de352ec folds details before truncation; c4663
 - [b6ca7c7] 2026-07-27 governance-closure: [attp-guard-allowlist] 在支持拓扑限定下关闭。单工作树 / 独立项目副本拓扑已解决并完成真实验收(docs/validation/attp-guard-allowlist-acc
-- [1108e9d] 2026-07-26 governance-closure: ATTP (Agent Takeover Trigger Protocol) closure. spec:agent-takeover-trigger-protocol
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
