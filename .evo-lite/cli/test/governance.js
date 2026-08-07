@@ -16524,7 +16524,16 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
             const wf = fs.readFileSync(wfPath, 'utf8');
             assert.ok(/^ {2}containment-contract:$/m.test(wf),
                 'release-gate.yml must declare a `containment-contract:` job (§8.3) — a mention in a comment is not a job');
-            const job = wf.slice(wf.search(/^ {2}containment-contract:$/m));
+            // Bounded at the next sibling job key, not at EOF. Slicing to the
+            // end of the file made every assertion below satisfiable by ANY
+            // later job: gut this one, put the strings in the next, and the
+            // guard still passed. It only looked precise because
+            // containment-contract happened to be last.
+            const start = wf.search(/^ {2}containment-contract:$/m);
+            const block = wf.slice(start);
+            const bodyStart = block.indexOf('\n') + 1;
+            const nextSibling = block.slice(bodyStart).search(/^ {2}[A-Za-z_][\w-]*:$/m);
+            const job = nextSibling === -1 ? block : block.slice(0, bodyStart + nextSibling);
             assert.ok(/^\s+name: containment \+ release enforcement contract evidence$/m.test(job),
                 'the job must keep its contract name so a regression is legible in the checks list');
             assert.ok(/npm run test:governance/.test(job),
