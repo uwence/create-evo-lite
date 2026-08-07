@@ -13,13 +13,17 @@ relationMode: independent
 > ```text
 > Tasks 1–6（AC1–AC5）  COMPLETE / MERGED
 > Task 7 Step 1（AC6）   RE-FROZEN 2026-08-07 —— 五态模型闭合 D2×M8×D5 冲突（§7.5）
-> Task 7 Step 2（AC6）   CHANGES REQUIRED —— 复审裁定，返工中
-> Tasks 8–9（AC7/收口）  NOT AUTHORIZED
+> Task 7 Step 2（AC6）   ACCEPTED / MERGED 2026-08-07（PR #17，merge commit 985b638）
+> Task 8（AC7）          IMPLEMENTATION AUTHORIZED 2026-08-07
+> Task 9（收口）          NOT AUTHORIZED
 > context closure       NOT AUTHORIZED
+> baseline              main@985b638
 > ```
 >
-> 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`；本文此前声称「Task 6 生产实施
-> 未授权」与该事实矛盾，故作此最小修正。这不代表 Task 6 的逐 Step 回填、mutation 历史
+> 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`；Task 7 / AC6 经三轮外部复审后
+> ACCEPTED 并于 PR #17 合入，`main` 基线随之由 `bc3ee2f` 推进到 `985b638`，
+> Task 7 的最终审查 head 是 `ac3445c`。本次仅同步授权与阶段状态，
+> **§8.2 / §8.3 等冻结合同语义未改动**。这不代表 Task 6 的逐 Step 回填、mutation 历史
 > 导入或 spec 终态推进 —— 那些仍属未处理项。
 >
 > 本文冻结合同与边界。§7.4 是第 4 版新增的**恢复机制冻结**（marker 载体、损坏方向、
@@ -1952,10 +1956,17 @@ Phase D 设计复审通过
 
 ```text
 Tasks 1–5（AC1–AC4）  实施授权已给出；已交付、已复审 ACCEPTED、已合入
-Task 6（AC5）          机制与计划补完授权（仅文档）；【生产实施未授权】
-Tasks 7–8（AC6/AC7）   未授权
+Task 6（AC5）          已交付、已复审 ACCEPTED、已合入（PR #16 → main@bc3ee2f）
+Task 7（AC6）          已交付、已复审 ACCEPTED、已合入（PR #17 → main@985b638）
+Task 8（AC7）          生产实施已授权 2026-08-07；基线 main@985b638
 Task 9（收口）          未授权
+context closure       未授权
 ```
+
+> Task 8 的授权是**范围受限**的：解禁面仅 `spec-portfolio.js`、新增 `release-preflight.js`、
+> `template-manifest.js`、`package.json` 的 `prepublishOnly`、`test/governance.js`
+> （均 live + template），外加 `.github/workflows/release-gate.yml` 这一**单文件例外**
+> —— 这不等于解禁 `.github/**`。containment 产品逻辑、Task 9、context closure 仍冻结。
 
 ### 14.1 Task 6 实施授权门（新增）
 

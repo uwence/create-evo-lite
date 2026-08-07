@@ -15,14 +15,17 @@ status: active
 > ```text
 > Tasks 1–6（AC1–AC5）  COMPLETE / MERGED
 > Task 7 Step 1（AC6）   RE-FROZEN 2026-08-07 —— 五态模型闭合 D2×M8×D5 冲突
-> Task 7 Step 2（AC6）   CHANGES REQUIRED —— 复审裁定，返工中
-> Tasks 8–9（AC7/收口）  NOT AUTHORIZED
+> Task 7 Step 2（AC6）   ACCEPTED / MERGED 2026-08-07（PR #17，merge commit 985b638）
+> Task 8（AC7）          IMPLEMENTATION AUTHORIZED 2026-08-07
+> Task 9（收口）          NOT AUTHORIZED
 > context closure       NOT AUTHORIZED
+> baseline              main@985b638（Task 7 最终审查 head = ac3445c）
 > ```
 >
-> 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`；本计划下文 Task 6 段落与
-> 「前置条件」仍保留「Task 6 需要单独实施授权」的旧文字，那是尚未处理的历史残留，
-> **以本摘要为准**。此处修正不代表 Task 6 的逐 Step 回填或 mutation 历史导入。
+> 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`，Task 7 已合入 `main@985b638`；
+> 本计划下文 Task 6 段落与「前置条件」仍保留「Task 6 需要单独实施授权」的旧文字，
+> 那是尚未处理的历史残留，**以本摘要为准**。此处修正不代表 Task 6 的逐 Step 回填或
+> mutation 历史导入，也不改动 Task 8 的冻结设计。
 >
 > 逐任务授权，不再有全局横幅。执行任何**未授权**任务之前，必须先通过 spec §14 /
 > §14.1 的授权门（含用户显式授权）。
@@ -1008,38 +1011,38 @@ active_context.md / raw_memory/**      属 context closure，本轮 FROZEN
 > 好消息是 `adoptSpec` 的 `reservedKeys` 不含该键，非保留键**原样保留追加**
 > （`spec-portfolio.js:490-496`），字段能在 adopt 后存活 —— 缺的只是 registry 的解析与派生。
 
-- [ ] **第 1 步（决策点，已定稿）**：结构化 blocker 载体 = **Spec Portfolio 字段**。
+- [x] **第 1 步（决策点，已定稿）**：结构化 blocker 载体 = **Spec Portfolio 字段**。
       理由：复用既有结构化治理域，不引入第二个真相源，天然满足「不扫自然语言」，
       且字段已能在 adopt 流程中存活。备选（release manifest / 独立 governance IR）
       **需书面否决理由方可改选**，不得在编码中静默切换。
-- [ ] **负责文件**：`spec-portfolio.js`（live + template）、`release-preflight.js`（live + template）、
+- [x] **负责文件**：`spec-portfolio.js`（live + template）、`release-preflight.js`（live + template）、
       `package.json`（`prepublishOnly`）、`test/governance.js`（live + template）
-- [ ] **严格 scalar 解释**（spec §8.2.2.0）——**已实测** `parseFrontmatter()` 不是 YAML parser，
+- [x] **严格 scalar 解释**（spec §8.2.2.0）——**已实测** `parseFrontmatter()` 不是 YAML parser，
       `releaseBlocking: true` 得到字符串 `"true"`，`"2026-07-31"` 得到**含引号**的
       `"\"2026-07-31\""`。故按原始字符串判定：`"true"`→true、`"false"`→false、
       **其余一切（`ture`/`yes`/`1`/带引号 `"true"`）→ schema error**。
       不 trim 引号、不折叠大小写、不做宽松 YAML 推断
-- [ ] `spec-portfolio.js`：registry 逐 spec 输出 `releaseBlocking`，顶层新增 `blockers`、
+- [x] `spec-portfolio.js`：registry 逐 spec 输出 `releaseBlocking`，顶层新增 `blockers`、
       **`errors`、`source{directoryReadable,discoveredFileCount,parsedSpecCount}`**，
       按 spec §8.2.2 表派生；`parked` 默认仍 BLOCK
-- [ ] **registry health（spec §8.2.3.1，堵 fail-open）**：现有 builder 正常退化时**不抛错**
+- [x] **registry health（spec §8.2.3.1，堵 fail-open）**：现有 builder 正常退化时**不抛错**
       （目录不可读 → 空集；单文件解析失败 → `parsed=null` 后跳过），因此损坏的
       release-blocking spec 会**静默消失并放行 publish**。必须把退化编码进 `errors`：
       目录不可读 / 任意 `*.md` 读取或解析失败（保留路径）/
       `discoveredFileCount !== parsedSpecCount` → 全部 FAIL
-- [ ] waiver schema（spec §8.2.2.1，**canonical 不带引号**）：
+- [x] waiver schema（spec §8.2.2.1，**canonical 不带引号**）：
       `releaseBlockDisposition: waived`（原始值严格等于，封闭枚举）+
       `releaseBlockReason`（trim 后非空）+ `releaseBlockReviewedAt`（`^\d{4}-\d{2}-\d{2}$`
       且**日期 round-trip 校验**，挡掉 `2026-02-31`），三项**同时**有效才放行；
       缺一或非法 → 保持 BLOCK + schema error；
       **waiver 只对 `parked` 生效，不可放行 `adopted`/`active`**
-- [ ] 实现 `prepublishOnly` → `release-preflight`：**现场** `buildSpecRegistry(projectRoot, {write:false})`
+- [x] 实现 `prepublishOnly` → `release-preflight`：**现场** `buildSpecRegistry(projectRoot, {write:false})`
       派生 blockers（**禁止**读取 `.evo-lite/generated/spec-registry.json` —— 该文件实际存在
       且可能 stale，漏读方向是放行）。
       **放行条件是 `registry.errors.length === 0 && registry.blockers.length === 0`，
       不是「调用未抛异常」**；任一不满足 → `exit != 0`
-- [ ] `release-gate.yml` 新增 containment **证据** job（非阻断角色）
-- [ ] **验收测试（T10，十条）**：①`adopted`/`active` blocker → prepublish fail
+- [x] `release-gate.yml` 新增 containment **证据** job（非阻断角色）
+- [x] **验收测试（T10，十条）**：①`adopted`/`active` blocker → prepublish fail
       （`npm publish --dry-run` 验证）；②`parked` blocker 无 waiver → fail；
       ③`parked` + 三项齐全合法 waiver → pass；④`done` spec → pass；
       ⑤字段缺失/`false` → 不影响 publish；
@@ -1048,13 +1051,13 @@ active_context.md / raw_memory/**      属 context closure，本轮 FROZEN
       ⑧`adopted`/`active` blocker 不可被 waiver 放行；
       ⑨**FOCUS 自然语言含 "release-blocker" 字样 → 不产生机器判断**；
       ⑩**stale `spec-registry.json` 与现场结果冲突 → 以现场为准**
-- [ ] **T11 registry health 回归（四条）**：①**损坏一个 release-blocking spec 的 frontmatter
+- [x] **T11 registry health 回归（四条）**：①**损坏一个 release-blocking spec 的 frontmatter
       → 该文件不得静默消失**，须进 `errors`（含路径）且 prepublish fail；
       ②`docs/specs` 不可读 → errors + fail；③`discoveredFileCount !== parsedSpecCount` → fail；
       ④放行条件为 `errors.length === 0 && blockers.length === 0`
-- [ ] 补充验收：containment 合同回归时该 PR **变红**；普通 PR 不执行 crash probe
-- [ ] 记录：`release-gate.yml` 是 informational，提升为 required 是手动 repo-admin 步骤
-- [ ] `templates/cli/` 同步；`release-preflight.js` 登记进 `template-manifest.js`
+- [x] 补充验收：containment 合同回归时该 PR **变红**；普通 PR 不执行 crash probe
+- [x] 记录：`release-gate.yml` 是 informational，提升为 required 是手动 repo-admin 步骤
+- [x] `templates/cli/` 同步；`release-preflight.js` 登记进 `template-manifest.js`
 
 **验收**：T10 十条 + T11 四条 + 两条补充验收全绿。
 

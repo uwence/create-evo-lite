@@ -72,3 +72,86 @@ jobs:
           test ! -f ../consume-test/package.json  # consumer is a non-Node project
           node ../consume-test/.evo-lite/cli/memory.js verify
           node ../consume-test/.evo-lite/cli/mcp-validate.js ../consume-test
+
+  # [zvec-win-unicode-containment] Task 8 / AC7 — standing contract evidence.
+  #
+  # This job does NOT gate publishing; release-preflight via prepublishOnly does
+  # (spec §8.1/§8.2). Its job is regression visibility: if the containment
+  # contract or the release enforcement point breaks, the PR goes red here with a
+  # name that says what broke, instead of the failure being buried in one cell of
+  # the consume matrix.
+  #
+  # The crash-reproduction fixture stays opt-in and is deliberately NOT armed
+  # here: it kills the process by design, and a gate that runs it on every PR
+  # stops being a gate and becomes an outage (spec §8.3).
+  containment-contract:
+    name: containment + release enforcement contract evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install root deps (reproducible)
+        run: npm ci
+
+      - name: Install runtime deps (shipped lockfile)
+        shell: bash
+        run: |
+          cp templates/runtime/package.json templates/runtime/package-lock.json .evo-lite/
+          npm ci --prefix .evo-lite
+
+      - name: Containment + release contract suite
+        # Covers T12 (containment diagnostics) and T10/T11 (release enforcement).
+        run: npm run test:governance
+
+      - name: Prove release-preflight blocks a release-blocking spec
+        shell: bash
+        run: |
+          # A synthetic project on purpose: this step must assert the CONTRACT,
+          # not the current governance state of this repository. Pointing it at
+          # the real tree would make it flip the day Task 9 clears the blocker.
+          FIX="$RUNNER_TEMP/preflight-fixture"
+          rm -rf "$FIX"
+          mkdir -p "$FIX/docs/specs" "$FIX/.evo-lite/generated/planning"
+          printf -- '---\nid: spec:ci-fixture\nstatus: draft\nreleaseBlocking: true\n---\n\n# ci fixture\n' \
+            > "$FIX/docs/specs/blocker.md"
+          printf '{"version":"evo-plan-ir@1","specs":[],"plans":[],"tasks":[],"warnings":[]}' \
+            > "$FIX/.evo-lite/generated/planning/plan-ir.json"
+          set +e
+          OUT="$(cd "$FIX" && node "$GITHUB_WORKSPACE/.evo-lite/cli/release-preflight.js" 2>&1)"
+          CODE=$?
+          set -e
+          echo "$OUT"
+          # Both halves matter. A non-zero exit alone proves nothing -- a crashed
+          # or missing binary also exits non-zero -- so the verdict must be
+          # spoken AND the exit code must agree with it.
+          echo "$OUT" | grep -q 'VERDICT=BLOCKED' \
+            || { echo "::error::release-preflight did not vote BLOCKED on a release-blocking spec"; exit 1; }
+          test "$CODE" -ne 0 \
+            || { echo "::error::release-preflight voted BLOCKED but exited 0"; exit 1; }
+
+      - name: Prove release-preflight clears a clean portfolio
+        shell: bash
+        run: |
+          # The pass direction needs proving too: a gate that always blocks is
+          # not a gate, and every "must block" case above would still be green.
+          FIX="$RUNNER_TEMP/preflight-clean"
+          rm -rf "$FIX"
+          mkdir -p "$FIX/docs/specs" "$FIX/.evo-lite/generated/planning"
+          printf -- '---\nid: spec:ci-clean\nstatus: done\nreleaseBlocking: true\n---\n\n# shipped\n' \
+            > "$FIX/docs/specs/shipped.md"
+          printf '{"version":"evo-plan-ir@1","specs":[],"plans":[],"tasks":[],"warnings":[]}' \
+            > "$FIX/.evo-lite/generated/planning/plan-ir.json"
+          OUT="$(cd "$FIX" && node "$GITHUB_WORKSPACE/.evo-lite/cli/release-preflight.js" 2>&1)"
+          echo "$OUT"
+          echo "$OUT" | grep -q 'VERDICT=CLEAR' \
+            || { echo "::error::release-preflight did not vote CLEAR on a shipped spec"; exit 1; }
+
+      - name: Crash probe must not be armed
+        shell: bash
+        run: |
+          test -z "${ZVEC_UNICODE_PROBE:-}" \
+            || { echo "::error::ZVEC_UNICODE_PROBE is armed; the crash fixture must stay opt-in (spec §8.3)"; exit 1; }

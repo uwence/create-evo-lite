@@ -30,16 +30,121 @@ function loadPlanIR(projectRoot) {
     return ir;
 }
 
-function listSpecFiles(projectRoot) {
+// Discovery reports HOW it went, not just what it found.
+//
+// The previous shape returned a bare array, so "there are no specs" and "the
+// spec directory could not be read" were the same observation — an empty list.
+// For a portfolio report that is a harmless degradation; for a release gate it
+// is fail-open, because the release-blocking specs disappear and publish is
+// released. See spec §8.2.3.1.
+function discoverSpecFiles(projectRoot) {
     const dir = path.join(projectRoot, 'docs', 'specs');
-    if (!fs.existsSync(dir)) return [];
+    const rel = path.relative(projectRoot, dir).split(path.sep).join('/');
+    if (!fs.existsSync(dir)) {
+        return { directoryReadable: false, files: [], error: { path: rel, reason: 'docs/specs does not exist' } };
+    }
     try {
-        return fs.readdirSync(dir)
+        const files = fs.readdirSync(dir)
             .filter(f => f.endsWith('.md'))
             .map(f => path.join(dir, f));
-    } catch (_) {
-        return [];
+        return { directoryReadable: true, files, error: null };
+    } catch (err) {
+        return {
+            directoryReadable: false,
+            files: [],
+            error: { path: rel, reason: `docs/specs is not readable: ${err && err.message ? err.message : String(err)}` },
+        };
     }
+}
+
+// --- release-blocking scalar + waiver schema (spec §8.2.2.0 / §8.2.2.1) ---
+
+// parseFrontmatter is NOT a YAML parser: it keeps the raw text after the colon,
+// quotes included. `releaseBlocking: true` arrives as the string "true", and
+// `releaseBlockReviewedAt: "2026-07-31"` arrives with its quotes still attached.
+// So interpretation is defined on the RAW string, and anything outside the two
+// canonical spellings is an error rather than a lenient false.
+//
+// The asymmetry is deliberate: a missing field means "nobody claimed this blocks
+// a release", which is a reasonable default. A present-but-unrecognised value
+// means someone tried to say something and it did not parse — and if that
+// degrades to false, a single typo (`ture`) silently disarms the gate.
+function parseReleaseBlocking(frontmatter) {
+    const fm = frontmatter || {};
+    if (!Object.prototype.hasOwnProperty.call(fm, 'releaseBlocking')) {
+        return { present: false, value: false, error: null };
+    }
+    const raw = fm.releaseBlocking;
+    if (raw === 'true') return { present: true, value: true, error: null };
+    if (raw === 'false') return { present: true, value: false, error: null };
+    return {
+        present: true,
+        value: false,
+        error: `releaseBlocking must be exactly \`true\` or \`false\`, unquoted; got \`${raw}\``,
+    };
+}
+
+// `2026-02-31` matches the shape and is not a date. Only a round-trip catches it.
+function isRoundTripDate(raw) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+    const parsed = new Date(`${raw}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime())) return false;
+    return parsed.toISOString().slice(0, 10) === raw;
+}
+
+// A waiver is all three fields or it is nothing. Partial waivers do not
+// half-release the gate; they keep the BLOCK and report why.
+function parseReleaseWaiver(frontmatter) {
+    const fm = frontmatter || {};
+    const get = (k) => (Object.prototype.hasOwnProperty.call(fm, k) ? fm[k] : null);
+    const disposition = get('releaseBlockDisposition');
+    const reason = get('releaseBlockReason');
+    const reviewedAt = get('releaseBlockReviewedAt');
+
+    if (disposition === null && reason === null && reviewedAt === null) {
+        return { present: false, valid: false, errors: [] };
+    }
+
+    const errors = [];
+    if (disposition !== 'waived') {
+        errors.push(`releaseBlockDisposition must be exactly \`waived\`, unquoted (closed enum); got ${disposition === null ? '<missing>' : `\`${disposition}\``}`);
+    }
+    if (reason === null || String(reason).trim() === '') {
+        errors.push('releaseBlockReason must be present and non-empty after trim');
+    }
+    if (reviewedAt === null || !isRoundTripDate(String(reviewedAt))) {
+        errors.push(`releaseBlockReviewedAt must be a real YYYY-MM-DD date that survives a round-trip; got ${reviewedAt === null ? '<missing>' : `\`${reviewedAt}\``}`);
+    }
+    return { present: true, valid: errors.length === 0, errors };
+}
+
+// spec §8.2.2. Returns a blocker record or null.
+//
+// `parked` still blocks on purpose: park means "deferred", not "the risk went
+// away". If changing governance state silently cleared the gate, anyone could
+// route around a real product risk by re-labelling it. Clearing it takes an
+// explicit, recorded waiver.
+function deriveBlocker(spec) {
+    if (!spec.releaseBlocking) return null;
+    if (spec.state === 'shipped') return null;
+    if (spec.state === 'parked') {
+        if (spec.releaseBlockWaiver && spec.releaseBlockWaiver.valid) return null;
+        return {
+            id: spec.id,
+            file: spec.file,
+            state: spec.state,
+            reason: spec.releaseBlockWaiver && spec.releaseBlockWaiver.present
+                ? 'parked release-blocking spec whose waiver is incomplete or invalid'
+                : 'parked release-blocking spec with no waiver',
+        };
+    }
+    // adopted / active — a waiver does not apply here at all (§8.2.2.1).
+    return {
+        id: spec.id,
+        file: spec.file,
+        state: spec.state,
+        reason: 'in-flight release-blocking spec; a waiver cannot release adopted/active — finish it or park it deliberately',
+    };
 }
 
 function gitLastCommitISO(projectRoot, relFile) {
@@ -156,20 +261,38 @@ function buildSpecRegistry(projectRoot, opts = {}) {
     }
 
     const specs = [];
-    for (const absPath of listSpecFiles(projectRoot)) {
-        let parsed = null;
-        try {
-            parsed = parseSpecFile(absPath);
-        } catch (_) {
-            parsed = null;
-        }
-        if (!parsed) continue;
+    const errors = [];
+    const discovery = discoverSpecFiles(projectRoot);
+    if (discovery.error) errors.push(discovery.error);
 
-        let content = '';
+    for (const absPath of discovery.files) {
+        const relPath = path.relative(projectRoot, absPath).split(path.sep).join('/');
+
+        // A file that cannot be read is recorded, never skipped. Skipping is how
+        // a release-blocking spec leaves the registry without leaving a trace.
+        let content = null;
         try {
             content = fs.readFileSync(absPath, 'utf8');
-        } catch (_) {
-            content = '';
+        } catch (err) {
+            errors.push({ path: relPath, reason: `unreadable: ${err && err.message ? err.message : String(err)}` });
+            continue;
+        }
+
+        let parsed = null;
+        let parseError = null;
+        try {
+            parsed = parseSpecFile(absPath);
+        } catch (err) {
+            parseError = err && err.message ? err.message : String(err);
+        }
+        if (!parsed) {
+            errors.push({
+                path: relPath,
+                reason: parseError
+                    ? `spec parse threw: ${parseError}`
+                    : 'no usable `id: spec:...` frontmatter — the file was discovered under docs/specs but produced no spec entry',
+            });
+            continue;
         }
         const { frontmatter, body } = parseFrontmatter(content);
         const relSpecPath = path.relative(projectRoot, absPath).replace(/\\/g, '/');
@@ -220,6 +343,29 @@ function buildSpecRegistry(projectRoot, opts = {}) {
 
         if (sizeExceeded && !sizeWaiver) warnings.push('size-exceeded');
 
+        const blocking = parseReleaseBlocking(frontmatter);
+        if (blocking.error) errors.push({ path: relSpecPath, reason: blocking.error });
+        const waiver = parseReleaseWaiver(frontmatter);
+
+        // Waiver schema errors are raised ONLY where a waiver can actually do
+        // something: a release-blocking spec that is parked (§8.2.2.1).
+        //
+        // Validating it everywhere made the fields load-bearing in states the
+        // frozen table says are ALLOW. A shipped spec that still carries waiver
+        // metadata from when it was parked would fail preflight on an incomplete
+        // waiver even though deriveBlocker() correctly returns no blocker —
+        // release-preflight treats any registry error as a refusal, so the
+        // stale, inapplicable metadata kept the release locked.
+        //
+        // adopted/active are deliberately excluded too: there the block is
+        // unconditional and a waiver cannot lift it, so reporting the waiver as
+        // malformed would suggest that fixing it would help. The blocker's own
+        // reason says the true thing instead.
+        const waiverIsLoadBearing = blocking.value && state === 'parked';
+        if (waiverIsLoadBearing) {
+            for (const e of waiver.errors) errors.push({ path: relSpecPath, reason: e });
+        }
+
         specs.push({
             id: parsed.id,
             file: relSpecPath,
@@ -234,14 +380,28 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             relationMode: (frontmatter && frontmatter.relationMode) || null,
             notDonePlans,
             warnings,
+            releaseBlocking: blocking.value,
+            releaseBlockingDeclared: blocking.present,
+            releaseBlockWaiver: waiver,
         });
     }
 
+    const blockers = specs.map(deriveBlocker).filter(Boolean);
+
     const registry = {
-        version: 'evo-spec-registry@1',
+        // Bumped from @1: the shape gained blockers/errors/source, and a consumer
+        // that keys on the version must be told the difference.
+        version: 'evo-spec-registry@2',
         generatedAt: new Date().toISOString(),
         agingDays,
         specs,
+        blockers,
+        errors,
+        source: {
+            directoryReadable: discovery.directoryReadable,
+            discoveredFileCount: discovery.files.length,
+            parsedSpecCount: specs.length,
+        },
     };
 
     if (write) {

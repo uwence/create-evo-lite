@@ -30,7 +30,8 @@
     "scripts": {
         "start": "node ./bin/cli.js",
         "test": "node ./.evo-lite/cli/test.js",
-        "test:governance": "node ./.evo-lite/cli/test.js governance"
+        "test:governance": "node ./.evo-lite/cli/test.js governance",
+        "prepublishOnly": "node ./.evo-lite/cli/release-preflight.js"
     },
     "keywords": [
         "evo-lite",
