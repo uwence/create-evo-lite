@@ -15,11 +15,13 @@ status: active
 > ```text
 > Tasks 1–6（AC1–AC5）  COMPLETE / MERGED
 > Task 7 Step 1（AC6）   RE-FROZEN 2026-08-07 —— 五态模型闭合 D2×M8×D5 冲突
-> Task 7 Step 2（AC6）   ACCEPTED / MERGED 2026-08-07（PR #17，merge commit 985b638）
-> Task 8（AC7）          IMPLEMENTATION AUTHORIZED 2026-08-07
-> Task 9（收口）          NOT AUTHORIZED
+> Task 7（AC6）          ACCEPTED / MERGED（PR #17 → merge commit 985b638，审查 head ac3445c）
+> Task 8（AC7）          ACCEPTED / MERGED（PR #18 → merge commit c2eb784，审查 head 42c054e）
+> FOCUS 锚点 resync      MERGED（PR #19 → merge commit 04fd869）
+> Task 9（收口）          CLOSEOUT PROCEDURE AUTHORIZED / EXECUTION NOT YET AUTHORIZED
+>                       分 9A–9D 逐段授权；当前仅 9A（docs-only）
 > context closure       NOT AUTHORIZED
-> baseline              main@985b638（Task 7 最终审查 head = ac3445c）
+> baseline              main@04fd869
 > ```
 >
 > 上表是**人工阶段摘要**。Task 6 已合入 `main@bc3ee2f`，Task 7 已合入 `main@985b638`；
@@ -1061,7 +1063,7 @@ active_context.md / raw_memory/**      属 context closure，本轮 FROZEN
 
 **验收**：T10 十条 + T11 四条 + 两条补充验收全绿。
 
-### Task 9: 实施完成后的状态推进与闭环（复审 ACCEPTED 后另行授权）
+### Task 9: 生命周期收口（2026-08-07 kickoff audit 后重新冻结）
 
 > **adopt 不在此处**。它已按 spec §13 前移到 Phase D 治理闭环、实施授权之前；
 > 本任务的前提是 spec **早已 adopted**。
@@ -1069,13 +1071,157 @@ active_context.md / raw_memory/**      属 context closure，本轮 FROZEN
 - [x] ~~建立 `docs/plans/zvec-win-unicode-containment.md`~~ —— **已作废并删除**。
       它建立在「`plan scan` 不扫 `docs/superpowers/plans/`」这个错误前提上，实际造成
       同 id 重复登记（见上文 Portfolio 落位决定）。本文件即唯一 plan
-- [ ] 推进 spec 状态至实施完成态；确认 Portfolio 仍为 **active** 直至收口
-- [ ] `sync-runtime --check` in-sync；live/template SHA256 一致
-- [ ] 上游上报：向 `@zvec/zvec` 提交最小复现（fixture 可直接作附件）
-- [ ] 在 `[attp-hive-rollout]` 登记「Windows 目标必须消费 containment decision 接口」的依赖
-- [ ] `mem commit` 闭环 + backlog `[zvec-win-unicode-containment]` 状态推进
 
-**⛔ 停止点 4**：治理闭环不得与实现任务一并执行，须复审 ACCEPTED 后单独授权。
+#### 9.0 kickoff audit 的两处接口错位（承重，已裁定）
+
+原 Task 9 的六条清单**不可照做**。只读 audit 在 `main@04fd869` 上机械确认了两处
+Task 9 原计划与现有治理机制之间的真实错位：
+
+**① `mem close --apply` 不适用于本 spec。**
+
+```text
+$ mem close docs/specs/zvec-win-unicode-containment.md --preview
+readiness: NO-CONTRACT
+```
+
+`applyClose` 的 Gate 2 是 `readiness !== 'READY' → refuse`，所以它会拒绝本 spec。
+裁定：**`NO-CONTRACT` 是一种诚实的 opt-out，不是 machinery 故障** ——
+它表示这个历史 spec 没有采用 verification-contract 的 criteria schema。
+closure 子系统自己的文案就写着 "add a criteria block for a real gate, **or close manually**"。
+
+```text
+方案 1  事后补 criteria           REJECTED —— 给已完成 Tasks 1–8、已过多轮复审与真实 CI 的
+                                 spec 补验收合同，会制造「合同在实施结束后才定义」的伪证据链
+方案 2  裸改 status: done         REJECTED —— 这才是真正的绕过 enforcement point
+方案 3  reviewer-attested 人工关闭  ACCEPTED
+```
+
+**真正的绕过不是「人工关闭」，而是「在收口证据完成前提前改 `status: done`」。**
+因此 lifecycle state 的变更必须是收口的**最后一步**。
+
+**② `mem commit` 会一并执行 context closure，必须移出 Task 9。**
+
+```text
+commitWithContext() → track() → archive(...)                      写 raw_memory
+                             → fs.writeFileSync(ACTIVE_CONTEXT_PATH)  写 focus/backlog
+                → git add <active_context> <archivePath>
+                → git commit                                       第二个 commit
+```
+
+裁定：
+
+```text
+Task 9 governance closeout   ≠   context closure
+
+mem commit / track / archive / trajectory / META    → 不属于 Task 9，留给独立 context closure
+backlog / FOCUS 的必要运行时更新                      → 走受支持的 mem context 命令，属 Task 9C
+Task 9 的仓库变更                                    → 用普通 git commit / PR
+```
+
+#### 9.1 承重不变量
+
+```text
+releaseBlocking: true      全程保留，永不删除、永不改 false
+```
+
+收口成功要证明的是 AC7 的**生命周期闭环**，不是把 gate 拆掉：
+
+```text
+active  + releaseBlocking:true   →  BLOCKED
+shipped + releaseBlocking:true   →  CLEAR
+```
+
+`deriveBlocker()` 正是这么实现的（`state === 'shipped'` 返回 no blocker）。
+
+#### 9.2 分段授权：9A–9D
+
+**9A — closeout procedure re-freeze（docs-only）**
+
+- [ ] 同步 spec / plan 顶部阶段摘要至真实状态与 `main@04fd869`
+- [ ] 用本节固化 kickoff audit 的裁定
+- [ ] 普通 git commit → Draft PR → 首轮 `pull_request` CI → 硬停
+
+**9B — 上游上报（外部写操作，单独授权）**
+
+- [ ] 目标为 **`alibaba/zvec`** —— `@zvec/zvec` 0.6.0 的 `bugs.url` 指向它；
+      `zvec-ai/zvec-node` 只是 Node binding 源码仓，不是 bug tracker
+- [ ] **新建 issue，不并入 `alibaba/zvec#626`**。#626（2026-07-28，仍 open）现象相关但
+      并非同一故障：它是 Python binding、可捕获的 `RuntimeError`
+      （"No mapping for the Unicode character exists in the target multi-byte code page"）；
+      本议题是 Node `insertSync` 的 `0xC0000409` / `STATUS_STACK_BUFFER_OVERRUN`
+      进程级 fail-fast，JS `try/catch` 拿不到控制权。新 issue 中注明 `Possibly related: #626`
+      并说明这一实质差异
+- [ ] 资产：`docs/validation/fixtures/zvec-win-unicode/`
+      （`README.md` / `probe-runner.js` / `probe-child.js` / `corpus.json` 135 样本 /
+      `results-summary.json` 四轮逐样本判定 + 原始结果 sha256）
+- [ ] **可声称**：0.5.0 与 0.6.0 同样复现，故不归因于版本升级；binding 由父进程以
+      绝对路径注入，已排除混版测量
+- [ ] **不可声称**：触发条件已收敛（§3.1 明确未收敛）；任何路径「安全」
+      （fixture README：它记录观测，不证明任何路径安全）；非 Windows 平台有无同类边界（未测）
+- [ ] 产出 durable issue URL → 硬停
+
+**9C — runtime governance dependency 登记（窄改 active_context）**
+
+- [ ] 在 `[attp-hive-rollout]` 登记「Windows 目标必须消费 containment decision 接口」的依赖
+      —— 该依赖目前**只**写在 spec §12，`[attp-hive-rollout]` 自己的 backlog 条目没有它
+- [ ] FOCUS 必要同步
+- [ ] **仍禁止**：`context track` / `archive` / META / trajectory / `mem commit`
+
+**9D — 受控人工关闭（最后一步）**
+
+前置门必须**同时**成立：
+
+```text
+Tasks 1–8                ACCEPTED / MERGED
+9A                       已合并
+9B upstream issue URL    已存在
+9C dependency 登记        已完成
+worktree                 clean
+sync-runtime --check     EXIT 0
+live/template SHA pairs  identical
+registry.errors          0
+release-preflight BEFORE BLOCKED
+```
+
+然后事务顺序：
+
+```text
+1  完成 Task 9 清单
+2  plan frontmatter status → done
+3  spec frontmatter status → done        ← lifecycle 变更放在最后
+4  releaseBlocking: true 保持原样
+5  planning backfill / scan
+6  Portfolio state → shipped
+7  registry.blockers → 0
+8  release-preflight → CLEAR
+9  npm test / test:governance / sync-runtime --check
+10 Draft PR + CI + 全量 closeout 复审
+```
+
+#### 9.3 已知债：不在 Task 9 范围，逐条留档不修
+
+```text
+closure linkedPlan asymmetry   previewClose() 只读 spec frontmatter 的正向 linkedPlan，
+                               而本 spec 没有该键；Portfolio 用的是双向 union
+                               （plan-ir 的 linkedSpec 反查）。因此 Portfolio 看得见
+                               唯一 plan，mem close 看不见。既然不走 applyClose，
+                               它不是 Task 9 blocker；**也不得为迁就 machinery 而
+                               给本 spec 临时加 linkedPlan 键**
+
+size-exceeded warning          `if (sizeExceeded && !sizeWaiver)` 与 state 无关，
+                               关闭为 shipped 后**仍会继续出现**。这可以接受：
+                               release-preflight 承重的是 errors 与 blockers，不是 warnings。
+                               **不得为了让报告好看而补 sizeWaiver** —— 那是另一项治理决策
+
+ci-1 job slicing debt          wf.slice(containment-contract:) 一直切到 EOF，
+                               仅因该 job 当前在最后才精确
+createTempRuntimeRoot          测试基础设施 cleanup debt
+fs.indexWrite                  supplemental corroboration，未独立证伪
+spec §14.1 两个 Task 6 门 / plan 中 Task 7 最后一条 local gate —— 文档债
+```
+
+**⛔ 停止点 4**：Task 9 分 9A–9D 逐段授权，每段自成一个 PR 并在首轮 CI 后硬停。
+不得因为前一段已合并就自动进入下一段；context closure 始终需要独立授权。
 
 ---
 
