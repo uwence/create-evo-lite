@@ -4503,7 +4503,7 @@ async function runGovernanceTests() {
             }, null, 2));
 
             const registry = specPortfolio.buildSpecRegistry(projectRoot);
-            assert.strictEqual(registry.version, 'evo-spec-registry@1', 'registry version stamp');
+            assert.strictEqual(registry.version, 'evo-spec-registry@2', 'registry version stamp (bumped by Task 8: blockers/errors/source)');
             assert.strictEqual(registry.agingDays, 14, 'agingDays defaults to 14 with no config override');
             assert.strictEqual(registry.specs.length, 6, 'all six fixture specs enumerated');
 
