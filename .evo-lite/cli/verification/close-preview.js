@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { loadValidatedContract } = require('./validate-contract');
-const { parseFrontmatter, parseSpecFile, resolveLinkedPlanIds } = require('../planning/parse-markdown');
+const { parseFrontmatter, parseSpecFile, resolveLinkedPlanIds, countTrackedUncheckedBoxes } = require('../planning/parse-markdown');
 
 function remedyFor(verdict, verifierType) {
     if (verdict === 'FAIL') return 'verifier failed — fix the underlying issue, then re-run';
@@ -30,7 +30,10 @@ function defaultPlanState(root, linkedPlanId) {
         if (plan.sourcePath) {
             try {
                 const txt = fs.readFileSync(path.join(root, plan.sourcePath), 'utf8');
-                uncheckedBoxes = (txt.match(/^- \[ \] /gm) || []).length;
+                // Tracked unchecked count from the shared scanner — the same
+                // question apply asks when it rewrites. Counting raw `- [ ] `
+                // matches promised flips for prose and fenced examples.
+                uncheckedBoxes = countTrackedUncheckedBoxes(txt);
             } catch (_) { /* plan file unreadable */ }
         }
         return { planId: linkedPlanId, found: true, planPath: plan.sourcePath, planStatus: plan.status,

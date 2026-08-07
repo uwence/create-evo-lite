@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
 const { previewClose } = require('./close-preview');
-const { parseFrontmatter } = require('../planning/parse-markdown');
+const { parseFrontmatter, markTrackedPlanCheckboxesDone } = require('../planning/parse-markdown');
 const { evidenceSlug } = require('./evidence-store');
 const { snapshotFiles, rollbackFiles } = require('../transaction');
 
@@ -152,15 +152,22 @@ function applyClose(specPath, opts = {}) {
     let staged = [];
     try {
         for (const m of planMutations) {
-            let txt = fs.readFileSync(m.abs, 'utf8');
-            // Known debt: this replacement is intentionally unchanged. It flips
-            // EVERY unchecked box in the file, and multi-plan closure now applies
-            // it to N plans atomically rather than one. Parser-scoped checkbox
-            // mutation is a separate closure-model change and is not in scope here.
-            if (m.uncheckedBoxes > 0) txt = txt.replace(/- \[ \] /g, '- [x] ');
-            fs.writeFileSync(m.abs, setStatusDone(txt));
-            actions.push(m.uncheckedBoxes > 0
-                ? `flip ${m.uncheckedBoxes} checkbox(es) + set ${m.planId} status: done in ${m.planPath}`
+            const original = fs.readFileSync(m.abs, 'utf8');
+            // Scanner-owned, line-indexed rewrite. The previous
+            // `txt.replace(/- \[ \] /g, ...)` was unanchored and global, so it
+            // also rewrote indented children, prose, and literals inside fenced
+            // code — including examples that match the tracked grammar exactly.
+            const marked = markTrackedPlanCheckboxesDone(original);
+            // Preview promised a number. If the file no longer agrees, either the
+            // tree moved under us or the two semantics have forked again; a
+            // partial rewrite is the worst outcome, so abort into the existing
+            // rollback rather than write something nobody predicted.
+            if (typeof m.uncheckedBoxes === 'number' && marked.changedCount !== m.uncheckedBoxes) {
+                throw new Error(`checkbox count mismatch in ${m.planPath}: preview said ${m.uncheckedBoxes}, scanner found ${marked.changedCount}`);
+            }
+            fs.writeFileSync(m.abs, setStatusDone(marked.content));
+            actions.push(marked.changedCount > 0
+                ? `flip ${marked.changedCount} checkbox(es) + set ${m.planId} status: done in ${m.planPath}`
                 : `set ${m.planId} status: done in ${m.planPath}`);
         }
         if (willSetStatus) {
