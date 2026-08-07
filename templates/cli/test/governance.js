@@ -15538,6 +15538,60 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
     console.log('T12. Testing verify containment diagnostics — four states, wording, zero side effects ...');
     {
         const stateMod = require(path.join(CLI_DIR, 'zvec-containment-state.js'));
+        // [zvec-win-unicode-containment] §7.5 D4.1 — CALL-LEVEL side-effect counters.
+        //
+        // End-state inference cannot establish "count = 0". create→release leaves no
+        // lease file; overwriting a marker with identical bytes leaves the same hash
+        // and possibly the same mtime; a rebuild that restores the same shape leaves
+        // the same directory fingerprint. Each of those passes a filesystem check
+        // while having performed the forbidden action.
+        //
+        // So the counters wrap the bindings memory.service.js destructures AT REQUIRE
+        // TIME, installed before it is loaded. A forbidden call is then counted even
+        // if the code puts everything back afterwards — which is the property D4.1
+        // actually froze.
+        const installCallCounters = ({ failZvecLoad = false } = {}) => {
+            const Module = require('module');
+            const originalLoad = Module._load;
+            const calls = Object.create(null);
+            const bump = (k) => { calls[k] = (calls[k] || 0) + 1; };
+            const WATCH = {
+                'memory-index': ['getMemoryIndex', 'resolveActiveImpl', 'resolveEngineDecision',
+                    'resolveRecoveryRebuildDecision', 'clearContainmentState', 'peekEngineDecision'],
+                'zvec-containment-state': ['readContainmentState', 'writeContainmentState',
+                    'clearContainmentState', 'acquireRecoveryLease', 'acquireArchiveMarkerLock'],
+            };
+            Module._load = function (request, parent, ...rest) {
+                if (request === '@zvec/zvec') {
+                    bump('zvec.require');
+                    if (failZvecLoad) {
+                        const err = new Error("Cannot find module '@zvec/zvec'");
+                        err.code = 'MODULE_NOT_FOUND';
+                        throw err;
+                    }
+                }
+                const mod = originalLoad.call(this, request, parent, ...rest);
+                for (const [name, fns] of Object.entries(WATCH)) {
+                    if (request === `./${name}` || request.endsWith(`${name}.js`)) {
+                        const wrapped = { ...mod };
+                        for (const fn of fns) {
+                            if (typeof mod[fn] === 'function') {
+                                wrapped[fn] = (...args) => { bump(`${name}.${fn}`); return mod[fn](...args); };
+                            }
+                        }
+                        return wrapped;
+                    }
+                }
+                return mod;
+            };
+            return {
+                calls,
+                count: (k) => calls[k] || 0,
+                reset: () => { for (const k of Object.keys(calls)) delete calls[k]; },
+                restore: () => { Module._load = originalLoad; },
+            };
+        };
+
         // One place that runs verify against a chosen db path + marker setup.
         const runVerify = async (label, { dbDir, marker, pinSqlite }) => {
             const runtime = createTempRuntimeRoot(`t12-${label}`);
@@ -15600,6 +15654,10 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         const FORBIDDEN_WORDING = [
             '从未被读取', '内容确认完整', '上游缺陷已经修复', '上游缺陷已修复',
             '路径问题已经修复', '已自动恢复',
+            // §7.5 D6 (re-freeze): debt and engine are separate dimensions. Saying
+            // the engine "runs normally" inside a debt verdict re-merges them — and
+            // is simply false under a sqlite pin or an unavailable binding.
+            '当前引擎按正常判定运行',
         ];
         const assertWording = (output, caseName) => {
             for (const banned of FORBIDDEN_WORDING) {
@@ -15622,10 +15680,10 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
             const anchor = createContainedZvecRoot('t12-normal');
             try {
                 const { report, output } = await runVerify('normal', { dbDir: anchor.base });
-                assert.strictEqual(report.containment.state, 'normal',
+                assert.strictEqual(report.containment.state, 'no-debt',
                     'a SAFE anchor with no marker carries no containment trust debt');
                 assert.strictEqual(report.containment.marker.status, 'absent', 'no marker was written');
-                assertWording(output, 'normal');
+                assertWording(output, 'no-debt');
             } finally {
                 anchor.cleanup();
             }
@@ -15676,8 +15734,29 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 const { report, output } = await runVerify('pin', { dbDir: anchor.base, marker: 'valid', pinSqlite: true });
                 assert.strictEqual(report.containment.marker.status, 'present',
                     'an explicit sqlite pin never clears an existing marker (§7.4 M8)');
-                assert.notStrictEqual(report.containment.state, 'normal',
-                    'an outstanding containment debt must stay visible under an explicit pin — a pin is a user preference, not a debt payment (§7.5 D2)');
+                // Precise, not `!== no-debt`: the re-frozen D5 names this state.
+                assert.strictEqual(report.containment.state, 'debt-under-pin',
+                    'an outstanding debt under an explicit pin is its own state — a pin is a user preference, not a debt payment (§7.5 D5 row 4)');
+                assert.strictEqual(report.containment.engine.reason, 'engine-choice',
+                    'the pin branch reports engine-choice, and says nothing about the path');
+                assert.strictEqual(report.containment.verdict, null,
+                    'the pin branch returns before classification, so the DECISION carries no containment verdict — which is exactly why the marker record below must be shown');
+                // §7.5 D3 — on this branch the marker is the ONLY thing that can
+                // explain the debt, so every recorded field must be present.
+                assert.ok(report.containment.marker.recordedCollectionPath,
+                    'debt-under-pin must expose which collection the debt was recorded against (§7.5 D3)');
+                assert.ok(report.containment.marker.recordedContainment,
+                    'debt-under-pin must expose the containment record stored in the marker (§7.5 D3)');
+                assert.strictEqual(report.containment.marker.recordedContainment.verdict, 'UNKNOWN',
+                    'the marker-recorded verdict must be surfaced verbatim');
+                assert.strictEqual(report.containment.marker.recordedContainment.layer, 'path',
+                    'the marker-recorded layer must be surfaced verbatim');
+                assert.ok(/test-fixture/.test(report.containment.marker.recordedContainment.reason || ''),
+                    'the marker-recorded reason must be surfaced verbatim');
+                assert.ok(output.includes('containment marker 原始记录'),
+                    'the CLI output must separate the marker record from the current decision (§7.5 D3)');
+                assert.ok(output.includes(report.containment.marker.recordedCollectionPath),
+                    'the recorded collection path must actually reach the operator, not just the report object');
                 assertWording(output, 'debt-under-pin');
             } finally {
                 anchor.cleanup();
@@ -15716,6 +15795,9 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
             const anchor = createContainedZvecRoot('t12-side-effects');
             let database6 = null;
             let closeDb6 = null;
+            // Installed BEFORE bootstrapRuntime so that memory.service.js destructures
+            // the counted bindings when it is (re)loaded.
+            const counters = installCallCounters();
             try {
                 const markerPath = stateMod.markerPathFor(anchor.base);
                 const collectionDir = anchor.paths.collectionPath;
@@ -15758,28 +15840,56 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 assert.ok(markerBefore,
                     'precondition: the marker fixture must be on disk, otherwise control C cannot observe a clear');
 
-                const Module = require('module');
-                const originalLoad = Module._load;
-                let zvecLoads = 0;
-                Module._load = function (request, ...rest) {
-                    if (request === '@zvec/zvec') zvecLoads += 1;
-                    return originalLoad.call(this, request, ...rest);
-                };
-                let diag;
-                try {
-                    diag = svc.buildContainmentDiagnostics();
-                } finally {
-                    Module._load = originalLoad;
+                // Everything above was setup. Zero the counters so what follows
+                // measures the containment section ALONE.
+                counters.reset();
+                const diag = svc.buildContainmentDiagnostics();
+
+                // --- D4.1 forbidden calls, counted at call level ------------
+                // Checked BEFORE the positive controls on purpose. A forbidden call
+                // often perturbs the legitimate counts too (getMemoryIndex re-reads
+                // the marker, for instance), so asserting the positive controls first
+                // would make every such mutation report the control's message instead
+                // of the property it was written to guard.
+                // Ordered most-specific first. Several forbidden actions transitively
+                // trigger a broader one (resolveRecoveryRebuildDecision loads the
+                // native binding; getMemoryIndex re-reads the marker), so checking
+                // the broad ones first would make every such mutation report the
+                // broad assertion and leave its own property looking unguarded.
+                const forbidden = [
+                    ['memory-index.resolveRecoveryRebuildDecision', 'entering recovery / rebuild semantics', 'control C2'],
+                    ['zvec-containment-state.acquireRecoveryLease', 'recovery lease acquisition', 'control C3'],
+                    ['zvec-containment-state.acquireArchiveMarkerLock', 'archive publication lock write', 'control C4'],
+                    ['memory-index.clearContainmentState', 'marker clear', 'control C1'],
+                    ['zvec-containment-state.clearContainmentState', 'marker clear', 'control C1'],
+                    ['zvec-containment-state.writeContainmentState', 'marker write', 'control C1'],
+                    ['memory-index.resolveEngineDecision', 'marker write via the decision path', 'control C1'],
+                    ['memory-index.resolveActiveImpl', 'marker write via the shared ambient path', 'control C1'],
+                    ['memory-index.getMemoryIndex', 'index construction / collection open / read', 'control B'],
+                    ['zvec.require', 'Zvec native require', 'control A'],
+                ];
+                for (const [key, what, control] of forbidden) {
+                    assert.strictEqual(counters.count(key), 0,
+                        `the containment section must not perform: ${what} (§7.5 D4.1, ${control}) — observed ${counters.count(key)} call(s) to ${key}`);
                 }
 
-                assert.strictEqual(zvecLoads, 0,
-                    'the containment section must not load @zvec/zvec — diagnosing a path suspected of crashing the native binding must never be the thing that loads it (§7.5 D4.1, control A)');
+                // --- positive controls -------------------------------------
+                // Without these, "every forbidden counter is 0" would also hold if the
+                // instrumentation silently failed to attach. These two prove the
+                // counters are live and wired to the code actually under test, so the
+                // zeros above mean something.
+                assert.strictEqual(counters.count('memory-index.peekEngineDecision'), 1,
+                    'positive control: the containment section must read the decision exactly once — if this is 0 the counters are not attached and every zero above is meaningless');
+                assert.strictEqual(counters.count('zvec-containment-state.readContainmentState'), 1,
+                    'positive control: the containment section must take exactly one marker snapshot (§7.5 D2) — not zero, and not a second read for output (§7.5 D3)');
+
+                // --- filesystem corroboration (auxiliary, NOT the proof) ----
                 assert.strictEqual(idxMod.peekMemoryIndex(), null,
-                    'the containment section must not instantiate ANY index — it reads a decision and a marker, nothing else (§7.5 D4.1, control B)');
+                    'no index instance may exist after the containment section (§7.5 D4.1, control B)');
                 assert.ok(!fs.existsSync(collectionDir),
-                    'the containment section must not create or open the collection directory (§7.5 D4.1, control B)');
+                    'auxiliary: the collection directory must not appear (§7.5 D4.1, control B)');
                 assert.strictEqual(fs.existsSync(markerPath), markerBefore,
-                    'the containment section must neither mint nor clear a marker (§7.5 D4.1, control C)');
+                    'auxiliary: marker existence must be unchanged — note this alone cannot prove write count 0, which is why the call counters above are authoritative');
                 assert.ok(diag.processObservation,
                     'the process observation must be present — it is the ONLY thing verify may claim about the collection (§7.5 D4)');
                 assert.strictEqual(diag.processObservation.instantiatedCollection, false,
@@ -15793,6 +15903,54 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     assert.strictEqual(database6.open, false,
                         'zero-side-effects: the bootstrapRuntime database must be closed BEFORE its runtime directory is deleted');
                 }
+                counters.restore();
+                anchor.cleanup();
+            }
+        }
+
+        // --- case 7: no-debt under an explicit sqlite pin -------------------
+        //
+        // §7.5 D5 re-freeze: `state` describes DEBT, `engine` describes the engine.
+        // The first version's `normal` required impl === 'zvec', so this combination
+        // had nowhere to go and silently fell through to it.
+        {
+            const anchor = createContainedZvecRoot('t12-pin-nodebt');
+            try {
+                const { report, output } = await runVerify('pin-nodebt', { dbDir: anchor.base, pinSqlite: true });
+                assert.strictEqual(report.containment.state, 'no-debt',
+                    'an explicit sqlite pin with no marker carries no containment debt — the pin is an engine choice, not a debt (§7.5 D5 row 5)');
+                assert.strictEqual(report.containment.engine.reason, 'engine-choice',
+                    'the engine dimension must still report the pin');
+                assert.strictEqual(report.containment.engine.impl, 'sqlite',
+                    'no-debt must not imply the engine is zvec');
+                assert.strictEqual(report.containment.marker.status, 'absent', 'no marker exists');
+                assertWording(output, 'no-debt-under-pin');
+            } finally { anchor.cleanup(); }
+        }
+
+        // --- case 8: no-debt when the binding is unavailable ----------------
+        //
+        // Same dimension-separation point from the other side: a SAFE path with no
+        // marker, but @zvec/zvec cannot load. defaultLoadZvecIndex() swallows that
+        // and returns null, so the decision is sqlite/dependency-unavailable — and
+        // there is still no containment debt.
+        {
+            const anchor = createContainedZvecRoot('t12-nodep');
+            // failZvecLoad must be installed before bootstrapRuntime loads the CLI.
+            const counters = installCallCounters({ failZvecLoad: true });
+            try {
+                const { report, output } = await runVerify('nodep', { dbDir: anchor.base });
+                assert.strictEqual(report.containment.state, 'no-debt',
+                    'an unavailable binding is not a containment debt (§7.5 D5 row 5)');
+                assert.strictEqual(report.containment.engine.impl, 'sqlite',
+                    'the engine degraded to sqlite');
+                assert.strictEqual(report.containment.engine.reason, 'dependency-unavailable',
+                    'the engine dimension must name the real cause, which is NOT containment');
+                assert.strictEqual(report.containment.marker.status, 'absent',
+                    'a missing binding must never mint a containment marker (§7.4 M8 keeps debt and engine choice separate)');
+                assertWording(output, 'no-debt-dependency-unavailable');
+            } finally {
+                counters.restore();
                 anchor.cleanup();
             }
         }

@@ -1927,9 +1927,15 @@ function buildContainmentDiagnostics() {
     const reason = decision ? decision.reason : null;
     const containment = (decision && decision.containment) || null;
 
-    // Order is load-bearing (§7.5 D3): a damaged marker outranks every other state,
-    // because "the debt exists but its content cannot be trusted" is the one thing
-    // that must never be presented as something milder.
+    // §7.5 D5 (re-frozen 2026-08-07). state describes CONTAINMENT DEBT ONLY — never
+    // whether the engine happens to be zvec. Those are two independent dimensions,
+    // and folding them together is what left `pin + marker absent` and
+    // `dependency-unavailable + marker absent` with nowhere to go in the first
+    // version. The engine facts live in `engine` below.
+    //
+    // Order is load-bearing: a damaged marker outranks every other state, because
+    // "the debt exists but its content cannot be trusted" is the one thing that
+    // must never be presented as something milder.
     let state;
     if (marker.status === 'invalid' || marker.status === 'unreadable') {
         state = 'marker-damaged';
@@ -1938,15 +1944,17 @@ function buildContainmentDiagnostics() {
     } else if (reason === 'containment-recovery-pending') {
         state = 'recovery-pending';
     } else if (marker.status === 'present') {
-        // §7.4 M8 + §7.5 D2: an explicit sqlite pin never mints a marker, but it
-        // never clears one either. The decision says nothing about containment on
-        // this branch, so this is NOT recovery-pending — we have no evidence the
-        // path is SAFE. It therefore gets its own state instead of being folded
-        // into a neighbouring one, because D2 requires an outstanding debt be shown
-        // SEPARATELY and D5's four rows do not enumerate this combination.
+        // §7.4 M8 + §7.5 D2/D5 row 4: an explicit sqlite pin never mints a marker,
+        // but it never clears one either. On a SAFE path a present marker has
+        // already been classified as containment-recovery-pending above, so
+        // anything reaching here came from the choice !== 'zvec' branch — which
+        // returns before classification runs and therefore cannot assert whether
+        // the path is supported.
         state = 'debt-under-pin';
     } else {
-        state = 'normal';
+        // marker absent. Says nothing about the engine: impl may be zvec, or sqlite
+        // under an explicit pin, or sqlite because the binding is unavailable.
+        state = 'no-debt';
     }
 
     return {
@@ -1963,7 +1971,19 @@ function buildContainmentDiagnostics() {
             markerPath: marker.markerPath || null,
             errorCode: marker.errorCode || null,
             detail: marker.detail || null,
+            // §7.5 D3 — what the MARKER recorded, as distinct from what this process
+            // just decided. Under debt-under-pin these are the only fields that can
+            // explain the debt at all: the pin branch returns containment: null
+            // before classification runs, so the decision knows nothing about it.
+            // Both come from the single snapshot taken above; no second read.
             recordedCollectionPath: (marker.state && marker.state.collectionPath) || null,
+            recordedContainment: (marker.state && marker.state.containment)
+                ? {
+                    verdict: marker.state.containment.verdict || null,
+                    layer: marker.state.containment.layer || null,
+                    reason: marker.state.containment.reason || null,
+                }
+                : null,
         },
         // §7.5 D4 — what this process did, NOT what was ever done to the collection.
         processObservation: decision
@@ -1974,26 +1994,44 @@ function buildContainmentDiagnostics() {
 
 function logContainmentDiagnostics(diag, log, pushNextStep) {
     if (!diag) return;
-    if (diag.state === 'normal') {
-        // Nothing outstanding. Say so without implying anything was repaired (D6).
-        log('🧭 [Containment]: 无 containment trust debt；当前引擎按正常判定运行。');
+    if (diag.state === 'no-debt') {
+        // §7.5 D5/D6: state speaks about DEBT only. Asserting the engine is "running
+        // normally" here would re-merge the two dimensions D5 just separated — and
+        // it would be wrong under an explicit sqlite pin or an unavailable binding.
+        log('🧭 [Containment]: 当前没有未清偿的 containment trust debt。');
         return;
     }
 
     log('🧭 [Containment]: 检测到 containment 状态，以下为只读诊断（不改变任何状态）。');
-    if (diag.verdict) {
-        log(`   判定: verdict=${diag.verdict} layer=${diag.layer || '-'} reason=${diag.containmentReason || '-'}`);
-    }
+
+    // Layer 1 — what THIS process decided (§7.5 D3).
+    log('   当前判定:');
     if (diag.engine) {
-        log(`   引擎: choice=${diag.engine.choice} impl=${diag.engine.impl} degraded=${diag.engine.degraded} reason=${diag.engine.reason || '-'}`);
+        log(`     choice=${diag.engine.choice} impl=${diag.engine.impl} degraded=${diag.engine.degraded} reason=${diag.engine.reason || '-'}`);
+    }
+    if (diag.verdict) {
+        log(`     containment verdict=${diag.verdict} layer=${diag.layer || '-'} reason=${diag.containmentReason || '-'}`);
     }
     if (diag.collectionPath) {
-        log(`   受影响 collection 路径: ${diag.collectionPath}`);
+        log(`     collectionPath=${diag.collectionPath}`);
     }
-    log(`   marker: status=${diag.marker.status}${diag.marker.markerPath ? ` path=${diag.marker.markerPath}` : ''}`);
+
+    // Layer 2 — what the MARKER recorded. Deliberately not merged with layer 1: one
+    // is a fact about this process, the other is a historical record on disk, and
+    // under debt-under-pin only the latter can explain the debt.
+    log('   containment marker 原始记录:');
+    log(`     status=${diag.marker.status}${diag.marker.markerPath ? ` path=${diag.marker.markerPath}` : ''}`);
+    if (diag.marker.recordedCollectionPath) {
+        log(`     recordedCollectionPath=${diag.marker.recordedCollectionPath}`);
+    }
+    if (diag.marker.recordedContainment) {
+        const rc = diag.marker.recordedContainment;
+        log(`     recorded verdict=${rc.verdict || '-'} layer=${rc.layer || '-'} reason=${rc.reason || '-'}`);
+    }
     if (diag.marker.errorCode) {
-        log(`   marker 读取失败: code=${diag.marker.errorCode} detail=${diag.marker.detail || '-'}`);
+        log(`     读取失败: code=${diag.marker.errorCode} detail=${diag.marker.detail || '-'}`);
     }
+
     if (diag.processObservation) {
         // The exact wording permitted by §7.5 D4. It speaks ONLY about this process.
         log('   本次 verify 进程未加载 Zvec native binding，也未实例化或打开该 collection。');

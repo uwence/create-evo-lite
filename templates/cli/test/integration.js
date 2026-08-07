@@ -2180,7 +2180,8 @@ async function runIntegrationTests() {
                     `verify must exit 0 on a containment-engaged runtime — a diagnostic that crashes on the machine it exists to diagnose is worthless — got ${run.status}: ${out.slice(-600)}`);
                 assert.ok(out.includes('[Containment]'),
                     `verify must always emit the containment section, including when there is no debt — got: ${out.slice(-600)}`);
-                for (const banned of ['从未被读取', '内容确认完整', '上游缺陷已修复', '已自动恢复']) {
+                for (const banned of ['从未被读取', '内容确认完整', '上游缺陷已修复', '已自动恢复',
+                    '当前引擎按正常判定运行']) {
                     assert.ok(!out.includes(banned),
                         `CLI verify output must not contain the banned claim "${banned}" (spec §7.5 D6)`);
                 }
