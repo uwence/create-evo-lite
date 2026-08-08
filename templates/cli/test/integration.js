@@ -1,6 +1,7 @@
 'use strict';
 const assert = require('assert');
 const childProcess = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -534,6 +535,174 @@ async function runIntegrationTests() {
             const ctxAfter = fs.readFileSync(path.join(labelRuntime.runtimeRoot, 'active_context.md'), 'utf8');
             assert.ok(!ctxAfter.includes('[verify1]'), 'resolved label still present in backlog after track');
             console.log('✅ 2r context add --label + resolve-by-label passed');
+        }
+
+        console.log('2e. Testing context edit service contract ...');
+        {
+            const editRuntime = createTempRuntimeRoot('backlog-edit-service');
+            const editLoaded = await bootstrapRuntime(editRuntime.runtimeRoot);
+            const svc = editLoaded.service;
+            const contextPath = path.join(editRuntime.runtimeRoot, 'active_context.md');
+            const logPath = path.join(editRuntime.runtimeRoot, 'memory.log');
+            const template = fs.readFileSync(contextPath, 'utf8');
+            const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
+            const editLogCount = () => {
+                if (!fs.existsSync(logPath)) return 0;
+                return (fs.readFileSync(logPath, 'utf8').match(/CONTEXT_EDIT:/g) || []).length;
+            };
+            const withBacklog = (lines, eol = '\n') => {
+                const begin = '<!-- BEGIN_BACKLOG -->';
+                const end = '<!-- END_BACKLOG -->';
+                const beginIndex = template.indexOf(begin);
+                const endIndex = template.indexOf(end);
+                return template.slice(0, beginIndex + begin.length)
+                    + eol + lines.join(eol) + eol
+                    + template.slice(endIndex);
+            };
+            const assertRejected = (markdown, id, newText, pattern, message) => {
+                fs.writeFileSync(contextPath, markdown, 'utf8');
+                const beforeBytes = fs.readFileSync(contextPath);
+                const beforeLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : null;
+                assert.throws(() => svc.editBacklogTask(id, newText), pattern, message);
+                const afterBytes = fs.readFileSync(contextPath);
+                const afterLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : null;
+                assert.strictEqual(sha256(afterBytes), sha256(beforeBytes), `${message}: active_context SHA-256 changed`);
+                assert.strictEqual(afterLog, beforeLog, `${message}: CONTEXT_EDIT log changed`);
+            };
+            const captureEditIo = fn => {
+                const operations = [];
+                const originalWriteFileSync = fs.writeFileSync;
+                const originalAppendFileSync = fs.appendFileSync;
+                fs.writeFileSync = (filePath, ...args) => {
+                    if (path.resolve(filePath) === path.resolve(contextPath)) operations.push('write');
+                    return originalWriteFileSync(filePath, ...args);
+                };
+                fs.appendFileSync = (filePath, content, ...args) => {
+                    if (path.resolve(filePath) === path.resolve(logPath) && String(content).includes('CONTEXT_EDIT:')) {
+                        operations.push('audit');
+                    }
+                    return originalAppendFileSync(filePath, content, ...args);
+                };
+                try {
+                    return { result: fn(), operations };
+                } finally {
+                    fs.writeFileSync = originalWriteFileSync;
+                    fs.appendFileSync = originalAppendFileSync;
+                }
+            };
+
+            const seeded = withBacklog([
+                '- [ ] [AbC]\t  old text',
+                '- [x] [done1] completed text',
+            ], '\r\n');
+            fs.writeFileSync(contextPath, seeded, 'utf8');
+            const expected = seeded.replace('- [ ] [AbC]\t  old text', '- [ ] [AbC]\t  [BLOCKED] 新文本，"quoted"');
+            const logBeforeChange = editLogCount();
+            const changedIo = captureEditIo(() => svc.editBacklogTask('abc', '  [BLOCKED] 新文本，"quoted"  '));
+            const changed = changedIo.result;
+            assert.deepStrictEqual(changed, {
+                id: 'AbC',
+                line: '- [ ] [AbC]\t  [BLOCKED] 新文本，"quoted"',
+            });
+            assert.deepStrictEqual(changedIo.operations, ['write', 'audit'], 'changed edit must write once before auditing');
+            assert.strictEqual(fs.readFileSync(contextPath, 'utf8'), expected, 'edit changed bytes outside the payload');
+            assert.strictEqual(editLogCount(), logBeforeChange + 1, 'changed edit must append one CONTEXT_EDIT');
+
+            const noOpBefore = fs.readFileSync(contextPath);
+            const noOpLogBefore = editLogCount();
+            const noOpIo = captureEditIo(() => svc.editBacklogTask('ABC', '  [BLOCKED] 新文本，"quoted"  '));
+            const noOp = noOpIo.result;
+            assert.deepStrictEqual(noOp, changed, 'same-text no-op should return the stored target identity');
+            assert.deepStrictEqual(noOpIo.operations, [], 'same-text no-op must not write or audit');
+            assert.strictEqual(sha256(fs.readFileSync(contextPath)), sha256(noOpBefore), 'same-text no-op rewrote active_context');
+            assert.strictEqual(editLogCount(), noOpLogBefore, 'same-text no-op appended CONTEXT_EDIT');
+
+            const lfSeeded = withBacklog(['- [ ] [lf1] old LF text'], '\n');
+            fs.writeFileSync(contextPath, lfSeeded, 'utf8');
+            svc.editBacklogTask('LF1', 'new LF text');
+            assert.strictEqual(
+                fs.readFileSync(contextPath, 'utf8'),
+                lfSeeded.replace('- [ ] [lf1] old LF text', '- [ ] [lf1] new LF text'),
+                'LF edit changed bytes outside the payload'
+            );
+
+            // This is a write-ordering fault test, not a crash-atomicity proof. The
+            // injected write throws before touching the file; the contract under test
+            // is exception propagation plus zero audit attempt after that throw.
+            fs.writeFileSync(contextPath, seeded, 'utf8');
+            const writeFailureLogBefore = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : null;
+            const writeFailureOperations = [];
+            const originalWrite = fs.writeFileSync;
+            const originalAppend = fs.appendFileSync;
+            fs.writeFileSync = (filePath, ...args) => {
+                if (path.resolve(filePath) === path.resolve(contextPath)) {
+                    writeFailureOperations.push('write');
+                    throw new Error('INJECTED_CONTEXT_WRITE_FAILURE');
+                }
+                return originalWrite(filePath, ...args);
+            };
+            fs.appendFileSync = (filePath, content, ...args) => {
+                if (path.resolve(filePath) === path.resolve(logPath) && String(content).includes('CONTEXT_EDIT:')) {
+                    writeFailureOperations.push('audit');
+                }
+                return originalAppend(filePath, content, ...args);
+            };
+            try {
+                assert.throws(
+                    () => svc.editBacklogTask('abc', 'write failure probe'),
+                    /INJECTED_CONTEXT_WRITE_FAILURE/,
+                    'context write error must propagate'
+                );
+                assert.deepStrictEqual(
+                    writeFailureOperations,
+                    ['write'],
+                    'failed context write must not attempt CONTEXT_EDIT'
+                );
+            } finally {
+                fs.writeFileSync = originalWrite;
+                fs.appendFileSync = originalAppend;
+            }
+            const writeFailureLogAfter = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : null;
+            assert.strictEqual(writeFailureLogAfter, writeFailureLogBefore, 'failed context write changed the edit audit log');
+
+            assertRejected(seeded, 'bad id', 'valid', /invalid backlog id/, 'invalid id');
+            assertRejected(seeded, 'missing', 'valid', /not found/, 'missing id');
+            assertRejected(seeded, 'bad id', 'line1\nline2', /single-line/, 'raw newline must win before id validation');
+            assertRejected(seeded, 'bad id', 'line1\rline2', /single-line/, 'raw CR must win before id validation');
+            assertRejected(seeded, 'bad id', 'line1\r\nline2', /single-line/, 'raw CRLF must win before id validation');
+            assertRejected(seeded, 'bad id', '', /new-text.*empty|empty.*new-text/, 'empty string must win before id validation');
+            assertRejected(seeded, 'bad id', '   ', /new-text.*empty|empty.*new-text/, 'empty text must win before id validation');
+            assertRejected(
+                withBacklog(['- [ ] [abc] first', '- [ ] [ABC] second']),
+                'aBc',
+                'replacement',
+                /ambiguous|multiple IDs/,
+                'pending duplicate id'
+            );
+            assertRejected(
+                withBacklog(['- [ ] [abc] pending', '- [x] [ABC] checked']),
+                'aBc',
+                'replacement',
+                /ambiguous|multiple IDs/,
+                'mixed-status duplicate id'
+            );
+            assertRejected(
+                withBacklog(['- [x] [abc] checked']),
+                'ABC',
+                'replacement',
+                /not pending/,
+                'checked-only target'
+            );
+            assertRejected(
+                seeded.replace('<!-- END_BACKLOG -->', '<!-- END_BACKLOG -->\n<!-- END_BACKLOG -->'),
+                'bad id',
+                'line1\nline2',
+                /active_context.*invalid/,
+                'invalid original structure must win before input validation'
+            );
+            assertRejected(seeded, 'abc', 'waiting <!-- END_BACKLOG -->', /active_context.*invalid/, 'BACKLOG anchor injection');
+            assertRejected(seeded, 'abc', 'waiting <!-- BEGIN_META -->', /active_context.*invalid/, 'cross-section anchor injection');
+            console.log('✅ 2e context edit service contract passed');
         }
 
         console.log('2s. Testing trajectory summary folds whitespace before truncating ...');

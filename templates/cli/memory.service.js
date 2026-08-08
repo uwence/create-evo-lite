@@ -1510,6 +1510,87 @@ function addTask(task, options = {}) {
     return { hash, line: newTaskLine };
 }
 
+function editBacklogTask(id, newText) {
+    const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
+    const originalValidation = validateActiveContextMarkdown(markdown);
+    if (!originalValidation.valid) {
+        throw new Error(`active_context invalid: ${originalValidation.errors.join('; ')}`);
+    }
+
+    const rawText = newText === undefined || newText === null ? '' : String(newText);
+    if (/[\r\n]/.test(rawText)) {
+        throw new Error('new-text must be single-line');
+    }
+    const text = rawText.trim();
+    if (!text) {
+        throw new Error('new-text must not be empty');
+    }
+
+    const normalizedId = id === undefined || id === null ? '' : String(id).trim();
+    if (!BACKLOG_LABEL_RE.test(normalizedId)) {
+        throw new Error(`invalid backlog id: ${normalizedId}`);
+    }
+
+    const beginMarker = '<!-- BEGIN_BACKLOG -->';
+    const endMarker = '<!-- END_BACKLOG -->';
+    const bodyStart = markdown.indexOf(beginMarker) + beginMarker.length;
+    const bodyEnd = markdown.indexOf(endMarker, bodyStart);
+    const body = markdown.slice(bodyStart, bodyEnd);
+    const matches = [];
+    const linePattern = /[^\r\n]*(?:\r\n|\n|\r|$)/g;
+    let lineMatch;
+    while ((lineMatch = linePattern.exec(body)) !== null) {
+        if (lineMatch[0] === '') break;
+        const fullLine = lineMatch[0];
+        const eolLength = fullLine.endsWith('\r\n') ? 2 : /[\r\n]$/.test(fullLine) ? 1 : 0;
+        const line = fullLine.slice(0, fullLine.length - eolLength);
+        const storedId = extractBacklogId(line);
+        if (storedId && storedId.toLowerCase() === normalizedId.toLowerCase()) {
+            matches.push({
+                id: storedId,
+                line,
+                start: bodyStart + lineMatch.index,
+            });
+        }
+    }
+
+    if (matches.length === 0) {
+        throw new Error(`backlog id not found: ${normalizedId}`);
+    }
+    if (matches.length > 1) {
+        throw new Error(`ambiguous backlog id (multiple IDs): ${normalizedId}`);
+    }
+
+    const target = matches[0];
+    const checkbox = target.line.trim().match(/^- \[([ xX])\]/);
+    if (!checkbox || checkbox[1].toLowerCase() === 'x') {
+        throw new Error(`backlog id is not pending: ${normalizedId}`);
+    }
+
+    const payload = target.line.match(/^(\s*- \[[ xX]\]\s*\[[A-Za-z0-9_-]{1,32}\])([ \t]+)(.*)$/);
+    if (!payload) {
+        throw new Error(`active_context invalid backlog payload: ${normalizedId}`);
+    }
+    const payloadStart = target.start + payload[1].length + payload[2].length;
+    const payloadEnd = target.start + target.line.length;
+    const resultLine = target.line.slice(0, payload[1].length + payload[2].length) + text;
+    const result = { id: target.id, line: resultLine };
+
+    if (payload[3] === text) {
+        return result;
+    }
+
+    const candidateMarkdown = markdown.slice(0, payloadStart) + text + markdown.slice(payloadEnd);
+    const candidateValidation = validateActiveContextMarkdown(candidateMarkdown);
+    if (!candidateValidation.valid) {
+        throw new Error(`active_context invalid: ${candidateValidation.errors.join('; ')}`);
+    }
+
+    fs.writeFileSync(ACTIVE_CONTEXT_PATH, candidateMarkdown, 'utf8');
+    appendLog('CONTEXT_EDIT', resultLine);
+    return result;
+}
+
 function setFocus(focus) {
     ensureContextFile();
     const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
@@ -3323,6 +3404,7 @@ async function buildTakeoverRecall(contextSummary, verifyReport) {
 
 module.exports = {
     addTask,
+    editBacklogTask,
     resolveBacklog,
     extractBacklogId,
     archive,
