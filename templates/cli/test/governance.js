@@ -16576,7 +16576,6 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                 const forbidden = [
                     // D4.1 #7 rebuild — the real rebuild path enters through this.
                     ['memory-index.resolveRecoveryRebuildDecision', 'entering the rebuild path', 'control C2'],
-                    ['fs.indexWrite', 'writing the Zvec collection tree (rebuild side effect)', 'control C2'],
                     // D4.1 #8/#9 ownership
                     ['zvec-containment-state.acquireRecoveryLease', 'recovery lease acquisition', 'control C3'],
                     ['zvec-containment-state.acquireArchiveMarkerLock', 'archive publication lock write', 'control C4'],
@@ -16598,6 +16597,20 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
                     ['zvec.query', 'collection read / query', 'control B4'],
                     ['zvec.open', 'collection open', 'control B3'],
                     ['zvec.construct', 'Zvec index construction', 'control B2'],
+                    // Broad filesystem observation, so it is checked LAST among the
+                    // Zvec-tree entries. It used to sit second, and since
+                    // initialize() writes through JS fs, controls B3 and B4 reported
+                    // "writing the Zvec collection tree" instead of their own
+                    // property — the exact mis-attribution this ordering exists to
+                    // prevent. Its own control is C2b, which reaches the tree
+                    // WITHOUT the rebuild decision or any Zvec API, so this entry is
+                    // the only one that can fire there.
+                    //
+                    // Scope note: it observes JS-level writes only. The native
+                    // binding creates most of the collection files without going
+                    // through require('fs'), so this counts direct writes from
+                    // product code — not every byte that lands in the tree.
+                    ['fs.indexWrite', 'direct filesystem write into the Zvec collection tree', 'control C2b'],
                     ['memory-index.getMemoryIndex', 'index acquisition (upstream entry)', 'control B'],
                     ['zvec.require', 'Zvec native require', 'control A'],
                 ];
