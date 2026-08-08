@@ -1,5 +1,8 @@
 'use strict';
-const { TEST_SCOPE, shouldRun, IS_CHILD_RUNTIME } = require('./test/harness');
+// Required FIRST so the temp-root tracker is installed before governance or
+// integration are loaded — anything they create at module-load time is covered.
+const harness = require('./test/harness');
+const { TEST_SCOPE, shouldRun, IS_CHILD_RUNTIME } = harness;
 const { runGovernanceTests } = require('./test/governance');
 const { runIntegrationTests } = require('./test/integration');
 
@@ -52,7 +55,40 @@ async function runTests() {
     await runIntegrationTests();
 }
 
-runTests().catch(err => {
-    console.error(err && err.stack ? err.stack : err);
-    process.exit(1);
-});
+// Reap what a previous CRASHED run abandoned, by exact recorded path. Never a
+// wildcard sweep: a concurrent run's directories must survive.
+// A refused or failed reap is exactly what a silent catch hides, so the
+// outcome is printed — including the safety refusals, which are the ones that
+// would otherwise look identical to "there was nothing to recover".
+try {
+    for (const line of harness.reportReapOutcome(harness.reapDeadOwners()).messages) {
+        console.log(line);
+    }
+} catch (err) {
+    // Recovery is best-effort and must never block the suite — but failing to
+    // even attempt it is still reported rather than swallowed.
+    console.log(`⚠️ previous-run temp recovery could not run: ${err && err.message ? err.message : err}`);
+}
+
+let primaryError = null;
+runTests()
+    .catch(err => { primaryError = err; })
+    .finally(() => {
+        // Quiesce first, then delete: on Windows, removing a directory that
+        // still holds a live handle fails, and deletion is not a way to release
+        // one (Task 7, node24 exit 127).
+        const summary = harness.tempTracker.cleanupAll({ quiesce: harness.quiesceSharedResources });
+        const report = harness.reportTempCleanup(summary, primaryError);
+        if (report.message) console.error(`❌ ${report.message}`);
+        harness.tempTracker.restore();
+
+        if (primaryError) {
+            // The cleanup outcome is reported above, but it never replaces the
+            // reason the suite was already failing.
+            console.error(primaryError && primaryError.stack ? primaryError.stack : primaryError);
+            process.exit(1);
+        }
+        // A leak that nobody fails on is how 162 directories accumulated while
+        // the suite reported green.
+        if (!report.ok) process.exit(1);
+    });

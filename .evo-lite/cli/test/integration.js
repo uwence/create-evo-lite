@@ -10,6 +10,7 @@ const {
     createTempRuntimeRoot, createTempTemplateCli, copyRecursive, createTempTemplateRoot,
     ensureParent, writeText, runGit, getGitShell, runPostCommitHook,
     createHookTestRepo, runInitializer,
+    quiesceSharedResources,
     readNdjson, createLegacyInitProject, createModernInitProject,
     resetCliModuleCache, loadCli, bootstrapRuntime, captureConsole, withPatchedExecFileSync,
 } = require('./harness');
@@ -300,6 +301,18 @@ async function runIntegrationTests() {
         const fallbackResults = await fallbackLoaded.service.recall('raw-only memory fragment');
         assert.ok(fallbackResults.some(item => item.id === Number(fallbackInsert.lastInsertRowid)), 'FTS fallback did not surface the raw-only memory row');
         assert.ok(fallbackResults.some(item => item.match_source === 'fts'), 'FTS fallback should label trigram-based matches');
+        // This test owns what it opened; suite cleanup cannot reach a handle held
+        // by an instance this test still references. Index first, then the db.
+        // Owner-local cleanup: the instance that opened this connection closes it.
+        fallbackLoaded.db.closeDb();
+
+        // bootstrapRuntime above reset the module cache, so the handle captured
+        // before it is now from a discarded generation. Re-bootstrap explicitly
+        // rather than calling through the stale one: that would open a
+        // connection against whatever EVO_LITE_ROOT this test left behind —
+        // which is how the following tests were operating on the fts-fallback
+        // database while believing they were using primary's.
+        primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
 
         console.log('1a. Testing P0 namespace isolation ...');
         const nsDb = primaryLoaded.db.getDb();
@@ -590,6 +603,9 @@ async function runIntegrationTests() {
         }
 
         console.log('2a. Testing context read / summary / validate ...');
+        // A runtime switch happened above; take a fresh handle rather than
+        // calling through the discarded generation.
+        primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
         const contextSnapshot = primaryLoaded.service.readActiveContext();
         assert.strictEqual(contextSnapshot.path, path.join(primary.runtimeRoot, 'active_context.md'), 'context read returned the wrong active_context path');
         assert.strictEqual(contextSnapshot.validation.valid, true, 'fresh template context should validate structurally');
@@ -1613,9 +1629,16 @@ async function runIntegrationTests() {
         });
         assert.ok(initGuidanceOutput.includes('[初始化引导] 当前 active_context.md 仍是初始化占位态。'), 'verify did not surface placeholder active_context guidance');
         assert.ok(initGuidanceOutput.includes('📌 初始化引导:'), 'verify did not print a dedicated bootstrap guidance section');
+        // verify() opens the entity store as well as the database; both must be
+        // released before suite cleanup removes this root.
+        // Owner-local cleanup: the instance that opened this connection closes it.
+        initGuidanceLoaded.db.closeDb();
         assert.ok(initGuidanceOutput.includes('.agents/rules/architecture.md'), 'verify did not mention missing or placeholder architecture rules during init guidance');
 
         console.log('8b. Testing git guard ignores .evo-lite-only deletions with leading status padding ...');
+        // Seven runtime switches happened since primaryLoaded was taken; without
+        // a fresh handle this track() would run against another test's database.
+        primaryLoaded = await bootstrapRuntime(primary.runtimeRoot);
         process.env.EVO_LITE_SKIP_GIT_GUARD = '';
         process.env.EVO_LITE_GIT_STATUS = ' D .evo-lite/index_memory/legacy-marker.md';
         await assert.doesNotReject(async () => {
