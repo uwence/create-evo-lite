@@ -1761,6 +1761,274 @@ async function runGovernanceTests() {
             }
         }
 
+        // ---------------------------------------------------------------------
+        // T-temp-lifecycle (R1–R11) — the test process owns every temp root it
+        // creates.
+        //
+        // Measured before this existed: one full `npm test` left 162 directories
+        // behind — 105 from createTempRuntimeRoot and 57 from direct
+        // mkdtempSync calls. Statically, 84 of 99 helper sites and 44 of 132
+        // direct sites never removed anything. That is not a discipline problem:
+        // createTempRuntimeRoot returns { runtimeRoot, workspaceRoot } and never
+        // returned a cleanup to call.
+        //
+        // So ownership moves to the process. A tracker records the exact path
+        // every mkdtempSync returns, a suite-level finally removes them, and a
+        // durable owner registry lets the NEXT run reap what a crashed one left
+        // — by exact recorded path, never by wildcard, because a wildcard sweep
+        // would delete a concurrent run's directories.
+        //
+        // Anti-vacuity throughout: "the directory is gone" is trivially true
+        // when it was never created, so every removal case first asserts the
+        // directory existed.
+        // ---------------------------------------------------------------------
+        console.log('T-temp-lifecycle. Testing temp-root ownership, cleanup and crash reaping (R1–R11) ...');
+        {
+            const H = require(path.join(CLI_DIR, 'test', 'harness'));
+            const rows = [];
+            const score = (id, fn) => {
+                try { fn(); rows.push({ id, ok: true, detail: null }); } catch (e) {
+                    rows.push({ id, ok: false, detail: e && e.message ? e.message : String(e) });
+                }
+            };
+
+            // Each case gets its own sandbox tmpdir + registry dir so nothing
+            // here can touch the real suite's roots.
+            const sandboxes = [];
+            const mkSandbox = (name) => {
+                const box = fs.mkdtempSync(path.join(os.tmpdir(), `evo-tlc-${name}-`));
+                sandboxes.push(box);
+                const tmp = path.join(box, 'tmp');
+                const reg = path.join(box, 'registry');
+                fs.mkdirSync(tmp, { recursive: true });
+                fs.mkdirSync(reg, { recursive: true });
+                return { box, tmp, reg };
+            };
+            const newTracker = (s, extra = {}) => {
+                assert.strictEqual(typeof H.createTempRootTracker, 'function',
+                    'harness must expose createTempRootTracker — per-call cleanup was rejected because 84 of 99 call sites never called one');
+                return H.createTempRootTracker(Object.assign({
+                    tmpdir: s.tmp, registryDir: s.reg, pid: 4242, nonce: 'n1',
+                }, extra));
+            };
+
+            // R1 — a helper-created root is registered. The helper's own prefix
+            // must survive untouched; the tracker only observes.
+            score('R1', () => {
+                const s = mkSandbox('r1');
+                const t = newTracker(s);
+                t.install();
+                try {
+                    const made = fs.mkdtempSync(path.join(s.tmp, 'evo-lite-helperish-'));
+                    assert.ok(fs.existsSync(made), 'positive control: the root must actually exist');
+                    assert.ok(t.roots().includes(made), `tracker must record the exact returned path; roots=${JSON.stringify(t.roots())}`);
+                } finally { t.restore(); }
+            });
+
+            // R2 — a direct mkdtempSync call is registered identically. These
+            // are the 132 sites a helper-only fix could never reach.
+            score('R2', () => {
+                const s = mkSandbox('r2');
+                const t = newTracker(s);
+                t.install();
+                let made;
+                try {
+                    made = fs.mkdtempSync(path.join(s.tmp, 'evo-direct-'));
+                } finally { t.restore(); }
+                assert.ok(fs.existsSync(made), 'positive control: the root must actually exist');
+                assert.ok(t.roots().includes(made), 'a direct mkdtempSync must be tracked too');
+                // And the wrapper must be transparent: same path, still usable.
+                fs.writeFileSync(path.join(made, 'probe.txt'), 'ok');
+                assert.strictEqual(fs.readFileSync(path.join(made, 'probe.txt'), 'utf8'), 'ok',
+                    'the wrapper must return the real directory, not a copy or a stub');
+            });
+
+            // R3 — normal cleanup removes what was tracked.
+            score('R3', () => {
+                const s = mkSandbox('r3');
+                const t = newTracker(s);
+                t.install();
+                let a, b;
+                try {
+                    a = fs.mkdtempSync(path.join(s.tmp, 'evo-a-'));
+                    b = fs.mkdtempSync(path.join(s.tmp, 'evo-b-'));
+                } finally { t.restore(); }
+                assert.ok(fs.existsSync(a) && fs.existsSync(b), 'positive control: both roots exist before cleanup');
+                const r = t.cleanupAll();
+                assert.strictEqual(r.failed.length, 0, `cleanup must not fail here; ${JSON.stringify(r.failed)}`);
+                assert.strictEqual(r.removed, 2, `both roots must be removed; got ${JSON.stringify(r)}`);
+                assert.ok(!fs.existsSync(a) && !fs.existsSync(b), 'both roots must be gone');
+            });
+
+            // R4 — a root a local helper already removed is not an error.
+            // Existing per-call cleanups keep working alongside this.
+            score('R4', () => {
+                const s = mkSandbox('r4');
+                const t = newTracker(s);
+                t.install();
+                let a;
+                try { a = fs.mkdtempSync(path.join(s.tmp, 'evo-early-')); } finally { t.restore(); }
+                assert.ok(fs.existsSync(a), 'positive control: created');
+                fs.rmSync(a, { recursive: true, force: true });
+                assert.ok(!fs.existsSync(a), 'positive control: locally removed before suite cleanup');
+                const r = t.cleanupAll();
+                assert.strictEqual(r.failed.length, 0, 'an already-removed root is not a failure');
+                assert.strictEqual(r.alreadyAbsent, 1, `it must be counted as already absent; got ${JSON.stringify(r)}`);
+            });
+
+            // R5 — quiesce before delete. An open sqlite handle is exactly what
+            // made Windows/node24 CI exit 127 in Task 7: rmSync of a directory
+            // with a live handle fails there. The control proves the handle was
+            // really open, then that closing it first lets the removal succeed.
+            score('R5', () => {
+                const s = mkSandbox('r5');
+                const t = newTracker(s);
+                t.install();
+                let root;
+                try { root = fs.mkdtempSync(path.join(s.tmp, 'evo-handle-')); } finally { t.restore(); }
+                const Database = require(path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules', 'better-sqlite3'));
+                const dbFile = path.join(root, 'probe.db');
+                const db = new Database(dbFile);
+                db.exec('CREATE TABLE t (x INTEGER)');
+                assert.strictEqual(db.open, true, 'positive control: the handle must really be open');
+                assert.strictEqual(typeof t.cleanupAll, 'function', 'tracker must expose cleanupAll');
+                const closed = [];
+                const r = t.cleanupAll({ quiesce: () => { db.close(); closed.push('db'); } });
+                assert.deepStrictEqual(closed, ['db'], 'quiesce must run BEFORE deletion, not after');
+                assert.strictEqual(r.failed.length, 0, `with the handle closed the removal must succeed; ${JSON.stringify(r.failed)}`);
+                assert.ok(!fs.existsSync(root), 'the root must be gone');
+            });
+
+            // R6 — one failure must not stop the rest, and must not be silent.
+            // Swallowing it is how "tests pass, 162 dirs leak" happened.
+            score('R6', () => {
+                const s = mkSandbox('r6');
+                const t = newTracker(s);
+                t.install();
+                let a, b;
+                try {
+                    a = fs.mkdtempSync(path.join(s.tmp, 'evo-fails-'));
+                    b = fs.mkdtempSync(path.join(s.tmp, 'evo-ok-'));
+                } finally { t.restore(); }
+                assert.ok(fs.existsSync(a) && fs.existsSync(b), 'positive control: both exist');
+                const r = t.cleanupAll({
+                    rmFn: (p, opts) => {
+                        if (p === a) throw Object.assign(new Error('EBUSY: simulated open handle'), { code: 'EBUSY' });
+                        fs.rmSync(p, opts);
+                    },
+                });
+                assert.strictEqual(r.failed.length, 1, `the failure must be reported; got ${JSON.stringify(r)}`);
+                assert.strictEqual(r.failed[0].path, a, 'the failure must name the root');
+                assert.ok(/EBUSY/.test(r.failed[0].error || ''), 'the failure must carry the cause');
+                assert.ok(!fs.existsSync(b), 'a failure on one root must not abort the others');
+            });
+
+            // R7 — a cleanup failure must not overwrite the reason the suite was
+            // already failing.
+            score('R7', () => {
+                const s = mkSandbox('r7');
+                const t = newTracker(s);
+                t.install();
+                try { fs.mkdtempSync(path.join(s.tmp, 'evo-both-')); } finally { t.restore(); }
+                assert.strictEqual(typeof H.reportTempCleanup, 'function',
+                    'harness must expose the reporter so test.js does not re-implement failure precedence');
+                const primary = new Error('the actual test failure');
+                const summary = { removed: 0, alreadyAbsent: 0, failed: [{ path: 'X', error: 'EBUSY' }], skipped: [] };
+                const out = H.reportTempCleanup(summary, primary);
+                assert.strictEqual(out.primary, primary, 'the original failure must survive as primary');
+                assert.ok(/EBUSY|cleanup/i.test(out.message || ''), `the cleanup failure must also be reported; got ${out.message}`);
+            });
+
+            // R8 — a crashed run's registry is reaped by the next run, by exact
+            // recorded path.
+            score('R8', () => {
+                const s = mkSandbox('r8');
+                const t = newTracker(s, { pid: 999001 });
+                t.install();
+                let root;
+                try { root = fs.mkdtempSync(path.join(s.tmp, 'evo-crashed-')); } finally { t.restore(); }
+                assert.ok(fs.existsSync(root), 'positive control: the abandoned root exists');
+                const regFiles = fs.readdirSync(s.reg);
+                assert.ok(regFiles.length === 1, `a durable owner registry must exist; got ${JSON.stringify(regFiles)}`);
+                assert.strictEqual(typeof H.reapDeadOwners, 'function', 'harness must expose reapDeadOwners');
+                const r = H.reapDeadOwners({ registryDir: s.reg, tmpdir: s.tmp, pidAliveFn: () => false });
+                assert.ok(!fs.existsSync(root), `a dead owner's roots must be reaped; got ${JSON.stringify(r)}`);
+                assert.strictEqual(fs.readdirSync(s.reg).length, 0, 'the registry entry must be removed too');
+            });
+
+            // R9 — a LIVE owner is left completely alone. This is why wildcard
+            // sweeps of %TEMP%\evo-* were rejected: they would delete a
+            // concurrent run's working directories mid-test.
+            score('R9', () => {
+                const s = mkSandbox('r9');
+                const t = newTracker(s, { pid: 999002 });
+                t.install();
+                let root;
+                try { root = fs.mkdtempSync(path.join(s.tmp, 'evo-live-')); } finally { t.restore(); }
+                assert.ok(fs.existsSync(root), 'positive control: the concurrent run\'s root exists');
+                H.reapDeadOwners({ registryDir: s.reg, tmpdir: s.tmp, pidAliveFn: () => true });
+                assert.ok(fs.existsSync(root), 'a live owner\'s root must NOT be removed');
+                assert.strictEqual(fs.readdirSync(s.reg).length, 1, 'a live owner\'s registry must survive');
+            });
+
+            // R10 — the reaper is not a general-purpose deleter. Anything a
+            // registry claims that is outside the temp subtree is refused.
+            score('R10', () => {
+                const s = mkSandbox('r10');
+                const outside = path.join(s.box, 'NOT-IN-TMP');
+                fs.mkdirSync(outside, { recursive: true });
+                fs.writeFileSync(path.join(outside, 'precious.txt'), 'do not delete');
+                fs.writeFileSync(path.join(s.reg, 'evo-lite-test-temp-999003-x.json'),
+                    JSON.stringify({ pid: 999003, roots: [outside] }));
+                const r = H.reapDeadOwners({ registryDir: s.reg, tmpdir: s.tmp, pidAliveFn: () => false });
+                assert.ok(fs.existsSync(path.join(outside, 'precious.txt')),
+                    'a path outside the temp subtree must never be deleted, even for a dead owner');
+                assert.ok((r.skipped || []).some(x => String(x.path || x).includes('NOT-IN-TMP')),
+                    `the refusal must be reported, not silent; got ${JSON.stringify(r)}`);
+            });
+
+            // R11 — resetCliModuleCache discards the module instance that owns a
+            // db handle, so a later closeDb() reaches a DIFFERENT connection.
+            // Quiesce therefore cannot promise every handle is closed, and a
+            // removal that fails for that reason must be visible rather than
+            // swallowed.
+            score('R11', () => {
+                const s = mkSandbox('r11');
+                const t = newTracker(s);
+                t.install();
+                let root;
+                try { root = fs.mkdtempSync(path.join(s.tmp, 'evo-orphan-')); } finally { t.restore(); }
+                const Database = require(path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules', 'better-sqlite3'));
+                const orphan = new Database(path.join(root, 'orphan.db'));
+                orphan.exec('CREATE TABLE t (x INTEGER)');
+                assert.strictEqual(orphan.open, true, 'positive control: an orphaned handle is really open');
+                // quiesce closes only what the CURRENT module instance knows about
+                // — which is not this connection.
+                const r = t.cleanupAll({
+                    quiesce: () => {},
+                    rmFn: (p, opts) => {
+                        if (p === root) throw Object.assign(new Error('EBUSY: handle owned by a discarded module instance'), { code: 'EBUSY' });
+                        fs.rmSync(p, opts);
+                    },
+                });
+                assert.strictEqual(r.failed.length, 1,
+                    'a root still locked by an orphaned handle must be REPORTED, not silently skipped');
+                orphan.close();
+            });
+
+            try {
+                const passed = rows.filter(r => r.ok).length;
+                console.log(`   R1–R11: ${passed}/${rows.length}`);
+                for (const r of rows.filter(x => !x.ok)) console.log(`      ✗ ${r.id} — ${r.detail}`);
+                const failed = rows.filter(r => !r.ok);
+                assert.strictEqual(failed.length, 0,
+                    `temp-root lifecycle matrix failed ${failed.length} case(s): ${failed.map(f => f.id).join(', ')}`);
+                console.log('✅ T-temp-lifecycle R1–R11 passed');
+            } finally {
+                for (const b of sandboxes) { try { fs.rmSync(b, { recursive: true, force: true }); } catch (_) { /* best effort */ } }
+            }
+        }
+
         console.log('T44. Testing applyClose defaultScan/defaultBackfill call planning with the real signature ...');
         {
             // Regression: T41 injects scanFn, masking the real defaultScan. The live --apply
