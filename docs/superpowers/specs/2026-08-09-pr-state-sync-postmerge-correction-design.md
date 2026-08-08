@@ -136,15 +136,39 @@ The acquisition command is exactly the nested, read-only CLI surface:
 
 ```text
 gh pr checks <PR_NUMBER>
-  --repo <RESOLVED_REPOSITORY>
+  --repo <RESOLVED_GITHUB_HOST>/<OWNER>/<REPO>
   --json bucket,event,link,name,state,workflow
 ```
 
 `PR_NUMBER` is the same target PR already resolved by the validator.
-`RESOLVED_REPOSITORY` is the same repository identity used for the remaining
-GitHub observations. The command must not discover or substitute another PR.
+`OWNER/REPO` is the resolved `nameWithOwner` used for the remaining GitHub
+observations. `RESOLVED_GITHUB_HOST` is derived from the observed PR as defined
+below. The command must not discover or substitute another PR or host.
 
-### 4.3 PR-scoped JSON and exit contract
+### 4.3 Resolved GitHub host authority
+
+The host authority source is the observed PR response's `html_url`. The
+validator must parse that URL and require all of the following before using it:
+
+```text
+scheme       https
+credentials  none
+host         non-empty
+path         /<resolved owner>/<resolved repo>/pull/<target PR number>
+query        none
+fragment     none
+```
+
+The owner, repository, and PR-number path components must exactly match the
+already resolved repository identity and target PR. A malformed URL, repository
+mismatch, or PR-number mismatch is an operational observation error.
+
+`RESOLVED_GITHUB_HOST` is the parsed URL host. It is the single authority for
+both the host-qualified `--repo` argument and returned check-link validation.
+The validator must not infer the host from `GH_HOST`, a Git remote, expected
+state, or a hard-coded `github.com` default.
+
+### 4.4 PR-scoped JSON and exit contract
 
 The command output must be a valid JSON array. Every array element must be an
 object containing the requested fields with string values. The association
@@ -157,13 +181,10 @@ Exit handling is frozen as follows:
 exit 0 + valid JSON array
 -> usable PR-scoped association observation
 
-exit 1 + valid JSON array
--> usable PR-scoped association observation
-
 exit 8 + valid JSON array
 -> usable PR-scoped association observation
 
-exit 2 or 4
+exit 1, 2, or 4
 -> operational error
 
 any other exit
@@ -173,24 +194,27 @@ any exit + missing or malformed JSON
 -> operational error
 ```
 
-Exit `1` and exit `8` do not mean failed or pending to the validator. They only
-permit the returned association rows to be consumed. Final checks state remains
-derived from the selected workflow run.
+Exit `8` is the only accepted command-specific nonzero status. It permits the
+returned association rows to be consumed but does not classify the selected run
+as pending. Exit `1` is a generic command failure and is never an association
+success channel. Final checks state remains derived from the selected workflow
+run.
 
-### 4.4 Accepted link identity
+### 4.5 Accepted link identity
 
 The parser must use URL parsing, not substring matching. A row contributes a run
 ID only when its `link` is a GitHub Actions run or job URL for the resolved
 repository:
 
 ```text
-https://<resolved GitHub host>/<owner>/<repo>/actions/runs/<run_id>
-https://<resolved GitHub host>/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>
+https://<RESOLVED_GITHUB_HOST>/<owner>/<repo>/actions/runs/<run_id>
+https://<RESOLVED_GITHUB_HOST>/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>
 ```
 
 The following rules apply:
 
-- host and repository must identify the resolved repository;
+- parsed link host must equal `RESOLVED_GITHUB_HOST` and its owner/repository
+  path must identify the resolved repository;
 - `run_id` and optional `job_id` must be canonical positive decimal integers;
 - no alternate path shape, credentials, query string, or fragment is accepted;
 - multiple job links for one run are deduplicated by numeric run ID;
@@ -207,20 +231,29 @@ After the original expected-block parser and semantic validation succeed, the
 validator must:
 
 1. resolve the target repository and PR;
-2. obtain the current observed PR head SHA;
-3. resolve the numeric workflow ID and require the exact path
+2. validate the observed PR `html_url` and derive `RESOLVED_GITHUB_HOST`;
+3. obtain the current observed PR head SHA;
+4. resolve the numeric workflow ID and require the exact path
    `.github/workflows/release-gate.yml`;
-4. execute the frozen PR-scoped checks command for that target PR;
-5. validate its exit status and JSON envelope;
-6. parse and deduplicate accepted same-repository Actions run IDs into
-   `PR_SCOPED_RUN_IDS`;
-7. query workflow runs by the resolved numeric workflow ID, `event=pull_request`,
+5. query workflow runs by the resolved numeric workflow ID, `event=pull_request`,
    and the current observed PR head SHA;
-8. consume every workflow-run result page;
-9. retain only runs whose numeric ID is in `PR_SCOPED_RUN_IDS`, whose event is
-   `pull_request`, and whose head SHA is the observed current head;
-10. select the retained run with the maximum numeric run ID;
-11. normalize that selected workflow run using the original checks contract.
+6. consume every workflow-run result page and form workflow candidates whose
+   event and observed head SHA match;
+7. if there are zero workflow candidates, emit `CHECKS_MISSING` without running
+   the PR-scoped association probe;
+8. if at least one workflow candidate exists, execute the frozen PR-scoped
+   checks command for the target PR and host-qualified repository;
+9. validate its exit status and JSON envelope, then parse and deduplicate
+   accepted same-repository Actions run IDs into `PR_SCOPED_RUN_IDS`;
+10. retain only workflow candidates whose numeric ID is in
+    `PR_SCOPED_RUN_IDS`;
+11. if that intersection is empty, emit `CHECKS_MISSING`;
+12. otherwise select the retained run with the maximum numeric run ID and
+    normalize it using the original checks contract.
+
+When workflow candidates exist, any PR-scoped command, exit, JSON, or structural
+acquisition failure is an operational error. The validator must not reinterpret
+that failure as `CHECKS_MISSING` or infer candidate ownership from a shared SHA.
 
 Expected `headSha` remains only a comparison operand. It must never appear in
 the PR-scoped or workflow-run discovery arguments.
@@ -315,28 +348,44 @@ other integration-test cleanup sites.
 
 ### A. PR-scoped association acquisition
 
-- exits `0`, `1`, and `8` with valid arrays are consumed;
-- exits `2`, `4`, and any unrecognized exit are operational errors;
+- exits `0` and documented `8` with valid arrays are consumed;
+- exits `1`, `2`, `4`, and any unrecognized exit are operational errors;
 - malformed, missing, non-array, or structurally invalid JSON is an operational
-  error for every exit status;
+  error for every accepted exit status;
 - `bucket`, `state`, `event`, and workflow display name never classify final
   checks state;
-- the target PR number and resolved repository are present in the exact command;
+- the target PR number and host-qualified resolved repository are present in the
+  exact command;
+- zero workflow candidates yield `CHECKS_MISSING` without invoking
+  `gh pr checks`;
+- when workflow candidates exist, PR-scoped acquisition failure is an
+  operational error rather than `CHECKS_MISSING`;
 - no mutating GitHub command is called.
 
-### B. Link parsing and run-ID association
+### B. Observed PR URL authority
+
+- a canonical HTTPS PR `html_url` supplies `RESOLVED_GITHUB_HOST`;
+- malformed URL, non-HTTPS scheme, credentials, empty host, query, or fragment
+  is an operational error;
+- repository or PR-number path mismatch is an operational error;
+- `--repo` contains `RESOLVED_GITHUB_HOST/OWNER/REPO` exactly;
+- environment, Git remote, expected state, and hard-coded defaults are never
+  used as host authority.
+
+### C. Link parsing and run-ID association
 
 - same-repository run URLs are accepted;
 - same-repository job URLs are accepted and yield their parent run ID;
 - multiple job rows for one run deduplicate to one numeric run ID;
-- wrong host, wrong repository, malformed URL, non-Actions path, query string,
-  fragment, noncanonical run ID, and noncanonical job ID do not associate a run;
+- a right-repository link on the wrong host is ignored;
+- wrong repository, malformed URL, non-Actions path, query string, fragment,
+  noncanonical run ID, and noncanonical job ID do not associate a run;
 - nonqualifying well-formed rows are ignored without creating ownership;
 - malformed row structure is an operational error;
 - empty usable arrays and arrays with no qualifying links can yield
   `CHECKS_MISSING`, not an acquisition error.
 
-### C. Workflow intersection and current-head identity
+### D. Workflow intersection and current-head identity
 
 - a workflow run matches only when its ID is PR-scoped and its workflow, event,
   and observed head SHA all match;
@@ -347,7 +396,7 @@ other integration-test cleanup sites.
 - wrong event, wrong head, wrong workflow, or unassociated run ID is ignored;
 - main-push runs never satisfy the PR checks contract.
 
-### D. Pagination and newest-run selection
+### E. Pagination and newest-run selection
 
 - every workflow-run page is consumed before selection;
 - maximum numeric run ID wins independent of API, row, or timestamp order;
@@ -356,7 +405,7 @@ other integration-test cleanup sites.
 - older success plus newer associated failed yields failed;
 - pagination failure remains an operational error.
 
-### E. Merged lifecycle regression
+### F. Merged lifecycle regression
 
 - a merged PR with empty workflow-run `pull_requests`, six PR-scoped job links,
   and a successful exact-head run validates `checks: success`;
@@ -366,15 +415,17 @@ other integration-test cleanup sites.
 - commit-to-PR acquisition is not invoked;
 - post-merge main-push success is neither queried nor used.
 
-### F. Checks taxonomy
+### G. Checks taxonomy
 
 - successful association and workflow acquisition with no intersection yields
   `CHECKS_MISSING`;
 - selected pending, failed, and success runs retain the original finding rules;
-- PR-scoped CLI exit `1` or `8` never overrides selected-run normalization;
+- PR-scoped CLI exit `8` never overrides selected-run normalization;
+- PR-scoped CLI exit `1` is an operational error even when stdout resembles a
+  valid association array;
 - errors still outrank accumulated drift findings.
 
-### G. Windows PS5 cleanup
+### H. Windows PS5 cleanup
 
 - the PS5 cleanup uses `recursive`, `force`, `maxRetries: 5`, and
   `retryDelay: 100` exactly;
@@ -383,7 +434,7 @@ other integration-test cleanup sites.
 - no catch-and-ignore behavior is introduced;
 - no unrelated cleanup site changes.
 
-### H. Mirror, scope, and regression
+### I. Mirror, scope, and regression
 
 - live/template service changes are byte-identical;
 - live/template integration changes are byte-identical;
