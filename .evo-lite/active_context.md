@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[active-context-resync] main@a5b1fa durable reality aligned: PR #29 and [test-temp-root-lifecycle-cleanup] are CLOSED; no corrective follow-up and reopen NOT AUTHORIZED. NEXT candidate is [backlog-edit-cli-gap] design freeze only, with implementation not yet authorized. [size-exceeded-warning] remains QUEUED / CONTRACT; [attp-hive-rollout] remains PARKED FOR SEPARATE SCOPE.
+[active-context-resync] main@a5b1fa durable reality aligned: PR #29 and [test-temp-root-lifecycle-cleanup] are CLOSED; no corrective follow-up and reopen NOT AUTHORIZED. NEXT candidate is [backlog-edit-cli-gap] design freeze only, with implementation not yet authorized. [size-exceeded-warning] remains QUEUED / CONTRACT; [attp-hive-rollout] remains BLOCKED / SEPARATE SCOPE and is not the current NEXT.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
