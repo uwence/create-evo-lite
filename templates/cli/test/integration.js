@@ -1271,7 +1271,312 @@ async function runIntegrationTests() {
                 const rejected = spawnCli(args, input);
                 assert.notStrictEqual(rejected.status, 0, `${label} must be rejected`);
             }
-            console.log('✅ PS3 pr-state CLI registration and rendering passed');
+           console.log('✅ PS3 pr-state CLI registration and rendering passed');
+       }
+
+        console.log('PS5. Testing pr-state fail-closed CLI acceptance ...');
+        {
+            const servicePath = path.join(TEMPLATE_CLI_DIR, 'pr-state.service.js');
+            delete require.cache[require.resolve(servicePath)];
+            const service = require(servicePath);
+            const SHA_BASE = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+            const SHA_HEAD = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+            const SHA_STALE = 'cccccccccccccccccccccccccccccccccccccccc';
+            const stateBody = (overrides = {}) => {
+                const values = {
+                    schema: '1', base: 'main', baseSha: SHA_BASE,
+                    head: 'codex/pr-state', headSha: SHA_HEAD,
+                    commits: '2', changedFiles: '8', phase: 'draft', checks: 'success',
+                    ...overrides,
+                };
+                return [
+                    '<!-- EVO-LITE:PR-STATE:BEGIN -->',
+                    `schema: ${values.schema}`, `base: ${values.base}`, `baseSha: ${values.baseSha}`,
+                    `head: ${values.head}`, `headSha: ${values.headSha}`,
+                    `commits: ${values.commits}`, `changedFiles: ${values.changedFiles}`,
+                    `phase: ${values.phase}`, `checks: ${values.checks}`,
+                    '<!-- EVO-LITE:PR-STATE:END -->',
+                ].join('\n');
+            };
+            const basePr = (overrides = {}) => ({
+                number: 31,
+                html_url: 'https://github.com/uwence/create-evo-lite/pull/31',
+                body: stateBody(),
+                state: 'open', draft: true, merged: false, merged_at: null,
+                base: { ref: 'main', sha: SHA_BASE },
+                head: { ref: 'codex/pr-state', sha: SHA_HEAD },
+                commits: 2, changed_files: 8,
+                ...overrides,
+            });
+            const baseRun = (overrides = {}) => ({
+                id: 900,
+                event: 'pull_request',
+                head_sha: SHA_HEAD,
+                status: 'completed',
+                conclusion: 'success',
+                pull_requests: [{ number: 31 }],
+                html_url: 'https://github.com/run/900',
+                created_at: '2026-08-08T00:00:00Z',
+                updated_at: '2026-08-08T00:01:00Z',
+                ...overrides,
+            });
+            const response = (value, status = 0, stderr = '') => ({
+                status,
+                stdout: typeof value === 'string' ? value : JSON.stringify(value),
+                stderr,
+            });
+            function directValidate(options = {}) {
+                const pr = options.pr || basePr();
+                const workflow = options.workflow || {
+                    id: 77,
+                    path: '.github/workflows/release-gate.yml',
+                };
+                const pages = options.pages || [{ total_count: 1, workflow_runs: [baseRun()] }];
+                const handlers = options.handlers || {};
+                const calls = [];
+                const runCommand = (executable, args) => {
+                    calls.push({ executable, args: [...args] });
+                    const custom = (name, fallback) => handlers[name]
+                        ? handlers[name]({ executable, args: [...args] })
+                        : fallback;
+                    if (executable === 'git' && args.join(' ') === 'rev-parse --show-toplevel') {
+                        return custom('gitRoot', response('C:/tmp/repo\n'));
+                    }
+                    if (executable === 'git' && args[0] === 'check-ref-format') {
+                        return custom('checkRef', response(`${args[2]}\n`));
+                    }
+                    if (executable === 'gh' && args.join(' ') === 'repo view --json nameWithOwner') {
+                        return custom('repository', response({ nameWithOwner: 'uwence/create-evo-lite' }));
+                    }
+                    if (executable === 'gh' && args.includes('repos/uwence/create-evo-lite/pulls/31')) {
+                        return custom('prQuery', response(pr));
+                    }
+                    if (executable === 'gh' && args.includes('repos/uwence/create-evo-lite/actions/workflows/release-gate.yml')) {
+                        return custom('workflow', response(workflow));
+                    }
+                    if (executable === 'gh' && args.includes('repos/uwence/create-evo-lite/actions/workflows/77/runs')) {
+                        const page = Number(args.find(value => /^page=/.test(value)).split('=')[1]);
+                        return custom('runs', response(pages[page - 1] || { total_count: 0, workflow_runs: [] }));
+                    }
+                    throw new Error(`unexpected command: ${executable} ${args.join(' ')}`);
+                };
+                return {
+                    report: service.validatePrState('31', { cwd: 'C:/tmp/repo', runCommand }),
+                    calls,
+                };
+            }
+
+            assert.throws(
+                () => service.normalizeChecks({ status: 'completed', conclusion: 'banana' }),
+                error => error.code === 'WORKFLOW_RUN_RESPONSE_INVALID',
+                'unknown completed conclusion must fail closed'
+            );
+
+            const missingGh = directValidate({
+                handlers: {
+                    repository: () => ({
+                        status: null, stdout: '', stderr: '',
+                        error: Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }),
+                    }),
+                },
+            });
+            assert.strictEqual(missingGh.report.result, 'error');
+            assert.ok(missingGh.report.errors.some(error => error.code === 'GIT_REPOSITORY_REQUIRED'));
+
+            for (const [label, handler] of [
+                ['HTTP 401', () => response('', 1, 'HTTP 401 authentication required')],
+                ['HTTP 403', () => response('', 1, 'HTTP 403 forbidden')],
+                ['network throw', () => { throw new Error('network unavailable'); }],
+                ['signal', () => ({ status: null, stdout: '', stderr: '', signal: 'SIGTERM' })],
+                ['timeout', () => ({
+                    status: null, stdout: '', stderr: '',
+                    error: Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+                })],
+            ]) {
+                const result = directValidate({ handlers: { prQuery: handler } });
+                assert.strictEqual(result.report.result, 'error', label);
+                assert.ok(result.report.errors.some(error => error.code === 'PR_QUERY_FAILED'), label);
+                assert.ok(!result.report.findings.some(item => item.code === 'CHECKS_MISSING'), label);
+            }
+
+            const malformedRepo = directValidate({
+                handlers: { repository: () => response('{not-json') },
+            });
+            assert.ok(malformedRepo.report.errors.some(error => error.code === 'GIT_REPOSITORY_REQUIRED'));
+
+            const malformedPr = directValidate({
+                pr: basePr({ head: { ref: 'codex/pr-state' } }),
+            });
+            assert.ok(malformedPr.report.errors.some(error => error.code === 'PR_RESPONSE_INVALID'));
+
+            const contradictory = directValidate({
+                pr: basePr({ state: 'open', draft: false, merged: true, merged_at: '2026-08-08T00:00:00Z' }),
+            });
+            assert.ok(contradictory.report.errors.some(error => error.code === 'OBSERVED_PHASE_INVALID'));
+
+            for (const workflow of [
+                { id: '77', path: '.github/workflows/release-gate.yml' },
+                { id: 77, path: '.github/workflows/other.yml' },
+            ]) {
+                const invalid = directValidate({ workflow });
+                assert.ok(invalid.report.errors.some(error => error.code === 'WORKFLOW_IDENTITY_INVALID'));
+            }
+
+            for (const run of [
+                baseRun({ status: 'mystery', conclusion: null }),
+                baseRun({ status: 'completed', conclusion: null }),
+                baseRun({ status: 'completed', conclusion: 'banana' }),
+            ]) {
+                const invalid = directValidate({ pages: [{ total_count: 1, workflow_runs: [run] }] });
+                assert.ok(invalid.report.errors.some(error => error.code === 'WORKFLOW_RUN_RESPONSE_INVALID'));
+            }
+
+            const inconsistentPages = directValidate({
+                pages: [
+                    { total_count: 2, workflow_runs: [baseRun({ id: 901, pull_requests: [] })] },
+                    { total_count: 3, workflow_runs: [baseRun({ id: 902 })] },
+                ],
+            });
+            assert.ok(inconsistentPages.report.errors.some(error => error.code === 'WORKFLOW_RUN_RESPONSE_INVALID'));
+            assert.ok(!inconsistentPages.report.findings.some(item => item.code === 'CHECKS_MISSING'));
+
+            const retained = directValidate({
+                pr: basePr({ body: stateBody({ headSha: SHA_STALE }) }),
+                handlers: { runs: () => response('', 1, 'network failure') },
+            });
+            assert.strictEqual(retained.report.result, 'error');
+            assert.ok(retained.report.findings.some(item => item.code === 'HEAD_SHA_DRIFT'));
+            assert.ok(retained.report.errors.some(error => error.code === 'WORKFLOW_RUN_QUERY_FAILED'));
+
+            const runtime = createTempRuntimeRoot('pr-state-real-cli');
+            const fakeBin = path.join(runtime.workspaceRoot, 'fake-gh-bin');
+            const fixturePath = path.join(fakeBin, 'fixture.json');
+            const callLogPath = path.join(fakeBin, 'calls.ndjson');
+            try {
+                copyRecursive(TEMPLATE_CLI_DIR, path.join(runtime.runtimeRoot, 'cli'));
+                fs.mkdirSync(fakeBin, { recursive: true });
+                const init = childProcess.spawnSync('git', ['init'], {
+                    cwd: runtime.workspaceRoot, encoding: 'utf8', windowsHide: true,
+                });
+                assert.strictEqual(init.status, 0, init.stderr);
+
+                const fakeScript = path.join(fakeBin, 'fake-gh.js');
+                const fakeSource = [
+                    "'use strict';",
+                    "const fs = require('fs');",
+                    "const path = require('path');",
+                    "const isWindowsShim = path.basename(process.execPath).toLowerCase() === 'gh.exe';",
+                    "if (process.platform === 'win32' && !isWindowsShim) return;",
+                    "const args = isWindowsShim ? [path.basename(process.argv[1]), ...process.argv.slice(2)] : process.argv.slice(2);",
+                    "fs.appendFileSync(process.env.PR_STATE_FAKE_GH_LOG, JSON.stringify(args) + '\\n');",
+                    "const fixture = JSON.parse(fs.readFileSync(process.env.PR_STATE_FAKE_GH_FIXTURE, 'utf8'));",
+                    "let value;",
+                    "if (args[0] === 'repo' && args[1] === 'view') value = { nameWithOwner: fixture.repository };",
+                    "else if (args[0] === 'api') {",
+                    "  const endpoint = args[args.indexOf('GET') + 1];",
+                    "  if (/\\/pulls\\/31$/.test(endpoint)) value = fixture.pr;",
+                    "  else if (/\\/actions\\/workflows\\/release-gate\\.yml$/.test(endpoint)) value = fixture.workflow;",
+                    "  else if (/\\/actions\\/workflows\\/77\\/runs$/.test(endpoint)) {",
+                    "    const pageArg = args.find(item => /^page=/.test(item));",
+                    "    value = fixture.pages[Number(pageArg.split('=')[1]) - 1] || { total_count: 0, workflow_runs: [] };",
+                    "  } else { console.error('unexpected endpoint: ' + endpoint); process.exit(3); }",
+                    "} else { console.error('unexpected args: ' + args.join(' ')); process.exit(3); }",
+                    "process.stdout.write(JSON.stringify(value));",
+                    "if (isWindowsShim) process.exit(0);",
+                ].join('\n');
+                fs.writeFileSync(fakeScript, fakeSource, 'utf8');
+                if (process.platform === 'win32') {
+                    const ghPath = path.join(fakeBin, 'gh.exe');
+                    try {
+                        fs.linkSync(process.execPath, ghPath);
+                    } catch {
+                        fs.copyFileSync(process.execPath, ghPath);
+                    }
+                } else {
+                    const ghPath = path.join(fakeBin, 'gh');
+                    fs.writeFileSync(ghPath, `#!/usr/bin/env node\n${fakeSource}`, 'utf8');
+                    fs.chmodSync(ghPath, 0o755);
+                }
+
+                const fixture = (body, workflowPath = '.github/workflows/release-gate.yml') => ({
+                    repository: 'uwence/create-evo-lite',
+                    pr: basePr({ body }),
+                    workflow: { id: 77, path: workflowPath },
+                    pages: [{ total_count: 1, workflow_runs: [baseRun()] }],
+                });
+                const childEnv = {
+                    ...process.env,
+                    EVO_LITE_ROOT: runtime.runtimeRoot,
+                    NODE_PATH: [
+                        path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'),
+                        process.env.NODE_PATH,
+                    ].filter(Boolean).join(path.delimiter),
+                    PATH: [fakeBin, process.env.PATH].filter(Boolean).join(path.delimiter),
+                    NODE_OPTIONS: [
+                        process.platform === 'win32' ? `--require=${fakeScript.replace(/\\/g, '/')}` : '',
+                        process.env.NODE_OPTIONS,
+                    ].filter(Boolean).join(' '),
+                    PR_STATE_FAKE_GH_FIXTURE: fixturePath,
+                    PR_STATE_FAKE_GH_LOG: callLogPath,
+                };
+                const snapshot = root => {
+                    const result = {};
+                    const walk = dir => {
+                        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                            const full = path.join(dir, entry.name);
+                            const rel = path.relative(root, full).replace(/\\/g, '/');
+                            if (rel === '.git' || rel.startsWith('.git/')
+                                || rel === 'fake-gh-bin' || rel.startsWith('fake-gh-bin/')) continue;
+                            if (entry.isDirectory()) walk(full);
+                            else result[rel] = crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex');
+                        }
+                    };
+                    walk(root);
+                    return result;
+                };
+                const before = snapshot(runtime.workspaceRoot);
+                const runCli = data => {
+                    fs.writeFileSync(fixturePath, JSON.stringify(data), 'utf8');
+                    fs.writeFileSync(callLogPath, '', 'utf8');
+                    const result = childProcess.spawnSync(
+                        process.execPath,
+                        [path.join(runtime.runtimeRoot, 'cli', 'memory.js'), 'pr-state', 'validate', '31', '--json'],
+                        { cwd: runtime.workspaceRoot, env: childEnv, encoding: 'utf8', windowsHide: true }
+                    );
+                    assert.ok(result.stdout.trim(), result.stderr || `pr-state CLI produced no JSON (exit ${result.status})`);
+                    const report = JSON.parse(result.stdout);
+                    const calls = fs.readFileSync(callLogPath, 'utf8')
+                        .split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+                    return { result, report, calls };
+                };
+
+                const realPass = runCli(fixture(stateBody()));
+                assert.strictEqual(realPass.result.status, 0, realPass.result.stderr || realPass.result.stdout);
+                assert.strictEqual(realPass.report.result, 'pass');
+                assert.deepStrictEqual(
+                    Object.keys(realPass.report),
+                    ['schema', 'result', 'pr', 'expected', 'observed', 'findings', 'errors']
+                );
+
+                const realDrift = runCli(fixture(stateBody({ headSha: SHA_STALE })));
+                assert.strictEqual(realDrift.result.status, 1, realDrift.result.stderr);
+                assert.ok(realDrift.report.findings.some(item => item.code === 'HEAD_SHA_DRIFT'));
+                const runCalls = realDrift.calls.filter(args => args.some(value => /actions\/workflows\/77\/runs/.test(value)));
+                assert.ok(runCalls.every(args => args.includes(`head_sha=${SHA_HEAD}`)));
+                assert.ok(runCalls.every(args => !args.includes(`head_sha=${SHA_STALE}`)));
+
+                const realError = runCli(fixture(stateBody(), '.github/workflows/other.yml'));
+                assert.strictEqual(realError.result.status, 2, realError.result.stderr);
+                assert.strictEqual(realError.report.result, 'error');
+
+                for (const args of [...realPass.calls, ...realDrift.calls, ...realError.calls]) {
+                    assert.ok(!/\b(edit|ready|merge|POST|PATCH|PUT|DELETE)\b/.test(args.join(' ')));
+                }
+                assert.deepStrictEqual(snapshot(runtime.workspaceRoot), before);
+            } finally {
+                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+            }
+            console.log('✅ PS5 pr-state fail-closed CLI acceptance passed');
         }
 
        console.log('2s. Testing trajectory summary folds whitespace before truncating ...');

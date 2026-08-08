@@ -167,13 +167,24 @@ function normalizePhase(pr) {
 }
 
 function normalizeChecks(run) {
+    const completedConclusions = new Set([
+        'success',
+        'failure',
+        'neutral',
+        'cancelled',
+        'skipped',
+        'timed_out',
+        'action_required',
+        'stale',
+        'startup_failure',
+    ]);
     if (!run || typeof run !== 'object' || typeof run.status !== 'string') {
         fail('WORKFLOW_RUN_RESPONSE_INVALID', 'workflow run status is malformed');
     }
     if (['requested', 'queued', 'waiting', 'pending', 'in_progress'].includes(run.status) && run.conclusion === null) {
         return 'pending';
     }
-    if (run.status === 'completed' && typeof run.conclusion === 'string' && run.conclusion.length > 0) {
+    if (run.status === 'completed' && completedConclusions.has(run.conclusion)) {
         return run.conclusion === 'success' ? 'success' : 'failed';
     }
     fail('WORKFLOW_RUN_RESPONSE_INVALID', 'workflow run status/conclusion combination is invalid');
