@@ -3,17 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 78a792e8f5e925f07432dda531055e0e2ec554ea
-> upstreamSha: 78a792e8f5e925f07432dda531055e0e2ec554ea
+> headSha: a5b1fa8641110db29f24a5e1b9af906039ff2755
+> upstreamSha: a5b1fa8641110db29f24a5e1b9af906039ff2755
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-08-07T17:55:44.425Z
+> focusUpdatedAt: 2026-08-08T06:58:15.268Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[zvec-win-unicode-containment] 已收口：AC1-AC7 全部交付并合入 main@78a792e，spec 为 shipped，registry blockers=0，release-preflight VERDICT=CLEAR。releaseBlocking:true 全程保留 —— 证明的是 lifecycle enforcement 而非 gate removal。上游已报 alibaba/zvec#665（触发规则未收敛，profile 外一律 UNKNOWN）。当前无 active release blocker；下一步由新议题决定。[attp-hive-rollout] 仍 BLOCKED，其 Windows 分发前置依赖已在 backlog 登记。[attp-lw-memory-identity] 与 [memory-lock-win-cim-snapshot-reliability] 保持 parked residual。
+[active-context-resync] main@a5b1fa durable reality aligned: PR #29 and [test-temp-root-lifecycle-cleanup] are CLOSED; no corrective follow-up and reopen NOT AUTHORIZED. NEXT candidate is [backlog-edit-cli-gap] design freeze only, with implementation not yet authorized. [size-exceeded-warning] remains QUEUED / CONTRACT; [attp-hive-rollout] remains PARKED FOR SEPARATE SCOPE.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -26,6 +26,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [a5b1fa8] 2026-08-08 TestTempRootLifecycleClosure: PR #29 merged by ordinary two-parent merge at main@a5b1fa8641110db29f24a5e1b9af906039ff2755, with re
 - [78a792e] 2026-08-07 ZvecWinUnicodeContainmentClosure: [zvec-win-unicode-containment] P0 / release-blocker 收口。AC1-AC7 全部交付并合入 main@78a792e。 问题：Windows 上部分非
 - [6780911] 2026-08-03 MemoryLockWinCimSnapshotReliabilityClosure: Phase 3A 已通过 PR #14 合入 main@d48108a。实现 getProcessSnapshotResult 结构化分类、兼容 wrapper、两个生产调用点 fail-closed
 - [201ba1a] 2026-08-01 MemoryLockWinCimSnapshotReactivation: [memory-lock-win-cim-snapshot-reliability] 由 parked residual 重新激活为 active release-gate reliability b
@@ -35,7 +36,6 @@
 - [ee98661] 2026-07-31 Zvec06CorrectnessClosure: [zvec-06-upgrade] 收口。议题由「功能升级」重分类为「P0 现存正确性缺陷修复」——原立项理由(0.5.0 无 readOnly、reader/writer 拆分随升级落地)被同版重测
 - [b181245] 2026-07-28 feature-completion: [c482] Wiki UX debt closed across three phases. 32911e0 wraps the architecture SVG in a natural-widt
 - [c466344] 2026-07-28 bug-fix: [57b0] trajectory entry single-line invariant closed. de352ec folds details before truncation; c4663
-- [b6ca7c7] 2026-07-27 governance-closure: [attp-guard-allowlist] 在支持拓扑限定下关闭。单工作树 / 独立项目副本拓扑已解决并完成真实验收(docs/validation/attp-guard-allowlist-acc
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
