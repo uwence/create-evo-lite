@@ -1132,10 +1132,107 @@ async function runIntegrationTests() {
             for (const status of ['requested', 'queued', 'waiting', 'pending', 'in_progress']) {
                 assert.strictEqual(service.normalizeChecks({ status, conclusion: null }), 'pending', status);
             }
-            console.log('✅ PS2 pr-state read-only acquisition passed');
+           console.log('✅ PS2 pr-state read-only acquisition passed');
+       }
+
+        console.log('PS3. Testing pr-state CLI registration and rendering ...');
+        {
+            const modulePath = path.join(TEMPLATE_CLI_DIR, 'pr-state.js');
+            delete require.cache[require.resolve(modulePath)];
+            const { Command } = require('commander');
+            const {
+                registerPrStateCommands,
+                resultExitCode,
+                renderText,
+            } = require(modulePath);
+            const envelope = (result, overrides = {}) => ({
+                schema: 1,
+                result,
+                pr: { repository: 'uwence/create-evo-lite', number: 31 },
+                expected: {},
+                observed: {},
+                findings: [],
+                errors: [],
+                ...overrides,
+            });
+            const cases = [
+                [envelope('pass'), 0],
+                [envelope('drift', {
+                    findings: [{
+                        code: 'HEAD_SHA_DRIFT', field: 'headSha',
+                        expected: 'a', observed: 'b',
+                    }],
+                }), 1],
+                [envelope('error', {
+                    errors: [{ code: 'PR_QUERY_FAILED', message: 'query failed' }],
+                }), 2],
+            ];
+
+            assert.strictEqual(resultExitCode('pass'), 0);
+            assert.strictEqual(resultExitCode('drift'), 1);
+            assert.strictEqual(resultExitCode('error'), 2);
+            assert.match(renderText(cases[1][0]), /HEAD_SHA_DRIFT/);
+            assert.match(renderText(cases[2][0]), /PR_QUERY_FAILED/);
+
+            for (const [report, expectedExit] of cases) {
+                const program = new Command();
+                program.name('memory').exitOverride();
+                registerPrStateCommands(program, { validatePrState: () => report });
+                const output = [];
+                const originalLog = console.log;
+                const originalExitCode = process.exitCode;
+                try {
+                    console.log = value => output.push(String(value));
+                    process.exitCode = undefined;
+                    await program.parseAsync(
+                        ['node', 'memory.js', 'pr-state', 'validate', '31', '--json'],
+                        { from: 'node' }
+                    );
+                    assert.strictEqual(process.exitCode || 0, expectedExit);
+                    assert.deepStrictEqual(JSON.parse(output.join('\n')), report);
+                } finally {
+                    console.log = originalLog;
+                    process.exitCode = originalExitCode;
+                }
+            }
+
+            const cliPath = path.join(CLI_DIR, 'memory.js');
+            const spawnCli = (args, input) => childProcess.spawnSync(
+                process.execPath,
+                [cliPath, ...args],
+                {
+                    cwd: WORKSPACE_ROOT,
+                    env: {
+                        ...process.env,
+                        NODE_PATH: [
+                            path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'),
+                            process.env.NODE_PATH,
+                        ].filter(Boolean).join(path.delimiter),
+                    },
+                    encoding: 'utf8',
+                    input,
+                }
+            );
+            const help = spawnCli(['pr-state', '--help']);
+            assert.strictEqual(help.status, 0, help.stderr || help.stdout);
+            assert.match(help.stdout, /validate \[options\] \[pr\]/);
+            assert.doesNotMatch(help.stdout, /--repo|--file|--content/);
+
+            for (const [label, args, input] of [
+                ['nested alias', ['context', 'pr-state']],
+                ['URL input', ['pr-state', 'validate', 'https://github.com/uwence/create-evo-lite/pull/31']],
+                ['repo option', ['pr-state', 'validate', '31', '--repo', 'uwence/create-evo-lite']],
+                ['file option', ['pr-state', 'validate', '31', '--file', 'state.md']],
+                ['extra argument', ['pr-state', 'validate', '31', 'extra']],
+                ['stdin body', ['pr-state', 'validate', 'bad id'], 'schema: 1\n'],
+            ]) {
+                const rejected = spawnCli(args, input);
+                assert.notStrictEqual(rejected.status, 0, `${label} must be rejected`);
+            }
+            console.log('✅ PS3 pr-state CLI registration and rendering passed');
         }
 
-        console.log('2s. Testing trajectory summary folds whitespace before truncating ...');
+       console.log('2s. Testing trajectory summary folds whitespace before truncating ...');
         {
             // A trajectory entry is a single anchor line. Truncating the archive body by
             // character count without folding newlines first splits one entry across

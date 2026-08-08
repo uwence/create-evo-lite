@@ -795,6 +795,7 @@ function buildProgram() {
     safeRegister('code-perception', () => require('./code-perception/post-commit-code-perception').registerCodePerceptionCommands(program));
     safeRegister('code', () => require('./code-perception/cli').registerCodeCommands(program));
     safeRegister('wiki', () => require('./wiki/cli').registerWikiCommands(program));
+    safeRegister('pr-state', () => require('./pr-state').registerPrStateCommands(program));
 
     program.command('inspect')
         .description('Run the inspector HTTP server.')
