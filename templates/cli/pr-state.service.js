@@ -113,14 +113,13 @@ function parseExpectedBlock(body, { checkRefName } = {}) {
     if (!SHA_RE.test(raw.baseSha) || !SHA_RE.test(raw.headSha)) {
         fail('PR_STATE_BLOCK_INVALID', 'baseSha and headSha must be full lowercase SHA-1 values');
     }
+    const commits = parseBoundedInteger(raw.commits, 'commits', 1);
+    const changedFiles = parseBoundedInteger(raw.changedFiles, 'changedFiles', 0);
     if (!['draft', 'ready', 'merged'].includes(raw.phase)) {
         fail('PR_STATE_BLOCK_INVALID', 'phase must be draft, ready, or merged');
     }
     if (!['pending', 'success'].includes(raw.checks)) {
         fail('PR_STATE_BLOCK_INVALID', 'checks must be pending or success');
-    }
-    if (raw.phase === 'merged' && raw.checks !== 'success') {
-        fail('PR_STATE_SEMANTIC_INVALID', 'phase merged requires checks success');
     }
 
     if (typeof checkRefName === 'function') {
@@ -136,6 +135,9 @@ function parseExpectedBlock(body, { checkRefName } = {}) {
             }
         }
     }
+    if (raw.phase === 'merged' && raw.checks !== 'success') {
+        fail('PR_STATE_SEMANTIC_INVALID', 'phase merged requires checks success');
+    }
 
     return {
         schema: 1,
@@ -143,8 +145,8 @@ function parseExpectedBlock(body, { checkRefName } = {}) {
         baseSha: raw.baseSha,
         head: raw.head,
         headSha: raw.headSha,
-        commits: parseBoundedInteger(raw.commits, 'commits', 1),
-        changedFiles: parseBoundedInteger(raw.changedFiles, 'changedFiles', 0),
+        commits,
+        changedFiles,
         phase: raw.phase,
         checks: raw.checks,
     };
@@ -161,8 +163,8 @@ function normalizePhase(pr) {
     }
     if (state === 'OPEN' && draft === true && merged === false && mergedAt === null) return 'draft';
     if (state === 'OPEN' && draft === false && merged === false && mergedAt === null) return 'ready';
-    if (state === 'CLOSED' && draft === false && merged === true && typeof mergedAt === 'string' && mergedAt.length > 0) return 'merged';
-    if (state === 'CLOSED' && draft === false && merged === false && mergedAt === null) return 'closed';
+    if (state === 'CLOSED' && merged === true && typeof mergedAt === 'string' && mergedAt.length > 0) return 'merged';
+    if (state === 'CLOSED' && merged === false && mergedAt === null) return 'closed';
     fail('OBSERVED_PHASE_INVALID', 'PR lifecycle fields are contradictory');
 }
 

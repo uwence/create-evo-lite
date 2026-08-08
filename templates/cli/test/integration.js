@@ -805,7 +805,17 @@ async function runIntegrationTests() {
                 normalizePhase({ state: 'closed', draft: false, merged: true, merged_at: '2026-08-08T00:00:00Z' }),
                 'merged'
             );
+            assert.strictEqual(
+                normalizePhase({ state: 'closed', draft: true, merged: true, merged_at: '2026-08-08T00:00:00Z' }),
+                'merged',
+                'CLOSED merged phase must not depend on the draft flag'
+            );
             assert.strictEqual(normalizePhase({ state: 'closed', draft: false, merged: false, merged_at: null }), 'closed');
+            assert.strictEqual(
+                normalizePhase({ state: 'closed', draft: true, merged: false, merged_at: null }),
+                'closed',
+                'CLOSED unmerged phase must not depend on the draft flag'
+            );
             assert.throws(
                 () => normalizePhase({ state: 'open', draft: false, merged: true, merged_at: null }),
                 error => error instanceof PrStateError && error.code === 'OBSERVED_PHASE_INVALID'
@@ -836,7 +846,7 @@ async function runIntegrationTests() {
                     [code], field
                 );
             }
-            const closedPhase = normalizePhase({ state: 'closed', draft: false, merged: false, merged_at: null });
+            const closedPhase = normalizePhase({ state: 'closed', draft: true, merged: false, merged_at: null });
             assert.deepStrictEqual(
                 compareExpectedObserved(expected, { ...expected, phase: closedPhase }).map(item => item.code),
                 ['PHASE_DRIFT']
@@ -948,6 +958,20 @@ async function runIntegrationTests() {
                     checkRefName: value => value !== 'bad ref',
                 }),
                 error => error instanceof PrStateError && error.code === 'PR_STATE_REF_INVALID'
+            );
+            assert.throws(
+                () => parseExpectedBlock(block({ base: 'bad ref', commits: '03' }), {
+                    checkRefName: value => value !== 'bad ref',
+                }),
+                error => error instanceof PrStateError && error.code === 'PR_STATE_BLOCK_INVALID',
+                'scalar validation must precede ref validation'
+            );
+            assert.throws(
+                () => parseExpectedBlock(block({ base: 'bad ref', phase: 'merged', checks: 'pending' }), {
+                    checkRefName: value => value !== 'bad ref',
+                }),
+                error => error instanceof PrStateError && error.code === 'PR_STATE_REF_INVALID',
+                'ref validation must precede cross-field semantic validation'
             );
             console.log('✅ PS1 pr-state expected-block primitives passed');
         }
