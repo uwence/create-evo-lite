@@ -259,17 +259,30 @@ Every required field receives shape and type validation. Missing fields, contrad
 ### 6.1 Phase normalization
 
 ```text
-OPEN + draft=true + not merged
+state=OPEN
+AND draft=true
+AND merged=false
+AND merged_at=null
 → draft
 
-OPEN + draft=false + not merged
+state=OPEN
+AND draft=false
+AND merged=false
+AND merged_at=null
 → ready
 
-merged=true / merged_at non-null with a consistent closed state
+state=CLOSED
+AND merged=true
+AND merged_at non-null
 → merged
 
-CLOSED + not merged
+state=CLOSED
+AND merged=false
+AND merged_at=null
 → closed
+
+all mixed or contradictory combinations
+→ observation error
 ```
 
 Expected phase is limited to `draft | ready | merged`. Observed `closed` is therefore a valid observation that produces `PHASE_DRIFT`, not a parser error.
@@ -597,6 +610,8 @@ Owns registration only. Parser, acquisition, and comparison logic must not be pl
 - no GitHub mutation occurs on pass, drift, or error;
 - `context pr-state`, URL input, `--repo`, stdin, aliases, and mutation flags are rejected;
 - `memory.js` contains registration only;
+- `pr-state.js` and `pr-state.service.js` are registered in the `core-cli` managed template manifest;
+- `sync-runtime` and runtime-lock management include both new modules;
 - live/template implementations and tests remain byte-identical;
 - full governance and integration regressions pass.
 
@@ -614,11 +629,14 @@ templates/cli/pr-state.js
 .evo-lite/cli/memory.js
 templates/cli/memory.js
 
+.evo-lite/cli/template-manifest.js
+templates/cli/template-manifest.js
+
 .evo-lite/cli/test/integration.js
 templates/cli/test/integration.js
 ```
 
-This is an expected implementation surface, not a requirement to manufacture changes in all eight files. A future implementation must remain within this set unless a separately reviewed design amendment proves another file necessary.
+This is an expected implementation surface, not a requirement to manufacture changes in all ten files. A future implementation must remain within this set unless a separately reviewed design amendment proves another file necessary.
 
 Not authorized by this design:
 
