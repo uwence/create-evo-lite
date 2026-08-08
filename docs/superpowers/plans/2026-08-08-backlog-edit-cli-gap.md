@@ -23,6 +23,7 @@
 - Treat payload text as opaque, then validate the complete candidate with `validateActiveContextMarkdown()` before writing.
 - Same-text after trim is a successful no-op with no write and no `CONTEXT_EDIT`.
 - A changed edit performs one `fs.writeFileSync()` call, followed by best-effort `CONTEXT_EDIT`; do not claim crash atomicity or rollback.
+- If the active-context write throws, propagate that error and do not attempt `CONTEXT_EDIT`.
 - Do not call `ensureContextFile()` from edit: a missing active-context file fails through the existing read error and is not implicitly created.
 - Keep each live/template pair byte-identical after every task.
 - Do not modify `validateActiveContextMarkdown`; GitNexus reports it as HIGH risk (2 direct callers, 4 affected processes). This feature only calls the existing validator.
@@ -152,9 +153,51 @@ console.log('2e. Testing context edit service contract ...');
         'LF edit changed bytes outside the payload'
     );
 
+    // This is a write-ordering fault test, not a crash-atomicity proof. The
+    // injected write throws before touching the file; the contract under test
+    // is exception propagation plus zero audit attempt after that throw.
+    fs.writeFileSync(contextPath, seeded, 'utf8');
+    const writeFailureLogBefore = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : null;
+    const writeFailureOperations = [];
+    const originalWrite = fs.writeFileSync;
+    const originalAppend = fs.appendFileSync;
+    fs.writeFileSync = (filePath, ...args) => {
+        if (path.resolve(filePath) === path.resolve(contextPath)) {
+            writeFailureOperations.push('write');
+            throw new Error('INJECTED_CONTEXT_WRITE_FAILURE');
+        }
+        return originalWrite(filePath, ...args);
+    };
+    fs.appendFileSync = (filePath, content, ...args) => {
+        if (path.resolve(filePath) === path.resolve(logPath) && String(content).includes('CONTEXT_EDIT:')) {
+            writeFailureOperations.push('audit');
+        }
+        return originalAppend(filePath, content, ...args);
+    };
+    try {
+        assert.throws(
+            () => svc.editBacklogTask('abc', 'write failure probe'),
+            /INJECTED_CONTEXT_WRITE_FAILURE/,
+            'context write error must propagate'
+        );
+        assert.deepStrictEqual(
+            writeFailureOperations,
+            ['write'],
+            'failed context write must not attempt CONTEXT_EDIT'
+        );
+    } finally {
+        fs.writeFileSync = originalWrite;
+        fs.appendFileSync = originalAppend;
+    }
+    const writeFailureLogAfter = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : null;
+    assert.strictEqual(writeFailureLogAfter, writeFailureLogBefore, 'failed context write changed the edit audit log');
+
     assertRejected(seeded, 'bad id', 'valid', /invalid backlog id/, 'invalid id');
     assertRejected(seeded, 'missing', 'valid', /not found/, 'missing id');
     assertRejected(seeded, 'bad id', 'line1\nline2', /single-line/, 'raw newline must win before id validation');
+    assertRejected(seeded, 'bad id', 'line1\rline2', /single-line/, 'raw CR must win before id validation');
+    assertRejected(seeded, 'bad id', 'line1\r\nline2', /single-line/, 'raw CRLF must win before id validation');
+    assertRejected(seeded, 'bad id', '', /new-text.*empty|empty.*new-text/, 'empty string must win before id validation');
     assertRejected(seeded, 'bad id', '   ', /new-text.*empty|empty.*new-text/, 'empty text must win before id validation');
     assertRejected(
         withBacklog(['- [ ] [abc] first', '- [ ] [ABC] second']),
