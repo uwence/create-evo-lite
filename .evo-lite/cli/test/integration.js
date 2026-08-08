@@ -705,6 +705,211 @@ async function runIntegrationTests() {
             console.log('✅ 2e context edit service contract passed');
         }
 
+        console.log('PS1. Testing pr-state expected-block primitives ...');
+        {
+            const servicePath = path.join(TEMPLATE_CLI_DIR, 'pr-state.service.js');
+            delete require.cache[require.resolve(servicePath)];
+            const {
+                PrStateError,
+                validatePrNumber,
+                parseExpectedBlock,
+                normalizePhase,
+                normalizeChecks,
+                compareExpectedObserved,
+                createReport,
+            } = require(servicePath);
+
+            const SHA_A = '0123456789abcdef0123456789abcdef01234567';
+            const SHA_B = 'fedcba9876543210fedcba9876543210fedcba98';
+            const BEGIN_MARKER = '<!-- EVO-LITE:PR-STATE:BEGIN -->';
+            const END_MARKER = '<!-- EVO-LITE:PR-STATE:END -->';
+            const block = (overrides = {}, eol = '\n') => {
+                const values = {
+                    schema: '1', base: 'main', baseSha: SHA_A,
+                    head: 'codex/feature', headSha: SHA_B,
+                    commits: '3', changedFiles: '4', phase: 'draft', checks: 'success',
+                    ...overrides,
+                };
+                return [
+                    'narrative before', BEGIN_MARKER,
+                    `schema: ${values.schema}`, `base: ${values.base}`, `baseSha: ${values.baseSha}`,
+                    `head: ${values.head}`, `headSha: ${values.headSha}`,
+                    `commits: ${values.commits}`, `changedFiles: ${values.changedFiles}`,
+                    `phase: ${values.phase}`, `checks: ${values.checks}`,
+                    END_MARKER, 'narrative after',
+                ].join(eol);
+            };
+            const parse = body => parseExpectedBlock(body, { checkRefName: () => true });
+            const expectedParsed = {
+                schema: 1, base: 'main', baseSha: SHA_A,
+                head: 'codex/feature', headSha: SHA_B,
+                commits: 3, changedFiles: 4, phase: 'draft', checks: 'success',
+            };
+
+            assert.deepStrictEqual(parse(block()), expectedParsed);
+            assert.deepStrictEqual(parse(block({}, '\r\n')), expectedParsed, 'CRLF must parse identically');
+            assert.strictEqual(validatePrNumber('31'), 31);
+            for (const raw of ['', '0', '03', '+3', '-1', '3.0', '3e2', '9007199254740992']) {
+                assert.throws(
+                    () => validatePrNumber(raw),
+                    error => error instanceof PrStateError && error.code === 'PR_NUMBER_INVALID',
+                    `invalid PR number ${raw}`
+                );
+            }
+
+            assert.strictEqual(normalizePhase({ state: 'open', draft: true, merged: false, merged_at: null }), 'draft');
+            assert.strictEqual(normalizePhase({ state: 'open', draft: false, merged: false, merged_at: null }), 'ready');
+            assert.strictEqual(
+                normalizePhase({ state: 'closed', draft: false, merged: true, merged_at: '2026-08-08T00:00:00Z' }),
+                'merged'
+            );
+            assert.strictEqual(normalizePhase({ state: 'closed', draft: false, merged: false, merged_at: null }), 'closed');
+            assert.throws(
+                () => normalizePhase({ state: 'open', draft: false, merged: true, merged_at: null }),
+                error => error instanceof PrStateError && error.code === 'OBSERVED_PHASE_INVALID'
+            );
+
+            assert.strictEqual(normalizeChecks({ status: 'queued', conclusion: null }), 'pending');
+            assert.strictEqual(normalizeChecks({ status: 'in_progress', conclusion: null }), 'pending');
+            assert.strictEqual(normalizeChecks({ status: 'completed', conclusion: 'success' }), 'success');
+            assert.strictEqual(normalizeChecks({ status: 'completed', conclusion: 'failure' }), 'failed');
+            assert.throws(
+                () => normalizeChecks({ status: 'completed', conclusion: null }),
+                error => error instanceof PrStateError && error.code === 'WORKFLOW_RUN_RESPONSE_INVALID'
+            );
+
+            const expected = parse(block());
+            const coreCases = [
+                ['base', 'Main', 'BASE_REF_DRIFT'],
+                ['baseSha', SHA_B, 'BASE_SHA_DRIFT'],
+                ['head', 'Codex/feature', 'HEAD_REF_DRIFT'],
+                ['headSha', SHA_A, 'HEAD_SHA_DRIFT'],
+                ['commits', 4, 'COMMIT_COUNT_DRIFT'],
+                ['changedFiles', 5, 'CHANGED_FILE_COUNT_DRIFT'],
+                ['phase', 'ready', 'PHASE_DRIFT'],
+            ];
+            for (const [field, value, code] of coreCases) {
+                assert.deepStrictEqual(
+                    compareExpectedObserved(expected, { ...expected, [field]: value }).map(item => item.code),
+                    [code], field
+                );
+            }
+            const closedPhase = normalizePhase({ state: 'closed', draft: false, merged: false, merged_at: null });
+            assert.deepStrictEqual(
+                compareExpectedObserved(expected, { ...expected, phase: closedPhase }).map(item => item.code),
+                ['PHASE_DRIFT']
+            );
+            const allCoreDrift = {
+                ...expected,
+                base: 'Main', baseSha: SHA_B,
+                head: 'Codex/feature', headSha: SHA_A,
+                commits: 4, changedFiles: 5, phase: 'ready',
+            };
+            assert.deepStrictEqual(
+                compareExpectedObserved(expected, allCoreDrift).map(item => item.code),
+                [
+                    'BASE_REF_DRIFT', 'BASE_SHA_DRIFT', 'HEAD_REF_DRIFT', 'HEAD_SHA_DRIFT',
+                    'COMMIT_COUNT_DRIFT', 'CHANGED_FILE_COUNT_DRIFT', 'PHASE_DRIFT',
+                ]
+            );
+
+            const checksCases = [
+                ['success', 'pending', ['CHECKS_PENDING']],
+                ['pending', 'failed', ['CHECKS_FAILED']],
+                ['success', 'failed', ['CHECKS_FAILED']],
+                ['pending', 'success', ['CHECKS_EXPECTATION_DRIFT']],
+                ['pending', 'pending', []],
+                ['success', 'success', []],
+                ['success', 'missing', ['CHECKS_MISSING']],
+            ];
+            for (const [expectedChecks, observedChecks, codes] of checksCases) {
+                const wanted = { ...expected, checks: expectedChecks };
+                const actual = { ...wanted, checks: observedChecks };
+                assert.deepStrictEqual(
+                    compareExpectedObserved(wanted, actual).map(item => item.code),
+                    codes, `${expectedChecks}/${observedChecks}`
+                );
+            }
+            assert.deepStrictEqual(
+                Object.keys(createReport()),
+                ['schema', 'result', 'pr', 'expected', 'observed', 'findings', 'errors']
+            );
+
+            const reversed = block()
+                .replace(BEGIN_MARKER, '__BEGIN__')
+                .replace(END_MARKER, BEGIN_MARKER)
+                .replace('__BEGIN__', END_MARKER);
+            const markerLikeProse = block().replace(
+                'narrative before',
+                `narrative ${BEGIN_MARKER} remains opaque`
+            );
+            assert.deepStrictEqual(parse(markerLikeProse), expectedParsed);
+            const rejectedBodies = [
+                ['missing BEGIN', block().replace(`${BEGIN_MARKER}\n`, '')],
+                ['missing END', block().replace(`\n${END_MARKER}`, '')],
+                ['duplicate BEGIN', block() + `\n${BEGIN_MARKER}`],
+                ['duplicate END', block() + `\n${END_MARKER}`],
+                ['reversed markers', reversed],
+                ['leading marker whitespace', block().replace(BEGIN_MARKER, ` ${BEGIN_MARKER}`)],
+                ['trailing marker whitespace', block().replace(END_MARKER, `${END_MARKER} `)],
+                ['unknown key', block().replace('checks: success', 'extra: value\nchecks: success')],
+                ['duplicate key', block().replace('checks: success', 'head: other\nchecks: success')],
+                ['missing key', block().replace('commits: 3\n', '')],
+                ['reordered key', block().replace('commits: 3\nchangedFiles: 4', 'changedFiles: 4\ncommits: 3')],
+                ['malformed delimiter', block().replace('base: main', 'base:main')],
+                ['blank line', block().replace('head: codex/feature', 'head: codex/feature\n')],
+                ['tab', block().replace('base: main', 'base:\tmain')],
+                ['comment line', block().replace('checks: success', '# comment\nchecks: success')],
+                ['quoted scalar', block().replace('base: main', 'base: "main"')],
+                ['generic extra content', block().replace('checks: success', 'unstructured extra content\nchecks: success')],
+                ['abbreviated SHA', block({ headSha: 'abc1234' })],
+                ['uppercase SHA', block({ headSha: SHA_B.toUpperCase() })],
+                ['commits overflow', block({ commits: '2147483648' })],
+                ['changedFiles overflow', block({ changedFiles: '2147483648' })],
+                ['invalid expected checks', block({ checks: 'failed' })],
+                ['merged pending', block({ phase: 'merged', checks: 'pending' })],
+            ];
+            for (const field of ['commits', 'changedFiles']) {
+                for (const raw of ['03', '+3', '-1', '3.0', '3e2']) {
+                    rejectedBodies.push([`${field} noncanonical ${raw}`, block({ [field]: raw })]);
+                }
+            }
+            for (const [label, body] of rejectedBodies) {
+                assert.throws(() => parse(body), error => error instanceof PrStateError, label);
+            }
+
+            for (const [commits, changedFiles] of [['1', '0'], ['2147483647', '2147483647']]) {
+                const parsed = parse(block({ commits, changedFiles }));
+                assert.strictEqual(parsed.commits, Number(commits));
+                assert.strictEqual(parsed.changedFiles, Number(changedFiles));
+            }
+            for (const [phase, checks] of [
+                ['draft', 'pending'], ['draft', 'success'],
+                ['ready', 'pending'], ['ready', 'success'],
+                ['merged', 'success'],
+            ]) {
+                const parsed = parse(block({ phase, checks }));
+                assert.strictEqual(parsed.phase, phase);
+                assert.strictEqual(parsed.checks, checks);
+            }
+
+            const refCalls = [];
+            parseExpectedBlock(block(), {
+                checkRefName(value) {
+                    refCalls.push(value);
+                    return true;
+                },
+            });
+            assert.deepStrictEqual(refCalls, ['main', 'codex/feature']);
+            assert.throws(
+                () => parseExpectedBlock(block({ head: 'bad ref' }), {
+                    checkRefName: value => value !== 'bad ref',
+                }),
+                error => error instanceof PrStateError && error.code === 'PR_STATE_REF_INVALID'
+            );
+            console.log('✅ PS1 pr-state expected-block primitives passed');
+        }
+
         console.log('2s. Testing trajectory summary folds whitespace before truncating ...');
         {
             // A trajectory entry is a single anchor line. Truncating the archive body by
