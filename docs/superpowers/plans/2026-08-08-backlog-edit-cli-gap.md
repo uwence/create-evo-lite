@@ -486,14 +486,15 @@ Run:
 
 ```bash
 node ./.evo-lite/cli/memory.js context --help
-node ./.evo-lite/cli/memory.js edit --help
+node ./.evo-lite/cli/memory.js edit "bad id" value
 node ./.evo-lite/cli/memory.js context edit 3d78 value --content other
 ```
 
 Expected:
 
 - nested help lists `edit <id> <new-text>`;
-- the top-level `edit` command exits non-zero;
+- the top-level `edit` probe exits non-zero with a parser-level rejection such as `too many arguments` or an equivalent unknown-command/argument error;
+- a service-level `invalid backlog id` error does not satisfy the top-level alias rejection gate;
 - `--content` exits non-zero;
 - none of these commands modify the repository's active context (use a test runtime for any valid edit invocation).
 
