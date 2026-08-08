@@ -93,7 +93,7 @@ function printHelp() {
   \x1b[32mexport\x1b[0m <file>       Export all memories to a JSON file.
   \x1b[32mimport\x1b[0m <file>       Import memories from a JSON file path.
 
-  \x1b[32mcontext\x1b[0m <op>...     Modify active_context.md anchors (track, add, focus).
+  \x1b[32mcontext\x1b[0m <op>...     Modify active_context.md anchors (track, add, edit, focus).
                       Read-only ops: read, summary, validate [--json].
   \x1b[32marchive\x1b[0m <text>      Save a summary to raw_memory/ and auto-index it.
     \x1b[32mcommit\x1b[0m <text>       Create code commit, context track, and runtime state meta-commit in one explicit flow.
@@ -360,6 +360,11 @@ async function runContextCommand(op, text, options = {}) {
             throw new Error('Usage: node .evo-lite/cli/memory.js context add "新任务描述"');
         }
         console.log(memoryService.addTask(taskText, { label: options.label }));
+        return;
+    }
+
+    if (op === 'edit') {
+        console.log(memoryService.editBacklogTask(options.id, text));
         return;
     }
 
@@ -703,6 +708,11 @@ function buildProgram() {
         .option('--label <label>', 'Human backlog id ([A-Za-z0-9_-]{1,32}) to resolve by later, instead of a random hash')
         .action(async (text, options) => {
             await runContextCommand('add', text, options);
+        });
+    contextCommand.command('edit <id> <new-text>')
+        .description('Replace the text of an existing pending backlog item.')
+        .action(async (id, newText) => {
+            await runContextCommand('edit', newText, { id });
         });
     withTextSourceOptions(
         contextCommand.command('focus [text]').description('Set the current focus text.')
