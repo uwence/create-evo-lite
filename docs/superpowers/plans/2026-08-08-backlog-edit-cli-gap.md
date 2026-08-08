@@ -26,6 +26,8 @@
 - If the active-context write throws, propagate that error and do not attempt `CONTEXT_EDIT`.
 - Do not call `ensureContextFile()` from edit: a missing active-context file fails through the existing read error and is not implicitly created.
 - Keep each live/template pair byte-identical after every task.
+- `node ./.evo-lite/cli/test.js` uses the default `TEST_SCOPE=all`: it runs governance first and, in the mother repository where the `templates/` tree exists, then runs integration. Integration RED/GREEN evidence comes from that full-suite integration phase and its `✅ 2e` / `✅ 3e` markers.
+- `node ./.evo-lite/cli/test.js governance` remains the separate governance-only gate; do not add an `integration` scope to `test.js` or `harness.js`.
 - Do not modify `validateActiveContextMarkdown`; GitNexus reports it as HIGH risk (2 direct callers, 4 affected processes). This feature only calls the existing validator.
 - Do not modify `.evo-lite/active_context.md`, planning state, product source, dependencies, or the frozen design spec.
 
@@ -238,7 +240,7 @@ console.log('2e. Testing context edit service contract ...');
 Run:
 
 ```bash
-node ./.evo-lite/cli/test.js integration
+node ./.evo-lite/cli/test.js
 ```
 
 Expected: non-zero with `svc.editBacklogTask is not a function`. If it fails earlier for dependency resolution, restore the documented test environment first; do not change the test contract to bypass the missing function.
@@ -337,7 +339,7 @@ Add `editBacklogTask` to the exported object immediately after `addTask` so both
 Run:
 
 ```bash
-node ./.evo-lite/cli/test.js integration
+node ./.evo-lite/cli/test.js
 ```
 
 Expected: exit `0`, including `✅ 2e context edit service contract passed`.
@@ -440,7 +442,7 @@ console.log('3e. Testing context edit CLI surface ...');
 Run:
 
 ```bash
-node ./.evo-lite/cli/test.js integration
+node ./.evo-lite/cli/test.js
 ```
 
 Expected: non-zero because `context edit` is not registered. The successful nested case should report an unknown command or argument error; do not weaken the assertion.
@@ -473,7 +475,7 @@ contextCommand.command('edit <id> <new-text>')
 Run:
 
 ```bash
-node ./.evo-lite/cli/test.js integration
+node ./.evo-lite/cli/test.js
 ```
 
 Expected: exit `0`, including both `✅ 2e context edit service contract passed` and `✅ 3e context edit CLI surface passed`.
@@ -534,7 +536,6 @@ This gate creates no commit. Run it after Task 2 is committed and before request
 git status --short
 git diff --check f46ec8a899c86b73bef7ac146e873aab6306c1d7..HEAD
 git diff --name-only f46ec8a899c86b73bef7ac146e873aab6306c1d7..HEAD
-node ./.evo-lite/cli/test.js integration
 node ./.evo-lite/cli/test.js governance
 node ./.evo-lite/cli/test.js
 node ./.evo-lite/cli/memory.js context validate
