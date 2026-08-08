@@ -1769,8 +1769,8 @@ async function runGovernanceTests() {
         }
 
         // ---------------------------------------------------------------------
-        // T-temp-lifecycle (R1–R11) — the test process owns every temp root it
-        // creates.
+        // T-temp-lifecycle (R1–R14) — the test process owns every temp root it
+        // creates, and never operates on a runtime it did not bootstrap.
         //
         // Measured before this existed: one full `npm test` left 162 directories
         // behind — 105 from createTempRuntimeRoot and 57 from direct
@@ -1788,8 +1788,11 @@ async function runGovernanceTests() {
         // Anti-vacuity throughout: "the directory is gone" is trivially true
         // when it was never created, so every removal case first asserts the
         // directory existed.
+        //
+        // R12–R14 cover the other failure mode entirely: leaving no residue
+        // while operating on the wrong runtime. See the block above them.
         // ---------------------------------------------------------------------
-        console.log('T-temp-lifecycle. Testing temp-root ownership, cleanup and crash reaping (R1–R11) ...');
+        console.log('T-temp-lifecycle. Testing temp-root ownership, cleanup, crash reaping and generation identity (R1–R14) ...');
         {
             const H = require(path.join(CLI_DIR, 'test', 'harness'));
             const rows = [];
@@ -2023,14 +2026,145 @@ async function runGovernanceTests() {
                 orphan.close();
             });
 
+            // -----------------------------------------------------------------
+            // R12–R14 — durable negative controls for the generation guard.
+            //
+            // R1–R11 cover resource residue, which only exposes isolation bugs
+            // that leave something behind. The guard exists for the other kind:
+            // a test that leaves no residue at all and still reads and writes
+            // ANOTHER runtime's database. It caught three such sites during
+            // development, and fixing them removed every remaining violation —
+            // so without these cases, deleting the generation check would leave
+            // the whole suite green.
+            // -----------------------------------------------------------------
+            const scoreAsync = async (id, fn) => {
+                try { await fn(); rows.push({ id, ok: true, detail: null }); } catch (e) {
+                    rows.push({ id, ok: false, detail: e && e.message ? e.message : String(e) });
+                }
+            };
+
+            // R12 — a handle from a discarded generation is REFUSED, and the
+            // refusal happens on property access, before the underlying module
+            // property is ever read.
+            await scoreAsync('R12', async () => {
+                const a = await bootstrapRuntime(createTempRuntimeRoot('gen-a-r12').runtimeRoot);
+                // Positive control: while current, the handle really does work.
+                const dbA = a.db.getDb();
+                dbA.exec('CREATE TABLE IF NOT EXISTS gen_probe (tag TEXT)');
+                dbA.prepare('INSERT INTO gen_probe (tag) VALUES (?)').run('ONLY_A');
+                assert.deepStrictEqual(dbA.prepare('SELECT tag FROM gen_probe').all().map(r => r.tag), ['ONLY_A'],
+                    'positive control: the handle must be usable while its generation is current');
+
+                const genBefore = H.currentCliGeneration();
+                const b = await bootstrapRuntime(createTempRuntimeRoot('gen-b-r12').runtimeRoot);
+                assert.ok(H.currentCliGeneration() > genBefore,
+                    'positive control: re-bootstrapping must advance the generation');
+                assert.notStrictEqual(a.generation, b.generation,
+                    'positive control: the two handles must belong to different generations');
+
+                assert.throws(() => { const fn = a.db.getDb; return fn; },
+                    (e) => e && e.code === 'STALE_TEST_RUNTIME_HANDLE',
+                    'a stale db handle must throw STALE_TEST_RUNTIME_HANDLE on access, not reopen silently');
+                assert.throws(() => { const fn = a.models.getActiveEngineInfo; return fn; },
+                    (e) => e && e.code === 'STALE_TEST_RUNTIME_HANDLE',
+                    'the guard must cover every handed-out handle, not only db');
+                // Without this, a guard that simply broke ALL handles would pass.
+                assert.strictEqual(typeof b.db.getDb, 'function',
+                    'positive control: the CURRENT generation must remain usable');
+            });
+
+            // R13 — the refusal must produce no side effect. A guard that opens
+            // the connection first and throws afterwards has already written to
+            // the wrong runtime by the time it complains.
+            await scoreAsync('R13', async () => {
+                const a = await bootstrapRuntime(createTempRuntimeRoot('gen-a-r13').runtimeRoot);
+                a.db.getDb();
+                const b = await bootstrapRuntime(createTempRuntimeRoot('gen-b-r13').runtimeRoot);
+
+                // A runtime root nobody has bootstrapped. getDbPath() resolves
+                // EVO_LITE_ROOT at CALL time, so a connection opened before the
+                // refusal would materialise memory.db right here.
+                const s = mkSandbox('r13');
+                const rootC = path.join(s.box, 'never-bootstrapped');
+                fs.mkdirSync(rootC, { recursive: true });
+                const dbC = path.join(rootC, 'memory.db');
+                assert.ok(!fs.existsSync(dbC), 'precondition: the unrelated runtime has no database yet');
+
+                const prevRoot = process.env.EVO_LITE_ROOT;
+                // An explicit EVO_LITE_DB_PATH from an earlier test would
+                // override EVO_LITE_ROOT and make this case measure nothing.
+                const prevDbPath = process.env.EVO_LITE_DB_PATH;
+                const rootsBefore = H.tempTracker.roots().length;
+                try {
+                    delete process.env.EVO_LITE_DB_PATH;
+                    process.env.EVO_LITE_ROOT = rootC;
+                    assert.throws(() => a.db.getDb(),
+                        (e) => e && e.code === 'STALE_TEST_RUNTIME_HANDLE',
+                        'the stale handle must still be refused under a changed ambient root');
+                    assert.ok(!fs.existsSync(dbC),
+                        'the refusal must precede any connection — opening first and throwing second still corrupts the other runtime');
+                    assert.strictEqual(H.tempTracker.roots().length, rootsBefore,
+                        'a refused call must not leave temp residue behind');
+
+                    // Anti-vacuity: prove the detector CAN fire. The current
+                    // handle, under the same ambient root, really does create it.
+                    b.db.closeDb();
+                    b.db.getDb();
+                    assert.ok(fs.existsSync(dbC),
+                        'positive control: a call that is NOT refused does create the database at the ambient root');
+                } finally {
+                    try { b.db.closeDb(); } catch (_) { /* still current generation */ }
+                    if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT;
+                    else process.env.EVO_LITE_ROOT = prevRoot;
+                    if (prevDbPath !== undefined) process.env.EVO_LITE_DB_PATH = prevDbPath;
+                }
+            });
+
+            // R14 — refusing is only half the contract. A fresh bootstrap must
+            // restore the ORIGINAL runtime's identity, or the recovery path
+            // silently hands the test a different database than it names.
+            await scoreAsync('R14', async () => {
+                const prevDbPath = process.env.EVO_LITE_DB_PATH;
+                delete process.env.EVO_LITE_DB_PATH;
+                try {
+                    const rootA = createTempRuntimeRoot('gen-a-r14').runtimeRoot;
+                    const rootB = createTempRuntimeRoot('gen-b-r14').runtimeRoot;
+
+                    const a = await bootstrapRuntime(rootA);
+                    const dbA = a.db.getDb();
+                    dbA.exec('CREATE TABLE IF NOT EXISTS gen_probe (tag TEXT)');
+                    dbA.prepare('INSERT INTO gen_probe (tag) VALUES (?)').run('ONLY_A');
+
+                    const b = await bootstrapRuntime(rootB);
+                    const dbB = b.db.getDb();
+                    dbB.exec('CREATE TABLE IF NOT EXISTS gen_probe (tag TEXT)');
+                    dbB.prepare('INSERT INTO gen_probe (tag) VALUES (?)').run('ONLY_B');
+                    assert.deepStrictEqual(dbB.prepare('SELECT tag FROM gen_probe').all().map(r => r.tag), ['ONLY_B'],
+                        'positive control: the two runtimes must be genuinely distinct databases');
+
+                    assert.throws(() => a.db.getDb(),
+                        (e) => e && e.code === 'STALE_TEST_RUNTIME_HANDLE',
+                        'the stale A handle must be refused rather than answering out of B');
+
+                    const a2 = await bootstrapRuntime(rootA);
+                    const tags = a2.db.getDb().prepare('SELECT tag FROM gen_probe').all().map(r => r.tag);
+                    assert.deepStrictEqual(tags, ['ONLY_A'],
+                        `a fresh bootstrap must restore A's own identity; got ${JSON.stringify(tags)}`);
+                    assert.ok(!tags.includes('ONLY_B'),
+                        'reading B\'s row through a handle the test calls A is exactly the silent corruption this guard exists to stop');
+                } finally {
+                    if (prevDbPath !== undefined) process.env.EVO_LITE_DB_PATH = prevDbPath;
+                }
+            });
+
             try {
                 const passed = rows.filter(r => r.ok).length;
-                console.log(`   R1–R11: ${passed}/${rows.length}`);
+                console.log(`   R1–R14: ${passed}/${rows.length}`);
                 for (const r of rows.filter(x => !x.ok)) console.log(`      ✗ ${r.id} — ${r.detail}`);
                 const failed = rows.filter(r => !r.ok);
                 assert.strictEqual(failed.length, 0,
                     `temp-root lifecycle matrix failed ${failed.length} case(s): ${failed.map(f => f.id).join(', ')}`);
-                console.log('✅ T-temp-lifecycle R1–R11 passed');
+                console.log('✅ T-temp-lifecycle R1–R14 passed');
             } finally {
                 for (const b of sandboxes) { try { fs.rmSync(b, { recursive: true, force: true }); } catch (_) { /* best effort */ } }
             }
