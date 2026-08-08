@@ -1,5 +1,7 @@
 'use strict';
 
+const { spawnSync } = require('child_process');
+
 const BEGIN = '<!-- EVO-LITE:PR-STATE:BEGIN -->';
 const END = '<!-- EVO-LITE:PR-STATE:END -->';
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -168,7 +170,7 @@ function normalizeChecks(run) {
     if (!run || typeof run !== 'object' || typeof run.status !== 'string') {
         fail('WORKFLOW_RUN_RESPONSE_INVALID', 'workflow run status is malformed');
     }
-    if ((run.status === 'queued' || run.status === 'in_progress') && run.conclusion === null) {
+    if (['requested', 'queued', 'waiting', 'pending', 'in_progress'].includes(run.status) && run.conclusion === null) {
         return 'pending';
     }
     if (run.status === 'completed' && typeof run.conclusion === 'string' && run.conclusion.length > 0) {
@@ -212,6 +214,319 @@ function createReport() {
     };
 }
 
+function createDefaultCommandRunner() {
+    return (executable, args, options = {}) => {
+        const result = spawnSync(executable, args, {
+            cwd: options.cwd,
+            encoding: 'utf8',
+            timeout: options.timeoutMs || 30000,
+            windowsHide: true,
+            shell: false,
+        });
+        return {
+            status: result.status,
+            stdout: result.stdout || '',
+            stderr: result.stderr || '',
+            error: result.error,
+            signal: result.signal,
+        };
+    };
+}
+
+function runText(runCommand, executable, args, options, errorCode) {
+    let result;
+    try {
+        result = runCommand(executable, args, options);
+    } catch (error) {
+        throw new PrStateError(errorCode, error && error.message ? error.message : `${executable} failed`);
+    }
+    if (!result || typeof result !== 'object') {
+        fail(errorCode, `${executable} returned no process result`);
+    }
+    if (result.error) {
+        fail(errorCode, result.error.message || `${executable} failed to start`);
+    }
+    if (result.signal) {
+        fail(errorCode, `${executable} terminated by signal ${result.signal}`);
+    }
+    if (result.status !== 0) {
+        const stderr = typeof result.stderr === 'string' ? result.stderr.trim() : '';
+        fail(errorCode, stderr || `${executable} exited with status ${result.status}`);
+    }
+    if (typeof result.stdout !== 'string') {
+        fail(errorCode, `${executable} returned malformed stdout`);
+    }
+    return result.stdout.trim();
+}
+
+function runJson(runCommand, executable, args, options, errorCode) {
+    const text = runText(runCommand, executable, args, options, errorCode);
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        fail(errorCode, `${executable} returned malformed JSON`);
+    }
+}
+
+function validateRepositoryShape(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || typeof value.nameWithOwner !== 'string'
+        || !/^[^/\s]+\/[^/\s]+$/.test(value.nameWithOwner)) {
+        fail('GIT_REPOSITORY_REQUIRED', 'GitHub repository identity is malformed');
+    }
+    return value.nameWithOwner;
+}
+
+function validatePrShape(value) {
+    const validSha = item => typeof item === 'string' && SHA_RE.test(item);
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !Number.isSafeInteger(value.number) || value.number < 1
+        || typeof value.html_url !== 'string' || value.html_url.length === 0
+        || typeof value.body !== 'string'
+        || typeof value.state !== 'string'
+        || typeof value.draft !== 'boolean'
+        || typeof value.merged !== 'boolean'
+        || !(value.merged_at === null || (typeof value.merged_at === 'string' && value.merged_at.length > 0))
+        || !value.base || typeof value.base !== 'object'
+        || typeof value.base.ref !== 'string' || !validSha(value.base.sha)
+        || !value.head || typeof value.head !== 'object'
+        || typeof value.head.ref !== 'string' || !validSha(value.head.sha)
+        || !Number.isSafeInteger(value.commits) || value.commits < 1
+        || !Number.isSafeInteger(value.changed_files) || value.changed_files < 0) {
+        fail('PR_RESPONSE_INVALID', 'pull request response is malformed or incomplete');
+    }
+    return value;
+}
+
+function validateWorkflowShape(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !Number.isSafeInteger(value.id) || value.id < 1
+        || typeof value.path !== 'string') {
+        fail('WORKFLOW_IDENTITY_INVALID', 'workflow response is malformed');
+    }
+    return value;
+}
+
+function validateRunShape(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !Number.isSafeInteger(value.id) || value.id < 1
+        || typeof value.event !== 'string'
+        || typeof value.head_sha !== 'string' || !SHA_RE.test(value.head_sha)
+        || typeof value.status !== 'string'
+        || !(value.conclusion === null || typeof value.conclusion === 'string')
+        || !Array.isArray(value.pull_requests)
+        || value.pull_requests.some(item => !item || !Number.isSafeInteger(item.number) || item.number < 1)) {
+        fail('WORKFLOW_RUN_RESPONSE_INVALID', 'workflow run response is malformed');
+    }
+    normalizeChecks(value);
+    return value;
+}
+
+function resolveRepository(runCommand, cwd) {
+    runText(runCommand, 'git', ['rev-parse', '--show-toplevel'], { cwd }, 'GIT_REPOSITORY_REQUIRED');
+    const value = runJson(
+        runCommand,
+        'gh',
+        ['repo', 'view', '--json', 'nameWithOwner'],
+        { cwd },
+        'GIT_REPOSITORY_REQUIRED'
+    );
+    return validateRepositoryShape(value);
+}
+
+function resolvePrNumber(prArg, repository, runCommand, cwd) {
+    if (prArg !== undefined && prArg !== null && prArg !== '') {
+        return validatePrNumber(prArg);
+    }
+    const branch = runText(
+        runCommand,
+        'git',
+        ['symbolic-ref', '--quiet', '--short', 'HEAD'],
+        { cwd },
+        'PR_RESOLUTION_FAILED'
+    );
+    if (!branch) fail('PR_RESOLUTION_FAILED', 'current HEAD is detached');
+    const value = runJson(
+        runCommand,
+        'gh',
+        ['pr', 'view', branch, '--repo', repository, '--json', 'number'],
+        { cwd },
+        'PR_RESOLUTION_FAILED'
+    );
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !Number.isSafeInteger(value.number)) {
+        fail('PR_RESOLUTION_FAILED', 'current branch does not resolve to exactly one pull request');
+    }
+    try {
+        return validatePrNumber(String(value.number));
+    } catch (error) {
+        fail('PR_RESOLUTION_FAILED', 'resolved pull request number is invalid');
+    }
+}
+
+function observeCore(pr) {
+    return {
+        base: pr.base.ref,
+        baseSha: pr.base.sha,
+        head: pr.head.ref,
+        headSha: pr.head.sha,
+        commits: pr.commits,
+        changedFiles: pr.changed_files,
+        phase: normalizePhase(pr),
+    };
+}
+
+function validateRunPage(value, expectedTotal) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !Number.isSafeInteger(value.total_count) || value.total_count < 0
+        || !Array.isArray(value.workflow_runs)
+        || (expectedTotal !== undefined && value.total_count !== expectedTotal)) {
+        fail('WORKFLOW_RUN_RESPONSE_INVALID', 'workflow run pagination response is inconsistent');
+    }
+    value.workflow_runs.forEach(validateRunShape);
+    return value;
+}
+
+function observeChecks({ repository, prNumber, headSha, runCommand, cwd }) {
+    const workflow = validateWorkflowShape(runJson(
+        runCommand,
+        'gh',
+        ['api', '--method', 'GET', `repos/${repository}/actions/workflows/release-gate.yml`],
+        { cwd },
+        'WORKFLOW_QUERY_FAILED'
+    ));
+    if (workflow.path !== '.github/workflows/release-gate.yml') {
+        fail('WORKFLOW_IDENTITY_INVALID', 'release-gate workflow path does not match the frozen identity');
+    }
+
+    let page = 1;
+    let totalCount;
+    let fetched = 0;
+    const runs = [];
+    while (totalCount === undefined || fetched < totalCount) {
+        const value = validateRunPage(runJson(
+            runCommand,
+            'gh',
+            [
+                'api', '--method', 'GET', `repos/${repository}/actions/workflows/${workflow.id}/runs`,
+                '-f', 'event=pull_request', '-f', `head_sha=${headSha}`,
+                '-f', 'per_page=100', '-f', `page=${page}`,
+            ],
+            { cwd },
+            'WORKFLOW_RUN_QUERY_FAILED'
+        ), totalCount);
+        if (totalCount === undefined) totalCount = value.total_count;
+        if (value.workflow_runs.length === 0 && fetched < totalCount) {
+            fail('WORKFLOW_RUN_RESPONSE_INVALID', 'workflow run pagination ended before total_count');
+        }
+        runs.push(...value.workflow_runs);
+        fetched += value.workflow_runs.length;
+        if (fetched > totalCount) {
+            fail('WORKFLOW_RUN_RESPONSE_INVALID', 'workflow run pagination exceeded total_count');
+        }
+        page += 1;
+    }
+
+    const matching = runs.filter(run =>
+        run.event === 'pull_request'
+        && run.head_sha === headSha
+        && run.pull_requests.some(item => item.number === prNumber)
+    );
+    const newest = matching.reduce((best, item) => !best || item.id > best.id ? item : best, null);
+    if (!newest) {
+        return {
+            checks: 'missing',
+            diagnostics: { workflowId: workflow.id, workflowPath: workflow.path },
+        };
+    }
+    return {
+        checks: normalizeChecks(newest),
+        diagnostics: {
+            workflowId: workflow.id,
+            workflowPath: workflow.path,
+            runId: newest.id,
+            runUrl: typeof newest.html_url === 'string' ? newest.html_url : null,
+            status: newest.status,
+            conclusion: newest.conclusion,
+            createdAt: typeof newest.created_at === 'string' ? newest.created_at : null,
+            updatedAt: typeof newest.updated_at === 'string' ? newest.updated_at : null,
+        },
+    };
+}
+
+function errorEntry(error) {
+    return {
+        code: error instanceof PrStateError ? error.code : 'PR_STATE_UNEXPECTED_ERROR',
+        message: error && error.message ? String(error.message) : 'unknown pr-state error',
+    };
+}
+
+function finalizeReport(report) {
+    report.result = report.errors.length > 0
+        ? 'error'
+        : report.findings.length > 0 ? 'drift' : 'pass';
+    return report;
+}
+
+function validatePrState(prArg, options = {}) {
+    const report = createReport();
+    const cwd = options.cwd || process.cwd();
+    const runCommand = options.runCommand || createDefaultCommandRunner();
+    let validatedPrArg = prArg;
+    try {
+        if (prArg !== undefined && prArg !== null && prArg !== '') {
+            validatedPrArg = String(validatePrNumber(prArg));
+        }
+        const repository = resolveRepository(runCommand, cwd);
+        const prNumber = resolvePrNumber(validatedPrArg, repository, runCommand, cwd);
+        const pr = validatePrShape(runJson(
+            runCommand,
+            'gh',
+            ['api', '--method', 'GET', `repos/${repository}/pulls/${prNumber}`],
+            { cwd },
+            'PR_QUERY_FAILED'
+        ));
+        if (pr.number !== prNumber) {
+            fail('PR_RESPONSE_INVALID', 'pull request response number does not match the target');
+        }
+        report.pr = { repository, number: prNumber, url: pr.html_url };
+        report.expected = parseExpectedBlock(pr.body, {
+            checkRefName(value) {
+                let result;
+                try {
+                    result = runCommand('git', ['check-ref-format', '--branch', value], { cwd });
+                } catch (error) {
+                    return false;
+                }
+                return Boolean(result && result.status === 0 && !result.error && !result.signal);
+            },
+        });
+        report.observed = observeCore(pr);
+        report.findings = compareExpectedObserved(report.expected, {
+            ...report.observed,
+            checks: report.expected.checks,
+        });
+
+        try {
+            const checks = observeChecks({
+                repository,
+                prNumber,
+                headSha: report.observed.headSha,
+                runCommand,
+                cwd,
+            });
+            report.observed.checks = checks.checks;
+            report.observed.diagnostics = checks.diagnostics;
+            report.findings = compareExpectedObserved(report.expected, report.observed);
+        } catch (error) {
+            report.errors.push(errorEntry(error));
+        }
+    } catch (error) {
+        report.errors.push(errorEntry(error));
+    }
+    return finalizeReport(report);
+}
+
+
 module.exports = {
     PrStateError,
     validatePrNumber,
@@ -220,4 +535,6 @@ module.exports = {
     normalizeChecks,
     compareExpectedObserved,
     createReport,
+    createDefaultCommandRunner,
+    validatePrState,
 };

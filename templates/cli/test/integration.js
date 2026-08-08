@@ -910,6 +910,231 @@ async function runIntegrationTests() {
             console.log('✅ PS1 pr-state expected-block primitives passed');
         }
 
+        console.log('PS2. Testing pr-state read-only acquisition ...');
+        {
+            const servicePath = path.join(TEMPLATE_CLI_DIR, 'pr-state.service.js');
+            delete require.cache[require.resolve(servicePath)];
+            const service = require(servicePath);
+            const SHA_BASE = '1111111111111111111111111111111111111111';
+            const SHA_HEAD = '2222222222222222222222222222222222222222';
+            const SHA_STALE = '3333333333333333333333333333333333333333';
+            const WORKFLOW_PATH = '.github/workflows/release-gate.yml';
+
+            const expectedBody = (overrides = {}) => {
+                const values = {
+                    schema: '1', base: 'main', baseSha: SHA_BASE,
+                    head: 'codex/feature', headSha: SHA_HEAD,
+                    commits: '3', changedFiles: '4', phase: 'draft', checks: 'success',
+                    ...overrides,
+                };
+                return [
+                    '<!-- EVO-LITE:PR-STATE:BEGIN -->',
+                    `schema: ${values.schema}`, `base: ${values.base}`, `baseSha: ${values.baseSha}`,
+                    `head: ${values.head}`, `headSha: ${values.headSha}`,
+                    `commits: ${values.commits}`, `changedFiles: ${values.changedFiles}`,
+                    `phase: ${values.phase}`, `checks: ${values.checks}`,
+                    '<!-- EVO-LITE:PR-STATE:END -->',
+                ].join('\n');
+            };
+            const makePr = (overrides = {}) => ({
+                number: 31,
+                html_url: 'https://github.com/uwence/create-evo-lite/pull/31',
+                body: expectedBody(),
+                state: 'open',
+                draft: true,
+                merged: false,
+                merged_at: null,
+                base: { ref: 'main', sha: SHA_BASE },
+                head: { ref: 'codex/feature', sha: SHA_HEAD },
+                commits: 3,
+                changed_files: 4,
+                mergeable: true,
+                ...overrides,
+            });
+            const makeRun = (id, status, conclusion, overrides = {}) => ({
+                id,
+                event: 'pull_request',
+                head_sha: SHA_HEAD,
+                status,
+                conclusion,
+                pull_requests: [{ number: 31 }],
+                html_url: `https://github.com/uwence/create-evo-lite/actions/runs/${id}`,
+                created_at: '2026-08-08T00:00:00Z',
+                updated_at: '2026-08-08T00:01:00Z',
+                ...overrides,
+            });
+            const okJson = value => ({ status: 0, stdout: JSON.stringify(value), stderr: '' });
+            const okText = value => ({ status: 0, stdout: value, stderr: '' });
+            const failed = message => ({ status: 1, stdout: '', stderr: message });
+
+            function runValidation(options = {}) {
+                const calls = [];
+                const pr = options.pr || makePr();
+                const workflow = options.workflow || { id: 77, path: WORKFLOW_PATH, name: 'release-gate' };
+                const pages = options.pages || [{
+                    total_count: 1,
+                    workflow_runs: [makeRun(100, 'completed', 'success')],
+                }];
+                const handlers = options.handlers || {};
+                const runCommand = (executable, args) => {
+                    calls.push({ executable, args: [...args] });
+                    const use = (name, fallback) => handlers[name]
+                        ? handlers[name]({ executable, args: [...args], calls })
+                        : fallback;
+                    if (executable === 'git' && args.join(' ') === 'rev-parse --show-toplevel') {
+                        return use('gitRoot', okText('C:/tmp/repo\n'));
+                    }
+                    if (executable === 'git' && args.join(' ') === 'symbolic-ref --quiet --short HEAD') {
+                        return use('symbolicRef', okText('codex/feature\n'));
+                    }
+                    if (executable === 'git' && args[0] === 'check-ref-format') {
+                        return use('checkRef', okText(`${args[2]}\n`));
+                    }
+                    if (executable === 'gh' && args.join(' ') === 'repo view --json nameWithOwner') {
+                        return use('repository', okJson({ nameWithOwner: 'uwence/create-evo-lite' }));
+                    }
+                    if (executable === 'gh' && args[0] === 'pr' && args[1] === 'view') {
+                        return use('prResolution', okJson({ number: 31 }));
+                    }
+                    if (executable === 'gh' && args[0] === 'api' && args.includes('repos/uwence/create-evo-lite/pulls/31')) {
+                        return use('prQuery', okJson(pr));
+                    }
+                    if (executable === 'gh' && args[0] === 'api' && args.includes(`repos/uwence/create-evo-lite/actions/workflows/release-gate.yml`)) {
+                        return use('workflow', okJson(workflow));
+                    }
+                    if (executable === 'gh' && args[0] === 'api' && args.includes('repos/uwence/create-evo-lite/actions/workflows/77/runs')) {
+                        const pageArg = args.find(value => /^page=/.test(value));
+                        const page = Number(pageArg.split('=')[1]);
+                        return use('runs', okJson(pages[page - 1] || { total_count: 0, workflow_runs: [] }));
+                    }
+                    throw new Error(`unexpected command: ${executable} ${args.join(' ')}`);
+                };
+                const report = service.validatePrState(options.prArg === undefined ? '31' : options.prArg, {
+                    cwd: 'C:/tmp/repo',
+                    runCommand,
+                });
+                return { report, calls };
+            }
+
+            const pass = runValidation();
+            assert.strictEqual(pass.report.result, 'pass');
+            assert.deepStrictEqual(pass.report.findings, []);
+            assert.deepStrictEqual(pass.report.errors, []);
+            assert.ok(pass.calls.every(call => ['git', 'gh'].includes(call.executable)));
+            assert.ok(pass.calls.every(call => !/\b(edit|ready|merge|POST|PATCH|PUT|DELETE)\b/.test(call.args.join(' '))));
+
+            const omitted = runValidation({ prArg: null });
+            assert.strictEqual(omitted.report.result, 'pass');
+            assert.ok(omitted.calls.some(call => call.executable === 'git' && call.args[0] === 'symbolic-ref'));
+            assert.ok(omitted.calls.some(call => call.executable === 'gh' && call.args.slice(0, 3).join(' ') === 'pr view codex/feature'));
+            assert.ok(!omitted.calls.some(call => call.executable === 'gh' && call.args[0] === 'pr' && call.args[1] === 'list'));
+
+            for (const [label, handler] of [
+                ['detached', () => failed('detached HEAD')],
+                ['no PR', () => failed('no pull requests found')],
+                ['ambiguous', () => okJson([{ number: 31 }, { number: 32 }])],
+            ]) {
+                const handlers = label === 'detached'
+                    ? { symbolicRef: handler }
+                    : { prResolution: handler };
+                const result = runValidation({ prArg: null, handlers });
+                assert.strictEqual(result.report.result, 'error', label);
+                assert.ok(result.report.errors.some(error => error.code === 'PR_RESOLUTION_FAILED'), label);
+            }
+
+            const stale = runValidation({ pr: makePr({ body: expectedBody({ headSha: SHA_STALE }) }) });
+            assert.strictEqual(stale.report.result, 'drift');
+            assert.ok(stale.report.findings.some(item => item.code === 'HEAD_SHA_DRIFT'));
+            const staleRunCalls = stale.calls.filter(call => call.args.some(value => /actions\/workflows\/77\/runs/.test(value)));
+            assert.ok(staleRunCalls.every(call => call.args.includes(`head_sha=${SHA_HEAD}`)));
+            assert.ok(staleRunCalls.every(call => !call.args.includes(`head_sha=${SHA_STALE}`)));
+
+            const identityFiltered = runValidation({
+                pages: [{
+                    total_count: 4,
+                    workflow_runs: [
+                        makeRun(120, 'completed', 'success', { pull_requests: [{ number: 99 }] }),
+                        makeRun(121, 'completed', 'success', { event: 'push' }),
+                        makeRun(122, 'completed', 'success', { head_sha: SHA_STALE }),
+                        makeRun(123, 'completed', 'success'),
+                    ],
+                }],
+            });
+            assert.strictEqual(identityFiltered.report.result, 'pass');
+            assert.strictEqual(identityFiltered.report.observed.diagnostics.runId, 123);
+
+            const sameTimestamp = '2026-08-08T00:00:00Z';
+            const newerPending = runValidation({
+                pages: [{
+                    total_count: 2,
+                    workflow_runs: [
+                        makeRun(200, 'completed', 'success', { created_at: sameTimestamp, updated_at: sameTimestamp }),
+                        makeRun(201, 'in_progress', null, { created_at: sameTimestamp, updated_at: sameTimestamp }),
+                    ],
+                }],
+            });
+            assert.strictEqual(newerPending.report.result, 'drift');
+            assert.deepStrictEqual(newerPending.report.findings.map(item => item.code), ['CHECKS_PENDING']);
+            assert.strictEqual(newerPending.report.observed.diagnostics.runId, 201);
+
+            const newerFailed = runValidation({
+                pages: [{
+                    total_count: 2,
+                    workflow_runs: [
+                        makeRun(301, 'completed', 'failure'),
+                        makeRun(300, 'completed', 'success'),
+                    ],
+                }],
+            });
+            assert.deepStrictEqual(newerFailed.report.findings.map(item => item.code), ['CHECKS_FAILED']);
+            assert.strictEqual(newerFailed.report.observed.diagnostics.runId, 301);
+
+            const firstPage = Array.from({ length: 100 }, (_, index) =>
+                makeRun(400 + index, 'completed', 'success', { pull_requests: [{ number: 99 }] })
+            );
+            const paginated = runValidation({
+                pages: [
+                    { total_count: 101, workflow_runs: firstPage },
+                    { total_count: 101, workflow_runs: [makeRun(999, 'completed', 'success')] },
+                ],
+            });
+            assert.strictEqual(paginated.report.result, 'pass');
+            assert.strictEqual(paginated.report.observed.diagnostics.runId, 999);
+            assert.strictEqual(
+                paginated.calls.filter(call => call.args.some(value => /actions\/workflows\/77\/runs/.test(value))).length,
+                2
+            );
+
+            const missing = runValidation({
+                pages: [{ total_count: 1, workflow_runs: [makeRun(500, 'completed', 'success', { event: 'push' })] }],
+            });
+            assert.strictEqual(missing.report.result, 'drift');
+            assert.deepStrictEqual(missing.report.findings.map(item => item.code), ['CHECKS_MISSING']);
+
+            const badWorkflow = runValidation({ workflow: { id: 77, path: '.github/workflows/other.yml' } });
+            assert.strictEqual(badWorkflow.report.result, 'error');
+            assert.ok(badWorkflow.report.errors.some(error => error.code === 'WORKFLOW_IDENTITY_INVALID'));
+
+            const prFailure = runValidation({ handlers: { prQuery: () => failed('HTTP 403') } });
+            assert.strictEqual(prFailure.report.result, 'error');
+            assert.ok(prFailure.report.errors.some(error => error.code === 'PR_QUERY_FAILED'));
+            assert.ok(!prFailure.report.findings.some(item => item.code === 'CHECKS_MISSING'));
+
+            const lateFailure = runValidation({
+                pr: makePr({ body: expectedBody({ headSha: SHA_STALE }) }),
+                handlers: { runs: () => failed('network timeout') },
+            });
+            assert.strictEqual(lateFailure.report.result, 'error');
+            assert.ok(lateFailure.report.findings.some(item => item.code === 'HEAD_SHA_DRIFT'));
+            assert.ok(lateFailure.report.errors.some(error => error.code === 'WORKFLOW_RUN_QUERY_FAILED'));
+            assert.ok(!lateFailure.report.findings.some(item => item.code === 'CHECKS_MISSING'));
+
+            for (const status of ['requested', 'queued', 'waiting', 'pending', 'in_progress']) {
+                assert.strictEqual(service.normalizeChecks({ status, conclusion: null }), 'pending', status);
+            }
+            console.log('✅ PS2 pr-state read-only acquisition passed');
+        }
+
         console.log('2s. Testing trajectory summary folds whitespace before truncating ...');
         {
             // A trajectory entry is a single anchor line. Truncating the archive body by
