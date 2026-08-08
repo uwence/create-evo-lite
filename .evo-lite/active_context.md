@@ -3,17 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: a5b1fa8641110db29f24a5e1b9af906039ff2755
-> upstreamSha: a5b1fa8641110db29f24a5e1b9af906039ff2755
+> headSha: 364505aafcd44747b70d7a228d5edf99a9d71906
+> upstreamSha: 364505aafcd44747b70d7a228d5edf99a9d71906
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-08-08T06:58:15.268Z
+> focusUpdatedAt: 2026-08-08T11:04:54.520Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[active-context-resync] main@a5b1fa durable reality aligned: PR #29 and [test-temp-root-lifecycle-cleanup] are CLOSED; no corrective follow-up and reopen NOT AUTHORIZED. NEXT candidate is [backlog-edit-cli-gap] design freeze only, with implementation not yet authorized. [size-exceeded-warning] remains QUEUED / CONTRACT; [attp-hive-rollout] remains BLOCKED / SEPARATE SCOPE and is not the current NEXT.
+[backlog-edit-cli-gap] CLOSED at main@364505aafcd44747b70d7a228d5edf99a9d71906 via PR #31 ordinary merge commit, with post-merge release-gate #242 6/6 PASS. No corrective follow-up or reopen authorized. No new NEXT scope is authorized by this resync. [size-exceeded-warning] remains QUEUED / CONTRACT. [attp-hive-rollout] remains BLOCKED / SEPARATE SCOPE.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -26,6 +26,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [364505a] 2026-08-08 BacklogEditCliGapClosure: PR #31 merged by ordinary two-parent merge at main@364505aafcd44747b70d7a228d5edf99a9d71906 with rev
 - [a5b1fa8] 2026-08-08 TestTempRootLifecycleClosure: PR #29 merged by ordinary two-parent merge at main@a5b1fa8641110db29f24a5e1b9af906039ff2755, with re
 - [78a792e] 2026-08-07 ZvecWinUnicodeContainmentClosure: [zvec-win-unicode-containment] P0 / release-blocker 收口。AC1-AC7 全部交付并合入 main@78a792e。 问题：Windows 上部分非
 - [6780911] 2026-08-03 MemoryLockWinCimSnapshotReliabilityClosure: Phase 3A 已通过 PR #14 合入 main@d48108a。实现 getProcessSnapshotResult 结构化分类、兼容 wrapper、两个生产调用点 fail-closed
@@ -35,7 +36,6 @@
 - [c862181] 2026-07-31 SpecPortfolioAgingDisposition: 将 spec:provider-first-code-perception-foundation 从 adopted 调整为 parked，保留 umbrella 与 spawned-from 关系。
 - [ee98661] 2026-07-31 Zvec06CorrectnessClosure: [zvec-06-upgrade] 收口。议题由「功能升级」重分类为「P0 现存正确性缺陷修复」——原立项理由(0.5.0 无 readOnly、reader/writer 拆分随升级落地)被同版重测
 - [b181245] 2026-07-28 feature-completion: [c482] Wiki UX debt closed across three phases. 32911e0 wraps the architecture SVG in a natural-widt
-- [c466344] 2026-07-28 bug-fix: [57b0] trajectory entry single-line invariant closed. de352ec folds details before truncation; c4663
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
