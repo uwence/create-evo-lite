@@ -41,7 +41,7 @@ The rejected probe leaves `.evo-lite/active_context.md` byte-identical.
 - Reuse the existing backlog ID grammar and case-insensitive resolution semantics.
 - Replace only the text payload of one existing pending backlog item.
 - Preserve the original Markdown bytes outside the payload span.
-- Fail closed before writing for invalid, missing, ambiguous, or non-pending targets.
+- Fail closed before writing for invalid input, missing/ambiguous/non-pending targets, or a structurally invalid candidate document.
 - Define identical-text edits as successful no-ops with no file write and no audit event.
 - Keep live/template implementations and tests byte-equivalent when implementation is later authorized.
 
@@ -102,7 +102,7 @@ Validation order is significant:
 
 The newline check occurs before `trim()` so leading or trailing line breaks cannot be silently removed and accepted.
 
-Ordinary square brackets, Chinese text, punctuation, and quotes are allowed payload bytes. For example:
+Ordinary square brackets, Chinese text, punctuation, and quotes are allowed payload bytes. Opaque payload handling does not exempt the resulting document from the existing active-context structural contract: after byte-surgical construction, the complete candidate document must pass `validateActiveContextMarkdown()` before any write. For example:
 
 ```text
 context edit 3d78 "[BLOCKED] 等待 host contract"
@@ -121,7 +121,9 @@ produces a target line shaped as:
 All validation and target resolution must finish before the first filesystem write. The frozen evaluation order is:
 
 ```text
-validate raw newText newline
+read original active_context
+→ validate original with validateActiveContextMarkdown
+→ validate raw newText newline
 → trim / non-empty
 → validate id syntax
 → scan ALL backlog IDs
@@ -129,7 +131,11 @@ validate raw newText newline
 → >1 match = ambiguous
 → unique but checked = not pending
 → compare current payload for no-op
-→ byte-surgical replacement
+→ identical = success no-op; different = derive byte-surgical candidateMarkdown
+→ validate candidateMarkdown with validateActiveContextMarkdown
+→ invalid candidate = fail closed
+→ one write
+→ CONTEXT_EDIT
 ```
 
 Errors must remain distinguishable through stable message fragments:
@@ -142,8 +148,9 @@ Errors must remain distinguishable through stable message fragments:
 | unique checked target | `not pending` |
 | empty or whitespace-only text | `new-text` and `empty` |
 | raw CR or LF present | `new-text` and `single-line` |
+| original or candidate document fails structural validation | `active_context` and `invalid` |
 
-Every validation, resolution, ambiguity, or pending-state error returns non-zero through the existing CLI error path. These fail-closed outcomes must not write `active_context.md` and must not append a `CONTEXT_EDIT` event.
+Every validation, resolution, ambiguity, pending-state, or candidate-structure error returns non-zero through the existing CLI error path. These fail-closed outcomes must not write `active_context.md` and must not append a `CONTEXT_EDIT` event.
 
 ## 6. Byte-Surgical Mutation Contract
 
@@ -166,6 +173,8 @@ original[0:payloadStart]
 + original[payloadEnd:end]
 ```
 
+Construction alone does not authorize the write. The complete `candidateMarkdown` must then pass the existing `validateActiveContextMarkdown(candidateMarkdown)` validator. A rejected candidate is discarded without writing or auditing. This deliberately relies on the canonical whole-document validator instead of maintaining an edit-specific blacklist of reserved marker strings.
+
 This preserves, byte for byte:
 
 - the target line prefix;
@@ -183,11 +192,13 @@ The only permitted byte delta for a changed edit is the target payload span.
 
 An editable line must have an existing payload span after the recognized checkbox/ID prefix and its separator. A structurally malformed line must not be repaired opportunistically by `edit`; it fails through the existing context-structure validation path or a closed edit-specific error before writing.
 
-### 6.3 Atomicity and audit
+### 6.3 Write ordering and audit
 
 After all validation succeeds, the implementation computes the complete final document before issuing exactly one call through the existing synchronous active-context write path. Only after that write succeeds may it call the existing best-effort `appendLog` path once with a `CONTEXT_EDIT` event describing the resulting target line. Because `appendLog` absorbs its own logging errors by existing contract, an audit sink problem cannot turn an already-applied edit into a reported command failure.
 
-If validation, target resolution, ambiguity detection, or pending-state validation fails, the command must not report success; the file remains byte-identical and no edit audit event is attempted. If the context write itself throws, that error propagates and no edit audit event is attempted.
+The byte-identical fail-closed guarantee applies to every failure before the active-context write begins, including original/candidate structural validation. If any such check fails, the command must not report success; the file remains byte-identical and no edit audit event is attempted.
+
+This feature does not introduce a new crash-atomic replacement or rollback contract for `active_context.md`. One synchronous `fs.writeFileSync()` call is a write-ordering boundary, not proof of crash-atomic filesystem replacement. If the context write itself throws, that error propagates and no edit audit event is attempted; filesystem write durability remains the existing context-write contract.
 
 ## 7. Identical-Text No-Op
 
@@ -206,6 +217,7 @@ When implementation is separately authorized, responsibility is divided as follo
 
 ### Service
 
+- validate the original document with `validateActiveContextMarkdown()` before interpreting it;
 - validate raw newline and normalized text rules;
 - validate the ID with the existing grammar;
 - locate BACKLOG offsets in the original document;
@@ -213,6 +225,7 @@ When implementation is separately authorized, responsibility is divided as follo
 - enforce ambiguity before pending-state checks;
 - locate the exact payload span;
 - recognize identical-text no-op;
+- build and structurally validate the complete candidate document before writing;
 - perform the single surgical write and changed-edit audit.
 
 ### CLI
@@ -226,7 +239,7 @@ No generic section-edit abstraction is introduced.
 
 ## 9. Acceptance Matrix
 
-Each failure test must hash or otherwise compare `active_context.md` before and after the command and prove byte identity. Success tests must compare complete file bytes, not only parsed values.
+Each failure test must compute the SHA-256 of `active_context.md` before and after the command and prove equality. Success tests must compare complete file bytes, not only parsed values.
 
 | Case | Input / fixture | Expected result | Byte-level assertion |
 | --- | --- | --- | --- |
@@ -237,10 +250,13 @@ Each failure test must hash or otherwise compare `active_context.md` before and 
 | Duplicate pending IDs | `[abc]` and `[ABC]`, both pending | non-zero, ambiguous | whole file identical |
 | Duplicate mixed status | pending `[abc]` and checked `[ABC]` | non-zero, ambiguous before pending check | whole file identical |
 | Checked-only target | one checked matching ID | non-zero, `not pending` | whole file identical |
+| Invalid original structure | original document already violates the active-context anchor contract | non-zero before input resolution; no audit | whole file identical, SHA-256 unchanged |
 | Empty text | `""` or whitespace only | non-zero, empty-text error | whole file identical |
 | Raw multiline | CR, LF, or CRLF anywhere in raw input | non-zero, single-line error before trim | whole file identical |
 | Opaque payload | `[]`, Chinese, punctuation, and quotes | success | payload preserved literally; no ID reinterpretation |
 | Same text | trimmed input equals current payload | success no-op; no audit | whole file identical, including metadata |
+| Reserved BACKLOG anchor injection | `waiting <!-- END_BACKLOG -->` | non-zero, candidate structurally invalid; no audit | whole file identical, SHA-256 unchanged |
+| Cross-section anchor injection | `waiting <!-- BEGIN_META -->` | non-zero, candidate structurally invalid; no audit | whole file identical, SHA-256 unchanged |
 | Line ending preservation | LF and CRLF fixtures | success | original target EOL and all other bytes preserved |
 | Surface rejection | top-level alias, `--content`, `--file`, or extra arguments | parser rejection | whole file identical |
 
@@ -289,6 +305,8 @@ Spec-level review must confirm:
 - the raw-newline-before-trim rule is unambiguous;
 - duplicate detection covers all checked and pending IDs before status validation;
 - offset-based replacement preserves every non-payload byte;
+- the original and complete candidate documents pass the canonical structural validator before mutation;
+- reserved same-section and cross-section anchor injections fail before writing or auditing;
 - identical text is a write-free and audit-free success;
 - error cases prove byte identity;
 - the expected implementation surface remains limited to the three live/template pairs.
