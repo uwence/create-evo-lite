@@ -1277,6 +1277,53 @@ async function runIntegrationTests() {
             'top-level add alias no longer parses correctly'
         );
 
+        console.log('3e. Testing context edit CLI surface ...');
+        {
+            const cliRuntime = createTempRuntimeRoot('backlog-edit-cli');
+            const contextPath = path.join(cliRuntime.runtimeRoot, 'active_context.md');
+            const initial = fs.readFileSync(contextPath, 'utf8').replace(
+                /<!-- BEGIN_BACKLOG -->[\s\S]*?<!-- END_BACKLOG -->/,
+                '<!-- BEGIN_BACKLOG -->\n- [ ] [Cli1] before CLI edit\n<!-- END_BACKLOG -->'
+            );
+            fs.writeFileSync(contextPath, initial, 'utf8');
+            const cliEnv = {
+                ...process.env,
+                EVO_LITE_ROOT: cliRuntime.runtimeRoot,
+                EVO_LITE_CACHE_DIR: SHARED_CACHE_DIR,
+                EVO_LITE_SKIP_GIT_GUARD: '1',
+                EVO_LITE_MEMORY_ENGINE: 'sqlite-fts5-trigram',
+            };
+            const spawnCli = (args, input) => childProcess.spawnSync(
+                process.execPath,
+                [path.join(CLI_DIR, 'memory.js'), ...args],
+                { cwd: cliRuntime.workspaceRoot, env: cliEnv, encoding: 'utf8', input }
+            );
+
+            const success = spawnCli(['context', 'edit', 'cli1', '[BLOCKED] CLI replacement']);
+            assert.strictEqual(success.status, 0, `${success.stdout}\n${success.stderr}`);
+            assert.ok(
+                fs.readFileSync(contextPath, 'utf8').includes('- [ ] [Cli1] [BLOCKED] CLI replacement'),
+                'nested context edit did not persist the replacement'
+            );
+
+            const unchanged = fs.readFileSync(contextPath);
+            const rejected = [
+                { args: ['edit', 'cli1', 'alias'], label: 'top-level alias' },
+                { args: ['context', 'edit', 'cli1', 'value', '--content', 'other'], label: '--content' },
+                { args: ['context', 'edit', 'cli1', 'value', '--file', 'task.md'], label: '--file' },
+                { args: ['context', 'edit', 'cli1', 'one', 'two'], label: 'extra/batch argument' },
+            ];
+            for (const testCase of rejected) {
+                const result = spawnCli(testCase.args);
+                assert.notStrictEqual(result.status, 0, `${testCase.label} must be rejected`);
+                assert.deepStrictEqual(fs.readFileSync(contextPath), unchanged, `${testCase.label} mutated active_context`);
+            }
+            const stdinOnly = spawnCli(['context', 'edit', 'cli1'], 'stdin replacement');
+            assert.notStrictEqual(stdinOnly.status, 0, 'stdin must not satisfy missing <new-text>');
+            assert.deepStrictEqual(fs.readFileSync(contextPath), unchanged, 'stdin rejection mutated active_context');
+            console.log('✅ 3e context edit CLI surface passed');
+        }
+
         console.log('3a. Testing initializer blocks 1.4.9-era runtime but allows 2.x hot update ...');
         const legacyInitRoot = createLegacyInitProject('blocked');
         const legacyInitResult = await runInitializer(legacyInitRoot);
