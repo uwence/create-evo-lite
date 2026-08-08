@@ -57,10 +57,18 @@ async function runTests() {
 
 // Reap what a previous CRASHED run abandoned, by exact recorded path. Never a
 // wildcard sweep: a concurrent run's directories must survive.
+// A refused or failed reap is exactly what a silent catch hides, so the
+// outcome is printed — including the safety refusals, which are the ones that
+// would otherwise look identical to "there was nothing to recover".
 try {
-    const reaped = harness.reapDeadOwners();
-    if (reaped.reaped.length) console.log(`🧹 reaped ${reaped.reaped.length} temp root(s) from a previous run`);
-} catch (_) { /* recovery is best-effort; it must never block the suite */ }
+    for (const line of harness.reportReapOutcome(harness.reapDeadOwners()).messages) {
+        console.log(line);
+    }
+} catch (err) {
+    // Recovery is best-effort and must never block the suite — but failing to
+    // even attempt it is still reported rather than swallowed.
+    console.log(`⚠️ previous-run temp recovery could not run: ${err && err.message ? err.message : err}`);
+}
 
 let primaryError = null;
 runTests()

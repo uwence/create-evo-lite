@@ -112,8 +112,21 @@ function createTempRootTracker(options = {}) {
                     result.failed.push({ path: root, error: err && err.message ? err.message : String(err) });
                 }
             }
+            // A cleanup that leaves an owned root behind must NOT destroy the
+            // record of it. The next run reaps by EXACT recorded path, so a
+            // deleted registry turns that residue into something no later run
+            // can attribute or remove — hard-failing and staying recoverable are
+            // not alternatives. Shrink to exactly what is still outstanding, so
+            // a root that really was removed is never re-claimed.
+            const remaining = result.failed.map(f => f.path)
+                .concat(result.skipped.map(s => s.path));
             roots.length = 0;
-            try { fs.unlinkSync(registryPath); } catch (_) { /* already gone */ }
+            if (remaining.length) {
+                roots.push(...remaining);
+                persist();
+            } else {
+                try { fs.unlinkSync(registryPath); } catch (_) { /* already gone */ }
+            }
             return result;
         },
     };
@@ -173,6 +186,25 @@ function reapDeadOwners(options = {}) {
         if (allHandled) { try { fs.unlinkSync(file); } catch (_) { /* already gone */ } }
     }
     return result;
+}
+
+// Startup recovery has to be visible. reapDeadOwners already refuses an
+// out-of-tree path and records a malformed registry, but "refused AND reported"
+// is only true if something actually prints it — a silent caller makes the
+// refusal indistinguishable from nothing having happened.
+//
+// A live owner is the ordinary concurrent-run case and stays quiet: reporting it
+// every run is noise that would train the reader to ignore this channel.
+function reportReapOutcome(result = {}) {
+    const messages = [];
+    const reaped = Array.isArray(result.reaped) ? result.reaped : [];
+    const failed = Array.isArray(result.failed) ? result.failed : [];
+    const unsafe = (Array.isArray(result.skipped) ? result.skipped : [])
+        .filter(s => s && s.reason !== 'owner still alive');
+    if (reaped.length) messages.push(`🧹 reaped ${reaped.length} temp root(s) from a previous run`);
+    for (const f of failed) messages.push(`⚠️ could not reap ${f.path}: ${f.error}`);
+    for (const s of unsafe) messages.push(`⚠️ refused to reap ${s.path}: ${s.reason}`);
+    return { messages, ok: failed.length === 0 && unsafe.length === 0 };
 }
 
 // Failure precedence: a cleanup failure must be reported, and must never
@@ -672,7 +704,7 @@ module.exports = {
     readNdjson, createLegacyInitProject, createModernInitProject,
     resetCliModuleCache, loadCli, bootstrapRuntime, captureConsole, withPatchedExecFileSync,
     IS_CHILD_RUNTIME, loadContextTemplate, EMBEDDED_CONTEXT_FIXTURE,
-    createTempRootTracker, reapDeadOwners, reportTempCleanup, tempTracker,
+    createTempRootTracker, reapDeadOwners, reportTempCleanup, reportReapOutcome, tempTracker,
     currentCliGeneration: () => cliGeneration,
     quiesceSharedResources,
 };

@@ -1769,7 +1769,7 @@ async function runGovernanceTests() {
         }
 
         // ---------------------------------------------------------------------
-        // T-temp-lifecycle (R1–R14) — the test process owns every temp root it
+        // T-temp-lifecycle (R1–R16) — the test process owns every temp root it
         // creates, and never operates on a runtime it did not bootstrap.
         //
         // Measured before this existed: one full `npm test` left 162 directories
@@ -1790,9 +1790,11 @@ async function runGovernanceTests() {
         // directory existed.
         //
         // R12–R14 cover the other failure mode entirely: leaving no residue
-        // while operating on the wrong runtime. See the block above them.
+        // while operating on the wrong runtime. R15–R16 cover the recovery path
+        // itself: residue that outlives a failed cleanup must stay attributable
+        // and every unsafe refusal must reach the operator. See each block.
         // ---------------------------------------------------------------------
-        console.log('T-temp-lifecycle. Testing temp-root ownership, cleanup, crash reaping and generation identity (R1–R14) ...');
+        console.log('T-temp-lifecycle. Testing temp-root ownership, cleanup, crash reaping and generation identity (R1–R16) ...');
         {
             const H = require(path.join(CLI_DIR, 'test', 'harness'));
             const rows = [];
@@ -2157,14 +2159,91 @@ async function runGovernanceTests() {
                 }
             });
 
+            // R15 — hard-failing and staying recoverable are not alternatives.
+            // cleanupAll used to delete the owner registry unconditionally, so a
+            // root it could not remove became residue that no later run could
+            // attribute or reap: crash-before-cleanup was recoverable, but
+            // cleanup-attempted-and-failed was not. Both mutation runs in this
+            // branch produced exactly that residue.
+            score('R15', () => {
+                const s = mkSandbox('r15');
+                const t = newTracker(s, { pid: 999004 });
+                t.install();
+                let a, b;
+                try {
+                    a = fs.mkdtempSync(path.join(s.tmp, 'evo-stuck-'));
+                    b = fs.mkdtempSync(path.join(s.tmp, 'evo-fine-'));
+                } finally { t.restore(); }
+                assert.ok(fs.existsSync(a) && fs.existsSync(b), 'positive control: both roots exist');
+                assert.ok(fs.existsSync(t.registryPath), 'positive control: the durable record exists before cleanup');
+
+                const r = t.cleanupAll({
+                    rmFn: (p, opts) => {
+                        if (p === a) throw Object.assign(new Error('EBUSY: simulated live handle'), { code: 'EBUSY' });
+                        fs.rmSync(p, opts);
+                    },
+                });
+                assert.deepStrictEqual(r.failed.map(f => f.path), [a], `only A must fail; got ${JSON.stringify(r)}`);
+                assert.ok(!fs.existsSync(b), 'the healthy root must still be removed');
+                assert.ok(fs.existsSync(a), 'positive control: A really did survive the failed removal');
+
+                assert.ok(fs.existsSync(t.registryPath),
+                    'a cleanup that left an owned root behind MUST keep the durable owner record');
+                const payload = JSON.parse(fs.readFileSync(t.registryPath, 'utf8'));
+                assert.ok(payload.roots.includes(a),
+                    `the record must still name A by exact path; got ${JSON.stringify(payload.roots)}`);
+                assert.ok(!payload.roots.includes(b),
+                    'a root that WAS removed must not be re-claimed — the next run would then delete a path it does not own');
+
+                // The next run, with the owner dead. This is the half that makes
+                // the retention worth anything.
+                const r2 = H.reapDeadOwners({ registryDir: s.reg, tmpdir: s.tmp, pidAliveFn: () => false });
+                assert.deepStrictEqual(r2.reaped, [a], `the next run must reap A from the retained record; got ${JSON.stringify(r2)}`);
+                assert.ok(!fs.existsSync(a), 'A must actually be gone after the second run');
+                assert.strictEqual(fs.readdirSync(s.reg).length, 0,
+                    'once everything is handled the registry must disappear');
+            });
+
+            // R16 — reapDeadOwners refuses unsafe entries, but a refusal nobody
+            // prints is indistinguishable from nothing having happened. The suite
+            // entrypoint used to read only `reaped.length` and swallow the rest.
+            score('R16', () => {
+                assert.strictEqual(typeof H.reportReapOutcome, 'function',
+                    'harness must own reap visibility so the entrypoint does not decide it ad hoc');
+                const out = H.reportReapOutcome({
+                    reaped: [path.join(os.tmpdir(), 'evo-recovered')],
+                    skipped: [
+                        { path: 'registry-live.json', reason: 'owner still alive' },
+                        { path: 'PATH-OUTSIDE-TMP', reason: 'outside the temp subtree' },
+                        { path: 'registry-broken.json', reason: 'malformed registry' },
+                    ],
+                    failed: [{ path: 'evo-locked', error: 'EBUSY: still held' }],
+                });
+                const text = out.messages.join('\n');
+                assert.ok(text.includes('evo-locked') && text.includes('EBUSY'),
+                    `a recovery failure must be reported; got ${JSON.stringify(out.messages)}`);
+                assert.ok(text.includes('PATH-OUTSIDE-TMP'),
+                    'a refused out-of-tree entry must be reported, not silently refused');
+                assert.ok(text.includes('registry-broken.json'),
+                    'a malformed registry must be reported rather than skipped in silence');
+                // A live owner is the ordinary concurrent case; printing it every
+                // run trains the reader to ignore this channel.
+                assert.ok(!text.includes('registry-live.json'),
+                    `a live-owner skip must stay quiet; got ${JSON.stringify(out.messages)}`);
+                // Anti-vacuity: without this, a reporter that prints everything
+                // unconditionally would satisfy every assertion above.
+                assert.deepStrictEqual(H.reportReapOutcome({ reaped: [], skipped: [], failed: [] }).messages, [],
+                    'nothing to report must produce no output');
+            });
+
             try {
                 const passed = rows.filter(r => r.ok).length;
-                console.log(`   R1–R14: ${passed}/${rows.length}`);
+                console.log(`   R1–R16: ${passed}/${rows.length}`);
                 for (const r of rows.filter(x => !x.ok)) console.log(`      ✗ ${r.id} — ${r.detail}`);
                 const failed = rows.filter(r => !r.ok);
                 assert.strictEqual(failed.length, 0,
                     `temp-root lifecycle matrix failed ${failed.length} case(s): ${failed.map(f => f.id).join(', ')}`);
-                console.log('✅ T-temp-lifecycle R1–R14 passed');
+                console.log('✅ T-temp-lifecycle R1–R16 passed');
             } finally {
                 for (const b of sandboxes) { try { fs.rmSync(b, { recursive: true, force: true }); } catch (_) { /* best effort */ } }
             }
