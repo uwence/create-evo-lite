@@ -9,6 +9,8 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
         relativeDir: [],
         files: [
             'memory.js',
+            'pr-state.js',
+            'pr-state.service.js',
             'db.js',
             'models.js',
             'memory-index-util.js',

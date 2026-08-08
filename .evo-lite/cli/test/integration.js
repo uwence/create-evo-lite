@@ -439,6 +439,7 @@ async function runIntegrationTests() {
                 'architecture/diff.js', 'architecture/infer-modules.js',
                 'architecture/provider-contract.js', 'architecture/scan-native.js',
                 'memory-index-lock.js',
+                'pr-state.js', 'pr-state.service.js',
                 'takeover-payload.js', 'takeover-receipt.js', 'takeover-session.js',
                 'takeover-adapter.js', 'takeover-install.js',
             ];
@@ -447,6 +448,47 @@ async function runIntegrationTests() {
                 assert.ok(coreCliFamily.files.includes(f), `core-cli manifest missing: ${f}`);
             }
             console.log('✅ T4 manifest covers all cli modules passed');
+        }
+
+
+        console.log('PS4. Testing pr-state managed runtime mirror coverage ...');
+        {
+            const runtime = createTempRuntimeRoot('pr-state-managed-runtime');
+            const previousCliDir = process.env.EVO_LITE_TEMPLATE_CLI_DIR;
+            const previousRootDir = process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
+            try {
+                process.env.EVO_LITE_TEMPLATE_CLI_DIR = TEMPLATE_CLI_DIR;
+                process.env.EVO_LITE_TEMPLATE_ROOT_DIR = TEMPLATE_ROOT_DIR;
+                const syncPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'sync-runtime.js'));
+                delete require.cache[syncPath];
+                const { syncRuntime, verifyRuntimeLock } = require(syncPath);
+                const synced = syncRuntime(runtime.workspaceRoot);
+                assert.strictEqual(synced.status, 'ok');
+                assert.deepStrictEqual(synced.missingTemplates, []);
+
+                for (const file of ['pr-state.js', 'pr-state.service.js']) {
+                    const activeFile = path.join(runtime.runtimeRoot, 'cli', file);
+                    const templateFile = path.join(TEMPLATE_CLI_DIR, file);
+                    assert.ok(fs.existsSync(activeFile), `${file} must be copied into the managed runtime`);
+                    assert.deepStrictEqual(fs.readFileSync(activeFile), fs.readFileSync(templateFile));
+                }
+
+                const lockPath = path.join(runtime.runtimeRoot, 'generated', 'runtime-mirror.lock.json');
+                const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+                assert.ok(lock.entries['.evo-lite/cli/pr-state.js']);
+                assert.ok(lock.entries['.evo-lite/cli/pr-state.service.js']);
+                const verified = verifyRuntimeLock(runtime.workspaceRoot);
+                assert.strictEqual(verified.status, 'ok');
+                assert.deepStrictEqual(verified.mismatches, []);
+                assert.deepStrictEqual(verified.missing, []);
+            } finally {
+                if (previousCliDir === undefined) delete process.env.EVO_LITE_TEMPLATE_CLI_DIR;
+                else process.env.EVO_LITE_TEMPLATE_CLI_DIR = previousCliDir;
+                if (previousRootDir === undefined) delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
+                else process.env.EVO_LITE_TEMPLATE_ROOT_DIR = previousRootDir;
+                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+            }
+            console.log('✅ PS4 pr-state managed runtime mirror coverage passed');
         }
 
         console.log('1c. Testing P4 inspector HTTP API returns 200 + JSON shapes ...');
