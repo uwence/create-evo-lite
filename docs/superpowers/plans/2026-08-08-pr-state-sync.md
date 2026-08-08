@@ -44,6 +44,19 @@
 
 No new dependency, workflow, test harness, or generated tracked artifact is needed.
 
+## Pre-Implementation Baseline Gate
+
+Before editing any runtime or test file, capture the exact reviewed plan head:
+
+```bash
+IMPLEMENTATION_BASE="$(git rev-parse HEAD)"
+git status --short
+```
+
+The implementation authorization must explicitly name the same SHA as `IMPLEMENTATION_BASE`, and the worktree must be clean. Record that SHA in the implementation evidence and reuse it unchanged for every implementation-only range check. If the authorization SHA, current `HEAD`, or recorded `IMPLEMENTATION_BASE` differs, stop before editing.
+
+The frozen design SHA `1a3308122223a3440409291219f1cd9eb6c2e2fd` is not the implementation-only comparison base because the reviewed plan commit is its descendant. The durable cumulative base remains `main@70c173b11ec64896780be67eb6b8bda94d2295fb`.
+
 ---
 
 ### Task 1: Pure Expected-State Primitives
@@ -140,25 +153,136 @@ console.log('PS1. Testing pr-state expected-block primitives ...');
 }
 ```
 
-Add table-driven rejected-body cases. Each assertion must inspect a `PrStateError`, not only message text:
+Add table-driven marker, lexical, scalar-boundary, semantic, comparison, and checks-taxonomy cases. Each rejection must inspect a `PrStateError`, not only message text:
 
 ```js
+const BEGIN_MARKER = '<!-- EVO-LITE:PR-STATE:BEGIN -->';
+const END_MARKER = '<!-- EVO-LITE:PR-STATE:END -->';
+const reversed = block()
+    .replace(BEGIN_MARKER, '__BEGIN__')
+    .replace(END_MARKER, BEGIN_MARKER)
+    .replace('__BEGIN__', END_MARKER);
+
+const markerLikeProse = block().replace(
+    'narrative before',
+    `narrative ${BEGIN_MARKER} remains opaque`
+);
+assert.deepStrictEqual(parse(markerLikeProse), parse(block()));
+
 const rejectedBodies = [
-    ['missing marker', block().replace('<!-- EVO-LITE:PR-STATE:BEGIN -->\n', '')],
-    ['duplicate marker', block() + '\n<!-- EVO-LITE:PR-STATE:BEGIN -->'],
+    ['missing BEGIN', block().replace(`${BEGIN_MARKER}\n`, '')],
+    ['missing END', block().replace(`\n${END_MARKER}`, '')],
+    ['duplicate BEGIN', block() + `\n${BEGIN_MARKER}`],
+    ['duplicate END', block() + `\n${END_MARKER}`],
+    ['reversed markers', reversed],
+    ['leading marker whitespace', block().replace(BEGIN_MARKER, ` ${BEGIN_MARKER}`)],
+    ['trailing marker whitespace', block().replace(END_MARKER, `${END_MARKER} `)],
     ['unknown key', block().replace('checks: success', 'extra: value\nchecks: success')],
     ['duplicate key', block().replace('checks: success', 'head: other\nchecks: success')],
+    ['missing key', block().replace('commits: 3\n', '')],
     ['reordered key', block().replace('commits: 3\nchangedFiles: 4', 'changedFiles: 4\ncommits: 3')],
+    ['malformed delimiter', block().replace('base: main', 'base:main')],
     ['blank line', block().replace('head: codex/feature', 'head: codex/feature\n')],
     ['tab', block().replace('base: main', 'base:\tmain')],
+    ['comment line', block().replace('checks: success', '# comment\nchecks: success')],
+    ['quoted scalar', block().replace('base: main', 'base: "main"')],
+    ['generic extra content', block().replace('checks: success', 'unstructured extra content\nchecks: success')],
     ['abbreviated SHA', block({ headSha: 'abc1234' })],
     ['uppercase SHA', block({ headSha: SHA_B.toUpperCase() })],
-    ['leading-zero count', block({ commits: '03' })],
+    ['commits overflow', block({ commits: '2147483648' })],
+    ['changedFiles overflow', block({ changedFiles: '2147483648' })],
     ['invalid expected checks', block({ checks: 'failed' })],
     ['merged pending', block({ phase: 'merged', checks: 'pending' })],
 ];
+for (const field of ['commits', 'changedFiles']) {
+    for (const raw of ['03', '+3', '-1', '3.0', '3e2']) {
+        rejectedBodies.push([`${field} noncanonical ${raw}`, block({ [field]: raw })]);
+    }
+}
 for (const [label, body] of rejectedBodies) {
     assert.throws(() => parse(body), err => err instanceof PrStateError, label);
+}
+
+for (const [commits, changedFiles] of [
+    ['1', '0'],
+    ['2147483647', '2147483647'],
+]) {
+    const parsed = parse(block({ commits, changedFiles }));
+    assert.strictEqual(parsed.commits, Number(commits));
+    assert.strictEqual(parsed.changedFiles, Number(changedFiles));
+}
+
+for (const [phase, checks] of [
+    ['draft', 'pending'], ['draft', 'success'],
+    ['ready', 'pending'], ['ready', 'success'],
+    ['merged', 'success'],
+]) {
+    const parsed = parse(block({ phase, checks }));
+    assert.strictEqual(parsed.phase, phase);
+    assert.strictEqual(parsed.checks, checks);
+}
+```
+
+Prove all seven core drift mappings independently, case-sensitive ref comparison, closed-unmerged phase drift, and stable simultaneous ordering:
+
+```js
+const coreCases = [
+    ['base', 'Main', 'BASE_REF_DRIFT'],
+    ['baseSha', SHA_B, 'BASE_SHA_DRIFT'],
+    ['head', 'Codex/feature', 'HEAD_REF_DRIFT'],
+    ['headSha', SHA_A, 'HEAD_SHA_DRIFT'],
+    ['commits', 4, 'COMMIT_COUNT_DRIFT'],
+    ['changedFiles', 5, 'CHANGED_FILE_COUNT_DRIFT'],
+    ['phase', 'ready', 'PHASE_DRIFT'],
+];
+for (const [field, value, code] of coreCases) {
+    const findings = compareExpectedObserved(expected, { ...expected, [field]: value });
+    assert.deepStrictEqual(findings.map(item => item.code), [code], field);
+}
+
+const closedPhase = normalizePhase({
+    state: 'closed', draft: false, merged: false, merged_at: null,
+});
+assert.deepStrictEqual(
+    compareExpectedObserved(expected, { ...expected, phase: closedPhase }).map(item => item.code),
+    ['PHASE_DRIFT']
+);
+
+const allCoreDrift = {
+    ...expected,
+    base: 'Main', baseSha: SHA_B,
+    head: 'Codex/feature', headSha: SHA_A,
+    commits: 4, changedFiles: 5, phase: 'ready',
+};
+assert.deepStrictEqual(
+    compareExpectedObserved(expected, allCoreDrift).map(item => item.code),
+    [
+        'BASE_REF_DRIFT', 'BASE_SHA_DRIFT', 'HEAD_REF_DRIFT', 'HEAD_SHA_DRIFT',
+        'COMMIT_COUNT_DRIFT', 'CHANGED_FILE_COUNT_DRIFT', 'PHASE_DRIFT',
+    ]
+);
+```
+
+Freeze every checks combination explicitly:
+
+```js
+const checksCases = [
+    ['success', 'pending', ['CHECKS_PENDING']],
+    ['pending', 'failed', ['CHECKS_FAILED']],
+    ['success', 'failed', ['CHECKS_FAILED']],
+    ['pending', 'success', ['CHECKS_EXPECTATION_DRIFT']],
+    ['pending', 'pending', []],
+    ['success', 'success', []],
+    ['success', 'missing', ['CHECKS_MISSING']],
+];
+for (const [expectedChecks, observedChecks, codes] of checksCases) {
+    const wanted = { ...expected, checks: expectedChecks };
+    const actual = { ...wanted, checks: observedChecks };
+    assert.deepStrictEqual(
+        compareExpectedObserved(wanted, actual).map(item => item.code),
+        codes,
+        `${expectedChecks}/${observedChecks}`
+    );
 }
 ```
 
@@ -350,7 +474,10 @@ Extend PS2 with these scenarios:
 - stale expected `headSha` yields `HEAD_SHA_DRIFT`, while run-query arguments contain only observed head SHA;
 - wrong PR association, event, or head SHA is ignored;
 - workflow path mismatch is an observation error;
-- reverse-ordered matching runs select maximum numeric run ID;
+- reverse-ordered matching runs select maximum numeric run ID, independent of API order;
+- an older successful run plus a larger-run-ID pending run yields `CHECKS_PENDING`;
+- an older successful run plus a larger-run-ID failed run yields `CHECKS_FAILED`;
+- equal `created_at`/`updated_at` timestamps do not break the tie: the larger numeric run ID still wins;
 - page 1 with 100 entries and `total_count: 101` forces page 2, whose larger matching run wins;
 - zero matches after complete pagination yields `CHECKS_MISSING`;
 - API failure yields error and never `CHECKS_MISSING`;
@@ -762,10 +889,19 @@ Run this gate only after Tasks 1-5 are committed. Do not repair failures by chan
 Run:
 
 ```bash
-git diff --name-status 1a3308122223a3440409291219f1cd9eb6c2e2fd..HEAD
+test "$(git merge-base "$IMPLEMENTATION_BASE" HEAD)" = "$IMPLEMENTATION_BASE"
+git diff --name-status "$IMPLEMENTATION_BASE"..HEAD
 ```
 
 Expected: exactly the ten frozen files and no design, plan, active-context, raw-memory, workflow, dependency, harness, or product-source change.
+
+Then run the cumulative branch proof:
+
+```bash
+git diff --name-status 70c173b11ec64896780be67eb6b8bda94d2295fb..HEAD
+```
+
+Expected: exactly 12 changed files: one frozen design spec, one implementation plan, and the ten frozen implementation files. Multiple append-only commits to either document do not increase this changed-file count.
 
 - [ ] **Run the supported governance and full-suite gates**
 
@@ -828,14 +964,14 @@ Expected: all five commands exit 0. PS4 must also prove the two new modules appe
 Run:
 
 ```bash
-git diff --check 1a3308122223a3440409291219f1cd9eb6c2e2fd..HEAD
+git diff --check "$IMPLEMENTATION_BASE"..HEAD
 git status --short
 ```
 
-Run GitNexus `detect_changes` with compare base `1a3308122223a3440409291219f1cd9eb6c2e2fd`. Review every affected process and confirm no unexpected symbol or flow is present.
+Run GitNexus `detect_changes` with compare base equal to the exact recorded `$IMPLEMENTATION_BASE`. Review every affected process and confirm no unexpected symbol or flow is present. The frozen design SHA is not an acceptable substitute for this implementation-only compare.
 
 - [ ] **Hard stop for implementation review**
 
-Return the five Task commit SHAs, the final ten-file diff, per-Task RED/GREEN evidence, governance/full-suite results, PS1-PS5 markers, five pair parity results, managed-manifest/runtime-lock evidence, context preservation, GitNexus compare output, `diff --check`, and a clean worktree.
+Return the recorded implementation-base SHA, five Task commit SHAs, the implementation-only ten-file diff, cumulative 12-file diff, per-Task RED/GREEN evidence, governance/full-suite results, PS1-PS5 markers, five pair parity results, managed-manifest/runtime-lock evidence, context preservation, GitNexus compare output, `diff --check`, and a clean worktree.
 
 Implementation does not authorize a Draft PR, Ready transition, merge, active-context edit, raw-memory write, feedback collection, branch deletion, or adjacent NEXT scope.
