@@ -8,6 +8,7 @@ const {
     WORKSPACE_ROOT, TEMPLATE_CLI_DIR, CLI_DIR, INIT_ENTRY, SHARED_CACHE_DIR,
     createTempRuntimeRoot, writeText, runGit, runPostCommitHook,
     createHookTestRepo, readNdjson, bootstrapRuntime, captureConsole, resetCliModuleCache,
+    quiesceSharedResources,
 } = require('./harness');
 
 // [zvec-win-unicode-containment] Tests that need a LIVE zvec engine also need a
@@ -105,6 +106,12 @@ async function runGovernanceTests() {
             });
             assert.ok(output.includes('plan progress'), 'verify should recommend `plan progress` when plan IR exists but progress has not been refreshed');
             assert.ok(output.includes('dashboard build'), 'verify should recommend `dashboard build` when dashboard data has not been built');
+            // This test owns what it opened. verify() opens the entity store as
+            // well as the database, and both must be released before the suite
+            // removes this root — it surfaced as EBUSY otherwise. Index first,
+            // then the database: same order runVerify established in Task 7.
+            quiesceSharedResources();
+            loaded.db.closeDb();
             console.log('✅ T13 governance verify guidance passed');
         }
 
@@ -5108,6 +5115,10 @@ async function runGovernanceTests() {
             } else {
                 console.log('   ⏭️ zvec list() subtest skipped — @zvec/zvec not installed');
             }
+            // The SqliteFtsIndex opened its own connection, separate from the one
+            // db.js holds, so suite cleanup could not reach it and the root came
+            // back as EBUSY. The zvec branch above already closes its index.
+            sq.close();
         }
         console.log('✅ T-LIST passed');
 
