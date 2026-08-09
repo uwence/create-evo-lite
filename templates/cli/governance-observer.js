@@ -32,6 +32,16 @@ const TRANSITION_ORDER = [
     'freeze-added',
     'budget-crossed',
 ];
+const DEFAULT_BUDGET_CONFIG = Object.freeze({
+    windowCommits: 100,
+    maxGovernanceRatio: 0.7,
+    maxRemediationRatio: 0.5,
+});
+const BUDGET_CHOICES = Object.freeze([
+    'continue-governance',
+    'downgrade-nonblocking-debt',
+    'resume-authorized-execution',
+]);
 
 function sha256(value) {
     return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
@@ -179,6 +189,116 @@ function readFreezeLedger(projectRoot, options = {}) {
     } catch {
         return { entries: [] };
     }
+}
+
+function invalidBudgetConfig(message) {
+    const error = new Error(message);
+    error.code = 'GOVERNANCE_BUDGET_CONFIG_INVALID';
+    return error;
+}
+
+function loadGovernanceBudgetConfig(projectRoot) {
+    const configPath = path.join(projectRoot, '.evo-lite', 'config.json');
+    let config = {};
+    if (fs.existsSync(configPath)) {
+        try {
+            config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        } catch (error) {
+            throw invalidBudgetConfig(`invalid JSON in ${configPath}: ${error.message}`);
+        }
+    }
+    const configured = config && config.governance && config.governance.budget;
+    if (configured !== undefined && (
+        configured === null
+        || typeof configured !== 'object'
+        || Array.isArray(configured)
+    )) {
+        throw invalidBudgetConfig('governance.budget must be an object');
+    }
+    const result = { ...DEFAULT_BUDGET_CONFIG, ...(configured || {}) };
+    if (!Number.isInteger(result.windowCommits) || result.windowCommits < 1 || result.windowCommits > 2147483647) {
+        throw invalidBudgetConfig('governance.budget.windowCommits must be an integer in 1..2147483647');
+    }
+    for (const key of ['maxGovernanceRatio', 'maxRemediationRatio']) {
+        if (!Number.isFinite(result[key]) || result[key] < 0 || result[key] > 1) {
+            throw invalidBudgetConfig(`governance.budget.${key} must be a number in 0..1`);
+        }
+    }
+    return result;
+}
+
+function isGovernanceOnlyPath(relativePath) {
+    const value = String(relativePath || '').replace(/\\/g, '/');
+    return value.startsWith('docs/')
+        || value.startsWith('.agents/')
+        || /(^|\/)(test|tests|__tests__)(\/|$)/.test(value)
+        || value === '.evo-lite/active_context.md'
+        || value === '.evo-lite/config.json'
+        || value.startsWith('.evo-lite/raw_memory/')
+        || value.startsWith('.evo-lite/index_memory/')
+        || value.startsWith('.evo-lite/generated/')
+        || value.startsWith('.evo-lite/governance/')
+        || value.startsWith('.evo-lite/hive/');
+}
+
+function classifyCommitFiles(files) {
+    const normalized = (files || []).filter(Boolean);
+    if (normalized.length === 0) return 'governance';
+    const governance = normalized.filter(isGovernanceOnlyPath).length;
+    if (governance === normalized.length) return 'governance';
+    if (governance === 0) return 'delivery';
+    return 'mixed';
+}
+
+function buildGovernanceBudget(projectRoot, options = {}) {
+    const config = options.config || loadGovernanceBudgetConfig(projectRoot);
+    const head = runGit(projectRoot, ['rev-parse', 'HEAD'], options);
+    const revisionArgs = options.since
+        ? ['rev-list', '--reverse', '--topo-order', `${options.since}..HEAD`]
+        : ['rev-list', `--max-count=${config.windowCommits}`, '--reverse', 'HEAD'];
+    const commits = runGit(projectRoot, revisionArgs, options).split(/\r?\n/).filter(Boolean);
+    const counts = { delivery: 0, governance: 0, mixed: 0, merge: 0, primary: 0 };
+    const commitTimes = [];
+    for (const commit of commits) {
+        commitTimes.push(Number(runGit(projectRoot, ['show', '-s', '--format=%ct', commit], options)));
+        const identity = runGit(projectRoot, ['rev-list', '--parents', '-n', '1', commit], options).split(/\s+/);
+        if (identity.length > 2) {
+            counts.merge += 1;
+            continue;
+        }
+        const files = runGit(projectRoot, ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', commit], options)
+            .split(/\r?\n/).filter(Boolean);
+        const classification = classifyCommitFiles(files);
+        counts[classification] += 1;
+        counts.primary += 1;
+    }
+    const freezeLedger = readFreezeLedger(projectRoot, options);
+    const remediationCommits = (freezeLedger.entries || []).reduce(
+        (total, entry) => total + Number(entry && entry.remediation && entry.remediation.used || 0),
+        0,
+    );
+    const governanceRatio = counts.primary > 0 ? counts.governance / counts.primary : 0;
+    const remediationRatio = counts.primary > 0 ? remediationCommits / counts.primary : 0;
+    const exceeded = governanceRatio > config.maxGovernanceRatio
+        || remediationRatio > config.maxRemediationRatio;
+    const finiteTimes = commitTimes.filter(Number.isFinite);
+    return {
+        version: 'evo-governance-budget@1',
+        since: options.since || null,
+        head,
+        windowCommits: config.windowCommits,
+        elapsedSeconds: finiteTimes.length > 1 ? Math.max(...finiteTimes) - Math.min(...finiteTimes) : 0,
+        counts,
+        remediationCommits,
+        governanceRatio,
+        remediationRatio,
+        thresholds: {
+            maxGovernanceRatio: config.maxGovernanceRatio,
+            maxRemediationRatio: config.maxRemediationRatio,
+        },
+        status: exceeded ? 'budget-exceeded' : 'within-budget',
+        choices: exceeded ? [...BUDGET_CHOICES] : [],
+    };
 }
 
 function findingCodes(planIR) {
@@ -354,8 +474,11 @@ function recordGovernanceSnapshot(projectRoot, options = {}) {
 module.exports = {
     SNAPSHOT_VERSION,
     SNAPSHOT_RELATIVE_PATH,
+    DEFAULT_BUDGET_CONFIG,
     buildGovernanceSnapshot,
     compareGovernanceSnapshots,
     writeGovernanceSnapshot,
     recordGovernanceSnapshot,
+    loadGovernanceBudgetConfig,
+    buildGovernanceBudget,
 };

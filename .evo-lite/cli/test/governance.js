@@ -18318,6 +18318,98 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
             'snapshot write failure must never create or mutate active context');
         console.log('✅ T-governance-observer passed');
     }
+    console.log('T-governance-budget. Commit classes, merge exclusion, elapsed span, and circuit breaker stay deterministic ...');
+    {
+        const observer = require(path.join(CLI_DIR, 'governance-observer.js'));
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-budget-'));
+        const git = (args, env = {}) => childProcess.execFileSync('git', args, {
+            cwd: root,
+            encoding: 'utf8',
+            env: { ...process.env, ...env },
+        }).trim();
+        const commit = (files, message, iso) => {
+            for (const [relativePath, content] of Object.entries(files)) {
+                writeText(path.join(root, ...relativePath.split('/')), content);
+            }
+            git(['add', '.']);
+            git(['commit', '-m', message], {
+                GIT_AUTHOR_DATE: iso,
+                GIT_COMMITTER_DATE: iso,
+            });
+            return git(['rev-parse', 'HEAD']);
+        };
+
+        git(['init', '-b', 'main']);
+        git(['config', 'user.name', 'Evo Test']);
+        git(['config', 'user.email', 'evo@example.com']);
+        git(['config', 'core.autocrlf', 'false']);
+        commit({ 'README.md': 'base\n' }, 'base', '2026-08-09T00:00:00Z');
+        const base = git(['rev-parse', 'HEAD']);
+        commit({ 'src/app.js': 'module.exports = 1;\n' }, 'delivery', '2026-08-09T00:01:00Z');
+        commit({ 'docs/note.md': '# Note\n' }, 'governance', '2026-08-09T00:02:00Z');
+        commit({
+            'src/mixed.js': 'module.exports = 2;\n',
+            'docs/mixed.md': '# Mixed\n',
+        }, 'mixed', '2026-08-09T00:03:00Z');
+        git(['switch', '-c', 'feature']);
+        commit({ '.agents/rules/feature.md': '# Rule\n' }, 'feature governance', '2026-08-09T00:04:00Z');
+        git(['switch', 'main']);
+        git(['merge', '--no-ff', 'feature', '-m', 'merge feature'], {
+            GIT_AUTHOR_DATE: '2026-08-09T00:05:00Z',
+            GIT_COMMITTER_DATE: '2026-08-09T00:05:00Z',
+        });
+
+        const report = observer.buildGovernanceBudget(root, {
+            since: base,
+            freezeLedger: {
+                entries: [{ remediation: { used: 2 } }],
+            },
+        });
+        assert.deepStrictEqual(report.counts, {
+            delivery: 1,
+            governance: 2,
+            mixed: 1,
+            merge: 1,
+            primary: 4,
+        });
+        assert.strictEqual(report.elapsedSeconds, 240,
+            'elapsed span covers the selected window while merge commits stay outside primary ratios');
+        assert.strictEqual(report.governanceRatio, 0.5);
+        assert.strictEqual(report.remediationRatio, 0.5);
+        assert.strictEqual(report.status, 'within-budget');
+        assert.deepStrictEqual(report.choices, []);
+
+        writeText(path.join(root, '.evo-lite', 'config.json'), JSON.stringify({
+            governance: {
+                budget: {
+                    windowCommits: 100,
+                    maxGovernanceRatio: 0.4,
+                    maxRemediationRatio: 0.4,
+                },
+            },
+        }, null, 2));
+        const exceeded = observer.buildGovernanceBudget(root, {
+            since: base,
+            freezeLedger: {
+                entries: [{ remediation: { used: 2 } }],
+            },
+        });
+        assert.strictEqual(exceeded.status, 'budget-exceeded');
+        assert.deepStrictEqual(exceeded.choices, [
+            'continue-governance',
+            'downgrade-nonblocking-debt',
+            'resume-authorized-execution',
+        ]);
+
+        writeText(path.join(root, '.evo-lite', 'config.json'), JSON.stringify({
+            governance: { budget: { windowCommits: 0 } },
+        }));
+        assert.throws(
+            () => observer.loadGovernanceBudgetConfig(root),
+            error => error && error.code === 'GOVERNANCE_BUDGET_CONFIG_INVALID',
+        );
+        console.log('✅ T-governance-budget passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
