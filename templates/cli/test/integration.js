@@ -16,6 +16,15 @@ const {
     resetCliModuleCache, loadCli, bootstrapRuntime, captureConsole, withPatchedExecFileSync,
 } = require('./harness');
 
+function removePrStateRuntimeRoot(root, rmSync = fs.rmSync) {
+    return rmSync(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+    });
+}
+
 async function runIntegrationTests() {
     console.log('--- Starting CLI integration tests ---');
 
@@ -1029,6 +1038,15 @@ async function runIntegrationTests() {
                 updated_at: '2026-08-08T00:01:00Z',
                 ...overrides,
             });
+            const makeCheckRow = (runId, overrides = {}) => ({
+                bucket: 'pass',
+                event: 'pull_request',
+                link: `https://github.com/uwence/create-evo-lite/actions/runs/${runId}/job/${runId + 1000}`,
+                name: 'pack + consume on windows-latest / node 24',
+                state: 'SUCCESS',
+                workflow: 'release-gate',
+                ...overrides,
+            });
             const okJson = value => ({ status: 0, stdout: JSON.stringify(value), stderr: '' });
             const okText = value => ({ status: 0, stdout: value, stderr: '' });
             const failed = message => ({ status: 1, stdout: '', stderr: message });
@@ -1041,6 +1059,10 @@ async function runIntegrationTests() {
                     total_count: 1,
                     workflow_runs: [makeRun(100, 'completed', 'success')],
                 }];
+                const checkRows = options.checkRows || [makeCheckRow(100)];
+                const checkStatus = options.checkStatus === undefined ? 0 : options.checkStatus;
+                const expectedRepositoryArg = options.expectedRepositoryArg
+                    || 'github.com/uwence/create-evo-lite';
                 const handlers = options.handlers || {};
                 const runCommand = (executable, args) => {
                     calls.push({ executable, args: [...args] });
@@ -1072,6 +1094,18 @@ async function runIntegrationTests() {
                         const pageArg = args.find(value => /^page=/.test(value));
                         const page = Number(pageArg.split('=')[1]);
                         return use('runs', okJson(pages[page - 1] || { total_count: 0, workflow_runs: [] }));
+                    }
+                    if (executable === 'gh' && args[0] === 'pr' && args[1] === 'checks') {
+                        assert.deepStrictEqual(args, [
+                            'pr', 'checks', '31',
+                            '--repo', expectedRepositoryArg,
+                            '--json', 'bucket,event,link,name,state,workflow',
+                        ]);
+                        return use('prChecks', {
+                            status: checkStatus,
+                            stdout: JSON.stringify(checkRows),
+                            stderr: '',
+                        });
                     }
                     throw new Error(`unexpected command: ${executable} ${args.join(' ')}`);
                 };
@@ -1125,6 +1159,7 @@ async function runIntegrationTests() {
                         makeRun(123, 'completed', 'success'),
                     ],
                 }],
+                checkRows: [120, 121, 122, 123].map(id => makeCheckRow(id)),
             });
             assert.strictEqual(identityFiltered.report.result, 'pass');
             assert.strictEqual(identityFiltered.report.observed.diagnostics.runId, 123);
@@ -1138,6 +1173,7 @@ async function runIntegrationTests() {
                         makeRun(201, 'in_progress', null, { created_at: sameTimestamp, updated_at: sameTimestamp }),
                     ],
                 }],
+                checkRows: [makeCheckRow(200), makeCheckRow(201)],
             });
             assert.strictEqual(newerPending.report.result, 'drift');
             assert.deepStrictEqual(newerPending.report.findings.map(item => item.code), ['CHECKS_PENDING']);
@@ -1151,6 +1187,7 @@ async function runIntegrationTests() {
                         makeRun(300, 'completed', 'success'),
                     ],
                 }],
+                checkRows: [makeCheckRow(300), makeCheckRow(301)],
             });
             assert.deepStrictEqual(newerFailed.report.findings.map(item => item.code), ['CHECKS_FAILED']);
             assert.strictEqual(newerFailed.report.observed.diagnostics.runId, 301);
@@ -1163,6 +1200,7 @@ async function runIntegrationTests() {
                     { total_count: 101, workflow_runs: firstPage },
                     { total_count: 101, workflow_runs: [makeRun(999, 'completed', 'success')] },
                 ],
+                checkRows: [makeCheckRow(999)],
             });
             assert.strictEqual(paginated.report.result, 'pass');
             assert.strictEqual(paginated.report.observed.diagnostics.runId, 999);
@@ -1170,12 +1208,246 @@ async function runIntegrationTests() {
                 paginated.calls.filter(call => call.args.some(value => /actions\/workflows\/77\/runs/.test(value))).length,
                 2
             );
+            const pageCallIndices = paginated.calls
+                .map((call, index) => ({ call, index }))
+                .filter(({ call }) => call.args.some(value => /actions\/workflows\/77\/runs/.test(value)))
+                .map(({ index }) => index);
+            const paginatedChecksIndex = paginated.calls.findIndex(
+                call => call.args.slice(0, 2).join(' ') === 'pr checks'
+            );
+            assert.ok(pageCallIndices.every(index => index < paginatedChecksIndex));
 
             const missing = runValidation({
                 pages: [{ total_count: 1, workflow_runs: [makeRun(500, 'completed', 'success', { event: 'push' })] }],
             });
             assert.strictEqual(missing.report.result, 'drift');
             assert.deepStrictEqual(missing.report.findings.map(item => item.code), ['CHECKS_MISSING']);
+
+            const omittedRun = makeRun(100, 'completed', 'success');
+            delete omittedRun.pull_requests;
+            const omittedPullRequests = runValidation({
+                pages: [{ total_count: 1, workflow_runs: [omittedRun] }],
+            });
+            assert.strictEqual(omittedPullRequests.report.result, 'pass');
+
+            for (const pullRequests of [[], [{ number: 99 }], 'ignored-shape']) {
+                const ignored = runValidation({
+                    pages: [{
+                        total_count: 1,
+                        workflow_runs: [
+                            makeRun(100, 'completed', 'success', { pull_requests: pullRequests }),
+                        ],
+                    }],
+                });
+                assert.strictEqual(ignored.report.result, 'pass', JSON.stringify(pullRequests));
+            }
+
+            const zeroCandidates = runValidation({
+                pages: [{ total_count: 0, workflow_runs: [] }],
+                handlers: { prChecks: () => { throw new Error('must not run'); } },
+            });
+            assert.deepStrictEqual(
+                zeroCandidates.report.findings.map(item => item.code),
+                ['CHECKS_MISSING']
+            );
+            assert.ok(!zeroCandidates.calls.some(
+                call => call.args.slice(0, 2).join(' ') === 'pr checks'
+            ));
+
+            const exitOne = runValidation({ checkStatus: 1 });
+            assert.strictEqual(exitOne.report.result, 'error');
+            assert.ok(exitOne.report.errors.some(error => error.code === 'PR_CHECKS_QUERY_FAILED'));
+
+            const exitEight = runValidation({ checkStatus: 8 });
+            assert.strictEqual(exitEight.report.result, 'pass');
+
+            for (const status of [2, 4, 9]) {
+                const invalidExit = runValidation({ checkStatus: status });
+                assert.strictEqual(invalidExit.report.result, 'error', String(status));
+                assert.ok(invalidExit.report.errors.some(
+                    error => error.code === 'PR_CHECKS_QUERY_FAILED'
+                ), String(status));
+            }
+
+            for (const status of [0, 8]) {
+                const malformedChecksJson = runValidation({
+                    handlers: {
+                        prChecks: () => ({ status, stdout: '{bad', stderr: '' }),
+                    },
+                });
+                assert.strictEqual(malformedChecksJson.report.result, 'error', String(status));
+                assert.ok(malformedChecksJson.report.errors.some(
+                    error => error.code === 'PR_CHECKS_QUERY_FAILED'
+                ), String(status));
+            }
+
+            const malformedCheckRow = runValidation({
+                checkRows: [{ ...makeCheckRow(100), link: 1 }],
+            });
+            assert.strictEqual(malformedCheckRow.report.result, 'error');
+            assert.ok(malformedCheckRow.report.errors.some(
+                error => error.code === 'PR_CHECKS_RESPONSE_INVALID'
+            ));
+
+            const invalidBlockAndUrl = runValidation({
+                pr: makePr({ body: 'not a state block', html_url: 'not a URL' }),
+            });
+            assert.deepStrictEqual(
+                invalidBlockAndUrl.report.errors.map(error => error.code),
+                ['PR_STATE_BLOCK_INVALID']
+            );
+
+            const invalidLifecycleAndUrl = runValidation({
+                pr: makePr({
+                    state: 'open', draft: false, merged: true,
+                    merged_at: '2026-08-08T00:00:00Z',
+                    html_url: 'not a URL',
+                }),
+            });
+            assert.deepStrictEqual(
+                invalidLifecycleAndUrl.report.errors.map(error => error.code),
+                ['OBSERVED_PHASE_INVALID']
+            );
+
+            const coreDriftAndInvalidUrl = runValidation({
+                pr: makePr({
+                    body: expectedBody({ headSha: SHA_STALE }),
+                    html_url: 'not a URL',
+                }),
+            });
+            assert.strictEqual(coreDriftAndInvalidUrl.report.result, 'error');
+            assert.deepStrictEqual(
+                coreDriftAndInvalidUrl.report.findings.map(item => item.code),
+                ['HEAD_SHA_DRIFT']
+            );
+            assert.deepStrictEqual(
+                coreDriftAndInvalidUrl.report.errors.map(error => error.code),
+                ['PR_RESPONSE_INVALID']
+            );
+
+            for (const html_url of [
+                'not a URL',
+                'http://github.com/uwence/create-evo-lite/pull/31',
+                'https://user@github.com/uwence/create-evo-lite/pull/31',
+                'https://github.com/other/create-evo-lite/pull/31',
+                'https://github.com/uwence/create-evo-lite/pull/32',
+                'https://github.com/uwence/create-evo-lite/pull/31?x=1',
+                'https://github.com/uwence/create-evo-lite/pull/31#x',
+            ]) {
+                const invalid = runValidation({ pr: makePr({ html_url }) });
+                assert.strictEqual(invalid.report.result, 'error', html_url);
+                assert.ok(invalid.report.errors.some(
+                    error => error.code === 'PR_RESPONSE_INVALID'
+                ), html_url);
+            }
+
+            for (const link of [
+                'https://github.com/uwence/create-evo-lite/actions/runs/100',
+                'https://github.com/uwence/create-evo-lite/actions/runs/100/job/1100',
+            ]) {
+                const accepted = runValidation({
+                    checkRows: [makeCheckRow(100, { link })],
+                });
+                assert.strictEqual(accepted.report.result, 'pass', link);
+                assert.strictEqual(accepted.report.observed.diagnostics.runId, 100, link);
+            }
+
+            const customPort = runValidation({
+                pr: makePr({
+                    html_url: 'https://ghe.example.com:8443/uwence/create-evo-lite/pull/31',
+                }),
+                checkRows: [makeCheckRow(100, {
+                    link: 'https://ghe.example.com:8443/uwence/create-evo-lite/actions/runs/100',
+                })],
+                expectedRepositoryArg: 'ghe.example.com:8443/uwence/create-evo-lite',
+            });
+            assert.strictEqual(customPort.report.result, 'pass');
+            assert.strictEqual(customPort.report.observed.diagnostics.runId, 100);
+
+            const wrongCustomPort = runValidation({
+                pr: makePr({
+                    html_url: 'https://ghe.example.com:8443/uwence/create-evo-lite/pull/31',
+                }),
+                checkRows: [makeCheckRow(100, {
+                    link: 'https://ghe.example.com:9443/uwence/create-evo-lite/actions/runs/100',
+                })],
+                expectedRepositoryArg: 'ghe.example.com:8443/uwence/create-evo-lite',
+            });
+            assert.deepStrictEqual(
+                wrongCustomPort.report.findings.map(item => item.code),
+                ['CHECKS_MISSING']
+            );
+
+            for (const link of [
+                'not a URL',
+                'https://example.com/uwence/create-evo-lite/actions/runs/100/job/1100',
+                'https://github.com/uwence/other/actions/runs/100/job/1100',
+                'https://github.com/uwence/create-evo-lite/actions/runs/100?x=1',
+                'https://github.com/uwence/create-evo-lite/actions/runs/100#x',
+                'https://github.com/uwence/create-evo-lite/actions/runs/0100',
+                'https://github.com/uwence/create-evo-lite/actions/runs/100/job/01100',
+                'https://github.com/uwence/create-evo-lite/actions/runs/9007199254740992',
+            ]) {
+                const ignored = runValidation({
+                    checkRows: [makeCheckRow(100, { link })],
+                });
+                assert.deepStrictEqual(
+                    ignored.report.findings.map(item => item.code),
+                    ['CHECKS_MISSING'],
+                    link
+                );
+            }
+
+            const sameHeadUnassociated = runValidation({
+                pages: [{ total_count: 2, workflow_runs: [
+                    makeRun(100, 'completed', 'success'),
+                    makeRun(101, 'completed', 'failure'),
+                ] }],
+                checkRows: [makeCheckRow(100), makeCheckRow(100)],
+            });
+            assert.strictEqual(sameHeadUnassociated.report.result, 'pass');
+            assert.strictEqual(sameHeadUnassociated.report.observed.diagnostics.runId, 100);
+
+            const rowCannotHideFailure = runValidation({
+                pages: [{ total_count: 1, workflow_runs: [
+                    makeRun(100, 'completed', 'failure'),
+                ] }],
+                checkRows: [makeCheckRow(100, {
+                    bucket: 'pass',
+                    state: 'SUCCESS',
+                    event: 'push',
+                    workflow: 'other-name',
+                })],
+            });
+            assert.deepStrictEqual(
+                rowCannotHideFailure.report.findings.map(item => item.code),
+                ['CHECKS_FAILED']
+            );
+
+            const mergedPr = overrides => makePr({
+                state: 'closed',
+                draft: false,
+                merged: true,
+                merged_at: '2026-08-08T16:37:22Z',
+                ...overrides,
+            });
+            const mergedRun = makeRun(100, 'completed', 'success');
+            delete mergedRun.pull_requests;
+            const mergedReady = runValidation({
+                pr: mergedPr({ body: expectedBody({ phase: 'ready' }) }),
+                pages: [{ total_count: 1, workflow_runs: [mergedRun] }],
+            });
+            assert.deepStrictEqual(
+                mergedReady.report.findings.map(item => item.code),
+                ['PHASE_DRIFT']
+            );
+            assert.strictEqual(mergedReady.report.observed.checks, 'success');
+
+            const mergedPass = runValidation({
+                pr: mergedPr({ body: expectedBody({ phase: 'merged' }) }),
+                pages: [{ total_count: 1, workflow_runs: [mergedRun] }],
+            });
+            assert.strictEqual(mergedPass.report.result, 'pass');
 
             const badWorkflow = runValidation({ workflow: { id: 77, path: '.github/workflows/other.yml' } });
             assert.strictEqual(badWorkflow.report.result, 'error');
@@ -1344,6 +1616,15 @@ async function runIntegrationTests() {
                 updated_at: '2026-08-08T00:01:00Z',
                 ...overrides,
             });
+            const baseCheckRow = (overrides = {}) => ({
+                bucket: 'pass',
+                event: 'pull_request',
+                link: 'https://github.com/uwence/create-evo-lite/actions/runs/900',
+                name: 'release-gate',
+                state: 'SUCCESS',
+                workflow: 'release-gate',
+                ...overrides,
+            });
             const response = (value, status = 0, stderr = '') => ({
                 status,
                 stdout: typeof value === 'string' ? value : JSON.stringify(value),
@@ -1356,6 +1637,8 @@ async function runIntegrationTests() {
                     path: '.github/workflows/release-gate.yml',
                 };
                 const pages = options.pages || [{ total_count: 1, workflow_runs: [baseRun()] }];
+                const checkRows = options.checkRows || [baseCheckRow()];
+                const checkStatus = options.checkStatus === undefined ? 0 : options.checkStatus;
                 const handlers = options.handlers || {};
                 const calls = [];
                 const runCommand = (executable, args) => {
@@ -1381,6 +1664,9 @@ async function runIntegrationTests() {
                     if (executable === 'gh' && args.includes('repos/uwence/create-evo-lite/actions/workflows/77/runs')) {
                         const page = Number(args.find(value => /^page=/.test(value)).split('=')[1]);
                         return custom('runs', response(pages[page - 1] || { total_count: 0, workflow_runs: [] }));
+                    }
+                    if (executable === 'gh' && args[0] === 'pr' && args[1] === 'checks') {
+                        return custom('checks', response(checkRows, checkStatus));
                     }
                     throw new Error(`unexpected command: ${executable} ${args.join(' ')}`);
                 };
@@ -1472,7 +1758,33 @@ async function runIntegrationTests() {
             assert.ok(retained.report.findings.some(item => item.code === 'HEAD_SHA_DRIFT'));
             assert.ok(retained.report.errors.some(error => error.code === 'WORKFLOW_RUN_QUERY_FAILED'));
 
+            const cleanupCalls = [];
+            removePrStateRuntimeRoot('C:/tmp/pr-state-runtime', (root, options) => {
+                cleanupCalls.push({ root, options });
+            });
+            assert.deepStrictEqual(cleanupCalls, [{
+                root: 'C:/tmp/pr-state-runtime',
+                options: {
+                    recursive: true,
+                    force: true,
+                    maxRetries: 5,
+                    retryDelay: 100,
+                },
+            }]);
+
+            const cleanupFailure = new Error('persistent EPERM');
+            assert.throws(
+                () => removePrStateRuntimeRoot('C:/tmp/pr-state-runtime', () => { throw cleanupFailure; }),
+                error => error === cleanupFailure
+            );
+
             const runtime = createTempRuntimeRoot('pr-state-real-cli');
+            const originalRmSync = fs.rmSync;
+            const ps5CleanupOptions = [];
+            fs.rmSync = (root, options) => {
+                if (root === runtime.workspaceRoot) ps5CleanupOptions.push({ ...options });
+                return originalRmSync(root, options);
+            };
             const fakeBin = path.join(runtime.workspaceRoot, 'fake-gh-bin');
             const fixturePath = path.join(fakeBin, 'fixture.json');
             const callLogPath = path.join(fakeBin, 'calls.ndjson');
@@ -1494,8 +1806,9 @@ async function runIntegrationTests() {
                     "const args = isWindowsShim ? [path.basename(process.argv[1]), ...process.argv.slice(2)] : process.argv.slice(2);",
                     "fs.appendFileSync(process.env.PR_STATE_FAKE_GH_LOG, JSON.stringify(args) + '\\n');",
                     "const fixture = JSON.parse(fs.readFileSync(process.env.PR_STATE_FAKE_GH_FIXTURE, 'utf8'));",
-                    "let value;",
+                    "let value; let exitStatus = 0;",
                     "if (args[0] === 'repo' && args[1] === 'view') value = { nameWithOwner: fixture.repository };",
+                    "else if (args[0] === 'pr' && args[1] === 'checks') { value = fixture.checks; exitStatus = fixture.checkStatus || 0; }",
                     "else if (args[0] === 'api') {",
                     "  const endpoint = args[args.indexOf('GET') + 1];",
                     "  if (/\\/pulls\\/31$/.test(endpoint)) value = fixture.pr;",
@@ -1506,7 +1819,7 @@ async function runIntegrationTests() {
                     "  } else { console.error('unexpected endpoint: ' + endpoint); process.exit(3); }",
                     "} else { console.error('unexpected args: ' + args.join(' ')); process.exit(3); }",
                     "process.stdout.write(JSON.stringify(value));",
-                    "if (isWindowsShim) process.exit(0);",
+                    "if (isWindowsShim) process.exit(exitStatus); else process.exitCode = exitStatus;",
                 ].join('\n');
                 fs.writeFileSync(fakeScript, fakeSource, 'utf8');
                 if (process.platform === 'win32') {
@@ -1522,11 +1835,13 @@ async function runIntegrationTests() {
                     fs.chmodSync(ghPath, 0o755);
                 }
 
-                const fixture = (body, workflowPath = '.github/workflows/release-gate.yml') => ({
+                const fixture = (body, workflowPath = '.github/workflows/release-gate.yml', prOverrides = {}) => ({
                     repository: 'uwence/create-evo-lite',
-                    pr: basePr({ body }),
+                    pr: basePr({ body, ...prOverrides }),
                     workflow: { id: 77, path: workflowPath },
                     pages: [{ total_count: 1, workflow_runs: [baseRun()] }],
+                    checks: [baseCheckRow()],
+                    checkStatus: 0,
                 });
                 const childEnv = {
                     ...process.env,
@@ -1581,6 +1896,10 @@ async function runIntegrationTests() {
                     Object.keys(realPass.report),
                     ['schema', 'result', 'pr', 'expected', 'observed', 'findings', 'errors']
                 );
+                const realPassChecksCall = realPass.calls.find(args => args[0] === 'pr' && args[1] === 'checks');
+                assert.ok(realPassChecksCall, 'real CLI must query PR-scoped checks after finding workflow candidates');
+                assert.ok(realPassChecksCall.includes('--repo'));
+                assert.ok(realPassChecksCall.includes('github.com/uwence/create-evo-lite'));
 
                 const realDrift = runCli(fixture(stateBody({ headSha: SHA_STALE })));
                 assert.strictEqual(realDrift.result.status, 1, realDrift.result.stderr);
@@ -1593,13 +1912,40 @@ async function runIntegrationTests() {
                 assert.strictEqual(realError.result.status, 2, realError.result.stderr);
                 assert.strictEqual(realError.report.result, 'error');
 
+                const mergedFixture = {
+                    state: 'closed', draft: true, merged: true,
+                    merged_at: '2026-08-09T00:00:00Z',
+                };
+                const realMergedDrift = runCli(fixture(stateBody({ phase: 'ready' }), undefined, mergedFixture));
+                assert.strictEqual(realMergedDrift.result.status, 1, realMergedDrift.result.stderr);
+                assert.strictEqual(realMergedDrift.report.result, 'drift');
+                assert.deepStrictEqual(realMergedDrift.report.findings.map(item => item.code), ['PHASE_DRIFT']);
+                assert.strictEqual(realMergedDrift.report.observed.phase, 'merged');
+                assert.strictEqual(realMergedDrift.report.observed.checks, 'success');
+                assert.strictEqual(realMergedDrift.report.observed.diagnostics.runId, 900);
+
+                const realMergedPass = runCli(fixture(stateBody({ phase: 'merged' }), undefined, mergedFixture));
+                assert.strictEqual(realMergedPass.result.status, 0, realMergedPass.result.stderr || realMergedPass.result.stdout);
+                assert.strictEqual(realMergedPass.report.result, 'pass');
+                assert.deepStrictEqual(realMergedPass.report.findings, []);
+
                 for (const args of [...realPass.calls, ...realDrift.calls, ...realError.calls]) {
                     assert.ok(!/\b(edit|ready|merge|POST|PATCH|PUT|DELETE)\b/.test(args.join(' ')));
                 }
                 assert.deepStrictEqual(snapshot(runtime.workspaceRoot), before);
             } finally {
-                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+                try {
+                    removePrStateRuntimeRoot(runtime.workspaceRoot);
+                } finally {
+                    fs.rmSync = originalRmSync;
+                }
             }
+            assert.deepStrictEqual(ps5CleanupOptions, [{
+                recursive: true,
+                force: true,
+                maxRetries: 5,
+                retryDelay: 100,
+            }]);
             console.log('✅ PS5 pr-state fail-closed CLI acceptance passed');
         }
 
