@@ -171,6 +171,45 @@ function registerPlanCommands(program) {
             process.exitCode = remaining > 0 ? 1 : 0;
         });
 
+    plan.command('freeze <path>')
+        .description('Record exact artifact bytes and the existing HEAD identity in the independent freeze ledger.')
+        .option('--replace', 'Explicitly replace an existing entry whose frozen identity differs.')
+        .option('--json', 'Emit the frozen ledger entry as JSON.')
+        .action((artifactPath, options) => {
+            const { freezeArtifact } = require('./planning/freeze-ledger');
+            const entry = freezeArtifact(projectRoot, artifactPath, { replace: !!options.replace });
+            if (options.json) {
+                console.log(JSON.stringify(entry, null, 2));
+                return;
+            }
+            console.log(`Frozen: ${entry.path}`);
+            console.log(`Artifact: ${entry.artifactId}`);
+            console.log(`Content SHA-256: ${entry.contentSha256}`);
+            console.log(`Freeze commit: ${entry.freezeCommit}`);
+            console.log(`Contract digest: ${entry.contractDigest}`);
+        });
+
+    plan.command('ledger')
+        .description('Inspect freeze identity, merge evidence, and remediation usage without mutation.')
+        .option('--json', 'Emit the complete derived ledger report as JSON.')
+        .action(options => {
+            const { inspectFreezeLedger } = require('./planning/freeze-ledger');
+            const report = inspectFreezeLedger(projectRoot);
+            if (options.json) {
+                console.log(JSON.stringify(report, null, 2));
+                return;
+            }
+            console.log(`Freeze ledger: ${report.entries.length} entr${report.entries.length === 1 ? 'y' : 'ies'}`);
+            for (const entry of report.entries) {
+                console.log(`- ${entry.path}`);
+                console.log(`  content=${entry.contentState} ancestor=${entry.ancestorOfHead ? 'yes' : 'no'} merge=${entry.mergeCommit || 'none'}`);
+                console.log(`  evidence=${entry.evidence.length} remediation=${entry.remediation.used}/${entry.remediation.budget} ${entry.remediation.status}`);
+                if (entry.remediation.status === 'budget-exceeded') {
+                    console.log(`  choices: ${entry.remediation.choices.join(' | ')}`);
+                }
+            }
+        });
+
     plan.command('new <slug>')
         .description('Scaffold a spec + plan stub under docs/superpowers/. Use this when /evo says "no active plan but in-flight edits".')
         .option('--from-diff', 'Prefill the Linked Files block from `git status --porcelain` so R006 stops firing on the in-flight edits.')

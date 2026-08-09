@@ -3718,6 +3718,69 @@ async function runIntegrationTests() {
             console.log('✅ T-zwuc-T12-cli verify containment diagnostics via CLI passed');
         }
 
+        console.log('T-freeze-ledger-cli. Testing plan freeze/ledger deterministic JSON and warning-only budget output ...');
+        {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-freeze-ledger-cli-'));
+            const artifactRel = 'docs/superpowers/plans/cli.md';
+            const artifactPath = path.join(root, ...artifactRel.split('/'));
+            const git = args => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+            const contractValue = {
+                schema: 1, artifactStage: 'plan', proofLayer: 'A',
+                requiredCapabilities: [], blockScope: 'artifact', remediationBudget: 0,
+                requiredInvariants: ['attempt-binding'],
+            };
+            const artifact = title => [
+                '---', 'id: plan:cli-freeze', 'linkedSpec: spec:cli-freeze', 'status: active', '---', '',
+                `# ${title}`, '', '## Governance Contract', '', '```json',
+                JSON.stringify(contractValue, null, 2), '```', '',
+            ].join('\n');
+            const env = {
+                ...process.env,
+                EVO_LITE_WORKSPACE_ROOT: root,
+                EVO_LITE_ROOT: path.join(root, '.evo-lite'),
+                EVO_LITE_SKIP_GIT_GUARD: '1',
+                EVO_LITE_SKIP_GIT_STATUS: '1',
+                NODE_PATH: [path.join(WORKSPACE_ROOT, 'node_modules'), path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules')].join(path.delimiter),
+            };
+            const run = args => childProcess.spawnSync(process.execPath, [path.join(CLI_DIR, 'memory.js'), ...args], {
+                cwd: root, env, encoding: 'utf8',
+            });
+            try {
+                fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+                git(['init', '-b', 'main']);
+                git(['config', 'user.name', 'Evo Test']);
+                git(['config', 'user.email', 'evo@example.com']);
+                git(['config', 'core.autocrlf', 'false']);
+                writeText(artifactPath, artifact('CLI Freeze'));
+                git(['add', artifactRel]);
+                git(['commit', '-m', 'add artifact']);
+
+                const frozen = run(['plan', 'freeze', artifactRel, '--json']);
+                assert.strictEqual(frozen.status, 0, `plan freeze --json failed: ${frozen.stderr}`);
+                const entry = JSON.parse(frozen.stdout);
+                assert.strictEqual(entry.path, artifactRel);
+                assert.strictEqual(entry.artifactId, 'plan:cli-freeze');
+
+                writeText(artifactPath, artifact('CLI Remediation'));
+                git(['add', artifactRel]);
+                git(['commit', '-m', 'remediate artifact']);
+                const jsonRun = run(['plan', 'ledger', '--json']);
+                assert.strictEqual(jsonRun.status, 0, `plan ledger --json failed: ${jsonRun.stderr}`);
+                const report = JSON.parse(jsonRun.stdout);
+                assert.strictEqual(report.entries[0].remediation.status, 'budget-exceeded');
+                assert.strictEqual(report.entries[0].remediation.used, 1);
+
+                const textRun = run(['plan', 'ledger']);
+                assert.strictEqual(textRun.status, 0, 'budget exceedance is warning-only, never an automatic refusal');
+                for (const choice of ['continue-governance', 'downgrade-nonblocking-debt', 'resume-authorized-execution']) {
+                    assert.ok(textRun.stdout.includes(choice), `ledger text must render reviewer choice ${choice}`);
+                }
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+            console.log('✅ T-freeze-ledger-cli passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);

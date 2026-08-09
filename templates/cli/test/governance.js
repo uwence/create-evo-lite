@@ -18018,6 +18018,100 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         }), []);
         console.log('✅ T-governance-contract passed');
     }
+
+    console.log('T-freeze-ledger. Freeze identity and convergence evidence stay external and read-only ...');
+    {
+        const crypto = require('crypto');
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-freeze-ledger-'));
+        const artifactRel = 'docs/superpowers/plans/frozen.md';
+        const artifactPath = path.join(root, ...artifactRel.split('/'));
+        const git = args => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+        const contractValue = {
+            schema: 1, artifactStage: 'plan', proofLayer: 'A',
+            requiredCapabilities: [], blockScope: 'artifact', remediationBudget: 0,
+            requiredInvariants: ['attempt-binding'],
+        };
+        const artifact = title => [
+            '---', 'id: plan:frozen', 'linkedSpec: spec:frozen', 'status: active', '---', '',
+            `# ${title}`, '', '## Governance Contract', '', '```json',
+            JSON.stringify(contractValue, null, 2), '```', '',
+        ].join('\n');
+        fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+        git(['init', '-b', 'main']);
+        git(['config', 'user.name', 'Evo Test']);
+        git(['config', 'user.email', 'evo@example.com']);
+        git(['config', 'core.autocrlf', 'false']);
+        writeText(path.join(root, 'README.md'), '# Root\n');
+        git(['add', 'README.md']);
+        git(['commit', '-m', 'base']);
+        git(['switch', '-c', 'feature']);
+        writeText(artifactPath, artifact('Frozen'));
+
+        const ledger = require(path.join(CLI_DIR, 'planning', 'freeze-ledger.js'));
+        assert.throws(() => ledger.freezeArtifact(root, artifactRel), /tracked|HEAD/i,
+            'an untracked artifact cannot be frozen');
+        git(['add', artifactRel]);
+        git(['commit', '-m', 'add frozen artifact']);
+        const freezeCommit = git(['rev-parse', 'HEAD']);
+        const bytes = fs.readFileSync(artifactPath);
+        const entry = ledger.freezeArtifact(root, artifactRel);
+        assert.strictEqual(entry.path, artifactRel);
+        assert.strictEqual(entry.artifactId, 'plan:frozen');
+        assert.strictEqual(entry.freezeCommit, freezeCommit);
+        assert.strictEqual(entry.contentSha256, crypto.createHash('sha256').update(bytes).digest('hex'));
+        assert.match(entry.contractDigest, /^[0-9a-f]{64}$/);
+        assert.deepStrictEqual(ledger.readFreezeLedger(root).entries, [entry]);
+
+        writeText(path.join(root, 'README.md'), '# Unrelated head movement\n');
+        git(['add', 'README.md']);
+        git(['commit', '-m', 'unrelated change']);
+        assert.deepStrictEqual(ledger.freezeArtifact(root, artifactRel), entry,
+            'same frozen bytes remain idempotent and retain their original freeze commit after unrelated HEAD movement');
+
+        writeText(artifactPath, artifact('Remediated'));
+        assert.throws(() => ledger.freezeArtifact(root, artifactRel), /clean|different content|replace/i,
+            'dirty or changed content cannot silently replace freeze identity');
+        git(['add', artifactRel]);
+        git(['commit', '-m', 'remediate frozen artifact']);
+        assert.throws(() => ledger.freezeArtifact(root, artifactRel), /--replace|different content/i,
+            'a committed digest change still requires explicit replacement');
+
+        writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+            version: 'evo-plan-ir@1', specs: [],
+            plans: [{ id: 'plan:frozen', sourcePath: artifactRel, taskIds: ['task:frozen'] }],
+            tasks: [{ id: 'task:frozen', linkedPlan: 'plan:frozen', evidence: ['git:proof'] }],
+            warnings: [],
+        }, null, 2));
+        let report = ledger.inspectFreezeLedger(root);
+        assert.strictEqual(report.entries[0].contentState, 'mismatch');
+        assert.strictEqual(report.entries[0].ancestorOfHead, true);
+        assert.strictEqual(report.entries[0].mergeCommit, null);
+        assert.strictEqual(report.entries[0].remediation.used, 1,
+            'the freeze commit itself is excluded and one later touching commit is counted');
+        assert.strictEqual(report.entries[0].remediation.status, 'budget-exceeded');
+        assert.deepStrictEqual(report.entries[0].remediation.choices, [
+            'continue-governance', 'downgrade-nonblocking-debt', 'resume-authorized-execution',
+        ]);
+        assert.deepStrictEqual(report.entries[0].evidence, ['git:proof']);
+
+        git(['switch', 'main']);
+        git(['merge', '--no-ff', 'feature', '-m', 'merge feature']);
+        const mergeCommit = git(['rev-parse', 'HEAD']);
+        report = ledger.inspectFreezeLedger(root);
+        assert.strictEqual(report.entries[0].contentState, 'mismatch');
+        assert.strictEqual(report.entries[0].mergeCommit, mergeCommit,
+            'the first mainline merge introducing the freeze commit is derived, never guessed');
+        assert.strictEqual(report.entries[0].remediation.used, 1);
+
+        const replacement = ledger.freezeArtifact(root, artifactRel, { replace: true });
+        assert.strictEqual(replacement.freezeCommit, mergeCommit);
+        assert.notStrictEqual(replacement.contentSha256, entry.contentSha256);
+        const beforeRead = fs.readFileSync(path.join(root, '.evo-lite', 'governance', 'freeze-ledger.json'));
+        ledger.inspectFreezeLedger(root);
+        const afterRead = fs.readFileSync(path.join(root, '.evo-lite', 'governance', 'freeze-ledger.json'));
+        assert.deepStrictEqual(afterRead, beforeRead, 'ledger inspection must be read-only');
+        console.log('✅ T-freeze-ledger passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
