@@ -18272,6 +18272,30 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         assert.deepStrictEqual(snapshot.semanticFindings, [],
             'an ancestor-valid META baseline and matching sync counters must remain valid');
 
+        const unstartedActive = observer.buildGovernanceSnapshot(root, {
+            ...baseOptions,
+            planIR: {
+                specs: [],
+                plans: [{ id: 'plan:not-started', status: 'active' }],
+                tasks: [{ id: 'task:not-started', linkedPlan: 'plan:not-started', status: 'todo' }],
+                findings: [],
+            },
+        });
+        assert.strictEqual(unstartedActive.semanticFindings.includes('FOCUS_PLAN_DRIFT'), false,
+            'an active plan with zero implemented/verified tasks must not create focus drift; R012 forbids focusing it');
+
+        const startedActive = observer.buildGovernanceSnapshot(root, {
+            ...baseOptions,
+            planIR: {
+                specs: [],
+                plans: [{ id: 'plan:started', status: 'active' }],
+                tasks: [{ id: 'task:started', linkedPlan: 'plan:started', status: 'implemented' }],
+                findings: [],
+            },
+        });
+        assert.strictEqual(startedActive.semanticFindings.includes('FOCUS_PLAN_DRIFT'), true,
+            'a started active plan that is absent from FOCUS must still create focus drift');
+
         const stale = observer.buildGovernanceSnapshot(root, {
             ...baseOptions,
             activeContext: {

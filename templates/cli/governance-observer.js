@@ -314,8 +314,11 @@ function findingCodes(planIR) {
 
 function detectFocusPlanDrift(focus, planIR, explicit) {
     if (typeof explicit === 'boolean') return explicit;
+    const tasks = planIR.tasks || [];
     const active = (planIR.plans || [])
-        .filter(plan => plan && plan.status === 'active' && typeof plan.id === 'string')
+        .filter(plan => plan && plan.status === 'active' && typeof plan.id === 'string'
+            && tasks.some(task => task && task.linkedPlan === plan.id
+                && (task.status === 'implemented' || task.status === 'verified')))
         .map(plan => plan.id.replace(/^plan:/, ''));
     return active.length > 0 && active.some(id => !String(focus || '').includes(id));
 }
