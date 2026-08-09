@@ -3819,6 +3819,102 @@ async function runIntegrationTests() {
             console.log('✅ T-freeze-ledger-cli passed');
         }
 
+        console.log('T-governance-cli. Nested snapshot/budget commands stay read-only, bounded, and manifest-managed ...');
+        {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-cli-'));
+            const activePath = path.join(root, '.evo-lite', 'active_context.md');
+            const snapshotPath = path.join(root, '.evo-lite', 'generated', 'governance', 'snapshot.json');
+            const git = args => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+            const env = {
+                ...process.env,
+                EVO_LITE_WORKSPACE_ROOT: root,
+                EVO_LITE_ROOT: path.join(root, '.evo-lite'),
+                EVO_LITE_SKIP_GIT_GUARD: '1',
+                EVO_LITE_SKIP_GIT_STATUS: '1',
+                NODE_PATH: [path.join(WORKSPACE_ROOT, 'node_modules'), path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules')].join(path.delimiter),
+            };
+            const run = args => childProcess.spawnSync(process.execPath, [path.join(CLI_DIR, 'memory.js'), ...args], {
+                cwd: root, env, encoding: 'utf8',
+            });
+            try {
+                git(['init', '-b', 'main']);
+                git(['config', 'user.name', 'Evo Test']);
+                git(['config', 'user.email', 'evo@example.com']);
+                git(['config', 'core.autocrlf', 'false']);
+                writeText(activePath, [
+                    '<!-- BEGIN_META -->',
+                    'headSha: 0000000000000000000000000000000000000000',
+                    'upstreamSha: 0000000000000000000000000000000000000000',
+                    'ahead: 0',
+                    'behind: 0',
+                    '<!-- END_META -->',
+                    '<!-- BEGIN_FOCUS -->',
+                    '[governance-cli] active',
+                    '<!-- END_FOCUS -->',
+                    '<!-- BEGIN_BACKLOG -->',
+                    '- [ ] [alpha] queued',
+                    '<!-- END_BACKLOG -->',
+                    '<!-- BEGIN_TRAJECTORY -->',
+                    '[0000000] baseline',
+                    '<!-- END_TRAJECTORY -->',
+                    '',
+                ].join('\n'));
+                writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                    version: 'evo-plan-ir@1',
+                    specs: [],
+                    plans: [],
+                    tasks: [],
+                    findings: [],
+                    warnings: [],
+                }, null, 2));
+                writeText(path.join(root, 'README.md'), 'base\n');
+                git(['add', '.']);
+                git(['commit', '-m', 'base']);
+                const base = git(['rev-parse', 'HEAD']);
+                writeText(path.join(root, 'docs', 'governance.md'), '# Governance\n');
+                git(['add', '.']);
+                git(['commit', '-m', 'governance']);
+
+                const beforeContext = fs.readFileSync(activePath);
+                const jsonSnapshot = run(['governance', 'snapshot', '--json']);
+                assert.strictEqual(jsonSnapshot.status, 0, jsonSnapshot.stderr);
+                assert.strictEqual(JSON.parse(jsonSnapshot.stdout).version, 'evo-governance-snapshot@1');
+                assert.strictEqual(fs.existsSync(snapshotPath), false, 'snapshot defaults to read-only');
+
+                const textSnapshot = run(['governance', 'snapshot']);
+                assert.strictEqual(textSnapshot.status, 0, textSnapshot.stderr);
+                assert.match(textSnapshot.stdout, /Governance snapshot/);
+
+                const written = run(['governance', 'snapshot', '--write', '--json']);
+                assert.strictEqual(written.status, 0, written.stderr);
+                assert.strictEqual(JSON.parse(written.stdout).write.path, snapshotPath);
+                assert.strictEqual(fs.existsSync(snapshotPath), true, '--write uses the exact generated target');
+
+                const budgetJson = run(['governance', 'budget', '--since', base, '--json']);
+                assert.strictEqual(budgetJson.status, 0, budgetJson.stderr);
+                assert.strictEqual(JSON.parse(budgetJson.stdout).version, 'evo-governance-budget@1');
+                const budgetText = run(['governance', 'budget', '--since', base]);
+                assert.strictEqual(budgetText.status, 0, budgetText.stderr);
+                assert.match(budgetText.stdout, /Governance work budget/);
+
+                for (const alias of [['snapshot'], ['budget']]) {
+                    const rejected = run(alias);
+                    assert.notStrictEqual(rejected.status, 0, `top-level ${alias[0]} alias must not exist`);
+                }
+                const invalidRef = run(['governance', 'budget', '--since', 'bad ref', '--json']);
+                assert.notStrictEqual(invalidRef.status, 0, 'invalid ref must fail safely through argv-based Git');
+                assert.deepStrictEqual(fs.readFileSync(activePath), beforeContext,
+                    'all governance commands preserve active context byte-for-byte');
+
+                const manifest = require(path.join(CLI_DIR, 'template-manifest.js'));
+                const core = manifest.MANAGED_TEMPLATE_FAMILIES.find(family => family.key === 'core-cli');
+                assert.ok(core.files.includes('governance-observer.js'));
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+            console.log('✅ T-governance-cli passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);

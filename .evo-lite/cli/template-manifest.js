@@ -9,6 +9,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
         relativeDir: [],
         files: [
             'memory.js',
+            'governance-observer.js',
             'pr-state.js',
             'pr-state.service.js',
             'db.js',
