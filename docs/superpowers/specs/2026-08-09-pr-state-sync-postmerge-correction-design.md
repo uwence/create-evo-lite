@@ -126,6 +126,11 @@ run          comes from the exact frozen release-gate workflow identity
 `run.pull_requests` is no longer a binding requirement. Its presence, absence,
 or contents cannot add or remove a matching run.
 
+The validator must not require or validate `run.pull_requests`. Whether the
+field is absent or present, its value is ignored for workflow-run shape
+validity and PR-to-run association. Implementation must not read that field to
+make either decision.
+
 The PR-scoped probe supplies only PR-to-run-ID association. The workflow-run API
 continues to supply workflow, event, head identity, ordering, status, and
 conclusion.
@@ -389,9 +394,14 @@ other integration-test cleanup sites.
 
 - a workflow run matches only when its ID is PR-scoped and its workflow, event,
   and observed head SHA all match;
+- a workflow run with `pull_requests` omitted remains a valid candidate, with
+  association determined only by `PR_SCOPED_RUN_IDS` plus workflow, event, and
+  observed-head identity;
 - an empty `run.pull_requests` array does not disqualify a run;
 - a populated `run.pull_requests` array cannot qualify an otherwise unrelated
   run;
+- the validator never reads `pull_requests` for workflow-run validity or
+  binding;
 - expected `headSha` never drives either acquisition path;
 - wrong event, wrong head, wrong workflow, or unassociated run ID is ignored;
 - main-push runs never satisfy the PR checks contract.
