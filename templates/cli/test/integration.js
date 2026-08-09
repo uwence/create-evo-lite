@@ -3350,6 +3350,38 @@ async function runIntegrationTests() {
                 assert.match(lintHelp.stdout, /--json/);
                 assert.match(lintHelp.stdout, /--strict/);
 
+                const warningRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-plan-lint-warning-'));
+                try {
+                    writeText(path.join(warningRoot, 'docs', 'superpowers', 'plans', 'warning.md'), [
+                        '---', 'id: plan:warning-only', '---', '', '# Warning only', '',
+                    ].join('\n'));
+                    const warningEnv = {
+                        ...process.env,
+                        EVO_LITE_WORKSPACE_ROOT: warningRoot,
+                        EVO_LITE_ROOT: path.join(warningRoot, '.evo-lite'),
+                        EVO_LITE_SKIP_GIT_GUARD: '1',
+                        EVO_LITE_SKIP_GIT_STATUS: '1',
+                        NODE_PATH: [path.join(WORKSPACE_ROOT, 'node_modules'), path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules')].join(path.delimiter),
+                    };
+                    const runLint = () => childProcess.spawnSync(process.execPath, [
+                        path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'plan', 'lint', '--strict',
+                    ], { cwd: warningRoot, env: warningEnv, encoding: 'utf8' });
+                    const warningOnly = runLint();
+                    assert.strictEqual(warningOnly.status, 0,
+                        `strict lint must remain successful for warnings-only legacy debt: ${warningOnly.stdout}${warningOnly.stderr}`);
+                    writeText(path.join(warningRoot, '.evo-lite', 'config.json'), JSON.stringify({
+                        planning: { contractLint: {
+                            required: true, paths: ['docs/superpowers/plans/**'], requiredInvariants: [],
+                        } },
+                    }));
+                    const withError = runLint();
+                    assert.notStrictEqual(withError.status, 0,
+                        'strict lint must exit non-zero when a configured contract error exists');
+                    assert.match(`${withError.stdout}${withError.stderr}`, /PLAN_CONTRACT_MISSING/);
+                } finally {
+                    fs.rmSync(warningRoot, { recursive: true, force: true });
+                }
+
                 fs.writeFileSync(path.join(plansDir, '2026-01-04-bad-heading.md'),
                     '---\nlinkedSpec: spec:bad-heading\n---\n# Bad Heading Plan\n## Task 1: Wrong level\n- [ ] **Step 1:** do thing\n');
                 const scanResult = scanPlanning(tmpLintRoot);

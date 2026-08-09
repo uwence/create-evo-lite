@@ -161,14 +161,15 @@ function registerPlanCommands(program) {
                 console.log('All plan files have valid frontmatter.');
             } else {
                 for (const issue of results.issues) {
-                    console.log(`[${issue.level}] ${issue.file}: ${issue.message}`);
+                    const code = issue.code ? `${issue.code} ` : '';
+                    console.log(`[${issue.level}] ${code}${issue.file}: ${issue.message}`);
                 }
             }
             if (!options.json && options.fix && results.fixed > 0) {
                 console.log(`\nFixed: ${results.fixed} file(s) — frontmatter injected.`);
             }
-            const remaining = options.fix ? results.issues.length - results.fixed : results.issues.length;
-            process.exitCode = remaining > 0 ? 1 : 0;
+            const remainingErrors = results.issues.filter(issue => issue.level === 'error').length;
+            process.exitCode = remainingErrors > 0 ? 1 : 0;
         });
 
     plan.command('freeze <path>')

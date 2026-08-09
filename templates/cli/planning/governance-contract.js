@@ -31,8 +31,26 @@ function duplicateJsonKey(jsonText) {
 
 function parseGovernanceContract(markdown) {
     const text = String(markdown == null ? '' : markdown);
-    const headingRe = /^## Governance Contract[ \t]*\r?$/gm;
-    const headings = [...text.matchAll(headingRe)];
+    const headings = [];
+    let activeFence = null;
+    let offset = 0;
+    while (offset <= text.length) {
+        const newline = text.indexOf('\n', offset);
+        const end = newline === -1 ? text.length : newline;
+        const rawLine = text.slice(offset, end);
+        const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+        const marker = line.match(/^[ \t]*(`{3,}|~{3,})(.*)$/);
+        if (activeFence) {
+            if (marker && marker[1][0] === activeFence.char && marker[1].length >= activeFence.length
+                && marker[2].trim() === '') activeFence = null;
+        } else if (marker) {
+            activeFence = { char: marker[1][0], length: marker[1].length };
+        } else if (/^## Governance Contract[ \t]*$/.test(line)) {
+            headings.push({ 0: rawLine, index: offset });
+        }
+        if (newline === -1) break;
+        offset = newline + 1;
+    }
     if (headings.length === 0) return { present: false, contract: null, error: null };
     if (headings.length !== 1) {
         return { present: true, contract: null, error: 'duplicate Governance Contract heading' };

@@ -17985,6 +17985,12 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         assert.deepStrictEqual(contract.parseGovernanceContract('# legacy'), {
             present: false, contract: null, error: null,
         }, 'legacy artifacts must remain an explicit opt-out');
+        assert.deepStrictEqual(contract.parseGovernanceContract([
+            '# Parser documentation', '', '````markdown', '## Governance Contract', '',
+            '```json', '{}', '```', '````', '',
+        ].join('\n')), {
+            present: false, contract: null, error: null,
+        }, 'an example heading inside a fenced block must not opt the document into the contract');
         const parsed = contract.parseGovernanceContract(block(valid));
         assert.strictEqual(parsed.present, true);
         assert.strictEqual(parsed.error, null);
