@@ -17931,6 +17931,55 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         console.log('✅ T7-7-native-entry-audit passed');
     }
 
+    console.log('T-governance-contract. Strict artifact contracts fail closed without breaking legacy docs ...');
+    {
+        const contract = require(path.join(CLI_DIR, 'planning', 'governance-contract.js'));
+        const block = value => [
+            '# Artifact', '', '## Governance Contract', '', '```json',
+            JSON.stringify(value, null, 2), '```', '',
+        ].join('\n');
+        const valid = {
+            schema: 1, artifactStage: 'plan', proofLayer: 'A',
+            requiredCapabilities: [], blockScope: 'artifact', remediationBudget: 5,
+            requiredInvariants: ['attempt-binding', 'causal-ordering'],
+        };
+
+        assert.deepStrictEqual(contract.parseGovernanceContract('# legacy'), {
+            present: false, contract: null, error: null,
+        }, 'legacy artifacts must remain an explicit opt-out');
+        const parsed = contract.parseGovernanceContract(block(valid));
+        assert.strictEqual(parsed.present, true);
+        assert.strictEqual(parsed.error, null);
+        assert.deepStrictEqual(parsed.contract, valid);
+
+        const duplicateKey = block(valid).replace('  "schema": 1,', '  "schema": 1,\n  "schema": 1,');
+        assert.match(contract.parseGovernanceContract(duplicateKey).error, /duplicate.*schema/i,
+            'a duplicate JSON key must fail before JSON.parse can erase the ambiguity');
+        assert.match(contract.parseGovernanceContract(block({ ...valid, surprise: true })).error, /unknown.*surprise/i);
+
+        const layerBArtifact = { ...valid, proofLayer: 'B', requiredCapabilities: ['provider:q1'] };
+        assert.deepStrictEqual(contract.validateGovernanceContract(layerBArtifact, {
+            filePath: 'docs/superpowers/plans/q1.md',
+            parsedArtifact: { tasks: [{ verify: ['node probe.js'], evidence: [] }] },
+        }).map(f => f.code), ['PROOF_LAYER_BLOCK_SCOPE_INVALID']);
+
+        const layerCMissingCapability = {
+            ...valid, proofLayer: 'C', blockScope: 'implementation', requiredCapabilities: [],
+        };
+        assert.deepStrictEqual(contract.validateGovernanceContract(layerCMissingCapability, {
+            filePath: 'docs/superpowers/plans/q1.md', parsedArtifact: { tasks: [] },
+        }).map(f => f.code), ['REQUIRED_CAPABILITY_MISSING']);
+
+        const spike = { ...valid, artifactStage: 'spike', blockScope: 'admission' };
+        assert.deepStrictEqual(contract.validateGovernanceContract(spike, {
+            filePath: 'docs/superpowers/specs/spike.md', parsedArtifact: { tasks: [] },
+        }).map(f => f.code), ['ARTIFACT_STAGE_PATH_MISMATCH', 'SPIKE_EXECUTION_EVIDENCE_MISSING']);
+        assert.deepStrictEqual(contract.validateGovernanceContract(spike, {
+            filePath: 'docs/superpowers/plans/spike.md',
+            parsedArtifact: { tasks: [{ verify: ['node probe.js'], evidence: [] }] },
+        }), []);
+        console.log('✅ T-governance-contract passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
