@@ -246,7 +246,7 @@ function createDefaultCommandRunner() {
     };
 }
 
-function runText(runCommand, executable, args, options, errorCode) {
+function runText(runCommand, executable, args, options, errorCode, acceptedStatuses = [0]) {
     let result;
     try {
         result = runCommand(executable, args, options);
@@ -262,7 +262,7 @@ function runText(runCommand, executable, args, options, errorCode) {
     if (result.signal) {
         fail(errorCode, `${executable} terminated by signal ${result.signal}`);
     }
-    if (result.status !== 0) {
+    if (!acceptedStatuses.includes(result.status)) {
         const stderr = typeof result.stderr === 'string' ? result.stderr.trim() : '';
         fail(errorCode, stderr || `${executable} exited with status ${result.status}`);
     }
@@ -272,8 +272,8 @@ function runText(runCommand, executable, args, options, errorCode) {
     return result.stdout.trim();
 }
 
-function runJson(runCommand, executable, args, options, errorCode) {
-    const text = runText(runCommand, executable, args, options, errorCode);
+function runJson(runCommand, executable, args, options, errorCode, acceptedStatuses = [0]) {
+    const text = runText(runCommand, executable, args, options, errorCode, acceptedStatuses);
     try {
         return JSON.parse(text);
     } catch (error) {
@@ -311,6 +311,30 @@ function validatePrShape(value) {
     return value;
 }
 
+function resolvePrWebIdentity(pr, repository, prNumber) {
+    let url;
+    try {
+        url = new URL(pr.html_url);
+    } catch (error) {
+        fail('PR_RESPONSE_INVALID', 'pull request html_url is malformed');
+    }
+    const expectedPath = `/${repository}/pull/${prNumber}`;
+    if (url.protocol !== 'https:'
+        || url.username !== ''
+        || url.password !== ''
+        || url.port !== ''
+        || url.search !== ''
+        || url.hash !== ''
+        || url.pathname !== expectedPath
+        || !url.hostname) {
+        fail('PR_RESPONSE_INVALID', 'pull request html_url does not match the resolved repository and PR');
+    }
+    return {
+        githubHost: url.hostname,
+        repositoryArg: `${url.hostname}/${repository}`,
+    };
+}
+
 function validateWorkflowShape(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
         || !Number.isSafeInteger(value.id) || value.id < 1
@@ -326,13 +350,54 @@ function validateRunShape(value) {
         || typeof value.event !== 'string'
         || typeof value.head_sha !== 'string' || !SHA_RE.test(value.head_sha)
         || typeof value.status !== 'string'
-        || !(value.conclusion === null || typeof value.conclusion === 'string')
-        || !Array.isArray(value.pull_requests)
-        || value.pull_requests.some(item => !item || !Number.isSafeInteger(item.number) || item.number < 1)) {
+        || !(value.conclusion === null || typeof value.conclusion === 'string')) {
         fail('WORKFLOW_RUN_RESPONSE_INVALID', 'workflow run response is malformed');
     }
     normalizeChecks(value);
     return value;
+}
+
+function validatePrCheckRows(value) {
+    const fields = ['bucket', 'event', 'link', 'name', 'state', 'workflow'];
+    if (!Array.isArray(value)
+        || value.some(row => !row || typeof row !== 'object' || Array.isArray(row)
+            || fields.some(field => typeof row[field] !== 'string'))) {
+        fail('PR_CHECKS_RESPONSE_INVALID', 'pull request checks response is malformed');
+    }
+    return value;
+}
+
+function parseCanonicalPositiveInteger(value) {
+    if (!/^[1-9][0-9]*$/.test(value)) return null;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function extractPrScopedRunIds(rows, githubHost, repository) {
+    const escapedRepository = repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pathPattern = new RegExp(`^/${escapedRepository}/actions/runs/([1-9][0-9]*)(?:/job/([1-9][0-9]*))?$`);
+    const ids = new Set();
+    for (const row of rows) {
+        let url;
+        try {
+            url = new URL(row.link);
+        } catch (error) {
+            continue;
+        }
+        if (url.protocol !== 'https:'
+            || url.username !== ''
+            || url.password !== ''
+            || url.port !== ''
+            || url.hostname !== githubHost
+            || url.search !== ''
+            || url.hash !== '') continue;
+        const match = pathPattern.exec(url.pathname);
+        if (!match) continue;
+        const runId = parseCanonicalPositiveInteger(match[1]);
+        const jobId = match[2] === undefined ? 1 : parseCanonicalPositiveInteger(match[2]);
+        if (runId !== null && jobId !== null) ids.add(runId);
+    }
+    return ids;
 }
 
 function resolveRepository(runCommand, cwd) {
@@ -399,7 +464,7 @@ function validateRunPage(value, expectedTotal) {
     return value;
 }
 
-function observeChecks({ repository, prNumber, headSha, runCommand, cwd }) {
+function observeChecks({ repository, repositoryArg, githubHost, prNumber, headSha, runCommand, cwd }) {
     const workflow = validateWorkflowShape(runJson(
         runCommand,
         'gh',
@@ -439,11 +504,31 @@ function observeChecks({ repository, prNumber, headSha, runCommand, cwd }) {
         page += 1;
     }
 
-    const matching = runs.filter(run =>
+    const candidates = runs.filter(run =>
         run.event === 'pull_request'
         && run.head_sha === headSha
-        && run.pull_requests.some(item => item.number === prNumber)
     );
+    if (candidates.length === 0) {
+        return {
+            checks: 'missing',
+            diagnostics: { workflowId: workflow.id, workflowPath: workflow.path },
+        };
+    }
+
+    const checkRows = validatePrCheckRows(runJson(
+        runCommand,
+        'gh',
+        [
+            'pr', 'checks', String(prNumber),
+            '--repo', repositoryArg,
+            '--json', 'bucket,event,link,name,state,workflow',
+        ],
+        { cwd },
+        'PR_CHECKS_QUERY_FAILED',
+        [0, 8]
+    ));
+    const prScopedRunIds = extractPrScopedRunIds(checkRows, githubHost, repository);
+    const matching = candidates.filter(run => prScopedRunIds.has(run.id));
     const newest = matching.reduce((best, item) => !best || item.id > best.id ? item : best, null);
     if (!newest) {
         return {
@@ -501,6 +586,7 @@ function validatePrState(prArg, options = {}) {
         if (pr.number !== prNumber) {
             fail('PR_RESPONSE_INVALID', 'pull request response number does not match the target');
         }
+        const prWebIdentity = resolvePrWebIdentity(pr, repository, prNumber);
         report.pr = { repository, number: prNumber, url: pr.html_url };
         report.expected = parseExpectedBlock(pr.body, {
             checkRefName(value) {
@@ -522,6 +608,8 @@ function validatePrState(prArg, options = {}) {
         try {
             const checks = observeChecks({
                 repository,
+                repositoryArg: prWebIdentity.repositoryArg,
+                githubHost: prWebIdentity.githubHost,
                 prNumber,
                 headSha: report.observed.headSha,
                 runCommand,
