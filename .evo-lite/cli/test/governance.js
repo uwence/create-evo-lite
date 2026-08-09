@@ -5673,6 +5673,44 @@ async function runGovernanceTests() {
             }, 'buildSpecRegistry must never throw on a project with no docs/specs, no plan-ir, no git');
             assert.deepStrictEqual(degraded.specs, [], 'degraded registry has empty specs array');
             fs.rmSync(emptyRoot, { recursive: true, force: true });
+
+            const dualRoot = createTempRuntimeRoot('spec-portfolio-dual-root').workspaceRoot;
+            writeText(path.join(dualRoot, 'docs', 'superpowers', 'specs', 'valid.md'), [
+                '---', 'id: spec:super', 'status: done', '---', '', '# Superpowers Spec', '',
+            ].join('\n'));
+            writeText(path.join(dualRoot, 'docs', 'superpowers', 'specs', 'legacy.md'),
+                '# Legacy design without portfolio identity\n');
+            writeText(path.join(dualRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:super', status: 'done', linkedPlans: [], sourcePath: 'docs/superpowers/specs/valid.md' }],
+                plans: [], tasks: [], warnings: [],
+            }, null, 2));
+            const dualRegistry = specPortfolio.buildSpecRegistry(dualRoot, { write: false });
+            assert.deepStrictEqual(dualRegistry.specs.map(s => s.id), ['spec:super'],
+                'a project with only docs/superpowers/specs must produce a non-zero portfolio');
+            assert.strictEqual(dualRegistry.errors.length, 0,
+                'legacy superpowers docs without spec IDs remain planning warnings, not release errors');
+            assert.ok(dualRegistry.source.warnings.some(w => w.path.endsWith('legacy.md')),
+                'skipped legacy superpowers docs stay visible in source diagnostics');
+
+            writeText(path.join(dualRoot, 'docs', 'specs', 'duplicate.md'), [
+                '---', 'id: spec:super', 'status: draft', '---', '', '# Duplicate', '',
+            ].join('\n'));
+            const duplicateRegistry = specPortfolio.buildSpecRegistry(dualRoot, { write: false });
+            assert.ok(duplicateRegistry.errors.some(e => /duplicate spec id.*spec:super/i.test(e.reason)),
+                'duplicate IDs across canonical roots must fail closed');
+
+            const driftRoot = createTempRuntimeRoot('spec-portfolio-source-drift').workspaceRoot;
+            writeText(path.join(driftRoot, 'docs', 'superpowers', 'specs', 'legacy.md'), '# Missing ID\n');
+            writeText(path.join(driftRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:known', status: 'draft', linkedPlans: [], sourcePath: 'docs/superpowers/specs/legacy.md' }],
+                plans: [], tasks: [], warnings: [],
+            }, null, 2));
+            const driftRegistry = specPortfolio.buildSpecRegistry(driftRoot, { write: false });
+            assert.ok(specPortfolio.formatPortfolioReport(driftRegistry)
+                .some(line => line.includes('portfolio-source-drift')),
+            'Planning IR specs with zero valid portfolio entities must emit source drift');
         }
         console.log('✅ T-spec-portfolio core derivation passed');
 
@@ -17931,6 +17969,447 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         console.log('✅ T7-7-native-entry-audit passed');
     }
 
+    console.log('T-governance-contract. Strict artifact contracts fail closed without breaking legacy docs ...');
+    {
+        const contract = require(path.join(CLI_DIR, 'planning', 'governance-contract.js'));
+        const block = value => [
+            '# Artifact', '', '## Governance Contract', '', '```json',
+            JSON.stringify(value, null, 2), '```', '',
+        ].join('\n');
+        const valid = {
+            schema: 1, artifactStage: 'plan', proofLayer: 'A',
+            requiredCapabilities: [], blockScope: 'artifact', remediationBudget: 5,
+            requiredInvariants: ['attempt-binding', 'causal-ordering'],
+        };
+
+        assert.deepStrictEqual(contract.parseGovernanceContract('# legacy'), {
+            present: false, contract: null, error: null,
+        }, 'legacy artifacts must remain an explicit opt-out');
+        assert.deepStrictEqual(contract.parseGovernanceContract([
+            '# Parser documentation', '', '````markdown', '## Governance Contract', '',
+            '```json', '{}', '```', '````', '',
+        ].join('\n')), {
+            present: false, contract: null, error: null,
+        }, 'an example heading inside a fenced block must not opt the document into the contract');
+        const parsed = contract.parseGovernanceContract(block(valid));
+        assert.strictEqual(parsed.present, true);
+        assert.strictEqual(parsed.error, null);
+        assert.deepStrictEqual(parsed.contract, valid);
+
+        const duplicateKey = block(valid).replace('  "schema": 1,', '  "schema": 1,\n  "schema": 1,');
+        assert.match(contract.parseGovernanceContract(duplicateKey).error, /duplicate.*schema/i,
+            'a duplicate JSON key must fail before JSON.parse can erase the ambiguity');
+        assert.match(contract.parseGovernanceContract(block({ ...valid, surprise: true })).error, /unknown.*surprise/i);
+
+        const layerBArtifact = { ...valid, proofLayer: 'B', requiredCapabilities: ['provider:q1'] };
+        assert.deepStrictEqual(contract.validateGovernanceContract(layerBArtifact, {
+            filePath: 'docs/superpowers/plans/q1.md',
+            parsedArtifact: { tasks: [{ verify: ['node probe.js'], evidence: [] }] },
+        }).map(f => f.code), ['PROOF_LAYER_BLOCK_SCOPE_INVALID']);
+
+        const layerCMissingCapability = {
+            ...valid, proofLayer: 'C', blockScope: 'implementation', requiredCapabilities: [],
+        };
+        assert.deepStrictEqual(contract.validateGovernanceContract(layerCMissingCapability, {
+            filePath: 'docs/superpowers/plans/q1.md', parsedArtifact: { tasks: [] },
+        }).map(f => f.code), ['REQUIRED_CAPABILITY_MISSING']);
+
+        const spike = { ...valid, artifactStage: 'spike', blockScope: 'admission' };
+        assert.deepStrictEqual(contract.validateGovernanceContract(spike, {
+            filePath: 'docs/superpowers/specs/spike.md', parsedArtifact: { tasks: [] },
+        }).map(f => f.code), ['ARTIFACT_STAGE_PATH_MISMATCH', 'SPIKE_EXECUTION_EVIDENCE_MISSING']);
+        assert.deepStrictEqual(contract.validateGovernanceContract(spike, {
+            filePath: 'docs/superpowers/plans/spike.md',
+            parsedArtifact: { tasks: [{ verify: ['node probe.js'], evidence: [] }] },
+        }), []);
+        console.log('✅ T-governance-contract passed');
+    }
+
+    console.log('T-freeze-ledger. Freeze identity and convergence evidence stay external and read-only ...');
+    {
+        const crypto = require('crypto');
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-freeze-ledger-'));
+        const artifactRel = 'docs/superpowers/plans/frozen.md';
+        const artifactPath = path.join(root, ...artifactRel.split('/'));
+        const git = args => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+        const contractValue = {
+            schema: 1, artifactStage: 'plan', proofLayer: 'A',
+            requiredCapabilities: [], blockScope: 'artifact', remediationBudget: 0,
+            requiredInvariants: ['attempt-binding'],
+        };
+        const artifact = title => [
+            '---', 'id: plan:frozen', 'linkedSpec: spec:frozen', 'status: active', '---', '',
+            `# ${title}`, '', '## Governance Contract', '', '```json',
+            JSON.stringify(contractValue, null, 2), '```', '',
+        ].join('\n');
+        fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+        git(['init', '-b', 'main']);
+        git(['config', 'user.name', 'Evo Test']);
+        git(['config', 'user.email', 'evo@example.com']);
+        git(['config', 'core.autocrlf', 'false']);
+        writeText(path.join(root, 'README.md'), '# Root\n');
+        git(['add', 'README.md']);
+        git(['commit', '-m', 'base']);
+        git(['switch', '-c', 'feature']);
+        writeText(artifactPath, artifact('Frozen'));
+
+        const ledger = require(path.join(CLI_DIR, 'planning', 'freeze-ledger.js'));
+        assert.throws(() => ledger.freezeArtifact(root, artifactRel), /tracked|HEAD/i,
+            'an untracked artifact cannot be frozen');
+        git(['add', artifactRel]);
+        git(['commit', '-m', 'add frozen artifact']);
+        const freezeCommit = git(['rev-parse', 'HEAD']);
+        const bytes = fs.readFileSync(artifactPath);
+        const entry = ledger.freezeArtifact(root, artifactRel);
+        assert.strictEqual(entry.path, artifactRel);
+        assert.strictEqual(entry.artifactId, 'plan:frozen');
+        assert.strictEqual(entry.freezeCommit, freezeCommit);
+        assert.strictEqual(entry.contentSha256, crypto.createHash('sha256').update(bytes).digest('hex'));
+        assert.match(entry.contractDigest, /^[0-9a-f]{64}$/);
+        assert.deepStrictEqual(ledger.readFreezeLedger(root).entries, [entry]);
+
+        writeText(path.join(root, 'README.md'), '# Unrelated head movement\n');
+        git(['add', 'README.md']);
+        git(['commit', '-m', 'unrelated change']);
+        assert.deepStrictEqual(ledger.freezeArtifact(root, artifactRel), entry,
+            'same frozen bytes remain idempotent and retain their original freeze commit after unrelated HEAD movement');
+
+        writeText(artifactPath, artifact('Remediated'));
+        assert.throws(() => ledger.freezeArtifact(root, artifactRel), /clean|different content|replace/i,
+            'dirty or changed content cannot silently replace freeze identity');
+        git(['add', artifactRel]);
+        git(['commit', '-m', 'remediate frozen artifact']);
+        assert.throws(() => ledger.freezeArtifact(root, artifactRel), /--replace|different content/i,
+            'a committed digest change still requires explicit replacement');
+
+        writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+            version: 'evo-plan-ir@1', specs: [],
+            plans: [{ id: 'plan:frozen', sourcePath: artifactRel, taskIds: ['task:frozen'] }],
+            tasks: [{ id: 'task:frozen', linkedPlan: 'plan:frozen', evidence: ['git:proof'] }],
+            warnings: [],
+        }, null, 2));
+        let report = ledger.inspectFreezeLedger(root);
+        assert.strictEqual(report.entries[0].contentState, 'mismatch');
+        assert.strictEqual(report.entries[0].ancestorOfHead, true);
+        assert.strictEqual(report.entries[0].mergeCommit, null);
+        assert.strictEqual(report.entries[0].remediation.used, 1,
+            'the freeze commit itself is excluded and one later touching commit is counted');
+        assert.strictEqual(report.entries[0].remediation.status, 'budget-exceeded');
+        assert.deepStrictEqual(report.entries[0].remediation.choices, [
+            'continue-governance', 'downgrade-nonblocking-debt', 'resume-authorized-execution',
+        ]);
+        assert.deepStrictEqual(report.entries[0].evidence, ['git:proof']);
+
+        git(['switch', 'main']);
+        git(['merge', '--no-ff', 'feature', '-m', 'merge feature']);
+        const mergeCommit = git(['rev-parse', 'HEAD']);
+        report = ledger.inspectFreezeLedger(root);
+        assert.strictEqual(report.entries[0].contentState, 'mismatch');
+        assert.strictEqual(report.entries[0].mergeCommit, mergeCommit,
+            'the first mainline merge introducing the freeze commit is derived, never guessed');
+        assert.strictEqual(report.entries[0].remediation.used, 1);
+
+        const replacement = ledger.freezeArtifact(root, artifactRel, { replace: true });
+        assert.strictEqual(replacement.freezeCommit, mergeCommit);
+        assert.notStrictEqual(replacement.contentSha256, entry.contentSha256);
+        const beforeRead = fs.readFileSync(path.join(root, '.evo-lite', 'governance', 'freeze-ledger.json'));
+        ledger.inspectFreezeLedger(root);
+        const afterRead = fs.readFileSync(path.join(root, '.evo-lite', 'governance', 'freeze-ledger.json'));
+        assert.deepStrictEqual(afterRead, beforeRead, 'ledger inspection must be read-only');
+        console.log('✅ T-freeze-ledger passed');
+    }
+
+    console.log('T-trace-freeze-v2. Traceability preserves v1 chains and includes derived freeze evidence ...');
+    {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-trace-freeze-'));
+        const artifactRel = 'docs/superpowers/plans/x.md';
+        const artifactPath = path.join(root, ...artifactRel.split('/'));
+        const git = args => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+        fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+        git(['init', '-b', 'main']);
+        git(['config', 'user.name', 'Evo Test']);
+        git(['config', 'user.email', 'evo@example.com']);
+        git(['config', 'core.autocrlf', 'false']);
+        writeText(artifactPath, [
+            '---', 'id: plan:x', 'linkedSpec: spec:x', 'status: active', '---', '', '# X', '',
+            '## Governance Contract', '', '```json', JSON.stringify({
+                schema: 1, artifactStage: 'plan', proofLayer: 'A', requiredCapabilities: [],
+                blockScope: 'artifact', remediationBudget: 2, requiredInvariants: ['attempt-binding'],
+            }, null, 2), '```', '',
+        ].join('\n'));
+        git(['add', artifactRel]);
+        git(['commit', '-m', 'add plan x']);
+        require(path.join(CLI_DIR, 'planning', 'freeze-ledger.js')).freezeArtifact(root, artifactRel);
+        writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+            version: 'evo-plan-ir@1',
+            specs: [{ id: 'spec:x', linkedPlans: ['plan:x'] }],
+            plans: [{ id: 'plan:x', sourcePath: artifactRel, taskIds: ['task:x'] }],
+            tasks: [{
+                id: 'task:x', title: 'X task', status: 'implemented', linkedPlan: 'plan:x',
+                linkedFiles: ['src/x.js'], evidence: ['git:proof'],
+            }],
+            warnings: [],
+        }, null, 2));
+        const trace = require(path.join(CLI_DIR, 'planning', 'traceability.js')).buildTraceability(root);
+        assert.strictEqual(trace.version, 'evo-trace@2');
+        assert.deepStrictEqual(trace.chains, [{
+            spec: 'spec:x', plan: 'plan:x', task: 'task:x', taskTitle: 'X task',
+            taskStatus: 'implemented', linkedFiles: ['src/x.js'], evidence: ['git:proof'],
+        }], 'v2 must preserve the exact v1 chain shape');
+        assert.deepStrictEqual(trace.unlinkedTasks, [], 'v2 must preserve the exact v1 unlinked-task shape');
+        assert.strictEqual(trace.freezeLedger.entries[0].artifactId, 'plan:x');
+        assert.deepStrictEqual(trace.freezeLedger.entries[0].evidence, ['git:proof']);
+
+        const manifest = require(path.join(CLI_DIR, 'template-manifest.js'));
+        const core = manifest.MANAGED_TEMPLATE_FAMILIES.find(family => family.key === 'core-cli');
+        assert.ok(core.files.includes('planning/governance-contract.js'));
+        assert.ok(core.files.includes('planning/freeze-ledger.js'));
+        console.log('✅ T-trace-freeze-v2 passed');
+    }
+    console.log('T-governance-observer. Structured snapshots exclude raw inputs and detect semantic transitions ...');
+    {
+        const observer = require(path.join(CLI_DIR, 'governance-observer.js'));
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-observer-'));
+        const baseOptions = {
+            now: () => '2026-08-09T00:00:00.000Z',
+            gitState: {
+                head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                branch: 'main',
+                upstream: 'origin/main',
+                ahead: 0,
+                behind: 0,
+                dirty: false,
+            },
+            activeContext: {
+                meta: {
+                    headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    upstreamSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    ahead: 0,
+                    behind: 0,
+                },
+                focus: 'Deliver governed work without capturing raw prose.',
+                backlogIds: ['alpha', 'beta'],
+                trajectoryHead: 'aaaaaaaa',
+            },
+            planIR: {
+                specs: [{ id: 'spec:x' }],
+                plans: [{ id: 'plan:x' }],
+                tasks: [{ id: 'task:x' }],
+                findings: [{ code: 'R013' }],
+            },
+            portfolio: { source: { portfolioSourceDrift: false } },
+            freezeLedger: {
+                entries: [{ artifactId: 'plan:x', remediation: { status: 'within-budget' } }],
+            },
+            budget: {
+                status: 'within-budget',
+                governanceRatio: 0.5,
+                remediationRatio: 0,
+            },
+            prState: {
+                number: 35,
+                base: 'main',
+                head: 'codex/example',
+                phase: 'draft',
+                checks: 'pending',
+                runId: 123,
+                body: 'secret body',
+            },
+            forbiddenProbe: {
+                prompt: 'secret prompt',
+                output: 'raw command output',
+                review: 'raw review text',
+                token: 'TOP_SECRET',
+            },
+            isAncestor: () => true,
+        };
+
+        const snapshot = observer.buildGovernanceSnapshot(root, baseOptions);
+        assert.deepStrictEqual(Object.keys(snapshot), [
+            'version', 'observedAt', 'git', 'context', 'planning', 'freeze',
+            'pr', 'budget', 'semanticFindings', 'transitions', 'recommendations',
+        ]);
+        assert.deepStrictEqual(snapshot.pr, {
+            number: 35,
+            base: 'main',
+            head: 'codex/example',
+            phase: 'draft',
+            checks: 'pending',
+            runId: 123,
+        });
+        const serialized = JSON.stringify(snapshot);
+        for (const forbidden of ['secret body', 'secret prompt', 'raw command output', 'raw review text', 'TOP_SECRET']) {
+            assert.strictEqual(serialized.includes(forbidden), false, forbidden);
+        }
+        assert.deepStrictEqual(snapshot.semanticFindings, [],
+            'an ancestor-valid META baseline and matching sync counters must remain valid');
+
+        const stale = observer.buildGovernanceSnapshot(root, {
+            ...baseOptions,
+            activeContext: {
+                ...baseOptions.activeContext,
+                meta: { ...baseOptions.activeContext.meta, ahead: 4, behind: 1 },
+                trajectoryHead: 'bbbbbbbb',
+            },
+            portfolio: { source: { portfolioSourceDrift: true } },
+            freezeLedger: {
+                entries: [{ artifactId: 'plan:x', remediation: { status: 'budget-exceeded' } }],
+            },
+            budget: { status: 'budget-exceeded', governanceRatio: 0.8, remediationRatio: 0.6 },
+            focusPlanDrift: true,
+            isAncestor: () => false,
+        });
+        assert.deepStrictEqual(stale.semanticFindings, [
+            'CONTEXT_HEAD_NOT_ANCESTOR',
+            'CONTEXT_SYNC_COUNT_DRIFT',
+            'TRAJECTORY_HEAD_DRIFT',
+            'FOCUS_PLAN_DRIFT',
+            'PORTFOLIO_SOURCE_DRIFT',
+            'REMEDIATION_BUDGET_EXCEEDED',
+        ]);
+        assert.deepStrictEqual(stale.recommendations, [
+            'refresh-context-baseline',
+            'reconcile-context-sync-counts',
+            'record-current-trajectory-head',
+            'reconcile-focus-with-plan',
+            'repair-portfolio-source',
+            'choose-governance-disposition',
+        ]);
+
+        const before = {
+            ...snapshot,
+            git: { ...snapshot.git, branch: 'feature', head: '9999999999999999999999999999999999999999' },
+            pr: { ...snapshot.pr, phase: 'draft', checks: 'pending' },
+            freeze: { withinBudget: 0, exceeded: 0 },
+            budget: { ...snapshot.budget, status: 'within-budget' },
+        };
+        const after = {
+            ...snapshot,
+            git: { ...snapshot.git, branch: 'main', head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', merge: true },
+            pr: { ...snapshot.pr, phase: 'ready', checks: 'success' },
+            freeze: { withinBudget: 1, exceeded: 0 },
+            budget: { ...snapshot.budget, status: 'budget-exceeded' },
+        };
+        assert.deepStrictEqual(
+            observer.compareGovernanceSnapshots(before, after).map(item => item.code),
+            [
+                'branch-changed',
+                'head-advanced',
+                'merge-observed',
+                'pr-phase-changed',
+                'ci-state-changed',
+                'freeze-added',
+                'budget-crossed',
+            ],
+        );
+
+        const successfulWrite = observer.writeGovernanceSnapshot(root, snapshot);
+        assert.strictEqual(successfulWrite.ok, true);
+        assert.strictEqual(
+            JSON.parse(fs.readFileSync(successfulWrite.path, 'utf8')).version,
+            'evo-governance-snapshot@1',
+        );
+        const failedWrite = observer.writeGovernanceSnapshot(root, snapshot, {
+            writeFile: () => { throw new Error('disk full'); },
+        });
+        assert.strictEqual(failedWrite.ok, false);
+        assert.match(failedWrite.error, /disk full/);
+        assert.strictEqual(fs.existsSync(path.join(root, '.evo-lite', 'active_context.md')), false,
+            'snapshot write failure must never create or mutate active context');
+        console.log('✅ T-governance-observer passed');
+    }
+    console.log('T-governance-budget. Commit classes, merge exclusion, elapsed span, and circuit breaker stay deterministic ...');
+    {
+        const observer = require(path.join(CLI_DIR, 'governance-observer.js'));
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-budget-'));
+        const git = (args, env = {}) => childProcess.execFileSync('git', args, {
+            cwd: root,
+            encoding: 'utf8',
+            env: { ...process.env, ...env },
+        }).trim();
+        const commit = (files, message, iso) => {
+            for (const [relativePath, content] of Object.entries(files)) {
+                writeText(path.join(root, ...relativePath.split('/')), content);
+            }
+            git(['add', '.']);
+            git(['commit', '-m', message], {
+                GIT_AUTHOR_DATE: iso,
+                GIT_COMMITTER_DATE: iso,
+            });
+            return git(['rev-parse', 'HEAD']);
+        };
+
+        git(['init', '-b', 'main']);
+        git(['config', 'user.name', 'Evo Test']);
+        git(['config', 'user.email', 'evo@example.com']);
+        git(['config', 'core.autocrlf', 'false']);
+        commit({ 'README.md': 'base\n' }, 'base', '2026-08-09T00:00:00Z');
+        const base = git(['rev-parse', 'HEAD']);
+        commit({ 'src/app.js': 'module.exports = 1;\n' }, 'delivery', '2026-08-09T00:01:00Z');
+        commit({ 'docs/note.md': '# Note\n' }, 'governance', '2026-08-09T00:02:00Z');
+        commit({
+            'src/mixed.js': 'module.exports = 2;\n',
+            'docs/mixed.md': '# Mixed\n',
+        }, 'mixed', '2026-08-09T00:03:00Z');
+        git(['switch', '-c', 'feature']);
+        commit({ '.agents/rules/feature.md': '# Rule\n' }, 'feature governance', '2026-08-09T00:04:00Z');
+        git(['switch', 'main']);
+        git(['merge', '--no-ff', 'feature', '-m', 'merge feature'], {
+            GIT_AUTHOR_DATE: '2026-08-09T00:05:00Z',
+            GIT_COMMITTER_DATE: '2026-08-09T00:05:00Z',
+        });
+
+        const report = observer.buildGovernanceBudget(root, {
+            since: base,
+            freezeLedger: {
+                entries: [{ remediation: { used: 2 } }],
+            },
+        });
+        assert.deepStrictEqual(report.counts, {
+            delivery: 1,
+            governance: 2,
+            mixed: 1,
+            merge: 1,
+            primary: 4,
+        });
+        assert.strictEqual(report.elapsedSeconds, 240,
+            'elapsed span covers the selected window while merge commits stay outside primary ratios');
+        assert.strictEqual(report.governanceRatio, 0.5);
+        assert.strictEqual(report.remediationRatio, 0.5);
+        assert.strictEqual(report.status, 'within-budget');
+        assert.deepStrictEqual(report.choices, []);
+
+        writeText(path.join(root, '.evo-lite', 'config.json'), JSON.stringify({
+            governance: {
+                budget: {
+                    windowCommits: 100,
+                    maxGovernanceRatio: 0.4,
+                    maxRemediationRatio: 0.4,
+                },
+            },
+        }, null, 2));
+        const exceeded = observer.buildGovernanceBudget(root, {
+            since: base,
+            freezeLedger: {
+                entries: [{ remediation: { used: 2 } }],
+            },
+        });
+        assert.strictEqual(exceeded.status, 'budget-exceeded');
+        assert.deepStrictEqual(exceeded.choices, [
+            'continue-governance',
+            'downgrade-nonblocking-debt',
+            'resume-authorized-execution',
+        ]);
+
+        writeText(path.join(root, '.evo-lite', 'config.json'), JSON.stringify({
+            governance: { budget: { windowCommits: 0 } },
+        }));
+        assert.throws(
+            () => observer.loadGovernanceBudgetConfig(root),
+            error => error && error.code === 'GOVERNANCE_BUDGET_CONFIG_INVALID',
+        );
+        console.log('✅ T-governance-budget passed');
+    }
 }
 
 module.exports = { runGovernanceTests };

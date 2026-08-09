@@ -33,9 +33,23 @@ function formatIRSummary(ir) {
     return lines.join('\n');
 }
 
-function registerPlanCommands(program) {
+function recordPlanningSnapshot(projectRoot, deps = {}) {
+    try {
+        const record = deps.recordGovernanceSnapshot
+            || require('./governance-observer').recordGovernanceSnapshot;
+        const result = record(projectRoot);
+        if (result && result.write && result.write.ok === false) {
+            console.warn(`[evo-lite] governance snapshot warning: ${result.write.error || 'write failed'}`);
+        }
+    } catch (error) {
+        console.warn(`[evo-lite] governance snapshot warning: ${error && error.message ? error.message : String(error)}`);
+    }
+}
+
+function registerPlanCommands(program, deps = {}) {
     const projectRoot = getWorkspaceRoot();
     const plan = program.command('plan').description('Planning IR commands.');
+    plan.hook('postAction', () => recordPlanningSnapshot(projectRoot, deps));
 
     plan.command('status')
         .description('Show planning status (cached IR or quick scan).')
@@ -148,23 +162,67 @@ function registerPlanCommands(program) {
         });
 
     plan.command('lint')
-        .description('Check plan files for missing frontmatter / linkedSpec.')
+        .description('Check planning metadata and configured Governance Contracts.')
         .option('--fix', 'Auto-inject minimal frontmatter into plans that have none.')
+        .option('--json', 'Emit the complete lint result as JSON.')
+        .option('--strict', 'Exit non-zero when any lint issue remains (current default; explicit for gates).')
         .action(async (options) => {
             const { lintPlans } = require('./planning/lint');
-            const results = lintPlans(projectRoot, !!options.fix);
-            if (results.issues.length === 0) {
+            const results = lintPlans(projectRoot, { fix: !!options.fix });
+            if (options.json) {
+                console.log(JSON.stringify(results, null, 2));
+            } else if (results.issues.length === 0) {
                 console.log('All plan files have valid frontmatter.');
             } else {
                 for (const issue of results.issues) {
-                    console.log(`[${issue.level}] ${issue.file}: ${issue.message}`);
+                    const code = issue.code ? `${issue.code} ` : '';
+                    console.log(`[${issue.level}] ${code}${issue.file}: ${issue.message}`);
                 }
             }
-            if (options.fix && results.fixed > 0) {
+            if (!options.json && options.fix && results.fixed > 0) {
                 console.log(`\nFixed: ${results.fixed} file(s) — frontmatter injected.`);
             }
-            const remaining = options.fix ? results.issues.length - results.fixed : results.issues.length;
-            process.exitCode = remaining > 0 ? 1 : 0;
+            const remainingErrors = results.issues.filter(issue => issue.level === 'error').length;
+            process.exitCode = remainingErrors > 0 ? 1 : 0;
+        });
+
+    plan.command('freeze <path>')
+        .description('Record exact artifact bytes and the existing HEAD identity in the independent freeze ledger.')
+        .option('--replace', 'Explicitly replace an existing entry whose frozen identity differs.')
+        .option('--json', 'Emit the frozen ledger entry as JSON.')
+        .action((artifactPath, options) => {
+            const { freezeArtifact } = require('./planning/freeze-ledger');
+            const entry = freezeArtifact(projectRoot, artifactPath, { replace: !!options.replace });
+            if (options.json) {
+                console.log(JSON.stringify(entry, null, 2));
+                return;
+            }
+            console.log(`Frozen: ${entry.path}`);
+            console.log(`Artifact: ${entry.artifactId}`);
+            console.log(`Content SHA-256: ${entry.contentSha256}`);
+            console.log(`Freeze commit: ${entry.freezeCommit}`);
+            console.log(`Contract digest: ${entry.contractDigest}`);
+        });
+
+    plan.command('ledger')
+        .description('Inspect freeze identity, merge evidence, and remediation usage without mutation.')
+        .option('--json', 'Emit the complete derived ledger report as JSON.')
+        .action(options => {
+            const { inspectFreezeLedger } = require('./planning/freeze-ledger');
+            const report = inspectFreezeLedger(projectRoot);
+            if (options.json) {
+                console.log(JSON.stringify(report, null, 2));
+                return;
+            }
+            console.log(`Freeze ledger: ${report.entries.length} entr${report.entries.length === 1 ? 'y' : 'ies'}`);
+            for (const entry of report.entries) {
+                console.log(`- ${entry.path}`);
+                console.log(`  content=${entry.contentState} ancestor=${entry.ancestorOfHead ? 'yes' : 'no'} merge=${entry.mergeCommit || 'none'}`);
+                console.log(`  evidence=${entry.evidence.length} remediation=${entry.remediation.used}/${entry.remediation.budget} ${entry.remediation.status}`);
+                if (entry.remediation.status === 'budget-exceeded') {
+                    console.log(`  choices: ${entry.remediation.choices.join(' | ')}`);
+                }
+            }
         });
 
     plan.command('new <slug>')

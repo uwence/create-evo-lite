@@ -445,6 +445,7 @@ async function runIntegrationTests() {
                 'mcp-server.js', 'mcp-validate.js', 'test.js',
                 'planning/gaps.js', 'planning/parse-markdown.js', 'planning/progress.js',
                 'planning/scan.js', 'planning/traceability.js',
+                'planning/governance-contract.js', 'planning/freeze-ledger.js',
                 'architecture/diff.js', 'architecture/infer-modules.js',
                 'architecture/provider-contract.js', 'architecture/scan-native.js',
                 'memory-index-lock.js',
@@ -475,7 +476,10 @@ async function runIntegrationTests() {
                 assert.strictEqual(synced.status, 'ok');
                 assert.deepStrictEqual(synced.missingTemplates, []);
 
-                for (const file of ['pr-state.js', 'pr-state.service.js']) {
+                for (const file of [
+                    'pr-state.js', 'pr-state.service.js',
+                    'planning/governance-contract.js', 'planning/freeze-ledger.js',
+                ]) {
                     const activeFile = path.join(runtime.runtimeRoot, 'cli', file);
                     const templateFile = path.join(TEMPLATE_CLI_DIR, file);
                     assert.ok(fs.existsSync(activeFile), `${file} must be copied into the managed runtime`);
@@ -484,8 +488,10 @@ async function runIntegrationTests() {
 
                 const lockPath = path.join(runtime.runtimeRoot, 'generated', 'runtime-mirror.lock.json');
                 const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-                assert.ok(lock.entries['.evo-lite/cli/pr-state.js']);
-                assert.ok(lock.entries['.evo-lite/cli/pr-state.service.js']);
+                for (const file of [
+                    'pr-state.js', 'pr-state.service.js',
+                    'planning/governance-contract.js', 'planning/freeze-ledger.js',
+                ]) assert.ok(lock.entries[`.evo-lite/cli/${file}`], `runtime lock missing ${file}`);
                 const verified = verifyRuntimeLock(runtime.workspaceRoot);
                 assert.strictEqual(verified.status, 'ok');
                 assert.deepStrictEqual(verified.mismatches, []);
@@ -1530,6 +1536,97 @@ async function runIntegrationTests() {
                     assert.deepStrictEqual(JSON.parse(output.join('\n')), report);
                 } finally {
                     console.log = originalLog;
+                    process.exitCode = originalExitCode;
+                }
+            }
+
+            const observationReport = envelope('pass', {
+                expected: {
+                    base: 'main',
+                    head: 'codex/pr-state',
+                    phase: 'draft',
+                    checks: 'success',
+                    secret: 'must-not-cross-boundary',
+                },
+                observed: {
+                    base: 'main',
+                    head: 'codex/pr-state',
+                    phase: 'draft',
+                    checks: 'success',
+                    diagnostics: { runId: 31295610538 },
+                    body: 'raw-pr-body-must-not-cross-boundary',
+                    reviews: [{ body: 'raw-review-must-not-cross-boundary' }],
+                },
+            });
+            const observations = [];
+            {
+                const program = new Command();
+                program.name('memory').exitOverride();
+                registerPrStateCommands(program, {
+                    cwd: () => 'C:/safe-workspace',
+                    validatePrState: () => observationReport,
+                    recordGovernanceSnapshot: (root, options) => {
+                        observations.push({ root, options });
+                        return { snapshot: {}, write: { ok: true } };
+                    },
+                });
+                const originalLog = console.log;
+                const originalExitCode = process.exitCode;
+                try {
+                    console.log = () => {};
+                    process.exitCode = undefined;
+                    await program.parseAsync(
+                        ['node', 'memory.js', 'pr-state', 'validate', '31', '--json'],
+                        { from: 'node' }
+                    );
+                    assert.strictEqual(process.exitCode || 0, 0);
+                } finally {
+                    console.log = originalLog;
+                    process.exitCode = originalExitCode;
+                }
+            }
+            assert.deepStrictEqual(observations, [{
+                root: 'C:/safe-workspace',
+                options: {
+                    prState: {
+                        number: 31,
+                        base: 'main',
+                        head: 'codex/pr-state',
+                        phase: 'draft',
+                        checks: 'success',
+                        runId: 31295610538,
+                        result: 'pass',
+                    },
+                },
+            }], 'pr-state observation passes only normalized allowlisted fields');
+            assert.doesNotMatch(JSON.stringify(observations), /must-not-cross-boundary|raw-pr-body|raw-review/);
+
+            {
+                const program = new Command();
+                program.name('memory').exitOverride();
+                registerPrStateCommands(program, {
+                    validatePrState: () => cases[1][0],
+                    recordGovernanceSnapshot: () => { throw new Error('snapshot writer unavailable'); },
+                });
+                const output = [];
+                const originalLog = console.log;
+                const originalWarn = console.warn;
+                const originalExitCode = process.exitCode;
+                try {
+                    console.log = value => output.push(String(value));
+                    console.warn = () => {};
+                    process.exitCode = undefined;
+                    await program.parseAsync(
+                        ['node', 'memory.js', 'pr-state', 'validate', '31', '--json'],
+                        { from: 'node' }
+                    );
+                    assert.strictEqual(process.exitCode, 1,
+                        'snapshot failure must preserve the original pr-state drift exit');
+                    assert.deepStrictEqual(JSON.parse(output.join('\n')), cases[1][0],
+                        'snapshot failure must preserve the original pr-state result');
+                } finally {
+                    console.log = originalLog;
+                    console.warn = originalWarn;
                     process.exitCode = originalExitCode;
                 }
             }
@@ -3304,6 +3401,78 @@ async function runIntegrationTests() {
                 const fixAgain = lintPlans(tmpLintRoot, true);
                 assert.strictEqual(fixAgain.fixed, 0, '--fix is idempotent — no double-inject');
 
+                const configDir = path.join(tmpLintRoot, '.evo-lite');
+                fs.mkdirSync(configDir, { recursive: true });
+                fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({
+                    planning: { contractLint: {
+                        required: true,
+                        paths: ['docs/superpowers/plans/contracted-*.md'],
+                        requiredInvariants: ['attempt-binding'],
+                    } },
+                }));
+                fs.writeFileSync(path.join(plansDir, 'contracted-missing.md'), [
+                    '---', 'id: plan:contracted-missing', 'linkedSpec: spec:good-plan', '---',
+                    '# Contract Missing', '',
+                ].join('\n'));
+                fs.writeFileSync(path.join(plansDir, 'contracted-invariant.md'), [
+                    '---', 'id: plan:contracted-invariant', 'linkedSpec: spec:good-plan', '---',
+                    '# Contract Invariant', '', '## Governance Contract', '', '```json',
+                    JSON.stringify({
+                        schema: 1, artifactStage: 'plan', proofLayer: 'A',
+                        requiredCapabilities: [], blockScope: 'artifact', remediationBudget: 3,
+                        requiredInvariants: ['causal-ordering'],
+                    }, null, 2),
+                    '```', '',
+                ].join('\n'));
+                const contractResult = lintPlans(tmpLintRoot, false);
+                assert.ok(contractResult.issues.some(i => i.code === 'PLAN_CONTRACT_MISSING'
+                    && i.file.endsWith('contracted-missing.md')),
+                'configured paths must fail when their Governance Contract is missing');
+                assert.ok(contractResult.issues.some(i => i.code === 'PLAN_CONTRACT_INVARIANT_MISSING'
+                    && i.file.endsWith('contracted-invariant.md')),
+                'configured invariant IDs must be present in an otherwise-valid contract');
+                assert.strictEqual(contractResult.issues.some(i => i.code === 'PLAN_CONTRACT_MISSING'
+                    && i.file.endsWith('good-plan.md')), false,
+                'non-matching legacy plans must remain valid opt-outs');
+                const lintHelp = childProcess.spawnSync(process.execPath, [
+                    path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'plan', 'lint', '--help',
+                ], { cwd: tmpLintRoot, encoding: 'utf8' });
+                assert.strictEqual(lintHelp.status, 0, lintHelp.stderr);
+                assert.match(lintHelp.stdout, /--json/);
+                assert.match(lintHelp.stdout, /--strict/);
+
+                const warningRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-plan-lint-warning-'));
+                try {
+                    writeText(path.join(warningRoot, 'docs', 'superpowers', 'plans', 'warning.md'), [
+                        '---', 'id: plan:warning-only', '---', '', '# Warning only', '',
+                    ].join('\n'));
+                    const warningEnv = {
+                        ...process.env,
+                        EVO_LITE_WORKSPACE_ROOT: warningRoot,
+                        EVO_LITE_ROOT: path.join(warningRoot, '.evo-lite'),
+                        EVO_LITE_SKIP_GIT_GUARD: '1',
+                        EVO_LITE_SKIP_GIT_STATUS: '1',
+                        NODE_PATH: [path.join(WORKSPACE_ROOT, 'node_modules'), path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules')].join(path.delimiter),
+                    };
+                    const runLint = () => childProcess.spawnSync(process.execPath, [
+                        path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'plan', 'lint', '--strict',
+                    ], { cwd: warningRoot, env: warningEnv, encoding: 'utf8' });
+                    const warningOnly = runLint();
+                    assert.strictEqual(warningOnly.status, 0,
+                        `strict lint must remain successful for warnings-only legacy debt: ${warningOnly.stdout}${warningOnly.stderr}`);
+                    writeText(path.join(warningRoot, '.evo-lite', 'config.json'), JSON.stringify({
+                        planning: { contractLint: {
+                            required: true, paths: ['docs/superpowers/plans/**'], requiredInvariants: [],
+                        } },
+                    }));
+                    const withError = runLint();
+                    assert.notStrictEqual(withError.status, 0,
+                        'strict lint must exit non-zero when a configured contract error exists');
+                    assert.match(`${withError.stdout}${withError.stderr}`, /PLAN_CONTRACT_MISSING/);
+                } finally {
+                    fs.rmSync(warningRoot, { recursive: true, force: true });
+                }
+
                 fs.writeFileSync(path.join(plansDir, '2026-01-04-bad-heading.md'),
                     '---\nlinkedSpec: spec:bad-heading\n---\n# Bad Heading Plan\n## Task 1: Wrong level\n- [ ] **Step 1:** do thing\n');
                 const scanResult = scanPlanning(tmpLintRoot);
@@ -3676,6 +3845,239 @@ async function runIntegrationTests() {
                 try { fs.rmSync(base, { recursive: true, force: true }); } catch (_) {}
             }
             console.log('✅ T-zwuc-T12-cli verify containment diagnostics via CLI passed');
+        }
+
+        console.log('T-freeze-ledger-cli. Testing plan freeze/ledger deterministic JSON and warning-only budget output ...');
+        {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-freeze-ledger-cli-'));
+            const artifactRel = 'docs/superpowers/plans/cli.md';
+            const artifactPath = path.join(root, ...artifactRel.split('/'));
+            const git = args => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+            const contractValue = {
+                schema: 1, artifactStage: 'plan', proofLayer: 'A',
+                requiredCapabilities: [], blockScope: 'artifact', remediationBudget: 0,
+                requiredInvariants: ['attempt-binding'],
+            };
+            const artifact = title => [
+                '---', 'id: plan:cli-freeze', 'linkedSpec: spec:cli-freeze', 'status: active', '---', '',
+                `# ${title}`, '', '## Governance Contract', '', '```json',
+                JSON.stringify(contractValue, null, 2), '```', '',
+            ].join('\n');
+            const env = {
+                ...process.env,
+                EVO_LITE_WORKSPACE_ROOT: root,
+                EVO_LITE_ROOT: path.join(root, '.evo-lite'),
+                EVO_LITE_SKIP_GIT_GUARD: '1',
+                EVO_LITE_SKIP_GIT_STATUS: '1',
+                NODE_PATH: [path.join(WORKSPACE_ROOT, 'node_modules'), path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules')].join(path.delimiter),
+            };
+            const run = args => childProcess.spawnSync(process.execPath, [path.join(CLI_DIR, 'memory.js'), ...args], {
+                cwd: root, env, encoding: 'utf8',
+            });
+            try {
+                fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+                git(['init', '-b', 'main']);
+                git(['config', 'user.name', 'Evo Test']);
+                git(['config', 'user.email', 'evo@example.com']);
+                git(['config', 'core.autocrlf', 'false']);
+                writeText(artifactPath, artifact('CLI Freeze'));
+                git(['add', artifactRel]);
+                git(['commit', '-m', 'add artifact']);
+
+                const frozen = run(['plan', 'freeze', artifactRel, '--json']);
+                assert.strictEqual(frozen.status, 0, `plan freeze --json failed: ${frozen.stderr}`);
+                const entry = JSON.parse(frozen.stdout);
+                assert.strictEqual(entry.path, artifactRel);
+                assert.strictEqual(entry.artifactId, 'plan:cli-freeze');
+
+                writeText(artifactPath, artifact('CLI Remediation'));
+                git(['add', artifactRel]);
+                git(['commit', '-m', 'remediate artifact']);
+                const jsonRun = run(['plan', 'ledger', '--json']);
+                assert.strictEqual(jsonRun.status, 0, `plan ledger --json failed: ${jsonRun.stderr}`);
+                const report = JSON.parse(jsonRun.stdout);
+                assert.strictEqual(report.entries[0].remediation.status, 'budget-exceeded');
+                assert.strictEqual(report.entries[0].remediation.used, 1);
+
+                const textRun = run(['plan', 'ledger']);
+                assert.strictEqual(textRun.status, 0, 'budget exceedance is warning-only, never an automatic refusal');
+                for (const choice of ['continue-governance', 'downgrade-nonblocking-debt', 'resume-authorized-execution']) {
+                    assert.ok(textRun.stdout.includes(choice), `ledger text must render reviewer choice ${choice}`);
+                }
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+            console.log('✅ T-freeze-ledger-cli passed');
+        }
+
+        console.log('T-governance-cli. Nested snapshot/budget commands stay read-only, bounded, and manifest-managed ...');
+        {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-cli-'));
+            const activePath = path.join(root, '.evo-lite', 'active_context.md');
+            const snapshotPath = path.join(root, '.evo-lite', 'generated', 'governance', 'snapshot.json');
+            const git = args => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+            const env = {
+                ...process.env,
+                EVO_LITE_WORKSPACE_ROOT: root,
+                EVO_LITE_ROOT: path.join(root, '.evo-lite'),
+                EVO_LITE_SKIP_GIT_GUARD: '1',
+                EVO_LITE_SKIP_GIT_STATUS: '1',
+                NODE_PATH: [path.join(WORKSPACE_ROOT, 'node_modules'), path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules')].join(path.delimiter),
+            };
+            const run = args => childProcess.spawnSync(process.execPath, [path.join(CLI_DIR, 'memory.js'), ...args], {
+                cwd: root, env, encoding: 'utf8',
+            });
+            try {
+                git(['init', '-b', 'main']);
+                git(['config', 'user.name', 'Evo Test']);
+                git(['config', 'user.email', 'evo@example.com']);
+                git(['config', 'core.autocrlf', 'false']);
+                writeText(activePath, [
+                    '<!-- BEGIN_META -->',
+                    'headSha: 0000000000000000000000000000000000000000',
+                    'upstreamSha: 0000000000000000000000000000000000000000',
+                    'ahead: 0',
+                    'behind: 0',
+                    '<!-- END_META -->',
+                    '<!-- BEGIN_FOCUS -->',
+                    '[governance-cli] active',
+                    '<!-- END_FOCUS -->',
+                    '<!-- BEGIN_BACKLOG -->',
+                    '- [ ] [alpha] queued',
+                    '<!-- END_BACKLOG -->',
+                    '<!-- BEGIN_TRAJECTORY -->',
+                    '[0000000] baseline',
+                    '<!-- END_TRAJECTORY -->',
+                    '',
+                ].join('\n'));
+                writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                    version: 'evo-plan-ir@1',
+                    specs: [],
+                    plans: [],
+                    tasks: [],
+                    findings: [],
+                    warnings: [],
+                }, null, 2));
+                writeText(path.join(root, 'README.md'), 'base\n');
+                git(['add', '.']);
+                git(['commit', '-m', 'base']);
+                const base = git(['rev-parse', 'HEAD']);
+                writeText(path.join(root, 'docs', 'superpowers', 'plans', 'governance.md'), [
+                    '---',
+                    'id: plan:governance-cli',
+                    'linkedSpec: spec:governance-cli',
+                    'status: active',
+                    '---',
+                    '# Governance',
+                    '',
+                    '## Governance Contract',
+                    '',
+                    '```json',
+                    JSON.stringify({
+                        schema: 1,
+                        artifactStage: 'plan',
+                        proofLayer: 'A',
+                        requiredCapabilities: [],
+                        blockScope: 'artifact',
+                        remediationBudget: 0,
+                        requiredInvariants: ['attempt-binding'],
+                    }, null, 2),
+                    '```',
+                    '',
+                ].join('\n'));
+                git(['add', '.']);
+                git(['commit', '-m', 'governance']);
+
+                const beforeContext = fs.readFileSync(activePath);
+                const jsonSnapshot = run(['governance', 'snapshot', '--json']);
+                assert.strictEqual(jsonSnapshot.status, 0, jsonSnapshot.stderr);
+                assert.strictEqual(JSON.parse(jsonSnapshot.stdout).version, 'evo-governance-snapshot@1');
+                assert.strictEqual(fs.existsSync(snapshotPath), false, 'snapshot defaults to read-only');
+
+                const textSnapshot = run(['governance', 'snapshot']);
+                assert.strictEqual(textSnapshot.status, 0, textSnapshot.stderr);
+                assert.match(textSnapshot.stdout, /Governance snapshot/);
+
+                const written = run(['governance', 'snapshot', '--write', '--json']);
+                assert.strictEqual(written.status, 0, written.stderr);
+                assert.strictEqual(JSON.parse(written.stdout).write.path, snapshotPath);
+                assert.strictEqual(fs.existsSync(snapshotPath), true, '--write uses the exact generated target');
+
+                fs.unlinkSync(snapshotPath);
+                writeText(path.join(root, 'head-advance-1.txt'), 'one\n');
+                git(['add', '.']);
+                git(['commit', '-m', 'head advance one']);
+                const sessionStart = run([
+                    'hook', 'advise', 'sessionstart', '--json',
+                    '--command', 'secret-command-must-not-persist',
+                    '--output', 'secret-output-must-not-persist',
+                ]);
+                assert.strictEqual(sessionStart.status, 0, sessionStart.stderr);
+                assert.strictEqual(fs.existsSync(snapshotPath), true,
+                    'sessionstart records a governance snapshot');
+                let boundarySnapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+                assert.doesNotMatch(JSON.stringify(boundarySnapshot), /secret-command|secret-output/,
+                    'lifecycle observations never persist raw command/output text');
+
+                writeText(path.join(root, 'head-advance-2.txt'), 'two\n');
+                git(['add', '.']);
+                git(['commit', '-m', 'head advance two']);
+                const stop = run(['hook', 'advise', 'stop', '--json']);
+                assert.strictEqual(stop.status, 0, stop.stderr);
+                boundarySnapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+                assert.ok(boundarySnapshot.transitions.some(item => item.code === 'head-advanced'),
+                    'stop observes the new HEAD transition');
+
+                fs.unlinkSync(snapshotPath);
+                const planStatus = run(['plan', 'freeze', 'docs/superpowers/plans/governance.md', '--json']);
+                assert.strictEqual(planStatus.status, 0, planStatus.stderr);
+                assert.strictEqual(fs.existsSync(snapshotPath), true,
+                    'plan freeze completion records a governance snapshot');
+                boundarySnapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+                assert.strictEqual(boundarySnapshot.freeze.withinBudget + boundarySnapshot.freeze.exceeded, 1,
+                    'plan freeze snapshot observes the new ledger entry');
+
+                fs.unlinkSync(snapshotPath);
+                writeText(path.join(root, '.evo-lite', 'config.json'), JSON.stringify({
+                    governance: { budget: { windowCommits: 0 } },
+                }, null, 2));
+                const verify = run(['verify']);
+                assert.strictEqual(verify.status, 0, verify.stderr);
+                assert.match(verify.stderr, /governance\.budget\.windowCommits|治理观察/,
+                    'invalid governance budget config is warning-only during verify');
+                assert.strictEqual(fs.existsSync(snapshotPath), true,
+                    'verify records a governance snapshot without changing its exit semantics');
+
+                fs.unlinkSync(path.join(root, '.evo-lite', 'config.json'));
+                const budgetJson = run(['governance', 'budget', '--since', base, '--json']);
+                assert.strictEqual(budgetJson.status, 0, budgetJson.stderr);
+                assert.strictEqual(JSON.parse(budgetJson.stdout).version, 'evo-governance-budget@1');
+                const budgetText = run(['governance', 'budget', '--since', base]);
+                assert.strictEqual(budgetText.status, 0, budgetText.stderr);
+                assert.match(budgetText.stdout, /Governance work budget/);
+
+                for (const alias of [['snapshot'], ['budget']]) {
+                    const rejected = run(alias);
+                    assert.notStrictEqual(rejected.status, 0, `top-level ${alias[0]} alias must not exist`);
+                }
+                const invalidRef = run(['governance', 'budget', '--since', 'bad ref', '--json']);
+                assert.notStrictEqual(invalidRef.status, 0, 'invalid ref must fail safely through argv-based Git');
+                assert.deepStrictEqual(fs.readFileSync(activePath), beforeContext,
+                    'all governance commands preserve active context byte-for-byte');
+
+                fs.unlinkSync(snapshotPath);
+                const contextFocus = run(['context', 'focus', '[governance-cli] refreshed']);
+                assert.strictEqual(contextFocus.status, 0, contextFocus.stderr);
+                assert.strictEqual(fs.existsSync(snapshotPath), true,
+                    'successful context mutation records a governance snapshot');
+
+                const manifest = require(path.join(CLI_DIR, 'template-manifest.js'));
+                const core = manifest.MANAGED_TEMPLATE_FAMILIES.find(family => family.key === 'core-cli');
+                assert.ok(core.files.includes('governance-observer.js'));
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+            console.log('✅ T-governance-cli passed');
         }
 
         console.log('--- All CLI integration tests passed! ---');

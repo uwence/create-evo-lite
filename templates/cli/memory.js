@@ -491,6 +491,61 @@ async function runCommitCommand(details, options = {}) {
     }
 }
 
+function formatGovernanceSnapshot(snapshot, write = null) {
+    const lines = [
+        'Governance snapshot',
+        `head: ${snapshot.git.head || 'unknown'}`,
+        `branch: ${snapshot.git.branch || 'unknown'}`,
+        `semantic findings: ${snapshot.semanticFindings.length}`,
+        `budget: ${snapshot.budget.status}`,
+    ];
+    if (write) lines.push(write.ok ? `written: ${write.path}` : `warning: snapshot write failed: ${write.error}`);
+    return lines.join('\n');
+}
+
+function formatGovernanceBudget(report) {
+    const lines = [
+        'Governance work budget',
+        `status: ${report.status}`,
+        `commits: delivery=${report.counts.delivery} governance=${report.counts.governance} mixed=${report.counts.mixed} merge=${report.counts.merge}`,
+        `governance ratio: ${report.governanceRatio.toFixed(3)} / ${report.thresholds.maxGovernanceRatio.toFixed(3)}`,
+        `remediation ratio: ${report.remediationRatio.toFixed(3)} / ${report.thresholds.maxRemediationRatio.toFixed(3)}`,
+    ];
+    if (report.choices.length > 0) lines.push(`choices: ${report.choices.join(', ')}`);
+    return lines.join('\n');
+}
+
+function registerGovernanceCommands(program) {
+    const observer = require('./governance-observer');
+    const governance = program.command('governance')
+        .description('Read privacy-bounded governance snapshots and work-budget reports.');
+    governance.command('snapshot')
+        .description('Build a structured governance snapshot.')
+        .option('--json', 'Print JSON output')
+        .option('--write', 'Write the latest snapshot under .evo-lite/generated/governance')
+        .action(options => {
+            const projectRoot = require('./runtime').getWorkspaceRoot();
+            if (options.write) {
+                const result = observer.recordGovernanceSnapshot(projectRoot);
+                console.log(options.json
+                    ? JSON.stringify(result, null, 2)
+                    : formatGovernanceSnapshot(result.snapshot, result.write));
+                return;
+            }
+            const snapshot = observer.buildGovernanceSnapshot(projectRoot);
+            console.log(options.json ? JSON.stringify(snapshot, null, 2) : formatGovernanceSnapshot(snapshot));
+        });
+    governance.command('budget')
+        .description('Classify recent delivery and governance work without making an authorization choice.')
+        .option('--since <ref>', 'Compare commits after a Git ref')
+        .option('--json', 'Print JSON output')
+        .action(options => {
+            const projectRoot = require('./runtime').getWorkspaceRoot();
+            const report = observer.buildGovernanceBudget(projectRoot, { since: options.since });
+            console.log(options.json ? JSON.stringify(report, null, 2) : formatGovernanceBudget(report));
+        });
+}
+
 function buildProgram() {
     const program = new Command();
     const contextCommand = program.command('context').description('Modify active_context.md anchors and inspect runtime state.');
@@ -796,6 +851,7 @@ function buildProgram() {
     safeRegister('code', () => require('./code-perception/cli').registerCodeCommands(program));
     safeRegister('wiki', () => require('./wiki/cli').registerWikiCommands(program));
     safeRegister('pr-state', () => require('./pr-state').registerPrStateCommands(program));
+    safeRegister('governance', () => registerGovernanceCommands(program));
 
     program.command('inspect')
         .description('Run the inspector HTTP server.')

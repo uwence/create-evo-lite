@@ -42,9 +42,13 @@ function buildTraceability(projectRoot) {
 
     const tasksWithFiles = chains.filter(c => c.linkedFiles.length > 0).length;
     const tasksWithEvidence = chains.filter(c => c.evidence.length > 0).length;
+    const freezeLedgerPath = path.join(projectRoot, '.evo-lite', 'governance', 'freeze-ledger.json');
+    const freezeLedger = fs.existsSync(freezeLedgerPath)
+        ? require('./freeze-ledger').inspectFreezeLedger(projectRoot)
+        : { version: 'evo-freeze-report@1', entries: [] };
 
     return {
-        version: 'evo-trace@1',
+        version: 'evo-trace@2',
         generatedAt: new Date().toISOString(),
         planIrPath: path.relative(projectRoot, irPath).replace(/\\/g, '/'),
         summary: {
@@ -58,6 +62,7 @@ function buildTraceability(projectRoot) {
         },
         chains,
         unlinkedTasks,
+        freezeLedger,
     };
 }
 

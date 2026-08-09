@@ -2,7 +2,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseFrontmatter } = require('./parse-markdown');
+const { parseFrontmatter, parsePlanFile, parseSpecFile } = require('./parse-markdown');
+const { loadContractLintConfig, lintGovernedArtifact } = require('./governance-contract');
 
 const PLAN_DIRS = [
     'docs/plans',
@@ -33,10 +34,24 @@ function collectSpecIds(projectRoot) {
     return ids;
 }
 
-function lintPlans(projectRoot, fix) {
+function lintPlans(projectRoot, fixOrOptions = false) {
+    const options = typeof fixOrOptions === 'boolean' ? { fix: fixOrOptions } : (fixOrOptions || {});
+    const fix = !!options.fix;
     const issues = [];
     let fixed = 0;
     const specIds = collectSpecIds(projectRoot);
+    const contractConfig = loadContractLintConfig(projectRoot);
+    if (!contractConfig.ok) issues.push(...contractConfig.findings);
+
+    const appendContractIssues = (filePath, relPath, content, parsedArtifact) => {
+        if (!contractConfig.ok) return;
+        issues.push(...lintGovernedArtifact({
+            projectRoot,
+            filePath: relPath,
+            markdown: content,
+            parsedArtifact,
+        }));
+    };
 
     for (const dir of PLAN_DIRS) {
         const abs = path.join(projectRoot, dir);
@@ -50,6 +65,10 @@ function lintPlans(projectRoot, fix) {
             const content = fs.readFileSync(filePath, 'utf8');
             const { frontmatter } = parseFrontmatter(content);
             const hasFrontmatter = Object.keys(frontmatter).length > 0;
+            let parsedArtifact = null;
+            try { parsedArtifact = parsePlanFile(filePath); } catch (_) { parsedArtifact = null; }
+
+            appendContractIssues(filePath, relPath, content, parsedArtifact);
 
             if (!hasFrontmatter) {
                 issues.push({
@@ -98,6 +117,10 @@ function lintPlans(projectRoot, fix) {
             const relPath = path.relative(projectRoot, filePath).replace(/\\/g, '/');
             const content = fs.readFileSync(filePath, 'utf8');
             const { frontmatter } = parseFrontmatter(content);
+            let parsedArtifact = null;
+            try { parsedArtifact = parseSpecFile(filePath); } catch (_) { parsedArtifact = null; }
+
+            appendContractIssues(filePath, relPath, content, parsedArtifact);
 
             if (!frontmatter.id || !frontmatter.id.startsWith('spec:')) continue;
 
