@@ -1,7 +1,8 @@
 ---
 id: spec:evidence-durability-stale-cascade
 linkedPlan: plan:evidence-durability-stale-cascade
-status: draft
+status: parked
+parkedUntil: portfolio 中最老的在飞 spec（idle 38 天），无授权推进、无实际故障触发。重开条件：真实出现证据陈旧级联导致的治理误判。
 ---
 
 # Evidence Durability — Kill the STALE Cascade (Precision Slice)

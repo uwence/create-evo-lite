@@ -1,8 +1,9 @@
 ---
 id: spec:hive-nurture-engine-migration
-status: draft
+status: parked
 created: 2026-07-08
 linkedPlan: plan:hive-nurture-engine-migration
+parkedUntil: 2026-07-08 round-2 zvec dogfood 暴露的 genes-vs-state 引擎迁移缺口，spec+plan 已建但从未实施。缺口自建档起未再复现。重开条件：真实出现引擎迁移导致的重复或损坏（如 rebuild 计数翻倍）。
 ---
 
 # Spec: Hive Nurture — Engine-Migration Safety

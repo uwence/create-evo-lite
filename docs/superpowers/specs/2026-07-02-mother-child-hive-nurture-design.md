@@ -1,7 +1,8 @@
 ---
 id: spec:mother-child-hive-nurture
 linkedPlan: plan:mother-child-hive-nurture
-status: draft
+status: parked
+parkedUntil: hive nurture 已 shipped 并在真实子巢 CodePLC 上运行；2026-08-09 接管复现 hive status CodePLC 为 up-to-date，无漂移无反馈。剩余 plan 未完成但无实际阻塞。重开条件：新增子巢接入，或 nurture 出现真实故障。
 ---
 
 # Mother-Child Hive — Registry + Nurture (Fleet Upgrade Channel)

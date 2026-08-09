@@ -1,9 +1,10 @@
 ---
 id: spec:codegraph-adapter-governance-linker
-status: adopted
+status: parked
 created: 2026-07-10
 linkedPlan: plan:codegraph-adapter-governance-linker-mvp
 relations: [{"kind":"spawned-from","target":"spec:provider-first-code-perception-foundation"},{"kind":"blocks","target":"spec:unified-code-explore-wiki-projection"}]
+parkedUntil: 父 spec:provider-first-code-perception-foundation 自 2026-07-31 起为 parked，本 spec 是其 spawned-from 子项，不应独立在飞。同时它 blocks spec:unified-code-explore-wiki-projection，两者应同进同退。重开条件：provider-first 被 reactivate，或本议题被单独立项授权并给出验收门。
 ---
 
 # Spec: CodeGraph Adapter & Governance Linker
