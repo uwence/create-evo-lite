@@ -495,7 +495,7 @@ async function runIntegrationTests() {
                 else process.env.EVO_LITE_TEMPLATE_CLI_DIR = previousCliDir;
                 if (previousRootDir === undefined) delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
                 else process.env.EVO_LITE_TEMPLATE_ROOT_DIR = previousRootDir;
-                removePrStateRuntimeRoot(runtime.workspaceRoot);
+                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
             }
             console.log('✅ PS4 pr-state managed runtime mirror coverage passed');
         }
@@ -1061,6 +1061,8 @@ async function runIntegrationTests() {
                 }];
                 const checkRows = options.checkRows || [makeCheckRow(100)];
                 const checkStatus = options.checkStatus === undefined ? 0 : options.checkStatus;
+                const expectedRepositoryArg = options.expectedRepositoryArg
+                    || 'github.com/uwence/create-evo-lite';
                 const handlers = options.handlers || {};
                 const runCommand = (executable, args) => {
                     calls.push({ executable, args: [...args] });
@@ -1096,7 +1098,7 @@ async function runIntegrationTests() {
                     if (executable === 'gh' && args[0] === 'pr' && args[1] === 'checks') {
                         assert.deepStrictEqual(args, [
                             'pr', 'checks', '31',
-                            '--repo', 'github.com/uwence/create-evo-lite',
+                            '--repo', expectedRepositoryArg,
                             '--json', 'bucket,event,link,name,state,workflow',
                         ]);
                         return use('prChecks', {
@@ -1287,6 +1289,42 @@ async function runIntegrationTests() {
                 error => error.code === 'PR_CHECKS_RESPONSE_INVALID'
             ));
 
+            const invalidBlockAndUrl = runValidation({
+                pr: makePr({ body: 'not a state block', html_url: 'not a URL' }),
+            });
+            assert.deepStrictEqual(
+                invalidBlockAndUrl.report.errors.map(error => error.code),
+                ['PR_STATE_BLOCK_INVALID']
+            );
+
+            const invalidLifecycleAndUrl = runValidation({
+                pr: makePr({
+                    state: 'open', draft: false, merged: true,
+                    merged_at: '2026-08-08T00:00:00Z',
+                    html_url: 'not a URL',
+                }),
+            });
+            assert.deepStrictEqual(
+                invalidLifecycleAndUrl.report.errors.map(error => error.code),
+                ['OBSERVED_PHASE_INVALID']
+            );
+
+            const coreDriftAndInvalidUrl = runValidation({
+                pr: makePr({
+                    body: expectedBody({ headSha: SHA_STALE }),
+                    html_url: 'not a URL',
+                }),
+            });
+            assert.strictEqual(coreDriftAndInvalidUrl.report.result, 'error');
+            assert.deepStrictEqual(
+                coreDriftAndInvalidUrl.report.findings.map(item => item.code),
+                ['HEAD_SHA_DRIFT']
+            );
+            assert.deepStrictEqual(
+                coreDriftAndInvalidUrl.report.errors.map(error => error.code),
+                ['PR_RESPONSE_INVALID']
+            );
+
             for (const html_url of [
                 'not a URL',
                 'http://github.com/uwence/create-evo-lite/pull/31',
@@ -1313,6 +1351,32 @@ async function runIntegrationTests() {
                 assert.strictEqual(accepted.report.result, 'pass', link);
                 assert.strictEqual(accepted.report.observed.diagnostics.runId, 100, link);
             }
+
+            const customPort = runValidation({
+                pr: makePr({
+                    html_url: 'https://ghe.example.com:8443/uwence/create-evo-lite/pull/31',
+                }),
+                checkRows: [makeCheckRow(100, {
+                    link: 'https://ghe.example.com:8443/uwence/create-evo-lite/actions/runs/100',
+                })],
+                expectedRepositoryArg: 'ghe.example.com:8443/uwence/create-evo-lite',
+            });
+            assert.strictEqual(customPort.report.result, 'pass');
+            assert.strictEqual(customPort.report.observed.diagnostics.runId, 100);
+
+            const wrongCustomPort = runValidation({
+                pr: makePr({
+                    html_url: 'https://ghe.example.com:8443/uwence/create-evo-lite/pull/31',
+                }),
+                checkRows: [makeCheckRow(100, {
+                    link: 'https://ghe.example.com:9443/uwence/create-evo-lite/actions/runs/100',
+                })],
+                expectedRepositoryArg: 'ghe.example.com:8443/uwence/create-evo-lite',
+            });
+            assert.deepStrictEqual(
+                wrongCustomPort.report.findings.map(item => item.code),
+                ['CHECKS_MISSING']
+            );
 
             for (const link of [
                 'not a URL',
@@ -1715,6 +1779,12 @@ async function runIntegrationTests() {
             );
 
             const runtime = createTempRuntimeRoot('pr-state-real-cli');
+            const originalRmSync = fs.rmSync;
+            const ps5CleanupOptions = [];
+            fs.rmSync = (root, options) => {
+                if (root === runtime.workspaceRoot) ps5CleanupOptions.push({ ...options });
+                return originalRmSync(root, options);
+            };
             const fakeBin = path.join(runtime.workspaceRoot, 'fake-gh-bin');
             const fixturePath = path.join(fakeBin, 'fixture.json');
             const callLogPath = path.join(fakeBin, 'calls.ndjson');
@@ -1864,8 +1934,18 @@ async function runIntegrationTests() {
                 }
                 assert.deepStrictEqual(snapshot(runtime.workspaceRoot), before);
             } finally {
-                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+                try {
+                    removePrStateRuntimeRoot(runtime.workspaceRoot);
+                } finally {
+                    fs.rmSync = originalRmSync;
+                }
             }
+            assert.deepStrictEqual(ps5CleanupOptions, [{
+                recursive: true,
+                force: true,
+                maxRetries: 5,
+                retryDelay: 100,
+            }]);
             console.log('✅ PS5 pr-state fail-closed CLI acceptance passed');
         }
 

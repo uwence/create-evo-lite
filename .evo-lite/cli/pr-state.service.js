@@ -322,7 +322,6 @@ function resolvePrWebIdentity(pr, repository, prNumber) {
     if (url.protocol !== 'https:'
         || url.username !== ''
         || url.password !== ''
-        || url.port !== ''
         || url.search !== ''
         || url.hash !== ''
         || url.pathname !== expectedPath
@@ -330,8 +329,8 @@ function resolvePrWebIdentity(pr, repository, prNumber) {
         fail('PR_RESPONSE_INVALID', 'pull request html_url does not match the resolved repository and PR');
     }
     return {
-        githubHost: url.hostname,
-        repositoryArg: `${url.hostname}/${repository}`,
+        githubHost: url.host,
+        repositoryArg: `${url.host}/${repository}`,
     };
 }
 
@@ -387,8 +386,7 @@ function extractPrScopedRunIds(rows, githubHost, repository) {
         if (url.protocol !== 'https:'
             || url.username !== ''
             || url.password !== ''
-            || url.port !== ''
-            || url.hostname !== githubHost
+            || url.host !== githubHost
             || url.search !== ''
             || url.hash !== '') continue;
         const match = pathPattern.exec(url.pathname);
@@ -586,7 +584,6 @@ function validatePrState(prArg, options = {}) {
         if (pr.number !== prNumber) {
             fail('PR_RESPONSE_INVALID', 'pull request response number does not match the target');
         }
-        const prWebIdentity = resolvePrWebIdentity(pr, repository, prNumber);
         report.pr = { repository, number: prNumber, url: pr.html_url };
         report.expected = parseExpectedBlock(pr.body, {
             checkRefName(value) {
@@ -606,6 +603,7 @@ function validatePrState(prArg, options = {}) {
         });
 
         try {
+            const prWebIdentity = resolvePrWebIdentity(pr, repository, prNumber);
             const checks = observeChecks({
                 repository,
                 repositoryArg: prWebIdentity.repositoryArg,
