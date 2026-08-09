@@ -38,23 +38,45 @@ function loadPlanIR(projectRoot) {
 // is fail-open, because the release-blocking specs disappear and publish is
 // released. See spec §8.2.3.1.
 function discoverSpecFiles(projectRoot) {
-    const dir = path.join(projectRoot, 'docs', 'specs');
-    const rel = path.relative(projectRoot, dir).split(path.sep).join('/');
-    if (!fs.existsSync(dir)) {
-        return { directoryReadable: false, files: [], error: { path: rel, reason: 'docs/specs does not exist' } };
+    const roots = [
+        { dir: path.join(projectRoot, 'docs', 'specs'), strict: true },
+        { dir: path.join(projectRoot, 'docs', 'superpowers', 'specs'), strict: false },
+    ];
+    const files = [];
+    const errors = [];
+    const rootStates = [];
+
+    for (const root of roots) {
+        const rel = path.relative(projectRoot, root.dir).split(path.sep).join('/');
+        if (!fs.existsSync(root.dir)) {
+            rootStates.push({ path: rel, present: false, readable: false, strict: root.strict });
+            continue;
+        }
+        try {
+            const rootFiles = fs.readdirSync(root.dir)
+                .filter(f => f.endsWith('.md'))
+                .sort()
+                .map(f => path.join(root.dir, f));
+            files.push(...rootFiles);
+            rootStates.push({ path: rel, present: true, readable: true, strict: root.strict });
+        } catch (err) {
+            const detail = err && err.message ? err.message : String(err);
+            errors.push({ path: rel, reason: `${rel} is not readable: ${detail}` });
+            rootStates.push({ path: rel, present: true, readable: false, strict: root.strict });
+        }
     }
-    try {
-        const files = fs.readdirSync(dir)
-            .filter(f => f.endsWith('.md'))
-            .map(f => path.join(dir, f));
-        return { directoryReadable: true, files, error: null };
-    } catch (err) {
-        return {
-            directoryReadable: false,
-            files: [],
-            error: { path: rel, reason: `docs/specs is not readable: ${err && err.message ? err.message : String(err)}` },
-        };
+
+    const presentRoots = rootStates.filter(root => root.present);
+    if (presentRoots.length === 0) {
+        errors.push({ path: 'docs/specs', reason: 'neither docs/specs nor docs/superpowers/specs exists' });
     }
+    return {
+        directoryReadable: presentRoots.length > 0 && presentRoots.every(root => root.readable),
+        files,
+        error: errors[0] || null,
+        errors,
+        roots: rootStates,
+    };
 }
 
 // --- release-blocking scalar + waiver schema (spec §8.2.2.0 / §8.2.2.1) ---
@@ -262,8 +284,11 @@ function buildSpecRegistry(projectRoot, opts = {}) {
 
     const specs = [];
     const errors = [];
+    const sourceWarnings = [];
+    const seenSpecIds = new Map();
+    let discoveredFileCount = 0;
     const discovery = discoverSpecFiles(projectRoot);
-    if (discovery.error) errors.push(discovery.error);
+    errors.push(...(discovery.errors || (discovery.error ? [discovery.error] : [])));
 
     for (const absPath of discovery.files) {
         const relPath = path.relative(projectRoot, absPath).split(path.sep).join('/');
@@ -286,14 +311,30 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             parseError = err && err.message ? err.message : String(err);
         }
         if (!parsed) {
-            errors.push({
+            const isCompatibilityDoc = relPath.startsWith('docs/superpowers/specs/');
+            const finding = {
                 path: relPath,
                 reason: parseError
                     ? `spec parse threw: ${parseError}`
-                    : 'no usable `id: spec:...` frontmatter — the file was discovered under docs/specs but produced no spec entry',
+                    : 'no usable `id: spec:...` frontmatter',
+            };
+            if (isCompatibilityDoc) sourceWarnings.push(finding);
+            else {
+                discoveredFileCount++;
+                finding.reason += ' — the file was discovered under docs/specs but produced no spec entry';
+                errors.push(finding);
+            }
+            continue;
+        }
+        discoveredFileCount++;
+        if (seenSpecIds.has(parsed.id)) {
+            errors.push({
+                path: relPath,
+                reason: `duplicate spec id ${parsed.id}; first seen at ${seenSpecIds.get(parsed.id)}`,
             });
             continue;
         }
+        seenSpecIds.set(parsed.id, relPath);
         const { frontmatter, body } = parseFrontmatter(content);
         const relSpecPath = path.relative(projectRoot, absPath).replace(/\\/g, '/');
 
@@ -396,8 +437,12 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         errors,
         source: {
             directoryReadable: discovery.directoryReadable,
-            discoveredFileCount: discovery.files.length,
+            discoveredFileCount,
             parsedSpecCount: specs.length,
+            discoveredMarkdownFileCount: discovery.files.length,
+            roots: discovery.roots || [],
+            warnings: sourceWarnings,
+            portfolioSourceDrift: specs.length === 0 && Array.isArray(ir.specs) && ir.specs.length > 0,
         },
     };
 
@@ -830,6 +875,9 @@ function formatPortfolioReport(registry) {
     const lines = [
         `📋 [Spec Portfolio]: adopted=${counts.adopted} active=${counts.active} parked=${counts.parked} shipped=${counts.shipped}`,
     ];
+    if (registry.source && registry.source.portfolioSourceDrift) {
+        lines.push('⚠️ [portfolio-source-drift] Planning IR contains specs but no valid portfolio entities were discovered.');
+    }
     for (const spec of specs) {
         for (const warning of (spec.warnings || [])) {
             lines.push(formatWarningLine(spec, warning));

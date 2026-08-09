@@ -5673,6 +5673,44 @@ async function runGovernanceTests() {
             }, 'buildSpecRegistry must never throw on a project with no docs/specs, no plan-ir, no git');
             assert.deepStrictEqual(degraded.specs, [], 'degraded registry has empty specs array');
             fs.rmSync(emptyRoot, { recursive: true, force: true });
+
+            const dualRoot = createTempRuntimeRoot('spec-portfolio-dual-root').workspaceRoot;
+            writeText(path.join(dualRoot, 'docs', 'superpowers', 'specs', 'valid.md'), [
+                '---', 'id: spec:super', 'status: done', '---', '', '# Superpowers Spec', '',
+            ].join('\n'));
+            writeText(path.join(dualRoot, 'docs', 'superpowers', 'specs', 'legacy.md'),
+                '# Legacy design without portfolio identity\n');
+            writeText(path.join(dualRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:super', status: 'done', linkedPlans: [], sourcePath: 'docs/superpowers/specs/valid.md' }],
+                plans: [], tasks: [], warnings: [],
+            }, null, 2));
+            const dualRegistry = specPortfolio.buildSpecRegistry(dualRoot, { write: false });
+            assert.deepStrictEqual(dualRegistry.specs.map(s => s.id), ['spec:super'],
+                'a project with only docs/superpowers/specs must produce a non-zero portfolio');
+            assert.strictEqual(dualRegistry.errors.length, 0,
+                'legacy superpowers docs without spec IDs remain planning warnings, not release errors');
+            assert.ok(dualRegistry.source.warnings.some(w => w.path.endsWith('legacy.md')),
+                'skipped legacy superpowers docs stay visible in source diagnostics');
+
+            writeText(path.join(dualRoot, 'docs', 'specs', 'duplicate.md'), [
+                '---', 'id: spec:super', 'status: draft', '---', '', '# Duplicate', '',
+            ].join('\n'));
+            const duplicateRegistry = specPortfolio.buildSpecRegistry(dualRoot, { write: false });
+            assert.ok(duplicateRegistry.errors.some(e => /duplicate spec id.*spec:super/i.test(e.reason)),
+                'duplicate IDs across canonical roots must fail closed');
+
+            const driftRoot = createTempRuntimeRoot('spec-portfolio-source-drift').workspaceRoot;
+            writeText(path.join(driftRoot, 'docs', 'superpowers', 'specs', 'legacy.md'), '# Missing ID\n');
+            writeText(path.join(driftRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:known', status: 'draft', linkedPlans: [], sourcePath: 'docs/superpowers/specs/legacy.md' }],
+                plans: [], tasks: [], warnings: [],
+            }, null, 2));
+            const driftRegistry = specPortfolio.buildSpecRegistry(driftRoot, { write: false });
+            assert.ok(specPortfolio.formatPortfolioReport(driftRegistry)
+                .some(line => line.includes('portfolio-source-drift')),
+            'Planning IR specs with zero valid portfolio entities must emit source drift');
         }
         console.log('✅ T-spec-portfolio core derivation passed');
 
