@@ -3304,6 +3304,46 @@ async function runIntegrationTests() {
                 const fixAgain = lintPlans(tmpLintRoot, true);
                 assert.strictEqual(fixAgain.fixed, 0, '--fix is idempotent — no double-inject');
 
+                const configDir = path.join(tmpLintRoot, '.evo-lite');
+                fs.mkdirSync(configDir, { recursive: true });
+                fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({
+                    planning: { contractLint: {
+                        required: true,
+                        paths: ['docs/superpowers/plans/contracted-*.md'],
+                        requiredInvariants: ['attempt-binding'],
+                    } },
+                }));
+                fs.writeFileSync(path.join(plansDir, 'contracted-missing.md'), [
+                    '---', 'id: plan:contracted-missing', 'linkedSpec: spec:good-plan', '---',
+                    '# Contract Missing', '',
+                ].join('\n'));
+                fs.writeFileSync(path.join(plansDir, 'contracted-invariant.md'), [
+                    '---', 'id: plan:contracted-invariant', 'linkedSpec: spec:good-plan', '---',
+                    '# Contract Invariant', '', '## Governance Contract', '', '```json',
+                    JSON.stringify({
+                        schema: 1, artifactStage: 'plan', proofLayer: 'A',
+                        requiredCapabilities: [], blockScope: 'artifact', remediationBudget: 3,
+                        requiredInvariants: ['causal-ordering'],
+                    }, null, 2),
+                    '```', '',
+                ].join('\n'));
+                const contractResult = lintPlans(tmpLintRoot, false);
+                assert.ok(contractResult.issues.some(i => i.code === 'PLAN_CONTRACT_MISSING'
+                    && i.file.endsWith('contracted-missing.md')),
+                'configured paths must fail when their Governance Contract is missing');
+                assert.ok(contractResult.issues.some(i => i.code === 'PLAN_CONTRACT_INVARIANT_MISSING'
+                    && i.file.endsWith('contracted-invariant.md')),
+                'configured invariant IDs must be present in an otherwise-valid contract');
+                assert.strictEqual(contractResult.issues.some(i => i.code === 'PLAN_CONTRACT_MISSING'
+                    && i.file.endsWith('good-plan.md')), false,
+                'non-matching legacy plans must remain valid opt-outs');
+                const lintHelp = childProcess.spawnSync(process.execPath, [
+                    path.join(TEMPLATE_CLI_DIR, 'memory.js'), 'plan', 'lint', '--help',
+                ], { cwd: tmpLintRoot, encoding: 'utf8' });
+                assert.strictEqual(lintHelp.status, 0, lintHelp.stderr);
+                assert.match(lintHelp.stdout, /--json/);
+                assert.match(lintHelp.stdout, /--strict/);
+
                 fs.writeFileSync(path.join(plansDir, '2026-01-04-bad-heading.md'),
                     '---\nlinkedSpec: spec:bad-heading\n---\n# Bad Heading Plan\n## Task 1: Wrong level\n- [ ] **Step 1:** do thing\n');
                 const scanResult = scanPlanning(tmpLintRoot);

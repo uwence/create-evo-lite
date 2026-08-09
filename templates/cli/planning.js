@@ -148,19 +148,23 @@ function registerPlanCommands(program) {
         });
 
     plan.command('lint')
-        .description('Check plan files for missing frontmatter / linkedSpec.')
+        .description('Check planning metadata and configured Governance Contracts.')
         .option('--fix', 'Auto-inject minimal frontmatter into plans that have none.')
+        .option('--json', 'Emit the complete lint result as JSON.')
+        .option('--strict', 'Exit non-zero when any lint issue remains (current default; explicit for gates).')
         .action(async (options) => {
             const { lintPlans } = require('./planning/lint');
-            const results = lintPlans(projectRoot, !!options.fix);
-            if (results.issues.length === 0) {
+            const results = lintPlans(projectRoot, { fix: !!options.fix });
+            if (options.json) {
+                console.log(JSON.stringify(results, null, 2));
+            } else if (results.issues.length === 0) {
                 console.log('All plan files have valid frontmatter.');
             } else {
                 for (const issue of results.issues) {
                     console.log(`[${issue.level}] ${issue.file}: ${issue.message}`);
                 }
             }
-            if (options.fix && results.fixed > 0) {
+            if (!options.json && options.fix && results.fixed > 0) {
                 console.log(`\nFixed: ${results.fixed} file(s) — frontmatter injected.`);
             }
             const remaining = options.fix ? results.issues.length - results.fixed : results.issues.length;
