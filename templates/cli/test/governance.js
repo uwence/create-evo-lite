@@ -18166,6 +18166,158 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         assert.ok(core.files.includes('planning/freeze-ledger.js'));
         console.log('✅ T-trace-freeze-v2 passed');
     }
+    console.log('T-governance-observer. Structured snapshots exclude raw inputs and detect semantic transitions ...');
+    {
+        const observer = require(path.join(CLI_DIR, 'governance-observer.js'));
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-observer-'));
+        const baseOptions = {
+            now: () => '2026-08-09T00:00:00.000Z',
+            gitState: {
+                head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                branch: 'main',
+                upstream: 'origin/main',
+                ahead: 0,
+                behind: 0,
+                dirty: false,
+            },
+            activeContext: {
+                meta: {
+                    headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    upstreamSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    ahead: 0,
+                    behind: 0,
+                },
+                focus: 'Deliver governed work without capturing raw prose.',
+                backlogIds: ['alpha', 'beta'],
+                trajectoryHead: 'aaaaaaaa',
+            },
+            planIR: {
+                specs: [{ id: 'spec:x' }],
+                plans: [{ id: 'plan:x' }],
+                tasks: [{ id: 'task:x' }],
+                findings: [{ code: 'R013' }],
+            },
+            portfolio: { source: { portfolioSourceDrift: false } },
+            freezeLedger: {
+                entries: [{ artifactId: 'plan:x', remediation: { status: 'within-budget' } }],
+            },
+            budget: {
+                status: 'within-budget',
+                governanceRatio: 0.5,
+                remediationRatio: 0,
+            },
+            prState: {
+                number: 35,
+                base: 'main',
+                head: 'codex/example',
+                phase: 'draft',
+                checks: 'pending',
+                runId: 123,
+                body: 'secret body',
+            },
+            forbiddenProbe: {
+                prompt: 'secret prompt',
+                output: 'raw command output',
+                review: 'raw review text',
+                token: 'TOP_SECRET',
+            },
+            isAncestor: () => true,
+        };
+
+        const snapshot = observer.buildGovernanceSnapshot(root, baseOptions);
+        assert.deepStrictEqual(Object.keys(snapshot), [
+            'version', 'observedAt', 'git', 'context', 'planning', 'freeze',
+            'pr', 'budget', 'semanticFindings', 'transitions', 'recommendations',
+        ]);
+        assert.deepStrictEqual(snapshot.pr, {
+            number: 35,
+            base: 'main',
+            head: 'codex/example',
+            phase: 'draft',
+            checks: 'pending',
+            runId: 123,
+        });
+        const serialized = JSON.stringify(snapshot);
+        for (const forbidden of ['secret body', 'secret prompt', 'raw command output', 'raw review text', 'TOP_SECRET']) {
+            assert.strictEqual(serialized.includes(forbidden), false, forbidden);
+        }
+        assert.deepStrictEqual(snapshot.semanticFindings, [],
+            'an ancestor-valid META baseline and matching sync counters must remain valid');
+
+        const stale = observer.buildGovernanceSnapshot(root, {
+            ...baseOptions,
+            activeContext: {
+                ...baseOptions.activeContext,
+                meta: { ...baseOptions.activeContext.meta, ahead: 4, behind: 1 },
+                trajectoryHead: 'bbbbbbbb',
+            },
+            portfolio: { source: { portfolioSourceDrift: true } },
+            freezeLedger: {
+                entries: [{ artifactId: 'plan:x', remediation: { status: 'budget-exceeded' } }],
+            },
+            budget: { status: 'budget-exceeded', governanceRatio: 0.8, remediationRatio: 0.6 },
+            focusPlanDrift: true,
+            isAncestor: () => false,
+        });
+        assert.deepStrictEqual(stale.semanticFindings, [
+            'CONTEXT_HEAD_NOT_ANCESTOR',
+            'CONTEXT_SYNC_COUNT_DRIFT',
+            'TRAJECTORY_HEAD_DRIFT',
+            'FOCUS_PLAN_DRIFT',
+            'PORTFOLIO_SOURCE_DRIFT',
+            'REMEDIATION_BUDGET_EXCEEDED',
+        ]);
+        assert.deepStrictEqual(stale.recommendations, [
+            'refresh-context-baseline',
+            'reconcile-context-sync-counts',
+            'record-current-trajectory-head',
+            'reconcile-focus-with-plan',
+            'repair-portfolio-source',
+            'choose-governance-disposition',
+        ]);
+
+        const before = {
+            ...snapshot,
+            git: { ...snapshot.git, branch: 'feature', head: '9999999999999999999999999999999999999999' },
+            pr: { ...snapshot.pr, phase: 'draft', checks: 'pending' },
+            freeze: { withinBudget: 0, exceeded: 0 },
+            budget: { ...snapshot.budget, status: 'within-budget' },
+        };
+        const after = {
+            ...snapshot,
+            git: { ...snapshot.git, branch: 'main', head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', merge: true },
+            pr: { ...snapshot.pr, phase: 'ready', checks: 'success' },
+            freeze: { withinBudget: 1, exceeded: 0 },
+            budget: { ...snapshot.budget, status: 'budget-exceeded' },
+        };
+        assert.deepStrictEqual(
+            observer.compareGovernanceSnapshots(before, after).map(item => item.code),
+            [
+                'branch-changed',
+                'head-advanced',
+                'merge-observed',
+                'pr-phase-changed',
+                'ci-state-changed',
+                'freeze-added',
+                'budget-crossed',
+            ],
+        );
+
+        const successfulWrite = observer.writeGovernanceSnapshot(root, snapshot);
+        assert.strictEqual(successfulWrite.ok, true);
+        assert.strictEqual(
+            JSON.parse(fs.readFileSync(successfulWrite.path, 'utf8')).version,
+            'evo-governance-snapshot@1',
+        );
+        const failedWrite = observer.writeGovernanceSnapshot(root, snapshot, {
+            writeFile: () => { throw new Error('disk full'); },
+        });
+        assert.strictEqual(failedWrite.ok, false);
+        assert.match(failedWrite.error, /disk full/);
+        assert.strictEqual(fs.existsSync(path.join(root, '.evo-lite', 'active_context.md')), false,
+            'snapshot write failure must never create or mutate active context');
+        console.log('✅ T-governance-observer passed');
+    }
 }
 
 module.exports = { runGovernanceTests };
