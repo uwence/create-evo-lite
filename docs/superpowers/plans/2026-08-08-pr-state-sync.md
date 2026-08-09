@@ -73,7 +73,7 @@ The frozen design SHA `1a3308122223a3440409291219f1cd9eb6c2e2fd` is not the impl
 - `parseExpectedBlock()` returns numeric `schema`, `commits`, and `changedFiles`; all other fields remain strings.
 - `compareExpectedObserved()` returns findings in the frozen schema order and never performs I/O.
 
-- [ ] **Step 1: Run impact analysis for the integration entry point**
+- [x] **Step 1: Run impact analysis for the integration entry point**
 
 Use GitNexus before editing the integration mirrors:
 
@@ -83,7 +83,7 @@ impact(target="runIntegrationTests", file_path="templates/cli/test/integration.j
 
 Record the risk and affected processes. The new service file has no existing symbol to analyze.
 
-- [ ] **Step 2: Add the failing PS1 primitive acceptance block to both integration mirrors**
+- [x] **Step 2: Add the failing PS1 primitive acceptance block to both integration mirrors**
 
 Add a block after `✅ 2e context edit service contract passed`. Use the template service path so the canonical implementation is exercised:
 
@@ -288,7 +288,7 @@ for (const [expectedChecks, observedChecks, codes] of checksCases) {
 
 Also prove `git check-ref-format` delegation by injecting a spy that rejects `bad ref` and records both `base` and `head` calls.
 
-- [ ] **Step 3: Run the full suite and capture RED evidence**
+- [x] **Step 3: Run the full suite and capture RED evidence**
 
 ```bash
 node ./.evo-lite/cli/test.js
@@ -296,7 +296,7 @@ node ./.evo-lite/cli/test.js
 
 Expected: governance completes, then integration fails in PS1 because `templates/cli/pr-state.service.js` does not exist. The failure must be attributable to the missing service.
 
-- [ ] **Step 4: Implement the pure service primitives in both mirrors**
+- [x] **Step 4: Implement the pure service primitives in both mirrors**
 
 Start both files identically:
 
@@ -369,13 +369,13 @@ module.exports = {
 };
 ```
 
-- [ ] **Step 5: Run PS1 GREEN and full regression**
+- [x] **Step 5: Run PS1 GREEN and full regression**
 
 Run `node ./.evo-lite/cli/test.js`.
 
 Expected: exit 0 with `✅ PS1 pr-state expected-block primitives passed`.
 
-- [ ] **Step 6: Verify parity, staged scope, and commit Task 1**
+- [x] **Step 6: Verify parity, staged scope, and commit Task 1**
 
 ```bash
 git diff --no-index -- .evo-lite/cli/pr-state.service.js templates/cli/pr-state.service.js
@@ -406,11 +406,11 @@ git commit -m "feat(pr-state): add expected state primitives"
 - Runner result: `{ status: number|null, stdout: string, stderr: string, error?: Error, signal?: string|null }`.
 - `validatePrState()` always returns the fixed envelope; expected operational failures do not escape.
 
-- [ ] **Step 1: Run impact analysis before extending Task 1 symbols**
+- [x] **Step 1: Run impact analysis before extending Task 1 symbols**
 
 Use GitNexus upstream impact on `parseExpectedBlock`, `compareExpectedObserved`, `createReport`, and `runIntegrationTests`. Report HIGH/CRITICAL before editing.
 
-- [ ] **Step 2: Add the failing PS2 acquisition block to both integration mirrors**
+- [x] **Step 2: Add the failing PS2 acquisition block to both integration mirrors**
 
 Build deterministic fixtures and a fake raw command runner:
 
@@ -483,13 +483,13 @@ Extend PS2 with these scenarios:
 - API failure yields error and never `CHECKS_MISSING`;
 - reliable `HEAD_SHA_DRIFT` remains when a later workflow query fails, while result is `error`.
 
-- [ ] **Step 3: Run the full suite and capture RED evidence**
+- [x] **Step 3: Run the full suite and capture RED evidence**
 
 Run `node ./.evo-lite/cli/test.js`.
 
 Expected: integration reaches PS2 and fails because `validatePrState` or `createDefaultCommandRunner` is not exported.
 
-- [ ] **Step 4: Add the default runner and acquisition orchestration to both service mirrors**
+- [x] **Step 4: Add the default runner and acquisition orchestration to both service mirrors**
 
 Use `spawnSync` without shell evaluation:
 
@@ -578,13 +578,13 @@ report.result = report.errors.length > 0
     : report.findings.length > 0 ? 'drift' : 'pass';
 ```
 
-- [ ] **Step 5: Run PS2 GREEN and full regression**
+- [x] **Step 5: Run PS2 GREEN and full regression**
 
 Run `node ./.evo-lite/cli/test.js`.
 
 Expected: exit 0 with both PS1 and `✅ PS2 pr-state read-only acquisition passed`.
 
-- [ ] **Step 6: Verify parity, staged scope, and commit Task 2**
+- [x] **Step 6: Verify parity, staged scope, and commit Task 2**
 
 Run pair diffs for service/integration, `git diff --check`, stage only the four Task 2 files, run GitNexus staged `detect_changes`, then commit:
 
@@ -611,11 +611,11 @@ resultExitCode(result)
 renderText(report)
 ```
 
-- [ ] **Step 1: Run impact analysis before editing existing symbols**
+- [x] **Step 1: Run impact analysis before editing existing symbols**
 
 Run GitNexus upstream impact analysis for `safeRegister`, `buildProgram`, and `runIntegrationTests`. Record the direct callers, affected processes, and risk. If any result is HIGH or CRITICAL, stop and return it for review before editing.
 
-- [ ] **Step 2: Add PS3 CLI tests to both integration mirrors**
+- [x] **Step 2: Add PS3 CLI tests to both integration mirrors**
 
 Add focused tests that inject a fake `validatePrState()` into `registerPrStateCommands()` and prove:
 
@@ -632,13 +632,13 @@ Use subprocess tests for the real root parser. Assert the marker:
 ✅ PS3 pr-state CLI registration and rendering passed
 ```
 
-- [ ] **Step 3: Run PS3 RED**
+- [x] **Step 3: Run PS3 RED**
 
 Run `node ./.evo-lite/cli/test.js`.
 
 Expected: non-zero in the integration phase because `pr-state.js` and root registration do not exist. An unrelated governance or earlier PS1/PS2 failure is not acceptable RED evidence.
 
-- [ ] **Step 4: Implement the live CLI module and root registration**
+- [x] **Step 4: Implement the live CLI module and root registration**
 
 Create `.evo-lite/cli/pr-state.js` with this boundary:
 
@@ -687,13 +687,13 @@ safeRegister('pr-state', () => require('./pr-state').registerPrStateCommands(pro
 
 Do not add `context pr-state`, aliases, body rewrite commands, or text-source options.
 
-- [ ] **Step 5: Mirror the CLI changes and run PS3 GREEN**
+- [x] **Step 5: Mirror the CLI changes and run PS3 GREEN**
 
 Copy the completed live changes byte-for-byte to the template mirrors, then run `node ./.evo-lite/cli/test.js`.
 
 Expected: exit 0 with PS1, PS2, and `✅ PS3 pr-state CLI registration and rendering passed` visible in the integration phase.
 
-- [ ] **Step 6: Verify parity, staged scope, and commit Task 3**
+- [x] **Step 6: Verify parity, staged scope, and commit Task 3**
 
 Run pair diffs for `pr-state.js`, `memory.js`, and `integration.js`, plus `git diff --check`. Stage only the six Task 3 files, run GitNexus staged `detect_changes`, then commit:
 
@@ -710,11 +710,11 @@ git commit -m "feat(pr-state): expose read-only validation command"
 - Modify: `.evo-lite/cli/test/integration.js`
 - Modify: `templates/cli/test/integration.js`
 
-- [ ] **Step 1: Run impact analysis before editing existing symbols**
+- [x] **Step 1: Run impact analysis before editing existing symbols**
 
 Run GitNexus upstream impact analysis for `MANAGED_TEMPLATE_FAMILIES`, `buildManagedTemplateEntries`, and `runIntegrationTests`. Stop for review if any result is HIGH or CRITICAL.
 
-- [ ] **Step 2: Add PS4 manifest/runtime-lock tests to both integration mirrors**
+- [x] **Step 2: Add PS4 manifest/runtime-lock tests to both integration mirrors**
 
 Extend the existing T4 managed-template assertions so the `core-cli` family must contain:
 
@@ -739,13 +739,13 @@ Assert the marker:
 ✅ PS4 pr-state managed runtime mirror coverage passed
 ```
 
-- [ ] **Step 3: Run PS4 RED**
+- [x] **Step 3: Run PS4 RED**
 
 Run `node ./.evo-lite/cli/test.js`.
 
 Expected: non-zero in the integration phase because the explicit `core-cli` manifest does not yet manage the two new modules. A failure caused by modifying `sync-runtime.js` or the harness is not acceptable.
 
-- [ ] **Step 4: Add the two exact manifest entries**
+- [x] **Step 4: Add the two exact manifest entries**
 
 Add these file names to the `core-cli` file list in both manifest mirrors:
 
@@ -756,13 +756,13 @@ Add these file names to the `core-cli` file list in both manifest mirrors:
 
 Do not modify `sync-runtime.js`, `index.js`, package metadata, or workflow files. The existing manifest-driven sync and lock machinery must consume the new entries without new special cases.
 
-- [ ] **Step 5: Run PS4 GREEN and verify runtime management**
+- [x] **Step 5: Run PS4 GREEN and verify runtime management**
 
 Run `node ./.evo-lite/cli/test.js`.
 
 Expected: exit 0 with PS1-PS4 markers, including `✅ PS4 pr-state managed runtime mirror coverage passed`.
 
-- [ ] **Step 6: Verify parity, staged scope, and commit Task 4**
+- [x] **Step 6: Verify parity, staged scope, and commit Task 4**
 
 Run pair diffs for manifest/integration, `git diff --check`, stage only the four Task 4 files, run GitNexus staged `detect_changes`, then commit:
 
@@ -781,11 +781,11 @@ git commit -m "feat(pr-state): manage validator runtime modules"
 - Modify: `.evo-lite/cli/test/integration.js`
 - Modify: `templates/cli/test/integration.js`
 
-- [ ] **Step 1: Run impact analysis before editing existing symbols**
+- [x] **Step 1: Run impact analysis before editing existing symbols**
 
 Run GitNexus upstream impact analysis for `validatePrState`, `registerPrStateCommands`, `renderText`, and `runIntegrationTests`. Stop for review on HIGH or CRITICAL risk.
 
-- [ ] **Step 2: Add PS5 operational-error and portable real-CLI tests**
+- [x] **Step 2: Add PS5 operational-error and portable real-CLI tests**
 
 Complete the fail-closed matrix for:
 
@@ -834,13 +834,13 @@ Assert the marker:
 ✅ PS5 pr-state fail-closed CLI acceptance passed
 ```
 
-- [ ] **Step 3: Run PS5 RED**
+- [x] **Step 3: Run PS5 RED**
 
 Run `node ./.evo-lite/cli/test.js`.
 
 Expected: non-zero from one deliberately deferred malformed-response or operational-error case. PS1-PS4 must still pass; an unrelated parser, registration, manifest, or governance failure is not acceptable RED evidence.
 
-- [ ] **Step 4: Implement only the missing fail-closed shape/error mappings**
+- [x] **Step 4: Implement only the missing fail-closed shape/error mappings**
 
 Keep the pure comparison and read-only acquisition architecture unchanged. Normalize thrown errors into the frozen envelope with a helper equivalent to:
 
@@ -859,7 +859,7 @@ function errorEntry(error) {
 
 Do not convert operational errors into drift, suppress reliable earlier findings, add retries, query job details, or introduce mutation/repair behavior.
 
-- [ ] **Step 5: Run PS5 GREEN and the supported regression gates**
+- [x] **Step 5: Run PS5 GREEN and the supported regression gates**
 
 Run:
 
@@ -872,7 +872,7 @@ Expected: both exit 0; the full default `all` run contains PS1-PS5 and `✅ PS5 
 
 Do not run `node ./.evo-lite/cli/test.js integration`; the harness does not expose that scope.
 
-- [ ] **Step 6: Verify parity, staged scope, and commit Task 5**
+- [x] **Step 6: Verify parity, staged scope, and commit Task 5**
 
 Run all touched live/template pair diffs and `git diff --check`. Stage only the six Task 5 files, run GitNexus staged `detect_changes`, then commit:
 
@@ -884,7 +884,7 @@ git commit -m "fix(pr-state): fail closed on observation gaps"
 
 Run this gate only after Tasks 1-5 are committed. Do not repair failures by changing the frozen design or plan.
 
-- [ ] **Verify the exact ten-file implementation surface**
+- [x] **Verify the exact ten-file implementation surface**
 
 Run:
 
@@ -903,7 +903,7 @@ git diff --name-status 70c173b11ec64896780be67eb6b8bda94d2295fb..HEAD
 
 Expected: exactly 12 changed files: one frozen design spec, one implementation plan, and the ten frozen implementation files. Multiple append-only commits to either document do not increase this changed-file count.
 
-- [ ] **Run the supported governance and full-suite gates**
+- [x] **Run the supported governance and full-suite gates**
 
 Run:
 
@@ -914,7 +914,7 @@ node ./.evo-lite/cli/test.js
 
 Expected: both exit 0. The default `all` suite must show PS1, PS2, PS3, PS4, and PS5 integration acceptance markers. Do not invent or add an `integration` test scope.
 
-- [ ] **Run safe parser-level CLI probes**
+- [x] **Run safe parser-level CLI probes**
 
 Run:
 
@@ -934,7 +934,7 @@ Expected:
 - `--repo` is rejected by the parser;
 - none of the probes changes repository files or calls a mutating GitHub operation.
 
-- [ ] **Validate context preservation**
+- [x] **Validate context preservation**
 
 Run:
 
@@ -945,7 +945,7 @@ git diff --exit-code -- .evo-lite/active_context.md .evo-lite/raw_memory
 
 Expected: validation passes and both governance-state paths are unchanged.
 
-- [ ] **Verify every live/template pair byte-for-byte**
+- [x] **Verify every live/template pair byte-for-byte**
 
 Run `git diff --no-index` for:
 
@@ -959,7 +959,7 @@ Run `git diff --no-index` for:
 
 Expected: all five commands exit 0. PS4 must also prove the two new modules appear in the managed runtime lock and pass `verifyRuntimeLock()`; do not commit a generated runtime-lock artifact.
 
-- [ ] **Run final diff hygiene and GitNexus compare review**
+- [x] **Run final diff hygiene and GitNexus compare review**
 
 Run:
 
@@ -970,7 +970,7 @@ git status --short
 
 Run GitNexus `detect_changes` with compare base equal to the exact recorded `$IMPLEMENTATION_BASE`. Review every affected process and confirm no unexpected symbol or flow is present. The frozen design SHA is not an acceptable substitute for this implementation-only compare.
 
-- [ ] **Hard stop for implementation review**
+- [x] **Hard stop for implementation review**
 
 Return the recorded implementation-base SHA, five Task commit SHAs, the implementation-only ten-file diff, cumulative 12-file diff, per-Task RED/GREEN evidence, governance/full-suite results, PS1-PS5 markers, five pair parity results, managed-manifest/runtime-lock evidence, context preservation, GitNexus compare output, `diff --check`, and a clean worktree.
 
