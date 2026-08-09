@@ -18224,6 +18224,34 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
             isAncestor: () => true,
         };
 
+        fs.mkdirSync(path.join(root, '.evo-lite'), { recursive: true });
+        writeText(path.join(root, '.evo-lite', 'active_context.md'), [
+            '<!-- BEGIN_META -->',
+            '> headSha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            '> upstreamSha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            '> ahead: 0',
+            '> behind: 0',
+            '<!-- END_META -->',
+            '<!-- BEGIN_FOCUS -->',
+            'Current governed focus.',
+            '<!-- END_FOCUS -->',
+            '<!-- BEGIN_BACKLOG -->',
+            '- [ ] [alpha] Pending item.',
+            '<!-- END_BACKLOG -->',
+            '<!-- BEGIN_TRAJECTORY -->',
+            '- [aaaaaaaa] Current trajectory.',
+            '<!-- END_TRAJECTORY -->',
+        ].join('\n') + '\n');
+        const { activeContext: ignoredActiveContext, ...fileBackedOptions } = baseOptions;
+        const fileBacked = observer.buildGovernanceSnapshot(root, fileBackedOptions);
+        assert.deepStrictEqual(fileBacked.context.meta, {
+            headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            upstreamSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            ahead: 0,
+            behind: 0,
+        }, 'canonical blockquoted META fields must be observed from active_context.md');
+        fs.unlinkSync(path.join(root, '.evo-lite', 'active_context.md'));
+
         const snapshot = observer.buildGovernanceSnapshot(root, baseOptions);
         assert.deepStrictEqual(Object.keys(snapshot), [
             'version', 'observedAt', 'git', 'context', 'planning', 'freeze',
