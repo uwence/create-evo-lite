@@ -3,7 +3,7 @@
 const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { childEntries, sha256 } = require('./status');
+const { childEntries, eolNormalizedSha256, sha256 } = require('./status');
 const feedback = require('./feedback');
 const registry = require('./registry');
 const { runTransaction } = require('../transaction');
@@ -14,13 +14,6 @@ function defaultExec(args, cwd) {
 
 function readJson(fp) {
     return JSON.parse(fs.readFileSync(fp, 'utf8'));
-}
-
-// Lock hashes are computed over the LF bytes nurture deploys; a child worktree
-// under git autocrlf=true re-materializes them as CRLF. Line-ending drift is
-// not a gene mutation — compare the CRLF-normalized hash too.
-function eolNormalizedSha256(bytes) {
-    return sha256(Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'), 'utf8'));
 }
 
 // Anchor names are [A-Z0-9_]; markers are `<!-- NAME -->` — no regex escaping needed.
@@ -126,7 +119,7 @@ function nurtureChild(motherRoot, entry, opts = {}) {
         const targetHash = sha256(targetBytes);
         const relActive = path.relative(childRoot, e.activeFile).replace(/\\/g, '/');
         checksums[relActive] = targetHash;
-        if (childExists && sha256(childBytes) === targetHash) {
+        if (childExists && eolNormalizedSha256(childBytes) === eolNormalizedSha256(targetBytes)) {
             report.skipped.push(e.label);
         } else {
             planned.push({ entry: e, bytes: targetBytes });

@@ -11264,6 +11264,12 @@ async function runChildRuntimeTests() {
         const upToDate = childStatus(mother, { id: 'a', path: mkChild('9.9.9') }, { familiesOverride: FAM });
         assert.strictEqual(upToDate.status, 'up-to-date');
 
+        const crlfChild = mkChild('9.9.9');
+        fs.writeFileSync(path.join(crlfChild, '.evo-lite', 'cli', 'gene.js'), 'module.exports = 1;\r\n');
+        const crlfEquivalent = childStatus(mother, { id: 'a-crlf', path: crlfChild }, { familiesOverride: FAM });
+        assert.strictEqual(crlfEquivalent.status, 'up-to-date', 'CRLF-only runtime materialization is not drift');
+        assert.deepStrictEqual(crlfEquivalent.driftedFiles, [], 'CRLF-only runtime materialization names no drifted files');
+
         const behind = childStatus(mother, { id: 'b', path: mkChild('9.0.0') }, { familiesOverride: FAM });
         assert.strictEqual(behind.status, 'behind');
         assert.strictEqual(behind.childVersion, '9.0.0');
@@ -11372,6 +11378,18 @@ async function runChildRuntimeTests() {
         assert.ok(dry.copied.includes('gene.js'), 'dry-run reports pending copy');
         assert.deepStrictEqual(dry.depGap.missing, ['@modelcontextprotocol/sdk'], 'dep gap named');
         assert.strictEqual(sha256(fs.readFileSync(path.join(c1, '.evo-lite', 'cli', 'gene.js'))), before, 'dry-run wrote nothing');
+
+        // CRLF-only worktree materialization is already current and must not plan a rewrite.
+        const eolMother = mkMother(); const eolChild = mkChild();
+        fs.writeFileSync(path.join(eolMother, 'templates', 'cli', 'gene.js'), 'module.exports = 1;\n');
+        fs.writeFileSync(path.join(eolChild, '.evo-lite', 'cli', 'gene.js'), 'module.exports = 1;\r\n');
+        fs.writeFileSync(path.join(eolChild, '.evo-lite', 'package.json'),
+            '{"version":"9.9.9","dependencies":{"commander":"15.0.0","@modelcontextprotocol/sdk":"1.29.0"}}');
+        const eolDry = nurtureChild(eolMother, { id: 'eol-kid', path: eolChild },
+            { dryRun: true, exec: noGit, force: true, familiesOverride: [FAM[0]] });
+        assert.deepStrictEqual(eolDry.copied, [], 'CRLF-only runtime materialization plans no copy');
+        assert.deepStrictEqual(eolDry.skipped, ['gene.js'], 'CRLF-only runtime materialization is skipped');
+        assert.strictEqual(eolDry.upToDate, true, 'CRLF-only runtime materialization is up to date');
 
         // apply: genes copied, anchors merged, state untouched, receipt + lock + bump + registry
         const regMod = require(path.join(CLI_DIR, 'hive', 'registry.js'));
