@@ -40,7 +40,7 @@ linkedSpec: spec:planning-truth-controls
 - Produces: `loadContractLintConfig(projectRoot) -> { ok, config, findings }`
 - Produces: `lintGovernedArtifact({ projectRoot, filePath, markdown, parsedArtifact }) -> Finding[]`
 
-- [ ] **Step 1: Add RED parser and semantic matrix**
+- [x] **Step 1: Add RED parser and semantic matrix**
 
 ```js
 const gc = require('../planning/governance-contract');
@@ -60,25 +60,25 @@ Cover malformed/multiple fences, duplicate JSON keys, unknown/missing keys,
 all enums, invariant grammar/uniqueness, Layer A/B/C cross-fields, path stage,
 and spike executable evidence.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
 Expected: failure because `planning/governance-contract.js` is absent.
 
-- [ ] **Step 3: Implement strict parser and validator**
+- [x] **Step 3: Implement strict parser and validator**
 
 Use a duplicate-key-aware JSON lexical pass before `JSON.parse`; return stable
 finding objects `{ code, level: 'error', file, message }`. Validate scalars
 before cross-field rules.
 
-- [ ] **Step 4: Mirror and run GREEN**
+- [x] **Step 4: Mirror and run GREEN**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
 Expected: parser matrix passes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/planning/governance-contract.js .evo-lite/cli/planning/governance-contract.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js
@@ -100,7 +100,7 @@ git commit -m "feat(planning): validate governance artifact contracts"
 - Produces: `lintPlans(projectRoot, options)` findings including `code`.
 - CLI: `mem plan lint [--fix] [--json] [--strict]`; strict exits non-zero on contract errors.
 
-- [ ] **Step 1: Add RED config and CLI tests**
+- [x] **Step 1: Add RED config and CLI tests**
 
 ```js
 const report = lintPlans(root, { contract: true });
@@ -111,24 +111,24 @@ assert.ok(report.findings.some(f => f.code === 'PLAN_CONTRACT_INVARIANT_MISSING'
 Test valid `*`/`**` patterns, traversal/absolute pattern rejection, non-matching
 legacy files, JSON output, and unchanged existing `--fix` behavior.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node ./.evo-lite/cli/test.js`
 
 Expected: integration phase fails on missing contract findings/CLI flags.
 
-- [ ] **Step 3: Integrate config and stable rendering**
+- [x] **Step 3: Integrate config and stable rendering**
 
 Do not let `--fix` invent a Governance Contract. It may continue fixing only
 existing frontmatter behavior.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `node ./.evo-lite/cli/test.js`
 
 Expected: governance and integration pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/planning/lint.js .evo-lite/cli/planning/lint.js templates/cli/planning.js .evo-lite/cli/planning.js templates/cli/test/integration.js .evo-lite/cli/test/integration.js
@@ -147,7 +147,7 @@ git commit -m "feat(planning): lint configured contract invariants"
 - Produces: `discoverSpecFiles(projectRoot)` with per-root source diagnostics.
 - Preserves: `buildSpecRegistry(projectRoot, { write })` public contract.
 
-- [ ] **Step 1: Add RED dual-root/duplicate/source-drift tests**
+- [x] **Step 1: Add RED dual-root/duplicate/source-drift tests**
 
 ```js
 writeSpec(root, 'docs/superpowers/specs/a.md', 'spec:a', 'done');
@@ -159,19 +159,19 @@ assert.strictEqual(registry.specs[0].state, 'shipped');
 Also cover same ID in both roots, unreadable/missing roots, one readable root,
 and Planning IR non-zero while portfolio valid count is zero.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
 Expected: superpowers-only fixture remains zero or lacks source warning.
 
-- [ ] **Step 3: Implement dual-root discovery**
+- [x] **Step 3: Implement dual-root discovery**
 
 Sort roots and files deterministically. Record duplicate-ID registry errors.
 Make `formatPortfolioReport()` emit `portfolio-source-drift` without turning it
 into a release blocker on its own.
 
-- [ ] **Step 4: Run GREEN and CodePLC fixture probe**
+- [x] **Step 4: Run GREEN and CodePLC fixture probe**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
@@ -180,7 +180,7 @@ Run a read-only Node probe that calls the template `buildSpecRegistry()` with
 
 Expected: valid spec count is non-zero.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/spec-portfolio.js .evo-lite/cli/spec-portfolio.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js
@@ -206,33 +206,33 @@ git commit -m "feat(portfolio): discover governed specs in both roots"
 - CLI: `mem plan freeze <path> [--replace] [--json]`
 - CLI: `mem plan ledger [--json]`
 
-- [ ] **Step 1: Add RED service tests**
+- [x] **Step 1: Add RED service tests**
 
 Use a temporary Git repository. Prove clean/tracked/HEAD-bound preconditions,
 exact byte SHA-256, contract digest, existing-entry refusal, explicit replace,
 content drift, ancestry, first reachable merge, evidence linkage, and commit
 count after freeze excluding the freeze commit.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
 Expected: missing ledger module.
 
-- [ ] **Step 3: Implement ledger with validate-before-write ordering**
+- [x] **Step 3: Implement ledger with validate-before-write ordering**
 
 Use `execFileSync('git', argv)` only; no shell strings. Normalize all stored
 paths and reject paths outside the workspace. Write one canonical JSON document
 after validation.
 
-- [ ] **Step 4: Add CLI RED then GREEN**
+- [x] **Step 4: Add CLI RED then GREEN**
 
 Run: `node ./.evo-lite/cli/test.js`
 
 Expected after implementation: freeze and ledger commands render deterministic
 JSON/text; budget exceedance is warning-only and lists the three frozen choices.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/planning/freeze-ledger.js .evo-lite/cli/planning/freeze-ledger.js templates/cli/planning.js .evo-lite/cli/planning.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js templates/cli/test/integration.js .evo-lite/cli/test/integration.js
@@ -255,7 +255,7 @@ git commit -m "feat(planning): record independent freeze identity"
 - Consumes: Task 4 `inspectFreezeLedger()`.
 - Produces: `evo-trace@2` with legacy fields plus `freezeLedger`.
 
-- [ ] **Step 1: Add RED trace/manifest tests**
+- [x] **Step 1: Add RED trace/manifest tests**
 
 ```js
 const trace = buildTraceability(root);
@@ -266,15 +266,15 @@ assert.deepStrictEqual(trace.freezeLedger.entries[0].artifactId, 'plan:x');
 Assert both new modules appear in the `core-cli` family and runtime-lock entry
 set.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node ./.evo-lite/cli/test.js`
 
-- [ ] **Step 3: Implement trace v2 and manifest entries**
+- [x] **Step 3: Implement trace v2 and manifest entries**
 
 Preserve the exact v1 chain/unlinked-task shapes.
 
-- [ ] **Step 4: Run GREEN and parity**
+- [x] **Step 4: Run GREEN and parity**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
@@ -282,7 +282,7 @@ Run: `node ./.evo-lite/cli/test.js`
 
 Compare all changed live/template pairs by Git blob hash.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/planning/traceability.js .evo-lite/cli/planning/traceability.js templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js templates/cli/test/integration.js .evo-lite/cli/test/integration.js
@@ -294,7 +294,7 @@ git commit -m "feat(planning): link freeze evidence into traceability"
 **Files:**
 - Modify only checkbox completion metadata in this plan after evidence passes.
 
-- [ ] **Step 1: Run full gates**
+- [x] **Step 1: Run full gates**
 
 ```text
 node ./.evo-lite/cli/test.js governance
@@ -306,15 +306,14 @@ node ./.evo-lite/cli/memory.js plan trace
 git diff --check IMPLEMENTATION_BASE..HEAD
 ```
 
-- [ ] **Step 2: Run GitNexus compare review**
+- [x] **Step 2: Run GitNexus compare review**
 
 Use `detect_changes(scope="compare", base_ref=IMPLEMENTATION_BASE)` and review
 every affected process before committing closure metadata.
 
-- [ ] **Step 3: Mark completed checkboxes and commit**
+- [x] **Step 3: Mark completed checkboxes and commit**
 
 ```bash
 git add docs/superpowers/plans/2026-08-09-planning-truth-controls.md
 git commit -m "docs(plan): close planning truth controls"
 ```
-
