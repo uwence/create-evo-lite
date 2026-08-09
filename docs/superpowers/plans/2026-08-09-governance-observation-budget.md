@@ -40,7 +40,7 @@ linkedSpec: spec:governance-observation-budget
 - Produces: `writeGovernanceSnapshot(projectRoot, snapshot, options) -> { ok, path|error }`
 - Produces: `recordGovernanceSnapshot(projectRoot, options) -> { snapshot, write }`
 
-- [ ] **Step 1: Add RED allowlist and transition tests**
+- [x] **Step 1: Add RED allowlist and transition tests**
 
 ```js
 const snapshot = observer.buildGovernanceSnapshot(root, {
@@ -58,20 +58,20 @@ Cover ancestor-valid META, non-ancestor head, sync counts, trajectory drift,
 portfolio source drift, freeze/budget crossings, deterministic ordering, and
 write failure.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
-- [ ] **Step 3: Implement pure builder and best-effort writer**
+- [x] **Step 3: Implement pure builder and best-effort writer**
 
 All Git calls use argv arrays and injectable providers. The writer uses the
 existing generated directory and never touches active context.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/governance-observer.js .evo-lite/cli/governance-observer.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js
@@ -90,27 +90,27 @@ git commit -m "feat(governance): build privacy-bounded state snapshots"
 - Produces: `buildGovernanceBudget(projectRoot, options) -> report`
 - Produces: `loadGovernanceBudgetConfig(projectRoot) -> validated config`
 
-- [ ] **Step 1: Add RED temporary-Git classification tests**
+- [x] **Step 1: Add RED temporary-Git classification tests**
 
 Create delivery-only, governance-only, mixed, and merge commits. Assert primary
 ratios exclude merge commits, elapsed span is deterministic with injected
 timestamps, remediation ratio consumes freeze-ledger observations, and invalid
 config fails closed.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
-- [ ] **Step 3: Implement report and thresholds**
+- [x] **Step 3: Implement report and thresholds**
 
 Return stable status `within-budget | budget-exceeded` and all three disposition
 choices on threshold crossing.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `node ./.evo-lite/cli/test.js governance`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/governance-observer.js .evo-lite/cli/governance-observer.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js
@@ -131,24 +131,24 @@ git commit -m "feat(governance): report bounded work ratios"
 - CLI: `mem governance snapshot [--json] [--write]`
 - CLI: `mem governance budget [--since <ref>] [--json]`
 
-- [ ] **Step 1: Add RED nested-only CLI tests**
+- [x] **Step 1: Add RED nested-only CLI tests**
 
 Assert JSON schema, text summary, safe invalid ref rejection, no top-level
 aliases, snapshot default read-only, `--write` exact target, and manifest entry.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node ./.evo-lite/cli/test.js`
 
-- [ ] **Step 3: Register commands and manifest**
+- [x] **Step 3: Register commands and manifest**
 
 Do not add dependencies or alternate input surfaces.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `node ./.evo-lite/cli/test.js`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/memory.js .evo-lite/cli/memory.js templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js templates/cli/test/integration.js .evo-lite/cli/test/integration.js
@@ -175,22 +175,22 @@ git commit -m "feat(governance): expose snapshot and budget commands"
   existing blocking rules.
 - `pr-state validate` passes only normalized expected/observed/result fields.
 
-- [ ] **Step 1: Add RED hook/verify/pr-state integration tests**
+- [x] **Step 1: Add RED hook/verify/pr-state integration tests**
 
 Prove sessionstart/stop head changes, plan freeze, verify, and pr-state validate
 write allowlisted snapshots; inject raw body/review/output/secrets and assert
 absence. Inject writer failure and assert original exit/result is unchanged.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node ./.evo-lite/cli/test.js`
 
-- [ ] **Step 3: Add best-effort integrations**
+- [x] **Step 3: Add best-effort integrations**
 
 Keep network acquisition inside pr-state. Observer receives normalized data and
 does not call GitHub itself.
 
-- [ ] **Step 4: Run GREEN and CodePLC semantic fixture**
+- [x] **Step 4: Run GREEN and CodePLC semantic fixture**
 
 Run: `node ./.evo-lite/cli/test.js`
 
@@ -198,7 +198,7 @@ Run a read-only observer probe against `D:/Data/ProjectAgent/CodePLC`; expect
 stale focus/head recommendation codes and no mutation unless `write` is
 explicitly requested.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add templates/cli/memory.service.js .evo-lite/cli/memory.service.js templates/cli/pr-state.js .evo-lite/cli/pr-state.js templates/cli/planning.js .evo-lite/cli/planning.js templates/cli/test/governance.js .evo-lite/cli/test/governance.js templates/cli/test/integration.js .evo-lite/cli/test/integration.js
@@ -210,7 +210,7 @@ git commit -m "feat(governance): record snapshots at lifecycle gates"
 **Files:**
 - Modify only checkbox completion metadata in this plan after evidence passes.
 
-- [ ] **Step 1: Run full gates**
+- [x] **Step 1: Run full gates**
 
 ```text
 node ./.evo-lite/cli/test.js governance
@@ -221,16 +221,16 @@ node ./.evo-lite/cli/memory.js context validate
 git diff --check IMPLEMENTATION_BASE..HEAD
 ```
 
-- [ ] **Step 2: Prove live/template parity and manifest coverage**
+- [x] **Step 2: Prove live/template parity and manifest coverage**
 
 Compare all changed pairs by Git blob hash and run runtime-lock/scaffold tests.
 
-- [ ] **Step 3: Run GitNexus compare review**
+- [x] **Step 3: Run GitNexus compare review**
 
 Use `detect_changes(scope="compare", base_ref=IMPLEMENTATION_BASE)` and review
 all affected execution flows.
 
-- [ ] **Step 4: Mark completed checkboxes and commit**
+- [x] **Step 4: Mark completed checkboxes and commit**
 
 ```bash
 git add docs/superpowers/plans/2026-08-09-governance-observation-budget.md
