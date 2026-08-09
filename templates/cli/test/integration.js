@@ -16,6 +16,15 @@ const {
     resetCliModuleCache, loadCli, bootstrapRuntime, captureConsole, withPatchedExecFileSync,
 } = require('./harness');
 
+function removePrStateRuntimeRoot(root, rmSync = fs.rmSync) {
+    return rmSync(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+    });
+}
+
 async function runIntegrationTests() {
     console.log('--- Starting CLI integration tests ---');
 
@@ -486,7 +495,7 @@ async function runIntegrationTests() {
                 else process.env.EVO_LITE_TEMPLATE_CLI_DIR = previousCliDir;
                 if (previousRootDir === undefined) delete process.env.EVO_LITE_TEMPLATE_ROOT_DIR;
                 else process.env.EVO_LITE_TEMPLATE_ROOT_DIR = previousRootDir;
-                fs.rmSync(runtime.workspaceRoot, { recursive: true, force: true });
+                removePrStateRuntimeRoot(runtime.workspaceRoot);
             }
             console.log('✅ PS4 pr-state managed runtime mirror coverage passed');
         }
@@ -1684,6 +1693,26 @@ async function runIntegrationTests() {
             assert.strictEqual(retained.report.result, 'error');
             assert.ok(retained.report.findings.some(item => item.code === 'HEAD_SHA_DRIFT'));
             assert.ok(retained.report.errors.some(error => error.code === 'WORKFLOW_RUN_QUERY_FAILED'));
+
+            const cleanupCalls = [];
+            removePrStateRuntimeRoot('C:/tmp/pr-state-runtime', (root, options) => {
+                cleanupCalls.push({ root, options });
+            });
+            assert.deepStrictEqual(cleanupCalls, [{
+                root: 'C:/tmp/pr-state-runtime',
+                options: {
+                    recursive: true,
+                    force: true,
+                    maxRetries: 5,
+                    retryDelay: 100,
+                },
+            }]);
+
+            const cleanupFailure = new Error('persistent EPERM');
+            assert.throws(
+                () => removePrStateRuntimeRoot('C:/tmp/pr-state-runtime', () => { throw cleanupFailure; }),
+                error => error === cleanupFailure
+            );
 
             const runtime = createTempRuntimeRoot('pr-state-real-cli');
             const fakeBin = path.join(runtime.workspaceRoot, 'fake-gh-bin');
