@@ -72,7 +72,7 @@ function readSection(markdown, name) {
 function parseMeta(section) {
     const meta = {};
     for (const line of String(section || '').split(/\r?\n/)) {
-        const match = line.match(/^([A-Za-z][A-Za-z0-9]*):\s*(.*?)\s*$/);
+        const match = line.match(/^\s*(?:>\s*)?([A-Za-z][A-Za-z0-9]*):\s*(.*?)\s*$/);
         if (match) meta[match[1]] = match[2];
     }
     return {
