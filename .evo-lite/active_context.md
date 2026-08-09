@@ -3,17 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: efe393e2ff54e335f19d743cb15605e2332df1ab
-> upstreamSha: efe393e2ff54e335f19d743cb15605e2332df1ab
+> headSha: 186a269abb41a2d6adfe14167f193b2a22add1a1
+> upstreamSha: 186a269abb41a2d6adfe14167f193b2a22add1a1
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-08-09T04:17:51.335Z
+> focusUpdatedAt: 2026-08-09T12:34:24.802Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[pr-state-sync] DURABLE CLOSED and [pr-state-sync-postmerge-correction] DURABLE CLOSED at main@efe393e2ff54e335f19d743cb15605e2332df1ab. PR #33 and PR #34 declarations PASS; no corrective follow-up or reopen is authorized. [size-exceeded-warning] remains QUEUED / CONTRACT and is the next contract-review candidate, but this resync does not authorize that review or implementation. No new NEXT scope is authorized by this resync. [attp-hive-rollout] remains BLOCKED / SEPARATE SCOPE.
+[codeplc-child-feedback-closure] DURABLE CLOSED: all 8 requested CodePLC child-hive outbox feedback items are completed and independently verified; child main@1c3a008f5cba988c7ed39ac394bf39374afa2e22 and mother main@186a269abb41a2d6adfe14167f193b2a22add1a1 are durable. Mother hive status is up-to-date with no drift or feedback, and nurture dry-run is zero-copy (copied=0, skipped=129). No corrective follow-up or reopen is authorized. No new NEXT is authorized. [size-exceeded-warning] remains QUEUED / CONTRACT candidate only. [attp-hive-rollout] remains BLOCKED / SEPARATE SCOPE.
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -26,6 +26,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [186a269] 2026-08-09 CodePLCChildFeedbackDurableClosure: Closed the complete CodePLC child-hive feedback chain. All 8 requested outbox feedback items are che
 - [efe393e] 2026-08-09 PrStateSyncDurableClosure: [pr-state-sync] and [pr-state-sync-postmerge-correction] DURABLE CLOSED. PR #33 merged at 23b6b095c8
 - [364505a] 2026-08-08 BacklogEditCliGapClosure: PR #31 merged by ordinary two-parent merge at main@364505aafcd44747b70d7a228d5edf99a9d71906 with rev
 - [a5b1fa8] 2026-08-08 TestTempRootLifecycleClosure: PR #29 merged by ordinary two-parent merge at main@a5b1fa8641110db29f24a5e1b9af906039ff2755, with re
@@ -35,7 +36,6 @@
 - [befedf1] 2026-08-01 ZvecWinUnicodeContainmentTask4Closure: [zvec-win-unicode-containment] Task 1–4 收口，运行时上下文对齐。 实现与合入：Task 1–3(判定层)经 PR #6 合入 main@a10dfd7；Task
 - [7628fdb] 2026-07-31 ZvecWinUnicodeContainmentDesignFreeze: 完成 [zvec-win-unicode-containment] Phase D 证据与设计冻结：固化 Windows 非 ASCII collection 路径 fail-fast 的有界证据矩阵
 - [c862181] 2026-07-31 SpecPortfolioAgingDisposition: 将 spec:provider-first-code-perception-foundation 从 adopted 调整为 parked，保留 umbrella 与 spawned-from 关系。
-- [ee98661] 2026-07-31 Zvec06CorrectnessClosure: [zvec-06-upgrade] 收口。议题由「功能升级」重分类为「P0 现存正确性缺陷修复」——原立项理由(0.5.0 无 readOnly、reader/writer 拆分随升级落地)被同版重测
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
