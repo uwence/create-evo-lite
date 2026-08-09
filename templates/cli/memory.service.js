@@ -31,6 +31,47 @@ const {
     getTemplateRootDir,
     getWorkspaceRoot,
 } = require('./runtime');
+
+function recordGovernanceBoundary(options = {}) {
+    const warn = typeof options.warn === 'function'
+        ? options.warn
+        : message => {
+            try { appendLog('GOVERNANCE_SNAPSHOT_WARNING', message); } catch (_) {}
+        };
+    let observer;
+    try {
+        observer = options.governanceObserver || require('./governance-observer');
+    } catch (error) {
+        warn(`observer unavailable: ${error && error.message ? error.message : String(error)}`);
+        return { snapshot: null, write: { ok: false }, budget: null, budgetError: error };
+    }
+
+    let budget = null;
+    let budgetError = null;
+    if (options.includeBudget) {
+        try {
+            budget = observer.buildGovernanceBudget(getWorkspaceRoot());
+        } catch (error) {
+            budgetError = error;
+            warn(`budget unavailable: ${error && error.message ? error.message : String(error)}`);
+        }
+    }
+
+    try {
+        const record = options.recordGovernanceSnapshot || observer.recordGovernanceSnapshot;
+        const recordOptions = {};
+        if (budget) recordOptions.budget = budget;
+        if (options.prState) recordOptions.prState = options.prState;
+        const result = record(getWorkspaceRoot(), recordOptions);
+        if (result && result.write && result.write.ok === false) {
+            warn(`snapshot write failed: ${result.write.error || 'unknown error'}`);
+        }
+        return { ...result, budget, budgetError };
+    } catch (error) {
+        warn(`snapshot failed: ${error && error.message ? error.message : String(error)}`);
+        return { snapshot: null, write: { ok: false }, budget, budgetError: budgetError || error };
+    }
+}
 const {
     getMemoryIndex, resolveActiveImpl, resolveEngine, resetMemoryIndex,
     resolveRecoveryRebuildDecision, clearContainmentState,
@@ -1221,6 +1262,14 @@ function inspectLocalState(event = 'sessionstart', options = {}) {
         output: output || null,
         workspaceRoot: getWorkspaceRoot(),
     };
+    const governanceObservation = recordGovernanceBoundary({
+        governanceObserver: options.governanceObserver,
+        recordGovernanceSnapshot: options.recordGovernanceSnapshot,
+    });
+    report.governanceRecommendations = governanceObservation.snapshot
+        && Array.isArray(governanceObservation.snapshot.recommendations)
+        ? governanceObservation.snapshot.recommendations
+        : [];
     try {
         recordSessionEvent(report.event, {
             activeTaskCount: report.activeTaskCount,
@@ -1507,6 +1556,7 @@ function addTask(task, options = {}) {
     const backlog = [...backlogLines.filter(line => !isPlaceholderLine(line)), newTaskLine].join('\n');
     fs.writeFileSync(ACTIVE_CONTEXT_PATH, writeSection(markdown, 'BACKLOG', backlog), 'utf8');
     appendLog('CONTEXT_ADD', newTaskLine);
+    recordGovernanceBoundary();
     return { hash, line: newTaskLine };
 }
 
@@ -1588,6 +1638,7 @@ function editBacklogTask(id, newText) {
 
     fs.writeFileSync(ACTIVE_CONTEXT_PATH, candidateMarkdown, 'utf8');
     appendLog('CONTEXT_EDIT', resultLine);
+    recordGovernanceBoundary();
     return result;
 }
 
@@ -1596,6 +1647,7 @@ function setFocus(focus) {
     const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
     fs.writeFileSync(ACTIVE_CONTEXT_PATH, writeSection(markdown, 'FOCUS', focus), 'utf8');
     appendLog('CONTEXT_FOCUS', focus);
+    recordGovernanceBoundary();
     return focus;
 }
 
@@ -1654,6 +1706,7 @@ function autoRefreshContext() {
     if (focusChanged || backlogChanged) {
         fs.writeFileSync(ACTIVE_CONTEXT_PATH, nextMarkdown, 'utf8');
         appendLog('CONTEXT_AUTOREFRESH', JSON.stringify({ focusChanged, backlogPruned: backlogPruned.length }));
+        recordGovernanceBoundary();
     }
 
     return {
@@ -1861,6 +1914,7 @@ async function track(mechanism, details, options = {}) {
 
     fs.writeFileSync(ACTIVE_CONTEXT_PATH, markdown, 'utf8');
     appendLog('TRACK', `${normalizedMechanism} | resolve=${options.resolve || 'none'}`);
+    recordGovernanceBoundary();
     return {
         archivePath: archiveResult.filePath,
         chunkCount: archiveResult.chunkCount,
@@ -3097,6 +3151,37 @@ async function verify(options = {}) {
     }
 
     collectOperatorNextSteps(getWorkspaceRoot(), report, pushNextStep);
+
+    const governanceObservation = recordGovernanceBoundary({
+        includeBudget: true,
+        governanceObserver: options.governanceObserver,
+        recordGovernanceSnapshot: options.recordGovernanceSnapshot,
+        warn: message => {
+            warn(`⚠️ [治理观察] ${message}`);
+            try { appendLog('GOVERNANCE_SNAPSHOT_WARNING', message); } catch (_) {}
+        },
+    });
+    report.governanceObservation = {
+        recommendations: governanceObservation.snapshot
+            && Array.isArray(governanceObservation.snapshot.recommendations)
+            ? governanceObservation.snapshot.recommendations
+            : [],
+        budget: governanceObservation.budget
+            ? {
+                status: governanceObservation.budget.status,
+                governanceRatio: governanceObservation.budget.governanceRatio,
+                remediationRatio: governanceObservation.budget.remediationRatio,
+                choices: governanceObservation.budget.choices || [],
+            }
+            : null,
+        writeOk: Boolean(governanceObservation.write && governanceObservation.write.ok),
+    };
+    if (governanceObservation.budget && governanceObservation.budget.status === 'budget-exceeded') {
+        warn('⚠️ [治理预算] governance/remediation ratio exceeded; reviewer choice is required.');
+        for (const choice of governanceObservation.budget.choices || []) {
+            pushNextStep(`Governance budget choice: ${choice}`);
+        }
+    }
 
     if (!report.hasAlerts) {
         if (report.nextSteps.length > 0) {

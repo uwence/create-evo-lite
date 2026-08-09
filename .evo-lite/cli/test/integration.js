@@ -1540,6 +1540,97 @@ async function runIntegrationTests() {
                 }
             }
 
+            const observationReport = envelope('pass', {
+                expected: {
+                    base: 'main',
+                    head: 'codex/pr-state',
+                    phase: 'draft',
+                    checks: 'success',
+                    secret: 'must-not-cross-boundary',
+                },
+                observed: {
+                    base: 'main',
+                    head: 'codex/pr-state',
+                    phase: 'draft',
+                    checks: 'success',
+                    diagnostics: { runId: 31295610538 },
+                    body: 'raw-pr-body-must-not-cross-boundary',
+                    reviews: [{ body: 'raw-review-must-not-cross-boundary' }],
+                },
+            });
+            const observations = [];
+            {
+                const program = new Command();
+                program.name('memory').exitOverride();
+                registerPrStateCommands(program, {
+                    cwd: () => 'C:/safe-workspace',
+                    validatePrState: () => observationReport,
+                    recordGovernanceSnapshot: (root, options) => {
+                        observations.push({ root, options });
+                        return { snapshot: {}, write: { ok: true } };
+                    },
+                });
+                const originalLog = console.log;
+                const originalExitCode = process.exitCode;
+                try {
+                    console.log = () => {};
+                    process.exitCode = undefined;
+                    await program.parseAsync(
+                        ['node', 'memory.js', 'pr-state', 'validate', '31', '--json'],
+                        { from: 'node' }
+                    );
+                    assert.strictEqual(process.exitCode || 0, 0);
+                } finally {
+                    console.log = originalLog;
+                    process.exitCode = originalExitCode;
+                }
+            }
+            assert.deepStrictEqual(observations, [{
+                root: 'C:/safe-workspace',
+                options: {
+                    prState: {
+                        number: 31,
+                        base: 'main',
+                        head: 'codex/pr-state',
+                        phase: 'draft',
+                        checks: 'success',
+                        runId: 31295610538,
+                        result: 'pass',
+                    },
+                },
+            }], 'pr-state observation passes only normalized allowlisted fields');
+            assert.doesNotMatch(JSON.stringify(observations), /must-not-cross-boundary|raw-pr-body|raw-review/);
+
+            {
+                const program = new Command();
+                program.name('memory').exitOverride();
+                registerPrStateCommands(program, {
+                    validatePrState: () => cases[1][0],
+                    recordGovernanceSnapshot: () => { throw new Error('snapshot writer unavailable'); },
+                });
+                const output = [];
+                const originalLog = console.log;
+                const originalWarn = console.warn;
+                const originalExitCode = process.exitCode;
+                try {
+                    console.log = value => output.push(String(value));
+                    console.warn = () => {};
+                    process.exitCode = undefined;
+                    await program.parseAsync(
+                        ['node', 'memory.js', 'pr-state', 'validate', '31', '--json'],
+                        { from: 'node' }
+                    );
+                    assert.strictEqual(process.exitCode, 1,
+                        'snapshot failure must preserve the original pr-state drift exit');
+                    assert.deepStrictEqual(JSON.parse(output.join('\n')), cases[1][0],
+                        'snapshot failure must preserve the original pr-state result');
+                } finally {
+                    console.log = originalLog;
+                    console.warn = originalWarn;
+                    process.exitCode = originalExitCode;
+                }
+            }
+
             const cliPath = path.join(CLI_DIR, 'memory.js');
             const spawnCli = (args, input) => childProcess.spawnSync(
                 process.execPath,
@@ -3871,7 +3962,29 @@ async function runIntegrationTests() {
                 git(['add', '.']);
                 git(['commit', '-m', 'base']);
                 const base = git(['rev-parse', 'HEAD']);
-                writeText(path.join(root, 'docs', 'governance.md'), '# Governance\n');
+                writeText(path.join(root, 'docs', 'superpowers', 'plans', 'governance.md'), [
+                    '---',
+                    'id: plan:governance-cli',
+                    'linkedSpec: spec:governance-cli',
+                    'status: active',
+                    '---',
+                    '# Governance',
+                    '',
+                    '## Governance Contract',
+                    '',
+                    '```json',
+                    JSON.stringify({
+                        schema: 1,
+                        artifactStage: 'plan',
+                        proofLayer: 'A',
+                        requiredCapabilities: [],
+                        blockScope: 'artifact',
+                        remediationBudget: 0,
+                        requiredInvariants: ['attempt-binding'],
+                    }, null, 2),
+                    '```',
+                    '',
+                ].join('\n'));
                 git(['add', '.']);
                 git(['commit', '-m', 'governance']);
 
@@ -3890,6 +4003,52 @@ async function runIntegrationTests() {
                 assert.strictEqual(JSON.parse(written.stdout).write.path, snapshotPath);
                 assert.strictEqual(fs.existsSync(snapshotPath), true, '--write uses the exact generated target');
 
+                fs.unlinkSync(snapshotPath);
+                writeText(path.join(root, 'head-advance-1.txt'), 'one\n');
+                git(['add', '.']);
+                git(['commit', '-m', 'head advance one']);
+                const sessionStart = run([
+                    'hook', 'advise', 'sessionstart', '--json',
+                    '--command', 'secret-command-must-not-persist',
+                    '--output', 'secret-output-must-not-persist',
+                ]);
+                assert.strictEqual(sessionStart.status, 0, sessionStart.stderr);
+                assert.strictEqual(fs.existsSync(snapshotPath), true,
+                    'sessionstart records a governance snapshot');
+                let boundarySnapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+                assert.doesNotMatch(JSON.stringify(boundarySnapshot), /secret-command|secret-output/,
+                    'lifecycle observations never persist raw command/output text');
+
+                writeText(path.join(root, 'head-advance-2.txt'), 'two\n');
+                git(['add', '.']);
+                git(['commit', '-m', 'head advance two']);
+                const stop = run(['hook', 'advise', 'stop', '--json']);
+                assert.strictEqual(stop.status, 0, stop.stderr);
+                boundarySnapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+                assert.ok(boundarySnapshot.transitions.some(item => item.code === 'head-advanced'),
+                    'stop observes the new HEAD transition');
+
+                fs.unlinkSync(snapshotPath);
+                const planStatus = run(['plan', 'freeze', 'docs/superpowers/plans/governance.md', '--json']);
+                assert.strictEqual(planStatus.status, 0, planStatus.stderr);
+                assert.strictEqual(fs.existsSync(snapshotPath), true,
+                    'plan freeze completion records a governance snapshot');
+                boundarySnapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+                assert.strictEqual(boundarySnapshot.freeze.withinBudget + boundarySnapshot.freeze.exceeded, 1,
+                    'plan freeze snapshot observes the new ledger entry');
+
+                fs.unlinkSync(snapshotPath);
+                writeText(path.join(root, '.evo-lite', 'config.json'), JSON.stringify({
+                    governance: { budget: { windowCommits: 0 } },
+                }, null, 2));
+                const verify = run(['verify']);
+                assert.strictEqual(verify.status, 0, verify.stderr);
+                assert.match(verify.stderr, /governance\.budget\.windowCommits|治理观察/,
+                    'invalid governance budget config is warning-only during verify');
+                assert.strictEqual(fs.existsSync(snapshotPath), true,
+                    'verify records a governance snapshot without changing its exit semantics');
+
+                fs.unlinkSync(path.join(root, '.evo-lite', 'config.json'));
                 const budgetJson = run(['governance', 'budget', '--since', base, '--json']);
                 assert.strictEqual(budgetJson.status, 0, budgetJson.stderr);
                 assert.strictEqual(JSON.parse(budgetJson.stdout).version, 'evo-governance-budget@1');
@@ -3905,6 +4064,12 @@ async function runIntegrationTests() {
                 assert.notStrictEqual(invalidRef.status, 0, 'invalid ref must fail safely through argv-based Git');
                 assert.deepStrictEqual(fs.readFileSync(activePath), beforeContext,
                     'all governance commands preserve active context byte-for-byte');
+
+                fs.unlinkSync(snapshotPath);
+                const contextFocus = run(['context', 'focus', '[governance-cli] refreshed']);
+                assert.strictEqual(contextFocus.status, 0, contextFocus.stderr);
+                assert.strictEqual(fs.existsSync(snapshotPath), true,
+                    'successful context mutation records a governance snapshot');
 
                 const manifest = require(path.join(CLI_DIR, 'template-manifest.js'));
                 const core = manifest.MANAGED_TEMPLATE_FAMILIES.find(family => family.key === 'core-cli');

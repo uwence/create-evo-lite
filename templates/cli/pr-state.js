@@ -34,6 +34,7 @@ function renderText(report) {
 function registerPrStateCommands(program, deps = {}) {
     const validate = deps.validatePrState || service.validatePrState;
     const cwd = deps.cwd || (() => process.cwd());
+    const record = deps.recordGovernanceSnapshot || null;
     const group = program.command('pr-state')
         .description('Validate declared pull-request governance state.');
 
@@ -42,6 +43,28 @@ function registerPrStateCommands(program, deps = {}) {
         .option('--json', 'Emit the structured validation envelope')
         .action((pr, options) => {
             const report = validate(pr, { cwd: cwd() });
+            try {
+                const snapshotRecorder = record
+                    || require('./governance-observer').recordGovernanceSnapshot;
+                const observed = report.observed || {};
+                const diagnostics = observed.diagnostics || {};
+                const result = snapshotRecorder(cwd(), {
+                    prState: {
+                        number: report.pr && Number.isInteger(report.pr.number) ? report.pr.number : null,
+                        base: typeof observed.base === 'string' ? observed.base : null,
+                        head: typeof observed.head === 'string' ? observed.head : null,
+                        phase: typeof observed.phase === 'string' ? observed.phase : null,
+                        checks: typeof observed.checks === 'string' ? observed.checks : null,
+                        runId: Number.isInteger(diagnostics.runId) ? diagnostics.runId : null,
+                        result: report.result,
+                    },
+                });
+                if (result && result.write && result.write.ok === false) {
+                    console.warn(`[evo-lite] governance snapshot warning: ${result.write.error || 'write failed'}`);
+                }
+            } catch (error) {
+                console.warn(`[evo-lite] governance snapshot warning: ${error && error.message ? error.message : String(error)}`);
+            }
             console.log(options.json ? JSON.stringify(report, null, 2) : renderText(report));
             process.exitCode = resultExitCode(report.result);
         });

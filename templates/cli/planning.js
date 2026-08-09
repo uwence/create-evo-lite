@@ -33,9 +33,23 @@ function formatIRSummary(ir) {
     return lines.join('\n');
 }
 
-function registerPlanCommands(program) {
+function recordPlanningSnapshot(projectRoot, deps = {}) {
+    try {
+        const record = deps.recordGovernanceSnapshot
+            || require('./governance-observer').recordGovernanceSnapshot;
+        const result = record(projectRoot);
+        if (result && result.write && result.write.ok === false) {
+            console.warn(`[evo-lite] governance snapshot warning: ${result.write.error || 'write failed'}`);
+        }
+    } catch (error) {
+        console.warn(`[evo-lite] governance snapshot warning: ${error && error.message ? error.message : String(error)}`);
+    }
+}
+
+function registerPlanCommands(program, deps = {}) {
     const projectRoot = getWorkspaceRoot();
     const plan = program.command('plan').description('Planning IR commands.');
+    plan.hook('postAction', () => recordPlanningSnapshot(projectRoot, deps));
 
     plan.command('status')
         .description('Show planning status (cached IR or quick scan).')
