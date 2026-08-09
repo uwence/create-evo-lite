@@ -1,8 +1,9 @@
 ---
 id: spec:unified-code-explore-wiki-projection
-status: adopted
+status: parked
 created: 2026-07-10
 relations: [{"kind":"spawned-from","target":"spec:provider-first-code-perception-foundation"}]
+parkedUntil: 父 spec:provider-first-code-perception-foundation 已 parked，本 spec 是其 spawned-from 子项；且 spec:architecture-governance-wiki (4b-1) 已 done，本 spec 的 wiki 投影范围可能已被其超越。重开前必须先做 supersede 判定，不得直接 reactivate。
 ---
 
 # Spec: Unified Code Explore & Code Wiki Projection
