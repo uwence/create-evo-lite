@@ -225,6 +225,61 @@ const checksCallIndex = association.calls.findIndex(call => call.args.slice(0, 2
 assert.ok(runCallIndex >= 0 && checksCallIndex > runCallIndex);
 ```
 
+Update the existing PS2 regressions with explicit PR-scoped association rows so
+their original selected-run assertions remain meaningful after intersection:
+
+```js
+const identityFiltered = runValidation({
+    pages: [{
+        total_count: 4,
+        workflow_runs: [
+            makeRun(120, 'completed', 'success', { pull_requests: [{ number: 99 }] }),
+            makeRun(121, 'completed', 'success', { event: 'push' }),
+            makeRun(122, 'completed', 'success', { head_sha: SHA_STALE }),
+            makeRun(123, 'completed', 'success'),
+        ],
+    }],
+    checkRows: [120, 121, 122, 123].map(id => makeCheckRow(id)),
+});
+assert.strictEqual(identityFiltered.report.observed.diagnostics.runId, 123);
+
+const newerPending = runValidation({
+    pages: [{ total_count: 2, workflow_runs: [
+        makeRun(200, 'completed', 'success'),
+        makeRun(201, 'in_progress', null),
+    ] }],
+    checkRows: [makeCheckRow(200), makeCheckRow(201)],
+});
+assert.strictEqual(newerPending.report.observed.diagnostics.runId, 201);
+
+const newerFailed = runValidation({
+    pages: [{ total_count: 2, workflow_runs: [
+        makeRun(301, 'completed', 'failure'),
+        makeRun(300, 'completed', 'success'),
+    ] }],
+    checkRows: [makeCheckRow(300), makeCheckRow(301)],
+});
+assert.strictEqual(newerFailed.report.observed.diagnostics.runId, 301);
+
+const paginated = runValidation({
+    pages: [
+        { total_count: 101, workflow_runs: firstPage },
+        { total_count: 101, workflow_runs: [makeRun(999, 'completed', 'success')] },
+    ],
+    checkRows: [makeCheckRow(999)],
+});
+assert.strictEqual(paginated.report.observed.diagnostics.runId, 999);
+const pageCallIndices = paginated.calls
+    .map((call, index) => ({ call, index }))
+    .filter(({ call }) => call.args.some(value => /actions\/workflows\/77\/runs/.test(value)))
+    .map(({ index }) => index);
+const paginatedChecksIndex = paginated.calls.findIndex(
+    call => call.args.slice(0, 2).join(' ') === 'pr checks'
+);
+assert.strictEqual(pageCallIndices.length, 2);
+assert.ok(pageCallIndices.every(index => index < paginatedChecksIndex));
+```
+
 Add the merged PR #33-style regression:
 
 ```js
@@ -249,7 +304,109 @@ const mergedPass = runValidation({
 assert.strictEqual(mergedPass.report.result, 'pass');
 ```
 
-Also cover malformed PR-check JSON/rows, accepted run URL and job URL shapes, duplicate rows, wrong repository, query/fragment, noncanonical IDs, unassociated same-head candidates, full pagination before association, and exit `2`, `4`, and an unknown exit as operational errors. Assert `bucket`, `state`, `event`, and workflow display name never override workflow-run normalization.
+Add exact fail-closed PR-check acquisition cases:
+
+```js
+for (const status of [0, 8]) {
+    const malformedChecksJson = runValidation({
+        handlers: {
+            prChecks: () => ({ status, stdout: '{bad', stderr: '' }),
+        },
+    });
+    assert.strictEqual(malformedChecksJson.report.result, 'error', String(status));
+    assert.ok(malformedChecksJson.report.errors.some(
+        error => error.code === 'PR_CHECKS_QUERY_FAILED'
+    ), String(status));
+}
+
+const malformedCheckRow = runValidation({
+    checkRows: [{ ...makeCheckRow(100), link: 1 }],
+});
+assert.strictEqual(malformedCheckRow.report.result, 'error');
+assert.ok(malformedCheckRow.report.errors.some(
+    error => error.code === 'PR_CHECKS_RESPONSE_INVALID'
+));
+
+for (const status of [2, 4, 9]) {
+    const invalidExit = runValidation({ checkStatus: status });
+    assert.strictEqual(invalidExit.report.result, 'error', String(status));
+    assert.ok(invalidExit.report.errors.some(
+        error => error.code === 'PR_CHECKS_QUERY_FAILED'
+    ), String(status));
+}
+```
+
+Add exact accepted-link cases:
+
+```js
+for (const link of [
+    'https://github.com/uwence/create-evo-lite/actions/runs/100',
+    'https://github.com/uwence/create-evo-lite/actions/runs/100/job/1100',
+]) {
+    const accepted = runValidation({
+        checkRows: [makeCheckRow(100, { link })],
+    });
+    assert.strictEqual(accepted.report.result, 'pass', link);
+    assert.strictEqual(accepted.report.observed.diagnostics.runId, 100, link);
+}
+```
+
+Add exact nonassociation cases. Each fixture has a valid workflow candidate but
+no qualifying PR-scoped run ID, so it must produce only `CHECKS_MISSING`:
+
+```js
+for (const link of [
+    'not a URL',
+    'https://example.com/uwence/create-evo-lite/actions/runs/100/job/1100',
+    'https://github.com/uwence/other/actions/runs/100/job/1100',
+    'https://github.com/uwence/create-evo-lite/actions/runs/100?x=1',
+    'https://github.com/uwence/create-evo-lite/actions/runs/100#x',
+    'https://github.com/uwence/create-evo-lite/actions/runs/0100',
+    'https://github.com/uwence/create-evo-lite/actions/runs/100/job/01100',
+    'https://github.com/uwence/create-evo-lite/actions/runs/9007199254740992',
+]) {
+    const ignored = runValidation({
+        checkRows: [makeCheckRow(100, { link })],
+    });
+    assert.deepStrictEqual(
+        ignored.report.findings.map(item => item.code),
+        ['CHECKS_MISSING'],
+        link
+    );
+}
+```
+
+Prove same-head candidates do not qualify without PR-scoped association and
+that duplicate job rows deduplicate harmlessly:
+
+```js
+const sameHeadUnassociated = runValidation({
+    pages: [{ total_count: 2, workflow_runs: [
+        makeRun(100, 'completed', 'success'),
+        makeRun(101, 'completed', 'failure'),
+    ] }],
+    checkRows: [makeCheckRow(100), makeCheckRow(100)],
+});
+assert.strictEqual(sameHeadUnassociated.report.result, 'pass');
+assert.strictEqual(sameHeadUnassociated.report.observed.diagnostics.runId, 100);
+```
+
+Prove check-row presentation never classifies the selected workflow run:
+
+```js
+const rowCannotHideFailure = runValidation({
+    pages: [{ total_count: 1, workflow_runs: [
+        makeRun(100, 'completed', 'failure'),
+    ] }],
+    checkRows: [makeCheckRow(100, {
+        bucket: 'pass', state: 'SUCCESS', event: 'push', workflow: 'other-name',
+    })],
+});
+assert.deepStrictEqual(
+    rowCannotHideFailure.report.findings.map(item => item.code),
+    ['CHECKS_FAILED']
+);
+```
 
 - [ ] **Step 2: Run the full suite and capture RED evidence**
 
@@ -447,6 +604,29 @@ const baseCheckRow = (overrides = {}) => ({
 });
 ```
 
+Define that helper before PS5 `directValidate()`. Inside the existing
+`directValidate(options)` function, insert these declarations immediately after
+the existing `pages` declaration and before `handlers`:
+
+```js
+const checkRows = options.checkRows || [baseCheckRow()];
+const checkStatus = options.checkStatus === undefined ? 0 : options.checkStatus;
+```
+
+Inside its existing `runCommand`, insert this exact branch after the workflow-run
+handler and before the final unexpected-command throw:
+
+```js
+if (executable === 'gh' && args[0] === 'pr' && args[1] === 'checks') {
+    assert.deepStrictEqual(args, [
+        'pr', 'checks', '31',
+        '--repo', 'github.com/uwence/create-evo-lite',
+        '--json', 'bucket,event,link,name,state,workflow',
+    ]);
+    return custom('prChecks', response(checkRows, checkStatus));
+}
+```
+
 Add this branch to the fake executable before its generic unexpected-args failure:
 
 ```js
@@ -640,6 +820,12 @@ git commit -m "test(pr-state): retry transient PS5 cleanup"
 
 ### Final Verification Gate: Regression, Real Merged-PR Dogfood, and Scope Proof
 
+Windows Node 22 and Windows Node 24 release-gate acceptance is **mandatory but
+deferred** to a separately authorized corrective Draft PR gate. It is not
+waived, and neither the local full suite nor real PR #33 dogfood satisfies it.
+This implementation gate may approve the local branch for Draft PR creation;
+it cannot declare the amendment durably complete.
+
 - [ ] **Step 1: Confirm implementation history and exact four-file surface**
 
 Run:
@@ -735,7 +921,33 @@ scope escalation       none
 
 If GitNexus is stale, refresh the index with the repository-provided runner and rerun compare; do not broaden code scope to satisfy indexing.
 
-- [ ] **Step 7: Hard stop for implementation-level review**
+- [ ] **Step 7: Push the verified implementation head without rewriting history**
+
+Only after Steps 1-6 pass and the worktree is clean, run:
+
+```powershell
+git push origin HEAD:codex/pr-state-sync-postmerge-plan
+
+$localHead = git rev-parse HEAD
+$remoteLine = git ls-remote origin refs/heads/codex/pr-state-sync-postmerge-plan
+if (-not $remoteLine) { throw "remote implementation branch is missing" }
+$remoteHead = ($remoteLine -split "`t")[0]
+if ($remoteHead -ne $localHead) {
+    throw "remote implementation head mismatch: local=$localHead remote=$remoteHead"
+}
+
+$remoteMainLine = git ls-remote origin refs/heads/main
+if (-not $remoteMainLine) { throw "remote main is missing" }
+$remoteMain = ($remoteMainLine -split "`t")[0]
+if ($remoteMain -ne '23b6b095c853366c07c14590342277604a274246') {
+    throw "remote main drifted: $remoteMain"
+}
+```
+
+Expected: an ordinary fast-forward push; remote branch equals local `HEAD`;
+remote main is unchanged. Force-push is forbidden.
+
+- [ ] **Step 8: Hard stop for implementation-level review**
 
 Return:
 
@@ -754,6 +966,7 @@ context preservation
 diff --check
 clean worktree
 remote branch/main identity
+Windows Node 22/24 CI deferred to mandatory Draft PR gate, not waived
 ```
 
 Do not create a Draft PR, mutate PR #33, modify active context, delete a branch, or begin another scope.
