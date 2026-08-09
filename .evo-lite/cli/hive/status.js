@@ -11,6 +11,10 @@ function sha256(buffer) {
     return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
+function eolNormalizedSha256(bytes) {
+    return sha256(Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'), 'utf8'));
+}
+
 function readVersion(pkgPath) {
     try { return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || null; }
     catch { return null; }
@@ -55,7 +59,7 @@ function childStatus(motherRoot, entry, options = {}) {
     for (const e of childEntries(motherRoot, entry.path, options)) {
         if (!fs.existsSync(e.templateFile)) continue; // mother-side gap is nurture's preflight problem
         if (!fs.existsSync(e.activeFile)) { driftedFiles.push(e.label); continue; }
-        if (sha256(fs.readFileSync(e.templateFile)) !== sha256(fs.readFileSync(e.activeFile))) {
+        if (eolNormalizedSha256(fs.readFileSync(e.templateFile)) !== eolNormalizedSha256(fs.readFileSync(e.activeFile))) {
             driftedFiles.push(e.label);
         }
     }
@@ -73,4 +77,4 @@ function hiveStatus(motherRoot, options = {}) {
     return children.map(c => childStatus(motherRoot, c, options));
 }
 
-module.exports = { childEntries, childStatus, hiveStatus, sha256 };
+module.exports = { childEntries, childStatus, eolNormalizedSha256, hiveStatus, sha256 };
