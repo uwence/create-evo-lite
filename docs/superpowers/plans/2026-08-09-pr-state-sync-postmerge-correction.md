@@ -46,7 +46,7 @@ templates/cli/test/integration.js
 
 ## Pre-Implementation Baseline Gate
 
-- [ ] **Step 1: Confirm the reviewed plan head before any runtime or test edit**
+- [x] **Step 1: Confirm the reviewed plan head before any runtime or test edit**
 
 Run in PowerShell:
 
@@ -68,7 +68,7 @@ If either condition fails, stop before editing. Then capture:
 $env:IMPLEMENTATION_BASE = $reviewedPlanHead
 ```
 
-- [ ] **Step 2: Confirm the frozen design is an ancestor and main has not drifted**
+- [x] **Step 2: Confirm the frozen design is an ancestor and main has not drifted**
 
 Run:
 
@@ -79,7 +79,7 @@ git ls-remote origin refs/heads/main
 
 Expected: ancestor check exits `0`; remote main is exactly `23b6b095c853366c07c14590342277604a274246`. Otherwise stop for review.
 
-- [ ] **Step 3: Run GitNexus impact analysis before symbol edits**
+- [x] **Step 3: Run GitNexus impact analysis before symbol edits**
 
 Use upstream impact analysis on these live/template symbols before editing:
 
@@ -112,7 +112,7 @@ Report direct callers, affected processes, and risk. Stop and obtain approval if
 - Changes: `runText(...)` and `runJson(...)` accept an optional final `acceptedStatuses` array defaulting to `[0]`.
 - Preserves: public exports and CLI surface remain unchanged.
 
-- [ ] **Step 1: Extend the PS2 fake runner and add failing acquisition tests**
+- [x] **Step 1: Extend the PS2 fake runner and add failing acquisition tests**
 
 In both integration mirrors, extend the PS2 helpers with PR-scoped rows:
 
@@ -408,7 +408,7 @@ assert.deepStrictEqual(
 );
 ```
 
-- [ ] **Step 2: Run the full suite and capture RED evidence**
+- [x] **Step 2: Run the full suite and capture RED evidence**
 
 Run:
 
@@ -418,7 +418,7 @@ node ./.evo-lite/cli/test.js
 
 Expected: governance completes, then integration fails in PS2 because the existing service still requires/reads `pull_requests`, never invokes `gh pr checks`, does not validate `PR.html_url`, and cannot consume exit `8`. Record the first contract-relevant failure; do not accept unrelated infrastructure failure as RED evidence.
 
-- [ ] **Step 3: Implement accepted-status execution and observed PR URL authority**
+- [x] **Step 3: Implement accepted-status execution and observed PR URL authority**
 
 In both service mirrors, extend the internal runner helpers without changing existing callers:
 
@@ -486,7 +486,7 @@ function resolvePrWebIdentity(pr, repository, prNumber) {
 
 Call this only after the expected block has parsed and the observed core facts have been built. Pass `repositoryArg` and `githubHost` into `observeChecks`; keep `report.pr.repository` as `OWNER/REPO` and `report.pr.url` unchanged.
 
-- [ ] **Step 4: Implement strict PR-check rows and run/job URL parsing**
+- [x] **Step 4: Implement strict PR-check rows and run/job URL parsing**
 
 Add exact internal validation:
 
@@ -549,7 +549,7 @@ This accepts only:
 
 Require HTTPS, no credentials, `url.host === githubHost`, exact owner/repository components, no query/fragment/trailing segments, and canonical `[1-9][0-9]*` IDs within `Number.isSafeInteger`. Return `null` for a nonqualifying well-formed row and deduplicate accepted run IDs in a `Set`. Do not fetch or follow links.
 
-- [ ] **Step 5: Implement candidate-first acquisition and two-sided intersection**
+- [x] **Step 5: Implement candidate-first acquisition and two-sided intersection**
 
 Remove both `pull_requests` clauses from `validateRunShape()` and remove every service read of `run.pull_requests`.
 
@@ -588,7 +588,7 @@ const newest = matching.reduce(
 
 Keep the existing missing result when `matching` is empty and existing diagnostics/`normalizeChecks(newest)` when a run is selected. Do not use check-row status fields or `run.pull_requests`.
 
-- [ ] **Step 6: Extend PS5 real-CLI dogfood fixtures before GREEN**
+- [x] **Step 6: Extend PS5 real-CLI dogfood fixtures before GREEN**
 
 Teach the fake `gh` executable to recognize the exact `pr checks` command and emit `fixture.checks`. Define a PS5-local row helper because the PS2 helper is block-scoped:
 
@@ -675,7 +675,7 @@ const fixture = (
 
 Add a second `phase: merged` invocation expecting exit `0`. Assert the fake call log contains host-qualified `pr checks`, and still contains no edit, ready, merge, POST, PATCH, PUT, or DELETE command.
 
-- [ ] **Step 7: Run GREEN and regression gates**
+- [x] **Step 7: Run GREEN and regression gates**
 
 Run:
 
@@ -691,7 +691,7 @@ Expected: exit `0`, including:
 All CLI integration tests passed.
 ```
 
-- [ ] **Step 8: Verify Task 1 parity, scope, and affected flows**
+- [x] **Step 8: Verify Task 1 parity, scope, and affected flows**
 
 Run:
 
@@ -712,7 +712,7 @@ if ($LASTEXITCODE -eq 0) { throw "service still reads pull_requests: $pullReques
 if ($LASTEXITCODE -ne 1) { throw "rg failed with exit $LASTEXITCODE" }
 ```
 
-- [ ] **Step 9: Commit Task 1**
+- [x] **Step 9: Commit Task 1**
 
 ```powershell
 git add .evo-lite/cli/pr-state.service.js templates/cli/pr-state.service.js `
@@ -733,7 +733,7 @@ git commit -m "fix(pr-state): preserve merged PR check association"
 - Produces: local test helper `removePrStateRuntimeRoot(root, rmSync = fs.rmSync)`.
 - Preserves: persistent removal failures propagate; no custom retry loop or catch is introduced.
 
-- [ ] **Step 1: Add a failing cleanup-option contract test**
+- [x] **Step 1: Add a failing cleanup-option contract test**
 
 In both integration mirrors, add the helper acceptance before the PS5 real runtime is created:
 
@@ -761,7 +761,7 @@ assert.throws(
 
 Do not add a fake JavaScript retry loop: these assertions prove the exact options delegated to Node and that terminal errors are not suppressed.
 
-- [ ] **Step 2: Run the suite and capture RED evidence**
+- [x] **Step 2: Run the suite and capture RED evidence**
 
 Run:
 
@@ -771,7 +771,7 @@ node ./.evo-lite/cli/test.js
 
 Expected: integration fails with `ReferenceError: removePrStateRuntimeRoot is not defined`. Do not accept a network or unrelated cleanup failure as RED evidence.
 
-- [ ] **Step 3: Implement the minimal cleanup helper and use it in PS5**
+- [x] **Step 3: Implement the minimal cleanup helper and use it in PS5**
 
 Add in both integration mirrors:
 
@@ -794,7 +794,7 @@ removePrStateRuntimeRoot(runtime.workspaceRoot);
 
 Do not change other cleanup sites.
 
-- [ ] **Step 4: Run GREEN and verify exact cleanup containment**
+- [x] **Step 4: Run GREEN and verify exact cleanup containment**
 
 Run:
 
@@ -807,7 +807,7 @@ git diff --name-status "$env:IMPLEMENTATION_BASE"
 
 Expected: full suite exits `0`; mirror diff exits `0`; the cumulative worktree still contains exactly the four authorized files; only the PS5 cleanup uses the new helper/options.
 
-- [ ] **Step 5: Run GitNexus review and commit Task 2**
+- [x] **Step 5: Run GitNexus review and commit Task 2**
 
 Run GitNexus `detect_changes(scope: "all")`, confirm the uncommitted Task 2 change affects only the integration-test pair and expected test flow, then commit:
 
@@ -826,7 +826,7 @@ waived, and neither the local full suite nor real PR #33 dogfood satisfies it.
 This implementation gate may approve the local branch for Draft PR creation;
 it cannot declare the amendment durably complete.
 
-- [ ] **Step 1: Confirm implementation history and exact four-file surface**
+- [x] **Step 1: Confirm implementation history and exact four-file surface**
 
 Run:
 
@@ -838,7 +838,7 @@ git diff --check "$env:IMPLEMENTATION_BASE..HEAD"
 
 Expected: exactly two ordinary implementation commits and exactly the four authorized files.
 
-- [ ] **Step 2: Confirm cumulative branch surface from durable main**
+- [x] **Step 2: Confirm cumulative branch surface from durable main**
 
 Run:
 
@@ -857,7 +857,7 @@ templates/cli/pr-state.service.js
 templates/cli/test/integration.js
 ```
 
-- [ ] **Step 3: Run independent governance and full-suite gates**
+- [x] **Step 3: Run independent governance and full-suite gates**
 
 Run:
 
@@ -868,7 +868,7 @@ node ./.evo-lite/cli/test.js
 
 Expected: both exit `0`; default `all` scope contains governance and integration, including `✅ PS2` and `✅ PS5`.
 
-- [ ] **Step 4: Run real merged-PR #33 dogfood without body mutation**
+- [x] **Step 4: Run real merged-PR #33 dogfood without body mutation**
 
 Run:
 
@@ -894,7 +894,7 @@ CHECKS_MISSING             absent
 
 Do not change PR #33 body. A later reviewer decides whether `phase: ready -> merged` is authorized after the corrective implementation is durably merged.
 
-- [ ] **Step 5: Verify context preservation and both mirror identities**
+- [x] **Step 5: Verify context preservation and both mirror identities**
 
 Run:
 
@@ -907,7 +907,7 @@ git status --short
 
 Expected: all diff commands exit `0`; worktree is clean. Confirm remote `main` and the retained PR #33 feature branch identities separately; do not delete either corrective or historical branch.
 
-- [ ] **Step 6: Run final GitNexus compare review**
+- [x] **Step 6: Run final GitNexus compare review**
 
 Run GitNexus `detect_changes(scope: "compare", base_ref: $env:IMPLEMENTATION_BASE)`.
 
@@ -921,7 +921,7 @@ scope escalation       none
 
 If GitNexus is stale, refresh the index with the repository-provided runner and rerun compare; do not broaden code scope to satisfy indexing.
 
-- [ ] **Step 7: Push the verified implementation head without rewriting history**
+- [x] **Step 7: Push the verified implementation head without rewriting history**
 
 Only after Steps 1-6 pass and the worktree is clean, run:
 
@@ -947,7 +947,7 @@ if ($remoteMain -ne '23b6b095c853366c07c14590342277604a274246') {
 Expected: an ordinary fast-forward push; remote branch equals local `HEAD`;
 remote main is unchanged. Force-push is forbidden.
 
-- [ ] **Step 8: Hard stop for implementation-level review**
+- [x] **Step 8: Hard stop for implementation-level review**
 
 Return:
 
