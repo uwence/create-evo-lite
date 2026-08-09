@@ -18112,6 +18112,54 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         assert.deepStrictEqual(afterRead, beforeRead, 'ledger inspection must be read-only');
         console.log('✅ T-freeze-ledger passed');
     }
+
+    console.log('T-trace-freeze-v2. Traceability preserves v1 chains and includes derived freeze evidence ...');
+    {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-trace-freeze-'));
+        const artifactRel = 'docs/superpowers/plans/x.md';
+        const artifactPath = path.join(root, ...artifactRel.split('/'));
+        const git = args => childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+        fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+        git(['init', '-b', 'main']);
+        git(['config', 'user.name', 'Evo Test']);
+        git(['config', 'user.email', 'evo@example.com']);
+        git(['config', 'core.autocrlf', 'false']);
+        writeText(artifactPath, [
+            '---', 'id: plan:x', 'linkedSpec: spec:x', 'status: active', '---', '', '# X', '',
+            '## Governance Contract', '', '```json', JSON.stringify({
+                schema: 1, artifactStage: 'plan', proofLayer: 'A', requiredCapabilities: [],
+                blockScope: 'artifact', remediationBudget: 2, requiredInvariants: ['attempt-binding'],
+            }, null, 2), '```', '',
+        ].join('\n'));
+        git(['add', artifactRel]);
+        git(['commit', '-m', 'add plan x']);
+        require(path.join(CLI_DIR, 'planning', 'freeze-ledger.js')).freezeArtifact(root, artifactRel);
+        writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+            version: 'evo-plan-ir@1',
+            specs: [{ id: 'spec:x', linkedPlans: ['plan:x'] }],
+            plans: [{ id: 'plan:x', sourcePath: artifactRel, taskIds: ['task:x'] }],
+            tasks: [{
+                id: 'task:x', title: 'X task', status: 'implemented', linkedPlan: 'plan:x',
+                linkedFiles: ['src/x.js'], evidence: ['git:proof'],
+            }],
+            warnings: [],
+        }, null, 2));
+        const trace = require(path.join(CLI_DIR, 'planning', 'traceability.js')).buildTraceability(root);
+        assert.strictEqual(trace.version, 'evo-trace@2');
+        assert.deepStrictEqual(trace.chains, [{
+            spec: 'spec:x', plan: 'plan:x', task: 'task:x', taskTitle: 'X task',
+            taskStatus: 'implemented', linkedFiles: ['src/x.js'], evidence: ['git:proof'],
+        }], 'v2 must preserve the exact v1 chain shape');
+        assert.deepStrictEqual(trace.unlinkedTasks, [], 'v2 must preserve the exact v1 unlinked-task shape');
+        assert.strictEqual(trace.freezeLedger.entries[0].artifactId, 'plan:x');
+        assert.deepStrictEqual(trace.freezeLedger.entries[0].evidence, ['git:proof']);
+
+        const manifest = require(path.join(CLI_DIR, 'template-manifest.js'));
+        const core = manifest.MANAGED_TEMPLATE_FAMILIES.find(family => family.key === 'core-cli');
+        assert.ok(core.files.includes('planning/governance-contract.js'));
+        assert.ok(core.files.includes('planning/freeze-ledger.js'));
+        console.log('✅ T-trace-freeze-v2 passed');
+    }
 }
 
 module.exports = { runGovernanceTests };

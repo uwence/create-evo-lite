@@ -445,6 +445,7 @@ async function runIntegrationTests() {
                 'mcp-server.js', 'mcp-validate.js', 'test.js',
                 'planning/gaps.js', 'planning/parse-markdown.js', 'planning/progress.js',
                 'planning/scan.js', 'planning/traceability.js',
+                'planning/governance-contract.js', 'planning/freeze-ledger.js',
                 'architecture/diff.js', 'architecture/infer-modules.js',
                 'architecture/provider-contract.js', 'architecture/scan-native.js',
                 'memory-index-lock.js',
@@ -475,7 +476,10 @@ async function runIntegrationTests() {
                 assert.strictEqual(synced.status, 'ok');
                 assert.deepStrictEqual(synced.missingTemplates, []);
 
-                for (const file of ['pr-state.js', 'pr-state.service.js']) {
+                for (const file of [
+                    'pr-state.js', 'pr-state.service.js',
+                    'planning/governance-contract.js', 'planning/freeze-ledger.js',
+                ]) {
                     const activeFile = path.join(runtime.runtimeRoot, 'cli', file);
                     const templateFile = path.join(TEMPLATE_CLI_DIR, file);
                     assert.ok(fs.existsSync(activeFile), `${file} must be copied into the managed runtime`);
@@ -484,8 +488,10 @@ async function runIntegrationTests() {
 
                 const lockPath = path.join(runtime.runtimeRoot, 'generated', 'runtime-mirror.lock.json');
                 const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-                assert.ok(lock.entries['.evo-lite/cli/pr-state.js']);
-                assert.ok(lock.entries['.evo-lite/cli/pr-state.service.js']);
+                for (const file of [
+                    'pr-state.js', 'pr-state.service.js',
+                    'planning/governance-contract.js', 'planning/freeze-ledger.js',
+                ]) assert.ok(lock.entries[`.evo-lite/cli/${file}`], `runtime lock missing ${file}`);
                 const verified = verifyRuntimeLock(runtime.workspaceRoot);
                 assert.strictEqual(verified.status, 'ok');
                 assert.deepStrictEqual(verified.mismatches, []);

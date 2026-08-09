@@ -47,6 +47,8 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'planning/scan.js',
             'planning/traceability.js',
             'planning/lint.js',
+            'planning/governance-contract.js',
+            'planning/freeze-ledger.js',
             'planning/backfill-evidence.js',
             'transaction.js',
             'verification/contract-schema.json',
