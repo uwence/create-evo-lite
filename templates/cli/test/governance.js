@@ -5543,6 +5543,79 @@ async function runGovernanceTests() {
             console.log('✅ T7-8-call-chain-audit passed');
         }
 
+        console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+
+            assert.ok(specPortfolio.RECOGNIZED_SPEC_STATUSES instanceof Set,
+                'RECOGNIZED_SPEC_STATUSES must be exported as a Set');
+            assert.deepStrictEqual(
+                [...specPortfolio.RECOGNIZED_SPEC_STATUSES].sort(),
+                ['active', 'adopted', 'done', 'draft', 'parked'],
+                'the recognized status vocabulary is closed and explicit');
+
+            const vocabRoot = createTempRuntimeRoot('spec-status-vocabulary').workspaceRoot;
+            const vspec = (file, front) => writeText(
+                path.join(vocabRoot, 'docs', 'specs', file),
+                ['---', ...front, '---', '', '# S', ''].join('\n'));
+
+            // Recognized statuses — must stay silent.
+            vspec('k-done.md', ['id: spec:k-done', 'status: done']);
+            vspec('k-parked.md', ['id: spec:k-parked', 'status: parked']);
+            vspec('k-adopted.md', ['id: spec:k-adopted', 'status: adopted']);
+            vspec('k-active.md', ['id: spec:k-active', 'status: active']);
+            vspec('k-draft.md', ['id: spec:k-draft', 'status: draft']);
+            // An ABSENT status is a different defect (adoptSpec normalizes it on
+            // adoption) — it is not an invented word, so it must not be flagged here.
+            vspec('k-missing.md', ['id: spec:k-missing']);
+            // Invented statuses, one per fallback branch: no linked plan -> adopted,
+            // linked plan -> active. Both are real CodePLC values.
+            vspec('u-noplan.md', ['id: spec:u-noplan', 'status: closed-experimental']);
+            vspec('u-plan.md', ['id: spec:u-plan', 'status: implemented-evidence-partial-parent-gated', 'linkedPlan: plan:u1']);
+            // Invented status on a release-blocking spec: the blocker verdict must not move.
+            vspec('u-block.md', ['id: spec:u-block', 'status: closed-completed-with-deferred-gates', 'releaseBlocking: true']);
+
+            const vreg = specPortfolio.buildSpecRegistry(vocabRoot, { write: false });
+            const vby = Object.fromEntries(vreg.specs.map(s => [s.id, s]));
+
+            for (const id of ['spec:k-done', 'spec:k-parked', 'spec:k-adopted', 'spec:k-active', 'spec:k-draft']) {
+                assert.strictEqual(vby[id].statusRecognized, true, `${id} declares a recognized status`);
+                assert.ok(!vby[id].warnings.includes('unknown-status'), `${id} must not be flagged`);
+            }
+            assert.ok(!vby['spec:k-missing'].warnings.includes('unknown-status'),
+                'an ABSENT status is not an invented one and must not raise unknown-status');
+            assert.strictEqual(vby['spec:k-missing'].declaredStatus, null,
+                'a missing status surfaces as null, never as the upstream literal "unknown"');
+
+            assert.strictEqual(vby['spec:u-noplan'].statusRecognized, false, 'an invented status is not recognized');
+            assert.strictEqual(vby['spec:u-noplan'].declaredStatus, 'closed-experimental',
+                'the raw declared status is preserved verbatim so the reviewer can act on it');
+            assert.ok(vby['spec:u-noplan'].warnings.includes('unknown-status'), 'an invented status raises unknown-status');
+            assert.ok(vby['spec:u-plan'].warnings.includes('unknown-status'), 'the linked-plan branch is flagged too');
+
+            // NEGATIVE CONTROL 1 — bucketing must NOT move. This is the entire
+            // reason the change is additive: deriveBlocker() reads `state`, so
+            // reclassifying here would silently move the release gate.
+            assert.strictEqual(vby['spec:u-noplan'].state, 'adopted',
+                'an unrecognized status still falls back to adopted when no plan is linked');
+            assert.strictEqual(vby['spec:u-plan'].state, 'active',
+                'an unrecognized status still falls back to active when a plan is linked');
+
+            // NEGATIVE CONTROL 2 — the release blocker verdict is untouched.
+            assert.ok(vreg.blockers.some(b => b.id === 'spec:u-block'),
+                'a release-blocking spec with an invented status still yields its blocker');
+
+            const vlines = specPortfolio.formatPortfolioReport(vreg);
+            const vline = vlines.find(l => l.includes('spec:u-noplan'));
+            assert.ok(vline, 'the invented status produces a report line');
+            assert.ok(vline.includes('closed-experimental'),
+                'the line quotes the invented status verbatim');
+            assert.ok(vline.includes('adopted'),
+                'the line names the fallback bucket so the reviewer knows the count is a guess');
+
+            console.log('✅ T-spec-status-vocabulary passed');
+        }
+
         console.log('T-spec-portfolio. Testing spec portfolio registry derivation + report ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
