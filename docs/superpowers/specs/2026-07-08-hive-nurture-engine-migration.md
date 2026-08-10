@@ -1,9 +1,9 @@
 ---
 id: spec:hive-nurture-engine-migration
-status: parked
+status: done
 created: 2026-07-08
 linkedPlan: plan:hive-nurture-engine-migration
-parkedUntil: 2026-07-08 round-2 zvec dogfood 暴露的 genes-vs-state 引擎迁移缺口，spec+plan 已建但从未实施。缺口自建档起未再复现。重开条件：真实出现引擎迁移导致的重复或损坏（如 rebuild 计数翻倍）。
+doneEvidence: 2026-08-10 逐条核实后由 parked 更正为 done。plan 的 t1-t5 全部 status=implemented 且各自的 linkedFiles 都在树上（memory-index.js / memory.service.js / hive/nurture.js / test/governance.js / test/integration.js），无零 linkedFiles 的空真通过项。此前的 parkedUntil 断言「spec+plan 已建但从未实施」是事实错误——它是从记忆推断的，没有核实产物。R011 自始就在报这条，只是当时未查 mem plan gaps。
 ---
 
 # Spec: Hive Nurture — Engine-Migration Safety
