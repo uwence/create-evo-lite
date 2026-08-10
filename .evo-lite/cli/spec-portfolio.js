@@ -7,6 +7,12 @@ const { parseSpecFile, parseFrontmatter, resolveLinkedPlanIds } = require('./pla
 const { getWorkspaceRoot } = require('./runtime');
 
 const SIZE_THRESHOLDS = Object.freeze({ acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 });
+// The closed vocabulary of spec statuses this registry can actually reason about.
+// Anything else is bucketed by the fallback branches in buildSpecRegistry, which
+// is a guess — see the `unknown-status` warning. `draft` is included because
+// adoptSpec() normalizes it to `adopted` on adoption, so it is a legitimate
+// pre-adoption input rather than an invented word.
+const RECOGNIZED_SPEC_STATUSES = Object.freeze(new Set(['done', 'parked', 'adopted', 'active', 'draft']));
 const DEFAULT_AGING_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -363,6 +369,26 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         const sizeWaiver = (frontmatter && frontmatter.sizeWaiver) || null;
 
         const status = (frontmatter && frontmatter.status) || parsed.status;
+        // A status outside the closed vocabulary is still bucketed by the fallback
+        // branches below, but that bucket is a GUESS, not a reading. Measured on the
+        // CodePLC child: 10 of 12 specs declared invented statuses, and three
+        // `closed-*` ones were landing in `active`/`adopted` — finished issues
+        // presented as in-flight, which is what kept drawing agents back to them.
+        //
+        // The bucketing itself is deliberately left untouched: deriveBlocker() reads
+        // `state`, so reclassifying here would silently move the release gate. This
+        // only makes the guess visible; changing it is a separate, gated decision.
+        //
+        // An ABSENT status is not flagged — adoptSpec() normalizes it, so it is a
+        // known hole rather than an invented word.
+        // Upstream parsing materializes a MISSING status as the literal string
+        // 'unknown', so by the time it reaches here, "absent" and "the author wrote
+        // the word unknown" are indistinguishable. Both are treated as absent: a
+        // missing status is a known hole with a normalization path (adoptSpec),
+        // and flagging it would turn every frontmatter-less spec into noise
+        // instead of surfacing genuinely invented vocabulary.
+        const declaredStatus = (status && status !== 'unknown') ? status : null;
+        const statusRecognized = !declaredStatus || RECOGNIZED_SPEC_STATUSES.has(declaredStatus);
         const warnings = [];
         let state;
 
@@ -379,6 +405,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             if (anyPlanNotDone && idleDays > agingDays) warnings.push('aging-inactive');
         }
 
+        if (!statusRecognized) warnings.push('unknown-status');
         if (sizeExceeded && !sizeWaiver) warnings.push('size-exceeded');
 
         const blocking = parseReleaseBlocking(frontmatter);
@@ -408,6 +435,8 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             id: parsed.id,
             file: relSpecPath,
             state,
+            declaredStatus,
+            statusRecognized,
             linkedPlans,
             lastTouchedAt,
             idleDays,
@@ -855,6 +884,11 @@ function formatWarningLine(spec, warning) {
     if (warning === 'size-exceeded') {
         return `⚠️ ${spec.id} 体量超标 (AC=${spec.size.acCount}, Phase=${spec.size.phaseCount}) — 建议拆分或在 frontmatter 声明 sizeWaiver`;
     }
+    if (warning === 'unknown-status') {
+        // Name the fallback bucket explicitly: the reviewer needs to know the
+        // portfolio count for this spec is a guess, not a reading.
+        return `⚠️ ${spec.id} 状态 "${spec.declaredStatus}" 不在已知词汇表内 (done|parked|adopted|active|draft) — 被兜底归为 ${spec.state}，该归类不可信`;
+    }
     if (warning === 'zombie-plan') {
         // Only the not-done plans are "仍活跃" — a done plan must never be named here.
         const plans = (spec.notDonePlans || spec.linkedPlans || []).join(', ');
@@ -986,6 +1020,7 @@ function registerSpecPortfolioCommands(program) {
 
 module.exports = {
     SIZE_THRESHOLDS,
+    RECOGNIZED_SPEC_STATUSES,
     DEFAULT_AGING_DAYS,
     buildSpecRegistry,
     formatPortfolioReport,
