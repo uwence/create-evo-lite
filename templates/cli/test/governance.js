@@ -5543,6 +5543,39 @@ async function runGovernanceTests() {
             console.log('✅ T7-8-call-chain-audit passed');
         }
 
+        console.log('T-disposition-fingerprint. Canonical hashing is stable across key and set order ...');
+        {
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const a = fp.computeFingerprint({ ruleId: 'R005', ruleVersion: 1,
+                factInputs: { alpha: 1, linkedFiles: ['b', 'a'] } });
+            const b = fp.computeFingerprint({ ruleId: 'R005', ruleVersion: 1,
+                factInputs: { linkedFiles: ['a', 'b'], alpha: 1 } });
+            assert.strictEqual(a, b, 'key order and set-array order must not change the fingerprint');
+            assert.match(a, /^[0-9a-f]{64}$/, 'fingerprint is sha256 hex');
+
+            const bumped = fp.computeFingerprint({ ruleId: 'R005', ruleVersion: 2,
+                factInputs: { alpha: 1, linkedFiles: ['a', 'b'] } });
+            assert.notStrictEqual(a, bumped, 'ruleVersion participates in the fingerprint');
+
+            const other = fp.computeFingerprint({ ruleId: 'R008', ruleVersion: 1,
+                factInputs: { alpha: 1, linkedFiles: ['a', 'b'] } });
+            assert.notStrictEqual(a, other, 'ruleId participates in the fingerprint');
+
+            assert.strictEqual(
+                fp.canonicalJson({ path: 'a\\b\\c' }),
+                fp.canonicalJson({ path: 'a/b/c' }),
+                'PATH keys are normalized to forward slashes before hashing');
+            assert.notStrictEqual(
+                fp.canonicalJson({ reason: 'a\\b' }),
+                fp.canonicalJson({ reason: 'a/b' }),
+                'a non-path string is NOT path-normalized — blanket rewriting would corrupt prose and shas');
+            assert.strictEqual(
+                fp.canonicalJson({ lastTouchedAt: '2026-08-11T10:00:00+08:00' }),
+                fp.canonicalJson({ lastTouchedAt: '2026-08-11T02:00:00Z' }),
+                'timestamps normalize to UTC — git %cI keeps a local offset that differs per machine');
+            console.log('✅ T-disposition-fingerprint passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
