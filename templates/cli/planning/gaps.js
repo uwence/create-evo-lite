@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const PLAN_SOURCE_PATHS = ['docs/specs', 'docs/plans', 'docs/superpowers/specs', 'docs/superpowers/plans'];
@@ -103,6 +104,35 @@ function hasArchiveEvidence(task) {
     );
 }
 
+// --- Disposition identity: canonical ids, rule versions and declared facts ---
+
+const PLANNING_RULE_VERSIONS = Object.freeze({
+    R003: 1, R004: 1, R005: 1, R006: 1, R008: 1,
+    R009: 1, R010: 1, R011: 1, R012: 1, R013: 1,
+});
+
+// Mechanical id migrations — only for rules whose new id is derivable from the
+// old one. R006 and R010 are NOT here: their ids depend on facts that exist
+// inside the check function and cannot be recovered from a display string.
+// R005/R008/R011/R012 need no entry — their subject id is already self-prefixed.
+const ID_MIGRATIONS = {
+    R003: () => 'R003:repo:specs',
+    R004: () => 'R004:repo:plans',
+    R009: f => `R009:ir:${f.id.slice('R009:'.length)}`,
+    R013: f => `R013:context:${f.id.slice('R013:'.length)}`,
+};
+
+function sha256(value) {
+    return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
+}
+
+// The statuses of every task belonging to the plans linked to a spec. Sorted by
+// the fingerprint layer (taskStatuses is in SET_KEYS), so order is irrelevant.
+function planTaskStatuses(planIR, plans) {
+    const ids = new Set(plans.map(p => p.id));
+    return (planIR.tasks || []).filter(t => ids.has(t.linkedPlan)).map(t => `${t.id}=${t.status}`);
+}
+
 // --- R003 ---
 
 function checkR003(projectRoot) {
@@ -118,6 +148,7 @@ function checkR003(projectRoot) {
         message: 'No spec files found in docs/specs/ or docs/superpowers/specs/',
         evidence: [],
         suggestedAction: 'Create a spec file in docs/specs/ with id: spec:<slug> frontmatter',
+        factInputs: {},
     }];
 }
 
@@ -136,6 +167,7 @@ function checkR004(projectRoot) {
         message: 'No plan files found in docs/plans/ or docs/superpowers/plans/',
         evidence: [],
         suggestedAction: 'Create a plan file in docs/plans/ with id: plan:<slug> frontmatter',
+        factInputs: {},
     }];
 }
 
@@ -151,10 +183,34 @@ function checkR005(planIR) {
             message: `Task ${t.id} has no linkedFiles`,
             evidence: [t.sourcePath],
             suggestedAction: `Add "- files: <path>" to task ${t.id} in ${t.sourcePath}`,
+            factInputs: {},
         }));
 }
 
 // --- R006 ---
+
+// An occurrence identity, NOT the file's bytes. Hashing content — or even the
+// (oldBlob,newBlob) pair — lets a lapsed disposition revive by rollback:
+//   C1 A->B (dispositioned) / C2 B->A (stale) / C3 A->B  <- identical to C1.
+// A working-tree diff has no such identity, so those findings are marked
+// non-dispositionable rather than given a fingerprint that collides.
+function changeOccurrence(projectRoot, options) {
+    if (!options.lastCommit) return null;
+    try {
+        return execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: projectRoot, encoding: 'utf8', timeout: 5000,
+        }).trim();
+    } catch (_) { return null; }
+}
+
+function changeStatusOf(projectRoot, file, options) {
+    if (!options.lastCommit) return 'worktree';
+    try {
+        const out = execFileSync('git', ['diff-tree', '--no-commit-id', '--name-status',
+            '-r', '--root', 'HEAD', '--', file], { cwd: projectRoot, encoding: 'utf8', timeout: 5000 }).trim();
+        return out ? out.split(/\s+/)[0] : 'M';
+    } catch (_) { return 'M'; }
+}
 
 function checkR006(projectRoot, planIR, options = {}) {
     if (!planIR) return [];
@@ -163,15 +219,16 @@ function checkR006(projectRoot, planIR, options = {}) {
     if (changedFiles.length === 0) return [];
 
     const linkedFiles = new Set((planIR.tasks || []).flatMap(t => t.linkedFiles || []));
-    return changedFiles
-        .filter(f => !linkedFiles.has(f))
-        .map(f => ({
-            id: `R006:${f}`, rule: 'R006', scope: 'planning', level: 'warning',
-            type: 'unlinked-file',
-            message: `Changed file not linked to any task: ${f}`,
-            evidence: [f],
-            suggestedAction: `Link ${f} to a task in docs/plans/ or create a new task`,
-        }));
+    const occurrence = changeOccurrence(projectRoot, options);
+    return changedFiles.filter(f => !linkedFiles.has(f)).map((f) => ({
+        id: `R006:${f}`, rule: 'R006', scope: 'planning', level: 'warning',
+        type: 'unlinked-file',
+        message: `Changed file not linked to any task: ${f}`,
+        evidence: [f],
+        suggestedAction: `Link ${f} to a task in docs/plans/ or create a new task`,
+        factInputs: { path: f, status: changeStatusOf(projectRoot, f, options), occurrence },
+        dispositionable: occurrence != null,
+    }));
 }
 
 // --- R008 ---
@@ -189,6 +246,7 @@ function checkR008(planIR) {
             message: `Task ${t.id} (${t.status}) has no archive evidence`,
             evidence: [t.sourcePath],
             suggestedAction: `Run mem archive after completing ${t.id} to record evidence`,
+            factInputs: { taskStatus: t.status, archiveHits: t.archiveHits || 0 },
         }));
 }
 
@@ -219,6 +277,7 @@ function checkR009(projectRoot) {
                     message: `${label} IR is stale — ${src} is newer`,
                     evidence: [path.relative(projectRoot, irPath).replace(/\\/g, '/')],
                     suggestedAction: label === 'plan' ? 'Run: mem plan scan' : 'Run: mem architecture scan',
+                    factInputs: {},
                 });
                 return;
             }
@@ -255,7 +314,7 @@ function checkR010(projectRoot, planIR) {
         .filter(item => !isPlaceholderBacklogItem(item));
     if (backlogItems.length === 0) return [];
 
-    const taskTitles = (planIR.tasks || []).map(t => t.title.toLowerCase());
+    const taskTitles = (planIR.tasks || []).map(t => String(t.title || '').toLowerCase());
     const taskIds = (planIR.tasks || []).map(t => t.id.toLowerCase());
 
     return backlogItems
@@ -263,13 +322,23 @@ function checkR010(projectRoot, planIR) {
             return !taskTitles.some(t => item.includes(t) || t.includes(item)) &&
                    !taskIds.some(id => item.includes(id));
         })
-        .map(item => ({
-            id: `R010:${item.slice(0, 40)}`, rule: 'R010', scope: 'planning', level: 'info',
-            type: 'untracked-backlog',
-            message: `Backlog item not in Planning IR: "${item.slice(0, 80)}"`,
-            evidence: ['.evo-lite/active_context.md'],
-            suggestedAction: 'Add a task to docs/plans/ that covers this backlog item',
-        }));
+        .map(item => {
+            // The bracketed label is the item's identity. The old id used the first 40
+            // characters of prose, which fractures on any rewording and silently orphans
+            // the decision for what is the same item. The digest covers the FULL
+            // normalized text, never the truncated display message.
+            const normalizedItemText = String(item).replace(/\s+/g, ' ').trim();
+            const labelMatch = /^\s*\[([^\]]+)\]/.exec(normalizedItemText);
+            const backlogKey = labelMatch ? labelMatch[1] : sha256(normalizedItemText).slice(0, 16);
+            return {
+                id: `R010:backlog:${backlogKey}`, rule: 'R010', scope: 'planning', level: 'info',
+                type: 'untracked-backlog',
+                message: `Backlog item not in Planning IR: "${normalizedItemText.slice(0, 80)}"`,
+                evidence: ['.evo-lite/active_context.md'],
+                suggestedAction: 'Add a task to docs/plans/ that covers this backlog item',
+                factInputs: { itemTextDigest: sha256(normalizedItemText) },
+            };
+        });
 }
 
 // --- R011 ---
@@ -311,6 +380,7 @@ function checkR011(planIR) {
             message: `Spec ${spec.id} is [${spec.status}] but ${plans.length > 1 ? `all ${plans.length} linked plans have` : `linked plan ${plans[0].id} has`} all tasks implemented`,
             evidence: [spec.sourcePath],
             suggestedAction: `Update status in ${spec.sourcePath} to: status: done`,
+            factInputs: { specStatus: spec.status, taskStatuses: planTaskStatuses(planIR, plans) },
         });
     }
     return findings;
@@ -368,6 +438,7 @@ function checkR012(projectRoot, planIR, options = {}) {
             message: `Focus points at plan ${plan.id} [${plan.status}] with ${done}/${total} tasks done — it is not a started, active plan`,
             evidence: [plan.sourcePath].filter(Boolean),
             suggestedAction: `Advance focus to a started plan (mem focus), or begin ${plan.id}`,
+            factInputs: { planStatus: plan.status, doneCount: done, totalCount: total },
         });
     }
     return findings;
@@ -427,6 +498,7 @@ function checkR013(projectRoot, options = {}) {
             message: `active_context META headSha ${meta.headSha} is not HEAD (${git.headSha}) nor an ancestor — the recorded project position is stale`,
             evidence: ['.evo-lite/active_context.md'],
             suggestedAction: 'Run `mem commit` / `context track` to refresh the META git fields, or update focus',
+            factInputs: { declaredHeadSha: meta.headSha },
         });
     }
     if (git.hasUpstream) {
@@ -438,6 +510,7 @@ function checkR013(projectRoot, options = {}) {
                 message: `active_context META ahead/behind (${meta.ahead}/${meta.behind}) disagrees with git (${git.ahead}/${git.behind})`,
                 evidence: ['.evo-lite/active_context.md'],
                 suggestedAction: 'Refresh META via `mem commit` / `context track`',
+                factInputs: { declaredAhead: meta.ahead, declaredBehind: meta.behind },
             });
         }
     }
@@ -446,23 +519,35 @@ function checkR013(projectRoot, options = {}) {
 
 // --- Public ---
 
-function runPlanningDrift(projectRoot, planIR, options = {}) {
-    return [
-        ...checkR003(projectRoot),
-        ...checkR004(projectRoot),
-        ...checkR005(planIR),
-        ...checkR006(projectRoot, planIR, options),
-        ...checkR008(planIR),
-        ...checkR009(projectRoot),
-        ...checkR010(projectRoot, planIR),
-        ...checkR011(planIR),
-        ...checkR012(projectRoot, planIR, options),
+function runPlanningDriftCensus(projectRoot, planIR, options = {}) {
+    const errors = [];
+    if (!planIR) errors.push('plan-ir.json is missing or unreadable — run `mem plan scan`');
+
+    const findings = [
+        ...checkR003(projectRoot), ...checkR004(projectRoot), ...checkR005(planIR),
+        ...checkR006(projectRoot, planIR, options), ...checkR008(planIR),
+        ...checkR009(projectRoot), ...checkR010(projectRoot, planIR),
+        ...checkR011(planIR), ...checkR012(projectRoot, planIR, options),
         ...checkR013(projectRoot, options),
-    ];
+    ].map(f => ({
+        ...f,
+        id: (ID_MIGRATIONS[f.rule] || (() => f.id))(f),
+        ruleId: f.rule,
+        ruleVersion: PLANNING_RULE_VERSIONS[f.rule],
+        factInputs: f.factInputs || {},
+    }));
+
+    return { findings, complete: errors.length === 0, errors };
+}
+
+function runPlanningDrift(projectRoot, planIR, options = {}) {
+    return runPlanningDriftCensus(projectRoot, planIR, options).findings;
 }
 
 module.exports = {
     runPlanningDrift,
+    runPlanningDriftCensus,
+    PLANNING_RULE_VERSIONS,
     checkR006,
     checkR008,
     checkR009,

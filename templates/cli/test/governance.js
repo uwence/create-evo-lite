@@ -5783,6 +5783,59 @@ async function runGovernanceTests() {
             console.log('✅ T-disposition-spec-findings passed');
         }
 
+        console.log('T-disposition-planning-census. Ten rules, canonical ids, and absence is not silence ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const root = createTempRuntimeRoot('disposition-planning-census').workspaceRoot;
+
+            const degraded = gaps.runPlanningDriftCensus(root, null, {});
+            assert.strictEqual(degraded.complete, false,
+                'a null plan-ir means we could not look — that is NOT an empty finding set');
+            assert.ok(degraded.errors.length > 0, 'the reason is reported, not swallowed');
+
+            const ir = { specs: [], plans: [], tasks: [{ id: 'task:t1', linkedPlan: 'plan:p',
+                linkedFiles: [], status: 'implemented' }] };
+            const ok = gaps.runPlanningDriftCensus(root, ir, { changedFiles: [] });
+            assert.strictEqual(ok.complete, true, 'a real IR yields a complete census');
+
+            const r005 = ok.findings.find(f => f.ruleId === 'R005');
+            assert.strictEqual(r005.id, 'R005:task:t1', 'R005 already conforms — id unchanged');
+            assert.strictEqual(r005.ruleVersion, 1);
+
+            const r003 = ok.findings.find(f => f.ruleId === 'R003');
+            assert.strictEqual(r003.id, 'R003:repo:specs', 'bare R003 is migrated to the canonical shape');
+            assert.deepStrictEqual(r003.factInputs, {},
+                'R003 has no stable facts — it expires through ORPHANED, never through a fingerprint');
+
+            const r009 = gaps.runPlanningDriftCensus(root, ir, { changedFiles: [] }).findings
+                .filter(f => f.ruleId === 'R009');
+            assert.ok(r009.every(f => /^R009:ir:(plan|architecture)$/.test(f.id)), 'R009 id shape');
+            assert.ok(r009.every(f => !JSON.stringify(f.factInputs).includes('mtime')),
+                'mtime must never enter a fingerprint — it does not survive a clone');
+
+            // R013 — the premise is a git comparison, so the DECLARED value is a fact
+            // input while the live one is ambient. Moving HEAD alone must not void a
+            // disposition, or every commit would void every R013 decision.
+            const meta = { headSha: 'a'.repeat(40), ahead: 1, behind: 0 };
+            const gitA = { headSha: 'b'.repeat(40), ahead: 3, behind: 0, hasUpstream: true,
+                isAncestorOfHead: () => false };
+            const gitB = { ...gitA, headSha: 'c'.repeat(40) };
+            const head = (g) => gaps.runPlanningDriftCensus(root, ir, { metaState: meta, gitState: g })
+                .findings.find(f => f.id === 'R013:context:head');
+            assert.ok(head(gitA), 'R013:context:head uses the canonical id');
+            assert.deepStrictEqual(head(gitA).factInputs, { declaredHeadSha: meta.headSha });
+            assert.deepStrictEqual(head(gitA).factInputs, head(gitB).factInputs,
+                'live HEAD moving alone must NOT change the R013 fingerprint');
+
+            // R006 — occurrence identity, not content. Without a commit there is no
+            // stable occurrence, so the finding must refuse to be dispositioned.
+            const wt = gaps.runPlanningDriftCensus(root, ir, { changedFiles: ['src/x.js'] })
+                .findings.find(f => f.ruleId === 'R006');
+            assert.strictEqual(wt.dispositionable, false,
+                'a working-tree R006 has no stable occurrence and must be non-dispositionable');
+            console.log('✅ T-disposition-planning-census passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
