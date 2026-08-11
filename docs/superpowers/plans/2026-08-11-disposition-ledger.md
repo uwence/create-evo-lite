@@ -931,6 +931,25 @@ function runPlanningDrift(projectRoot, planIR, options = {}) {
 
 Export `runPlanningDriftCensus` and `PLANNING_RULE_VERSIONS` alongside the existing exports.
 
+> **AMENDED after Task 5 review (commits `131eddd`, `eea99e4`).** Two corrections the
+> snippets below do not show:
+>
+> 1. The `id:` emitted by `checkR006` ships as `` `R006:file:${f}` ``, not `` `R006:${f}` ``.
+>    The frozen spec's rule table requires the three-segment canonical shape; the original
+>    draft here missed the migration and a reviewer caught it. Two assertions in
+>    `test/integration.js` had to move with it.
+> 2. `checkR010`'s title matching must EXCLUDE titleless tasks
+>    (`.map(t => t.title).filter(Boolean)`), never coerce them with `String(t.title || '')`.
+>    Coercion makes `item.includes('')` true for every backlog item, which silently
+>    suppresses **every** R010 finding repo-wide the moment one task lacks a title — a loud
+>    crash traded for silent, total suppression, in the one plan whose purpose is that
+>    absence must not be silence.
+>
+> Note also that `checkR009` and `checkR013` deliberately keep emitting BARE ids
+> (`R009:plan`, `R013:head`); the canonical prefixes are applied by `ID_MIGRATIONS` inside
+> `runPlanningDriftCensus`. Tests that call those checkers directly therefore assert the
+> bare form on purpose — that is not a missed migration.
+
 R006 needs its occurrence identity resolved explicitly. Add above `checkR006`:
 
 ```js
