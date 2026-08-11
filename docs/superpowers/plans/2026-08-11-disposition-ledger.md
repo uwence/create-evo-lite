@@ -193,7 +193,20 @@ git commit -m "feat(disposition): canonical fingerprint over ruleId, ruleVersion
 **Interfaces:**
 - Consumes: nothing
 - Produces: `LEDGER_VERSION = 'evo-disposition-ledger@1'`
-- Produces: `CHOICES` — frozen Set of `not-applicable`, `accepted-debt`, `deferred`, `wont-fix`
+- Produces: `CHOICES` — frozen **Array** of `not-applicable`, `accepted-debt`, `deferred`, `wont-fix`
+
+> **AMENDED after Task 2 review (commit `c1f28b5`).** The code blocks below still
+> show `Object.freeze(new Set([...]))`. That is a **false guarantee**: freezing a
+> Set does not block `.add()` / `.delete()` — verified empirically, `isFrozen`
+> reports true while mutation succeeds. This repo had already hit the trap and
+> recorded the fix at `code-perception/providers/codegraph-exec.js:17`: export a
+> frozen ARRAY and keep the lookup Set module-private.
+>
+> As shipped, `CHOICES` (here) and `SET_KEYS` / `PATH_KEYS` / `TIMESTAMP_KEYS`
+> (Task 1) are frozen arrays paired with private `*_SET` / `*_LOOKUP` sets, and
+> every internal membership test uses the private set. **Consumers must use
+> `.includes()`, never `.has()`.** The blocks below are left as-authored so the
+> review history stays legible; the shipped shape is what governs.
 - Produces: `readLedger(projectRoot) -> { version, entries }` (empty ledger when absent)
 - Produces: `writeLedger(projectRoot, ledger) -> void` (sorted, 2-space, trailing newline, atomic)
 - Produces: `upsertEntry(ledger, entry) -> ledger` (replaces any existing entry with the same `findingId`)
@@ -1295,8 +1308,10 @@ function registerDispositionCommands(program) {
         .requiredOption('--reason <text>')
         .option('--until <text>')
         .action((findingId, opts) => {
-            if (!CHOICES.has(opts.choice)) {
-                throw new Error(`--choice must be one of: ${[...CHOICES].join(', ')}`);
+            // CHOICES is a frozen ARRAY, not a Set — see Task 2's amendment note.
+            // `.has()` here would be a TypeError.
+            if (!CHOICES.includes(opts.choice)) {
+                throw new Error(`--choice must be one of: ${CHOICES.join(', ')}`);
             }
             if (!String(opts.reason || '').trim()) throw new Error('--reason must not be empty');
             if (opts.choice === 'deferred' && !String(opts.until || '').trim()) {
