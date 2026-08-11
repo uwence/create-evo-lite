@@ -127,27 +127,53 @@ Three relations, not two:
 
 | relation | condition | consequence |
 |---|---|---|
-| `CURRENT` | finding emitted, id matches, fingerprint matches | decision holds |
+| `CURRENT` | finding emitted, id matches, fingerprint matches, entry not tombstoned | decision holds |
 | `STALE` | finding emitted, id matches, fingerprint differs | **decision void, finding reactivated** |
 | `ORPHANED` | entry exists, finding no longer emitted | normal resolution, **no re-statement required** |
 
-The load-bearing rule:
+Two load-bearing rules, not one:
 
-> **A fingerprint mismatch invalidates a disposition only when the same findingId is still emitted.**
+> **(a)** A fingerprint mismatch invalidates a disposition only when the same findingId is still emitted.
+>
+> **(b)** Once an entry has been observed orphaned, it never returns to `CURRENT` — a later recurrence of the same findingId with the same fingerprint requires a fresh decision.
 
-Without the `ORPHANED` case, resolving a problem would demand a fresh disposition for a finding that no longer exists, and the stale queue would fill with already-solved items until nobody trusted it.
+Without (a), resolving a problem would demand a fresh disposition for a finding that no longer exists, and the stale queue would fill with already-solved items until nobody trusted it.
 
-`aging-*` shows both paths: touch the file and it either still exceeds the threshold (`STALE` — circumstances changed, restate) or no longer does (`ORPHANED` — done, say nothing).
+Without (b), a regression silently inherits the decision that was made about the *original* occurrence. Consider: `accepted-debt` at T0, fact repaired at T1 (entry orphaned), regression at T2 restoring the exact same facts. Pure fingerprint matching marks it `CURRENT` and the old acceptance revives — precisely at the moment a human most needs to look. **Orphaning is terminal**, expressed as a tombstone on the entry:
+
+```jsonc
+{ "findingId": "…", "fingerprint": "abc…", "choice": "accepted-debt",
+  "orphanedAt": "2026-09-01T10:00:00Z", "orphanedHead": "1f2e3d4…" }
+```
+
+A tombstoned entry is never `CURRENT`. It is retained rather than deleted so the history of "this was accepted once, then solved, then came back" survives — that sequence is itself governance information.
+
+`aging-*` shows both paths of rule (a): touch the file and it either still exceeds the threshold (`STALE` — circumstances changed, restate) or no longer does (`ORPHANED` — done, say nothing).
 
 ### 3.1 Single resolver
 
 ```text
-effectiveDisposition(finding, ledger) = fingerprint matches ? entry : null
+effectiveDisposition(finding, ledger) =
+    entry && !entry.orphanedAt && fingerprintMatches(entry, finding) ? entry : null
 ```
 
-Therefore **undispositioned** means *no entry* **or** *entry present but stale* — one concept, one function.
+Therefore **undispositioned** means *no entry*, *entry present but stale*, **or** *entry tombstoned* — one concept, one function.
 
-No consumer may implement fingerprint matching itself. `if (ledger.has(finding.id)) suppress()` is the specific bug this forbids: it suppresses stale entries, which is the exact opposite of the intended behaviour.
+No consumer may implement fingerprint matching itself. `if (ledger.has(finding.id)) suppress()` is the specific bug this forbids: it suppresses stale and tombstoned entries alike, the exact opposite of the intended behaviour.
+
+### 3.2 Who writes the tombstone
+
+Detecting an orphan requires observing that a finding is *absent*, and every consumer that makes that observation (`verify`, `spec status`, `plan gaps`) is **read-only by contract**. A read-only command must never mutate a git-tracked decision record as a side effect — that would put governance writes on paths users invoke casually and expect to be inert.
+
+The write therefore belongs to an explicit, idempotent command:
+
+```text
+mem disposition sync     # tombstones entries whose finding is no longer emitted
+```
+
+invoked from the existing `post-commit` governance hook, alongside `plan progress`, `focus auto-advance` and `plan gaps`. Read-only consumers report the pending count and never write.
+
+**Residual window, stated rather than hidden:** between a finding disappearing and the next `sync`, the entry is not yet tombstoned. A regression inside that window with identical facts would resolve to `CURRENT`. The window is bounded by one commit under normal workflow, and `mem disposition list` surfaces `N 条待 sync` so the exposure is visible rather than silent. Closing it entirely would require a read-only command to write, which is the worse trade.
 
 ## 4. Choice vocabulary
 
@@ -174,7 +200,16 @@ The predictable failure mode is `deferred` decaying into a nicer-sounding `accep
 
 `set` rejects `deferred` without a non-empty `until`. This is the same discipline already applied to `mem spec park --until`: **no bare deferral, always a reopening condition.**
 
-`until` is recorded and displayed but **not** machine-evaluated in v1 — it is a promise to the reader, not a trigger. Automatic expiry is a later decision.
+**`until` in v1, stated exhaustively so nobody assumes a scheduler exists:**
+
+- mandatory for `deferred`
+- machine-readable and displayed
+- does **not** participate in `effectiveDisposition`
+- does **not** trigger `stale`
+- is **not** a scheduler and must not be described as one
+- dispositions still expire only through fingerprint mismatch, tombstoning, or `revoke`
+
+Because nothing enforces it, visibility must: `mem disposition list` prints `until` on every `deferred` entry by default, so `deferred — until 2026-09-01` cannot sit six months past its date unseen. Building a condition engine is explicitly not part of layer 2.
 
 ## 5. Ledger format
 
@@ -266,14 +301,17 @@ Line 1 leads with the actionable count — the number a reader actually needs. L
     { "id": "ac1", "text": "Every finding from spec-portfolio and planning gaps carries a stable id of the form <ruleId>:<subjectType>:<subjectId>[:<instanceKey>], and a subject breaching multiple size dimensions yields one id per dimension." },
     { "id": "ac2", "text": "fingerprint = sha256(canonicalJson({ruleId, ruleVersion, factInputs})) is deterministic across runs, key order, and set-array order, and excludes display text, absolute paths, HEAD, and current time." },
     { "id": "ac3", "text": "ruleVersion is defined and documented as a disposition compatibility version; bumping it invalidates every disposition for that rule, and message/format/refactor changes do not bump it." },
-    { "id": "ac4", "text": "Resolution distinguishes CURRENT, STALE and ORPHANED; a fingerprint mismatch invalidates a disposition only while the same findingId is still emitted, and an ORPHANED entry never demands re-statement." },
+    { "id": "ac4", "text": "Resolution distinguishes CURRENT, STALE and ORPHANED; a fingerprint mismatch invalidates a disposition only while the same findingId is still emitted; an ORPHANED entry never demands re-statement; and a tombstoned entry never returns to CURRENT even when an identical finding recurs with an identical fingerprint." },
     { "id": "ac5", "text": "set validates its inputs: choice restricted to the four-word closed set, reason mandatory, deferred without a non-empty until rejected, a findingId not currently emitted rejected, and a caller-supplied fingerprint rejected — the system always derives it." },
     { "id": "ac6", "text": "The ledger lives at .evo-lite/dispositions.json, is tracked by git, holds at most one entry per findingId with set replacing rather than appending, and writes sorted, 2-space, atomic, newline-terminated JSON." },
     { "id": "ac7", "text": "Findings are annotated, never filtered: every finding remains in the JSON collection with a disposition field of current/stale/null, and only human-readable presentation collapses them." },
-    { "id": "ac8", "text": "All three consumers resolve dispositions through one shared resolver; no consumer implements fingerprint matching itself, and undispositioned covers both no-entry and stale-entry." }
+    { "id": "ac8", "text": "All three consumers resolve dispositions through one shared resolver; no consumer implements fingerprint matching itself, and undispositioned covers no-entry, stale-entry and tombstoned-entry alike." },
+    { "id": "ac9", "text": "Tombstoning is written only by the explicit idempotent `mem disposition sync`, invoked from the post-commit hook; verify, spec status and plan gaps remain read-only, never mutate the ledger, and instead report the count of entries awaiting sync." }
   ]
 }
 ```
+
+**Note on this spec's own size:** adding AC9 puts `acCount` at 9, one over the threshold, so this spec now reports `size-exceeded` against itself. That is deliberate. AC9 is an independently falsifiable property with its own failure boundary — a read-only command mutating the ledger is a distinct defect from the resolver mishandling a tombstone — and folding it into AC4 to keep the counter green would be exactly the warning-driven governance this whole layer exists to end. The overrun is left visible, to be dispositioned by the mechanism this spec defines once it exists.
 
 ## Test strategy
 
@@ -283,6 +321,8 @@ Beyond ordinary cases, these invariants must be verified by mutation — each mu
 - bumping `ruleVersion` invalidates every disposition for that rule
 - **a dispositioned finding still appears in the JSON collection** — removing it from the data layer must turn a test red, because that is the failure that would let a consumer conclude the problem is gone
 - an `ORPHANED` entry does **not** appear in `--stale` and does not demand re-statement
+- **regression after orphaning does not revive the old decision**: tombstone an entry, re-emit an identical finding with an identical fingerprint, and it must resolve to undispositioned — deleting the tombstone check must turn this red
+- a read-only consumer run against a ledger with orphanable entries leaves the file **byte-identical**
 - canonicalization: two payloads differing only in key order or set-array order hash identically
 
 ## Out of scope
