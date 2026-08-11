@@ -5634,6 +5634,42 @@ async function runGovernanceTests() {
             assert.strictEqual(led.dispositionsDirty(gitRoot), true,
                 'git repo with modified ledger returns true');
 
+            // orphanedAt / orphanedHead: present-but-unrecognisable must fail
+            // closed — the same ruling as the releaseBlocking frontmatter work.
+            // A missing field is tolerated; a field present but malformed makes
+            // the whole ledger a schema error, same as fingerprint/choice.
+            const orphanedRoot = createTempRuntimeRoot('disposition-orphaned-validation').workspaceRoot;
+            const baseEntry = { findingId: 'R008:task:orphan', ruleId: 'R008', ruleVersion: 1,
+                fingerprint: 'c'.repeat(64), choice: 'accepted-debt', reason: 'r', at: '2026-08-11T00:00:00Z' };
+
+            for (const bad of ['', 0, false, null, 'not-a-date']) {
+                fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                    entries: [{ ...baseEntry, orphanedAt: bad }] }) + '\n');
+                assert.throws(() => led.readLedger(orphanedRoot), /invalid or duplicate entry/,
+                    `orphanedAt=${JSON.stringify(bad)} must fail closed, not silently revive a tombstoned decision`);
+            }
+
+            fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                entries: [{ ...baseEntry, orphanedAt: '2026-09-01T00:00:00Z' }] }) + '\n');
+            assert.strictEqual(led.readLedger(orphanedRoot).entries[0].orphanedAt, '2026-09-01T00:00:00Z',
+                'a valid ISO-8601 orphanedAt is accepted');
+
+            fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                entries: [{ ...baseEntry }] }) + '\n');
+            assert.strictEqual(led.readLedger(orphanedRoot).entries[0].findingId, baseEntry.findingId,
+                'an absent orphanedAt is tolerated — it simply means no tombstone');
+
+            for (const badHead of ['', 0, false]) {
+                fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                    entries: [{ ...baseEntry, orphanedAt: '2026-09-01T00:00:00Z', orphanedHead: badHead }] }) + '\n');
+                assert.throws(() => led.readLedger(orphanedRoot), /invalid or duplicate entry/,
+                    `orphanedHead=${JSON.stringify(badHead)} must fail closed`);
+            }
+            fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                entries: [{ ...baseEntry, orphanedAt: '2026-09-01T00:00:00Z', orphanedHead: '1f2e3d4' }] }) + '\n');
+            assert.strictEqual(led.readLedger(orphanedRoot).entries[0].orphanedHead, '1f2e3d4',
+                'a non-empty orphanedHead is accepted');
+
             console.log('✅ T-disposition-ledger passed');
         }
 
@@ -5676,6 +5712,27 @@ async function runGovernanceTests() {
             assert.strictEqual(res.classifyEntry(entry, new Set([finding.id])), 'current');
             assert.strictEqual(res.classifyEntry(entry, new Set()), 'orphaned',
                 'absent from the emitted set means orphaned');
+
+            // Layer 2 regression coverage: resolve.js must branch on PRESENCE,
+            // not truthiness. In-memory ledgers built by sync/tests never pass
+            // through readLedger's own validation, so the resolver must fail
+            // closed on its own — a present-but-falsy orphanedAt must still
+            // read as TOMBSTONED, never revived as CURRENT.
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'sanity: the baseline entry has no orphanedAt key at all');
+            assert.strictEqual(res.effectiveDisposition(finding, ledger).choice, 'not-applicable',
+                'orphanedAt absent (never regressed) still resolves CURRENT with an identical fingerprint');
+
+            for (const falsyOrphan of ['', 0, false]) {
+                const falsyTombstoned = led.upsertEntry(ledger, { ...entry, orphanedAt: falsyOrphan });
+                assert.strictEqual(res.effectiveDisposition(finding, falsyTombstoned), null,
+                    `orphanedAt=${JSON.stringify(falsyOrphan)} present-but-falsy must still read as TOMBSTONED, not revived as CURRENT`);
+                assert.strictEqual(res.annotate(finding, falsyTombstoned).disposition, null,
+                    `orphanedAt=${JSON.stringify(falsyOrphan)} annotate must present as undispositioned, not stale or current`);
+                assert.strictEqual(
+                    res.classifyEntry({ ...entry, orphanedAt: falsyOrphan }, new Set([finding.id])), 'orphaned',
+                    `orphanedAt=${JSON.stringify(falsyOrphan)} classifyEntry must report orphaned even when present but falsy`);
+            }
 
             const untouched = { ...finding };
             res.annotate(untouched, ledger);

@@ -14,6 +14,15 @@ function ledgerPath(projectRoot) {
     return path.join(projectRoot, '.evo-lite', 'dispositions.json');
 }
 
+// A missing field is tolerated (no tombstone). A field that is PRESENT but
+// unrecognisable must fail closed — same ruling as the releaseBlocking
+// frontmatter work: one typo must never silently defeat a gate. `null` is
+// rejected on purpose: nothing in this system legitimately writes it, so a
+// present-but-null value is a writer bug, not a shape this layer tolerates.
+function isValidIsoTimestamp(value) {
+    return typeof value === 'string' && value.length > 0 && !Number.isNaN(Date.parse(value));
+}
+
 function readLedger(projectRoot) {
     const file = ledgerPath(projectRoot);
     if (!fs.existsSync(file)) return { version: LEDGER_VERSION, entries: [] };
@@ -31,6 +40,18 @@ function readLedger(projectRoot) {
         if (!e || typeof e.findingId !== 'string' || seen.has(e.findingId)
             || !/^[0-9a-f]{64}$/.test(e.fingerprint || '')
             || !CHOICES_SET.has(e.choice)) {
+            throw new Error('disposition ledger contains an invalid or duplicate entry');
+        }
+        // orphanedAt: absent is fine (no tombstone). Present must be a valid
+        // ISO-8601 string — '', 0, false, null and unparsable strings all
+        // fail closed rather than silently reviving a tombstoned decision.
+        if (Object.prototype.hasOwnProperty.call(e, 'orphanedAt') && !isValidIsoTimestamp(e.orphanedAt)) {
+            throw new Error('disposition ledger contains an invalid or duplicate entry');
+        }
+        // orphanedHead: same treatment, trivial case only — present must be
+        // a non-empty string.
+        if (Object.prototype.hasOwnProperty.call(e, 'orphanedHead')
+            && (typeof e.orphanedHead !== 'string' || e.orphanedHead.length === 0)) {
             throw new Error('disposition ledger contains an invalid or duplicate entry');
         }
         seen.add(e.findingId);
