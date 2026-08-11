@@ -1114,11 +1114,17 @@ console.log('T-disposition-cli. set validates its inputs and never trusts the ca
     // the `no such finding` branch, making the guard unreachable and the
     // mutation dead. The real case is the SAME path carrying a committed R006
     // AND a further uncommitted change: one findingId, two occurrences.
-    gitInit(root);
+    // harness exports runGit(cwd, args); there is no gitInit/gitCommitAll.
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', 'Evo Test']);
+    runGit(root, ['config', 'user.email', 'evo@example.com']);
+    ensureParent(path.join(root, 'src', 'shadow.js'));
     fs.writeFileSync(path.join(root, 'src', 'shadow.js'), 'v1');
-    gitCommitAll(root, 'add unlinked file');          // committed R006 now exists
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-m', 'add unlinked file']);           // committed R006 now exists
     fs.writeFileSync(path.join(root, 'src', 'shadow.js'), 'v2');   // worktree R006 too
 
+    const { collectAllFindings } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
     const committed = collectAllFindings(root).findings.find(f => f.id === 'R006:file:src/shadow.js');
     assert.ok(committed, 'the committed occurrence IS in the disposition id space');
     const shadowed = run(['set', 'R006:file:src/shadow.js', '--choice', 'accepted-debt', '--reason', 'x']);
@@ -1499,10 +1505,20 @@ git commit -m "feat(disposition): fail-closed sync that tombstones only from a c
 
 **Files:**
 - Modify: `templates/cli/spec-portfolio.js`
-- Modify: `templates/cli/memory.service.js:3112-3113`
+- Modify: `.evo-lite/cli/spec-portfolio.js`
+- Modify: `templates/cli/memory.service.js`
+- Modify: `.evo-lite/cli/memory.service.js`
+- Modify: `templates/cli/memory.js`
+- Modify: `.evo-lite/cli/memory.js`
 - Test: `templates/cli/test/governance.js`
 
-- files: templates/cli/spec-portfolio.js, templates/cli/memory.service.js, templates/cli/test/governance.js
+Touch points inside those files: `memory.service.js` at 1936 (`workspaceRoot`
+binding), 1981 (runtime file set), 3112-3113 (verify reporting); `memory.js` at
+133 (`formatTrackResult`). **Line numbers stay in prose, never in the file list**
+— a path carrying `:1936,1981` never matches a real file, so R006 would report
+that file as unlinked forever.
+
+- files: templates/cli/spec-portfolio.js, templates/cli/memory.service.js, templates/cli/memory.js, templates/cli/test/governance.js
 - verify: node .evo-lite/cli/test.js governance
 - acceptance: ac7, ac9
 
@@ -1601,14 +1617,18 @@ if (reactivated.length) {
 
 In `templates/cli/memory.service.js` after line 3113, add the pending-tombstone check:
 
+Import the single implementation — **do not write a second one here.** Task 2
+already owns `dispositionsDirty`; a local copy is exactly the drift this layer
+keeps arguing against. At the top of `memory.service.js`:
+
 ```js
-const { execFileSync } = require('child_process');
-function dispositionsDirty(root) {
-    try {
-        return execFileSync('git', ['status', '--porcelain', '--', '.evo-lite/dispositions.json'],
-            { cwd: root, encoding: 'utf8' }).trim().length > 0;
-    } catch (_) { return false; }   // not a git repo
-}
+const { dispositionsDirty } = require('./disposition/ledger');
+const DISPOSITIONS_PATH = '.evo-lite/dispositions.json';
+```
+
+Then, after line 3113:
+
+```js
 // A tombstone written by post-commit is NOT in that commit. Until a later
 // commit carries it, another machine will not see it — so say so.
 if (dispositionsDirty(getWorkspaceRoot())) {
@@ -1627,7 +1647,18 @@ result.runtime.files = [
 ```
 
 so a tombstone stays dirty across any number of `mem commit` runs while the
-command reports runtime state as written. Extend it at `memory.service.js:1981`:
+command reports runtime state as written.
+
+`commitWithContext` has **no `workspaceRoot` binding** — it calls the module-level
+`runGit` throughout and never calls `getWorkspaceRoot()` at all. Introduce the
+binding once, at the top of the function body (`memory.service.js:1936`, right
+after the usage check):
+
+```js
+const workspaceRoot = getWorkspaceRoot();
+```
+
+Then extend the file set at `memory.service.js:1981`:
 
 ```js
 result.runtime.files = [
@@ -1637,14 +1668,10 @@ result.runtime.files = [
 // A pending tombstone is part of the runtime state this commit closes.
 // Excluding it lets `mem commit` claim durability while a decision that
 // another machine cannot see is still sitting unstaged.
-if (dispositionsDirty(getWorkspaceRoot())) {
+if (dispositionsDirty(workspaceRoot)) {
     result.runtime.files.push(toWorkspaceGitPath(DISPOSITIONS_PATH));
 }
 ```
-
-with `const DISPOSITIONS_PATH = '.evo-lite/dispositions.json';` beside the
-existing `ACTIVE_CONTEXT_PATH` constant, and `dispositionsDirty` imported from
-`./disposition/ledger`.
 
 **That still is not closure, because of a second-order effect.** The runtime
 meta-commit is itself a commit, so it fires `post-commit`, which now runs
@@ -1687,10 +1714,18 @@ const closureComplete = result.status.archive === 'written'
 ```
 
 which would keep printing `closure: complete` while a tombstone sits unstaged.
-Extend it in `templates/cli/memory.js:133`:
+`memory.js` imports only `fs`, `memory.service`, `db` and `commander`, so add
+the two it now needs at the top of the file:
 
 ```js
-const ledgerPending = require('./disposition/ledger').dispositionsDirty(getWorkspaceRoot());
+const { getWorkspaceRoot } = require('./runtime');
+const { dispositionsDirty } = require('./disposition/ledger');
+```
+
+Then extend `formatTrackResult` at `templates/cli/memory.js:133`:
+
+```js
+const ledgerPending = dispositionsDirty(getWorkspaceRoot());
 const closureComplete = result.status.archive === 'written'
     && result.status.context === 'updated'
     && ['resolved', 'not_requested'].includes(result.status.resolve)
@@ -1719,6 +1754,7 @@ Add to the Task 9 test:
 ```bash
 cp templates/cli/spec-portfolio.js .evo-lite/cli/spec-portfolio.js
 cp templates/cli/memory.service.js .evo-lite/cli/memory.service.js
+cp templates/cli/memory.js .evo-lite/cli/memory.js
 node .evo-lite/cli/test.js governance
 node .evo-lite/cli/test.js integration
 ```
@@ -1730,6 +1766,7 @@ Expected: PASS on both scopes.
 ```bash
 git add templates/cli/spec-portfolio.js .evo-lite/cli/spec-portfolio.js \
         templates/cli/memory.service.js .evo-lite/cli/memory.service.js \
+        templates/cli/memory.js .evo-lite/cli/memory.js \
         templates/cli/test/governance.js .evo-lite/cli/test/governance.js
 git commit -m "feat(disposition): three-line projection and pending-tombstone visibility"
 ```
@@ -1790,6 +1827,54 @@ For each row: apply the mutation to BOTH mirrors, run the scope, record the fail
     runCli(root, ['disposition', 'sync']);
     assert.strictEqual(gitRevParse(root, 'HEAD'), headBefore, 'sync must not commit');
     assert.strictEqual(gitDiffCached(root), stagedBefore, 'sync must not stage');
+```
+
+**M13 and M14 need baselines, or their mutations have nothing to turn red.**
+Add both to the Task 10 test file before running the matrix:
+
+```js
+// M13 baseline — a degraded census must not manufacture an ORPHANED.
+{
+    const root = createTempRuntimeRoot('m13-degraded-list').workspaceRoot;
+    writeText(path.join(root, 'docs', 'specs', 'u.md'),
+        ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+    runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+        '--choice', 'accepted-debt', '--reason', 'r']);
+    const ir = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    ensureParent(ir);
+    fs.writeFileSync(ir, 'not json');                      // degrade the round
+    const out = runCli(root, ['disposition', 'list', '--json']).stdout;
+    const parsed = JSON.parse(out);
+    assert.strictEqual(parsed.complete, false, 'the degraded census is reported as such');
+    assert.ok(parsed.entries.every(e => e.status !== 'orphaned'),
+        'a degraded census must never report orphaned — that is proven absence, not silence');
+}
+
+// M14 baseline — a tombstone written by the meta-commit's own post-commit hook
+// must not be reported as a completed closure.
+{
+    const root = createTempRuntimeRoot('m14-post-meta').workspaceRoot;
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', 'Evo Test']);
+    runGit(root, ['config', 'user.email', 'evo@example.com']);
+    writeText(path.join(root, '.evo-lite', 'dispositions.json'),
+        `${JSON.stringify({ version: 'evo-disposition-ledger@1', entries: [] }, null, 2)}\n`);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-m', 'baseline']);
+    // Simulate the hook dirtying the ledger after the meta-commit landed.
+    fs.appendFileSync(path.join(root, '.evo-lite', 'dispositions.json'), '');
+    fs.writeFileSync(path.join(root, '.evo-lite', 'dispositions.json'),
+        `${JSON.stringify({ version: 'evo-disposition-ledger@1',
+            entries: [{ findingId: 'R005:task:x', ruleId: 'R005', ruleVersion: 1,
+                fingerprint: 'a'.repeat(64), choice: 'accepted-debt', reason: 'r',
+                at: '2026-08-11T00:00:00Z', orphanedAt: '2026-08-11T01:00:00Z' }] }, null, 2)}\n`);
+    const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+    assert.strictEqual(led.dispositionsDirty(root), true,
+        'the fixture leaves a genuinely uncommitted tombstone');
+    const track = runCli(root, ['context', 'track', '--mechanism', 'M14Probe', 'probe']);
+    assert.match(track.stdout, /closure: partial|dispositions: pending/,
+        'an uncommitted tombstone must prevent a complete-closure claim');
+}
 ```
 
 **M12 needs a deterministic fault, not a fixture.** `parseSpecFile` is a
