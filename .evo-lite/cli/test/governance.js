@@ -5637,6 +5637,52 @@ async function runGovernanceTests() {
             console.log('✅ T-disposition-ledger passed');
         }
 
+        console.log('T-disposition-resolve. CURRENT / STALE / ORPHANED, and tombstones are terminal ...');
+        {
+            const res = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'resolve'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+
+            const finding = { id: 'unknown-status:spec:x', ruleId: 'unknown-status', ruleVersion: 1,
+                factInputs: { declaredStatus: 'closed-experimental' } };
+            const print = fp.computeFingerprint(finding);
+            const entry = { findingId: finding.id, ruleId: 'unknown-status', ruleVersion: 1,
+                fingerprint: print, choice: 'not-applicable', reason: 'r', at: '2026-08-11T00:00:00Z' };
+            let ledger = led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, entry);
+
+            assert.strictEqual(res.effectiveDisposition(finding, ledger).choice, 'not-applicable',
+                'matching fingerprint resolves to CURRENT');
+            assert.strictEqual(res.annotate(finding, ledger).disposition.status, 'current');
+
+            const moved = { ...finding, factInputs: { declaredStatus: 'done' } };
+            assert.strictEqual(res.effectiveDisposition(moved, ledger), null,
+                'a changed fact voids the decision');
+            assert.strictEqual(res.annotate(moved, ledger).disposition.status, 'stale',
+                'stale is annotated, not erased — the reader must see a decision lapsed');
+
+            const bumped = { ...finding, ruleVersion: 2 };
+            assert.strictEqual(res.effectiveDisposition(bumped, ledger), null,
+                'a ruleVersion bump voids every disposition for that rule');
+
+            // NEGATIVE CONTROL — the regression path. Tombstone, then re-emit an
+            // IDENTICAL finding with an IDENTICAL fingerprint.
+            let tombstoned = led.upsertEntry(ledger, { ...entry, orphanedAt: '2026-09-01T00:00:00Z',
+                orphanedHead: '1f2e3d4' });
+            assert.strictEqual(res.effectiveDisposition(finding, tombstoned), null,
+                'a tombstoned entry NEVER returns to CURRENT, even on an identical recurrence');
+            assert.strictEqual(res.annotate(finding, tombstoned).disposition, null,
+                'the recurrence is presented as undispositioned, demanding a fresh decision');
+
+            assert.strictEqual(res.classifyEntry(entry, new Set([finding.id])), 'current');
+            assert.strictEqual(res.classifyEntry(entry, new Set()), 'orphaned',
+                'absent from the emitted set means orphaned');
+
+            const untouched = { ...finding };
+            res.annotate(untouched, ledger);
+            assert.ok(!('disposition' in untouched), 'annotate must not mutate its input');
+            console.log('✅ T-disposition-resolve passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
