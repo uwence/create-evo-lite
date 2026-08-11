@@ -1623,7 +1623,9 @@ keeps arguing against. At the top of `memory.service.js`:
 
 ```js
 const { dispositionsDirty } = require('./disposition/ledger');
-const DISPOSITIONS_PATH = '.evo-lite/dispositions.json';
+// Already workspace-relative and git-ready. The name warns against piping it
+// through toWorkspaceGitPath(), whose contract is absolute -> relative.
+const DISPOSITIONS_GIT_PATH = '.evo-lite/dispositions.json';
 ```
 
 Then, after line 3113:
@@ -1668,10 +1670,20 @@ result.runtime.files = [
 // A pending tombstone is part of the runtime state this commit closes.
 // Excluding it lets `mem commit` claim durability while a decision that
 // another machine cannot see is still sitting unstaged.
+//
+// NOTE the path type. toWorkspaceGitPath() is path.relative(workspaceRoot, x)
+// and its two existing arguments — ACTIVE_CONTEXT_PATH and
+// archiveResult.filePath — are ABSOLUTE. Feeding it an already-relative path
+// would relativize a cwd-relative string against the workspace root and yield a
+// broken pathspec, so the constant goes in as-is.
 if (dispositionsDirty(workspaceRoot)) {
-    result.runtime.files.push(toWorkspaceGitPath(DISPOSITIONS_PATH));
+    result.runtime.files.push(DISPOSITIONS_GIT_PATH);
 }
 ```
+
+with `const DISPOSITIONS_GIT_PATH = '.evo-lite/dispositions.json';` declared
+beside `ACTIVE_CONTEXT_PATH`. The name says `GIT_PATH` precisely so nobody later
+pipes it through `toWorkspaceGitPath()`.
 
 **That still is not closure, because of a second-order effect.** The runtime
 meta-commit is itself a commit, so it fires `post-commit`, which now runs
@@ -1688,7 +1700,7 @@ So re-check after the meta-commit returns, and close it once more:
 // One retry, then honesty: never report a closure we did not achieve.
 if (dispositionsDirty(workspaceRoot)) {
     try {
-        runGit(['add', '--', DISPOSITIONS_PATH]);
+        runGit(['add', '--', DISPOSITIONS_GIT_PATH]);
         runGit(['commit', '-m', 'chore(meta): close disposition tombstones written by post-commit']);
     } catch (_) { /* fall through to the dirty check below */ }
 }
@@ -1745,8 +1757,10 @@ Add to the Task 9 test:
     const svc = require(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'));
     assert.ok(typeof svc.commitWithContext === 'function');
     const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'), 'utf8');
-    assert.ok(/runtime\.files\.push\([^)]*DISPOSITIONS_PATH/.test(src),
+    assert.ok(/runtime\.files\.push\(\s*DISPOSITIONS_GIT_PATH\s*\)/.test(src),
         'a dirty dispositions.json must join the runtime commit file set, not merely be warned about');
+    assert.ok(!/toWorkspaceGitPath\(\s*DISPOSITIONS_GIT_PATH/.test(src),
+        'the ledger path is already workspace-relative — relativizing it again yields a broken pathspec');
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1822,11 +1836,13 @@ For each row: apply the mutation to BOTH mirrors, run the scope, record the fail
 ```js
     // sync writes the file and stops. Implicit git mutation from a hook is a
     // worse defect than the window it would close.
-    const headBefore = gitRevParse(root, 'HEAD');
-    const stagedBefore = gitDiffCached(root);
+    // harness runGit(cwd, args) already trims, so these compare cleanly.
+    const headBefore = runGit(root, ['rev-parse', 'HEAD']);
+    const stagedBefore = runGit(root, ['diff', '--cached', '--name-only']);
     runCli(root, ['disposition', 'sync']);
-    assert.strictEqual(gitRevParse(root, 'HEAD'), headBefore, 'sync must not commit');
-    assert.strictEqual(gitDiffCached(root), stagedBefore, 'sync must not stage');
+    assert.strictEqual(runGit(root, ['rev-parse', 'HEAD']), headBefore, 'sync must not commit');
+    assert.strictEqual(runGit(root, ['diff', '--cached', '--name-only']), stagedBefore,
+        'sync must not stage');
 ```
 
 **M13 and M14 need baselines, or their mutations have nothing to turn red.**
@@ -1834,24 +1850,44 @@ Add both to the Task 10 test file before running the matrix:
 
 ```js
 // M13 baseline — a degraded census must not manufacture an ORPHANED.
+//
+// The dispositioned finding MUST come from the producer we are about to break.
+// An `unknown-status:spec:*` entry would survive a broken plan-ir untouched,
+// byId would still hit, and the `complete ? 'orphaned' : 'unobserved'` line
+// would never execute — the guard would be unreachable and the mutation dead.
+// R005 is derived from plan-ir, so breaking plan-ir makes it genuinely absent.
 {
     const root = createTempRuntimeRoot('m13-degraded-list').workspaceRoot;
-    writeText(path.join(root, 'docs', 'specs', 'u.md'),
-        ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
-    runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
-        '--choice', 'accepted-debt', '--reason', 'r']);
     const ir = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
     ensureParent(ir);
-    fs.writeFileSync(ir, 'not json');                      // degrade the round
-    const out = runCli(root, ['disposition', 'list', '--json']).stdout;
-    const parsed = JSON.parse(out);
+    fs.writeFileSync(ir, `${JSON.stringify({
+        version: 'evo-plan-ir@1', specs: [], plans: [{ id: 'plan:p', status: 'active' }],
+        tasks: [{ id: 'task:t1', linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' }],
+        warnings: [],
+    }, null, 2)}\n`);
+
+    const before = JSON.parse(runCli(root, ['disposition', 'list', '--json']).stdout);
+    assert.strictEqual(before.complete, true, 'the intact fixture is a complete census');
+    runCli(root, ['disposition', 'set', 'R005:task:t1', '--choice', 'accepted-debt', '--reason', 'r']);
+
+    fs.writeFileSync(ir, 'not json');                      // degrade THAT producer
+    const parsed = JSON.parse(runCli(root, ['disposition', 'list', '--json']).stdout);
     assert.strictEqual(parsed.complete, false, 'the degraded census is reported as such');
-    assert.ok(parsed.entries.every(e => e.status !== 'orphaned'),
-        'a degraded census must never report orphaned — that is proven absence, not silence');
+    const entry = parsed.entries.find(e => e.findingId === 'R005:task:t1');
+    assert.strictEqual(entry.status, 'unobserved',
+        'a finding we could not look for is unobserved — ORPHANED means a complete census PROVED absence');
 }
 
-// M14 baseline — a tombstone written by the meta-commit's own post-commit hook
-// must not be reported as a completed closure.
+// M14 baseline — the post-meta-commit re-check inside commitWithContext.
+//
+// This fixture MUST run `mem commit`. A `context track` probe would assert on
+// formatTrackResult + dispositionsDirty and would stay green even after the
+// re-check is deleted, because the ledger is dirty for its own reasons — the
+// mutation would be decorative, exactly like the dead M11.
+//
+// Determinism comes from a test-only post-commit hook that dirties the ledger
+// after EVERY commit, so the code commit, the meta-commit and the bounded
+// closure commit each leave it dirty and the final re-check must report partial.
 {
     const root = createTempRuntimeRoot('m14-post-meta').workspaceRoot;
     runGit(root, ['init']);
@@ -1859,21 +1895,26 @@ Add both to the Task 10 test file before running the matrix:
     runGit(root, ['config', 'user.email', 'evo@example.com']);
     writeText(path.join(root, '.evo-lite', 'dispositions.json'),
         `${JSON.stringify({ version: 'evo-disposition-ledger@1', entries: [] }, null, 2)}\n`);
+    writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 1;\n');
     runGit(root, ['add', '.']);
     runGit(root, ['commit', '-m', 'baseline']);
-    // Simulate the hook dirtying the ledger after the meta-commit landed.
-    fs.appendFileSync(path.join(root, '.evo-lite', 'dispositions.json'), '');
-    fs.writeFileSync(path.join(root, '.evo-lite', 'dispositions.json'),
-        `${JSON.stringify({ version: 'evo-disposition-ledger@1',
-            entries: [{ findingId: 'R005:task:x', ruleId: 'R005', ruleVersion: 1,
-                fingerprint: 'a'.repeat(64), choice: 'accepted-debt', reason: 'r',
-                at: '2026-08-11T00:00:00Z', orphanedAt: '2026-08-11T01:00:00Z' }] }, null, 2)}\n`);
+
+    const hook = path.join(root, '.git', 'hooks', 'post-commit');
+    ensureParent(hook);
+    fs.writeFileSync(hook, '#!/bin/sh\nprintf "\\n" >> .evo-lite/dispositions.json\n');
+    fs.chmodSync(hook, 0o755);
+
+    writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+    runGit(root, ['add', '--', 'src/feature.js']);
+    const out = runCli(root, ['commit', 'M14 probe closure',
+        '--code-message', 'feat: probe', '--mechanism', 'M14Probe']);
+
     const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
     assert.strictEqual(led.dispositionsDirty(root), true,
-        'the fixture leaves a genuinely uncommitted tombstone');
-    const track = runCli(root, ['context', 'track', '--mechanism', 'M14Probe', 'probe']);
-    assert.match(track.stdout, /closure: partial|dispositions: pending/,
-        'an uncommitted tombstone must prevent a complete-closure claim');
+        'the hook keeps the ledger dirty after every commit, including the closure retry');
+    assert.match(out.stdout + out.stderr, /partial/,
+        'commitWithContext must report partial when a tombstone survives the bounded retry — '
+        + 'never claim a durability it did not achieve');
 }
 ```
 
