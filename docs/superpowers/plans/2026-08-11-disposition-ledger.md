@@ -392,7 +392,9 @@ git commit -m "feat(disposition): git-tracked ledger with sorted atomic writes a
 - Consumes: `computeFingerprint` (Task 1), `readLedger` (Task 2)
 - Produces: `effectiveDisposition(finding, ledger) -> entry | null`
 - Produces: `annotate(finding, ledger) -> finding` — attaches `.disposition` = `{status:'current'|'stale', …}` or `null`
-- Produces: `classifyEntry(entry, emittedIds) -> 'current'|'stale'|'orphaned'`
+- Produces: `classifyEntry(entry, emittedIds) -> 'current'|'orphaned'` — membership only. It
+  can never return `'stale'`: staleness needs the live `factInputs` to recompute a fingerprint,
+  and only `annotate` has them. Consumers must not branch on a `'stale'` value from here.
 
 A finding is `{ id, ruleId, ruleVersion, factInputs }`. The `.disposition` field is written onto a shallow copy; the input is never mutated.
 
