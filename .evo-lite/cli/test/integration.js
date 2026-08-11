@@ -3595,7 +3595,7 @@ async function runIntegrationTests() {
                 runPostCommitHook(repo.projectRoot);
 
                 const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
-                assert.ok(findings.some(f => f.id === 'R006:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
+                assert.ok(findings.some(f => f.id === 'R006:file:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
             } finally {
                 fs.rmSync(repo.projectRoot, { recursive: true, force: true });
             }
@@ -3641,7 +3641,7 @@ async function runIntegrationTests() {
                 runPostCommitHook(repo.projectRoot);
 
                 const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
-                assert.ok(findings.some(f => f.id === 'R006:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
+                assert.ok(findings.some(f => f.id === 'R006:file:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
             } finally {
                 fs.rmSync(repo.projectRoot, { recursive: true, force: true });
             }
