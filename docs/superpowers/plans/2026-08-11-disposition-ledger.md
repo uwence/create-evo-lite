@@ -307,7 +307,20 @@ function upsertEntry(ledger, entry) {
     return { version: LEDGER_VERSION, entries };
 }
 
-module.exports = { LEDGER_VERSION, CHOICES, ledgerPath, readLedger, writeLedger, upsertEntry };
+// Lives here, not in each consumer: `list`, `verify`, `commitWithContext` and
+// `context track` all need it, and three copies of a git-status predicate is
+// how they drift apart.
+function dispositionsDirty(projectRoot) {
+    try {
+        return require('child_process')
+            .execFileSync('git', ['status', '--porcelain', '--', '.evo-lite/dispositions.json'],
+                { cwd: projectRoot, encoding: 'utf8' }).trim().length > 0;
+    } catch (_) { return false; }   // not a git repo
+}
+
+module.exports = {
+    LEDGER_VERSION, CHOICES, ledgerPath, readLedger, writeLedger, upsertEntry, dispositionsDirty,
+};
 ```
 
 Add the gitignore exception immediately after line 16 (`!.evo-lite/memory-engine.json`):
@@ -609,7 +622,7 @@ is no `source` variable to read. Hoist it first — immediately before the
 
 ```js
 const source = {
-    directoryReadable: rootsReadable,
+    directoryReadable: discovery.directoryReadable,
     discoveredFileCount,
     parsedSpecCount: specs.length,
     discoveredMarkdownFileCount: discovery.files.length,
@@ -1096,14 +1109,23 @@ console.log('T-disposition-cli. set validates its inputs and never trusts the ca
     assert.strictEqual(entry.until, '2026-09-01');
     assert.ok('head' in entry, 'provenance head is recorded (never part of the fingerprint)');
 
-    // A working-tree R006 has no stable occurrence identity. The committed
-    // observation is the only id space disposition works in, so `set` must
-    // refuse rather than silently store another event's fingerprint.
-    fs.writeFileSync(path.join(root, 'src-unlinked.js'), 'x');
-    const wtR006 = run(['set', 'R006:file:src-unlinked.js',
-        '--choice', 'accepted-debt', '--reason', 'x']);
-    assert.notStrictEqual(wtR006.status, 0,
-        'an uncommitted R006 is not dispositionable and set must reject it');
+    // SHADOW AMBIGUITY. The reachable case is not "an uncommitted file" — that
+    // one is simply absent from the committed census and would be rejected by
+    // the `no such finding` branch, making the guard unreachable and the
+    // mutation dead. The real case is the SAME path carrying a committed R006
+    // AND a further uncommitted change: one findingId, two occurrences.
+    gitInit(root);
+    fs.writeFileSync(path.join(root, 'src', 'shadow.js'), 'v1');
+    gitCommitAll(root, 'add unlinked file');          // committed R006 now exists
+    fs.writeFileSync(path.join(root, 'src', 'shadow.js'), 'v2');   // worktree R006 too
+
+    const committed = collectAllFindings(root).findings.find(f => f.id === 'R006:file:src/shadow.js');
+    assert.ok(committed, 'the committed occurrence IS in the disposition id space');
+    const shadowed = run(['set', 'R006:file:src/shadow.js', '--choice', 'accepted-debt', '--reason', 'x']);
+    assert.notStrictEqual(shadowed.status, 0,
+        'one findingId with two live occurrences must be refused, not silently bound to the committed one');
+    assert.match(shadowed.stderr + shadowed.stdout, /working tree/,
+        'the refusal explains which ambiguity to resolve');
 
     const listed = run(['list', '--json']);
     assert.ok(listed.stdout.includes('2026-09-01'),
@@ -1133,7 +1155,7 @@ Create `templates/cli/disposition/commands.js`:
 ```js
 'use strict';
 
-const { readLedger, writeLedger, upsertEntry, CHOICES } = require('./ledger');
+const { readLedger, writeLedger, upsertEntry, CHOICES, dispositionsDirty } = require('./ledger');
 const { computeFingerprint } = require('./fingerprint');
 
 // FROZEN OBSERVATION MODE: every disposition command reads the COMMITTED
@@ -1144,17 +1166,41 @@ const { computeFingerprint } = require('./fingerprint');
 // in ordinary `plan gaps` output; they simply never enter governance decisions.
 const OBSERVATION = Object.freeze({ lastCommit: true });
 
+// Parsing is not validating. `{}` is valid JSON and would sail through
+// `!planIR`, and `scanPlanning()` emits a perfectly well-formed evo-plan-ir@1
+// even when individual specs or plans FAILED to parse — it records those as
+// `level:'error'` warnings. Either case would let sync tombstone from a census
+// that never actually completed.
 function safeLoadPlanIR(projectRoot) {
     const fs = require('fs'); const path = require('path');
     const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
     if (!fs.existsSync(irPath)) return { planIR: null, error: 'plan-ir.json is missing — run `mem plan scan`' };
+
+    let ir;
     try {
-        return { planIR: JSON.parse(fs.readFileSync(irPath, 'utf8')), error: null };
+        ir = JSON.parse(fs.readFileSync(irPath, 'utf8'));
     } catch (err) {
-        // A corrupt IR must degrade the census, never escape as an exception —
-        // an unhandled throw here would skip the fail-closed guard entirely.
+        // Must degrade the census, never escape — an unhandled throw here would
+        // skip the fail-closed guard entirely.
         return { planIR: null, error: `plan-ir.json is unreadable: ${err && err.message ? err.message : String(err)}` };
     }
+    if (!ir || ir.version !== 'evo-plan-ir@1') {
+        return { planIR: null, error: `plan-ir.json version mismatch: ${ir && ir.version}` };
+    }
+    if (!Array.isArray(ir.specs) || !Array.isArray(ir.plans) || !Array.isArray(ir.tasks)) {
+        return { planIR: null, error: 'plan-ir.json is missing its specs/plans/tasks arrays' };
+    }
+    // Same classification as the spec census (Task 4): `level:'error'` means a
+    // spec or plan that was MEANT to parse blew up, so entries derived from it
+    // are missing. `level:'warning'` covers the expected id-less compatibility
+    // docs and must not block — gating on those would lock sync forever.
+    const fatal = (ir.warnings || []).filter(w => w && w.level === 'error');
+    if (fatal.length) {
+        // The IR is still returned: its findings remain useful for reporting.
+        // Only the ability to TOMBSTONE is withdrawn.
+        return { planIR: ir, error: `plan-ir has ${fatal.length} fatal scan error(s): ${fatal[0].message}` };
+    }
+    return { planIR: ir, error: null };
 }
 
 function collectAllFindings(projectRoot) {
@@ -1210,6 +1256,22 @@ function registerDispositionCommands(program) {
             if (finding.dispositionable === false) {
                 throw new Error(`${findingId} has no stable occurrence identity and cannot be dispositioned`);
             }
+            // WORKING-TREE SHADOW GUARD. The committed census is the id space,
+            // but the SAME findingId can exist right now as a different
+            // occurrence in the working tree — and `plan gaps` shows that one by
+            // default. A user reading it would `set` this id and silently
+            // disposition the committed event instead. Refuse until the
+            // ambiguity is resolved; the fix is one commit away.
+            if (finding.ruleId === 'R006') {
+                const { runPlanningDriftCensus } = require('../planning/gaps');
+                const { planIR } = safeLoadPlanIR(projectRoot);
+                const shadow = runPlanningDriftCensus(projectRoot, planIR, {})   // worktree mode
+                    .findings.find(f => f.id === findingId);
+                if (shadow) {
+                    throw new Error(`${findingId} also has an uncommitted change in the working tree — `
+                        + 'commit or revert it first, so the decision binds to exactly one occurrence');
+                }
+            }
             let head = null;
             try {
                 head = require('child_process').execFileSync('git', ['rev-parse', 'HEAD'],
@@ -1240,18 +1302,31 @@ function registerDispositionCommands(program) {
         const projectRoot = root();
         // findings are already annotated by collectAllFindings — status is READ
         // from the shared resolver's verdict, never inferred here.
-        const { findings } = collectAllFindings(projectRoot);
+        const { findings, complete, errors } = collectAllFindings(projectRoot);
         const byId = new Map(findings.map(f => [f.id, f]));
         let rows = readLedger(projectRoot).entries.map((e) => {
             if (e.orphanedAt) return { ...e, status: 'orphaned' };
             const f = byId.get(e.findingId);
-            if (!f) return { ...e, status: 'orphaned' };
-            return { ...e, status: f.disposition ? f.disposition.status : 'stale' };
+            if (f) return { ...e, status: f.disposition ? f.disposition.status : 'stale' };
+            // Not observed this round. Calling that `orphaned` would be the same
+            // fail-open the whole B4 amendment exists to prevent: ORPHANED means
+            // a COMPLETE census proved absence, not that a degraded one missed it.
+            return { ...e, status: complete ? 'orphaned' : 'unobserved' };
         });
         if (opts.stale) rows = rows.filter(r => r.status === 'stale');
-        if (opts.json) { console.log(JSON.stringify(rows, null, 2)); return; }
+        if (opts.json) {
+            console.log(JSON.stringify({ complete, errors, entries: rows }, null, 2));
+            return;
+        }
+        if (!complete) {
+            console.log('⚠️ census degraded — 未观察到的条目按 unobserved 处理，不判定为 orphaned');
+            for (const e of errors) console.log(`   ${e}`);
+        }
+        if (dispositionsDirty(projectRoot)) {
+            console.log('⚠️ dispositions.json 有未提交改动 — tombstone 尚未持久化，其他机器看不到');
+        }
         for (const r of rows) {
-            console.log(`${r.status.padEnd(8)} ${r.choice.padEnd(15)} ${r.findingId}`
+            console.log(`${r.status.padEnd(10)} ${r.choice.padEnd(15)} ${r.findingId}`
                 + (r.until ? `  — until ${r.until}` : ''));
         }
     });
@@ -1568,9 +1643,65 @@ if (dispositionsDirty(getWorkspaceRoot())) {
 ```
 
 with `const DISPOSITIONS_PATH = '.evo-lite/dispositions.json';` beside the
-existing `ACTIVE_CONTEXT_PATH` constant. `context track` does not commit, so it
-keeps reporting only — but the pending line above must appear in its output too,
-so a partial closure is never mistaken for a complete one.
+existing `ACTIVE_CONTEXT_PATH` constant, and `dispositionsDirty` imported from
+`./disposition/ledger`.
+
+**That still is not closure, because of a second-order effect.** The runtime
+meta-commit is itself a commit, so it fires `post-commit`, which now runs
+`disposition sync`. That sync can tombstone something *because of* the
+meta-commit — R006 is the easy case: the code commit's occurrence is no longer
+`HEAD` once the meta-commit lands, so its finding disappears and its entry is
+tombstoned right there. The ledger is dirty again, immediately after we staged
+it, and the current plan would report `runtime.status = 'written'`.
+
+So re-check after the meta-commit returns, and close it once more:
+
+```js
+// The meta-commit fired post-commit, which may have written a NEW tombstone.
+// One retry, then honesty: never report a closure we did not achieve.
+if (dispositionsDirty(workspaceRoot)) {
+    try {
+        runGit(['add', '--', DISPOSITIONS_PATH]);
+        runGit(['commit', '-m', 'chore(meta): close disposition tombstones written by post-commit']);
+    } catch (_) { /* fall through to the dirty check below */ }
+}
+if (dispositionsDirty(workspaceRoot)) {
+    result.runtime.status = 'partial';
+    result.runtime.message = 'disposition tombstone still uncommitted after closure retry — '
+        + 'other machines will not see it; run `git add .evo-lite/dispositions.json` and commit';
+}
+```
+
+A single retry is deliberate: the closure commit touches only the ledger, so its
+own post-commit hook has no unlinked-file or context change to react to and
+cannot cascade. If it is *still* dirty after that, something unexpected is
+writing, and `partial` is the truthful answer.
+
+`context track` does not commit at all, so it can only report — but it must
+report. `formatTrackResult` currently computes:
+
+```js
+const closureComplete = result.status.archive === 'written'
+    && result.status.context === 'updated'
+    && ['resolved', 'not_requested'].includes(result.status.resolve);
+```
+
+which would keep printing `closure: complete` while a tombstone sits unstaged.
+Extend it in `templates/cli/memory.js:133`:
+
+```js
+const ledgerPending = require('./disposition/ledger').dispositionsDirty(getWorkspaceRoot());
+const closureComplete = result.status.archive === 'written'
+    && result.status.context === 'updated'
+    && ['resolved', 'not_requested'].includes(result.status.resolve)
+    && !ledgerPending;
+```
+
+and add a line to the printed block so the reason is visible, not just the verdict:
+
+```js
+`- dispositions: ${ledgerPending ? 'pending (uncommitted tombstone)' : 'clean'}`,
+```
 
 Add to the Task 9 test:
 
@@ -1641,11 +1772,49 @@ For each row: apply the mutation to BOTH mirrors, run the scope, record the fail
 | M5 | in `fingerprint.js`, drop `ruleVersion` from the payload | `ruleVersion participates in the fingerprint` |
 | M6 | in `commands.js`, accept `deferred` without `--until` | `deferred without until is rejected` |
 | M7 | in `ledger.js`, make `upsertEntry` push without filtering | `set replaces rather than appends` |
-| M8 | in `sync`, add `git add` after `writeLedger` | index must stay clean — add an assertion if none catches it |
+| M8 | in `sync`, add `git add` after `writeLedger` | `sync neither stages nor commits` — see the assertion below |
 | M9 | in `gaps.js`, add the live `git.headSha` to R013's `factInputs` | `live HEAD moving alone must NOT change the R013 fingerprint` |
 | M10 | in `gaps.js`, drop `occurrence` from R006's `factInputs` | `C3 fingerprint != C1` — apply `A→B`, `B→A`, `A→B` and compare the first and third |
-| M11 | in `commands.js`, delete the `dispositionable === false` guard in `set` | `an uncommitted R006 is not dispositionable and set must reject it` |
-| M12 | in `spec-portfolio.js`, relax `census.complete` to `errors.length === 0` | a `spec parse threw` warning must still block the round — add a fixture whose spec body throws |
+| M11 | in `commands.js`, delete the **working-tree shadow guard** in `set` | `one findingId with two live occurrences must be refused` — the fixture must have BOTH a committed and an uncommitted change on the same path |
+| M12 | in `spec-portfolio.js`, relax `census.complete` to `errors.length === 0` | `a parse failure under the compatibility root blocks the round` — see the injection below |
+| M13 | in `list`, replace `complete ? 'orphaned' : 'unobserved'` with a bare `'orphaned'` | `a degraded census must not report orphaned` |
+| M14 | in `commitWithContext`, delete the post-meta-commit re-check | `runtime.status is partial when a tombstone remains uncommitted` |
+
+**M8 needs its assertion written now, not improvised.** Add to the Task 8 test:
+
+```js
+    // sync writes the file and stops. Implicit git mutation from a hook is a
+    // worse defect than the window it would close.
+    const headBefore = gitRevParse(root, 'HEAD');
+    const stagedBefore = gitDiffCached(root);
+    runCli(root, ['disposition', 'sync']);
+    assert.strictEqual(gitRevParse(root, 'HEAD'), headBefore, 'sync must not commit');
+    assert.strictEqual(gitDiffCached(root), stagedBefore, 'sync must not stage');
+```
+
+**M12 needs a deterministic fault, not a fixture.** `parseSpecFile` is a
+frontmatter/regex parser and will not throw on a merely malformed body, so the
+`spec parse threw` branch is unreachable from static content. Inject it instead:
+
+```js
+    // Force the one path that produces `sourceWarnings: spec parse threw` — a
+    // file under the compatibility root that WAS meant to be a spec and blew up.
+    const realRead = fs.readFileSync;
+    const victim = path.join(root, 'docs', 'superpowers', 'specs', 'boom.md');
+    writeText(victim, ['---', 'id: spec:boom', 'status: done', '---', '', '# B', ''].join('\n'));
+    fs.readFileSync = function (p, ...rest) {
+        if (String(p) === victim) throw new Error('injected read fault');
+        return realRead.call(this, p, ...rest);
+    };
+    try {
+        const reg = sp.buildSpecRegistry(root, { write: false });
+        assert.strictEqual(reg.census.complete, false,
+            'a parse failure under the compatibility root blocks the round, even though '
+            + 'the id-less design docs beside it do not');
+    } finally {
+        fs.readFileSync = realRead;
+    }
+```
 
 - [ ] **Step 3: Record the matrix**
 
