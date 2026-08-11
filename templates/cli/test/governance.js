@@ -5576,6 +5576,43 @@ async function runGovernanceTests() {
             console.log('✅ T-disposition-fingerprint passed');
         }
 
+        console.log('T-disposition-ledger. Ledger is sorted, single-entry-per-finding, atomic ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-ledger').workspaceRoot;
+
+            assert.deepStrictEqual(led.readLedger(root), { version: led.LEDGER_VERSION, entries: [] },
+                'a missing ledger reads as empty, never throws');
+
+            let ledger = { version: led.LEDGER_VERSION, entries: [] };
+            ledger = led.upsertEntry(ledger, { findingId: 'R008:task:z', ruleId: 'R008', ruleVersion: 1,
+                fingerprint: 'f'.repeat(64), choice: 'accepted-debt', reason: 'r', at: '2026-08-11T00:00:00Z' });
+            ledger = led.upsertEntry(ledger, { findingId: 'R005:task:a', ruleId: 'R005', ruleVersion: 1,
+                fingerprint: 'a'.repeat(64), choice: 'wont-fix', reason: 'r', at: '2026-08-11T00:00:00Z' });
+            led.writeLedger(root, ledger);
+
+            const raw = fs.readFileSync(led.ledgerPath(root), 'utf8');
+            assert.ok(raw.endsWith('\n'), 'ledger ends with a newline');
+            assert.ok(raw.includes('\n  "version"'), 'ledger uses 2-space indent');
+            const onDisk = JSON.parse(raw);
+            assert.deepStrictEqual(onDisk.entries.map(e => e.findingId), ['R005:task:a', 'R008:task:z'],
+                'entries are sorted by findingId so diffs and merges stay sane');
+
+            let again = led.upsertEntry(led.readLedger(root), { findingId: 'R008:task:z', ruleId: 'R008',
+                ruleVersion: 1, fingerprint: 'b'.repeat(64), choice: 'deferred', reason: 'r2',
+                until: 'later', at: '2026-08-12T00:00:00Z' });
+            assert.strictEqual(again.entries.filter(e => e.findingId === 'R008:task:z').length, 1,
+                'set replaces rather than appends — a findingId can never hold two live decisions');
+            assert.strictEqual(again.entries.find(e => e.findingId === 'R008:task:z').choice, 'deferred',
+                'the replacement wins');
+
+            assert.throws(() => led.readLedger.call(null, (() => {
+                fs.writeFileSync(led.ledgerPath(root), '{"version":"wrong","entries":[]}\n');
+                return root;
+            })()), /evo-disposition-ledger@1/, 'a wrong schema version is rejected, not silently accepted');
+            console.log('✅ T-disposition-ledger passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
