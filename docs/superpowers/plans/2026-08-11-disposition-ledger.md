@@ -69,9 +69,17 @@ console.log('T-disposition-fingerprint. Canonical hashing is stable across key a
     assert.notStrictEqual(a, other, 'ruleId participates in the fingerprint');
 
     assert.strictEqual(
-        fp.canonicalJson({ p: 'a\\b\\c' }),
-        fp.canonicalJson({ p: 'a/b/c' }),
-        'paths are normalized to forward slashes before hashing');
+        fp.canonicalJson({ path: 'a\\b\\c' }),
+        fp.canonicalJson({ path: 'a/b/c' }),
+        'PATH keys are normalized to forward slashes before hashing');
+    assert.notStrictEqual(
+        fp.canonicalJson({ reason: 'a\\b' }),
+        fp.canonicalJson({ reason: 'a/b' }),
+        'a non-path string is NOT path-normalized — blanket rewriting would corrupt prose and shas');
+    assert.strictEqual(
+        fp.canonicalJson({ lastTouchedAt: '2026-08-11T10:00:00+08:00' }),
+        fp.canonicalJson({ lastTouchedAt: '2026-08-11T02:00:00Z' }),
+        'timestamps normalize to UTC — git %cI keeps a local offset that differs per machine');
     console.log('✅ T-disposition-fingerprint passed');
 }
 ```
@@ -99,8 +107,22 @@ const SET_KEYS = Object.freeze(new Set([
     'linkedFiles', 'notDonePlans', 'taskStatuses', 'linkedPlans',
 ]));
 
-function normalizeScalar(value) {
-    if (typeof value === 'string') return value.replace(/\\/g, '/');
+// Only these keys are treated as paths. Blanket `\ -> /` on every string would
+// silently rewrite prose, ids and shas that merely contain a backslash.
+const PATH_KEYS = Object.freeze(new Set(['path', 'file', 'linkedFiles']));
+
+// Only these are normalized to UTC. `lastTouchedAt` arrives from
+// `git log --format=%cI`, which keeps the committer's local offset — two
+// machines would otherwise fingerprint the same instant differently.
+const TIMESTAMP_KEYS = Object.freeze(new Set(['lastTouchedAt', 'at', 'orphanedAt']));
+
+function normalizeScalar(value, key) {
+    if (typeof value !== 'string') return value;
+    if (PATH_KEYS.has(key)) return value.replace(/\\/g, '/');
+    if (TIMESTAMP_KEYS.has(key)) {
+        const t = Date.parse(value);
+        return Number.isNaN(t) ? value : new Date(t).toISOString();
+    }
     return value;
 }
 
@@ -115,7 +137,7 @@ function canonicalize(value, key) {
         for (const k of Object.keys(value).sort()) out[k] = canonicalize(value[k], k);
         return out;
     }
-    return normalizeScalar(value);
+    return normalizeScalar(value, key);
 }
 
 function canonicalJson(value) {
@@ -581,21 +603,65 @@ Immediately after the `specs.push({…})` call, attach findings and build the ce
 for (const s of specs) s.findings = buildSpecFindings(s, s.size);
 ```
 
-In the registry object add:
+`source` is currently built inline inside the `registry` object literal, so there
+is no `source` variable to read. Hoist it first — immediately before the
+`const registry = {` line — and have the literal reference it:
 
 ```js
+const source = {
+    directoryReadable: rootsReadable,
+    discoveredFileCount,
+    parsedSpecCount: specs.length,
+    discoveredMarkdownFileCount: discovery.files.length,
+    roots: discovery.roots,
+    warnings: sourceWarnings,
+    portfolioSourceDrift: specs.length === 0 && Array.isArray(ir.specs) && ir.specs.length > 0,
+};
+```
+
+(Keep the existing expressions verbatim; only their location changes. `source:
+source` then replaces the inline literal.)
+
+Then add the census. **The predicate below is the result of reading how the two
+roots actually behave — do not simplify it.**
+
+```js
+// `sourceWarnings` mixes two very different things:
+//   'no usable id: spec:...'  — a design doc under docs/superpowers/specs/.
+//                               Expected. There are 9 of them today, and they
+//                               will never be specs.
+//   'spec parse threw: ...'   — a file that WAS meant to be a spec and blew up.
+//                               A spec silently vanished from the census.
+// Gating on warnings.length === 0 (or on discoveredMarkdownFileCount) would
+// therefore mark this repo permanently incomplete and sync would never
+// tombstone anything. Gate on the second kind only.
+const parseFailures = sourceWarnings.filter(w => /parse threw/.test(w.reason));
+
+// discoveredFileCount counts every file under the strict root plus every file
+// that parsed anywhere, so `=== specs.length` catches both a strict-root parse
+// failure and a duplicate id (counted, then dropped).
 census: {
-    // Conservative by contract: any read error, any discovered file that did
-    // not become a spec entry, or an unreadable root means we did NOT take a
-    // full census. Absence observed under those conditions is not evidence.
     complete: errors.length === 0
         && source.directoryReadable
-        && source.discoveredFileCount === source.parsedSpecCount,
-    errors: errors.map(e => e.reason),
+        && source.discoveredFileCount === source.parsedSpecCount
+        && parseFailures.length === 0
+        && !source.portfolioSourceDrift,
+    errors: [...errors.map(e => e.reason), ...parseFailures.map(w => `${w.path}: ${w.reason}`)],
 },
 ```
 
 Export `SPEC_RULE_VERSIONS`.
+
+Add to the Task 4 test, before the closing brace:
+
+```js
+    // The predicate must not be tripped by the design docs that legitimately
+    // carry no spec id — otherwise the census is never complete and sync is
+    // dead code in this repo.
+    const realReg = sp.buildSpecRegistry(process.cwd(), { write: false });
+    assert.strictEqual(realReg.census.complete, true,
+        'the real repository, with its 9 id-less design docs, is a COMPLETE census');
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -668,6 +734,27 @@ console.log('T-disposition-planning-census. Ten rules, canonical ids, and absenc
     assert.ok(r009.every(f => /^R009:ir:(plan|architecture)$/.test(f.id)), 'R009 id shape');
     assert.ok(r009.every(f => !JSON.stringify(f.factInputs).includes('mtime')),
         'mtime must never enter a fingerprint — it does not survive a clone');
+
+    // R013 — the premise is a git comparison, so the DECLARED value is a fact
+    // input while the live one is ambient. Moving HEAD alone must not void a
+    // disposition, or every commit would void every R013 decision.
+    const meta = { headSha: 'a'.repeat(40), ahead: 1, behind: 0 };
+    const gitA = { headSha: 'b'.repeat(40), ahead: 3, behind: 0, hasUpstream: true,
+        isAncestorOfHead: () => false };
+    const gitB = { ...gitA, headSha: 'c'.repeat(40) };
+    const head = (g) => gaps.runPlanningDriftCensus(root, ir, { metaState: meta, gitState: g })
+        .findings.find(f => f.id === 'R013:context:head');
+    assert.ok(head(gitA), 'R013:context:head uses the canonical id');
+    assert.deepStrictEqual(head(gitA).factInputs, { declaredHeadSha: meta.headSha });
+    assert.deepStrictEqual(head(gitA).factInputs, head(gitB).factInputs,
+        'live HEAD moving alone must NOT change the R013 fingerprint');
+
+    // R006 — occurrence identity, not content. Without a commit there is no
+    // stable occurrence, so the finding must refuse to be dispositioned.
+    const wt = gaps.runPlanningDriftCensus(root, ir, { changedFiles: ['src/x.js'] })
+        .findings.find(f => f.ruleId === 'R006');
+    assert.strictEqual(wt.dispositionable, false,
+        'a working-tree R006 has no stable occurrence and must be non-dispositionable');
     console.log('✅ T-disposition-planning-census passed');
 }
 ```
@@ -691,22 +778,50 @@ const PLANNING_RULE_VERSIONS = Object.freeze({
     R009: 1, R010: 1, R011: 1, R012: 1, R013: 1,
 });
 
-// Canonical id + declared facts per rule. Ids for R005/R008/R011/R012 are
-// already `<rule>:<subject>` because the subject id is self-prefixed.
+// Mechanical id migrations — only for rules whose new id is derivable from the
+// old one. R006 and R010 are NOT here: their ids depend on facts that exist
+// inside the check function and cannot be recovered from a display string.
+// R005/R008/R011/R012 need no entry — their subject id is already self-prefixed.
 const ID_MIGRATIONS = {
     R003: () => 'R003:repo:specs',
     R004: () => 'R004:repo:plans',
-    R006: f => `R006:file:${f.evidence[0]}`,
     R009: f => `R009:ir:${f.id.slice('R009:'.length)}`,
-    R010: f => `R010:backlog:${backlogKey(f)}`,
     R013: f => `R013:context:${f.id.slice('R013:'.length)}`,
 };
 
-function backlogKey(finding) {
-    const m = /\[([^\]]+)\]/.exec(finding.message || '');
-    if (m) return m[1];
-    return sha256(String(finding.message || '').replace(/\s+/g, ' ').trim()).slice(0, 16);
+function sha256(value) {
+    return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
 }
+
+// The statuses of every task belonging to the plans linked to a spec. Sorted by
+// the fingerprint layer (taskStatuses is in SET_KEYS), so order is irrelevant.
+function planTaskStatuses(planIR, plans) {
+    const ids = new Set(plans.map(p => p.id));
+    return (planIR.tasks || []).filter(t => ids.has(t.linkedPlan)).map(t => `${t.id}=${t.status}`);
+}
+```
+
+Add `const crypto = require('crypto');` to the top of `gaps.js` if absent.
+
+**R010 must build its own id and facts from the raw item**, inside `checkR010`,
+where `item` is still the full backlog text:
+
+```js
+// The bracketed label is the item's identity. The old id used the first 40
+// characters of prose, which fractures on any rewording and silently orphans
+// the decision for what is the same item. The digest covers the FULL
+// normalized text, never the truncated display message.
+const normalizedItemText = String(item).replace(/\s+/g, ' ').trim();
+const labelMatch = /^\s*\[([^\]]+)\]/.exec(normalizedItemText);
+const backlogKey = labelMatch ? labelMatch[1] : sha256(normalizedItemText).slice(0, 16);
+return {
+    id: `R010:backlog:${backlogKey}`, rule: 'R010', scope: 'planning', level: 'info',
+    type: 'untracked-backlog',
+    message: `Backlog item not in Planning IR: "${normalizedItemText.slice(0, 80)}"`,
+    evidence: ['.evo-lite/active_context.md'],
+    suggestedAction: 'Add a task to docs/plans/ that covers this backlog item',
+    factInputs: { itemTextDigest: sha256(normalizedItemText) },
+};
 ```
 
 Each `checkRxxx` gains a `factInputs` property on the objects it pushes:
@@ -727,7 +842,7 @@ factInputs: { taskStatus: t.status, archiveHits: t.archiveHits || 0 },
 factInputs: { itemTextDigest: sha256(normalizedItemText) },
 
 // R011
-factInputs: { specStatus: spec.status, taskStatuses: plans.flatMap(planTaskStatuses) },
+factInputs: { specStatus: spec.status, taskStatuses: planTaskStatuses(planIR, plans) },
 
 // R012
 factInputs: { planStatus: plan.status, doneCount: done, totalCount: total },
@@ -979,6 +1094,16 @@ console.log('T-disposition-cli. set validates its inputs and never trusts the ca
     const entry = led.readLedger(root).entries[0];
     assert.match(entry.fingerprint, /^[0-9a-f]{64}$/, 'the system derived the fingerprint');
     assert.strictEqual(entry.until, '2026-09-01');
+    assert.ok('head' in entry, 'provenance head is recorded (never part of the fingerprint)');
+
+    // A working-tree R006 has no stable occurrence identity. The committed
+    // observation is the only id space disposition works in, so `set` must
+    // refuse rather than silently store another event's fingerprint.
+    fs.writeFileSync(path.join(root, 'src-unlinked.js'), 'x');
+    const wtR006 = run(['set', 'R006:file:src-unlinked.js',
+        '--choice', 'accepted-debt', '--reason', 'x']);
+    assert.notStrictEqual(wtR006.status, 0,
+        'an uncommitted R006 is not dispositionable and set must reject it');
 
     const listed = run(['list', '--json']);
     assert.ok(listed.stdout.includes('2026-09-01'),
@@ -1011,29 +1136,59 @@ Create `templates/cli/disposition/commands.js`:
 const { readLedger, writeLedger, upsertEntry, CHOICES } = require('./ledger');
 const { computeFingerprint } = require('./fingerprint');
 
+// FROZEN OBSERVATION MODE: every disposition command reads the COMMITTED
+// observation (`lastCommit: true`). set, sync and list must share one id space
+// — otherwise a user dispositions the `R006:file:x` they can see in the working
+// tree while the CLI resolves and stores the fingerprint of HEAD's occurrence,
+// i.e. a decision about a different event. Working-tree findings stay visible
+// in ordinary `plan gaps` output; they simply never enter governance decisions.
+const OBSERVATION = Object.freeze({ lastCommit: true });
+
+function safeLoadPlanIR(projectRoot) {
+    const fs = require('fs'); const path = require('path');
+    const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    if (!fs.existsSync(irPath)) return { planIR: null, error: 'plan-ir.json is missing — run `mem plan scan`' };
+    try {
+        return { planIR: JSON.parse(fs.readFileSync(irPath, 'utf8')), error: null };
+    } catch (err) {
+        // A corrupt IR must degrade the census, never escape as an exception —
+        // an unhandled throw here would skip the fail-closed guard entirely.
+        return { planIR: null, error: `plan-ir.json is unreadable: ${err && err.message ? err.message : String(err)}` };
+    }
+}
+
 function collectAllFindings(projectRoot) {
     const errors = [];
-    let findings = [];
+    let raw = [];
     let complete = true;
 
     const { buildSpecRegistry } = require('../spec-portfolio');
     const reg = buildSpecRegistry(projectRoot, { write: false });
-    findings = findings.concat(reg.specs.flatMap(s => s.findings || []));
+    raw = raw.concat(reg.specs.flatMap(s => s.findings || []));
     if (!reg.census.complete) { complete = false; errors.push(...reg.census.errors); }
 
     const { runPlanningDriftCensus } = require('../planning/gaps');
-    const fs = require('fs'); const path = require('path');
-    const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
-    const planIR = fs.existsSync(irPath) ? JSON.parse(fs.readFileSync(irPath, 'utf8')) : null;
-    const census = runPlanningDriftCensus(projectRoot, planIR, { lastCommit: true });
-    findings = findings.concat(census.findings);
+    const { planIR, error } = safeLoadPlanIR(projectRoot);
+    if (error) { complete = false; errors.push(error); }
+    const census = runPlanningDriftCensus(projectRoot, planIR, OBSERVATION);
+    raw = raw.concat(census.findings);
     if (!census.complete) { complete = false; errors.push(...census.errors); }
+
+    // Annotate HERE, once, through the shared resolver. Spec findings arrive
+    // already annotated by buildSpecRegistry; planning findings do not, and
+    // letting the CLI infer status from "does .disposition exist?" would report
+    // every CURRENT planning decision as stale.
+    let ledger = { version: 'evo-disposition-ledger@1', entries: [] };
+    try { ledger = readLedger(projectRoot); } catch (_) { /* reporting must survive a bad ledger */ }
+    const { annotate } = require('./resolve');
+    const findings = raw.map(f => ('disposition' in f ? f : annotate(f, ledger)));
 
     return { findings, complete, errors };
 }
 
 function registerDispositionCommands(program) {
-    const root = () => require('../paths').getWorkspaceRoot();
+    // getWorkspaceRoot lives in runtime.js; there is no paths.js in this repo.
+    const root = () => require('../runtime').getWorkspaceRoot();
     const cmd = program.command('disposition').description('Governance decisions on findings.');
 
     cmd.command('set <findingId>')
@@ -1055,11 +1210,17 @@ function registerDispositionCommands(program) {
             if (finding.dispositionable === false) {
                 throw new Error(`${findingId} has no stable occurrence identity and cannot be dispositioned`);
             }
+            let head = null;
+            try {
+                head = require('child_process').execFileSync('git', ['rev-parse', 'HEAD'],
+                    { cwd: projectRoot, encoding: 'utf8' }).trim();
+            } catch (_) { /* not a git repo */ }
             const ledger = upsertEntry(readLedger(projectRoot), {
                 findingId, ruleId: finding.ruleId, ruleVersion: finding.ruleVersion,
                 fingerprint: computeFingerprint(finding),   // never from the caller
                 choice: opts.choice, reason: opts.reason,
                 until: opts.until || null, at: new Date().toISOString(),
+                head,   // provenance only — never part of the fingerprint
             });
             writeLedger(projectRoot, ledger);
             console.log(`✅ ${findingId} → ${opts.choice}`);
@@ -1077,13 +1238,16 @@ function registerDispositionCommands(program) {
 
     cmd.command('list').option('--stale').option('--json').action((opts) => {
         const projectRoot = root();
+        // findings are already annotated by collectAllFindings — status is READ
+        // from the shared resolver's verdict, never inferred here.
         const { findings } = collectAllFindings(projectRoot);
         const byId = new Map(findings.map(f => [f.id, f]));
-        let rows = readLedger(projectRoot).entries.map(e => ({
-            ...e, status: byId.has(e.findingId)
-                ? (byId.get(e.findingId).disposition && byId.get(e.findingId).disposition.status) || 'stale'
-                : 'orphaned',
-        }));
+        let rows = readLedger(projectRoot).entries.map((e) => {
+            if (e.orphanedAt) return { ...e, status: 'orphaned' };
+            const f = byId.get(e.findingId);
+            if (!f) return { ...e, status: 'orphaned' };
+            return { ...e, status: f.disposition ? f.disposition.status : 'stale' };
+        });
         if (opts.stale) rows = rows.filter(r => r.status === 'stale');
         if (opts.json) { console.log(JSON.stringify(rows, null, 2)); return; }
         for (const r of rows) {
@@ -1364,13 +1528,59 @@ In `templates/cli/memory.service.js` after line 3113, add the pending-tombstone 
 
 ```js
 const { execFileSync } = require('child_process');
-try {
-    const dirty = execFileSync('git', ['status', '--porcelain', '--', '.evo-lite/dispositions.json'],
-        { cwd: getWorkspaceRoot(), encoding: 'utf8' }).trim();
-    // A tombstone written by post-commit is NOT in that commit. Until a later
-    // commit carries it, another machine will not see it — so say so.
-    if (dirty) lines.push('⚠️ dispositions.json 有未提交改动 — tombstone 尚未持久化，其他机器看不到');
-} catch (_) { /* not a git repo */ }
+function dispositionsDirty(root) {
+    try {
+        return execFileSync('git', ['status', '--porcelain', '--', '.evo-lite/dispositions.json'],
+            { cwd: root, encoding: 'utf8' }).trim().length > 0;
+    } catch (_) { return false; }   // not a git repo
+}
+// A tombstone written by post-commit is NOT in that commit. Until a later
+// commit carries it, another machine will not see it — so say so.
+if (dispositionsDirty(getWorkspaceRoot())) {
+    lines.push('⚠️ dispositions.json 有未提交改动 — tombstone 尚未持久化，其他机器看不到');
+}
+```
+
+**Reporting alone does not satisfy AC9 — the closure must actually close.**
+`commitWithContext` currently stages exactly two files:
+
+```js
+result.runtime.files = [
+    toWorkspaceGitPath(ACTIVE_CONTEXT_PATH),
+    toWorkspaceGitPath(trackResult.archivePath),
+];
+```
+
+so a tombstone stays dirty across any number of `mem commit` runs while the
+command reports runtime state as written. Extend it at `memory.service.js:1981`:
+
+```js
+result.runtime.files = [
+    toWorkspaceGitPath(ACTIVE_CONTEXT_PATH),
+    toWorkspaceGitPath(trackResult.archivePath),
+];
+// A pending tombstone is part of the runtime state this commit closes.
+// Excluding it lets `mem commit` claim durability while a decision that
+// another machine cannot see is still sitting unstaged.
+if (dispositionsDirty(getWorkspaceRoot())) {
+    result.runtime.files.push(toWorkspaceGitPath(DISPOSITIONS_PATH));
+}
+```
+
+with `const DISPOSITIONS_PATH = '.evo-lite/dispositions.json';` beside the
+existing `ACTIVE_CONTEXT_PATH` constant. `context track` does not commit, so it
+keeps reporting only — but the pending line above must appear in its output too,
+so a partial closure is never mistaken for a complete one.
+
+Add to the Task 9 test:
+
+```js
+    // AC9 durability closure — reporting is not closing.
+    const svc = require(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'));
+    assert.ok(typeof svc.commitWithContext === 'function');
+    const src = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'), 'utf8');
+    assert.ok(/runtime\.files\.push\([^)]*DISPOSITIONS_PATH/.test(src),
+        'a dirty dispositions.json must join the runtime commit file set, not merely be warned about');
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1432,6 +1642,10 @@ For each row: apply the mutation to BOTH mirrors, run the scope, record the fail
 | M6 | in `commands.js`, accept `deferred` without `--until` | `deferred without until is rejected` |
 | M7 | in `ledger.js`, make `upsertEntry` push without filtering | `set replaces rather than appends` |
 | M8 | in `sync`, add `git add` after `writeLedger` | index must stay clean — add an assertion if none catches it |
+| M9 | in `gaps.js`, add the live `git.headSha` to R013's `factInputs` | `live HEAD moving alone must NOT change the R013 fingerprint` |
+| M10 | in `gaps.js`, drop `occurrence` from R006's `factInputs` | `C3 fingerprint != C1` — apply `A→B`, `B→A`, `A→B` and compare the first and third |
+| M11 | in `commands.js`, delete the `dispositionable === false` guard in `set` | `an uncommitted R006 is not dispositionable and set must reject it` |
+| M12 | in `spec-portfolio.js`, relax `census.complete` to `errors.length === 0` | a `spec parse threw` warning must still block the round — add a fixture whose spec body throws |
 
 - [ ] **Step 3: Record the matrix**
 
