@@ -79,15 +79,55 @@ fingerprint = sha256(canonicalJson({ ruleId, ruleVersion, factInputs }))
 
 `factInputs` is declared **by the producer**, never by the ledger. The ledger has no knowledge of any rule's semantics; it hashes and compares. A new finding type is added by declaring its inputs, with no ledger change.
 
-| finding | factInputs | invalidated when |
-|---|---|---|
-| `unknown-status` | `declaredStatus` | the status word changes |
-| `zombie-plan` | `notDonePlans[]` | any linked plan completes |
-| `size-exceeded:<dim>` | `dimension`, `value`, `threshold`, `state` | that dimension or the spec state changes |
-| `aging-*` | `lastTouchedAt` | the file is touched at all |
-| `R005` | `linkedFiles[]` | files are declared |
-| `R008` | `taskStatus`, `archiveHits` | archive evidence appears |
-| `R011` | `specStatus`, `taskStatuses[]` | either side moves |
+**Spec-portfolio findings:**
+
+| finding | canonical id | factInputs | invalidated when |
+|---|---|---|---|
+| `unknown-status` | `unknown-status:spec:<id>` | `declaredStatus` | the status word changes |
+| `zombie-plan` | `zombie-plan:spec:<id>` | `notDonePlans[]` | any linked plan completes |
+| `size-exceeded` | `size-exceeded:spec:<id>:<dim>` | `dimension`, `value`, `threshold`, `state` | that dimension or the spec state changes |
+| `aging-no-plan` / `aging-inactive` | `<rule>:spec:<id>` | `lastTouchedAt` | the file is touched at all |
+
+**Planning-gap findings — all ten rules `gaps.js` currently emits.** Four already
+satisfy the schema because the subject id is itself prefixed (`task:x`, `spec:x`,
+`plan:x`); the other six require an id migration as part of this layer.
+
+| rule | canonical id | factInputs | migration |
+|---|---|---|---|
+| `R003` no-specs | `R003:repo:specs` | `{}` | from bare `R003` |
+| `R004` no-plans | `R004:repo:plans` | `{}` | from bare `R004` |
+| `R005` no-linked-files | `R005:task:<id>` | `{}` | — already conforms |
+| `R006` unlinked-file | `R006:file:<path>` | `changeDigest` | from `R006:<path>` |
+| `R008` no-evidence | `R008:task:<id>` | `taskStatus`, `archiveHits` | — already conforms |
+| `R009` stale-ir | `R009:ir:<plan\|architecture>` | `{}` | from `R009:<label>` |
+| `R010` untracked-backlog | `R010:backlog:<label>` | `itemTextDigest` | from `R010:<first 40 chars>` |
+| `R011` spec-status-drift | `R011:spec:<id>` | `specStatus`, `taskStatuses[]` | — already conforms |
+| `R012` phantom-focus | `R012:plan:<id>` | `planStatus`, `doneCount`, `totalCount` | — already conforms |
+| `R013` context drift | `R013:context:head` / `R013:context:sync` | see §2.2 | from `R013:head` / `R013:sync` |
+
+Three entries encode a governance decision rather than a mechanical mapping, and
+are called out because they are not recoverable from the code:
+
+**`R006` carries `changeDigest`.** The finding says "this file's changes are not
+covered by any task". Keying only on the path would let one `accepted-debt` exempt
+every future change to that file forever — a permanent blanket waiver granted by a
+decision made about one specific diff. Including the digest of the inspected
+content means a further unlinked change re-enters as `STALE` and must be restated.
+The cost is real: an actively churning unlinked file will demand repeated
+statements. That is the correct pressure — the fix is to link the file, not to
+mute it once.
+
+**`R009` and `R005` carry empty `factInputs` deliberately.** Their condition is
+purely "this absence exists", and mtime must never enter a fingerprint because it
+is not stable across clones — the one property §2.1 exists to protect. They expire
+through the `ORPHANED` path instead: run the scan, the finding disappears, the entry
+is tombstoned, and a later recurrence therefore requires a fresh decision. This
+gives exactly the intended behaviour without a single unstable input.
+
+**`R010` keys on the bracketed backlog label**, not on the first 40 characters of
+prose. Text-prefix ids fracture on any rewording, silently orphaning the old
+decision and demanding a new one for what is the same item. Items with no label
+fall back to a digest of the full normalized text.
 
 ### 2.1 Canonicalization
 
@@ -103,12 +143,33 @@ Explicitly **excluded** from `factInputs`:
 
 - display text (a message reword must not invalidate decisions)
 - absolute machine paths
-- `HEAD`
+- file mtimes (they do not survive a clone)
+- ambient `HEAD`
 - the current time
 
 `factInputs` describes only the governance facts on which the finding stands.
 
-### 2.2 ruleVersion is a disposition compatibility version
+### 2.2 Ambient git state vs. git state as evidence
+
+The `HEAD` exclusion above bars **ambient** git position. For nearly every rule
+`HEAD` is not a premise, so admitting it would invalidate every disposition in the
+repository on each commit — the noise mode this whole design exists to avoid.
+
+`R013` is the exception that proves the boundary: its premise *is* a git-value
+comparison. It is resolved by admitting only the **declared** value — the sha and
+counters written into `active_context.md`, which are document content — and never
+the live value read from the repository:
+
+| finding | factInputs | rationale |
+|---|---|---|
+| `R013:context:head` | `declaredHeadSha` | the staleness belongs to the recorded value; refreshing META changes it, and every unrelated commit does not |
+| `R013:context:sync` | `declaredAhead`, `declaredBehind` | same, for the counters |
+
+Rule of thumb: **if a value is a premise of the rule, it is a fact input; if it is
+merely the environment the rule ran in, it is not.** A live `HEAD` moving is the
+environment. A recorded `headSha` going stale is the finding.
+
+### 2.3 ruleVersion is a disposition compatibility version
 
 **Not** a code version. Bump only when:
 
@@ -146,7 +207,21 @@ Without (b), a regression silently inherits the decision that was made about the
   "orphanedAt": "2026-09-01T10:00:00Z", "orphanedHead": "1f2e3d4…" }
 ```
 
-A tombstoned entry is never `CURRENT`. It is retained rather than deleted so the history of "this was accepted once, then solved, then came back" survives — that sequence is itself governance information.
+A tombstoned entry is never `CURRENT`.
+
+**Retention scope in v1 — deliberately narrow.** The tombstone is retained *until an
+explicit fresh `set`*, at which point the new disposition **supersedes** the prior
+occurrence and the old `choice` / `at` / `orphanedAt` are gone. There is still at most
+one entry per `findingId` (§6), and this spec makes **no promise of permanent
+occurrence history**.
+
+That is a real limitation and it is chosen: keeping "accepted once → solved → came
+back" forever would require either a `history[]` array or per-occurrence records,
+which turns a validity ledger into an audit event store. The purpose of layer 2 is
+*validity and automatic reactivation*, not an audit trail. The tombstone does the
+one job that matters — it stops a regression from silently inheriting the previous
+decision — and stops there. Git history of `dispositions.json` remains available for
+anyone who genuinely needs the sequence.
 
 `aging-*` shows both paths of rule (a): touch the file and it either still exceeds the threshold (`STALE` — circumstances changed, restate) or no longer does (`ORPHANED` — done, say nothing).
 
@@ -173,7 +248,48 @@ mem disposition sync     # tombstones entries whose finding is no longer emitted
 
 invoked from the existing `post-commit` governance hook, alongside `plan progress`, `focus auto-advance` and `plan gaps`. Read-only consumers report the pending count and never write.
 
-**Residual window, stated rather than hidden:** between a finding disappearing and the next `sync`, the entry is not yet tombstoned. A regression inside that window with identical facts would resolve to `CURRENT`. The window is bounded by one commit under normal workflow, and `mem disposition list` surfaces `N 条待 sync` so the exposure is visible rather than silent. Closing it entirely would require a read-only command to write, which is the worse trade.
+### 3.3 Durability closure
+
+`post-commit` runs **after** the commit object exists. A tombstone it writes is
+therefore a working-tree modification to a tracked file that is **not in that
+commit**. Saying the window is "bounded by one commit" is true only of *local
+detection*; it is false for the cross-session, cross-agent, cross-machine
+durability this ledger exists to provide. Four distinct stages, and only the last
+one delivers the guarantee:
+
+| stage | achieved by | still exposed |
+|---|---|---|
+| 1. orphan detected | next `mem disposition sync` | nothing written yet |
+| 2. tombstone written locally | `sync` writes `dispositions.json` | dirty tracked file, not in git |
+| 3. tombstone durable | a **subsequent** commit includes it | — |
+| 4. available elsewhere | push / pull | — |
+
+The failure this creates if left unstated:
+
+```text
+machine A:  commit C fixes the finding
+            post-commit writes the tombstone
+            push C            <- tombstone NOT in C
+machine B:  pull C            -> finding gone, ledger not tombstoned
+                              -> identical regression resolves to CURRENT
+```
+
+Three rules close it:
+
+1. **`sync` writes; it never stages or commits.** Automatic `git add` / `git commit`
+   from a hook is a worse defect than the window — implicit git mutation on a path
+   users invoke casually.
+2. **Uncommitted tombstones are observable.** `mem disposition list` and `verify`
+   report `N 条 tombstone 尚未提交` whenever `dispositions.json` is dirty. An
+   invisible pending write is what makes this class of bug survive.
+3. **Closure gates require them committed.** `mem commit` / `context track` — the
+   points that already assert runtime state is durable — must treat a dirty
+   `dispositions.json` as part of the state they are closing, so a governance
+   snapshot can never claim durability while a tombstone sits unstaged.
+
+Under those rules the honest statement is: **the exposure lasts until the tombstone
+is carried by a later commit**, normally the next one, and it is visible for its
+entire duration.
 
 ## 4. Choice vocabulary
 
@@ -298,15 +414,15 @@ Line 1 leads with the actionable count — the number a reader actually needs. L
 ```json
 {
   "criteria": [
-    { "id": "ac1", "text": "Every finding from spec-portfolio and planning gaps carries a stable id of the form <ruleId>:<subjectType>:<subjectId>[:<instanceKey>], and a subject breaching multiple size dimensions yields one id per dimension." },
-    { "id": "ac2", "text": "fingerprint = sha256(canonicalJson({ruleId, ruleVersion, factInputs})) is deterministic across runs, key order, and set-array order, and excludes display text, absolute paths, HEAD, and current time." },
+    { "id": "ac1", "text": "Every finding from spec-portfolio and from all ten planning-gap rules (R003, R004, R005, R006, R008, R009, R010, R011, R012, R013) carries a stable id of the form <ruleId>:<subjectType>:<subjectId>[:<instanceKey>]; the six non-conforming rules are migrated; a subject breaching multiple size dimensions yields one id per dimension; and R010 keys on the bracketed backlog label rather than a text prefix." },
+    { "id": "ac2", "text": "fingerprint = sha256(canonicalJson({ruleId, ruleVersion, factInputs})) is deterministic across runs, key order, and set-array order; it excludes display text, absolute paths, file mtimes, ambient HEAD and current time; and where a rule's premise is itself a git value (R013) only the declared value from active_context is admitted, never the live one." },
     { "id": "ac3", "text": "ruleVersion is defined and documented as a disposition compatibility version; bumping it invalidates every disposition for that rule, and message/format/refactor changes do not bump it." },
     { "id": "ac4", "text": "Resolution distinguishes CURRENT, STALE and ORPHANED; a fingerprint mismatch invalidates a disposition only while the same findingId is still emitted; an ORPHANED entry never demands re-statement; and a tombstoned entry never returns to CURRENT even when an identical finding recurs with an identical fingerprint." },
     { "id": "ac5", "text": "set validates its inputs: choice restricted to the four-word closed set, reason mandatory, deferred without a non-empty until rejected, a findingId not currently emitted rejected, and a caller-supplied fingerprint rejected — the system always derives it." },
-    { "id": "ac6", "text": "The ledger lives at .evo-lite/dispositions.json, is tracked by git, holds at most one entry per findingId with set replacing rather than appending, and writes sorted, 2-space, atomic, newline-terminated JSON." },
+    { "id": "ac6", "text": "The ledger lives at .evo-lite/dispositions.json, is tracked by git, holds at most one entry per findingId — a fresh set supersedes any prior entry including a tombstoned one, and no occurrence history is retained — and writes sorted, 2-space, atomic, newline-terminated JSON." },
     { "id": "ac7", "text": "Findings are annotated, never filtered: every finding remains in the JSON collection with a disposition field of current/stale/null, and only human-readable presentation collapses them." },
     { "id": "ac8", "text": "All three consumers resolve dispositions through one shared resolver; no consumer implements fingerprint matching itself, and undispositioned covers no-entry, stale-entry and tombstoned-entry alike." },
-    { "id": "ac9", "text": "Tombstoning is written only by the explicit idempotent `mem disposition sync`, invoked from the post-commit hook; verify, spec status and plan gaps remain read-only, never mutate the ledger, and instead report the count of entries awaiting sync." }
+    { "id": "ac9", "text": "Tombstoning is written only by the explicit idempotent `mem disposition sync` invoked from the post-commit hook; verify, spec status and plan gaps remain read-only and never mutate the ledger; sync never stages or commits; an uncommitted tombstone is reported as pending by list and verify; and mem commit / context track treat a dirty dispositions.json as part of the state they close, so durability is never claimed while a tombstone is unstaged." }
   ]
 }
 ```
@@ -323,6 +439,9 @@ Beyond ordinary cases, these invariants must be verified by mutation — each mu
 - an `ORPHANED` entry does **not** appear in `--stale` and does not demand re-statement
 - **regression after orphaning does not revive the old decision**: tombstone an entry, re-emit an identical finding with an identical fingerprint, and it must resolve to undispositioned — deleting the tombstone check must turn this red
 - a read-only consumer run against a ledger with orphanable entries leaves the file **byte-identical**
+- `sync` neither stages nor commits: after it writes a tombstone the git index is unchanged and the file is dirty
+- `R013` fingerprints move when the declared META values change and **do not** move when only live `HEAD` advances
+- `R006` fingerprints move when the inspected content changes, so a further unlinked change to an already-dispositioned file returns as `STALE`
 - canonicalization: two payloads differing only in key order or set-array order hash identically
 
 ## Out of scope
