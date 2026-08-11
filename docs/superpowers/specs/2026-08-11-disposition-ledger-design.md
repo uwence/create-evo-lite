@@ -108,14 +108,35 @@ satisfy the schema because the subject id is itself prefixed (`task:x`, `spec:x`
 Three entries encode a governance decision rather than a mechanical mapping, and
 are called out because they are not recoverable from the code:
 
-**`R006` carries `changeDigest`.** The finding says "this file's changes are not
-covered by any task". Keying only on the path would let one `accepted-debt` exempt
-every future change to that file forever — a permanent blanket waiver granted by a
-decision made about one specific diff. Including the digest of the inspected
-content means a further unlinked change re-enters as `STALE` and must be restated.
-The cost is real: an actively churning unlinked file will demand repeated
-statements. That is the correct pressure — the fix is to link the file, not to
-mute it once.
+**`R006` carries `changeDigest`, and it digests the change *occurrence*, not the
+file's bytes.** The finding says "this file's changes are not covered by any task".
+Keying only on the path would let one `accepted-debt` exempt every future change to
+that file forever — a blanket waiver granted by a decision about one specific diff.
+
+But hashing current content is not enough either, and neither is hashing the
+`(oldBlob, newBlob)` pair:
+
+```text
+C1   A → B    accepted-debt
+C2   B → A    STALE (not restated)
+C3   A → B    content identical to C1, and (old,new) identical to C1
+              → old disposition silently revives
+```
+
+So `changeDigest = digest(canonicalChangeObservation)`, carrying `path`, change
+status (`modify` / `delete` / `rename` — a deletion has no current content at all),
+and an **occurrence identity** that distinguishes C3 from C1. For a committed
+observation that identity is the git identity of the change being inspected; that
+is rule *evidence*, not the ambient `HEAD` §2.2 forbids — the distinction being
+that the rule is inspecting that commit, not merely running at it.
+
+**A working-tree observation has no stable occurrence identity**, so R006 findings
+produced from an uncommitted diff are marked non-dispositionable rather than given
+a fingerprint that would collide across edits. This costs nothing in practice: the
+governance paths (post-commit hook, CI) all inspect committed changes.
+
+The residual cost is real and intended — an actively churning unlinked file will
+demand repeated statements. The fix is to link the file, not to mute it once.
 
 **`R009` and `R005` carry empty `factInputs` deliberately.** Their condition is
 purely "this absence exists", and mtime must never enter a fingerprint because it
@@ -190,7 +211,7 @@ Three relations, not two:
 |---|---|---|
 | `CURRENT` | finding emitted, id matches, fingerprint matches, entry not tombstoned | decision holds |
 | `STALE` | finding emitted, id matches, fingerprint differs | **decision void, finding reactivated** |
-| `ORPHANED` | entry exists, finding no longer emitted | normal resolution, **no re-statement required** |
+| `ORPHANED` | entry exists, an **authoritative census succeeded**, and the finding is absent from it | normal resolution, **no re-statement required** |
 
 Two load-bearing rules, not one:
 
@@ -243,12 +264,58 @@ Detecting an orphan requires observing that a finding is *absent*, and every con
 The write therefore belongs to an explicit, idempotent command:
 
 ```text
-mem disposition sync     # tombstones entries whose finding is no longer emitted
+mem disposition sync     # tombstones entries proven absent from a complete census (§3.3)
 ```
 
 invoked from the existing `post-commit` governance hook, alongside `plan progress`, `focus auto-advance` and `plan gaps`. Read-only consumers report the pending count and never write.
 
-### 3.3 Durability closure
+### 3.3 ORPHANED requires proven absence, not silence
+
+Tombstoning is terminal, so converting an absence into one on bad evidence
+**permanently destroys a governance decision**. An empty producer result does not
+mean "solved" — today it very often means "could not look":
+
+```js
+// planning.js
+if (!planIR) console.log('No plan-ir.json found. Run: mem plan scan first.');
+runPlanningDrift(projectRoot, planIR, …);   // …and runs anyway, with null
+
+// gaps.js — six rules, all silently empty
+checkR005(planIR) { if (!planIR) return []; }
+checkR006(…)      { if (!planIR) return []; }
+checkR008(planIR) { if (!planIR) return []; }
+```
+
+`runPlanningDrift` returns a bare array, so **its type cannot express "I could not
+check"**. A fresh clone, or anyone deleting the gitignored `generated/` tree, makes
+every R005/R006/R008/R010/R011/R012 finding vanish — and a naive `sync` would read
+that as universal resolution and tombstone the lot.
+
+The two producers are **not** symmetric today, and the plan must not assume they are:
+
+| producer | completeness signal | status |
+|---|---|---|
+| `buildSpecRegistry` | `errors[]`, `source.directoryReadable`, `source.parsedSpecCount` | already present |
+| `runPlanningDrift` | none — returns a bare array | **must be added by this layer** |
+
+Contract: a finding census is a result, not a list.
+
+```jsonc
+{ "findings": [ … ], "complete": true, "errors": [] }
+```
+
+**Fail-closed, whole-round, in v1:** if *any* producer participating in a `sync`
+reports `complete: false`, that round tombstones **nothing at all** — not even for
+the producer that did succeed — leaves every affected entry byte-identical, and
+reports the degradation. Per-rule coverage tracking is a later refinement; guessing
+is never one. The asymmetry above is exactly why the conservative rule is
+whole-round rather than per-producer: partial credit here is indistinguishable from
+partial evidence.
+
+This is the same principle the rest of the ledger rests on, applied to the observer
+itself: **a failure to observe must never impersonate a change in fact.**
+
+### 3.4 Durability closure
 
 `post-commit` runs **after** the commit object exists. A tombstone it writes is
 therefore a working-tree modification to a tracked file that is **not in that
@@ -422,7 +489,7 @@ Line 1 leads with the actionable count — the number a reader actually needs. L
     { "id": "ac6", "text": "The ledger lives at .evo-lite/dispositions.json, is tracked by git, holds at most one entry per findingId — a fresh set supersedes any prior entry including a tombstoned one, and no occurrence history is retained — and writes sorted, 2-space, atomic, newline-terminated JSON." },
     { "id": "ac7", "text": "Findings are annotated, never filtered: every finding remains in the JSON collection with a disposition field of current/stale/null, and only human-readable presentation collapses them." },
     { "id": "ac8", "text": "All three consumers resolve dispositions through one shared resolver; no consumer implements fingerprint matching itself, and undispositioned covers no-entry, stale-entry and tombstoned-entry alike." },
-    { "id": "ac9", "text": "Tombstoning is written only by the explicit idempotent `mem disposition sync` invoked from the post-commit hook; verify, spec status and plan gaps remain read-only and never mutate the ledger; sync never stages or commits; an uncommitted tombstone is reported as pending by list and verify; and mem commit / context track treat a dirty dispositions.json as part of the state they close, so durability is never claimed while a tombstone is unstaged." }
+    { "id": "ac9", "text": "Tombstoning is written only by the explicit idempotent `mem disposition sync` invoked from the post-commit hook, and only from an authoritative complete finding census — a producer reporting complete:false blocks tombstoning for the entire round, leaves affected entries byte-identical and reports the degradation, so missing or corrupt inputs never become ORPHANED; verify, spec status and plan gaps remain read-only and never mutate the ledger; sync never stages or commits; an uncommitted tombstone is reported as pending by list and verify; and mem commit / context track treat a dirty dispositions.json as part of the state they close, so durability is never claimed while a tombstone is unstaged." }
   ]
 }
 ```
@@ -441,7 +508,9 @@ Beyond ordinary cases, these invariants must be verified by mutation — each mu
 - a read-only consumer run against a ledger with orphanable entries leaves the file **byte-identical**
 - `sync` neither stages nor commits: after it writes a tombstone the git index is unchanged and the file is dirty
 - `R013` fingerprints move when the declared META values change and **do not** move when only live `HEAD` advances
-- `R006` fingerprints move when the inspected content changes, so a further unlinked change to an already-dispositioned file returns as `STALE`
+- **an incomplete census never tombstones** — with a `CURRENT` `R005:task:X` entry, remove or corrupt `plan-ir.json`, run `sync`: that entry must stay byte-identical and the run must report degradation; restore the IR with the finding genuinely gone and only then may `sync` tombstone it. Deleting the `if (!complete) return` guard must turn this red.
+- `R006` distinguishes occurrences, not contents: `A→B`, `B→A`, `A→B` must yield a different fingerprint on the third change than on the first, so a lapsed disposition cannot revive by content rollback
+- an `R006` finding from an uncommitted working-tree diff is non-dispositionable and `set` refuses it
 - canonicalization: two payloads differing only in key order or set-array order hash identically
 
 ## Out of scope
