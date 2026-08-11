@@ -337,10 +337,20 @@ Register `'disposition/ledger.js',` in `templates/cli/template-manifest.js`.
 cp templates/cli/disposition/ledger.js .evo-lite/cli/disposition/ledger.js
 cp templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js
 node .evo-lite/cli/test.js governance
-git check-ignore -v .evo-lite/dispositions.json || echo "TRACKED (correct)"
+
+# Load-bearing: a gitignored decision record would defeat the whole layer.
+# NOTE: do NOT use `check-ignore -v` here. In verbose mode git also prints the
+# matching NEGATION rule and still exits 0, so `!.evo-lite/dispositions.json`
+# reads as "ignored" when it means the exact opposite.
+git check-ignore .evo-lite/dispositions.json && echo "IGNORED — layer defeated" || echo "NOT IGNORED (correct)"
+printf '{\n  "version": "evo-disposition-ledger@1",\n  "entries": []\n}\n' > .evo-lite/dispositions.json
+git status --porcelain=v1 -- .evo-lite/dispositions.json   # expect: ?? (git can see it)
+rm -f .evo-lite/dispositions.json
 ```
 
-Expected: PASS, and `git check-ignore` prints `TRACKED (correct)` — a gitignored decision record would defeat the whole layer.
+Expected: tests PASS, the ignore check prints `NOT IGNORED (correct)`, and
+`git status` shows `?? .evo-lite/dispositions.json` — the second check exists
+because the first one is easy to get subtly wrong.
 
 - [ ] **Step 5: Commit**
 
