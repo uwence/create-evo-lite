@@ -221,7 +221,7 @@ function checkR006(projectRoot, planIR, options = {}) {
     const linkedFiles = new Set((planIR.tasks || []).flatMap(t => t.linkedFiles || []));
     const occurrence = changeOccurrence(projectRoot, options);
     return changedFiles.filter(f => !linkedFiles.has(f)).map((f) => ({
-        id: `R006:${f}`, rule: 'R006', scope: 'planning', level: 'warning',
+        id: `R006:file:${f}`, rule: 'R006', scope: 'planning', level: 'warning',
         type: 'unlinked-file',
         message: `Changed file not linked to any task: ${f}`,
         evidence: [f],
@@ -314,7 +314,11 @@ function checkR010(projectRoot, planIR) {
         .filter(item => !isPlaceholderBacklogItem(item));
     if (backlogItems.length === 0) return [];
 
-    const taskTitles = (planIR.tasks || []).map(t => String(t.title || '').toLowerCase());
+    // A task with no title does not participate in title matching — coercing
+    // it to '' would make `item.includes('')` (always true) suppress every
+    // backlog item, silently erasing the whole rule's output. Absence of a
+    // title must not read as absence of a finding.
+    const taskTitles = (planIR.tasks || []).map(t => t.title).filter(Boolean).map(t => t.toLowerCase());
     const taskIds = (planIR.tasks || []).map(t => t.id.toLowerCase());
 
     return backlogItems

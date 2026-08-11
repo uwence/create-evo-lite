@@ -236,7 +236,7 @@ async function runGovernanceTests() {
                 runPostCommitHook(repo.projectRoot);
 
                 const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
-                assert.ok(findings.some(f => f.id === 'R006:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
+                assert.ok(findings.some(f => f.id === 'R006:file:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
             } finally {
                 fs.rmSync(repo.projectRoot, { recursive: true, force: true });
             }
@@ -282,7 +282,7 @@ async function runGovernanceTests() {
                 runPostCommitHook(repo.projectRoot);
 
                 const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
-                assert.ok(findings.some(f => f.id === 'R006:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
+                assert.ok(findings.some(f => f.id === 'R006:file:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
             } finally {
                 fs.rmSync(repo.projectRoot, { recursive: true, force: true });
             }
@@ -5807,9 +5807,24 @@ async function runGovernanceTests() {
             assert.deepStrictEqual(r003.factInputs, {},
                 'R003 has no stable facts — it expires through ORPHANED, never through a fingerprint');
 
-            const r009 = gaps.runPlanningDriftCensus(root, ir, { changedFiles: [] }).findings
+            // R009 — a fixture that never actually goes stale would let this
+            // assertion pass identically whether or not ID_MIGRATIONS.R009
+            // exists (`[].every(...)` is trivially true). Build a genuinely
+            // stale IR: an old plan-ir.json plus a newer file under a
+            // PLAN_SOURCE_PATHS directory.
+            const r009Root = createTempRuntimeRoot('disposition-planning-r009-stale').workspaceRoot;
+            const r009IrPath = path.join(r009Root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            writeText(r009IrPath, JSON.stringify({ version: 'evo-plan-ir@1', tasks: [] }, null, 2));
+            const staleTime = new Date(Date.now() - 60 * 60 * 1000);
+            fs.utimesSync(r009IrPath, staleTime, staleTime);
+            writeText(path.join(r009Root, 'docs', 'plans', 'fresh.md'), '# Fresh plan\n');
+
+            const r009 = gaps.runPlanningDriftCensus(r009Root, ir, { changedFiles: [] }).findings
                 .filter(f => f.ruleId === 'R009');
+            assert.ok(r009.length > 0, 'the stale-IR fixture must actually produce an R009 finding — an empty array would make every assertion below vacuous');
             assert.ok(r009.every(f => /^R009:ir:(plan|architecture)$/.test(f.id)), 'R009 id shape');
+            assert.deepStrictEqual(r009.find(f => f.id === 'R009:ir:plan').factInputs, {},
+                'R009 has no stable facts — it expires through ORPHANED, never through a fingerprint');
             assert.ok(r009.every(f => !JSON.stringify(f.factInputs).includes('mtime')),
                 'mtime must never enter a fingerprint — it does not survive a clone');
 
@@ -5831,8 +5846,32 @@ async function runGovernanceTests() {
             // stable occurrence, so the finding must refuse to be dispositioned.
             const wt = gaps.runPlanningDriftCensus(root, ir, { changedFiles: ['src/x.js'] })
                 .findings.find(f => f.ruleId === 'R006');
+            assert.strictEqual(wt.id, 'R006:file:src/x.js',
+                'R006 migrates to the three-segment canonical shape (spec: R006:file:<path>)');
             assert.strictEqual(wt.dispositionable, false,
                 'a working-tree R006 has no stable occurrence and must be non-dispositionable');
+
+            // R010 regression — a titleless task must not silently erase every
+            // backlog finding. `item.includes('')` is always true, so coercing
+            // a missing title to '' made EVERY backlog item match EVERY task,
+            // suppressing the whole rule even with a genuinely untracked item
+            // and an unrelated, well-formed task both present.
+            const r010Root = createTempRuntimeRoot('disposition-planning-r010-titleless').workspaceRoot;
+            writeText(path.join(r010Root, '.evo-lite', 'active_context.md'), [
+                '# Active Context', '<!-- BEGIN_META -->', '<!-- END_META -->',
+                '## Focus', '<!-- BEGIN_FOCUS -->', 'focus', '<!-- END_FOCUS -->',
+                '## Backlog', '<!-- BEGIN_BACKLOG -->', '- [ ] [zzzz] Totally untracked backlog item.', '<!-- END_BACKLOG -->',
+                '## Trajectory', '<!-- BEGIN_TRAJECTORY -->', '<!-- END_TRAJECTORY -->', '',
+            ].join('\n'));
+            const r010IR = { specs: [], plans: [], tasks: [
+                { id: 'task:titled', title: 'Some Other Task', linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' },
+                { id: 'task:titleless', linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' }, // no title
+            ] };
+            const r010Findings = gaps.runPlanningDriftCensus(r010Root, r010IR, { changedFiles: [] })
+                .findings.filter(f => f.ruleId === 'R010');
+            assert.ok(r010Findings.some(f => f.id === 'R010:backlog:zzzz'),
+                'a titleless task must not suppress a genuinely untracked backlog item when a well-formed task is also present');
+
             console.log('✅ T-disposition-planning-census passed');
         }
 
