@@ -1064,11 +1064,18 @@ git commit -m "feat(disposition): annotate findings without ever removing them"
 **Files:**
 - Create: `templates/cli/disposition/commands.js`
 - Create: `.evo-lite/cli/disposition/commands.js`
-- Modify: `templates/cli/memory.js:841-854`
+- Modify: `templates/cli/memory.js`
+- Modify: `.evo-lite/cli/memory.js`
 - Modify: `templates/cli/template-manifest.js`
+- Modify: `.evo-lite/cli/template-manifest.js`
+- Modify: `templates/cli/test/harness.js`
+- Modify: `.evo-lite/cli/test/harness.js`
 - Test: `templates/cli/test/integration.js`
 
-- files: templates/cli/disposition/commands.js, templates/cli/memory.js, templates/cli/template-manifest.js, templates/cli/test/integration.js
+Command registration goes at `memory.js:841-854`, next to the existing
+`safeRegister` calls.
+
+- files: templates/cli/disposition/commands.js, templates/cli/memory.js, templates/cli/template-manifest.js, templates/cli/test/harness.js, templates/cli/test/integration.js
 - verify: node .evo-lite/cli/test.js integration
 - acceptance: ac5
 
@@ -1143,7 +1150,37 @@ console.log('T-disposition-cli. set validates its inputs and never trusts the ca
 }
 ```
 
-`runCli` is the existing integration helper that spawns `memory.js` with a project root.
+`runCli` does **not** exist yet. `harness.js` has no such helper, and the
+`runCli` in `integration.js` is a block-local `const runCli = data => …` with a
+different signature entirely. Add the real one to `templates/cli/test/harness.js`
+and export it, because Task 10's M13/M14 fixtures need it too:
+
+```js
+// Spawns the real CLI against an arbitrary project root. getRuntimeRoot() reads
+// EVO_LITE_ROOT before falling back to its own location, which is how the
+// existing tests already retarget the runtime (harness.js:639,
+// integration.js:144/253) — so the repo's CLI runs while treating the temp
+// directory as the workspace.
+function runCli(projectRoot, args, extraEnv = {}) {
+    const res = childProcess.spawnSync(process.execPath,
+        [path.join(TEMPLATE_CLI_DIR, 'memory.js'), ...args], {
+            cwd: projectRoot,
+            encoding: 'utf8',
+            env: {
+                ...process.env,
+                EVO_LITE_ROOT: path.join(projectRoot, '.evo-lite'),
+                ...extraEnv,
+            },
+        });
+    // spawnSync, not execFileSync: these tests assert on NON-ZERO exits, and a
+    // throwing helper cannot express "the command correctly refused".
+    return { status: res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
+}
+```
+
+Add `runCli` to the `module.exports` list beside `runGit`, and destructure it
+where the suites already pull `runGit`, `writeText` and `createTempRuntimeRoot`
+from the harness.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1355,6 +1392,7 @@ Register `'disposition/commands.js',` in the manifest.
 cp templates/cli/disposition/commands.js .evo-lite/cli/disposition/commands.js
 cp templates/cli/memory.js .evo-lite/cli/memory.js
 cp templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js
+cp templates/cli/test/harness.js .evo-lite/cli/test/harness.js
 node .evo-lite/cli/test.js integration
 ```
 
@@ -1366,6 +1404,7 @@ Expected: PASS
 git add templates/cli/disposition/commands.js .evo-lite/cli/disposition/commands.js \
         templates/cli/memory.js .evo-lite/cli/memory.js \
         templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js \
+        templates/cli/test/harness.js .evo-lite/cli/test/harness.js \
         templates/cli/test/integration.js .evo-lite/cli/test/integration.js
 git commit -m "feat(disposition): set/list/revoke with closed vocabulary and no caller-supplied fingerprints"
 ```
