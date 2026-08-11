@@ -5610,6 +5610,30 @@ async function runGovernanceTests() {
                 fs.writeFileSync(led.ledgerPath(root), '{"version":"wrong","entries":[]}\n');
                 return root;
             })()), /evo-disposition-ledger@1/, 'a wrong schema version is rejected, not silently accepted');
+
+            // Test dispositionsDirty: non-git directory, clean repo, dirty repo
+            const nonGitRoot = createTempRuntimeRoot('disposition-non-git').workspaceRoot;
+            assert.strictEqual(led.dispositionsDirty(nonGitRoot), false,
+                'non-git directory safely returns false instead of throwing');
+
+            const gitRoot = createTempRuntimeRoot('disposition-git').workspaceRoot;
+            runGit(gitRoot, ['init']);
+            runGit(gitRoot, ['config', 'user.name', 'Test']);
+            runGit(gitRoot, ['config', 'user.email', 'test@example.com']);
+            assert.strictEqual(led.dispositionsDirty(gitRoot), false,
+                'clean git repo with no ledger file returns false');
+
+            ledger = { version: led.LEDGER_VERSION, entries: [] };
+            led.writeLedger(gitRoot, ledger);
+            runGit(gitRoot, ['add', '.evo-lite/dispositions.json']);
+            runGit(gitRoot, ['commit', '-m', 'init: add ledger']);
+            assert.strictEqual(led.dispositionsDirty(gitRoot), false,
+                'clean git repo with committed ledger returns false');
+
+            fs.writeFileSync(led.ledgerPath(gitRoot), '{"version":"evo-disposition-ledger@1","entries":[{"findingId":"R001","ruleId":"R001","ruleVersion":1,"fingerprint":"' + 'a'.repeat(64) + '","choice":"accepted-debt","reason":"test","at":"2026-08-11T00:00:00Z"}]}\n');
+            assert.strictEqual(led.dispositionsDirty(gitRoot), true,
+                'git repo with modified ledger returns true');
+
             console.log('✅ T-disposition-ledger passed');
         }
 

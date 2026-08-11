@@ -4,7 +4,11 @@ const fs = require('fs');
 const path = require('path');
 
 const LEDGER_VERSION = 'evo-disposition-ledger@1';
-const CHOICES = Object.freeze(new Set(['not-applicable', 'accepted-debt', 'deferred', 'wont-fix']));
+// Frozen ARRAY (not a Set): Object.freeze(new Set()) does NOT block .add(),
+// so the exported choices are an array and the lookup structure stays
+// module-private below.
+const CHOICES = Object.freeze(['not-applicable', 'accepted-debt', 'deferred', 'wont-fix']);
+const CHOICES_SET = new Set(CHOICES);
 
 function ledgerPath(projectRoot) {
     return path.join(projectRoot, '.evo-lite', 'dispositions.json');
@@ -26,7 +30,7 @@ function readLedger(projectRoot) {
     for (const e of parsed.entries) {
         if (!e || typeof e.findingId !== 'string' || seen.has(e.findingId)
             || !/^[0-9a-f]{64}$/.test(e.fingerprint || '')
-            || !CHOICES.has(e.choice)) {
+            || !CHOICES_SET.has(e.choice)) {
             throw new Error('disposition ledger contains an invalid or duplicate entry');
         }
         seen.add(e.findingId);
@@ -59,7 +63,15 @@ function dispositionsDirty(projectRoot) {
         return require('child_process')
             .execFileSync('git', ['status', '--porcelain', '--', '.evo-lite/dispositions.json'],
                 { cwd: projectRoot, encoding: 'utf8' }).trim().length > 0;
-    } catch (_) { return false; }   // not a git repo
+    } catch (err) {
+        // Only swallow the "not a git repository" case. Other errors (missing
+        // binary, permissions, corrupted .git) must propagate rather than be
+        // misreported as "clean" — this function decides governance durability.
+        if (err && err.stderr && err.stderr.includes('not a git repository')) {
+            return false;
+        }
+        throw err;
+    }
 }
 
 module.exports = {
