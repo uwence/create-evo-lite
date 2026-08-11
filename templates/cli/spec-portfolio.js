@@ -16,6 +16,36 @@ const RECOGNIZED_SPEC_STATUSES = Object.freeze(new Set(['done', 'parked', 'adopt
 const DEFAULT_AGING_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const SPEC_RULE_VERSIONS = Object.freeze({
+    'unknown-status': 1, 'zombie-plan': 1, 'size-exceeded': 1,
+    'aging-no-plan': 1, 'aging-inactive': 1,
+});
+
+function breachedDimensions(size) {
+    return Object.keys(SIZE_THRESHOLDS).filter(k => size[k] > SIZE_THRESHOLDS[k]);
+}
+
+// One independently dispositionable fact = one finding id.
+function buildSpecFindings(spec, size) {
+    const out = [];
+    const f = (ruleId, factInputs, instanceKey) => out.push({
+        id: `${ruleId}:${spec.id}${instanceKey ? `:${instanceKey}` : ''}`,
+        ruleId, ruleVersion: SPEC_RULE_VERSIONS[ruleId], factInputs,
+    });
+    for (const w of spec.warnings) {
+        if (w === 'unknown-status') f(w, { declaredStatus: spec.declaredStatus });
+        else if (w === 'zombie-plan') f(w, { notDonePlans: spec.notDonePlans });
+        else if (w === 'aging-no-plan' || w === 'aging-inactive') f(w, { lastTouchedAt: spec.lastTouchedAt });
+        else if (w === 'size-exceeded') {
+            for (const dim of breachedDimensions(size)) {
+                f('size-exceeded', { dimension: dim, value: size[dim],
+                    threshold: SIZE_THRESHOLDS[dim], state: spec.state }, dim);
+            }
+        }
+    }
+    return out;
+}
+
 function readJsonSafe(filePath) {
     try {
         return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -453,7 +483,30 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         });
     }
 
+    for (const s of specs) s.findings = buildSpecFindings(s, s.size);
+
     const blockers = specs.map(deriveBlocker).filter(Boolean);
+
+    const source = {
+        directoryReadable: discovery.directoryReadable,
+        discoveredFileCount,
+        parsedSpecCount: specs.length,
+        discoveredMarkdownFileCount: discovery.files.length,
+        roots: discovery.roots || [],
+        warnings: sourceWarnings,
+        portfolioSourceDrift: specs.length === 0 && Array.isArray(ir.specs) && ir.specs.length > 0,
+    };
+
+    // `sourceWarnings` mixes two very different things:
+    //   'no usable id: spec:...'  — a design doc under docs/superpowers/specs/.
+    //                               Expected. There are 9 of them today, and they
+    //                               will never be specs.
+    //   'spec parse threw: ...'   — a file that WAS meant to be a spec and blew up.
+    //                               A spec silently vanished from the census.
+    // Gating on warnings.length === 0 (or on discoveredMarkdownFileCount) would
+    // therefore mark this repo permanently incomplete and sync would never
+    // tombstone anything. Gate on the second kind only.
+    const parseFailures = sourceWarnings.filter(w => /parse threw/.test(w.reason));
 
     const registry = {
         // Bumped from @1: the shape gained blockers/errors/source, and a consumer
@@ -464,14 +517,17 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         specs,
         blockers,
         errors,
-        source: {
-            directoryReadable: discovery.directoryReadable,
-            discoveredFileCount,
-            parsedSpecCount: specs.length,
-            discoveredMarkdownFileCount: discovery.files.length,
-            roots: discovery.roots || [],
-            warnings: sourceWarnings,
-            portfolioSourceDrift: specs.length === 0 && Array.isArray(ir.specs) && ir.specs.length > 0,
+        source,
+        // discoveredFileCount counts every file under the strict root plus every file
+        // that parsed anywhere, so `=== specs.length` catches both a strict-root parse
+        // failure and a duplicate id (counted, then dropped).
+        census: {
+            complete: errors.length === 0
+                && source.directoryReadable
+                && source.discoveredFileCount === source.parsedSpecCount
+                && parseFailures.length === 0
+                && !source.portfolioSourceDrift,
+            errors: [...errors.map(e => e.reason), ...parseFailures.map(w => `${w.path}: ${w.reason}`)],
         },
     };
 
@@ -1021,6 +1077,7 @@ function registerSpecPortfolioCommands(program) {
 module.exports = {
     SIZE_THRESHOLDS,
     RECOGNIZED_SPEC_STATUSES,
+    SPEC_RULE_VERSIONS,
     DEFAULT_AGING_DAYS,
     buildSpecRegistry,
     formatPortfolioReport,

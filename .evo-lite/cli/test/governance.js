@@ -5740,6 +5740,49 @@ async function runGovernanceTests() {
             console.log('✅ T-disposition-resolve passed');
         }
 
+        console.log('T-disposition-spec-findings. Spec warnings become identified findings ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const root = createTempRuntimeRoot('disposition-spec-findings').workspaceRoot;
+            const w = (file, front) => writeText(path.join(root, 'docs', 'specs', file),
+                ['---', ...front, '---', '', '# S', ''].join('\n'));
+
+            w('u.md', ['id: spec:u', 'status: closed-experimental']);
+            const big = [1,2,3,4,5,6,7,8,9].map(n => `    { "id": "c${n}" }`).join(',\n');
+            w('big.md', ['id: spec:big', 'status: done', 'x: 1']);
+            fs.appendFileSync(path.join(root, 'docs', 'specs', 'big.md'),
+                ['## Acceptance Criteria', '', '```json', '{', '  "criteria": [', big, '  ]', '}', '```', ''].join('\n'));
+
+            const reg = sp.buildSpecRegistry(root, { write: false });
+            const by = Object.fromEntries(reg.specs.map(s => [s.id, s]));
+
+            const uf = by['spec:u'].findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(uf, 'unknown-status is emitted as a finding object');
+            assert.strictEqual(uf.id, 'unknown-status:spec:u', 'canonical id shape');
+            assert.strictEqual(uf.factInputs.declaredStatus, 'closed-experimental',
+                'the fact that made the finding true is declared');
+            assert.strictEqual(uf.ruleVersion, 1);
+
+            const dims = by['spec:big'].findings.filter(f => f.ruleId === 'size-exceeded');
+            assert.ok(dims.length >= 1, 'size-exceeded is emitted per dimension');
+            assert.ok(dims.every(f => /^size-exceeded:spec:big:[a-zA-Z]+$/.test(f.id)),
+                'each breached dimension gets its OWN id — one consent must not cover three decisions');
+            assert.ok(dims.some(f => f.factInputs.dimension === 'acCount' && f.factInputs.value === 9),
+                'the dimension, its value and its threshold are the facts');
+
+            assert.strictEqual(reg.census.complete, true, 'a readable portfolio is a complete census');
+            assert.deepStrictEqual(by['spec:u'].warnings.includes('unknown-status'), true,
+                'the legacy string warnings are untouched');
+
+            // The predicate must not be tripped by the design docs that legitimately
+            // carry no spec id — otherwise the census is never complete and sync is
+            // dead code in this repo.
+            const realReg = sp.buildSpecRegistry(process.cwd(), { write: false });
+            assert.strictEqual(realReg.census.complete, true,
+                'the real repository, with its 9 id-less design docs, is a COMPLETE census');
+            console.log('✅ T-disposition-spec-findings passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
