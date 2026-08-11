@@ -24,6 +24,15 @@ linkedSpec: spec:disposition-ledger
 - **Do not nurture child hives.** Distribution is a separate gated step.
 - **Fail-closed on doubt.** A failure to observe must never be encoded as a change in fact.
 - **Never `git add`/`git commit` from a hook.**
+- **A task is not verified until the FULL suite passes: `node .evo-lite/cli/test.js` with no
+  scope argument.** `… test.js governance` returns before `runIntegrationTests()` is ever
+  loaded (`test.js:17-44`), so a green governance run says nothing about the integration
+  suite. This was learned the expensive way in Task 5: the R006 id migration broke two
+  `integration.js` assertions, and three consecutive "suite green" reports — implementer's
+  and controller's alike — all missed it because every one of them ran only the governance
+  scope. Use `governance` for fast inner-loop feedback if you like; report the full run.
+  (`… test.js integration` is not a thing — the only scopes are `governance` and the
+  default `all`. Passing it prints `Unknown test scope` and exits 1.)
 
 ---
 
@@ -37,7 +46,7 @@ linkedSpec: spec:disposition-ledger
 - Test: `templates/cli/test/governance.js`
 
 - files: templates/cli/disposition/fingerprint.js, templates/cli/template-manifest.js, templates/cli/test/governance.js
-- verify: node .evo-lite/cli/test.js governance
+- verify: node .evo-lite/cli/test.js
 - acceptance: ac2
 
 **Interfaces:**
@@ -187,7 +196,7 @@ git commit -m "feat(disposition): canonical fingerprint over ruleId, ruleVersion
 - Test: `templates/cli/test/governance.js`
 
 - files: templates/cli/disposition/ledger.js, templates/cli/template-manifest.js, .gitignore, templates/cli/test/governance.js
-- verify: node .evo-lite/cli/test.js governance
+- verify: node .evo-lite/cli/test.js
 - acceptance: ac6
 
 **Interfaces:**
@@ -385,7 +394,7 @@ git commit -m "feat(disposition): git-tracked ledger with sorted atomic writes a
 - Test: `templates/cli/test/governance.js`
 
 - files: templates/cli/disposition/resolve.js, templates/cli/template-manifest.js, templates/cli/test/governance.js
-- verify: node .evo-lite/cli/test.js governance
+- verify: node .evo-lite/cli/test.js
 - acceptance: ac4, ac8
 
 **Interfaces:**
@@ -540,7 +549,7 @@ git commit -m "feat(disposition): single resolver with terminal tombstones"
 - Test: `templates/cli/test/governance.js`
 
 - files: templates/cli/spec-portfolio.js, templates/cli/test/governance.js
-- verify: node .evo-lite/cli/test.js governance
+- verify: node .evo-lite/cli/test.js
 - acceptance: ac1, ac2
 
 **Interfaces:**
@@ -730,7 +739,7 @@ git commit -m "feat(disposition): identified findings and a conservative census 
 - Test: `templates/cli/test/governance.js`
 
 - files: templates/cli/planning/gaps.js, templates/cli/planning.js, templates/cli/test/governance.js
-- verify: node .evo-lite/cli/test.js governance
+- verify: node .evo-lite/cli/test.js
 - acceptance: ac1, ac2
 
 **Interfaces:**
@@ -994,7 +1003,7 @@ git commit -m "feat(disposition): canonical ids, declared facts and a census res
 - Test: `templates/cli/test/governance.js`
 
 - files: templates/cli/spec-portfolio.js, templates/cli/planning.js, templates/cli/memory.service.js, templates/cli/test/governance.js
-- verify: node .evo-lite/cli/test.js governance
+- verify: node .evo-lite/cli/test.js
 - acceptance: ac7, ac8
 
 **Interfaces:**
@@ -1101,7 +1110,7 @@ Command registration goes at `memory.js:841-854`, next to the existing
 `safeRegister` calls.
 
 - files: templates/cli/disposition/commands.js, templates/cli/memory.js, templates/cli/template-manifest.js, templates/cli/test/harness.js, templates/cli/test/integration.js
-- verify: node .evo-lite/cli/test.js integration
+- verify: node .evo-lite/cli/test.js
 - acceptance: ac5
 
 **Interfaces:**
@@ -1446,7 +1455,7 @@ git commit -m "feat(disposition): set/list/revoke with closed vocabulary and no 
 - Test: `templates/cli/test/governance.js`
 
 - files: templates/cli/disposition/commands.js, templates/cli/hooks.js, templates/cli/test/governance.js
-- verify: node .evo-lite/cli/test.js governance
+- verify: node .evo-lite/cli/test.js
 - acceptance: ac9
 
 **Interfaces:**
@@ -1585,7 +1594,7 @@ binding), 1981 (runtime file set), 3112-3113 (verify reporting); `memory.js` at
 that file as unlinked forever.
 
 - files: templates/cli/spec-portfolio.js, templates/cli/memory.service.js, templates/cli/memory.js, templates/cli/test/governance.js
-- verify: node .evo-lite/cli/test.js governance
+- verify: node .evo-lite/cli/test.js
 - acceptance: ac7, ac9
 
 **Interfaces:**
