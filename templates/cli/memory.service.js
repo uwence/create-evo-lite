@@ -31,6 +31,9 @@ const {
     getTemplateRootDir,
     getWorkspaceRoot,
 } = require('./runtime');
+// Task 2 owns the single implementation of "is the ledger uncommitted". A local
+// copy here is exactly the drift this layer keeps arguing against.
+const { dispositionsDirty } = require('./disposition/ledger');
 
 function recordGovernanceBoundary(options = {}) {
     const warn = typeof options.warn === 'function'
@@ -206,6 +209,9 @@ function reportRecoveryLeaseRelease(markerDir, fingerprint, leaseId, committed) 
 }
 
 const ACTIVE_CONTEXT_PATH = getActiveContextPath();
+// Already workspace-relative and git-ready. The name warns against piping it
+// through toWorkspaceGitPath(), whose contract is absolute -> relative.
+const DISPOSITIONS_GIT_PATH = '.evo-lite/dispositions.json';
 const DB_PATH = getDbPath();
 const LOG_PATH = getLogPath();
 const OFFLINE_MEMORIES_PATH = getOfflineMemoriesPath();
@@ -1938,6 +1944,8 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
         throw new Error('Usage: node .evo-lite/cli/memory.js commit "闭环详情" --code-message="feat(...): ..." --mechanism="机制名" [--resolve="4-char-hash"] [--stage=staged|all]');
     }
 
+    const workspaceRoot = getWorkspaceRoot();
+
     ensureContextFile();
     await ensureMemoryStoreReady();
 
@@ -1982,6 +1990,18 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
             toWorkspaceGitPath(ACTIVE_CONTEXT_PATH),
             toWorkspaceGitPath(trackResult.archivePath),
         ];
+        // A pending tombstone is part of the runtime state this commit closes.
+        // Excluding it lets `mem commit` claim durability while a decision that
+        // another machine cannot see is still sitting unstaged.
+        //
+        // NOTE the path type. toWorkspaceGitPath() is path.relative(workspaceRoot, x)
+        // and its two existing arguments are ABSOLUTE. Feeding it an already
+        // workspace-relative path would relativize a cwd-relative string against
+        // the workspace root and yield a broken pathspec, so the constant goes in
+        // as-is.
+        if (dispositionsDirty(workspaceRoot)) {
+            result.runtime.files.push(DISPOSITIONS_GIT_PATH);
+        }
     } catch (error) {
         result.track.status = 'failed';
         result.errorStage = 'track';
@@ -1994,6 +2014,24 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
         runGit(['commit', '-m', runtimeMessage]);
         result.runtime.status = 'written';
         result.runtime.commitHash = runGit(['rev-parse', '--short', 'HEAD']);
+
+        // The meta-commit is itself a commit, so it fired post-commit, which runs
+        // `disposition sync` and may have written a NEW tombstone — dirty again,
+        // immediately after we staged it. One retry, then honesty: never report a
+        // closure we did not achieve. A single retry is deliberate: the closure
+        // commit touches only the ledger, so its own post-commit has no unlinked
+        // file and no context change to react to and cannot cascade.
+        if (dispositionsDirty(workspaceRoot)) {
+            try {
+                runGit(['add', '--', DISPOSITIONS_GIT_PATH]);
+                runGit(['commit', '-m', 'chore(meta): close disposition tombstones written by post-commit']);
+            } catch (_) { /* fall through to the dirty check below */ }
+        }
+        if (dispositionsDirty(workspaceRoot)) {
+            result.runtime.status = 'partial';
+            result.runtime.message = 'disposition tombstone still uncommitted after closure retry — '
+                + 'other machines will not see it; run `git add .evo-lite/dispositions.json` and commit';
+        }
     } catch (error) {
         result.runtime.status = 'failed';
         result.errorStage = 'meta-commit';
@@ -3132,6 +3170,21 @@ async function verify(options = {}) {
         } else {
             log(`📋 [Spec Portfolio]: degraded (${err && err.message ? err.message : 'error'})`);
         }
+    }
+
+    // A tombstone written by post-commit is NOT in that commit. Until a later
+    // commit carries it, another machine will not see it — so say so. It is
+    // reported OUTSIDE the portfolio `lines` on purpose: it is a durability
+    // alert, not a spec-portfolio warning, and folding it into that hasWarn would
+    // push "表态老化/超标 spec" as the next step for a debt that only git closes.
+    try {
+        if (dispositionsDirty(getWorkspaceRoot())) {
+            log('⚠️ dispositions.json 有未提交改动 — tombstone 尚未持久化，其他机器看不到');
+            report.hasAlerts = true;
+            pushNextStep('提交 disposition 账本: git add .evo-lite/dispositions.json && git commit。');
+        }
+    } catch (err) {
+        log(`⚠️ dispositions.json 提交状态未知 (${err && err.message ? err.message : 'error'})`);
     }
 
     const governanceRun = readGovernanceRunState(getWorkspaceRoot());

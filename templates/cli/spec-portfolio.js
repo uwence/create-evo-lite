@@ -959,6 +959,17 @@ function formatWarningLine(spec, warning) {
     return `⚠️ ${spec.id} ${warning}`;
 }
 
+// Per-finding line. Falls back to the legacy per-warning text for every rule
+// whose finding maps 1:1 onto a warning; only size-exceeded needs the
+// dimension, because it is the one rule that splits per instance.
+function formatFindingLine(spec, finding) {
+    if (finding.ruleId === 'size-exceeded') {
+        const { dimension, value, threshold } = finding.factInputs;
+        return `⚠️ ${spec.id} 体量超标 ${dimension}=${value} > ${threshold} (${spec.state}) — 建议拆分或声明 sizeWaiver`;
+    }
+    return formatWarningLine(spec, finding.ruleId);
+}
+
 function formatPortfolioReport(registry) {
     if (!registry) return [];
 
@@ -974,10 +985,37 @@ function formatPortfolioReport(registry) {
     if (registry.source && registry.source.portfolioSourceDrift) {
         lines.push('⚠️ [portfolio-source-drift] Planning IR contains specs but no valid portfolio entities were discovered.');
     }
-    for (const spec of specs) {
-        for (const warning of (spec.warnings || [])) {
-            lines.push(formatWarningLine(spec, warning));
-        }
+    // Projection over the ANNOTATED findings, never a filter of them. The
+    // machine collection (registry.specs[*].findings) keeps every finding it
+    // always had — dispositioning only moves a finding between the sections a
+    // human reads.
+    const all = specs.flatMap(s => (s.findings || []).map(f => ({ f, spec: s })));
+    const actionable = all.filter(x => !x.f.disposition || x.f.disposition.status === 'stale');
+    const handled = all.filter(x => x.f.disposition && x.f.disposition.status === 'current');
+    const reactivated = all.filter(x => x.f.disposition && x.f.disposition.status === 'stale');
+
+    // Guarded, not unconditional. verify() derives report.hasAlerts from
+    // `lines.some(l => l.startsWith('⚠️'))`, so an always-emitted header would
+    // make every clean portfolio raise a permanent alert and push a next-step
+    // that names work nobody has.
+    if (actionable.length) {
+        lines.push(`⚠️ ${actionable.length} 条待处理 finding`);
+        for (const { f, spec } of actionable) lines.push(`   ${formatFindingLine(spec, f)}`);
+    }
+
+    if (handled.length) {
+        const by = {};
+        for (const { f } of handled) by[f.disposition.choice] = (by[f.disposition.choice] || 0) + 1;
+        lines.push('');
+        lines.push(`📋 ${handled.length} 条 finding 已处置`);
+        lines.push(`   ${['not-applicable', 'accepted-debt', 'deferred', 'wont-fix']
+            .map(c => `${c} ${by[c] || 0}`).join(' · ')}`);
+        lines.push('   使用 mem disposition list 查看');
+    }
+    if (reactivated.length) {
+        lines.push('');
+        lines.push(`♻️ ${reactivated.length} 条 disposition 已失效，finding 已重新激活`);
+        lines.push('   使用 mem disposition list --stale 查看');
     }
     return lines;
 }

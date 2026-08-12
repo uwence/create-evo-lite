@@ -2,6 +2,8 @@ const fs = require('fs');
 const memoryService = require('./memory.service');
 const { initDB } = require('./db');
 const { Command } = require('commander');
+const { getWorkspaceRoot } = require('./runtime');
+const { dispositionsDirty } = require('./disposition/ledger');
 
 function getCliText(argv = process.argv) {
     const action = argv[2];
@@ -130,12 +132,18 @@ function printResults(results) {
 }
 
 function formatTrackResult(result) {
+    // `context track` does not commit, so it cannot close this debt — but it must
+    // not claim a closure it did not achieve either. An uncommitted tombstone is
+    // a governance decision no other machine can see.
+    const ledgerPending = dispositionsDirty(getWorkspaceRoot());
     const closureComplete = result.status.archive === 'written'
         && result.status.context === 'updated'
-        && ['resolved', 'not_requested'].includes(result.status.resolve);
+        && ['resolved', 'not_requested'].includes(result.status.resolve)
+        && !ledgerPending;
     const nextStep = closureComplete
         ? '可以向用户汇报：代码提交已固化，轨迹与 archive 已完成闭环。'
-        : '不要宣称闭环完成；请先根据上面的状态补救 archive / context / resolve。';
+        : '不要宣称闭环完成；请先根据上面的状态补救 archive / context / resolve'
+            + (ledgerPending ? '，并提交 .evo-lite/dispositions.json（track 不提交，只能报告）' : '') + '。';
     const lines = [
         '✅ Context track completed.',
         `- closure: ${closureComplete ? 'complete' : 'partial'}`,
@@ -143,6 +151,7 @@ function formatTrackResult(result) {
         `- archive: ${result.status.archive}`,
         `- context: ${result.status.context}`,
         `- resolve: ${result.status.resolve}`,
+        `- dispositions: ${ledgerPending ? 'pending (uncommitted tombstone)' : 'clean'}`,
         `- chunks: ${result.chunkCount}`,
         `- archive_path: ${result.archivePath}`,
         `- next_step: ${nextStep}`,

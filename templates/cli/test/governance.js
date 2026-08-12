@@ -75,6 +75,52 @@ function spawnContainmentChild(envOverrides, args) {
     });
 }
 
+// --- AC9 durability fixtures -------------------------------------------------
+//
+// `mem commit` refuses to run unless every non-.evo-lite path is staged, and a
+// fresh temp workspace carries untracked scaffold files (AGENTS.md, .agents/,
+// .claude/ ...). So the fixture takes a baseline commit FIRST; everything after
+// it is the change under test.
+function initCommitFixtureRepo(projectRoot) {
+    runGit(projectRoot, ['init']);
+    runGit(projectRoot, ['config', 'user.name', 'Evo Test']);
+    runGit(projectRoot, ['config', 'user.email', 'evo@example.com']);
+    writeText(path.join(projectRoot, 'src', 'feature.js'), 'module.exports = 1;\n');
+    runGit(projectRoot, ['add', '-A']);
+    runGit(projectRoot, ['commit', '-m', 'chore: baseline']);
+}
+
+// Stands in for `disposition sync` running inside the real post-commit hook. It
+// only APPENDS to the tracked ledger, so the file goes dirty without this test
+// having to reproduce the ledger's on-disk schema (a second copy of which would
+// be exactly the drift these tests exist to prevent).
+//
+// `when` is a commit ordinal ('2' = the runtime meta-commit) or 'always'.
+function writeCountingPostCommitHook(projectRoot, when) {
+    const hookPath = path.join(projectRoot, '.git', 'hooks', 'post-commit');
+    writeText(hookPath, [
+        '#!/bin/sh',
+        'n=0',
+        '[ -f .evo-lite/hook-count ] && n=$(cat .evo-lite/hook-count)',
+        'n=$((n+1))',
+        'printf "%s" "$n" > .evo-lite/hook-count',
+        `if [ "${when}" = "always" ] || [ "$n" = "${when}" ]; then`,
+        '  printf "\\n" >> .evo-lite/dispositions.json',
+        'fi',
+        'exit 0',
+        '',
+    ].join('\n'));
+    try { fs.chmodSync(hookPath, '755'); } catch (_) { /* not meaningful on Windows */ }
+}
+
+function parseCliJson(res, label) {
+    const start = res.stdout.indexOf('{');
+    const end = res.stdout.lastIndexOf('}');
+    assert.ok(start !== -1 && end > start,
+        `${label} must print a JSON payload. status: ${res.status} stdout: ${res.stdout} stderr: ${res.stderr}`);
+    return JSON.parse(res.stdout.slice(start, end + 1));
+}
+
 async function runGovernanceTests() {
     const { IS_CHILD_RUNTIME } = require('./harness');
     if (IS_CHILD_RUNTIME) {
@@ -6308,6 +6354,226 @@ async function runGovernanceTests() {
             console.log('✅ T-disposition-sync-never-stages passed');
         }
 
+        console.log('T-disposition-presentation. Actionable count leads; debt stays visible; the machine collection does not move ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-presentation').workspaceRoot;
+            const specFile = (n, status) => writeText(path.join(root, 'docs', 'specs', `${n}.md`),
+                ['---', `id: spec:${n}`, `status: ${status}`, '---', '', '# S', ''].join('\n'));
+            for (const n of ['a', 'b']) specFile(n, 'closed-experimental');
+
+            const reg0 = sp.buildSpecRegistry(root, { write: false });
+            const idsBefore = reg0.specs.flatMap(s => s.findings.map(f => f.id)).sort();
+            assert.strictEqual(idsBefore.length, 2,
+                'precondition: two undispositioned findings, or the collapse below proves nothing');
+            const f0 = reg0.specs[0].findings[0];
+            const dispositionedSpecId = reg0.specs[0].id;
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: f0.id, ruleId: f0.ruleId, ruleVersion: f0.ruleVersion,
+                fingerprint: fp.computeFingerprint(f0), choice: 'not-applicable',
+                reason: 'r', at: '2026-08-11T00:00:00Z',
+            }));
+
+            const reg1 = sp.buildSpecRegistry(root, { write: false });
+            // AC7. Presentation collapses; the machine collection must not move.
+            // Same fixture, with and without a ledger, identical finding ids.
+            assert.deepStrictEqual(reg1.specs.flatMap(s => s.findings.map(f => f.id)).sort(), idsBefore,
+                'AC7: dispositioning is a PRESENTATION change — registry.specs[*].findings keeps '
+                + 'exactly the same ids and count');
+
+            const lines = sp.formatPortfolioReport(reg1);
+            const text = lines.join('\n');
+            assert.ok(/1 条待处理 finding/.test(text), 'the actionable count leads — that is the number a reader needs');
+            assert.ok(/1 条 finding 已处置/.test(text), 'dispositioned debt stays permanently visible');
+            assert.ok(/not-applicable 1/.test(text), 'the breakdown by choice is shown');
+            const warnLines = lines.filter(l => l.trim().startsWith('⚠️'));
+            assert.ok(!warnLines.some(l => l.includes(dispositionedSpecId)),
+                'a dispositioned finding is collapsed out of the actionable list, not deleted from data');
+            assert.ok(warnLines.some(l => l.includes('spec:b')),
+                'the undispositioned finding is still named in full');
+
+            // A lapsed decision is REPORTED as lapsed. Same finding id, different
+            // fact -> the fingerprint moves, the entry goes stale, and the finding
+            // is actionable again AND announced as reactivated.
+            specFile(dispositionedSpecId.replace('spec:', ''), 'closed-provisional');
+            const reg2 = sp.buildSpecRegistry(root, { write: false });
+            const stale = reg2.specs.flatMap(s => s.findings).find(f => f.id === f0.id);
+            assert.strictEqual(stale.disposition.status, 'stale', 'precondition: the entry really did lapse');
+            const staleText = sp.formatPortfolioReport(reg2).join('\n');
+            assert.ok(/2 条待处理 finding/.test(staleText), 'a lapsed decision returns its finding to the actionable list');
+            assert.ok(/1 条 disposition 已失效/.test(staleText), 'and the lapse itself is announced, never silent');
+            assert.ok(!/条 finding 已处置/.test(staleText), 'with nothing live left, the handled section is not printed');
+            console.log('✅ T-disposition-presentation passed');
+        }
+
+        console.log('T-disposition-presentation-no-phantom-alert. A zero-actionable portfolio must not raise a verify alert ...');
+        {
+            const runtime = createTempRuntimeRoot('disposition-no-phantom-alert');
+            const root = runtime.workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'not-applicable', '--reason', 'child convention']).status, 0,
+                'precondition: set must succeed, or every assertion below is vacuous');
+
+            const sp = require(path.join(CLI_DIR, 'spec-portfolio'));
+            const reg = sp.buildSpecRegistry(root, { write: false });
+            const findings = reg.specs.flatMap(s => s.findings);
+            assert.strictEqual(findings.length, 1,
+                'precondition: the finding is STILL in the machine collection — this is not a filter');
+            assert.strictEqual(findings[0].disposition.status, 'current',
+                'precondition: zero actionable findings remain');
+            assert.ok(!sp.formatPortfolioReport(reg).some(l => l.startsWith('⚠️')),
+                'a portfolio with zero actionable findings emits no top-level ⚠️ line — verify derives '
+                + 'hasAlerts from exactly that prefix');
+
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+            let report;
+            const output = await captureConsole(async () => { report = await loaded.service.verify(); });
+            assert.ok(!output.split('\n').some(l => l.startsWith('⚠️') && /条待处理 finding/.test(l)),
+                'verify must not print an actionable header for a portfolio with nothing actionable');
+            assert.ok(!report.nextSteps.some(s => s.includes('表态老化/超标 spec')),
+                'and it must not push the 表态 next-step for work nobody has');
+            assert.strictEqual(report.hasAlerts, false,
+                'a fully dispositioned portfolio must not make verify report an alert');
+            console.log('✅ T-disposition-presentation-no-phantom-alert passed');
+        }
+
+        console.log('T-disposition-durability-commit. A dirty ledger joins the REAL staged file set of mem commit ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-durability-commit').workspaceRoot;
+            initCommitFixtureRepo(root);
+
+            // Dirty the ledger BEFORE the commit flow runs.
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            assert.match(runGit(root, ['status', '--porcelain']), /\.evo-lite\/dispositions\.json/,
+                'precondition: the ledger really is uncommitted going in');
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', 'Closed the durability loop for the disposition ledger in one explicit flow.',
+                '--code-message', 'feat: durability fixture', '--mechanism', 'DurabilityClosure', '--json']);
+            const payload = parseCliJson(res, 'mem commit --json');
+
+            // OBSERVED git state, not a source grep. "the source pushes the path"
+            // is not the property under test — "the produced commit carries the
+            // file" is, and only git can answer that.
+            assert.strictEqual(payload.runtime.status, 'written',
+                `the runtime meta-commit must succeed. stderr: ${res.stderr}`);
+            const committed = runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', payload.runtime.commitHash]);
+            assert.ok(committed.split('\n').includes('.evo-lite/dispositions.json'),
+                'AC9: the commit mem commit PRODUCED must contain .evo-lite/dispositions.json — '
+                + 'warning about the debt is not closing it');
+            assert.ok(!/dispositions\.json/.test(runGit(root, ['status', '--porcelain'])),
+                'AC9: and the ledger is no longer dirty afterwards');
+            assert.ok((payload.runtime.files || []).includes('.evo-lite/dispositions.json'),
+                'the reported file set names the ledger it actually staged');
+
+            // The one source-shape check worth keeping: the constant is already
+            // workspace-relative, so relativizing it again yields a broken pathspec.
+            // (Belt and braces only — the assertions above are the evidence.)
+            for (const dir of [TEMPLATE_CLI_DIR, CLI_DIR]) {
+                assert.ok(!/toWorkspaceGitPath\(\s*DISPOSITIONS_GIT_PATH/
+                    .test(fs.readFileSync(path.join(dir, 'memory.service.js'), 'utf8')),
+                'the ledger path is already workspace-relative — relativizing it again yields a broken pathspec');
+            }
+            console.log('✅ T-disposition-durability-commit passed');
+        }
+
+        console.log('T-disposition-durability-second-order. A tombstone written BY the meta-commit is closed by a retry ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-durability-second-order').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            assert.ok(!/dispositions\.json/.test(runGit(root, ['status', '--porcelain'])),
+                'precondition: the ledger starts CLEAN, so the first file-set push cannot be what rescues this');
+
+            // Stand in for `disposition sync` inside post-commit: the meta-commit is
+            // itself a commit, so the hook fires and can dirty the ledger AFTER we
+            // already staged it. Commit 1 is the code commit, commit 2 the
+            // meta-commit, commit 3 the closure retry.
+            writeCountingPostCommitHook(root, '2');
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', 'Closed a tombstone that post-commit wrote after the meta-commit landed.',
+                '--code-message', 'feat: second order fixture', '--mechanism', 'DurabilityClosure', '--json']);
+            const payload = parseCliJson(res, 'mem commit --json');
+
+            assert.strictEqual(payload.runtime.status, 'written',
+                `a second-order tombstone must be CLOSED, not merely reported. stderr: ${res.stderr}`);
+            assert.ok(runGit(root, ['log', '--format=%s']).split('\n')
+                .includes('chore(meta): close disposition tombstones written by post-commit'),
+            'the closure retry commit must exist — the tombstone post-commit wrote is not in the meta-commit');
+            assert.ok(runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'])
+                .split('\n').includes('.evo-lite/dispositions.json'),
+            'and that retry commit is the one carrying the ledger');
+            assert.ok(!/dispositions\.json/.test(runGit(root, ['status', '--porcelain'])),
+                'nothing is left dirty once the retry has run');
+            console.log('✅ T-disposition-durability-second-order passed');
+        }
+
+        console.log('T-disposition-durability-honesty. A ledger still dirty after the retry is reported partial, never written ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-durability-honesty').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+
+            // An unexpected writer that dirties the ledger after EVERY commit,
+            // including the closure retry's own post-commit. One retry is all the
+            // contract promises; past that the only honest answer is `partial`.
+            writeCountingPostCommitHook(root, 'always');
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', 'Attempted closure while an unexpected writer keeps dirtying the ledger.',
+                '--code-message', 'feat: honesty fixture', '--mechanism', 'DurabilityClosure', '--json']);
+            const payload = parseCliJson(res, 'mem commit --json');
+
+            const stillDirty = /dispositions\.json/.test(runGit(root, ['status', '--porcelain']));
+            assert.strictEqual(stillDirty, true,
+                'precondition: the writer really did win, or `partial` would be the wrong verdict to test');
+            assert.notStrictEqual(payload.runtime.status, 'written',
+                'FORBIDDEN: reporting runtime.status = "written" while git still shows dispositions.json dirty');
+            assert.strictEqual(payload.runtime.status, 'partial',
+                'an unclosed tombstone is reported as partial');
+            assert.ok(payload.runtime.message.includes('git add .evo-lite/dispositions.json'),
+                'and the message names the manual fix rather than leaving the operator to guess');
+            console.log('✅ T-disposition-durability-honesty passed');
+        }
+
+        console.log('T-disposition-track-reports. context track does not commit — so it must REPORT the pending tombstone ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-track-reports').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+
+            const details = 'Recorded the trajectory for a run whose disposition ledger state is under test here.';
+            const clean = runCli(root, ['context', 'track', details, '--mechanism', 'TrackClosure']);
+            assert.strictEqual(clean.status, 0, `precondition: track must succeed. stderr: ${clean.stderr}`);
+            assert.ok(clean.stdout.includes('- closure: complete'),
+                'a clean ledger must not drift the existing behaviour — closure still reports complete');
+            assert.ok(clean.stdout.includes('- dispositions: clean'), 'and it says WHY, not just the verdict');
+
+            fs.appendFileSync(led.ledgerPath(root), '\n');
+            assert.match(runGit(root, ['status', '--porcelain']), /\.evo-lite\/dispositions\.json/,
+                'precondition: the ledger really is dirty for the second run');
+            const dirty = runCli(root, ['context', 'track', details, '--mechanism', 'TrackClosure']);
+            assert.strictEqual(dirty.status, 0, `track must still succeed. stderr: ${dirty.stderr}`);
+            assert.ok(!dirty.stdout.includes('- closure: complete'),
+                'closure: complete must NOT be printed while a tombstone sits uncommitted');
+            assert.ok(dirty.stdout.includes('- closure: partial'), 'the verdict degrades to partial');
+            assert.ok(dirty.stdout.includes('- dispositions: pending (uncommitted tombstone)'),
+                'and the reason is visible, not just the verdict');
+            console.log('✅ T-disposition-track-reports passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
@@ -6493,9 +6759,17 @@ async function runGovernanceTests() {
             const report = specPortfolio.formatPortfolioReport(registry);
             assert.strictEqual(report[0], '📋 [Spec Portfolio]: adopted=3 active=1 parked=1 shipped=1',
                 'first report line summarizes counts per state');
-            const warnLines = report.slice(1);
-            assert.strictEqual(warnLines.length, 3, 'one WARN line per warning across the fixture');
-            assert.ok(warnLines.every(l => l.startsWith('⚠️')), 'every warning line is prefixed with the WARN glyph');
+            // Task 9 changed the SHAPE, not the content: the ⚠️ glyph now leads a
+            // single actionable header and the per-finding lines are indented
+            // beneath it. The old promise — one TOP-LEVEL ⚠️ line per warning — is
+            // genuinely retired; what is still promised is that every actionable
+            // finding gets its own named line.
+            assert.strictEqual(report[1], '⚠️ 3 条待处理 finding',
+                'the actionable count leads the projection');
+            const warnLines = report.slice(2);
+            assert.strictEqual(warnLines.length, 3, 'one line per actionable finding across the fixture');
+            assert.ok(warnLines.every(l => l.startsWith('   ⚠️')),
+                'every finding line is indented under the header and keeps the WARN glyph');
             assert.ok(warnLines.some(l => l.includes('spec:c') && l.includes('天无活动')), 'aging-no-plan line mentions spec:c and idle days');
             assert.ok(warnLines.some(l => l.includes('spec:b') && l.includes('zombie')), 'zombie-plan line mentions spec:b');
             assert.ok(warnLines.some(l => l.includes('spec:e') && l.includes('体量超标')), 'size-exceeded line mentions spec:e');
@@ -6763,7 +7037,12 @@ async function runGovernanceTests() {
                 });
                 const portfolioLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]:'));
                 assert.ok(portfolioLine, 'verify output must include a 📋 [Spec Portfolio]: line');
-                assert.ok(output.split('\n').some(l => l.startsWith('⚠️') && l.includes('spec:m')),
+                // Task 9: the glyph leads the actionable HEADER; the spec-named
+                // line is indented beneath it. Both halves are asserted so the
+                // relaxation of `startsWith` cannot hide a lost header.
+                assert.ok(output.split('\n').some(l => l.startsWith('⚠️') && /条待处理 finding/.test(l)),
+                    'verify output must include the ⚠️ actionable header');
+                assert.ok(output.split('\n').some(l => l.trim().startsWith('⚠️') && l.includes('spec:m')),
                     'verify output must include a ⚠️ aging warning line for spec:m');
                 assert.strictEqual(report.hasAlerts, true, 'report.hasAlerts must be true when a spec portfolio warning fires');
                 assert.ok(report.specPortfolio, 'report.specPortfolio must be populated');
