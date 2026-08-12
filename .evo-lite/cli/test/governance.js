@@ -5875,6 +5875,213 @@ async function runGovernanceTests() {
             console.log('✅ T-disposition-planning-census passed');
         }
 
+        console.log('T-disposition-annotation. Dispositioned findings stay in the collection ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-annotation').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            const first = sp.buildSpecRegistry(root, { write: false });
+            const target = first.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+            assert.strictEqual(target.disposition, null, 'undispositioned findings annotate as null');
+
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: target.id, ruleId: target.ruleId, ruleVersion: target.ruleVersion,
+                fingerprint: fp.computeFingerprint(target), choice: 'not-applicable',
+                reason: 'child convention', at: '2026-08-11T00:00:00Z',
+            }));
+
+            const second = sp.buildSpecRegistry(root, { write: false });
+            const after = second.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+
+            // THE core invariant. If this ever fails, a downstream reader can conclude
+            // a problem does not exist because somebody dispositioned it.
+            assert.ok(after, 'a dispositioned finding MUST remain in the collection');
+            assert.strictEqual(after.disposition.status, 'current');
+            assert.strictEqual(after.disposition.choice, 'not-applicable');
+            assert.strictEqual(second.specs[0].warnings.includes('unknown-status'), true,
+                'the legacy warnings array is likewise not filtered');
+            console.log('✅ T-disposition-annotation passed');
+        }
+
+        console.log('NC1-disposition-cardinality. Same input -> identical finding id set across no ledger / current ledger / stale ledger ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-nc1-cardinality').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            // State 1: no ledger file at all.
+            const noLedgerReg = sp.buildSpecRegistry(root, { write: false });
+            const idsNoLedger = noLedgerReg.specs[0].findings.map(f => f.id).sort();
+            const target = noLedgerReg.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(target, 'precondition: an unknown-status finding must exist, or this control is vacuous');
+
+            // State 2: a CURRENT-matching ledger entry (fingerprint matches the live finding).
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: target.id, ruleId: target.ruleId, ruleVersion: target.ruleVersion,
+                fingerprint: fp.computeFingerprint(target), choice: 'not-applicable',
+                reason: 'nc1 current', at: '2026-08-11T00:00:00Z',
+            }));
+            const currentReg = sp.buildSpecRegistry(root, { write: false });
+            const idsCurrent = currentReg.specs[0].findings.map(f => f.id).sort();
+
+            // State 3: a STALE ledger — same findingId, but a fingerprint that can never
+            // match again (a hand-forged value stands in for "the facts moved").
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: target.id, ruleId: target.ruleId, ruleVersion: target.ruleVersion,
+                fingerprint: 'f'.repeat(64), choice: 'not-applicable',
+                reason: 'nc1 stale', at: '2026-08-11T00:00:00Z',
+            }));
+            const staleReg = sp.buildSpecRegistry(root, { write: false });
+            const idsStale = staleReg.specs[0].findings.map(f => f.id).sort();
+
+            assert.deepStrictEqual(idsCurrent, idsNoLedger,
+                'NC1: a CURRENT-matching ledger must not change the set of finding ids');
+            assert.deepStrictEqual(idsStale, idsNoLedger,
+                'NC1: a STALE ledger must not change the set of finding ids');
+
+            // Only `.disposition` may differ across the three states.
+            const stripDisposition = (findings) => findings
+                .map(({ disposition, ...rest }) => rest)
+                .sort((a, b) => a.id.localeCompare(b.id));
+            assert.deepStrictEqual(stripDisposition(currentReg.specs[0].findings), stripDisposition(noLedgerReg.specs[0].findings),
+                'NC1: under a current ledger, only .disposition may differ from the no-ledger run');
+            assert.deepStrictEqual(stripDisposition(staleReg.specs[0].findings), stripDisposition(noLedgerReg.specs[0].findings),
+                'NC1: under a stale ledger, only .disposition may differ from the no-ledger run');
+
+            assert.strictEqual(currentReg.specs[0].findings.find(f => f.id === target.id).disposition.status, 'current',
+                'NC1 sanity: the current-ledger state really does annotate as current');
+            assert.strictEqual(staleReg.specs[0].findings.find(f => f.id === target.id).disposition.status, 'stale',
+                'NC1 sanity: the stale-ledger state really does annotate as stale');
+            console.log('✅ NC1-disposition-cardinality passed');
+        }
+
+        console.log('NC2-disposition-planning-coverage. `plan gaps` finding collection stays full-size and every finding carries a disposition key ...');
+        {
+            const { spawnSync } = require('child_process');
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const memCli = path.join(TEMPLATE_CLI_DIR, 'memory.js');
+            // memory.js -> memory.service -> db.js -> better-sqlite3, which lives in the
+            // workspace runtime's node_modules (NOT the package's). Same idiom as
+            // harness.js:18 / integration.js child spawns.
+            const nodePath = [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH]
+                .filter(Boolean).join(path.delimiter);
+
+            const runtime = createTempRuntimeRoot('disposition-nc2-planning');
+            const projectRoot = runtime.workspaceRoot;
+            const irPath = path.join(runtime.runtimeRoot, 'generated', 'planning', 'plan-ir.json');
+            writeText(irPath, JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:nc2', linkedPlan: 'plan:nc2', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2));
+
+            const driftReportPath = path.join(runtime.runtimeRoot, 'generated', 'architecture', 'drift-report.json');
+            const runGaps = () => {
+                const res = spawnSync(process.execPath, [memCli, 'plan', 'gaps'], {
+                    env: { ...process.env, EVO_LITE_ROOT: runtime.runtimeRoot, NODE_PATH: nodePath },
+                    encoding: 'utf8',
+                });
+                assert.strictEqual(res.status, 0, `plan gaps must exit 0. stderr: ${res.stderr || ''}`);
+                const report = JSON.parse(fs.readFileSync(driftReportPath, 'utf8'));
+                return report.findings.filter(f => f.scope === 'planning');
+            };
+
+            const before = runGaps();
+            assert.ok(before.length > 0, 'precondition: the fixture must actually produce planning findings, or this control is vacuous');
+            assert.ok(before.every(f => 'disposition' in f), 'NC2: every planning finding carries a disposition key');
+            assert.ok(before.every(f => f.disposition === null), 'NC2: with no ledger, every disposition is null');
+
+            const target = before.find(f => f.ruleId === 'R005');
+            assert.ok(target, 'precondition: R005 (no linkedFiles) must be present for a deterministic disposition target');
+
+            led.writeLedger(projectRoot, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: target.id, ruleId: target.ruleId, ruleVersion: target.ruleVersion,
+                fingerprint: fp.computeFingerprint(target), choice: 'accepted-debt',
+                reason: 'nc2', at: '2026-08-11T00:00:00Z',
+            }));
+
+            const after = runGaps();
+            assert.deepStrictEqual(after.map(f => f.id).sort(), before.map(f => f.id).sort(),
+                'NC2: the planning producer must not lose or gain findings once one is dispositioned');
+            assert.ok(after.every(f => 'disposition' in f), 'NC2: every planning finding still carries a disposition key');
+            const afterTarget = after.find(f => f.id === target.id);
+            assert.strictEqual(afterTarget.disposition.status, 'current', 'NC2: the dispositioned finding resolves current');
+            console.log('✅ NC2-disposition-planning-coverage passed');
+        }
+
+        console.log('NC3-disposition-invalid-ledger-failsafe. A corrupt ledger loses annotation, never a finding ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-nc3-invalid-ledger').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            const clean = sp.buildSpecRegistry(root, { write: false });
+            const cleanIds = clean.specs[0].findings.map(f => f.id).sort();
+            assert.ok(cleanIds.length > 0, 'precondition: findings exist, or this control is vacuous');
+
+            fs.mkdirSync(path.join(root, '.evo-lite'), { recursive: true });
+            fs.writeFileSync(path.join(root, '.evo-lite', 'dispositions.json'), '{ this is not valid json', 'utf8');
+            assert.throws(() => led.readLedger(root), /invalid JSON/,
+                'precondition: readLedger really does throw on this fixture');
+
+            const degraded = sp.buildSpecRegistry(root, { write: false });
+            const degradedIds = degraded.specs[0].findings.map(f => f.id).sort();
+
+            assert.deepStrictEqual(degradedIds, cleanIds,
+                'NC3: no finding may be lost when the ledger is unreadable');
+            assert.ok(degraded.specs[0].findings.every(f => f.disposition === null),
+                'NC3: annotation may be lost (every disposition null) but the findings themselves must survive');
+            console.log('✅ NC3-disposition-invalid-ledger-failsafe passed');
+        }
+
+        console.log('NC4-disposition-legacy-surface. Pre-existing fields stay byte-identical once a finding is dispositioned ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-nc4-legacy-surface').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            const before = sp.buildSpecRegistry(root, { write: false });
+            const beforeTarget = before.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(beforeTarget, 'precondition: unknown-status finding exists');
+            assert.strictEqual(before.specs[0].warnings.includes('unknown-status'), true,
+                'precondition: the legacy warnings array carries the same signal');
+
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: beforeTarget.id, ruleId: beforeTarget.ruleId, ruleVersion: beforeTarget.ruleVersion,
+                fingerprint: fp.computeFingerprint(beforeTarget), choice: 'not-applicable',
+                reason: 'nc4', at: '2026-08-11T00:00:00Z',
+            }));
+
+            const after = sp.buildSpecRegistry(root, { write: false });
+            const afterTarget = after.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(afterTarget, 'the finding must still be present after dispositioning');
+            assert.notStrictEqual(afterTarget.disposition, null, 'precondition: the finding really is now dispositioned');
+
+            // Whichever pre-existing fields this producer emits (spec-portfolio findings
+            // carry id / ruleId / ruleVersion / factInputs — no separate rule/type/level/
+            // message/evidence/suggestedAction) must be untouched by dispositioning.
+            for (const key of ['id', 'ruleId', 'ruleVersion', 'factInputs']) {
+                assert.deepStrictEqual(afterTarget[key], beforeTarget[key],
+                    `NC4: field "${key}" must be byte-identical to the undispositioned run`);
+            }
+            assert.strictEqual(after.specs[0].warnings.includes('unknown-status'), true,
+                'NC4: the legacy warnings array still contains the warning after dispositioning');
+            console.log('✅ NC4-disposition-legacy-surface passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));

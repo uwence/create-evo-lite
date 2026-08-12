@@ -87,15 +87,21 @@ function registerPlanCommands(program, deps = {}) {
         .action(async (options) => {
             const { runPlanningDrift } = require('./planning/gaps');
             const { loadReport, saveReport, mergeFindings } = require('./architecture/diff');
+            const { readLedger } = require('./disposition/ledger');
+            const { annotate } = require('./disposition/resolve');
             const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
             const planIR = fs.existsSync(irPath) ? JSON.parse(fs.readFileSync(irPath, 'utf8')) : null;
             if (!planIR) console.log('No plan-ir.json found. Run: mem plan scan first.\n');
 
             console.log('Running planning drift checks...\n');
-            const newFindings = runPlanningDrift(projectRoot, planIR, {
+            let newFindings = runPlanningDrift(projectRoot, planIR, {
                 lastCommit: !!options.lastCommit,
                 changedFilesFromEnv: !!options.changedFilesFromEnv,
             });
+
+            let ledger = { version: 'evo-disposition-ledger@1', entries: [] };
+            try { ledger = readLedger(projectRoot); } catch (_) { /* invalid ledger must not break reporting */ }
+            newFindings = newFindings.map(f => annotate(f, ledger));
 
             const existing = loadReport(projectRoot);
             existing.findings = mergeFindings(existing.findings, newFindings, 'planning');

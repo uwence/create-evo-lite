@@ -5,6 +5,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseSpecFile, parseFrontmatter, resolveLinkedPlanIds } = require('./planning/parse-markdown');
 const { getWorkspaceRoot } = require('./runtime');
+const { readLedger } = require('./disposition/ledger');
+const { annotate } = require('./disposition/resolve');
 
 const SIZE_THRESHOLDS = Object.freeze({ acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 });
 // The closed vocabulary of spec statuses this registry can actually reason about.
@@ -484,6 +486,10 @@ function buildSpecRegistry(projectRoot, opts = {}) {
     }
 
     for (const s of specs) s.findings = buildSpecFindings(s, s.size);
+
+    let ledger = { version: 'evo-disposition-ledger@1', entries: [] };
+    try { ledger = readLedger(projectRoot); } catch (_) { /* invalid ledger must not break reporting */ }
+    for (const s of specs) s.findings = s.findings.map(f => annotate(f, ledger));
 
     const blockers = specs.map(deriveBlocker).filter(Boolean);
 
