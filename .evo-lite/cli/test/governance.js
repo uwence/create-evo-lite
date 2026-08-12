@@ -6044,6 +6044,57 @@ async function runGovernanceTests() {
             console.log('✅ NC3-disposition-invalid-ledger-failsafe passed');
         }
 
+        console.log('NC3b-disposition-planning-invalid-ledger-failsafe. A corrupt ledger loses annotation, never a planning finding ...');
+        {
+            const { spawnSync } = require('child_process');
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const memCli = path.join(TEMPLATE_CLI_DIR, 'memory.js');
+            // Same CLI-spawn harness as NC2: memory.js -> memory.service -> db.js ->
+            // better-sqlite3, which lives in the workspace runtime's node_modules.
+            const nodePath = [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH]
+                .filter(Boolean).join(path.delimiter);
+
+            const runtime = createTempRuntimeRoot('disposition-nc3b-planning-invalid-ledger');
+            const projectRoot = runtime.workspaceRoot;
+            const irPath = path.join(runtime.runtimeRoot, 'generated', 'planning', 'plan-ir.json');
+            writeText(irPath, JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:nc3b', linkedPlan: 'plan:nc3b', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2));
+
+            const driftReportPath = path.join(runtime.runtimeRoot, 'generated', 'architecture', 'drift-report.json');
+            const runGaps = () => {
+                const res = spawnSync(process.execPath, [memCli, 'plan', 'gaps'], {
+                    env: { ...process.env, EVO_LITE_ROOT: runtime.runtimeRoot, NODE_PATH: nodePath },
+                    encoding: 'utf8',
+                });
+                assert.strictEqual(res.status, 0, `plan gaps must exit 0. stderr: ${res.stderr || ''}`);
+                const report = JSON.parse(fs.readFileSync(driftReportPath, 'utf8'));
+                return report.findings.filter(f => f.scope === 'planning');
+            };
+
+            const clean = runGaps();
+            assert.ok(clean.length > 0, 'precondition: the fixture must actually produce planning findings, or this control is vacuous');
+
+            // Corrupt the ledger: invalid JSON. readLedger() THROWS on this — the
+            // identical 3-line try/catch guard planning.js carries around
+            // readLedger(projectRoot) is otherwise never exercised by the suite.
+            fs.writeFileSync(led.ledgerPath(projectRoot), '{ this is not valid json', 'utf8');
+            assert.throws(() => led.readLedger(projectRoot), /invalid JSON/,
+                'precondition: readLedger really does throw on this fixture');
+
+            const degraded = runGaps();
+            assert.ok(degraded.length > 0, 'precondition: the degraded run must still produce planning findings, or the .every() checks below are vacuous');
+
+            assert.deepStrictEqual(degraded.map(f => f.id).sort(), clean.map(f => f.id).sort(),
+                'NC3b: no planning finding may be lost when the ledger is unreadable');
+            assert.ok(degraded.every(f => 'disposition' in f), 'NC3b: every planning finding still carries a disposition key');
+            assert.ok(degraded.every(f => f.disposition === null),
+                'NC3b: annotation may be lost (every disposition null) but the findings themselves must survive');
+            console.log('✅ NC3b-disposition-planning-invalid-ledger-failsafe passed');
+        }
+
         console.log('NC4-disposition-legacy-surface. Pre-existing fields stay byte-identical once a finding is dispositioned ...');
         {
             const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
