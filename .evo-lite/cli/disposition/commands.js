@@ -174,7 +174,7 @@ function registerDispositionCommands(program) {
                 return;
             }
 
-            const { classifyEntry } = require('./resolve');
+            const { classifyEntry, isTombstoned } = require('./resolve');
             // A real Set, so `.has()` inside classifyEntry is correct — unlike
             // CHOICES, which is a frozen ARRAY.
             const emitted = new Set(findings.map(f => f.id));
@@ -188,11 +188,20 @@ function registerDispositionCommands(program) {
             let n = 0;
             const entries = ledger.entries.map((e) => {
                 // Membership is decided by the shared resolver, never re-derived
-                // here. The `e.orphanedAt` short-circuit is what makes a tombstone
+                // here. The tombstone short-circuit is what makes a tombstone
                 // TERMINAL and this command IDEMPOTENT: without it every later run
                 // would re-stamp orphanedAt, overwriting the date a governance
                 // decision actually closed with "whenever the hook last fired".
-                if (e.orphanedAt || classifyEntry(e, emitted) !== 'orphaned') return e;
+                //
+                // PRESENCE, not truthiness — `isTombstoned`, never `e.orphanedAt`.
+                // Task 3's ruling: a present-but-falsy orphanedAt was proven to
+                // REVIVE a tombstoned finding, and the ruling covered every layer.
+                // readLedger makes the two coincide for anything sync can observe
+                // today, so this is behaviour-preserving here; it is written this
+                // way so the irreversible-mutation path cannot be the one place
+                // that silently disagrees with the resolver about what a tombstone
+                // is if that validation ever moves.
+                if (isTombstoned(e) || classifyEntry(e, emitted) !== 'orphaned') return e;
                 n += 1;
                 const tombstoned = { ...e, orphanedAt: new Date().toISOString() };
                 // orphanedHead is ADDED only when there is a head to record.

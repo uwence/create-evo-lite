@@ -48,4 +48,4 @@ function classifyEntry(entry, emittedIds) {
     return isTombstoned(entry) ? 'orphaned' : 'current';
 }
 
-module.exports = { effectiveDisposition, annotate, classifyEntry };
+module.exports = { isTombstoned, effectiveDisposition, annotate, classifyEntry };
