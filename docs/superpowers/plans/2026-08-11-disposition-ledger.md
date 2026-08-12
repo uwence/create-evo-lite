@@ -33,6 +33,11 @@ linkedSpec: spec:disposition-ledger
   scope. Use `governance` for fast inner-loop feedback if you like; report the full run.
   (`… test.js integration` is not a thing — the only scopes are `governance` and the
   default `all`. Passing it prints `Unknown test scope` and exits 1.)
+  **Amendment (controller, during Task 7):** `e9af011` normalised every task's `- verify:`
+  metadata line but did NOT reach the commands written inside the numbered steps. Three of
+  those still said `test.js integration` — Task 7's Steps 2 and 4 and Task 9's Step 4 — and
+  each would have exited 1 with `Unknown test scope` on first use. All three are now the
+  no-argument full suite. Plan text only; no AC, no semantics, no implementation touched.
 
 ---
 
@@ -1239,7 +1244,7 @@ from the harness.
 
 ```bash
 cp templates/cli/test/integration.js .evo-lite/cli/test/integration.js
-node .evo-lite/cli/test.js integration
+node .evo-lite/cli/test.js
 ```
 
 Expected: FAIL — `unknown command 'disposition'`
@@ -1448,7 +1453,7 @@ cp templates/cli/disposition/commands.js .evo-lite/cli/disposition/commands.js
 cp templates/cli/memory.js .evo-lite/cli/memory.js
 cp templates/cli/template-manifest.js .evo-lite/cli/template-manifest.js
 cp templates/cli/test/harness.js .evo-lite/cli/test/harness.js
-node .evo-lite/cli/test.js integration
+node .evo-lite/cli/test.js
 ```
 
 Expected: PASS
@@ -1863,8 +1868,7 @@ Add to the Task 9 test:
 cp templates/cli/spec-portfolio.js .evo-lite/cli/spec-portfolio.js
 cp templates/cli/memory.service.js .evo-lite/cli/memory.service.js
 cp templates/cli/memory.js .evo-lite/cli/memory.js
-node .evo-lite/cli/test.js governance
-node .evo-lite/cli/test.js integration
+node .evo-lite/cli/test.js
 ```
 
 Expected: PASS on both scopes.
