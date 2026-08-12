@@ -9,7 +9,7 @@ const {
     CLI_DIR, WORKSPACE_ROOT, TEMPLATE_CONTEXT_PATH, SHARED_CACHE_DIR,
     TEMPLATE_CLI_DIR, TEMPLATE_ROOT_DIR, INIT_ENTRY,
     createTempRuntimeRoot, createTempTemplateCli, copyRecursive, createTempTemplateRoot,
-    ensureParent, writeText, runGit, getGitShell, runPostCommitHook,
+    ensureParent, writeText, runGit, runCli, getGitShell, runPostCommitHook,
     createHookTestRepo, runInitializer,
     quiesceSharedResources,
     readNdjson, createLegacyInitProject, createModernInitProject,
@@ -4078,6 +4078,103 @@ async function runIntegrationTests() {
                 fs.rmSync(root, { recursive: true, force: true });
             }
             console.log('✅ T-governance-cli passed');
+        }
+
+        console.log('T-disposition-cli. set validates its inputs and never trusts the caller ...');
+        {
+            const root = createTempRuntimeRoot('disposition-cli').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            const run = (args) => runCli(root, ['disposition', ...args]);
+
+            let r = run(['set', 'unknown-status:spec:does-not-exist', '--choice', 'wont-fix', '--reason', 'x']);
+            assert.notStrictEqual(r.status, 0, 'refuses to disposition a finding that is not emitted');
+
+            r = run(['set', 'unknown-status:spec:u', '--choice', 'invented', '--reason', 'x']);
+            assert.notStrictEqual(r.status, 0, 'choice is a closed vocabulary');
+
+            r = run(['set', 'unknown-status:spec:u', '--choice', 'accepted-debt', '--reason', '']);
+            assert.notStrictEqual(r.status, 0, 'reason is mandatory');
+
+            r = run(['set', 'unknown-status:spec:u', '--choice', 'deferred', '--reason', 'later']);
+            assert.notStrictEqual(r.status, 0, 'deferred without until is rejected — no bare deferral');
+
+            r = run(['set', 'unknown-status:spec:u', '--choice', 'deferred', '--reason', 'later',
+                     '--until', '2026-09-01']);
+            assert.strictEqual(r.status, 0, 'deferred with until is accepted');
+
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const entry = led.readLedger(root).entries[0];
+            assert.match(entry.fingerprint, /^[0-9a-f]{64}$/, 'the system derived the fingerprint');
+            assert.strictEqual(entry.until, '2026-09-01');
+            assert.ok('head' in entry, 'provenance head is recorded (never part of the fingerprint)');
+
+            // MERGED-CENSUS COMPLETENESS. Task 8's `sync` tombstones orphaned
+            // ledger entries only when the round that observed their absence was
+            // COMPLETE. `collectAllFindings` merges two independent producers
+            // (spec-portfolio + planning), so completeness must come from BOTH —
+            // a merged census that only reflects one producer would let sync
+            // tombstone from an incomplete round. At this point the spec census
+            // is clean (one well-formed spec, no parse failures) but no
+            // plan-ir.json has been written yet, so the planning producer is
+            // degraded; the merge must surface that.
+            const { collectAllFindings } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            assert.strictEqual(collectAllFindings(root).complete, false,
+                'merged census is incomplete while the planning producer has not run, ' +
+                'even though the spec census alone is clean');
+
+            // POSITIVE CONTROL: the four refusal assertions above only prove
+            // something if `disposition` actually registered as a command group.
+            // safeRegister() swallows a require-time throw and continues without
+            // it — every `mem disposition ...` call would then exit non-zero with
+            // "unknown command", making all four `notStrictEqual(status, 0)`
+            // checks pass vacuously. The 'deferred with until is accepted' assertion
+            // just above (status === 0, plus the ledger entry it produced) is that
+            // positive control: it can only pass if the real `set` handler ran.
+
+            // SHADOW AMBIGUITY. The reachable case is not "an uncommitted file" —
+            // that one is simply absent from the committed census and would be
+            // rejected by the `no such finding` branch, making the guard
+            // unreachable and the mutation dead. The real case is the SAME path
+            // carrying a committed R006 AND a further uncommitted change: one
+            // findingId, two occurrences.
+            // harness exports runGit(cwd, args); there is no gitInit/gitCommitAll.
+            runGit(root, ['init']);
+            runGit(root, ['config', 'user.name', 'Evo Test']);
+            runGit(root, ['config', 'user.email', 'evo@example.com']);
+            ensureParent(path.join(root, 'src', 'shadow.js'));
+            fs.writeFileSync(path.join(root, 'src', 'shadow.js'), 'v1');
+            runGit(root, ['add', '.']);
+            runGit(root, ['commit', '-m', 'add unlinked file']);           // committed R006 now exists
+
+            // checkR006 short-circuits to [] when planIR is null (planning/gaps.js),
+            // so a plan-ir.json must exist for R006 to emit anything at all. Written
+            // AFTER the commit, not before: isGovernanceInfraFile() filters
+            // `.evo-lite/**` out of the changed-file set, so an uncommitted IR does
+            // not itself produce an R006 finding.
+            writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2));
+
+            fs.writeFileSync(path.join(root, 'src', 'shadow.js'), 'v2');   // worktree R006 too
+
+            const committed = collectAllFindings(root).findings.find(f => f.id === 'R006:file:src/shadow.js');
+            assert.ok(committed, 'the committed occurrence IS in the disposition id space');
+            const shadowed = run(['set', 'R006:file:src/shadow.js', '--choice', 'accepted-debt', '--reason', 'x']);
+            assert.notStrictEqual(shadowed.status, 0,
+                'one findingId with two live occurrences must be refused, not silently bound to the committed one');
+            assert.match(shadowed.stderr + shadowed.stdout, /working tree/,
+                'the refusal explains which ambiguity to resolve');
+
+            const listed = run(['list', '--json']);
+            assert.ok(listed.stdout.includes('2026-09-01'),
+                'until is shown by default so a lapsed deferral cannot sit unseen');
+
+            assert.strictEqual(run(['revoke', 'unknown-status:spec:u']).status, 0);
+            assert.strictEqual(led.readLedger(root).entries.length, 0, 'revoke removes the entry');
+            console.log('✅ T-disposition-cli passed');
         }
 
         console.log('--- All CLI integration tests passed! ---');

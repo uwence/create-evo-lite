@@ -386,6 +386,27 @@ function runGit(cwd, args, extraEnv = {}) {
     }).trim();
 }
 
+// Spawns the real CLI against an arbitrary project root. getRuntimeRoot() reads
+// EVO_LITE_ROOT before falling back to its own location, which is how the
+// existing tests already retarget the runtime (harness.js:639,
+// integration.js:144/253) — so the repo's CLI runs while treating the temp
+// directory as the workspace.
+function runCli(projectRoot, args, extraEnv = {}) {
+    const res = childProcess.spawnSync(process.execPath,
+        [path.join(TEMPLATE_CLI_DIR, 'memory.js'), ...args], {
+            cwd: projectRoot,
+            encoding: 'utf8',
+            env: {
+                ...process.env,
+                EVO_LITE_ROOT: path.join(projectRoot, '.evo-lite'),
+                ...extraEnv,
+            },
+        });
+    // spawnSync, not execFileSync: these tests assert on NON-ZERO exits, and a
+    // throwing helper cannot express "the command correctly refused".
+    return { status: res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
+}
+
 function getGitShell() {
     const candidates = [
         path.join(process.env.ProgramFiles || '', 'Git', 'bin', 'sh.exe'),
@@ -699,7 +720,7 @@ module.exports = {
     CLI_DIR, WORKSPACE_ROOT, TEMPLATE_CONTEXT_PATH, SHARED_CACHE_DIR,
     TEMPLATE_CLI_DIR, TEMPLATE_ROOT_DIR, INIT_ENTRY, TEST_SCOPE, shouldRun,
     createTempRuntimeRoot, createTempTemplateCli, copyRecursive, createTempTemplateRoot,
-    ensureParent, writeText, runGit, getGitShell, runPostCommitHook,
+    ensureParent, writeText, runGit, runCli, getGitShell, runPostCommitHook,
     createHookTestRepo, runInitializer,
     readNdjson, createLegacyInitProject, createModernInitProject,
     resetCliModuleCache, loadCli, bootstrapRuntime, captureConsole, withPatchedExecFileSync,

@@ -852,6 +852,7 @@ function buildProgram() {
     safeRegister('wiki', () => require('./wiki/cli').registerWikiCommands(program));
     safeRegister('pr-state', () => require('./pr-state').registerPrStateCommands(program));
     safeRegister('governance', () => registerGovernanceCommands(program));
+    safeRegister('disposition', () => require('./disposition/commands').registerDispositionCommands(program));
 
     program.command('inspect')
         .description('Run the inspector HTTP server.')

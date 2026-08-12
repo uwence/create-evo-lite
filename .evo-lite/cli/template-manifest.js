@@ -54,6 +54,7 @@ const MANAGED_TEMPLATE_FAMILIES = Object.freeze([
             'disposition/fingerprint.js',
             'disposition/ledger.js',
             'disposition/resolve.js',
+            'disposition/commands.js',
             'transaction.js',
             'verification/contract-schema.json',
             'verification/validate-contract.js',
