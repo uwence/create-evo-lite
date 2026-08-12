@@ -149,10 +149,11 @@ function registerDispositionCommands(program) {
     cmd.command('revoke <findingId>').action((findingId) => {
         const projectRoot = root();
         const ledger = readLedger(projectRoot);
-        writeLedger(projectRoot, {
-            version: ledger.version,
-            entries: ledger.entries.filter(e => e.findingId !== findingId),
-        });
+        const entries = ledger.entries.filter(e => e.findingId !== findingId);
+        if (entries.length === ledger.entries.length) {
+            throw new Error(`no disposition entry exists: ${findingId}`);
+        }
+        writeLedger(projectRoot, { version: ledger.version, entries });
         console.log(`✅ revoked ${findingId}`);
     });
 

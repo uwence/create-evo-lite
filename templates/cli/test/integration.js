@@ -4299,6 +4299,68 @@ async function runIntegrationTests() {
             console.log('✅ T-disposition-cli-shadow-failclosed passed');
         }
 
+        console.log('T-disposition-cli-revoke-failclosed. revoke never reports success when nothing was revoked ...');
+        {
+            const revokeRoot = createTempRuntimeRoot('disposition-cli-revoke-failclosed').workspaceRoot;
+            const run = (args) => runCli(revokeRoot, ['disposition', ...args]);
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+
+            // Two entries so "removed the right one" is distinguishable from
+            // "removed all of them". revoke only filters the raw ledger — it
+            // never needs a live finding — so these are constructed directly
+            // rather than round-tripped through `set`.
+            let ledger = { version: led.LEDGER_VERSION, entries: [] };
+            ledger = led.upsertEntry(ledger, {
+                findingId: 'R008:task:keep', ruleId: 'R008', ruleVersion: 1,
+                fingerprint: 'a'.repeat(64), choice: 'accepted-debt', reason: 'keep me',
+                at: '2026-08-11T00:00:00Z',
+            });
+            ledger = led.upsertEntry(ledger, {
+                findingId: 'R008:task:gone', ruleId: 'R008', ruleVersion: 1,
+                fingerprint: 'b'.repeat(64), choice: 'wont-fix', reason: 'revoke me',
+                at: '2026-08-11T00:00:00Z',
+            });
+            led.writeLedger(revokeRoot, ledger);
+
+            const ledgerFile = led.ledgerPath(revokeRoot);
+
+            // (a) WRONG ID: exit != 0, the message explains nothing matched, and
+            // the ledger file is BYTE-IDENTICAL to what it was before the call —
+            // captured as raw bytes, not re-read through readLedger, so a
+            // corrupting rewrite that still happens to parse would still be caught.
+            const bytesBeforeWrongId = fs.readFileSync(ledgerFile);
+            const wrong = run(['revoke', 'R008:task:does-not-exist']);
+            assert.notStrictEqual(wrong.status, 0, 'revoking an id with no entry must not succeed');
+            assert.match(wrong.stderr + wrong.stdout, /no disposition entry exists/,
+                'the refusal explains that nothing matched');
+            const bytesAfterWrongId = fs.readFileSync(ledgerFile);
+            assert.ok(bytesBeforeWrongId.equals(bytesAfterWrongId),
+                'a failed revoke must not rewrite the ledger at all — byte-identical before and after');
+
+            // (b) CORRECT ID: exit == 0, and EXACTLY that one entry disappears
+            // while the other survives unchanged — proves "removed the right
+            // one", not "removed everything" or "removed nothing but exited 0".
+            const correct = run(['revoke', 'R008:task:gone']);
+            assert.strictEqual(correct.status, 0, correct.stderr);
+            const afterCorrect = led.readLedger(revokeRoot);
+            assert.strictEqual(afterCorrect.entries.length, 1, 'exactly one entry was removed');
+            assert.strictEqual(afterCorrect.entries[0].findingId, 'R008:task:keep',
+                'the surviving entry is the one that was never targeted — the right entry was removed, not the wrong one');
+
+            // (c) SECOND REVOKE OF THE SAME ID: exit != 0 and byte-identical again —
+            // the guard holds after a legitimate revoke, not just on a typo.
+            const bytesBeforeSecond = fs.readFileSync(ledgerFile);
+            const second = run(['revoke', 'R008:task:gone']);
+            assert.notStrictEqual(second.status, 0, 'revoking an already-revoked id must not succeed');
+            assert.match(second.stderr + second.stdout, /no disposition entry exists/,
+                'the refusal explains that nothing matched');
+            const bytesAfterSecond = fs.readFileSync(ledgerFile);
+            assert.ok(bytesBeforeSecond.equals(bytesAfterSecond),
+                'the second (no-op) revoke attempt must not rewrite the ledger — byte-identical before and after');
+
+            console.log('✅ T-disposition-cli-revoke-failclosed passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);
