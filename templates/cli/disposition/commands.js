@@ -157,6 +157,59 @@ function registerDispositionCommands(program) {
         console.log(`✅ revoked ${findingId}`);
     });
 
+    cmd.command('sync')
+        .description('Tombstone entries proven absent from a complete census.')
+        .action(() => {
+            const projectRoot = root();
+            const { findings, complete, errors } = collectAllFindings(projectRoot);
+
+            // Fail-closed, WHOLE ROUND. Partial credit is indistinguishable from
+            // partial evidence, and tombstoning is terminal: a wrong one destroys
+            // a governance decision permanently. Absence seen through a degraded
+            // round is an OBSERVATION failure, not a fact change — the entry stays
+            // exactly as it was and the round says so out loud.
+            if (!complete) {
+                console.log('⚠️ disposition sync degraded — no tombstone written this round');
+                for (const e of errors) console.log(`   ${e}`);
+                return;
+            }
+
+            const { classifyEntry } = require('./resolve');
+            // A real Set, so `.has()` inside classifyEntry is correct — unlike
+            // CHOICES, which is a frozen ARRAY.
+            const emitted = new Set(findings.map(f => f.id));
+            const ledger = readLedger(projectRoot);
+            let head = null;
+            try {
+                head = require('child_process')
+                    .execFileSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf8' }).trim();
+            } catch (_) { /* not a git repo — tombstone without a head reference */ }
+
+            let n = 0;
+            const entries = ledger.entries.map((e) => {
+                // Membership is decided by the shared resolver, never re-derived
+                // here. The `e.orphanedAt` short-circuit is what makes a tombstone
+                // TERMINAL and this command IDEMPOTENT: without it every later run
+                // would re-stamp orphanedAt, overwriting the date a governance
+                // decision actually closed with "whenever the hook last fired".
+                if (e.orphanedAt || classifyEntry(e, emitted) !== 'orphaned') return e;
+                n += 1;
+                const tombstoned = { ...e, orphanedAt: new Date().toISOString() };
+                // orphanedHead is ADDED only when there is a head to record.
+                // readLedger fails closed on a present-but-non-string
+                // orphanedHead, so writing `orphanedHead: null` outside a git repo
+                // would produce a ledger the very next read refuses — the whole
+                // governance file bricked by its own tombstone.
+                if (head) tombstoned.orphanedHead = head;
+                return tombstoned;
+            });
+            if (n > 0) writeLedger(projectRoot, { version: ledger.version, entries });
+            console.log(`✅ disposition sync: ${n} tombstoned`);
+            // Deliberately no `git add` / `git commit`: implicit git mutation from a
+            // hook is a worse defect than the window it would close. `list` already
+            // reports that window through dispositionsDirty().
+        });
+
     cmd.command('list').option('--stale').option('--json').action((opts) => {
         const projectRoot = root();
         // findings are already annotated by collectAllFindings — status is READ

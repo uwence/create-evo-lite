@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const {
     WORKSPACE_ROOT, TEMPLATE_CLI_DIR, CLI_DIR, INIT_ENTRY, SHARED_CACHE_DIR,
-    createTempRuntimeRoot, writeText, runGit, runPostCommitHook,
+    createTempRuntimeRoot, writeText, runGit, runCli, runPostCommitHook,
     createHookTestRepo, readNdjson, bootstrapRuntime, captureConsole, resetCliModuleCache,
     quiesceSharedResources,
 } = require('./harness');
@@ -214,6 +214,13 @@ async function runGovernanceTests() {
                 assert.ok(hook.includes('plan progress'), 'hook must reference plan progress');
                 assert.ok(hook.includes('plan gaps --last-commit --changed-files-from-env'), 'hook must evaluate last-commit gaps');
                 assert.ok(hook.includes('dashboard build'), 'hook must reference dashboard build');
+                // The hook CALLS the explicit command and nothing else. Any shell-side
+                // reimplementation of tombstone logic would be a second, unreviewed
+                // writer of an irreversible governance mutation.
+                assert.ok(hook.includes('run_and_record "disposition sync" disposition sync'),
+                    'hook must invoke the explicit `disposition sync` command through run_and_record');
+                assert.ok(!/orphanedAt|dispositions\.json/.test(hook),
+                    'the hook must never reimplement tombstone logic or touch the ledger file itself');
                 const reportWriteIdx = hook.indexOf('HOOK_REPORT_PATH');
                 const dashboardBuildIdx = hook.indexOf('run_and_record "dashboard build"');
                 assert.ok(reportWriteIdx > 0 && dashboardBuildIdx > 0, 'hook must contain both report write and dashboard build');
@@ -6131,6 +6138,174 @@ async function runGovernanceTests() {
             assert.strictEqual(after.specs[0].warnings.includes('unknown-status'), true,
                 'NC4: the legacy warnings array still contains the warning after dispositioning');
             console.log('✅ NC4-disposition-legacy-surface passed');
+        }
+
+        console.log('T-disposition-sync. A degraded census must never manufacture an ORPHANED ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const { collectAllFindings } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            const root = createTempRuntimeRoot('disposition-sync').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            // A live disposition on a finding that exists right now.
+            const wasSet = runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'accepted-debt', '--reason', 'child convention']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every later assertion is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            // Genuinely resolve the finding AND break the planning producer. BOTH
+            // halves are load-bearing. The danger this test exists for is a round
+            // that OBSERVES an absence it was never entitled to observe — so the
+            // finding must actually be gone. If it were left emitted, deleting the
+            // fail-closed guard would still tombstone nothing, the ledger would
+            // stay byte-identical anyway, and the test would prove nothing.
+            fs.writeFileSync(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: done', '---', '', '# S', ''].join('\n'));
+            const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            fs.mkdirSync(path.dirname(irPath), { recursive: true });
+            fs.writeFileSync(irPath, 'not json at all');
+            const degradedRound = collectAllFindings(root);
+            assert.strictEqual(degradedRound.complete, false, 'precondition: the round really is degraded');
+            assert.ok(!degradedRound.findings.some(f => f.id === 'unknown-status:spec:u'),
+                'precondition: the degraded round DOES see the finding as absent — that is exactly '
+                + 'the trap the fail-closed guard exists to refuse');
+
+            const degraded = runCli(root, ['disposition', 'sync']);
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'a degraded round leaves the ledger BYTE-IDENTICAL — observation failure is not fact change');
+            assert.ok(/degrad/i.test(degraded.stdout + degraded.stderr),
+                'the degradation is reported, never silent');
+
+            // Repair the producer. The finding is already genuinely resolved.
+            fs.rmSync(irPath, { force: true });
+            runCli(root, ['plan', 'scan']);
+            const round = collectAllFindings(root);
+            assert.strictEqual(round.complete, true,
+                `precondition: the repaired round is complete. errors: ${JSON.stringify(round.errors)}`);
+            runCli(root, ['disposition', 'sync']);
+            const entry = led.readLedger(root).entries.find(e => e.findingId === 'unknown-status:spec:u');
+            assert.ok(entry.orphanedAt, 'only a complete census may tombstone');
+            console.log('✅ T-disposition-sync passed');
+        }
+
+        console.log('T-disposition-sync-stale. A STALE entry is still OBSERVED and must never be tombstoned ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const { collectAllFindings } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            const root = createTempRuntimeRoot('disposition-sync-stale').workspaceRoot;
+            const spec = status => writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', `status: ${status}`, '---', '', '# S', ''].join('\n'));
+
+            spec('closed-experimental');
+            const wasSet = runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'accepted-debt', '--reason', 'child convention']);
+            assert.strictEqual(wasSet.status, 0, `precondition: set must succeed. stderr: ${wasSet.stderr}`);
+
+            // Same finding id, DIFFERENT fact. `unknown-status` hashes
+            // declaredStatus, so a second invented word keeps the id and moves the
+            // fingerprint: the decision no longer covers the fact it was made
+            // about. That is STALE — a live finding awaiting a fresh human call —
+            // and it is the case a naive "the ledger entry no longer matches, so
+            // close it" implementation would silently destroy.
+            spec('closed-provisional');
+            runCli(root, ['plan', 'scan']);
+
+            const round = collectAllFindings(root);
+            assert.strictEqual(round.complete, true,
+                `precondition: the round is complete, so sync is not merely refusing. errors: ${JSON.stringify(round.errors)}`);
+            const live = round.findings.find(f => f.id === 'unknown-status:spec:u');
+            assert.ok(live, 'precondition: the finding is still emitted');
+            assert.strictEqual(live.disposition.status, 'stale',
+                'precondition: the entry really is STALE, not current — otherwise this tests nothing');
+
+            const res = runCli(root, ['disposition', 'sync']);
+            assert.strictEqual(res.status, 0, `sync must succeed on a complete round. stderr: ${res.stderr}`);
+            const entry = led.readLedger(root).entries.find(e => e.findingId === 'unknown-status:spec:u');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'a STALE entry is still OBSERVED — only authoritative ABSENCE may tombstone');
+            assert.match(res.stdout, /0 tombstoned/, 'and sync says so: nothing was closed this round');
+            console.log('✅ T-disposition-sync-stale passed');
+        }
+
+        console.log('T-disposition-sync-idempotent. A tombstone is TERMINAL — a second sync must not re-stamp it ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-sync-idempotent').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'wont-fix', '--reason', 'child convention']).status, 0,
+                'precondition: set must succeed');
+
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: done', '---', '', '# S', ''].join('\n'));
+            runCli(root, ['plan', 'scan']);
+
+            const first = runCli(root, ['disposition', 'sync']);
+            assert.match(first.stdout, /1 tombstoned/,
+                `precondition: the first sync really tombstoned the entry. stdout: ${first.stdout} stderr: ${first.stderr}`);
+            const afterFirst = fs.readFileSync(led.ledgerPath(root), 'utf8');
+            const orphanedAtFirst = led.readLedger(root).entries[0].orphanedAt;
+            const orphanedHeadFirst = led.readLedger(root).entries[0].orphanedHead;
+            assert.ok(orphanedAtFirst, 'precondition: the tombstone carries orphanedAt');
+
+            const second = runCli(root, ['disposition', 'sync']);
+            assert.strictEqual(second.status, 0, `the second sync must succeed. stderr: ${second.stderr}`);
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), afterFirst,
+                'a second sync over an existing tombstone leaves the ledger BYTE-IDENTICAL');
+            assert.strictEqual(led.readLedger(root).entries[0].orphanedAt, orphanedAtFirst,
+                'orphanedAt is the date a governance decision CLOSED — re-stamping it every run erases that fact');
+            assert.strictEqual(led.readLedger(root).entries[0].orphanedHead, orphanedHeadFirst,
+                'orphanedHead likewise records WHERE the absence was proven, once');
+            assert.match(second.stdout, /0 tombstoned/, 'the second round finds nothing left to close');
+            console.log('✅ T-disposition-sync-idempotent passed');
+        }
+
+        console.log('T-disposition-sync-never-stages. sync writes the WORKING TREE only — never the index, never HEAD ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-sync-never-stages').workspaceRoot;
+            runGit(root, ['init']);
+            runGit(root, ['config', 'user.name', 'Evo Test']);
+            runGit(root, ['config', 'user.email', 'evo@example.com']);
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'accepted-debt', '--reason', 'child convention']).status, 0,
+                'precondition: set must succeed');
+            runGit(root, ['add', '-A']);
+            runGit(root, ['commit', '-m', 'baseline carrying a live disposition']);
+
+            // Resolve the finding for real, then observe it through a complete round.
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: done', '---', '', '# S', ''].join('\n'));
+            runCli(root, ['plan', 'scan']);
+
+            // OBSERVED git state, not a source grep. "the source contains no
+            // `git add`" is not the property under test — "the index did not move"
+            // is, and only git can answer that.
+            const headBefore = runGit(root, ['rev-parse', 'HEAD']);
+            const stagedBefore = runGit(root, ['diff', '--cached', '--name-only']);
+            assert.strictEqual(stagedBefore, '', 'precondition: nothing is staged going in');
+
+            const res = runCli(root, ['disposition', 'sync']);
+            assert.match(res.stdout, /1 tombstoned/,
+                `precondition: this round really did write a tombstone, so "index unchanged" is not vacuous. `
+                + `stdout: ${res.stdout} stderr: ${res.stderr}`);
+
+            assert.strictEqual(runGit(root, ['rev-parse', 'HEAD']), headBefore,
+                'sync must never commit — HEAD is unchanged');
+            assert.strictEqual(runGit(root, ['diff', '--cached', '--name-only']), stagedBefore,
+                'sync must never stage — the index is unchanged');
+            assert.match(runGit(root, ['status', '--porcelain']), /\.evo-lite\/dispositions\.json/,
+                'the tombstone lands in the WORKING TREE, dirty and visible, for a human to commit');
+
+            const entry = led.readLedger(root).entries[0];
+            assert.strictEqual(entry.orphanedHead, headBefore,
+                'the tombstone records the head absence was proven at — provenance, never part of the fingerprint');
+            console.log('✅ T-disposition-sync-never-stages passed');
         }
 
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
