@@ -135,7 +135,23 @@ function formatTrackResult(result) {
     // `context track` does not commit, so it cannot close this debt — but it must
     // not claim a closure it did not achieve either. An uncommitted tombstone is
     // a governance decision no other machine can see.
-    const ledgerPending = dispositionsDirty(getWorkspaceRoot());
+    //
+    // Guarded, and FAIL-CLOSED. dispositionsDirty rethrows every git failure that
+    // is not "not a git repository" (corrupt .git, permissions, a transient EPERM),
+    // and by the time this formatter runs, track() has already written the archive,
+    // the trajectory and the context to disk — so an uncaught throw here would
+    // report a successful track as a hard CLI failure. An UNKNOWN durability state
+    // is also not a clean one, so it still blocks `closure: complete`, and the
+    // reason is printed rather than swallowed.
+    let ledgerState = 'clean';
+    let ledgerDetail = '';
+    try {
+        ledgerState = dispositionsDirty(getWorkspaceRoot()) ? 'pending' : 'clean';
+    } catch (err) {
+        ledgerState = 'unknown';
+        ledgerDetail = err && err.message ? err.message : 'error';
+    }
+    const ledgerPending = ledgerState !== 'clean';
     const closureComplete = result.status.archive === 'written'
         && result.status.context === 'updated'
         && ['resolved', 'not_requested'].includes(result.status.resolve)
@@ -143,7 +159,9 @@ function formatTrackResult(result) {
     const nextStep = closureComplete
         ? '可以向用户汇报：代码提交已固化，轨迹与 archive 已完成闭环。'
         : '不要宣称闭环完成；请先根据上面的状态补救 archive / context / resolve'
-            + (ledgerPending ? '，并提交 .evo-lite/dispositions.json（track 不提交，只能报告）' : '') + '。';
+            + (ledgerState === 'pending' ? '，并提交 .evo-lite/dispositions.json（track 不提交，只能报告）' : '')
+            + (ledgerState === 'unknown' ? '，并先查明 dispositions.json 的提交状态（git 读取失败；未知不等于干净）' : '')
+            + '。';
     const lines = [
         '✅ Context track completed.',
         `- closure: ${closureComplete ? 'complete' : 'partial'}`,
@@ -151,7 +169,9 @@ function formatTrackResult(result) {
         `- archive: ${result.status.archive}`,
         `- context: ${result.status.context}`,
         `- resolve: ${result.status.resolve}`,
-        `- dispositions: ${ledgerPending ? 'pending (uncommitted tombstone)' : 'clean'}`,
+        `- dispositions: ${ledgerState === 'clean' ? 'clean'
+            : ledgerState === 'pending' ? 'pending (uncommitted tombstone)'
+                : `unknown (${ledgerDetail})`}`,
         `- chunks: ${result.chunkCount}`,
         `- archive_path: ${result.archivePath}`,
         `- next_step: ${nextStep}`,
@@ -196,6 +216,11 @@ function formatCommitFlowResult(result) {
     lines.push(`- runtime_meta: ${result.runtime.status}`);
     if (result.runtime.commitHash) {
         lines.push(`- runtime_commit: ${result.runtime.commitHash}`);
+    }
+    // The tombstone post-commit wrote is not in the meta-commit above — it is in
+    // this one. Naming it separately keeps every printed hash true to its contents.
+    if (result.runtime.closureCommitHash) {
+        lines.push(`- runtime_closure_commit: ${result.runtime.closureCommitHash}`);
     }
     if (result.runtime.message) {
         lines.push(`- runtime_message: ${result.runtime.message}`);

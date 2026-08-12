@@ -6471,6 +6471,8 @@ async function runGovernanceTests() {
                 'AC9: and the ledger is no longer dirty afterwards');
             assert.ok((payload.runtime.files || []).includes('.evo-lite/dispositions.json'),
                 'the reported file set names the ledger it actually staged');
+            assert.strictEqual(payload.runtime.closureCommitHash, null,
+                'negative control: no retry ran on the first-order path, so no closure commit may be reported');
 
             // The one source-shape check worth keeping: the constant is already
             // workspace-relative, so relativizing it again yields a broken pathspec.
@@ -6505,7 +6507,8 @@ async function runGovernanceTests() {
             const payload = parseCliJson(res, 'mem commit --json');
 
             assert.strictEqual(payload.runtime.status, 'written',
-                `a second-order tombstone must be CLOSED, not merely reported. stderr: ${res.stderr}`);
+                'a second-order tombstone must be CLOSED, not merely reported'
+                + ` [mem commit stderr: ${res.stderr.trim() || '(empty)'}]`);
             assert.ok(runGit(root, ['log', '--format=%s']).split('\n')
                 .includes('chore(meta): close disposition tombstones written by post-commit'),
             'the closure retry commit must exist — the tombstone post-commit wrote is not in the meta-commit');
@@ -6514,6 +6517,22 @@ async function runGovernanceTests() {
             'and that retry commit is the one carrying the ledger');
             assert.ok(!/dispositions\.json/.test(runGit(root, ['status', '--porcelain'])),
                 'nothing is left dirty once the retry has run');
+
+            // The PAYLOAD, not git alone. A closure achieved but reported against
+            // the wrong commit is the same class of defect as a closure claimed and
+            // not achieved: no field may name a commit that lacks what it claims.
+            assert.ok(payload.runtime.closureCommitHash,
+                'a successful retry must be REPORTED — the payload must name the commit that carries the tombstone, '
+                + 'because commitHash was read before the retry and names a meta-commit without the ledger');
+            assert.ok(runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r',
+                payload.runtime.closureCommitHash]).split('\n').includes('.evo-lite/dispositions.json'),
+            'the commit the payload names for the closure must actually contain .evo-lite/dispositions.json');
+            assert.ok((payload.runtime.files || []).includes('.evo-lite/dispositions.json'),
+                'and the reported runtime file set must name the ledger this flow committed');
+            assert.ok(!runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r',
+                payload.runtime.commitHash]).split('\n').includes('.evo-lite/dispositions.json'),
+            'negative control: the meta-commit really does NOT carry the ledger, so reporting it there '
+                + 'would have been false rather than merely imprecise');
             console.log('✅ T-disposition-durability-second-order passed');
         }
 
@@ -6572,6 +6591,55 @@ async function runGovernanceTests() {
             assert.ok(dirty.stdout.includes('- dispositions: pending (uncommitted tombstone)'),
                 'and the reason is visible, not just the verdict');
             console.log('✅ T-disposition-track-reports passed');
+        }
+
+        console.log('T-disposition-track-unknown-ledger. An unreadable ledger state degrades fail-closed, never into a crash ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const trackResult = {
+                mechanism: 'TrackClosure',
+                chunkCount: 1,
+                archivePath: 'C:/tmp/mem_fixture.md',
+                resolvedLine: null,
+                status: { archive: 'written', context: 'updated', resolve: 'not_requested' },
+            };
+            const realExecFileSync = childProcess.execFileSync;
+            const withLedgerProbe = (onProbe, fn) => withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && args[0] === 'status'
+                    && args.includes('.evo-lite/dispositions.json')) {
+                    return onProbe();
+                }
+                return realExecFileSync(command, args, options);
+            }, fn);
+
+            let clean = null;
+            await withLedgerProbe(() => '', async () => { clean = cliModule.formatTrackResult(trackResult); });
+            assert.ok(clean.includes('- closure: complete'),
+                'precondition: this very result is a COMPLETE closure while the ledger reads clean — '
+                + 'otherwise the degradation below proves nothing');
+
+            let out = null;
+            let threw = null;
+            // Only the ledger probe fails: a corrupt .git / permission error /
+            // transient EPERM, i.e. every case dispositionsDirty deliberately
+            // RETHROWS rather than reporting as clean.
+            await withLedgerProbe(() => {
+                throw new Error('fatal: unable to read config file .git/config: Permission denied');
+            }, async () => {
+                try { out = cliModule.formatTrackResult(trackResult); } catch (err) { threw = err; }
+            });
+
+            assert.strictEqual(threw, null,
+                'an unreadable ledger state must NOT throw out of formatTrackResult — track() has already '
+                + 'written archive, trajectory and context, and an uncaught git failure here turns a '
+                + 'SUCCESSFUL track into a hard CLI failure (run().catch prints ❌ and exits 1)');
+            assert.ok(!out.includes('- closure: complete'),
+                'fail-closed: an UNKNOWN durability state is not a clean one, so closure: complete must not be printed');
+            assert.ok(out.includes('- closure: partial'), 'the verdict degrades to partial');
+            assert.ok(/- dispositions: unknown \(.+\)/.test(out),
+                'and the unknown state is NAMED with its reason, never silently reported as clean');
+            console.log('✅ T-disposition-track-unknown-ledger passed');
         }
 
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');

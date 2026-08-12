@@ -1969,6 +1969,10 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
         runtime: {
             status: 'skipped',
             commitHash: null,
+            // Set only when the second-order retry below actually commits. It is a
+            // SEPARATE field because `commitHash`/`message` are a true pair naming
+            // the meta-commit, and the ledger is by construction not in it.
+            closureCommitHash: null,
             message: runtimeMessage,
             files: [],
         },
@@ -2025,6 +2029,15 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
             try {
                 runGit(['add', '--', DISPOSITIONS_GIT_PATH]);
                 runGit(['commit', '-m', 'chore(meta): close disposition tombstones written by post-commit']);
+                // Report the closure where it actually LANDED. `commitHash` was
+                // read before this retry and names the meta-commit, which does not
+                // carry the ledger; leaving the payload at that value tells a human
+                // and every JSON consumer that a commit contains something it does
+                // not. No field may name a commit that lacks what the field claims.
+                result.runtime.closureCommitHash = runGit(['rev-parse', '--short', 'HEAD']);
+                if (!result.runtime.files.includes(DISPOSITIONS_GIT_PATH)) {
+                    result.runtime.files.push(DISPOSITIONS_GIT_PATH);
+                }
             } catch (_) { /* fall through to the dirty check below */ }
         }
         if (dispositionsDirty(workspaceRoot)) {
