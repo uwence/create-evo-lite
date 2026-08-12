@@ -112,6 +112,17 @@ function registerDispositionCommands(program) {
             if (finding.ruleId === 'R006') {
                 const { runPlanningDriftCensus } = require('../planning/gaps');
                 const { planIR } = safeLoadPlanIR(projectRoot);
+                // Fail CLOSED, not open: if the working-tree check itself cannot be
+                // performed (plan-ir.json vanished or became unreadable between the
+                // committed-census read above and this one), that is not the same as
+                // "no shadow" — checkR006 short-circuits to [] on a null planIR, which
+                // would otherwise let this guard silently pass and bind the decision
+                // to the committed occurrence, the exact failure it exists to prevent.
+                if (!planIR) {
+                    throw new Error(`${findingId} cannot be dispositioned — the working tree shadow `
+                        + 'check could not be completed (plan-ir.json is missing or unreadable); '
+                        + 'run `mem plan scan` and try again');
+                }
                 const shadow = runPlanningDriftCensus(projectRoot, planIR, {})   // worktree mode
                     .findings.find(f => f.id === findingId);
                 if (shadow) {

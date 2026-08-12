@@ -4177,6 +4177,128 @@ async function runIntegrationTests() {
             console.log('✅ T-disposition-cli passed');
         }
 
+        console.log('T-disposition-cli-spec-half. merged census honors the SPEC producer\'s completeness too ...');
+        {
+            const specHalfRoot = createTempRuntimeRoot('disposition-cli-spec-half').workspaceRoot;
+            // A docs/specs file with no usable `id: spec:...` frontmatter is a real
+            // parse failure — buildSpecRegistry pushes it to `errors` (docs/specs is
+            // the strict root, unlike docs/superpowers/specs), degrading
+            // `census.complete`. The planning producer stays fully complete (a
+            // valid, empty plan-ir.json, no fatal warnings), isolating the SPEC
+            // half specifically — the fix-round-1 gap was that nothing exercised
+            // this half at all.
+            writeText(path.join(specHalfRoot, 'docs', 'specs', 'broken.md'),
+                ['---', 'title: not a spec', '---', '', '# no id here', ''].join('\n'));
+            writeText(path.join(specHalfRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+            }, null, 2));
+            const { collectAllFindings: collectSpecHalf } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            assert.strictEqual(collectSpecHalf(specHalfRoot).complete, false,
+                'merged census is incomplete when only the SPEC producer is degraded, even though planning is complete');
+            console.log('✅ T-disposition-cli-spec-half passed');
+        }
+
+        console.log('T-disposition-cli-planir-fatal. merged census honors plan-ir.json\'s own fatal scan warnings ...');
+        {
+            const planIrFatalRoot = createTempRuntimeRoot('disposition-cli-planir-fatal').workspaceRoot;
+            // A syntactically valid evo-plan-ir@1 (proper specs/plans/tasks arrays,
+            // so runPlanningDriftCensus's OWN `!planIR` check never fires) whose
+            // `warnings` carries a level:'error' entry is safeLoadPlanIR's Mode B:
+            // planIR comes back non-null but `error` is set. Mode A (missing/
+            // corrupt/wrong-version plan-ir.json, planIR: null) is already
+            // double-covered by runPlanningDriftCensus's own `!planIR` check, so it
+            // cannot isolate the `if (error) {...}` line in collectAllFindings —
+            // Mode B is the only fixture where that line is the SOLE thing
+            // degrading the merged census. A clean, well-formed spec keeps the
+            // SPEC half complete so this isolates Mode B specifically.
+            writeText(path.join(planIrFatalRoot, 'docs', 'specs', 'ok.md'),
+                ['---', 'id: spec:ok', 'status: active', '---', '', '# OK', ''].join('\n'));
+            writeText(path.join(planIrFatalRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [],
+                warnings: [{ level: 'error', message: 'spec scan blew up mid-parse' }],
+            }, null, 2));
+            const { collectAllFindings: collectPlanIrFatal } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            assert.strictEqual(collectPlanIrFatal(planIrFatalRoot).complete, false,
+                'merged census is incomplete when plan-ir.json carries a fatal scan warning, even though it parses cleanly');
+            console.log('✅ T-disposition-cli-planir-fatal passed');
+        }
+
+        console.log('T-disposition-cli-shadow-failclosed. R006 shadow guard fails CLOSED when the second read cannot complete ...');
+        {
+            const shadowFailRoot = createTempRuntimeRoot('disposition-cli-shadow-failclosed').workspaceRoot;
+            ensureParent(path.join(shadowFailRoot, 'src', 'shadow2.js'));
+            fs.writeFileSync(path.join(shadowFailRoot, 'src', 'shadow2.js'), 'v1');
+            runGit(shadowFailRoot, ['init']);
+            runGit(shadowFailRoot, ['config', 'user.name', 'Evo Test']);
+            runGit(shadowFailRoot, ['config', 'user.email', 'evo@example.com']);
+            runGit(shadowFailRoot, ['add', '.']);
+            runGit(shadowFailRoot, ['commit', '-m', 'add unlinked file']);
+            const shadowIrPath = path.join(shadowFailRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            writeText(shadowIrPath, JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2));
+
+            // TOCTOU simulation. `set` reads plan-ir.json (via safeLoadPlanIR) TWICE:
+            // once through collectAllFindings to discover the committed R006
+            // finding, and again inside the R006 shadow guard to check the working
+            // tree. Both read the same on-disk file, so within one synchronous
+            // command they normally agree — the failure mode this guard defends is
+            // exactly the case where they don't (the file vanishes or corrupts
+            // between the two reads). That is reproduced with a call-counted
+            // `fs.existsSync` stub: calls #1 and #2 to this exact path
+            // (collectAllFindings's own safeLoadPlanIR, then checkR009's staleness
+            // check inside that same runPlanningDriftCensus call) are left
+            // untouched — committed discovery must still succeed — and only call
+            // #3 (the shadow guard's own, independent safeLoadPlanIR read) is made
+            // to report the file missing. This sequence was verified empirically
+            // (a throwaway calibration script, logging each call) before being
+            // locked in here — it is not a guess, and this sanity-checks itself
+            // below via `existsCallCount`.
+            //
+            // Must run in-process (not through runCli's spawned subprocess):
+            // only an in-process caller can install this stub before invoking the
+            // real `set` action and remove it immediately after.
+            const { registerDispositionCommands } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            const { Command } = require('commander');
+            const origExistsSync = fs.existsSync;
+            const previousEvoLiteRoot = process.env.EVO_LITE_ROOT;
+            let existsCallCount = 0;
+            let caught = null;
+            try {
+                fs.existsSync = (p) => {
+                    if (String(p) === shadowIrPath) {
+                        existsCallCount++;
+                        if (existsCallCount === 3) return false;
+                    }
+                    return origExistsSync(p);
+                };
+                process.env.EVO_LITE_ROOT = path.join(shadowFailRoot, '.evo-lite');
+                const program = new Command();
+                program.exitOverride();
+                registerDispositionCommands(program);
+                try {
+                    await program.parseAsync(
+                        ['disposition', 'set', 'R006:file:src/shadow2.js', '--choice', 'accepted-debt', '--reason', 'x'],
+                        { from: 'user' }
+                    );
+                } catch (err) {
+                    caught = err;
+                }
+            } finally {
+                fs.existsSync = origExistsSync;
+                if (previousEvoLiteRoot === undefined) delete process.env.EVO_LITE_ROOT;
+                else process.env.EVO_LITE_ROOT = previousEvoLiteRoot;
+            }
+            assert.strictEqual(existsCallCount >= 3, true,
+                "calibration sanity: the shadow guard's own safeLoadPlanIR read must have been reached");
+            assert.ok(caught, 'set must refuse when the working-tree shadow check cannot be completed, not silently pass');
+            assert.match(String(caught && caught.message), /working tree shadow check could not be completed/,
+                'the refusal explains that the check itself failed, not that a shadow was found');
+            console.log('✅ T-disposition-cli-shadow-failclosed passed');
+        }
+
         console.log('--- All CLI integration tests passed! ---');
     } catch (error) {
         console.error('❌ Test failed:', error);
