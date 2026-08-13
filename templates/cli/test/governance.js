@@ -6742,8 +6742,13 @@ async function runGovernanceTests() {
             await captureConsole(async () => { report = await loaded.service.verify(); });
             assert.strictEqual(report.hasAlerts, true,
                 'a genuinely degraded ledger MUST make verify alert');
+            // Presence only, and the message says so. This fixture HAS a genuine
+            // actionable spec finding (the corruption stripped its disposition), so
+            // the 表态老化/超标 next-step legitimately fires here too and an absence
+            // check would be false. The absence property is owned by
+            // T-disposition-ledger-alerting below, whose fixture has zero specs.
             assert.ok(report.nextSteps.some(s => s.includes('.evo-lite/dispositions.json')),
-                'and the next-step names the ledger, not the 表态老化/超标 spec remedy');
+                'the ledger degradation gets its own next-step');
 
             // --- Phase 3: RESTORED ---
             fs.writeFileSync(led.ledgerPath(root), validLedger, 'utf8');
@@ -6759,6 +6764,44 @@ async function runGovernanceTests() {
                 && !degraded(plan3.text),
             'and the degradation signal disappears with the degradation');
             console.log('✅ T-disposition-ledger-unreadable passed');
+        }
+
+        console.log('T-disposition-ledger-alerting. A corrupt ledger must not prescribe the SPEC remedy ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const sp = require(path.join(CLI_DIR, 'spec-portfolio'));
+            // ZERO specs on purpose. With an actionable spec finding present, the
+            // 表态老化/超标 next-step fires legitimately and the absence check below
+            // would be masked — which is exactly how the first version of this
+            // assertion read as coverage while checking nothing.
+            const runtime = createTempRuntimeRoot('disposition-ledger-alerting');
+            const root = runtime.workspaceRoot;
+            fs.mkdirSync(path.join(root, '.evo-lite'), { recursive: true });
+            fs.writeFileSync(led.ledgerPath(root), '{ this is not json at all', 'utf8');
+
+            const registry = sp.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(registry.specs.length, 0, 'precondition: the fixture really has zero specs');
+            assert.ok(registry.source.dispositionLedgerError,
+                'precondition: the ledger really is unreadable, or nothing below is exercised');
+            const lines = sp.formatPortfolioReport(registry);
+            assert.ok(lines.some(l => l.startsWith(sp.DISPOSITION_LEDGER_WARNING_PREFIX)),
+                'the degradation stays VISIBLE in the human portfolio report');
+            assert.strictEqual(
+                lines.filter(l => l.startsWith('⚠️') && !l.startsWith(sp.DISPOSITION_LEDGER_WARNING_PREFIX)).length, 0,
+                'precondition: the ledger marker is the ONLY ⚠️ line — so any spec remedy below '
+                + 'can only have come from it');
+
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+            let report;
+            await captureConsole(async () => { report = await loaded.service.verify(); });
+            assert.strictEqual(report.hasAlerts, true,
+                'the degradation still alerts — it is a real problem, just not a spec-portfolio one');
+            assert.ok(report.nextSteps.some(s => s.includes('.evo-lite/dispositions.json')),
+                'and it prescribes its own remedy: fix the ledger');
+            assert.ok(!report.nextSteps.some(s => s.includes('表态老化/超标 spec')),
+                'an unreadable ledger must NOT prescribe the spec park/reactivate remedy — '
+                + 'this portfolio has no specs at all, so that instruction names work nobody has');
+            console.log('✅ T-disposition-ledger-alerting passed');
         }
 
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');

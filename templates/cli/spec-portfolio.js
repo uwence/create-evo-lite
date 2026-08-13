@@ -949,6 +949,13 @@ function reactivateSpec(projectRoot, specId) {
     return { id: specId, state: entry ? entry.state : 'adopted' };
 }
 
+// The single source of truth for the degradation marker. verify() must be able to
+// tell this line apart from a spec-portfolio warning WITHOUT re-typing the string:
+// the marker is a durability signal with its own remedy, and letting it feed
+// verify's `hasWarn` would push "park or reactivate a spec" at an operator whose
+// specs are fine and whose ledger is corrupt.
+const DISPOSITION_LEDGER_WARNING_PREFIX = '⚠️ [disposition-ledger-unreadable]';
+
 function formatWarningLine(spec, warning) {
     if (warning === 'aging-no-plan' || warning === 'aging-inactive') {
         return `⚠️ ${spec.id} 已 ${spec.idleDays} 天无活动 (${spec.state}) — 请表态: mem spec park|reactivate`;
@@ -999,7 +1006,7 @@ function formatPortfolioReport(registry) {
     // must be read: with the ledger unreadable, a finding shown as undispositioned
     // may in fact carry a decision nobody can see right now.
     if (registry.source && registry.source.dispositionLedgerError) {
-        lines.push(`⚠️ [disposition-ledger-unreadable] 表态账本读取失败 (${registry.source.dispositionLedgerError})`);
+        lines.push(`${DISPOSITION_LEDGER_WARNING_PREFIX} 表态账本读取失败 (${registry.source.dispositionLedgerError})`);
         lines.push('   findings 完整未删减，但表态状态未知 — 此处的“未处置”不等于“无人表态”；'
             + '修复 .evo-lite/dispositions.json 后重新查看');
     }
@@ -1140,6 +1147,7 @@ module.exports = {
     SIZE_THRESHOLDS,
     RECOGNIZED_SPEC_STATUSES,
     SPEC_RULE_VERSIONS,
+    DISPOSITION_LEDGER_WARNING_PREFIX,
     DEFAULT_AGING_DAYS,
     buildSpecRegistry,
     formatPortfolioReport,

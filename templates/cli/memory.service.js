@@ -3165,7 +3165,15 @@ async function verify(options = {}) {
         for (const line of lines) {
             log(line);
         }
-        const hasWarn = lines.some(l => l.startsWith('⚠️'));
+        // The ledger-degradation marker is printed by the portfolio report but is
+        // NOT a spec-portfolio warning: its remedy is "fix the ledger", not "park or
+        // reactivate a spec". Excluding it keeps `hasWarn` meaning exactly what the
+        // next-step below prescribes — the same separation already applied to the
+        // pending-tombstone check. The prefix comes from the producer so the two
+        // cannot drift; the sentinel keeps an older child runtime (which does not
+        // export it) behaving exactly as before.
+        const ledgerMarker = specPortfolio.DISPOSITION_LEDGER_WARNING_PREFIX || ' no-marker';
+        const hasWarn = lines.some(l => l.startsWith('⚠️') && !l.startsWith(ledgerMarker));
         if (hasWarn) {
             report.hasAlerts = true;
             pushNextStep('表态老化/超标 spec: mem spec park|reactivate,或拆分/声明 sizeWaiver。');
