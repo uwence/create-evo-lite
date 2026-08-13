@@ -6804,6 +6804,153 @@ async function runGovernanceTests() {
             console.log('✅ T-disposition-ledger-alerting passed');
         }
 
+        console.log('T-disposition-r006-occurrence. A rolled-back change is a NEW occurrence, never the dispositioned one ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-r006-occurrence').workspaceRoot;
+            runGit(root, ['init']);
+            runGit(root, ['config', 'user.name', 'Evo Test']);
+            runGit(root, ['config', 'user.email', 'evo@example.com']);
+
+            // checkR006 short-circuits to [] on a null planIR, so an IR must exist.
+            // It stays uncommitted on purpose: isGovernanceInfraFile filters
+            // `.evo-lite/**` out of the changed-file set, so it cannot become a
+            // finding of its own and pollute the comparison.
+            const ir = { version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: [], status: 'implemented' }],
+                warnings: [] };
+            writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                `${JSON.stringify(ir, null, 2)}\n`);
+
+            const commitBody = (body, message) => {
+                writeText(path.join(root, 'src', 'x.js'), body);
+                runGit(root, ['add', '--', 'src/x.js']);
+                runGit(root, ['commit', '-m', message]);
+            };
+            // COMMITTED observation mode — the same `{ lastCommit: true }` every
+            // disposition command uses. A working-tree R006 has no occurrence at
+            // all and is marked non-dispositionable, so it can never reach here.
+            const snap = () => {
+                const f = gaps.runPlanningDriftCensus(root, ir, { lastCommit: true })
+                    .findings.find(x => x.id === 'R006:file:src/x.js');
+                assert.ok(f, 'precondition: this commit really does emit the R006 finding under test');
+                return { head: runGit(root, ['rev-parse', 'HEAD']), status: f.factInputs.status,
+                    path: f.factInputs.path, print: fp.computeFingerprint(f) };
+            };
+
+            commitBody('A\n', 'seed A');
+            commitBody('B\n', 'C1: A -> B');    // C1 — the change a human dispositions
+            const c1 = snap();
+            commitBody('A\n', 'C2: B -> A');    // C2 — rollback; the decision goes stale
+            commitBody('B\n', 'C3: A -> B again');
+            const c3 = snap();                  // C3 — byte-identical in content to C1's result
+
+            // Preconditions that survive the mutation, so the verdict below is the
+            // only thing a dropped `occurrence` can move.
+            assert.strictEqual(c3.path, c1.path, 'precondition: same file across C1 and C3');
+            assert.strictEqual(c3.status, c1.status,
+                'precondition: same change status across C1 and C3 — the rollback reproduces C1 exactly, '
+                + 'which is what makes a content-derived identity collide');
+            assert.notStrictEqual(c3.head, c1.head,
+                'precondition: C3 is a distinct commit, so there IS an occurrence to distinguish it by');
+
+            assert.notStrictEqual(c3.print, c1.print,
+                'C3 fingerprint != C1 — a rolled-back-and-reapplied change is a NEW occurrence; '
+                + 'reusing C1\'s fingerprint would silently revive the disposition a human made once');
+            console.log('✅ T-disposition-r006-occurrence passed');
+        }
+
+        console.log('T-disposition-census-parse-failure. A spec that BLEW UP under the compatibility root blocks the round ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const root = createTempRuntimeRoot('disposition-census-parse-failure').workspaceRoot;
+            const victim = path.join(root, 'docs', 'superpowers', 'specs', 'boom.md');
+            writeText(victim, ['---', 'id: spec:boom', 'status: done', '---', '', '# B', ''].join('\n'));
+
+            assert.strictEqual(sp.buildSpecRegistry(root, { write: false }).census.complete, true,
+                'precondition: intact, the same compatibility-root spec is a COMPLETE census — '
+                + 'so only the injected fault can move the verdict below');
+
+            // CALL-COUNTED, not a blanket throw. buildSpecRegistry reads the file
+            // ITSELF first, and a failure on that read lands in `errors` and
+            // `continue`s — parseSpecFile would never run, `spec parse threw` would
+            // never be produced, and the census would be incomplete for an entirely
+            // different reason. Read #1 must SUCCEED; only read #2, the one inside
+            // parseSpecFile, throws.
+            const realRead = fs.readFileSync;
+            let victimReads = 0;
+            let reg = null;
+            try {
+                fs.readFileSync = function (p, ...rest) {
+                    if (String(p) === victim) {
+                        victimReads += 1;
+                        if (victimReads >= 2) throw new Error('injected read fault');
+                    }
+                    return realRead.call(this, p, ...rest);
+                };
+                reg = sp.buildSpecRegistry(root, { write: false });
+            } finally {
+                fs.readFileSync = realRead;
+            }
+
+            assert.ok(victimReads >= 2,
+                "calibration sanity: parseSpecFile's own read of the victim must have been reached — "
+                + 'a fault that only hits read #1 exercises the `unreadable` branch instead');
+            assert.deepStrictEqual(reg.errors, [],
+                'precondition: nothing else degraded this round, so the parse failure is the SOLE reason');
+            assert.strictEqual(reg.source.discoveredFileCount, reg.source.parsedSpecCount,
+                'precondition: the file/spec count still agrees — that predicate cannot be what fails');
+            assert.ok((reg.source.warnings || []).some(w => /parse threw/.test(w.reason)),
+                'precondition: the fault really produced a `spec parse threw` sourceWarning');
+
+            assert.strictEqual(reg.census.complete, false,
+                'a parse failure under the compatibility root blocks the round, even though '
+                + 'the id-less design docs beside it do not');
+            console.log('✅ T-disposition-census-parse-failure passed');
+        }
+
+        console.log('T-disposition-list-degraded. A degraded census must not manufacture an ORPHANED in `list` ...');
+        {
+            const root = createTempRuntimeRoot('disposition-list-degraded').workspaceRoot;
+            // A clean spec half, so completeness rests entirely on the planning
+            // producer we are about to break.
+            writeText(path.join(root, 'docs', 'specs', 'ok.md'),
+                ['---', 'id: spec:ok', 'status: active', '---', '', '# OK', ''].join('\n'));
+            const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            writeText(irPath, `${JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [{ id: 'plan:p', status: 'active' }],
+                tasks: [{ id: 'task:t1', linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2)}\n`);
+
+            // The dispositioned finding MUST come from the producer we break. An
+            // `unknown-status:spec:*` entry would survive a broken plan-ir
+            // untouched, `byId` would still hit, and the `complete ? 'orphaned' :
+            // 'unobserved'` line would never execute — the guard unreachable and
+            // any mutation of it dead. R005 is derived from plan-ir, so breaking
+            // plan-ir makes it genuinely absent from the round.
+            const before = parseCliJson(runCli(root, ['disposition', 'list', '--json']), 'disposition list --json');
+            assert.strictEqual(before.complete, true,
+                `precondition: the intact fixture is a COMPLETE census. errors: ${JSON.stringify(before.errors)}`);
+            const wasSet = runCli(root, ['disposition', 'set', 'R005:task:t1',
+                '--choice', 'accepted-debt', '--reason', 'tracked elsewhere']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+
+            fs.writeFileSync(irPath, 'not json');   // degrade THAT producer
+            const res = runCli(root, ['disposition', 'list', '--json']);
+            const parsed = parseCliJson(res, 'disposition list --json');
+            assert.strictEqual(parsed.complete, false, 'precondition: the degraded census is reported as such');
+            const entry = parsed.entries.find(e => e.findingId === 'R005:task:t1');
+            assert.ok(entry, 'precondition: the ledger entry is still listed — degradation hides nothing');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'precondition: no tombstone exists, so the status can only come from the census branch');
+            assert.strictEqual(entry.status, 'unobserved',
+                'a finding we could not look for is unobserved — ORPHANED means a complete census PROVED absence');
+            console.log('✅ T-disposition-list-degraded passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
