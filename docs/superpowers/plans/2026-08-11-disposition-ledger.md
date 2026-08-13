@@ -1609,7 +1609,18 @@ git commit -m "feat(disposition): fail-closed sync that tombstones only from a c
 - Modify: `.evo-lite/cli/memory.service.js`
 - Modify: `templates/cli/memory.js`
 - Modify: `.evo-lite/cli/memory.js`
+- Modify: `templates/cli/planning.js`
+- Modify: `.evo-lite/cli/planning.js`
 - Test: `templates/cli/test/governance.js`
+
+**Amendment (controller, during Task 9):** `planning.js` and its mirror were
+added to close the already-adjudicated Task-6 carry-forward — an unreadable
+`dispositions.json` is silently converted into ordinary `disposition: null` by
+BOTH producers, so "no decision exists" and "the decision record could not be
+read" are indistinguishable. That gap was deferred to Task 9 by human ruling at
+the Task 6 gate, and the planning producer carries the identical silent
+fallback, so closing it in `spec-portfolio.js` alone would leave half of it
+open. No new AC, no new semantics, no change to any finding collection.
 
 Touch points inside those files: `memory.service.js` at 1936 (`workspaceRoot`
 binding), 1981 (runtime file set), 3112-3113 (verify reporting); `memory.js` at
@@ -1617,7 +1628,7 @@ binding), 1981 (runtime file set), 3112-3113 (verify reporting); `memory.js` at
 — a path carrying `:1936,1981` never matches a real file, so R006 would report
 that file as unlinked forever.
 
-- files: templates/cli/spec-portfolio.js, templates/cli/memory.service.js, templates/cli/memory.js, templates/cli/test/governance.js
+- files: templates/cli/spec-portfolio.js, templates/cli/memory.service.js, templates/cli/memory.js, templates/cli/planning.js, templates/cli/test/governance.js
 - verify: node .evo-lite/cli/test.js
 - acceptance: ac7, ac9
 
