@@ -3170,6 +3170,13 @@ async function verify(options = {}) {
             report.hasAlerts = true;
             pushNextStep('表态老化/超标 spec: mem spec park|reactivate,或拆分/声明 sizeWaiver。');
         }
+        // An unreadable ledger is not a spec-portfolio backlog item, so it gets its
+        // own next-step rather than borrowing the 表态老化/超标 one above, and the
+        // alert is asserted at the report level instead of resting on a glyph.
+        if (registry.source && registry.source.dispositionLedgerError) {
+            report.hasAlerts = true;
+            pushNextStep('修复 .evo-lite/dispositions.json: 表态账本读取失败，findings 完整但表态状态未知。');
+        }
         report.specPortfolio = {
             adopted: registry.specs.filter(s => s.state === 'adopted').length,
             active: registry.specs.filter(s => s.state === 'active').length,

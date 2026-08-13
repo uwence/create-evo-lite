@@ -6642,6 +6642,125 @@ async function runGovernanceTests() {
             console.log('✅ T-disposition-track-unknown-ledger passed');
         }
 
+        console.log('T-disposition-ledger-unreadable. A corrupt ledger degrades VISIBLY — findings complete,表态 state UNKNOWN ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const sp = require(path.join(CLI_DIR, 'spec-portfolio'));
+            const DEGRADATION_MARKER = /⚠️ \[disposition-ledger-unreadable\]/;
+            const runtime = createTempRuntimeRoot('disposition-corrupt-ledger');
+            const root = runtime.workspaceRoot;
+            const driftReportPath = path.join(root, '.evo-lite', 'generated', 'architecture', 'drift-report.json');
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            runCli(root, ['plan', 'scan']);
+
+            // The fixture carries a REAL live decision on EACH producer. Without one,
+            // "the ledger could not be read" would have nothing to lose and the whole
+            // block would pass vacuously.
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'not-applicable', '--reason', 'child convention']).status, 0,
+            'precondition: the spec-producer disposition must be set');
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'R004:repo:plans',
+                '--choice', 'accepted-debt', '--reason', 'no plans yet by design']).status, 0,
+            'precondition: the planning-producer disposition must be set');
+            const validLedger = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            const specSurface = () => {
+                const registry = sp.buildSpecRegistry(root, { write: false });
+                const findings = registry.specs.flatMap(s => s.findings);
+                return { registry, findings, ids: findings.map(f => f.id).sort(),
+                    text: sp.formatPortfolioReport(registry).join('\n') };
+            };
+            const planSurface = () => {
+                const res = runCli(root, ['plan', 'gaps']);
+                assert.strictEqual(res.status, 0, `plan gaps must keep working. stderr: ${res.stderr}`);
+                const findings = JSON.parse(fs.readFileSync(driftReportPath, 'utf8'))
+                    .findings.filter(f => f.scope === 'planning');
+                return { findings, ids: findings.map(f => f.id).sort(), text: res.stdout };
+            };
+
+            // --- Phase 1: VALID ledger ---
+            const spec1 = specSurface();
+            const plan1 = planSurface();
+            assert.ok(spec1.ids.length > 0 && plan1.ids.length > 0,
+                'precondition: both producers emit findings, or every id comparison below is vacuous');
+            assert.strictEqual(spec1.findings.find(f => f.id === 'unknown-status:spec:u').disposition.status,
+                'current', 'precondition: the spec finding really does resolve to a CURRENT disposition');
+            assert.strictEqual(plan1.findings.find(f => f.id === 'R004:repo:plans').disposition.status,
+                'current', 'precondition: the planning finding really does resolve to a CURRENT disposition');
+            // Match the EMITTED marker, not the bare id: `plan gaps` prints an
+            // absolute report path, so a substring probe also matches any temp
+            // directory whose name happens to contain the id.
+            const degraded = text => DEGRADATION_MARKER.test(text);
+            const degradationLine = text => (text.split('\n').find(l => DEGRADATION_MARKER.test(l)) || '(none)');
+            assert.ok(!degraded(spec1.text),
+                `a valid ledger reports no degradation on the spec surface [got: ${degradationLine(spec1.text)}]`);
+            assert.ok(!degraded(plan1.text),
+                `a valid ledger reports no degradation on the plan gaps surface [got: ${degradationLine(plan1.text)}]`);
+
+            // --- Phase 2a: NO ledger at all. This is the confusable state — every
+            // finding reads `disposition: null` because nobody has decided anything.
+            fs.rmSync(led.ledgerPath(root), { force: true });
+            const specNone = specSurface();
+            const planNone = planSurface();
+            assert.ok(specNone.findings.every(f => f.disposition === null)
+                && planNone.findings.every(f => f.disposition === null),
+            'precondition: with no ledger, every finding is an ordinary undispositioned finding');
+
+            // --- Phase 2b: CORRUPT ledger ---
+            fs.writeFileSync(led.ledgerPath(root), '{ this is not json at all', 'utf8');
+            const spec2 = specSurface();
+            const plan2 = planSurface();
+
+            assert.deepStrictEqual(spec2.ids, spec1.ids,
+                'AC7: an unreadable ledger must not cost a single spec finding');
+            assert.deepStrictEqual(plan2.ids, plan1.ids,
+                'AC7: an unreadable ledger must not cost a single planning finding');
+            assert.ok(spec2.findings.every(f => f.disposition === null)
+                && plan2.findings.every(f => f.disposition === null),
+            'precondition: the corruption really does erase every annotation — so the REPORTED '
+                + 'degradation is the only thing left that can distinguish the two states');
+
+            // THE PROPERTY, not a substring: "the ledger is unreadable" must not
+            // present identically to "nobody has decided". Both surfaces above are
+            // byte-identical in their finding content; only the degradation signal
+            // can tell them apart.
+            assert.notStrictEqual(spec2.text, specNone.text,
+                'an unreadable ledger must NOT present identically to "nobody has decided anything" — '
+                + 'on the spec surface the two states are indistinguishable to a reader');
+            assert.notStrictEqual(plan2.text, planNone.text,
+                'an unreadable ledger must NOT present identically to "nobody has decided anything" — '
+                + 'on the plan gaps surface the two states are indistinguishable to a reader');
+            assert.ok(degraded(spec2.text)
+                && /未处置.*不等于.*无人表态|不等于/.test(spec2.text),
+            'and the difference NAMES the cause: null here does not mean "no decision"');
+            assert.ok(degraded(plan2.text),
+                'plan gaps names the same cause on its own surface');
+
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+            let report;
+            await captureConsole(async () => { report = await loaded.service.verify(); });
+            assert.strictEqual(report.hasAlerts, true,
+                'a genuinely degraded ledger MUST make verify alert');
+            assert.ok(report.nextSteps.some(s => s.includes('.evo-lite/dispositions.json')),
+                'and the next-step names the ledger, not the 表态老化/超标 spec remedy');
+
+            // --- Phase 3: RESTORED ---
+            fs.writeFileSync(led.ledgerPath(root), validLedger, 'utf8');
+            const spec3 = specSurface();
+            const plan3 = planSurface();
+            assert.deepStrictEqual(spec3.ids, spec1.ids, 'restoring the ledger keeps the same spec findings');
+            assert.deepStrictEqual(plan3.ids, plan1.ids, 'restoring the ledger keeps the same planning findings');
+            assert.strictEqual(spec3.findings.find(f => f.id === 'unknown-status:spec:u').disposition.status,
+                'current', 'the CURRENT spec disposition displays normally again');
+            assert.strictEqual(plan3.findings.find(f => f.id === 'R004:repo:plans').disposition.status,
+                'current', 'the CURRENT planning disposition displays normally again');
+            assert.ok(!degraded(spec3.text)
+                && !degraded(plan3.text),
+            'and the degradation signal disappears with the degradation');
+            console.log('✅ T-disposition-ledger-unreadable passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));

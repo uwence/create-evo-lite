@@ -488,7 +488,16 @@ function buildSpecRegistry(projectRoot, opts = {}) {
     for (const s of specs) s.findings = buildSpecFindings(s, s.size);
 
     let ledger = { version: 'evo-disposition-ledger@1', entries: [] };
-    try { ledger = readLedger(projectRoot); } catch (_) { /* invalid ledger must not break reporting */ }
+    // The empty-ledger fallback stays: an unreadable ledger must never remove a
+    // finding (AC7). But it must not be INVISIBLE either. Without this signal every
+    // live decision silently becomes `disposition: null`, and `null` then means two
+    // different things at once — "nobody decided" and "the decisions are unreadable".
+    let dispositionLedgerError = null;
+    try {
+        ledger = readLedger(projectRoot);
+    } catch (err) {
+        dispositionLedgerError = err && err.message ? err.message : 'disposition ledger unreadable';
+    }
     for (const s of specs) s.findings = s.findings.map(f => annotate(f, ledger));
 
     const blockers = specs.map(deriveBlocker).filter(Boolean);
@@ -501,6 +510,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         roots: discovery.roots || [],
         warnings: sourceWarnings,
         portfolioSourceDrift: specs.length === 0 && Array.isArray(ir.specs) && ir.specs.length > 0,
+        dispositionLedgerError,
     };
 
     // `sourceWarnings` mixes two very different things:
@@ -984,6 +994,14 @@ function formatPortfolioReport(registry) {
     ];
     if (registry.source && registry.source.portfolioSourceDrift) {
         lines.push('⚠️ [portfolio-source-drift] Planning IR contains specs but no valid portfolio entities were discovered.');
+    }
+    // Emitted BEFORE the projection, because it changes how every line below it
+    // must be read: with the ledger unreadable, a finding shown as undispositioned
+    // may in fact carry a decision nobody can see right now.
+    if (registry.source && registry.source.dispositionLedgerError) {
+        lines.push(`⚠️ [disposition-ledger-unreadable] 表态账本读取失败 (${registry.source.dispositionLedgerError})`);
+        lines.push('   findings 完整未删减，但表态状态未知 — 此处的“未处置”不等于“无人表态”；'
+            + '修复 .evo-lite/dispositions.json 后重新查看');
     }
     // Projection over the ANNOTATED findings, never a filter of them. The
     // machine collection (registry.specs[*].findings) keeps every finding it
