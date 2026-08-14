@@ -1964,6 +1964,24 @@ function probeDispositionState(projectRoot) {
     }
 }
 
+// The same ruling as probeDispositionState, with `rev-parse` as the observer.
+//
+// Every call site below runs AFTER a `git commit` has already returned success,
+// so the commit IS in the history. A rev-parse failure there means we do not know
+// its HASH — it never means the mutation did not happen. Letting such a throw
+// escape, or land in a mutating stage's catch, turns a completed commit into a
+// reported failure and the remediation then asks the operator to make it again.
+//
+// So the probe reports a third state instead of throwing: a null hash carrying
+// `unknown` and its reason. The stage that completed keeps saying `written`.
+function probeCommitIdentity() {
+    try {
+        return { hash: runGit(['rev-parse', '--short', 'HEAD']), state: 'known', detail: null };
+    } catch (err) {
+        return { hash: null, state: 'unknown', detail: err && err.message ? err.message : 'error' };
+    }
+}
+
 async function commitWithContext(codeMessage, mechanism, details, options = {}) {
     if (!codeMessage || !mechanism || !details) {
         throw new Error('Usage: node .evo-lite/cli/memory.js commit "闭环详情" --code-message="feat(...): ..." --mechanism="机制名" [--resolve="4-char-hash"] [--stage=staged|all]');
@@ -1978,13 +1996,20 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
     ensureCodeSnapshotReady(stageMode);
 
     runGit(['commit', '-m', codeMessage]);
-    const codeCommitHash = runGit(['rev-parse', '--short', 'HEAD']);
+    // From this line on the code commit EXISTS. The hash read is an OBSERVER of
+    // it and sits outside every try in this function, so an unguarded throw here
+    // escapes commitWithContext entirely: the CLI prints a bare error and exits 1
+    // with no payload at all, for a commit that is already in the history — and
+    // the operator, told only "commit failed", stages and commits it again.
+    const codeIdentity = probeCommitIdentity();
     const runtimeMessage = options.metaMessage || 'chore(meta): snapshot evo-lite runtime state';
     const result = {
         stageMode,
         code: {
             status: 'written',
-            commitHash: codeCommitHash,
+            commitHash: codeIdentity.hash,
+            // Null hash + `unknown` + a reason, never a silent absence.
+            commitIdentity: { state: codeIdentity.state, detail: codeIdentity.detail },
             message: codeMessage,
         },
         track: {
@@ -1994,6 +2019,10 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
         runtime: {
             status: 'skipped',
             commitHash: null,
+            // Identity of the meta-commit and of the closure retry, each recorded
+            // only once the corresponding commit has actually been made.
+            commitIdentity: null,
+            closureCommitIdentity: null,
             // Set only when the second-order retry below actually commits. It is a
             // SEPARATE field because `commitHash`/`message` are a true pair naming
             // the meta-commit, and the ledger is by construction not in it.
@@ -2051,7 +2080,6 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
         runGit(['add', '--', ...result.runtime.files]);
         runGit(['commit', '-m', runtimeMessage]);
         result.runtime.status = 'written';
-        result.runtime.commitHash = runGit(['rev-parse', '--short', 'HEAD']);
     } catch (error) {
         result.runtime.status = 'failed';
         result.errorStage = 'meta-commit';
@@ -2059,10 +2087,19 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
         return result;
     }
 
-    // Past this line the meta-commit EXISTS and `commitHash` names it. Everything
-    // below only OBSERVES and REPORTS; nothing below may set runtime.status back
-    // to 'failed' or blame the meta-commit stage, or the operator is told to redo
-    // a commit that is already in the history.
+    // Past this line the meta-commit EXISTS. Everything below only OBSERVES and
+    // REPORTS; nothing below may set runtime.status back to 'failed' or blame the
+    // meta-commit stage, or the operator is told to redo a commit that is already
+    // in the history.
+    //
+    // The hash read therefore moved OUT of the try above: inside it, a rev-parse
+    // failure — an observer, running after `git commit` already returned success —
+    // set runtime.status = 'failed' and errorStage = 'meta-commit', and the
+    // formatter then asked for a meta-commit that exists.
+    const metaIdentity = probeCommitIdentity();
+    result.runtime.commitHash = metaIdentity.hash;
+    result.runtime.commitIdentity = { state: metaIdentity.state, detail: metaIdentity.detail };
+
     //
     // The meta-commit is itself a commit, so it fired post-commit, which runs
     // `disposition sync` and may have written a NEW tombstone — dirty again,
@@ -2072,22 +2109,47 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
     // file and no context change to react to and cannot cascade.
     let ledger = probeDispositionState(workspaceRoot);
     if (ledger.state === 'pending') {
+        let closureCommitted = false;
         try {
             runGit(['add', '--', DISPOSITIONS_GIT_PATH]);
             runGit(['commit', '-m', 'chore(meta): close disposition tombstones written by post-commit']);
+            closureCommitted = true;
+        } catch (_) { /* fall through to the re-probe below */ }
+        if (closureCommitted) {
+            // ATTRIBUTION FIRST, identity second. The closure commit carries the
+            // ledger whether or not its hash can be read, and Task 9's ruling is
+            // that attribution must be truthful — so the file set is recorded
+            // before any observer runs. Previously the rev-parse sat first inside
+            // the same catch-all: its throw was swallowed AND took this push with
+            // it, leaving the payload's file set contradicting what is on disk.
+            if (!result.runtime.files.includes(DISPOSITIONS_GIT_PATH)) {
+                result.runtime.files.push(DISPOSITIONS_GIT_PATH);
+            }
             // Report the closure where it actually LANDED. `commitHash` was
             // read before this retry and names the meta-commit, which does not
             // carry the ledger; leaving the payload at that value tells a human
             // and every JSON consumer that a commit contains something it does
-            // not. No field may name a commit that lacks what the field claims.
-            result.runtime.closureCommitHash = runGit(['rev-parse', '--short', 'HEAD']);
-            if (!result.runtime.files.includes(DISPOSITIONS_GIT_PATH)) {
-                result.runtime.files.push(DISPOSITIONS_GIT_PATH);
-            }
-        } catch (_) { /* fall through to the re-probe below */ }
+            // not. No field may name a commit that lacks what the field claims —
+            // and a hash that could not be READ is `unknown`, not absent.
+            const closureIdentity = probeCommitIdentity();
+            result.runtime.closureCommitHash = closureIdentity.hash;
+            result.runtime.closureCommitIdentity = {
+                state: closureIdentity.state, detail: closureIdentity.detail,
+            };
+        }
         ledger = probeDispositionState(workspaceRoot);
     }
     result.dispositions = ledger;
+
+    // Which commits this flow made but could not NAME. Reported as its own stage
+    // for the same reason `disposition-probe` is: every one of these mutations
+    // completed, so no mutating stage may inherit an observer's blame and no
+    // remediation may ask for a repeat.
+    const unnamedCommits = [
+        ['code commit', result.code.commitIdentity],
+        ['runtime meta-commit', result.runtime.commitIdentity],
+        ['disposition closure commit', result.runtime.closureCommitIdentity],
+    ].filter(([, identity]) => identity && identity.state === 'unknown');
 
     if (ledger.state === 'pending') {
         result.runtime.status = 'partial';
@@ -2099,6 +2161,9 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
         // remediation attached to either name asks for a repeat mutation.
         result.errorStage = 'disposition-probe';
         result.errorMessage = ledger.detail;
+    } else if (unnamedCommits.length > 0) {
+        result.errorStage = 'commit-identity';
+        result.errorMessage = `${unnamedCommits.map(([name]) => name).join(', ')}: ${unnamedCommits[0][1].detail}`;
     }
 
     return result;
@@ -3148,12 +3213,12 @@ async function verify(options = {}) {
         }
     }
 
-    if (report.hasAlerts) {
-        log('📋 建议下一步:');
-        for (const step of report.nextSteps) {
-            log(`- ${step}`);
-        }
-    }
+    // The next-step section is NOT rendered here. Six more `report.hasAlerts = true`
+    // sites and collectOperatorNextSteps() all run below this line, so a section
+    // printed here shows whatever happened to be pushed so far and silently drops
+    // the rest — and when the only alert fires later, this block is skipped while
+    // the clean-path block at the end is skipped too, printing NO steps at all.
+    // Both shapes are rendered ONCE at the end of verify(), after every producer.
 
     if (report.bootstrapPending) {
         log('📌 初始化引导:');
@@ -3258,12 +3323,38 @@ async function verify(options = {}) {
     // push "表态老化/超标 spec" as the next step for a debt that only git closes.
     try {
         if (dispositionsDirty(getWorkspaceRoot())) {
+            report.dispositionsDurability = 'pending';
             log('⚠️ dispositions.json 有未提交改动 — tombstone 尚未持久化，其他机器看不到');
             report.hasAlerts = true;
             pushNextStep('提交 disposition 账本: git add .evo-lite/dispositions.json && git commit。');
+        } else {
+            report.dispositionsDurability = 'clean';
         }
     } catch (err) {
-        log(`⚠️ dispositions.json 提交状态未知 (${err && err.message ? err.message : 'error'})`);
+        if (isGitInvocationBlocked(err)) {
+            // The SAME classification verify's own git-status check applies to this
+            // exact condition above: the Node runtime cannot invoke git AT ALL, which
+            // is a property of the environment rather than a finding about this
+            // repository, and the wrapper scripts are the documented way out. The two
+            // git observations inside one verify must not disagree about what a
+            // blocked invocation means. It is still not `clean` — it is recorded as
+            // its own state and printed.
+            log('ℹ️ dispositions.json 提交状态未观测：当前运行环境禁止直接拉起 Git；'
+                + '若需完整校验，请使用 `./.evo-lite/mem verify` 或 `.evo-lite\\mem.cmd verify`。');
+            report.dispositionsDurability = 'blocked';
+        } else {
+            // `unknown` is NOT `clean`. verify is the visible durability-closure
+            // surface, so printing this warning and then "Verify completed with no
+            // active alerts" tells the operator the opposite of what was observed.
+            // The probe failing IS the alert, and it gets its own remediation: the
+            // fix is to repair the git observation, not to commit a ledger whose
+            // state nobody could read.
+            log(`⚠️ dispositions.json 提交状态未知 (${err && err.message ? err.message : 'error'})`);
+            report.dispositionsDurability = 'unknown';
+            report.hasAlerts = true;
+            pushNextStep('查明 disposition 账本的提交状态: git 观测失败，未知不等于干净；'
+                + '手工执行 `git status --porcelain -- .evo-lite/dispositions.json`，或修复该仓库的 git 读取权限后重跑 verify。');
+        }
     }
 
     const governanceRun = readGovernanceRunState(getWorkspaceRoot());
@@ -3315,13 +3406,26 @@ async function verify(options = {}) {
         }
     }
 
-    if (!report.hasAlerts) {
-        if (report.nextSteps.length > 0) {
-            log('🧭 常用治理动作:');
-            for (const step of report.nextSteps) {
-                log(`- ${step}`);
-            }
+    // THE SINGLE RENDER POINT. Every `pushNextStep` producer — the early template
+    // and git checks, the database block, focus health, the spec portfolio, the
+    // ledger durability probe, the governance run state, collectOperatorNextSteps
+    // and the governance budget — has now run, so this is the first place where
+    // `report.nextSteps` is complete. The two shapes stay distinguishable (an
+    // alerting run reads 📋, a clean run reads 🧭); neither may lose a step, and
+    // an alerting run may never end up printing no section at all.
+    if (report.hasAlerts) {
+        log('📋 建议下一步:');
+        for (const step of report.nextSteps) {
+            log(`- ${step}`);
         }
+    } else if (report.nextSteps.length > 0) {
+        log('🧭 常用治理动作:');
+        for (const step of report.nextSteps) {
+            log(`- ${step}`);
+        }
+    }
+
+    if (!report.hasAlerts) {
         log('✅ Verify completed with no active alerts.');
         log('💡 建议下一步: 可以继续 `/evo` / `/commit` 工作流，或直接开始新的开发任务。');
     }
