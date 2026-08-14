@@ -13,7 +13,7 @@
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[codeplc-child-feedback-closure] DURABLE CLOSED: all 8 requested CodePLC child-hive outbox feedback items are completed and independently verified; child main@1c3a008f5cba988c7ed39ac394bf39374afa2e22 and mother main@186a269abb41a2d6adfe14167f193b2a22add1a1 are durable. Mother hive status is up-to-date with no drift or feedback, and nurture dry-run is zero-copy (copied=0, skipped=129). No corrective follow-up or reopen is authorized. No new NEXT is authorized. [size-exceeded-warning] remains QUEUED / CONTRACT candidate only. [attp-hive-rollout] remains BLOCKED / SEPARATE SCOPE.
+[hook-status-freshness] NEXT / AUTHORIZED ([235a]): 让 `mem hook status` 消费已经存在的 `diffInstalledHook()` freshness evidence，报告四态 no-hook / no-block / in-sync / drifted，drifted 时 exit != 0 并提示 `mem hook diff` + `mem hook install`；status 保持纯 observer，绝不改写 hook。SCOPE HARD-LOCKED — IN: templates/cli/hooks.js + 镜像 + 测试；OUT: mem verify、自动升级、hook install 行为重设计、P1-B contract、其他 known debt。起源：Disposition Ledger 合并后 installed hook 比模板旧两个月，功能静默失活而所有绿色都是真的。[0ce0] verify-hook-runtime-health = QUEUED / DESIGN-NEEDED，实现未授权。[3d78] 与 [attp-lw-memory-identity] 保持 BLOCKED，不因空闲而硬开。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
