@@ -5891,7 +5891,12 @@ async function runGovernanceTests() {
             const head = (g) => gaps.runPlanningDriftCensus(root, ir, { metaState: meta, gitState: g })
                 .findings.find(f => f.id === 'R013:context:head');
             assert.ok(head(gitA), 'R013:context:head uses the canonical id');
-            assert.deepStrictEqual(head(gitA).factInputs, { declaredHeadSha: meta.headSha });
+            // Stated as a property, not a bare shape check: this assertion is STRICTLY
+            // STRONGER than the one below it and therefore fires first, so its message
+            // is what an operator actually reads when R013 starts leaking the live head.
+            assert.deepStrictEqual(head(gitA).factInputs, { declaredHeadSha: meta.headSha },
+                'R013 factInputs carries the DECLARED head and NOTHING else — a live-HEAD leak '
+                + 'here would move the fingerprint on every commit and void every R013 decision');
             assert.deepStrictEqual(head(gitA).factInputs, head(gitB).factInputs,
                 'live HEAD moving alone must NOT change the R013 fingerprint');
 

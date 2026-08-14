@@ -64,7 +64,7 @@ Every row below restored to exactly these values in both mirrors after its run.
 | M6 | effective | assertion already shipped, in `test/integration.js` |
 | M7 | effective | |
 | M8 | effective | assertion already shipped by Task 8 — nothing was written for this row |
-| M9 | effective | red lands on the structural precondition one line above; M9′ forces it onto the named assertion, also red |
+| M9 | effective — red lands on the ADJACENT assertion, not the named one | that assertion is in the same block and strictly STRONGER, so the guard is not decorative; unlike M3, whose red was an unrelated `TypeError` 200 lines away. M9′ confirms the named assertion also reddens |
 | M10 | effective | **new baseline block** |
 | M11 | effective | assertion already shipped, in `test/integration.js` |
 | M12 | effective | **new baseline block**; the brief's own injection is dead — corrected fault seam |
@@ -338,8 +338,33 @@ dispositioned it. Mutating that site instead:
   `governance` exit `1` after 106 blocks; `test/governance.js` restored to
   `7d705caf…` in both mirrors, verified.
 - **Restored.** `planning/gaps.js` back to `727facbf…` in both mirrors, verified.
-- **Verdict: effective.** The named assertion is genuinely load-bearing; it is
-  simply preceded by a stricter one that catches the same defect first.
+- **The M9′ technique is a DIAGNOSTIC, not the same class of evidence as M3′ and
+  M12.** Those two found a different real seam in PRODUCTION code. M9′ instead
+  removed a line from the OBSERVER — the test file — to see what the next
+  assertion would do. That is legitimate and it is disclosed, but a future reader
+  must not treat the two as interchangeable: editing the test until the desired
+  assertion fires proves nothing on its own. What makes M9 effective is the fact
+  below, not the M9′ run.
+- **Verdict: effective — but the red lands on the ADJACENT assertion, not the
+  named one.** The row is NOT decorative, and this is materially different from
+  M3. There the red was a `TypeError` in an unrelated block ~200 lines earlier
+  that would fire for *any* null-returning mutation, telling you nothing about the
+  invariant. Here the red lands one line above, inside the same block, on an
+  assertion that guards the SAME invariant and is strictly STRONGER: "`factInputs`
+  contains only the declared head" implies "a moving live HEAD cannot change it".
+  A guard that fires earlier because it is more precise is a better guard, not an
+  absent one.
+- **Follow-up applied (controller, fix round 1).** That adjacent assertion
+  originally carried NO message, so the failure an operator actually sees stated
+  nothing about the broken property, and this row could not record meaningful
+  "verbatim failing assertion text". It now reads:
+
+  ```
+  AssertionError [ERR_ASSERTION]: R013 factInputs carries the DECLARED head and NOTHING else
+  — a live-HEAD leak here would move the fingerprint on every commit and void every R013 decision
+  ```
+
+  Semantics unchanged; only the diagnostic text was added.
 
 ## M10 — a rolled-back change is a NEW occurrence
 
