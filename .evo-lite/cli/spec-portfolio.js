@@ -62,24 +62,65 @@ function buildSpecFindings(spec, size) {
     return out;
 }
 
-function readJsonSafe(filePath) {
+// Absent is not the same observation as unreadable — the same distinction the
+// git observers make, for the same reason. A missing file is a normal state with
+// a defined default; a file that EXISTS and could not be parsed means the input
+// this census is derived from is unknown, and both callers below turn that into
+// findings that silently vanish under a `complete: true` census.
+//
+// Returns { value, error }.
+//
+// ENOENT is the signal for "absent", rather than an existsSync probe: the probe
+// would both introduce a TOCTOU window and answer the wrong question — a
+// directory in the file's place, or a permission denial, exists and still cannot
+// be read.
+function readJsonObserved(filePath, label) {
+    const detailOf = (err) => (err && err.message
+        ? String(err.message).split('\n')[0].trim().slice(0, 200) : String(err));
+    let raw;
     try {
-        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    } catch (_) {
-        return null;
+        raw = fs.readFileSync(filePath, 'utf8');
+    } catch (err) {
+        if (err && err.code === 'ENOENT') return { value: null, error: null };   // absent is normal
+        return { value: null, error: `${label} exists but could not be read: ${detailOf(err)}` };
+    }
+    try {
+        return { value: JSON.parse(raw), error: null };
+    } catch (err) {
+        return { value: null, error: `${label} exists but could not be parsed: ${detailOf(err)}` };
     }
 }
 
+// A corrupt config silently reverts agingDays to the default. A project
+// configured to 7 then loses every aging finding in the 8-14 day band, and sync
+// tombstones their dispositions — a threshold nobody changed, applied because a
+// file could not be read.
 function loadAgingDays(projectRoot) {
-    const config = readJsonSafe(path.join(projectRoot, '.evo-lite', 'config.json'));
+    const observed = readJsonObserved(
+        path.join(projectRoot, '.evo-lite', 'config.json'), '.evo-lite/config.json');
+    const config = observed.value;
     const days = config && config.specPortfolio && config.specPortfolio.agingDays;
-    return typeof days === 'number' && days > 0 ? days : DEFAULT_AGING_DAYS;
+    return {
+        days: typeof days === 'number' && days > 0 ? days : DEFAULT_AGING_DAYS,
+        error: observed.error,
+    };
 }
 
+// A corrupt plan-ir empties linkedPlans, which removes every zombie-plan finding
+// AND flips state active -> adopted. That RENAMES `aging-inactive:<spec>` to
+// `aging-no-plan:<spec>` — a different id, so the dispositioned one reads as
+// absent. collectAllFindings happens to degrade on the same file through
+// safeLoadPlanIR, but that is a cross-module coincidence, not a guard: this
+// census must state its own observation.
 function loadPlanIR(projectRoot) {
-    const ir = readJsonSafe(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'));
-    if (!ir || !Array.isArray(ir.plans)) return { plans: [] };
-    return ir;
+    const observed = readJsonObserved(
+        path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+        '.evo-lite/generated/planning/plan-ir.json');
+    const ir = observed.value;
+    return {
+        ir: (!ir || !Array.isArray(ir.plans)) ? { plans: [] } : ir,
+        error: observed.error,
+    };
 }
 
 // Discovery reports HOW it went, not just what it found.
@@ -358,8 +399,12 @@ function parseRelations(frontmatter) {
 // empty specs array / null lastTouchedAt per entry instead.
 function buildSpecRegistry(projectRoot, opts = {}) {
     const write = opts.write !== false;
-    const agingDays = loadAgingDays(projectRoot);
-    const ir = loadPlanIR(projectRoot);
+    // Collected before anything derived from them, so a census built on an
+    // unreadable input can never call itself complete.
+    const aging = loadAgingDays(projectRoot);
+    const agingDays = aging.days;
+    const loadedIR = loadPlanIR(projectRoot);
+    const ir = loadedIR.ir;
     const plansById = new Map();
     for (const plan of ir.plans) {
         if (plan && plan.id) plansById.set(plan.id, plan);
@@ -367,13 +412,16 @@ function buildSpecRegistry(projectRoot, opts = {}) {
 
     const specs = [];
     const errors = [];
-    // Kept OUT of `errors` on purpose. release-preflight refuses on any
-    // registry error, and a transient git failure is not a reason to block a
-    // publish — but it IS a reason to withhold the authority to tombstone. So it
-    // degrades the census only. One memo per build: a workspace that is not a
-    // repo answers the classifier once, not once per spec file.
-    const gitObservationErrors = [];
+    // Kept OUT of `errors` on purpose. release-preflight refuses on any registry
+    // error, and a transient git failure or an unparseable local config is not a
+    // reason to block a publish — but each IS a reason to withhold the authority
+    // to tombstone. So they degrade the census only. One memo per build: a
+    // workspace answers the git classifier once, not once per spec file.
+    const observationErrors = [];
     const gitMemo = {};
+    for (const e of [aging.error, loadedIR.error]) {
+        if (e && !observationErrors.includes(e)) observationErrors.push(e);
+    }
     const sourceWarnings = [];
     const seenSpecIds = new Map();
     let discoveredFileCount = 0;
@@ -448,7 +496,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         const touched = observeLastTouchedAt(projectRoot, touchFiles, gitMemo);
         const lastTouchedAt = touched.iso;
         for (const e of touched.errors) {
-            if (!gitObservationErrors.includes(e)) gitObservationErrors.push(e);
+            if (!observationErrors.includes(e)) observationErrors.push(e);
         }
         const idleDays = lastTouchedAt ? Math.floor((Date.now() - Date.parse(lastTouchedAt)) / DAY_MS) : 0;
 
@@ -570,7 +618,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         warnings: sourceWarnings,
         portfolioSourceDrift: specs.length === 0 && Array.isArray(ir.specs) && ir.specs.length > 0,
         dispositionLedgerError,
-        gitObservationErrors,
+        observationErrors,
     };
 
     // `sourceWarnings` mixes two very different things:
@@ -606,11 +654,11 @@ function buildSpecRegistry(projectRoot, opts = {}) {
                 // An unobservable git history means `lastTouchedAt` silently
                 // became a local mtime, which can make an aging finding vanish
                 // outright. Absence seen through that is an observation failure.
-                && gitObservationErrors.length === 0,
+                && observationErrors.length === 0,
             errors: [
                 ...errors.map(e => e.reason),
                 ...parseFailures.map(w => `${w.path}: ${w.reason}`),
-                ...gitObservationErrors,
+                ...observationErrors,
             ],
         },
     };

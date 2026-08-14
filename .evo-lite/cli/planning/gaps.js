@@ -54,34 +54,133 @@ function gitOut(projectRoot, args, extra = {}) {
 // expected to fail, and that noise reads like a real error in test output.
 const QUIET_GIT = Object.freeze({ stdio: ['ignore', 'pipe', 'pipe'] });
 
-// Why a probe and not stderr matching: git's messages are localized and
-// version-dependent, while these questions have crisp, cheap answers.
+// --- Filesystem evidence, independent of whether git can be run at all ---
 //
-//   'no-repository' — not a git repo (or git is not installed). A NORMAL, fully
+// A git probe answers "can git OPEN this repository?", which is NOT the question
+// this classifier needs. Every reason git cannot open one — a deleted
+// `.git/HEAD`, a dubious-ownership refusal (routine on Windows shared drives,
+// Docker bind mounts, CI, and any repo cloned by another user), a corrupt object
+// store, git missing from PATH — makes the probe fail exactly like "there is no
+// repository here". Trusting the probe alone therefore re-arms the very
+// destruction path this module exists to close: a BROKEN repo yields a silently
+// empty observation under a clean census, and `sync` tombstones from it.
+//
+// So the probe decides nothing on its own. The filesystem is asked whether a
+// repository IS there, and whether it HAS had commits.
+
+// The `.git` entry for projectRoot or any ancestor: a directory (ordinary repo)
+// or a regular file (gitfile: linked worktree / submodule).
+function findGitEntry(projectRoot) {
+    let dir = path.resolve(projectRoot);
+    for (;;) {
+        const candidate = path.join(dir, '.git');
+        try {
+            const st = fs.lstatSync(candidate);
+            if (st.isDirectory() || st.isFile()) return candidate;
+        } catch (_) { /* not here — keep walking up */ }
+        const parent = path.dirname(dir);
+        if (parent === dir) return null;
+        dir = parent;
+    }
+}
+
+// Resolves the entry to the actual git directory. A malformed gitfile still
+// counts as evidence a repository is here — that IS the broken-repo case.
+function resolveGitDir(projectRoot) {
+    const entry = findGitEntry(projectRoot);
+    if (!entry) return null;
+    try {
+        if (fs.lstatSync(entry).isDirectory()) return entry;
+        const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(entry, 'utf8'));
+        if (!m) return entry;
+        const target = m[1].trim();
+        return path.isAbsolute(target) ? target : path.resolve(path.dirname(entry), target);
+    } catch (_) {
+        return entry;
+    }
+}
+
+function isNonEmptyFile(p) {
+    try { return fs.statSync(p).size > 0; } catch (_) { return false; }
+}
+
+function hasAnyRef(refsDir) {
+    const stack = [refsDir];
+    while (stack.length) {
+        const dir = stack.pop();
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { continue; }
+        for (const e of entries) {
+            if (e.isDirectory()) stack.push(path.join(dir, e.name));
+            else return true;   // refs/heads/<anything>, including a nested feat/x
+        }
+    }
+    return false;
+}
+
+// Has this repository EVER had a commit? Asked of the filesystem, because the
+// state that makes this matter is precisely the one where git cannot answer.
+//
+// The reflog is first on purpose: this project's own memory records a Windows
+// incident where `.git/refs/heads/main` was NUL-filled, and `.git/logs/HEAD` is
+// exactly what made the sha recoverable. A repo in that state must read as
+// BROKEN, never as "freshly initialised, no commits yet".
+function hasCommitHistoryEvidence(gitDir) {
+    if (!gitDir) return false;
+    if (isNonEmptyFile(path.join(gitDir, 'logs', 'HEAD'))) return true;
+    if (fs.existsSync(path.join(gitDir, 'packed-refs'))) return true;
+    if (hasAnyRef(path.join(gitDir, 'refs', 'heads'))) return true;
+    // A linked worktree keeps refs in the common dir, not in its own gitdir.
+    try {
+        const common = fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim();
+        if (common) {
+            const commonDir = path.isAbsolute(common) ? common : path.resolve(gitDir, common);
+            if (fs.existsSync(path.join(commonDir, 'packed-refs'))) return true;
+            if (hasAnyRef(path.join(commonDir, 'refs', 'heads'))) return true;
+        }
+    } catch (_) { /* not a linked worktree */ }
+    return false;
+}
+
+// The verdicts:
+//
+//   'no-repository' — no `.git` at projectRoot or any ancestor. A NORMAL, fully
 //                     supported state: most fixtures and many real projects are
 //                     exactly this. Reporting it as an observation failure would
 //                     mark every such census permanently incomplete and `sync`
 //                     would never tombstone anything again — strictly worse than
 //                     the bug this boundary exists to fix.
-//   'no-commits'    — a repository whose HEAD is unborn. Also normal: there is
-//                     genuinely no commit history to read yet.
-//   'unavailable'   — anything else: permissions, a corrupt object store, a
-//                     timeout, git killed mid-read. We could not LOOK, and that
-//                     must never be reported as "there is nothing there".
+//   'no-commits'    — a repository that exists and has no commit history yet
+//                     (a fresh `git init`). Also normal: there is genuinely
+//                     nothing to read.
+//   'unavailable'   — a repository IS here, and we still could not read what we
+//                     asked for. Permissions, ownership refusal, a corrupt or
+//                     truncated ref, a missing HEAD, a timeout, git absent. We
+//                     could not LOOK, and that must never be reported as "there
+//                     is nothing there".
 //
 // Only 'unavailable' may degrade a census. `memo` is an optional per-round cache
-// so a workspace that is simply not a repo costs two probes for the whole round
-// rather than two per observation.
+// so one workspace is classified once for the whole round.
 function classifyGitFailure(projectRoot, memo = null) {
     if (memo && memo.kind) return memo.kind;
+    const gitDir = resolveGitDir(projectRoot);
     let kind;
     try {
         gitOut(projectRoot, ['rev-parse', '--git-dir'], QUIET_GIT);
         try {
             gitOut(projectRoot, ['rev-parse', '--verify', 'HEAD'], QUIET_GIT);
+            // git opened the repo and resolved HEAD, yet the caller's own read
+            // still failed — unambiguously an observation failure.
             kind = 'unavailable';
-        } catch (_) { kind = 'no-commits'; }
-    } catch (_) { kind = 'no-repository'; }
+        } catch (_) {
+            kind = hasCommitHistoryEvidence(gitDir) ? 'unavailable' : 'no-commits';
+        }
+    } catch (_) {
+        // git could not even open it. Only the ABSENCE of a repository makes
+        // that a normal answer; anything else means a repository is here and
+        // unreadable.
+        kind = gitDir ? 'unavailable' : 'no-repository';
+    }
     if (memo) memo.kind = kind;
     return kind;
 }
@@ -570,6 +669,29 @@ function readMetaGitState(projectRoot) {
 // Returns { git, error }. A bare null used to mean two incompatible things —
 // "not a git repo, so R013 has nothing to check" and "git blew up, so R013
 // could not check" — and checkR013 silently emitted nothing for both.
+// EXISTENCE, not resolvability.
+//
+// `git rev-parse @{u}` resolves the REMOTE-TRACKING REF, which `fetch --prune`
+// deletes the moment the remote branch goes away — while `branch.<name>.merge`
+// still declares an upstream. Asking `@{u}` would call that "no upstream", and
+// R013:sync would vanish under a clean census. But the ahead/behind it compares
+// is not "now in agreement" — it is UNKNOWABLE, which is the definition of an
+// observation failure under this module's own rule. The declaration lives in
+// config, so that is what is asked.
+//
+// A detached HEAD genuinely cannot declare an upstream, and is not a failure.
+function hasDeclaredUpstream(projectRoot) {
+    let branch;
+    try { branch = gitOut(projectRoot, ['rev-parse', '--abbrev-ref', 'HEAD'], QUIET_GIT); }
+    catch (_) { return false; }
+    if (!branch || branch === 'HEAD') return false;
+    try {
+        return gitOut(projectRoot, ['config', '--get', `branch.${branch}.merge`], QUIET_GIT) !== '';
+    } catch (_) {
+        return false;   // `config --get` exits 1 when the key is not set
+    }
+}
+
 function observeGitState(projectRoot, memo = null) {
     let headSha;
     try {
@@ -590,10 +712,9 @@ function observeGitState(projectRoot, memo = null) {
         // "no upstream configured" is the normal answer and must stay silent. An
         // upstream that EXISTS but could not be counted is an observation failure
         // that would otherwise erase every R013:sync finding without a trace.
-        try {
-            gitOut(projectRoot, ['rev-parse', '--symbolic-full-name', '@{u}'], QUIET_GIT);
+        if (hasDeclaredUpstream(projectRoot)) {
             error = { what: 'R013 ahead/behind (git rev-list @{u}...HEAD)', err };
-        } catch (_) { /* genuinely no upstream */ }
+        }
     }
 
     return {

@@ -7090,7 +7090,7 @@ async function runGovernanceTests() {
             const declaredHeadSha = '0123456789abcdef0123456789abcdef01234567';
             writeText(path.join(root, '.evo-lite', 'active_context.md'), [
                 '# Active Context', '', '<!-- BEGIN_META -->',
-                `headSha: ${declaredHeadSha}`, '<!-- END_META -->', '',
+                `headSha: ${declaredHeadSha}`, 'ahead: 5', 'behind: 0', '<!-- END_META -->', '',
             ].join('\n'));
             // Land it as its own commit so HEAD's changed set is governance
             // infrastructure only. R006 then short-circuits before it reads an
@@ -7146,6 +7146,45 @@ async function runGovernanceTests() {
             assert.ok(entry, 'the entry is still there at all');
             assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
                 'no tombstone: only an OBSERVED absence may close a governance decision');
+
+            // A DECLARED upstream whose remote-tracking ref was pruned. `@{u}`
+            // tests RESOLVABILITY; `branch.<name>.merge` is what records that an
+            // upstream exists. Any `fetch --prune` after a remote branch is
+            // deleted lands here, and treating it as "no upstream" suppresses
+            // R013:sync under a clean census — but the ahead/behind is not "now
+            // in agreement", it is UNKNOWABLE.
+            const branch = runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+            // `remote add` is what installs the fetch refspec that maps
+            // refs/heads/<branch> on origin to refs/remotes/origin/<branch>;
+            // without it @{u} cannot resolve even with the branch config set.
+            // The URL is never contacted — nothing here reaches the network.
+            runGit(root, ['remote', 'add', 'origin', 'https://example.invalid/x.git']);
+            runGit(root, ['config', `branch.${branch}.remote`, 'origin']);
+            runGit(root, ['config', `branch.${branch}.merge`, `refs/heads/${branch}`]);
+            runGit(root, ['update-ref', `refs/remotes/origin/${branch}`, 'HEAD']);
+            const syncFindingId = 'R013:context:sync';
+            const withUpstream = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.strictEqual(withUpstream.complete, true,
+                `precondition: a resolvable upstream is a COMPLETE census. errors: ${JSON.stringify(withUpstream.errors)}`);
+            assert.ok(withUpstream.findings.some(f => f.id === syncFindingId),
+                'precondition: with the tracking ref present R013 CAN compare ahead/behind, and reports the disagreement');
+
+            runGit(root, ['update-ref', '-d', `refs/remotes/origin/${branch}`]);   // exactly what fetch --prune does
+            const pruned = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.ok(!pruned.findings.some(f => f.id === syncFindingId),
+                'precondition: the pruned ref really does make the finding vanish');
+            assert.strictEqual(pruned.complete, false,
+                'a DECLARED upstream whose tracking ref was pruned makes ahead/behind UNKNOWABLE, not equal — '
+                + 'resolvability is not existence');
+            assert.ok(pruned.errors.some(e => /R013 ahead\/behind/.test(e)),
+                `the census names what could not be observed. errors: ${JSON.stringify(pruned.errors)}`);
+
+            // And the genuinely normal case stays silent: no upstream was ever
+            // declared, so there is nothing to compare and nothing to report.
+            runGit(root, ['config', '--unset', `branch.${branch}.merge`]);
+            const noUpstream = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.strictEqual(noUpstream.complete, true,
+                `a branch with no declared upstream is a COMPLETE census. errors: ${JSON.stringify(noUpstream.errors)}`);
             console.log('✅ T-observation-git-state passed');
         }
 
@@ -7242,6 +7281,89 @@ async function runGovernanceTests() {
             console.log('✅ T-observation-last-touched passed');
         }
 
+        console.log('T-observation-source-json. A file that exists and cannot be parsed is not an absent one ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+
+            // Ten idle days against a CONFIGURED threshold of 7. If the config
+            // silently reverts to the default 14, every finding in the 8-14 band
+            // disappears — a threshold nobody changed, applied because a file
+            // could not be read.
+            const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+            const { root } = createObservationRepo('observation-source-json', {
+                files: {
+                    'docs/specs/aged.md': ['---', 'id: spec:aged', 'status: adopted', '---', '', '# Aged', ''].join('\n'),
+                    '.evo-lite/config.json': `${JSON.stringify({ specPortfolio: { agingDays: 7 } }, null, 2)}\n`,
+                },
+                commitEnv: { GIT_AUTHOR_DATE: tenDaysAgo, GIT_COMMITTER_DATE: tenDaysAgo },
+            });
+            const configPath = path.join(root, '.evo-lite', 'config.json');
+            const findingId = 'aging-no-plan:spec:aged';
+
+            const healthy = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(healthy.agingDays, 7, 'precondition: the CONFIGURED threshold is in force');
+            assert.strictEqual(healthy.census.complete, true,
+                `precondition: the intact fixture is a COMPLETE census. errors: ${JSON.stringify(healthy.census.errors)}`);
+            assert.ok((healthy.specs.find(s => s.id === 'spec:aged').findings || []).some(f => f.id === findingId),
+                'precondition: 10 idle days exceeds the configured 7, so the finding exists');
+
+            const wasSet = runCli(root, ['disposition', 'set', findingId,
+                '--choice', 'wont-fix', '--reason', 'kept as a reference spec']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            fs.writeFileSync(configPath, '{ specPortfolio: this is not json');
+            const degraded = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(degraded.agingDays, 14,
+                'precondition: the corrupt config really does revert the threshold to the default');
+            assert.strictEqual(degraded.census.complete, false,
+                'a config that EXISTS and could not be parsed degrades the census — the threshold now in force is '
+                + 'not the one this project configured');
+            assert.ok(degraded.census.errors.some(e => /config\.json exists but could not be parsed/.test(e)),
+                `the census names WHAT could not be read. errors: ${JSON.stringify(degraded.census.errors)}`);
+            assert.ok(!(degraded.specs.find(s => s.id === 'spec:aged').findings || []).some(f => f.id === findingId),
+                'precondition: the reverted threshold really does make the finding vanish (10 < 14) — that is the '
+                + 'trap a complete census would have read as authoritative absence');
+
+            const sync = runCli(root, ['disposition', 'sync']);
+            assert.ok(/degrad/i.test(sync.stdout + sync.stderr),
+                `the degradation is reported, never silent. stdout: ${sync.stdout}`);
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'an unreadable config leaves the ledger BYTE-IDENTICAL — observation failure is not fact change');
+            const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+            assert.ok(entry, 'the entry is still there at all');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'no tombstone: only an OBSERVED absence may close a governance decision');
+
+            // The positive control for the same distinction: an ABSENT config is
+            // the normal state with a defined default, and must NOT degrade.
+            fs.rmSync(configPath);
+            assert.strictEqual(specPortfolio.buildSpecRegistry(root, { write: false }).census.complete, true,
+                'an ABSENT config is normal — only an unreadable one degrades');
+
+            // Same rule for plan-ir, where the damage is subtler: an empty
+            // linkedPlans removes every zombie-plan finding AND flips state
+            // active -> adopted, which RENAMES aging-inactive:<spec> to
+            // aging-no-plan:<spec>. collectAllFindings happens to degrade on the
+            // same file through safeLoadPlanIR, but that is a cross-module
+            // coincidence — the spec census must state its own observation.
+            const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            fs.writeFileSync(irPath, 'not json at all');
+            const irDegraded = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(irDegraded.census.complete, false,
+                'an unparseable plan-ir degrades the SPEC census on its own authority, not by borrowing another '
+                + "module's guard");
+            assert.ok(irDegraded.census.errors.some(e => /plan-ir\.json exists but could not be parsed/.test(e)),
+                `the census names WHAT could not be read. errors: ${JSON.stringify(irDegraded.census.errors)}`);
+
+            fs.rmSync(irPath);
+            assert.strictEqual(specPortfolio.buildSpecRegistry(root, { write: false }).census.complete, true,
+                'an ABSENT plan-ir is normal — a project with no planning IR is not a project whose IR is broken');
+            console.log('✅ T-observation-source-json passed');
+        }
+
         console.log('T-observation-not-a-repo. A workspace that is simply not a git repo is NORMAL, never degraded ...');
         {
             const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
@@ -7286,6 +7408,85 @@ async function runGovernanceTests() {
                 `an unborn HEAD is a COMPLETE census. errors: ${JSON.stringify(unbornCensus.errors)}`);
             assert.strictEqual(specPortfolio.buildSpecRegistry(unborn, { write: false }).census.complete, true,
                 'and so is its spec census');
+
+            // --- The negative half. Without it this block encodes the WRONG
+            // assumption: that "git said no" is always one of the two normal
+            // states above. A git probe answers "can git OPEN this repository?",
+            // and every reason it cannot — a deleted HEAD, an ownership refusal,
+            // a truncated ref, git absent from PATH — fails EXACTLY like "there
+            // is no repository here". A repository that exists and cannot be read
+            // must degrade, or this whole fix is re-armed through its own
+            // boundary and sync tombstones from a silently empty observation.
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const brokenRepoCase = async (name, describe, breakIt) => {
+                const { root, planIR } = createObservationRepo(name, {
+                    files: { 'src/a.js': 'module.exports = 1;\n' },
+                    planIR: {
+                        version: 'evo-plan-ir@1', specs: [], plans: [],
+                        tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: ['docs/plans/p.md'], status: 'planning-only' }],
+                        warnings: [],
+                    },
+                });
+                const findingId = 'R006:file:src/a.js';
+
+                const intact = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+                assert.strictEqual(intact.complete, true,
+                    `${describe}: precondition — the INTACT repo is a complete census. errors: ${JSON.stringify(intact.errors)}`);
+                assert.ok(intact.findings.some(f => f.id === findingId),
+                    `${describe}: precondition — the intact repo emits the finding this case is about`);
+                const wasSet = runCli(root, ['disposition', 'set', findingId,
+                    '--choice', 'accepted-debt', '--reason', 'tracked in the next plan']);
+                assert.strictEqual(wasSet.status, 0,
+                    `${describe}: precondition — set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+                const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+                breakIt(root);
+
+                // The census property first: that is the behaviour that protects
+                // the decision. The classifier verdict is asserted below as the
+                // explanation, not as the thing under test.
+                const degraded = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+                assert.strictEqual(degraded.complete, false,
+                    `${describe}: a BROKEN repository degrades the census — an unreadable repo is not an empty one`);
+                assert.strictEqual(gaps.classifyGitFailure(root), 'unavailable',
+                    `${describe}: a repository that EXISTS and cannot be read is UNAVAILABLE — never "no repository" `
+                    + 'and never "no commits". The .git directory is right there.');
+                assert.ok(degraded.errors.some(e => /could not be observed/.test(e)),
+                    `${describe}: the census names what could not be observed. errors: ${JSON.stringify(degraded.errors)}`);
+                assert.ok(!degraded.findings.some(f => f.id === findingId),
+                    `${describe}: precondition — the breakage really does make the finding vanish, which is exactly `
+                    + 'what a complete census would have read as authoritative absence');
+
+                const sync = runCli(root, ['disposition', 'sync']);
+                assert.ok(/degrad/i.test(sync.stdout + sync.stderr),
+                    `${describe}: the degradation is reported, never silent. stdout: ${sync.stdout}`);
+                assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                    `${describe}: a BROKEN repository leaves the ledger BYTE-IDENTICAL — observation failure is not fact change`);
+                const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+                assert.ok(entry, `${describe}: the entry is still there at all`);
+                assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                    `${describe}: no tombstone survives a repository we could not read`);
+            };
+
+            // git reports "fatal: not a git repository" for this — verified.
+            await brokenRepoCase('observation-broken-head', 'missing .git/HEAD', (root) => {
+                fs.rmSync(path.join(root, '.git', 'HEAD'));
+                assert.ok(fs.existsSync(path.join(root, '.git')),
+                    'precondition: .git is still present — the repository EXISTS, it is BROKEN');
+            });
+
+            // Not hypothetical: this project's own memory records Windows
+            // NUL-filling .git/refs/heads/main, recovered from the reflog. git
+            // reports "Needed a single revision", which looks exactly like an
+            // unborn HEAD — hence the reflog evidence check.
+            await brokenRepoCase('observation-zeroed-ref', 'NUL-zeroed branch ref with the reflog intact', (root) => {
+                const gitDir = path.join(root, '.git');
+                const ref = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim().replace(/^ref:\s*/, '');
+                fs.writeFileSync(path.join(gitDir, ...ref.split('/')), Buffer.alloc(41, 0));
+                assert.ok(fs.statSync(path.join(gitDir, 'logs', 'HEAD')).size > 0,
+                    'precondition: the reflog survived — that is the evidence this repo HAS had commits, '
+                    + 'and it is what made the recorded incident recoverable');
+            });
             console.log('✅ T-observation-not-a-repo passed');
         }
 
