@@ -1939,6 +1939,31 @@ async function track(mechanism, details, options = {}) {
     };
 }
 
+// The disposition ledger's durability state is OBSERVED, never performed. That
+// distinction is the whole point of this function.
+//
+// dispositionsDirty() deliberately RETHROWS every git failure that is not
+// literally "not a git repository" — a corrupt .git, a permission error, a
+// transient EPERM. Inside commitWithContext those probes run AFTER track() has
+// already written the archive, the trajectory and active_context.md to disk, and
+// AFTER the runtime meta-commit has already been created. Letting such a throw
+// land in a stage's catch re-labels a completed, IRREVERSIBLE side effect as a
+// failed one, and the remediation text that follows then tells the operator to
+// redo it — a second archive, a second trajectory entry, a second meta-commit.
+// The direction of harm is not a false success claim; it is a false REMEDIATION.
+//
+// So: an observer failure must never re-interpret a side effect that already
+// completed. The probe reports a third state instead of throwing, exactly like
+// formatTrackResult's. `unknown` is NOT `clean` — it still blocks every "closure
+// complete" claim, and it carries the reason rather than swallowing it.
+function probeDispositionState(projectRoot) {
+    try {
+        return { state: dispositionsDirty(projectRoot) ? 'pending' : 'clean', detail: null };
+    } catch (err) {
+        return { state: 'unknown', detail: err && err.message ? err.message : 'error' };
+    }
+}
+
 async function commitWithContext(codeMessage, mechanism, details, options = {}) {
     if (!codeMessage || !mechanism || !details) {
         throw new Error('Usage: node .evo-lite/cli/memory.js commit "闭环详情" --code-message="feat(...): ..." --mechanism="机制名" [--resolve="4-char-hash"] [--stage=staged|all]');
@@ -1976,6 +2001,10 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
             message: runtimeMessage,
             files: [],
         },
+        // Durability of the disposition ledger, as OBSERVED — three states, never
+        // two. Starts `unknown` because nothing has looked yet, and a field that
+        // defaults to `clean` would claim a reading it never took.
+        dispositions: { state: 'unknown', detail: 'not probed' },
         errorStage: null,
         errorMessage: null,
     };
@@ -2003,7 +2032,12 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
         // workspace-relative path would relativize a cwd-relative string against
         // the workspace root and yield a broken pathspec, so the constant goes in
         // as-is.
-        if (dispositionsDirty(workspaceRoot)) {
+        //
+        // PROBED, not asserted: track() has already written to disk by the time we
+        // get here, so a git failure in this observation may not be allowed to
+        // reach the catch below and re-label a completed track as a failed one.
+        result.dispositions = probeDispositionState(workspaceRoot);
+        if (result.dispositions.state === 'pending') {
             result.runtime.files.push(DISPOSITIONS_GIT_PATH);
         }
     } catch (error) {
@@ -2018,37 +2052,53 @@ async function commitWithContext(codeMessage, mechanism, details, options = {}) 
         runGit(['commit', '-m', runtimeMessage]);
         result.runtime.status = 'written';
         result.runtime.commitHash = runGit(['rev-parse', '--short', 'HEAD']);
-
-        // The meta-commit is itself a commit, so it fired post-commit, which runs
-        // `disposition sync` and may have written a NEW tombstone — dirty again,
-        // immediately after we staged it. One retry, then honesty: never report a
-        // closure we did not achieve. A single retry is deliberate: the closure
-        // commit touches only the ledger, so its own post-commit has no unlinked
-        // file and no context change to react to and cannot cascade.
-        if (dispositionsDirty(workspaceRoot)) {
-            try {
-                runGit(['add', '--', DISPOSITIONS_GIT_PATH]);
-                runGit(['commit', '-m', 'chore(meta): close disposition tombstones written by post-commit']);
-                // Report the closure where it actually LANDED. `commitHash` was
-                // read before this retry and names the meta-commit, which does not
-                // carry the ledger; leaving the payload at that value tells a human
-                // and every JSON consumer that a commit contains something it does
-                // not. No field may name a commit that lacks what the field claims.
-                result.runtime.closureCommitHash = runGit(['rev-parse', '--short', 'HEAD']);
-                if (!result.runtime.files.includes(DISPOSITIONS_GIT_PATH)) {
-                    result.runtime.files.push(DISPOSITIONS_GIT_PATH);
-                }
-            } catch (_) { /* fall through to the dirty check below */ }
-        }
-        if (dispositionsDirty(workspaceRoot)) {
-            result.runtime.status = 'partial';
-            result.runtime.message = 'disposition tombstone still uncommitted after closure retry — '
-                + 'other machines will not see it; run `git add .evo-lite/dispositions.json` and commit';
-        }
     } catch (error) {
         result.runtime.status = 'failed';
         result.errorStage = 'meta-commit';
         result.errorMessage = error.message;
+        return result;
+    }
+
+    // Past this line the meta-commit EXISTS and `commitHash` names it. Everything
+    // below only OBSERVES and REPORTS; nothing below may set runtime.status back
+    // to 'failed' or blame the meta-commit stage, or the operator is told to redo
+    // a commit that is already in the history.
+    //
+    // The meta-commit is itself a commit, so it fired post-commit, which runs
+    // `disposition sync` and may have written a NEW tombstone — dirty again,
+    // immediately after we staged it. One retry, then honesty: never report a
+    // closure we did not achieve. A single retry is deliberate: the closure
+    // commit touches only the ledger, so its own post-commit has no unlinked
+    // file and no context change to react to and cannot cascade.
+    let ledger = probeDispositionState(workspaceRoot);
+    if (ledger.state === 'pending') {
+        try {
+            runGit(['add', '--', DISPOSITIONS_GIT_PATH]);
+            runGit(['commit', '-m', 'chore(meta): close disposition tombstones written by post-commit']);
+            // Report the closure where it actually LANDED. `commitHash` was
+            // read before this retry and names the meta-commit, which does not
+            // carry the ledger; leaving the payload at that value tells a human
+            // and every JSON consumer that a commit contains something it does
+            // not. No field may name a commit that lacks what the field claims.
+            result.runtime.closureCommitHash = runGit(['rev-parse', '--short', 'HEAD']);
+            if (!result.runtime.files.includes(DISPOSITIONS_GIT_PATH)) {
+                result.runtime.files.push(DISPOSITIONS_GIT_PATH);
+            }
+        } catch (_) { /* fall through to the re-probe below */ }
+        ledger = probeDispositionState(workspaceRoot);
+    }
+    result.dispositions = ledger;
+
+    if (ledger.state === 'pending') {
+        result.runtime.status = 'partial';
+        result.runtime.message = 'disposition tombstone still uncommitted after closure retry — '
+            + 'other machines will not see it; run `git add .evo-lite/dispositions.json` and commit';
+    } else if (ledger.state === 'unknown') {
+        // Its OWN stage name. Neither 'track' nor 'meta-commit' may be blamed for
+        // an observer that could not run: both of those stages completed, and the
+        // remediation attached to either name asks for a repeat mutation.
+        result.errorStage = 'disposition-probe';
+        result.errorMessage = ledger.detail;
     }
 
     return result;

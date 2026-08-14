@@ -158,6 +158,84 @@ function writeCountingPostCommitHook(projectRoot, when) {
     try { fs.chmodSync(hookPath, '755'); } catch (_) { /* not meaningful on Windows */ }
 }
 
+// Fault injection that reaches dispositionsDirty's git call and NOTHING else.
+//
+// `mem commit` must run in a child: its git work goes through process.cwd(), so
+// an in-process childProcess patch (the T-disposition-track-unknown-ledger shape)
+// cannot observe it without chdir'ing the whole suite. So the same patch is
+// installed in the CHILD through a --require preload.
+//
+// The narrowness is the point. dispositionsDirty is the only caller that invokes
+// `git status --porcelain -- .evo-lite/dispositions.json`; matching that exact
+// argv shape leaves the code commit, the meta-commit, rev-parse, git add and the
+// staging guard's bare `git status --porcelain` delegating to the real binary, so
+// the stages that must genuinely SUCCEED before the probe fails still do — which
+// is the whole premise of both tests below. It also survives the fact that
+// memory.service.js destructures execFileSync at require time (the preload runs
+// first, so it captures the wrapper) while ledger.js resolves it per call.
+//
+// `failFrom` is the 1-based probe ordinal at which the fault starts, and that is
+// how the two fault seams are separated: 1 fails the probe that runs right after
+// track() has written to disk; 2 lets that one answer honestly and fails the
+// probe that runs only after the runtime meta-commit has already landed. Probe
+// calls and thrown faults are recorded to disk so each test can PROVE its
+// injected fault fired rather than assuming it.
+const LEDGER_PROBE_FAULT_MESSAGE = 'fatal: unable to read config file .git/config: Permission denied';
+
+function installLedgerProbeFault(projectRoot, failFrom) {
+    // Both files live under .evo-lite/: getNonEvoLiteGitStatusEntries filters that
+    // prefix out, so the fixture's `--stage=staged` precondition ("every non-
+    // .evo-lite path is staged") is unaffected by the harness itself.
+    const stubPath = path.join(projectRoot, '.evo-lite', 'ledger-probe-fault.js');
+    const counterPath = path.join(projectRoot, '.evo-lite', 'ledger-probe-calls.txt');
+    writeText(stubPath, [
+        "'use strict';",
+        "const cp = require('child_process');",
+        "const fsx = require('fs');",
+        'const real = cp.execFileSync;',
+        `const COUNTER = ${JSON.stringify(counterPath)};`,
+        `const FAIL_FROM = ${JSON.stringify(failFrom)};`,
+        `const MESSAGE = ${JSON.stringify(LEDGER_PROBE_FAULT_MESSAGE)};`,
+        'let calls = 0;',
+        'let thrown = 0;',
+        'function record() {',
+        "    try { fsx.writeFileSync(COUNTER, 'calls=' + calls + ' thrown=' + thrown); } catch (e) {}",
+        '}',
+        'cp.execFileSync = function (command, args) {',
+        "    const isLedgerProbe = command === 'git' && Array.isArray(args)",
+        "        && args[0] === 'status' && args.indexOf('.evo-lite/dispositions.json') !== -1;",
+        '    if (!isLedgerProbe) {',
+        '        return real.apply(this, arguments);',
+        '    }',
+        '    calls += 1;',
+        '    if (calls >= FAIL_FROM) {',
+        '        thrown += 1;',
+        '        record();',
+        '        // No .stderr, so dispositionsDirty rethrows rather than taking its',
+        '        // one "not a git repository" swallow path.',
+        '        throw new Error(MESSAGE);',
+        '    }',
+        '    record();',
+        '    return real.apply(this, arguments);',
+        '};',
+        '',
+    ].join('\n'));
+    return {
+        env: {
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require "${stubPath.replace(/\\/g, '/')}"`]
+                .filter(Boolean).join(' '),
+        },
+        readProbeLog() {
+            if (!fs.existsSync(counterPath)) return { calls: 0, thrown: 0 };
+            const raw = fs.readFileSync(counterPath, 'utf8');
+            return {
+                calls: Number((/calls=(\d+)/.exec(raw) || [])[1] || 0),
+                thrown: Number((/thrown=(\d+)/.exec(raw) || [])[1] || 0),
+            };
+        },
+    };
+}
+
 function parseCliJson(res, label) {
     const start = res.stdout.indexOf('{');
     const end = res.stdout.lastIndexOf('}');
@@ -6690,6 +6768,197 @@ async function runGovernanceTests() {
             assert.ok(/- dispositions: unknown \(.+\)/.test(out),
                 'and the unknown state is NAMED with its reason, never silently reported as clean');
             console.log('✅ T-disposition-track-unknown-ledger passed');
+        }
+
+        console.log('T-disposition-commit-probe-after-track. A ledger PROBE failure must not re-label a track that already wrote to disk ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a commit whose ledger probe fails after track already wrote to disk.';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // Healthy-path CONTROL, identical plumbing, fault ordinal out of reach.
+            // Without it the degraded assertions below could all pass for reasons
+            // that have nothing to do with the probe.
+            {
+                const root = createTempRuntimeRoot('disposition-commit-probe-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                const fault = installLedgerProbeFault(root, 99);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', 'feat: probe control',
+                    '--mechanism', 'ProbeControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(fault.readProbeLog().thrown, 0,
+                    'control precondition: the preload is installed but never fires');
+                assert.strictEqual(res.status, 0, `control: an unfaulted mem commit exits 0. stderr: ${res.stderr}`);
+                assert.strictEqual(payload.track.status, 'complete', 'control: context track completes');
+                assert.strictEqual(payload.runtime.status, 'written', 'control: the meta-commit lands');
+                assert.strictEqual(payload.errorStage, null,
+                    'control: no stage is blamed when the durability probe can actually run');
+                assert.strictEqual(payload.dispositions.state, 'clean',
+                    'control: a readable, committed ledger reads clean — so `unknown` below is the fault talking');
+                assert.ok(nextStepOf(payload).includes('已完成一次显式闭环'),
+                    'control: the healthy flow still reports a complete closure');
+            }
+
+            const root = createTempRuntimeRoot('disposition-commit-probe-after-track').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            // Ordinal 1: the FIRST ledger probe fails — the one that runs after
+            // track() has already written archive, trajectory and active_context.
+            const fault = installLedgerProbeFault(root, 1);
+            const contextPath = path.join(root, '.evo-lite', 'active_context.md');
+            const contextBefore = fs.readFileSync(contextPath, 'utf8');
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', 'feat: probe after track',
+                '--mechanism', 'ProbeAfterTrack', '--json'], fault.env);
+            const payload = parseCliJson(res, 'mem commit --json (probe fault after track)');
+
+            // Self-check FIRST, and deliberately mutation-invariant: it proves the
+            // injected fault fired without itself being the thing under test, so a
+            // regression reddens on the property assertions that follow.
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected ledger-probe fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+
+            // THE PROPERTY: an observer failure must not re-interpret a completed,
+            // irreversible side effect.
+            assert.strictEqual(payload.track.status, 'complete',
+                'a durability PROBE failure must not re-label a context track that ALREADY wrote archive, '
+                + 'trajectory and active_context.md to disk — the stage completed and must keep saying so');
+            assert.notStrictEqual(payload.errorStage, 'track',
+                'and the track stage must not be blamed for an observer that could not run');
+
+            // The side effect really did happen — checked on DISK, not in the payload.
+            assert.ok(payload.track.result && payload.track.result.archivePath,
+                'the completed track must still report the archive it wrote');
+            assert.ok(fs.existsSync(payload.track.result.archivePath),
+                'the archive track wrote is STILL on disk — this is exactly the irreversible side effect '
+                + 'that a "remediate context track" instruction would duplicate');
+            assert.notStrictEqual(fs.readFileSync(contextPath, 'utf8'), contextBefore,
+                'and active_context.md really was mutated, so re-running track would mutate it a second time');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请先补救 context track'),
+                'FORBIDDEN: the remediation must not instruct the operator to redo context track — '
+                + `following it writes a second archive and a second trajectory entry [next_step: ${nextStep}]`);
+            assert.ok(!nextStep.includes('请补做 runtime state 的 meta-commit'),
+                'nor to redo the meta-commit');
+            assert.ok(nextStep.includes('dispositions.json'),
+                'it must NAME the durability probe as the thing that failed');
+
+            // `unknown` is its own state: not clean, not pending, and never a
+            // closure-complete claim.
+            assert.strictEqual(payload.dispositions.state, 'unknown',
+                'an unreadable durability probe is UNKNOWN — distinct from clean and from pending');
+            assert.ok(String(payload.dispositions.detail || '').includes('Permission denied'),
+                'and it carries the reason rather than swallowing it');
+            assert.strictEqual(payload.errorStage, 'disposition-probe',
+                'the observer gets its OWN stage name, so no mutating stage inherits its blame');
+            const rendered = cliModule.formatCommitFlowResult(payload);
+            assert.ok(rendered.includes('- dispositions: unknown ('),
+                'the unknown state is printed, not hidden');
+            assert.ok(!rendered.includes('- closure: complete') && !nextStep.includes('已完成一次显式闭环'),
+                'fail-closed: an UNKNOWN durability state must not permit any closure-complete claim');
+            assert.strictEqual(res.status, 2,
+                'and the CLI still exits non-zero — unknown is not clean');
+            console.log('✅ T-disposition-commit-probe-after-track passed');
+        }
+
+        console.log('T-disposition-commit-probe-after-meta-commit. A probe failure must not re-label a meta-commit that already landed ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a commit whose ledger probe fails after the meta-commit landed.';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // Healthy-path CONTROL for this seam: the SAME ordinal-2 probe answers
+            // normally, so the degraded run below differs in exactly one thing.
+            {
+                const root = createTempRuntimeRoot('disposition-commit-meta-probe-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                const fault = installLedgerProbeFault(root, 99);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', 'feat: meta probe control',
+                    '--mechanism', 'MetaProbeControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(res.status, 0, `control: an unfaulted mem commit exits 0. stderr: ${res.stderr}`);
+                assert.ok(fault.readProbeLog().calls >= 2,
+                    'control precondition: the flow really does probe the ledger AFTER the meta-commit — '
+                    + 'otherwise ordinal 2 would not be the post-meta-commit seam');
+                assert.strictEqual(payload.runtime.status, 'written', 'control: the meta-commit is reported written');
+                assert.strictEqual(payload.errorStage, null, 'control: nothing is blamed');
+                assert.ok(nextStepOf(payload).includes('已完成一次显式闭环'),
+                    'control: the healthy flow still reports a complete closure');
+            }
+
+            const root = createTempRuntimeRoot('disposition-commit-probe-after-meta').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            // Ordinal 2: the first probe ANSWERS; the fault lands only on the probe
+            // that runs after the runtime meta-commit has genuinely been created.
+            const fault = installLedgerProbeFault(root, 2);
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', 'feat: probe after meta commit',
+                '--mechanism', 'ProbeAfterMeta', '--json'], fault.env);
+            const payload = parseCliJson(res, 'mem commit --json (probe fault after meta-commit)');
+
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected ledger-probe fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+            assert.ok(probeLog.calls >= 2,
+                'self-check: the first probe answered and the fault landed on a LATER one — this is the '
+                + `post-meta-commit seam, not the post-track seam (log: ${JSON.stringify(probeLog)})`);
+
+            // THE PROPERTY.
+            assert.notStrictEqual(payload.runtime.status, 'failed',
+                'a durability PROBE failure must not re-label a runtime meta-commit that GENUINELY landed');
+            assert.notStrictEqual(payload.errorStage, 'meta-commit',
+                'and the meta-commit stage must not be blamed for an observer that could not run');
+            assert.strictEqual(payload.runtime.status, 'written',
+                'the stage that completed keeps saying so');
+
+            // The commit is verified against GIT, not by reading the payload back.
+            assert.ok(payload.runtime.commitHash,
+                'runtime.commitHash must keep naming the commit the flow created');
+            assert.match(runGit(root, ['rev-parse', '--verify', `${payload.runtime.commitHash}^{commit}`]),
+                /^[0-9a-f]{40}$/,
+                'the reported runtime commit must resolve to a real commit object in the repository');
+            assert.strictEqual(runGit(root, ['log', '-1', '--format=%s', payload.runtime.commitHash]),
+                'chore(meta): snapshot evo-lite runtime state',
+                'and that commit really is the runtime meta-commit this flow made');
+            assert.ok(runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', payload.runtime.commitHash])
+                .split('\n').includes('.evo-lite/active_context.md'),
+            'and it carries the runtime state it claims to carry');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请补做 runtime state 的 meta-commit'),
+                'FORBIDDEN: the remediation must not ask for another meta-commit — one already exists at '
+                + `${payload.runtime.commitHash} [next_step: ${nextStep}]`);
+            assert.ok(!nextStep.includes('请先补救 context track'), 'nor for another context track');
+            assert.ok(nextStep.includes('dispositions.json'),
+                'it must NAME the durability probe as the thing that failed');
+
+            assert.strictEqual(payload.dispositions.state, 'unknown',
+                'the durability reading that could not be taken is UNKNOWN');
+            assert.strictEqual(payload.errorStage, 'disposition-probe',
+                'blamed on the observer, which is the only thing that failed');
+            assert.ok(!nextStep.includes('已完成一次显式闭环'),
+                'fail-closed: an UNKNOWN durability state must not permit a closure-complete claim');
+            assert.ok(!runGit(root, ['log', '--format=%s']).split('\n')
+                .includes('chore(meta): close disposition tombstones written by post-commit'),
+            'negative control: an UNKNOWN probe is not a PENDING one, so no closure retry may be attempted');
+            console.log('✅ T-disposition-commit-probe-after-meta-commit passed');
         }
 
         console.log('T-disposition-ledger-unreadable. A corrupt ledger degrades VISIBLY — findings complete,表态 state UNKNOWN ...');

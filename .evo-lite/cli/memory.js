@@ -185,9 +185,16 @@ function formatTrackResult(result) {
 }
 
 function formatCommitFlowResult(result) {
+    // Three states, same shape as formatTrackResult's: `unknown` is a durability
+    // reading that could not be TAKEN, and it is neither `clean` nor `pending`.
+    // It blocks the closure claim without ever demoting a stage that completed.
+    const ledger = result.dispositions && result.dispositions.state
+        ? result.dispositions
+        : { state: 'unknown', detail: 'not reported' };
     const closureComplete = result.code.status === 'written'
         && result.track.status === 'complete'
-        && result.runtime.status === 'written';
+        && result.runtime.status === 'written'
+        && ledger.state === 'clean';
     const lines = [
         `${closureComplete ? '✅' : '⚠️'} Evo-Lite commit flow ${closureComplete ? 'completed' : 'ended partial'}.`,
         `- stage_mode: ${result.stageMode}`,
@@ -229,6 +236,10 @@ function formatCommitFlowResult(result) {
         lines.push(`- runtime_file: ${file}`);
     }
 
+    lines.push(`- dispositions: ${ledger.state === 'clean' ? 'clean'
+        : ledger.state === 'pending' ? 'pending (uncommitted tombstone)'
+            : `unknown (${ledger.detail || 'error'})`}`);
+
     if (result.errorStage) {
         lines.push(`- error_stage: ${result.errorStage}`);
         lines.push(`- error: ${result.errorMessage}`);
@@ -240,7 +251,12 @@ function formatCommitFlowResult(result) {
             ? '代码快照已提交；请先补救 context track，然后再提交运行时状态文件。'
             : result.errorStage === 'meta-commit'
                 ? 'context track 已完成；请补做 runtime state 的 meta-commit，不要再次运行 context track。'
-                : '请先补齐当前闭环步骤，再继续下一个任务。';
+                // The failure is the OBSERVER, not any stage. Every mutation this
+                // flow performs has already landed, so the one thing this text must
+                // never do is ask for a repeat of it.
+                : result.errorStage === 'disposition-probe'
+                    ? `代码快照、context track 与 runtime meta-commit 均已完成，不要重跑其中任何一步；无法读取的是 dispositions.json 的提交状态（${result.errorMessage || 'error'}）——未知不等于干净，请手工执行 \`git status --porcelain -- .evo-lite/dispositions.json\` 确认账本是否已持久化。`
+                    : '请先补齐当前闭环步骤，再继续下一个任务。';
     lines.push(`- next_step: ${nextStep}`);
     return lines.join('\n');
 }
