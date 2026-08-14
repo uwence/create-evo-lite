@@ -7228,6 +7228,37 @@ async function runGovernanceTests() {
                 'consistency: the same condition verify already reports as ℹ️ degraded for its own git check '
                 + 'does not become an alert only for the ledger probe');
 
+            // THE DISCRIMINATOR. This fixture differs from the one above in exactly
+            // one respect: git RAN and exited non-zero (`status` is set) instead of
+            // failing to launch. The stderr wording is the Windows phrasing git emits
+            // when it could not read a repository file — and the older
+            // isGitInvocationBlocked predicate matched that STRING, so this repository
+            // failure used to be swallowed as an environment note on Windows while the
+            // identical failure alerted on POSIX, whose wording is `Permission denied`.
+            // A platform-asymmetric silence is worse than either answer applied
+            // consistently, and it silences precisely the condition this probe exists
+            // for.
+            let ranReport = null;
+            const ranOut = await withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && Array.isArray(args) && args[0] === 'status'
+                    && args.indexOf('.evo-lite/dispositions.json') !== -1) {
+                    const error = new Error('Command failed: git status --porcelain -- .evo-lite/dispositions.json');
+                    error.status = 128;               // git RAN — this is the repository's problem
+                    error.stderr = 'error: unable to read .git/index: Access is denied.';
+                    throw error;
+                }
+                return realExecFileSync(command, args, options);
+            }, async () => captureConsole(async () => { ranReport = await loaded.service.verify(); }));
+            assert.strictEqual(ranReport.dispositionsDurability, 'unknown',
+                'FORBIDDEN: git RAN and could not read the repository, so this is a finding about the repo — '
+                + 'classifying it as an environment blackout silences it on Windows only, because the '
+                + 'POSIX wording of the same failure does not match that string');
+            assert.strictEqual(ranReport.hasAlerts, true,
+                'and it alerts, exactly like the POSIX-worded failure above — the platform must not decide '
+                + 'whether an unreadable ledger is worth telling the operator about');
+            assert.ok(!ranOut.includes('✅ Verify completed with no active alerts.'),
+                'FORBIDDEN: reporting no active alerts for a ledger nobody could read');
+
             quiesceSharedResources();
             loaded.db.closeDb();
             console.log('✅ T-verify-ledger-probe-alerts passed');

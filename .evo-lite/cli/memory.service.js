@@ -565,6 +565,27 @@ function isGitInvocationBlocked(error) {
     );
 }
 
+// DELIBERATELY NARROWER than isGitInvocationBlocked, and only for observations
+// whose failure is itself a finding about the repository.
+//
+// isGitInvocationBlocked answers "can Node spawn git in this environment at all",
+// which is the right question for ensureCleanWorktree. It is the WRONG question
+// for the disposition durability probe, because it also matches an
+// `access is denied` STDERR — text git itself emits when it ran perfectly well
+// and could not read `.git/index`. That is a fact about THIS REPOSITORY, exactly
+// the condition the probe exists to surface, and swallowing it as an environment
+// note would silence it — on Windows only, since the POSIX wording
+// (`Permission denied`) does not match. A platform-asymmetric silence is worse
+// than either answer applied consistently.
+//
+// The discriminator is already in the error object: execFileSync sets `status`
+// when git RAN and exited non-zero, and sets a spawn-level `code` when the
+// process could not be launched. Git having run means the failure is the repo's.
+function isGitSpawnBlocked(error) {
+    if (!error || error.status != null) return false;
+    return error.code === 'EPERM' || error.code === 'EACCES' || error.code === 'ENOENT';
+}
+
 function getInjectedCommitHash() {
     const commitHash = process.env.EVO_LITE_GIT_COMMIT;
     return commitHash ? commitHash.trim() : '';
@@ -3331,14 +3352,14 @@ async function verify(options = {}) {
             report.dispositionsDurability = 'clean';
         }
     } catch (err) {
-        if (isGitInvocationBlocked(err)) {
-            // The SAME classification verify's own git-status check applies to this
-            // exact condition above: the Node runtime cannot invoke git AT ALL, which
-            // is a property of the environment rather than a finding about this
-            // repository, and the wrapper scripts are the documented way out. The two
-            // git observations inside one verify must not disagree about what a
-            // blocked invocation means. It is still not `clean` — it is recorded as
-            // its own state and printed.
+        if (isGitSpawnBlocked(err)) {
+            // isGitSpawnBlocked, NOT isGitInvocationBlocked — see the comment on that
+            // pair. Only a failure to LAUNCH git is a property of the environment. If
+            // git ran and reported a problem, that is a finding about this repository
+            // and it belongs in the `unknown` branch below, however the local git
+            // happens to word it. The wrapper scripts are the documented way out of a
+            // genuine blackout. It is still not `clean` — it is recorded as its own
+            // state and printed.
             log('ℹ️ dispositions.json 提交状态未观测：当前运行环境禁止直接拉起 Git；'
                 + '若需完整校验，请使用 `./.evo-lite/mem verify` 或 `.evo-lite\\mem.cmd verify`。');
             report.dispositionsDurability = 'blocked';
