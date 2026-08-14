@@ -43,6 +43,51 @@ function createContainedZvecRoot(name) {
     };
 }
 
+// The REAL `mem disposition sync` action, driven in-process.
+//
+// The observation-failure tests below inject a failing git through
+// `withPatchedExecFileSync`, which replaces `child_process.execFileSync` in THIS
+// process. A spawned CLI (runCli) would run an unpatched child and the fault
+// would never reach the observer, so the assertion would pass for the wrong
+// reason. This is the same reason T-disposition-cli-shadow-failclosed drives
+// `set` in-process.
+async function runDispositionSyncInProcess(workspaceRoot) {
+    const { registerDispositionCommands } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+    const { Command } = require('commander');
+    const previous = process.env.EVO_LITE_ROOT;
+    process.env.EVO_LITE_ROOT = path.join(workspaceRoot, '.evo-lite');
+    try {
+        const program = new Command();
+        program.exitOverride();
+        registerDispositionCommands(program);
+        await program.parseAsync(['disposition', 'sync'], { from: 'user' });
+    } finally {
+        if (previous === undefined) delete process.env.EVO_LITE_ROOT;
+        else process.env.EVO_LITE_ROOT = previous;
+    }
+}
+
+// Builds a git repository whose spec half is clean, so completeness rests only
+// on the observation under test. Returns the paths the caller needs.
+function createObservationRepo(name, extra = {}) {
+    const root = createTempRuntimeRoot(name).workspaceRoot;
+    writeText(path.join(root, 'docs', 'specs', 'ok.md'),
+        ['---', 'id: spec:ok', 'status: done', '---', '', '# OK', ''].join('\n'));
+    for (const [rel, body] of Object.entries(extra.files || {})) {
+        writeText(path.join(root, ...rel.split('/')), body);
+    }
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', 'Evo Test']);
+    runGit(root, ['config', 'user.email', 'evo@example.com']);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-m', 'baseline'], extra.commitEnv || {});
+    const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    writeText(irPath, `${JSON.stringify(extra.planIR || {
+        version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+    }, null, 2)}\n`);
+    return { root, irPath, planIR: JSON.parse(fs.readFileSync(irPath, 'utf8')) };
+}
+
 // [zvec-win-unicode-containment] Task 6 — the ONE place that knows how to spawn
 // a child running this repository's runtime.
 //
@@ -6954,6 +6999,294 @@ async function runGovernanceTests() {
             assert.strictEqual(entry.status, 'unobserved',
                 'a finding we could not look for is unobserved — ORPHANED means a complete census PROVED absence');
             console.log('✅ T-disposition-list-degraded passed');
+        }
+
+        // --- Observation failure must never impersonate a change in fact ---
+        //
+        // Three observers used to swallow a git failure and return an EMPTY
+        // result, which is indistinguishable from a genuine absence. `sync` reads
+        // absence from a complete census as PROOF and writes a TERMINAL
+        // tombstone, so each of these was a path from "git hiccuped" to "a human
+        // governance decision is permanently destroyed".
+        //
+        // Every fault below fails exactly ONE git question and lets every other
+        // git call — crucially the classifier's own probes — reach real git. That
+        // is what makes the injected condition "git could not answer this", not
+        // "there is no repository here", which is a normal state this tool
+        // supports and must never degrade.
+
+        console.log('T-observation-changed-files. A git diff that FAILED must not read as a clean tree ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const realExec = childProcess.execFileSync;
+
+            const { root, planIR } = createObservationRepo('observation-changed-files', {
+                files: { 'src/a.js': 'module.exports = 1;\n' },
+                planIR: {
+                    version: 'evo-plan-ir@1', specs: [], plans: [],
+                    tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: ['docs/plans/p.md'], status: 'planning-only' }],
+                    warnings: [],
+                },
+            });
+            const findingId = 'R006:file:src/a.js';
+
+            // Healthy control. Without it the degraded assertion could pass
+            // vacuously — a finding that was never emitted cannot vanish.
+            const healthy = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.strictEqual(healthy.complete, true,
+                `precondition: a working git yields a COMPLETE census. errors: ${JSON.stringify(healthy.errors)}`);
+            assert.ok(healthy.findings.some(f => f.id === findingId),
+                'precondition: a working git emits the R006 finding this test is about');
+
+            const wasSet = runCli(root, ['disposition', 'set', findingId,
+                '--choice', 'accepted-debt', '--reason', 'tracked in the next plan']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            let hits = 0;
+            await withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && (args || [])[0] === 'diff-tree' && (args || []).includes('--name-only')) {
+                    hits += 1;
+                    throw new Error('fatal: unable to read tree object: Permission denied');
+                }
+                return realExec(command, args, options);
+            }, async () => {
+                const degraded = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+                assert.ok(hits > 0,
+                    'self-check: the injected git failure must actually have been reached, or this test proves nothing');
+                assert.strictEqual(degraded.complete, false,
+                    'a changed-file set that could not be READ degrades the census — an unreadable diff is not a clean tree');
+                assert.ok(degraded.errors.some(e => /R006 changed-file set \(git diff-tree\) could not be observed/.test(e)),
+                    `the census names WHAT could not be observed. errors: ${JSON.stringify(degraded.errors)}`);
+                assert.ok(!degraded.findings.some(f => f.id === findingId),
+                    'precondition: the failure really does make the finding vanish — that is the trap a complete '
+                    + 'census would have read as authoritative absence');
+                await captureConsole(() => runDispositionSyncInProcess(root));
+            });
+
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'a round whose changed-file observation FAILED leaves the ledger BYTE-IDENTICAL — '
+                + 'observation failure is not fact change');
+            const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+            assert.ok(entry, 'the entry is still there at all');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'no tombstone: only an OBSERVED absence may close a governance decision');
+            console.log('✅ T-observation-changed-files passed');
+        }
+
+        console.log('T-observation-git-state. R013 that could not READ git must degrade, not fall silent ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const realExec = childProcess.execFileSync;
+
+            const { root, planIR } = createObservationRepo('observation-git-state');
+            // A META headSha that is a well-formed sha and is NOT in this repo, so
+            // R013 has something real to report while git is healthy.
+            const declaredHeadSha = '0123456789abcdef0123456789abcdef01234567';
+            writeText(path.join(root, '.evo-lite', 'active_context.md'), [
+                '# Active Context', '', '<!-- BEGIN_META -->',
+                `headSha: ${declaredHeadSha}`, '<!-- END_META -->', '',
+            ].join('\n'));
+            // Land it as its own commit so HEAD's changed set is governance
+            // infrastructure only. R006 then short-circuits before it reads an
+            // occurrence, which is what isolates this test on R013's observer
+            // alone: `git rev-parse HEAD` serves both, and a shared failure would
+            // let R006's propagation stand in for the one under test.
+            runGit(root, ['add', '--', '.evo-lite/active_context.md']);
+            runGit(root, ['commit', '-m', 'record META']);
+            const findingId = 'R013:context:head';
+
+            const healthy = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.strictEqual(healthy.complete, true,
+                `precondition: a working git yields a COMPLETE census. errors: ${JSON.stringify(healthy.errors)}`);
+            assert.ok(healthy.findings.some(f => f.id === findingId),
+                'precondition: a working git emits the R013 finding this test is about');
+
+            const wasSet = runCli(root, ['disposition', 'set', findingId,
+                '--choice', 'deferred', '--reason', 'refreshing META after the next commit', '--until', 'next commit']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            let hits = 0;
+            await withPatchedExecFileSync((command, args, options) => {
+                const argv = args || [];
+                // ONLY the plain `git rev-parse HEAD` read. The classifier's probes
+                // (`rev-parse --git-dir`, `rev-parse --verify HEAD`) still reach real
+                // git, so this reads as "a live repository whose HEAD could not be
+                // read", never as "this is not a repository".
+                if (command === 'git' && argv.length === 2 && argv[0] === 'rev-parse' && argv[1] === 'HEAD') {
+                    hits += 1;
+                    throw new Error('fatal: unable to read HEAD: Permission denied');
+                }
+                return realExec(command, args, options);
+            }, async () => {
+                const degraded = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+                assert.ok(hits > 0,
+                    'self-check: the injected git failure must actually have been reached, or this test proves nothing');
+                assert.strictEqual(degraded.complete, false,
+                    'live git state that could not be READ degrades the census — R013 falling silent is not "no drift"');
+                assert.ok(degraded.errors.some(e => /R013 live git state \(git rev-parse HEAD\) could not be observed/.test(e)),
+                    `the census names WHAT could not be observed. errors: ${JSON.stringify(degraded.errors)}`);
+                assert.ok(!degraded.findings.some(f => f.id === findingId),
+                    'precondition: the failure really does make the finding vanish — that is the trap a complete '
+                    + 'census would have read as authoritative absence');
+                await captureConsole(() => runDispositionSyncInProcess(root));
+            });
+
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'a round whose live-git observation FAILED leaves the ledger BYTE-IDENTICAL — '
+                + 'observation failure is not fact change');
+            const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+            assert.ok(entry, 'the entry is still there at all');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'no tombstone: only an OBSERVED absence may close a governance decision');
+            console.log('✅ T-observation-git-state passed');
+        }
+
+        console.log('T-observation-last-touched. An unreadable git history must not become a local mtime ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const realExec = childProcess.execFileSync;
+
+            const oldStamp = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString();
+            const { root } = createObservationRepo('observation-last-touched', {
+                files: {
+                    'docs/specs/aged.md': ['---', 'id: spec:aged', 'status: adopted', '---', '', '# Aged', ''].join('\n'),
+                },
+                commitEnv: { GIT_AUTHOR_DATE: oldStamp, GIT_COMMITTER_DATE: oldStamp },
+            });
+            const findingId = 'aging-no-plan:spec:aged';
+
+            const healthy = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(healthy.census.complete, true,
+                `precondition: a working git yields a COMPLETE spec census. errors: ${JSON.stringify(healthy.census.errors)}`);
+            const healthySpec = healthy.specs.find(s => s.id === 'spec:aged');
+            assert.strictEqual(healthySpec.lastTouchedProvenance, 'git',
+                'precondition: with git working, lastTouchedAt is GIT evidence — a fact of the project, not of this checkout');
+            const healthyFinding = (healthySpec.findings || []).find(f => f.id === findingId);
+            assert.ok(healthyFinding, 'precondition: a working git emits the aging finding this test is about');
+            assert.notStrictEqual(healthyFinding.dispositionable, false,
+                'precondition: a git-derived aging finding IS dispositionable, or the set below could not happen');
+
+            const wasSet = runCli(root, ['disposition', 'set', findingId,
+                '--choice', 'wont-fix', '--reason', 'kept as a reference spec']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            let hits = 0;
+            await withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && (args || [])[0] === 'log') {
+                    hits += 1;
+                    throw new Error('fatal: unable to read commit object: Permission denied');
+                }
+                return realExec(command, args, options);
+            }, async () => {
+                const degraded = specPortfolio.buildSpecRegistry(root, { write: false });
+                assert.ok(hits > 0,
+                    'self-check: the injected git failure must actually have been reached, or this test proves nothing');
+                assert.strictEqual(degraded.census.complete, false,
+                    'a git history that could not be READ degrades the spec census — the fallback silently swapped '
+                    + 'a project fact for a property of this checkout');
+                assert.ok(degraded.census.errors.some(e => /git history for .* could not be observed/.test(e)),
+                    `the census names WHAT could not be observed. errors: ${JSON.stringify(degraded.census.errors)}`);
+                const spec = degraded.specs.find(s => s.id === 'spec:aged');
+                assert.strictEqual(spec.lastTouchedProvenance, 'mtime',
+                    'precondition: the fallback really did fire, so the date now comes from the filesystem');
+                assert.ok(!(spec.findings || []).some(f => f.id === findingId),
+                    'precondition: the mtime of a freshly written checkout pushes idleDays under the threshold and the '
+                    + 'finding VANISHES — that is the trap a complete census would have read as authoritative absence');
+                await captureConsole(() => runDispositionSyncInProcess(root));
+            });
+
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'a round whose git history was unreadable leaves the ledger BYTE-IDENTICAL — '
+                + 'observation failure is not fact change');
+            const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+            assert.ok(entry, 'the entry is still there at all');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'no tombstone: only an OBSERVED absence may close a governance decision');
+
+            // The OTHER half of the mtime rule, and a different question from the
+            // one above. Here git works perfectly and simply reports that this file
+            // has no commit — a normal, extremely common state (any spec written but
+            // not yet committed). That must NOT degrade the census. But the date it
+            // falls back to is this checkout's mtime, which no clone reproduces, so
+            // the finding stays visible and stays OUT of the disposition id space.
+            const untrackedStamp = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000);
+            const untrackedPath = path.join(root, 'docs', 'specs', 'fresh.md');
+            writeText(untrackedPath, ['---', 'id: spec:fresh', 'status: adopted', '---', '', '# Fresh', ''].join('\n'));
+            fs.utimesSync(untrackedPath, untrackedStamp, untrackedStamp);
+            const mixed = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(mixed.census.complete, true,
+                `an UNCOMMITTED spec is a normal state, never an observation failure. errors: ${JSON.stringify(mixed.census.errors)}`);
+            const fresh = mixed.specs.find(s => s.id === 'spec:fresh');
+            assert.strictEqual(fresh.lastTouchedProvenance, 'mtime',
+                'precondition: an uncommitted file really does fall back to its mtime');
+            const freshFinding = (fresh.findings || []).find(f => f.id === 'aging-no-plan:spec:fresh');
+            assert.ok(freshFinding, 'the finding is still EMITTED — nothing is ever filtered out of the collection (AC7)');
+            assert.strictEqual(freshFinding.dispositionable, false,
+                'but it is kept out of the disposition id space: a fingerprint over a filesystem mtime describes '
+                + 'one working copy, not the project, and would lapse the moment anyone else looked');
+            const refused = runCli(root, ['disposition', 'set', 'aging-no-plan:spec:fresh',
+                '--choice', 'wont-fix', '--reason', 'nope']);
+            assert.notStrictEqual(refused.status, 0, 'and `set` actually refuses it rather than recording a local-only decision');
+            console.log('✅ T-observation-last-touched passed');
+        }
+
+        console.log('T-observation-not-a-repo. A workspace that is simply not a git repo is NORMAL, never degraded ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+
+            // The boundary this test defends: if "git said no" were treated as an
+            // observation failure, every non-repo workspace — most fixtures, and
+            // plenty of real projects — would be permanently incomplete and `sync`
+            // would never tombstone anything again. That is strictly worse than the
+            // bug the degradation above exists to fix.
+            const bare = createTempRuntimeRoot('observation-not-a-repo').workspaceRoot;
+            writeText(path.join(bare, 'docs', 'specs', 'ok.md'),
+                ['---', 'id: spec:ok', 'status: done', '---', '', '# OK', ''].join('\n'));
+            writeText(path.join(bare, 'src', 'a.js'), 'module.exports = 1;\n');
+            const planIR = { version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [] };
+            writeText(path.join(bare, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                `${JSON.stringify(planIR, null, 2)}\n`);
+
+            assert.strictEqual(gaps.classifyGitFailure(bare), 'no-repository',
+                'precondition: the classifier recognizes a non-repository as such');
+            for (const options of [{}, { lastCommit: true }]) {
+                const census = gaps.runPlanningDriftCensus(bare, planIR, options);
+                assert.strictEqual(census.complete, true,
+                    `a non-repository workspace is a COMPLETE planning census (${JSON.stringify(options)}). `
+                    + `errors: ${JSON.stringify(census.errors)}`);
+            }
+            assert.strictEqual(specPortfolio.buildSpecRegistry(bare, { write: false }).census.complete, true,
+                'and a COMPLETE spec census — no git evidence anywhere is an answer, not a failure');
+
+            // A repository whose HEAD is unborn is the same kind of normal: there is
+            // genuinely no history to read yet.
+            const unborn = createTempRuntimeRoot('observation-unborn-head').workspaceRoot;
+            writeText(path.join(unborn, 'docs', 'specs', 'ok.md'),
+                ['---', 'id: spec:ok', 'status: done', '---', '', '# OK', ''].join('\n'));
+            writeText(path.join(unborn, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                `${JSON.stringify(planIR, null, 2)}\n`);
+            runGit(unborn, ['init']);
+            assert.strictEqual(gaps.classifyGitFailure(unborn), 'no-commits',
+                'precondition: a repository with no commits is classified apart from both a failure and a non-repo');
+            const unbornCensus = gaps.runPlanningDriftCensus(unborn, planIR, { lastCommit: true });
+            assert.strictEqual(unbornCensus.complete, true,
+                `an unborn HEAD is a COMPLETE census. errors: ${JSON.stringify(unbornCensus.errors)}`);
+            assert.strictEqual(specPortfolio.buildSpecRegistry(unborn, { write: false }).census.complete, true,
+                'and so is its spec census');
+            console.log('✅ T-observation-not-a-repo passed');
         }
 
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');

@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const childProcess = require('child_process');
 
 const PLAN_SOURCE_PATHS = ['docs/specs', 'docs/plans', 'docs/superpowers/specs', 'docs/superpowers/plans'];
 const ARCH_SOURCE_PATHS = [
@@ -32,27 +32,114 @@ function readChangedFilesFromEnv() {
     return files.length > 0 ? files : null;
 }
 
-function getChangedFiles(projectRoot, options = {}) {
+// --- Git observation: "we looked and saw nothing" vs "we could not look" ---
+//
+// The governing sentence of the disposition ledger is that a failure to OBSERVE
+// must never impersonate a change in FACT. Every git read below therefore
+// reports HOW it went, not just what it saw: an observer that swallows a failure
+// and returns an empty result is indistinguishable from a genuine absence, and
+// `sync` reads absence from a complete census as proof, then tombstones a human
+// decision permanently.
+//
+// gitOut calls execFileSync through the module object rather than a destructured
+// binding, so a test can substitute a failing git without rebuilding the module
+// graph — the same idiom `withPatchedExecFileSync` already serves elsewhere.
+function gitOut(projectRoot, args, extra = {}) {
+    return String(childProcess.execFileSync('git', args, {
+        cwd: projectRoot, encoding: 'utf8', timeout: 5000, ...extra,
+    })).trim();
+}
+
+// Probes must not spray git's own fatal text onto the parent's stderr: they are
+// expected to fail, and that noise reads like a real error in test output.
+const QUIET_GIT = Object.freeze({ stdio: ['ignore', 'pipe', 'pipe'] });
+
+// Why a probe and not stderr matching: git's messages are localized and
+// version-dependent, while these questions have crisp, cheap answers.
+//
+//   'no-repository' — not a git repo (or git is not installed). A NORMAL, fully
+//                     supported state: most fixtures and many real projects are
+//                     exactly this. Reporting it as an observation failure would
+//                     mark every such census permanently incomplete and `sync`
+//                     would never tombstone anything again — strictly worse than
+//                     the bug this boundary exists to fix.
+//   'no-commits'    — a repository whose HEAD is unborn. Also normal: there is
+//                     genuinely no commit history to read yet.
+//   'unavailable'   — anything else: permissions, a corrupt object store, a
+//                     timeout, git killed mid-read. We could not LOOK, and that
+//                     must never be reported as "there is nothing there".
+//
+// Only 'unavailable' may degrade a census. `memo` is an optional per-round cache
+// so a workspace that is simply not a repo costs two probes for the whole round
+// rather than two per observation.
+function classifyGitFailure(projectRoot, memo = null) {
+    if (memo && memo.kind) return memo.kind;
+    let kind;
+    try {
+        gitOut(projectRoot, ['rev-parse', '--git-dir'], QUIET_GIT);
+        try {
+            gitOut(projectRoot, ['rev-parse', '--verify', 'HEAD'], QUIET_GIT);
+            kind = 'unavailable';
+        } catch (_) { kind = 'no-commits'; }
+    } catch (_) { kind = 'no-repository'; }
+    if (memo) memo.kind = kind;
+    return kind;
+}
+
+function firstLine(err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    return msg.split('\n')[0].trim().slice(0, 200);
+}
+
+// A census-round observation sink. A check that could not LOOK records why here;
+// a check that looked and saw nothing records nothing. The findings a degraded
+// round did manage to produce are still returned — degrade the census, never the
+// collection (AC7).
+function createObservation() {
+    const errors = [];
+    const gitMemo = {};
+    return {
+        errors,
+        gitMemo,
+        unavailable(what, err) {
+            const line = `${what} could not be observed: ${firstLine(err)}`;
+            if (!errors.includes(line)) errors.push(line);
+        },
+    };
+}
+
+// Returns { files, error } — never a bare array. checkR006 short-circuits on an
+// empty set, so an unreadable diff used to produce zero findings that look
+// exactly like a clean tree.
+function observeChangedFiles(projectRoot, options = {}, memo = null) {
     if (Array.isArray(options.changedFiles)) {
-        return normalizePaths(options.changedFiles);
+        return { files: normalizePaths(options.changedFiles), error: null };
     }
 
     if (options.changedFilesFromEnv) {
         const envFiles = readChangedFilesFromEnv();
-        if (envFiles) return envFiles;
+        if (envFiles) return { files: envFiles, error: null };
     }
 
+    const args = options.lastCommit
+        ? ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', 'HEAD']
+        : ['diff', '--name-only', 'HEAD'];
     try {
-        const args = options.lastCommit
-            ? ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', 'HEAD']
-            : ['diff', '--name-only', 'HEAD'];
-        const out = execFileSync('git', args, {
-            cwd: projectRoot, encoding: 'utf8', timeout: 5000,
-        }).trim();
-        return out ? normalizePaths(out.split('\n')) : [];
-    } catch {
-        return [];
+        const out = gitOut(projectRoot, args);
+        return { files: out ? normalizePaths(out.split('\n')) : [], error: null };
+    } catch (err) {
+        if (classifyGitFailure(projectRoot, memo) !== 'unavailable') {
+            return { files: [], error: null };   // genuinely nothing to read
+        }
+        return { files: [], error: { what: `R006 changed-file set (git ${args[0]})`, err } };
     }
+}
+
+// Legacy array-shaped accessor, kept so any caller outside this module keeps the
+// shape it has always had. The census uses observeChangedFiles directly, because
+// only that shape can tell absence from unavailability.
+function getChangedFiles(projectRoot, options = {}) {
+    return observeChangedFiles(projectRoot, options).files;
 }
 
 // Root-level project-meta files that are not product code. Listed explicitly
@@ -194,39 +281,50 @@ function checkR005(planIR) {
 //   C1 A->B (dispositioned) / C2 B->A (stale) / C3 A->B  <- identical to C1.
 // A working-tree diff has no such identity, so those findings are marked
 // non-dispositionable rather than given a fingerprint that collides.
-function changeOccurrence(projectRoot, options) {
+function changeOccurrence(projectRoot, options, observation = null) {
     if (!options.lastCommit) return null;
     try {
-        return execFileSync('git', ['rev-parse', 'HEAD'], {
-            cwd: projectRoot, encoding: 'utf8', timeout: 5000,
-        }).trim();
-    } catch (_) { return null; }
+        return gitOut(projectRoot, ['rev-parse', 'HEAD']);
+    } catch (err) {
+        // A null occurrence is not merely "non-dispositionable": it also REWRITES
+        // factInputs.occurrence, so a live decision would lapse because git
+        // hiccuped rather than because the change did.
+        if (observation && classifyGitFailure(projectRoot, observation.gitMemo) === 'unavailable') {
+            observation.unavailable('R006 change occurrence (git rev-parse HEAD)', err);
+        }
+        return null;
+    }
 }
 
-function changeStatusOf(projectRoot, file, options) {
+function changeStatusOf(projectRoot, file, options, observation = null) {
     if (!options.lastCommit) return 'worktree';
     try {
-        const out = execFileSync('git', ['diff-tree', '--no-commit-id', '--name-status',
-            '-r', '--root', 'HEAD', '--', file], { cwd: projectRoot, encoding: 'utf8', timeout: 5000 }).trim();
-        return out ? out.split(/\s+/)[0] : 'M';
-    } catch (_) { return 'M'; }
+        return (gitOut(projectRoot, ['diff-tree', '--no-commit-id', '--name-status',
+            '-r', '--root', 'HEAD', '--', file]) || 'M').split(/\s+/)[0];
+    } catch (err) {
+        if (observation && classifyGitFailure(projectRoot, observation.gitMemo) === 'unavailable') {
+            observation.unavailable(`R006 change status of ${file} (git diff-tree)`, err);
+        }
+        return 'M';
+    }
 }
 
-function checkR006(projectRoot, planIR, options = {}) {
+function checkR006(projectRoot, planIR, options = {}, observation = null) {
     if (!planIR) return [];
-    const changedFiles = getChangedFiles(projectRoot, options)
-        .filter(f => !isGovernanceInfraFile(f));
+    const observed = observeChangedFiles(projectRoot, options, observation && observation.gitMemo);
+    if (observed.error && observation) observation.unavailable(observed.error.what, observed.error.err);
+    const changedFiles = observed.files.filter(f => !isGovernanceInfraFile(f));
     if (changedFiles.length === 0) return [];
 
     const linkedFiles = new Set((planIR.tasks || []).flatMap(t => t.linkedFiles || []));
-    const occurrence = changeOccurrence(projectRoot, options);
+    const occurrence = changeOccurrence(projectRoot, options, observation);
     return changedFiles.filter(f => !linkedFiles.has(f)).map((f) => ({
         id: `R006:file:${f}`, rule: 'R006', scope: 'planning', level: 'warning',
         type: 'unlinked-file',
         message: `Changed file not linked to any task: ${f}`,
         evidence: [f],
         suggestedAction: `Link ${f} to a task in docs/plans/ or create a new task`,
-        factInputs: { path: f, status: changeStatusOf(projectRoot, f, options), occurrence },
+        factInputs: { path: f, status: changeStatusOf(projectRoot, f, options, observation), occurrence },
         dispositionable: occurrence != null,
     }));
 }
@@ -468,32 +566,60 @@ function readMetaGitState(projectRoot) {
 
 // Read live git state via argv-form git (never string-interpolated). Injectable
 // via options.gitState for tests.
-function liveGitState(projectRoot) {
-    const git = (args) => String(execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' })).trim();
+//
+// Returns { git, error }. A bare null used to mean two incompatible things —
+// "not a git repo, so R013 has nothing to check" and "git blew up, so R013
+// could not check" — and checkR013 silently emitted nothing for both.
+function observeGitState(projectRoot, memo = null) {
+    let headSha;
     try {
-        const headSha = git(['rev-parse', 'HEAD']);
-        let hasUpstream = true, ahead = 0, behind = 0;
+        headSha = gitOut(projectRoot, ['rev-parse', 'HEAD']);
+    } catch (err) {
+        if (classifyGitFailure(projectRoot, memo) !== 'unavailable') {
+            return { git: null, error: null }; // no repo / unborn HEAD — R013 stays silent, by design
+        }
+        return { git: null, error: { what: 'R013 live git state (git rev-parse HEAD)', err } };
+    }
+
+    let hasUpstream = true, ahead = 0, behind = 0, error = null;
+    try {
+        const lr = gitOut(projectRoot, ['rev-list', '--left-right', '--count', '@{u}...HEAD']).split(/\s+/);
+        behind = parseInt(lr[0], 10) || 0; ahead = parseInt(lr[1], 10) || 0;
+    } catch (err) {
+        hasUpstream = false;
+        // "no upstream configured" is the normal answer and must stay silent. An
+        // upstream that EXISTS but could not be counted is an observation failure
+        // that would otherwise erase every R013:sync finding without a trace.
         try {
-            const lr = git(['rev-list', '--left-right', '--count', '@{u}...HEAD']).split(/\s+/);
-            behind = parseInt(lr[0], 10) || 0; ahead = parseInt(lr[1], 10) || 0;
-        } catch (_) { hasUpstream = false; }
-        return {
+            gitOut(projectRoot, ['rev-parse', '--symbolic-full-name', '@{u}'], QUIET_GIT);
+            error = { what: 'R013 ahead/behind (git rev-list @{u}...HEAD)', err };
+        } catch (_) { /* genuinely no upstream */ }
+    }
+
+    return {
+        git: {
             headSha, ahead, behind, hasUpstream,
             isAncestorOfHead: (sha) => {
                 if (sha === headSha) return true;
-                try { execFileSync('git', ['merge-base', '--is-ancestor', sha, 'HEAD'], { cwd: projectRoot }); return true; }
+                try { gitOut(projectRoot, ['merge-base', '--is-ancestor', sha, 'HEAD'], QUIET_GIT); return true; }
                 catch (_) { return false; }
             },
-        };
-    } catch (_) {
-        return null; // not a git repo — R013 cannot check, stays silent
-    }
+        },
+        error,
+    };
 }
 
-function checkR013(projectRoot, options = {}) {
+function checkR013(projectRoot, options = {}, observation = null) {
     const meta = options.metaState != null ? options.metaState : readMetaGitState(projectRoot);
     if (!meta || !meta.headSha) return []; // no structured state to check
-    const git = options.gitState != null ? options.gitState : liveGitState(projectRoot);
+    let git;
+    if (options.gitState != null) {
+        git = options.gitState;
+    } else {
+        const observed = observeGitState(projectRoot, observation && observation.gitMemo);
+        git = observed.git;
+        if (observed.error && observation) observation.unavailable(observed.error.what, observed.error.err);
+    }
     if (!git) return [];
     const findings = [];
     if (!git.isAncestorOfHead(meta.headSha)) {
@@ -527,12 +653,16 @@ function runPlanningDriftCensus(projectRoot, planIR, options = {}) {
     const errors = [];
     if (!planIR) errors.push('plan-ir.json is missing or unreadable — run `mem plan scan`');
 
+    // Observation failures are collected DURING the round and folded into
+    // `errors` after it. They degrade `complete`; they never remove a finding.
+    const observation = createObservation();
+
     const findings = [
         ...checkR003(projectRoot), ...checkR004(projectRoot), ...checkR005(planIR),
-        ...checkR006(projectRoot, planIR, options), ...checkR008(planIR),
+        ...checkR006(projectRoot, planIR, options, observation), ...checkR008(planIR),
         ...checkR009(projectRoot), ...checkR010(projectRoot, planIR),
         ...checkR011(planIR), ...checkR012(projectRoot, planIR, options),
-        ...checkR013(projectRoot, options),
+        ...checkR013(projectRoot, options, observation),
     ].map(f => ({
         ...f,
         id: (ID_MIGRATIONS[f.rule] || (() => f.id))(f),
@@ -541,6 +671,7 @@ function runPlanningDriftCensus(projectRoot, planIR, options = {}) {
         factInputs: f.factInputs || {},
     }));
 
+    errors.push(...observation.errors);
     return { findings, complete: errors.length === 0, errors };
 }
 
@@ -559,6 +690,11 @@ module.exports = {
     checkR012,
     checkR013,
     getChangedFiles,
+    observeChangedFiles,
+    // The ONE git-failure classifier. spec-portfolio imports it rather than
+    // growing a second implementation that could disagree about where the
+    // "normal absence" / "could not observe" boundary sits.
+    classifyGitFailure,
     hasArchiveEvidence,
     isGovernanceInfraFile,
     normalizeBacklogItem,

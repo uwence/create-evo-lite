@@ -2,8 +2,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+// Called through the module object, never destructured: git observation must
+// stay substitutable by a test without rebuilding the module graph.
+const childProcess = require('child_process');
 const { parseSpecFile, parseFrontmatter, resolveLinkedPlanIds } = require('./planning/parse-markdown');
+const { classifyGitFailure } = require('./planning/gaps');
 const { getWorkspaceRoot } = require('./runtime');
 const { readLedger } = require('./disposition/ledger');
 const { annotate } = require('./disposition/resolve');
@@ -30,14 +33,25 @@ function breachedDimensions(size) {
 // One independently dispositionable fact = one finding id.
 function buildSpecFindings(spec, size) {
     const out = [];
-    const f = (ruleId, factInputs, instanceKey) => out.push({
+    const f = (ruleId, factInputs, instanceKey, extra) => out.push({
         id: `${ruleId}:${spec.id}${instanceKey ? `:${instanceKey}` : ''}`,
         ruleId, ruleVersion: SPEC_RULE_VERSIONS[ruleId], factInputs,
+        ...(extra || {}),
     });
     for (const w of spec.warnings) {
         if (w === 'unknown-status') f(w, { declaredStatus: spec.declaredStatus });
         else if (w === 'zombie-plan') f(w, { notDonePlans: spec.notDonePlans });
-        else if (w === 'aging-no-plan' || w === 'aging-inactive') f(w, { lastTouchedAt: spec.lastTouchedAt });
+        else if (w === 'aging-no-plan' || w === 'aging-inactive') {
+            // The finding is emitted unchanged — same id, same factInputs (AC7 /
+            // "never filter"). What changes is whether it may enter the
+            // disposition id space at all: when lastTouchedAt came from a
+            // filesystem mtime it is not clone-portable, so a fingerprint over it
+            // describes one working copy rather than the project. `set` refuses a
+            // non-dispositionable finding rather than recording a decision that
+            // would lapse the moment anyone else looked.
+            f(w, { lastTouchedAt: spec.lastTouchedAt }, null,
+                spec.lastTouchedProvenance === 'mtime' ? { dispositionable: false } : null);
+        }
         else if (w === 'size-exceeded') {
             for (const dim of breachedDimensions(size)) {
                 f('size-exceeded', { dimension: dim, value: size[dim],
@@ -207,14 +221,22 @@ function deriveBlocker(spec) {
     };
 }
 
-function gitLastCommitISO(projectRoot, relFile) {
+// Observation, not just a value.
+//
+// EMPTY output means "this file has no commit yet" (untracked, or never
+// committed) — a genuine, extremely common, normal answer. THROWING means we
+// could not look at all, and only that may degrade a census; see
+// classifyGitFailure for where the boundary sits.
+function observeLastCommitISO(projectRoot, relFile, memo = null) {
     try {
-        const out = execFileSync('git', ['log', '-1', '--format=%cI', '--', relFile], {
+        const out = String(childProcess.execFileSync('git', ['log', '-1', '--format=%cI', '--', relFile], {
             cwd: projectRoot, encoding: 'utf8', timeout: 5000,
-        }).trim();
-        return out || null;
-    } catch (_) {
-        return null;
+        })).trim();
+        return { iso: out || null, error: null };
+    } catch (err) {
+        if (classifyGitFailure(projectRoot, memo) !== 'unavailable') return { iso: null, error: null };
+        const detail = err && err.message ? String(err.message).split('\n')[0].trim().slice(0, 200) : String(err);
+        return { iso: null, error: `git history for ${relFile} could not be observed: ${detail}` };
     }
 }
 
@@ -229,15 +251,30 @@ function mtimeISO(absPath) {
 // lastTouchedAt = max of `git log -1 --format=%cI -- <file>` across the spec file and
 // each linked plan file; falls back to file mtime when git is unavailable/file untracked.
 // Never throws.
-function resolveLastTouchedAt(projectRoot, relFiles) {
+//
+// Returns { iso, provenance, errors }. PROVENANCE is load-bearing and the reason
+// this returns a record rather than a string: an mtime is a property of THIS
+// CHECKOUT, not of the project's history. It does not survive a clone, and
+// `lastTouchedAt` is inside the aging findings' factInputs — so a decision
+// fingerprinted on an mtime is a decision about this working copy alone. The
+// aging finding derived from it can also VANISH on a fresh checkout, whose
+// mtimes are all "now", pushing idleDays under the threshold. Displaying it to a
+// human stays fine; letting it back a tombstone does not.
+function observeLastTouchedAt(projectRoot, relFiles, memo = null) {
     let max = null;
     let maxEpoch = -Infinity;
+    let provenance = null;
+    const errors = [];
     for (const relFile of relFiles) {
         if (!relFile) continue;
         const posixRel = relFile.replace(/\\/g, '/');
-        let iso = gitLastCommitISO(projectRoot, posixRel);
+        const observed = observeLastCommitISO(projectRoot, posixRel, memo);
+        if (observed.error && !errors.includes(observed.error)) errors.push(observed.error);
+        let iso = observed.iso;
+        let from = 'git';
         if (!iso) {
             iso = mtimeISO(path.join(projectRoot, relFile));
+            from = 'mtime';
         }
         if (!iso) continue;
         const epoch = Date.parse(iso);
@@ -245,9 +282,17 @@ function resolveLastTouchedAt(projectRoot, relFiles) {
         if (epoch > maxEpoch) {
             maxEpoch = epoch;
             max = iso;
+            provenance = from;
         }
     }
-    return max;
+    return { iso: max, provenance, errors };
+}
+
+// Legacy value-shaped accessor, kept for callers (and unit tests) that only want
+// the instant. The registry uses observeLastTouchedAt, because only that shape
+// carries the provenance the disposition layer must respect.
+function resolveLastTouchedAt(projectRoot, relFiles) {
+    return observeLastTouchedAt(projectRoot, relFiles).iso;
 }
 
 // The LAST ```json fenced block in the file that contains a `"criteria"` key.
@@ -322,6 +367,13 @@ function buildSpecRegistry(projectRoot, opts = {}) {
 
     const specs = [];
     const errors = [];
+    // Kept OUT of `errors` on purpose. release-preflight refuses on any
+    // registry error, and a transient git failure is not a reason to block a
+    // publish — but it IS a reason to withhold the authority to tombstone. So it
+    // degrades the census only. One memo per build: a workspace that is not a
+    // repo answers the classifier once, not once per spec file.
+    const gitObservationErrors = [];
+    const gitMemo = {};
     const sourceWarnings = [];
     const seenSpecIds = new Map();
     let discoveredFileCount = 0;
@@ -393,7 +445,11 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             const plan = plansById.get(planId);
             if (plan && plan.sourcePath) touchFiles.push(plan.sourcePath);
         }
-        const lastTouchedAt = resolveLastTouchedAt(projectRoot, touchFiles);
+        const touched = observeLastTouchedAt(projectRoot, touchFiles, gitMemo);
+        const lastTouchedAt = touched.iso;
+        for (const e of touched.errors) {
+            if (!gitObservationErrors.includes(e)) gitObservationErrors.push(e);
+        }
         const idleDays = lastTouchedAt ? Math.floor((Date.now() - Date.parse(lastTouchedAt)) / DAY_MS) : 0;
 
         const size = computeSizeMetrics(content, body);
@@ -471,6 +527,9 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             statusRecognized,
             linkedPlans,
             lastTouchedAt,
+            // 'git' | 'mtime' | null — where lastTouchedAt actually came from.
+            // A human report may use either; a fingerprint may only use 'git'.
+            lastTouchedProvenance: touched.provenance,
             idleDays,
             size,
             sizeExceeded,
@@ -511,6 +570,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         warnings: sourceWarnings,
         portfolioSourceDrift: specs.length === 0 && Array.isArray(ir.specs) && ir.specs.length > 0,
         dispositionLedgerError,
+        gitObservationErrors,
     };
 
     // `sourceWarnings` mixes two very different things:
@@ -542,8 +602,16 @@ function buildSpecRegistry(projectRoot, opts = {}) {
                 && source.directoryReadable
                 && source.discoveredFileCount === source.parsedSpecCount
                 && parseFailures.length === 0
-                && !source.portfolioSourceDrift,
-            errors: [...errors.map(e => e.reason), ...parseFailures.map(w => `${w.path}: ${w.reason}`)],
+                && !source.portfolioSourceDrift
+                // An unobservable git history means `lastTouchedAt` silently
+                // became a local mtime, which can make an aging finding vanish
+                // outright. Absence seen through that is an observation failure.
+                && gitObservationErrors.length === 0,
+            errors: [
+                ...errors.map(e => e.reason),
+                ...parseFailures.map(w => `${w.path}: ${w.reason}`),
+                ...gitObservationErrors,
+            ],
         },
     };
 
@@ -843,7 +911,7 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
         const relDst = path.relative(projectRoot, targetPath).replace(/\\/g, '/');
         let movedViaGit = false;
         try {
-            execFileSync('git', ['mv', '--', relSrc, relDst], { cwd: projectRoot, stdio: 'pipe' });
+            childProcess.execFileSync('git', ['mv', '--', relSrc, relDst], { cwd: projectRoot, stdio: 'pipe' });
             movedViaGit = true;
         } catch (_) {
             movedViaGit = false;
@@ -851,7 +919,7 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
         if (!movedViaGit) {
             fs.renameSync(absSrc, targetPath);
             try {
-                execFileSync('git', ['add', '--', relDst], { cwd: projectRoot, stdio: 'pipe' });
+                childProcess.execFileSync('git', ['add', '--', relDst], { cwd: projectRoot, stdio: 'pipe' });
             } catch (_) {
                 // best-effort; untracked/no-git is fine here.
             }
@@ -1157,4 +1225,6 @@ module.exports = {
     registerSpecPortfolioCommands,
     // Exported for unit testing (timezone-safe epoch compare, not lexicographic).
     resolveLastTouchedAt,
+    // Exported so a test can assert PROVENANCE, not just the instant.
+    observeLastTouchedAt,
 };
