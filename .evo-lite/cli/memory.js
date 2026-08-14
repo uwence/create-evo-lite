@@ -2,6 +2,8 @@ const fs = require('fs');
 const memoryService = require('./memory.service');
 const { initDB } = require('./db');
 const { Command } = require('commander');
+const { getWorkspaceRoot } = require('./runtime');
+const { dispositionsDirty } = require('./disposition/ledger');
 
 function getCliText(argv = process.argv) {
     const action = argv[2];
@@ -130,12 +132,36 @@ function printResults(results) {
 }
 
 function formatTrackResult(result) {
+    // `context track` does not commit, so it cannot close this debt — but it must
+    // not claim a closure it did not achieve either. An uncommitted tombstone is
+    // a governance decision no other machine can see.
+    //
+    // Guarded, and FAIL-CLOSED. dispositionsDirty rethrows every git failure that
+    // is not "not a git repository" (corrupt .git, permissions, a transient EPERM),
+    // and by the time this formatter runs, track() has already written the archive,
+    // the trajectory and the context to disk — so an uncaught throw here would
+    // report a successful track as a hard CLI failure. An UNKNOWN durability state
+    // is also not a clean one, so it still blocks `closure: complete`, and the
+    // reason is printed rather than swallowed.
+    let ledgerState = 'clean';
+    let ledgerDetail = '';
+    try {
+        ledgerState = dispositionsDirty(getWorkspaceRoot()) ? 'pending' : 'clean';
+    } catch (err) {
+        ledgerState = 'unknown';
+        ledgerDetail = err && err.message ? err.message : 'error';
+    }
+    const ledgerPending = ledgerState !== 'clean';
     const closureComplete = result.status.archive === 'written'
         && result.status.context === 'updated'
-        && ['resolved', 'not_requested'].includes(result.status.resolve);
+        && ['resolved', 'not_requested'].includes(result.status.resolve)
+        && !ledgerPending;
     const nextStep = closureComplete
         ? '可以向用户汇报：代码提交已固化，轨迹与 archive 已完成闭环。'
-        : '不要宣称闭环完成；请先根据上面的状态补救 archive / context / resolve。';
+        : '不要宣称闭环完成；请先根据上面的状态补救 archive / context / resolve'
+            + (ledgerState === 'pending' ? '，并提交 .evo-lite/dispositions.json（track 不提交，只能报告）' : '')
+            + (ledgerState === 'unknown' ? '，并先查明 dispositions.json 的提交状态（git 读取失败；未知不等于干净）' : '')
+            + '。';
     const lines = [
         '✅ Context track completed.',
         `- closure: ${closureComplete ? 'complete' : 'partial'}`,
@@ -143,6 +169,9 @@ function formatTrackResult(result) {
         `- archive: ${result.status.archive}`,
         `- context: ${result.status.context}`,
         `- resolve: ${result.status.resolve}`,
+        `- dispositions: ${ledgerState === 'clean' ? 'clean'
+            : ledgerState === 'pending' ? 'pending (uncommitted tombstone)'
+                : `unknown (${ledgerDetail})`}`,
         `- chunks: ${result.chunkCount}`,
         `- archive_path: ${result.archivePath}`,
         `- next_step: ${nextStep}`,
@@ -156,17 +185,43 @@ function formatTrackResult(result) {
 }
 
 function formatCommitFlowResult(result) {
+    // Three states, same shape as formatTrackResult's: `unknown` is a durability
+    // reading that could not be TAKEN, and it is neither `clean` nor `pending`.
+    // It blocks the closure claim without ever demoting a stage that completed.
+    const ledger = result.dispositions && result.dispositions.state
+        ? result.dispositions
+        : { state: 'unknown', detail: 'not reported' };
+    // A commit whose hash could not be READ is a third state too, on exactly the
+    // same rule: the mutation landed, so its stage stays `written`, but nothing
+    // may claim a reading it never took. `unknown` blocks the closure claim
+    // without ever demoting the stage that produced the commit.
+    const identities = [
+        ['code_commit', result.code.commitHash, result.code.commitIdentity],
+        ['runtime_commit', result.runtime.commitHash, result.runtime.commitIdentity],
+        ['runtime_closure_commit', result.runtime.closureCommitHash, result.runtime.closureCommitIdentity],
+    ];
+    const unnamedCommits = identities.filter(([, , identity]) => identity && identity.state === 'unknown');
+    const identityLine = (label) => {
+        const [, hash, identity] = identities.find(([name]) => name === label);
+        if (hash) return `- ${label}: ${hash}`;
+        if (identity && identity.state === 'unknown') {
+            return `- ${label}: unknown (${identity.detail || 'error'})`;
+        }
+        return null;
+    };
     const closureComplete = result.code.status === 'written'
         && result.track.status === 'complete'
-        && result.runtime.status === 'written';
+        && result.runtime.status === 'written'
+        && ledger.state === 'clean'
+        && unnamedCommits.length === 0;
     const lines = [
         `${closureComplete ? '✅' : '⚠️'} Evo-Lite commit flow ${closureComplete ? 'completed' : 'ended partial'}.`,
         `- stage_mode: ${result.stageMode}`,
         `- code_snapshot: ${result.code.status}`,
     ];
 
-    if (result.code.commitHash) {
-        lines.push(`- code_commit: ${result.code.commitHash}`);
+    if (identityLine('code_commit')) {
+        lines.push(identityLine('code_commit'));
     }
     if (result.code.message) {
         lines.push(`- code_message: ${result.code.message}`);
@@ -185,8 +240,13 @@ function formatCommitFlowResult(result) {
     }
 
     lines.push(`- runtime_meta: ${result.runtime.status}`);
-    if (result.runtime.commitHash) {
-        lines.push(`- runtime_commit: ${result.runtime.commitHash}`);
+    if (identityLine('runtime_commit')) {
+        lines.push(identityLine('runtime_commit'));
+    }
+    // The tombstone post-commit wrote is not in the meta-commit above — it is in
+    // this one. Naming it separately keeps every printed hash true to its contents.
+    if (identityLine('runtime_closure_commit')) {
+        lines.push(identityLine('runtime_closure_commit'));
     }
     if (result.runtime.message) {
         lines.push(`- runtime_message: ${result.runtime.message}`);
@@ -194,6 +254,10 @@ function formatCommitFlowResult(result) {
     for (const file of result.runtime.files || []) {
         lines.push(`- runtime_file: ${file}`);
     }
+
+    lines.push(`- dispositions: ${ledger.state === 'clean' ? 'clean'
+        : ledger.state === 'pending' ? 'pending (uncommitted tombstone)'
+            : `unknown (${ledger.detail || 'error'})`}`);
 
     if (result.errorStage) {
         lines.push(`- error_stage: ${result.errorStage}`);
@@ -206,7 +270,16 @@ function formatCommitFlowResult(result) {
             ? '代码快照已提交；请先补救 context track，然后再提交运行时状态文件。'
             : result.errorStage === 'meta-commit'
                 ? 'context track 已完成；请补做 runtime state 的 meta-commit，不要再次运行 context track。'
-                : '请先补齐当前闭环步骤，再继续下一个任务。';
+                // The failure is the OBSERVER, not any stage. Every mutation this
+                // flow performs has already landed, so the one thing this text must
+                // never do is ask for a repeat of it.
+                : result.errorStage === 'disposition-probe'
+                    ? `代码快照、context track 与 runtime meta-commit 均已完成，不要重跑其中任何一步；无法读取的是 dispositions.json 的提交状态（${result.errorMessage || 'error'}）——未知不等于干净，请手工执行 \`git status --porcelain -- .evo-lite/dispositions.json\` 确认账本是否已持久化。`
+                    // Again the OBSERVER, not any stage: the commits below are
+                    // already in git history, only their提交号读不出来。
+                    : result.errorStage === 'commit-identity'
+                        ? `本次流程的提交都已写入 git 历史，不要重复提交其中任何一步；读不出来的是提交号（${result.errorMessage || 'error'}）——请手工执行 \`git log -3 --oneline\` 补齐提交号后再汇报。`
+                        : '请先补齐当前闭环步骤，再继续下一个任务。';
     lines.push(`- next_step: ${nextStep}`);
     return lines.join('\n');
 }
@@ -852,6 +925,7 @@ function buildProgram() {
     safeRegister('wiki', () => require('./wiki/cli').registerWikiCommands(program));
     safeRegister('pr-state', () => require('./pr-state').registerPrStateCommands(program));
     safeRegister('governance', () => registerGovernanceCommands(program));
+    safeRegister('disposition', () => require('./disposition/commands').registerDispositionCommands(program));
 
     program.command('inspect')
         .description('Run the inspector HTTP server.')

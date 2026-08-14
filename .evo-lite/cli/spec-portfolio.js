@@ -2,9 +2,14 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+// Called through the module object, never destructured: git observation must
+// stay substitutable by a test without rebuilding the module graph.
+const childProcess = require('child_process');
 const { parseSpecFile, parseFrontmatter, resolveLinkedPlanIds } = require('./planning/parse-markdown');
+const { classifyGitFailure } = require('./planning/gaps');
 const { getWorkspaceRoot } = require('./runtime');
+const { readLedger } = require('./disposition/ledger');
+const { annotate } = require('./disposition/resolve');
 
 const SIZE_THRESHOLDS = Object.freeze({ acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 });
 // The closed vocabulary of spec statuses this registry can actually reason about.
@@ -16,24 +21,106 @@ const RECOGNIZED_SPEC_STATUSES = Object.freeze(new Set(['done', 'parked', 'adopt
 const DEFAULT_AGING_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function readJsonSafe(filePath) {
+const SPEC_RULE_VERSIONS = Object.freeze({
+    'unknown-status': 1, 'zombie-plan': 1, 'size-exceeded': 1,
+    'aging-no-plan': 1, 'aging-inactive': 1,
+});
+
+function breachedDimensions(size) {
+    return Object.keys(SIZE_THRESHOLDS).filter(k => size[k] > SIZE_THRESHOLDS[k]);
+}
+
+// One independently dispositionable fact = one finding id.
+function buildSpecFindings(spec, size) {
+    const out = [];
+    const f = (ruleId, factInputs, instanceKey, extra) => out.push({
+        id: `${ruleId}:${spec.id}${instanceKey ? `:${instanceKey}` : ''}`,
+        ruleId, ruleVersion: SPEC_RULE_VERSIONS[ruleId], factInputs,
+        ...(extra || {}),
+    });
+    for (const w of spec.warnings) {
+        if (w === 'unknown-status') f(w, { declaredStatus: spec.declaredStatus });
+        else if (w === 'zombie-plan') f(w, { notDonePlans: spec.notDonePlans });
+        else if (w === 'aging-no-plan' || w === 'aging-inactive') {
+            // The finding is emitted unchanged — same id, same factInputs (AC7 /
+            // "never filter"). What changes is whether it may enter the
+            // disposition id space at all: when lastTouchedAt came from a
+            // filesystem mtime it is not clone-portable, so a fingerprint over it
+            // describes one working copy rather than the project. `set` refuses a
+            // non-dispositionable finding rather than recording a decision that
+            // would lapse the moment anyone else looked.
+            f(w, { lastTouchedAt: spec.lastTouchedAt }, null,
+                spec.lastTouchedProvenance === 'mtime' ? { dispositionable: false } : null);
+        }
+        else if (w === 'size-exceeded') {
+            for (const dim of breachedDimensions(size)) {
+                f('size-exceeded', { dimension: dim, value: size[dim],
+                    threshold: SIZE_THRESHOLDS[dim], state: spec.state }, dim);
+            }
+        }
+    }
+    return out;
+}
+
+// Absent is not the same observation as unreadable — the same distinction the
+// git observers make, for the same reason. A missing file is a normal state with
+// a defined default; a file that EXISTS and could not be parsed means the input
+// this census is derived from is unknown, and both callers below turn that into
+// findings that silently vanish under a `complete: true` census.
+//
+// Returns { value, error }.
+//
+// ENOENT is the signal for "absent", rather than an existsSync probe: the probe
+// would both introduce a TOCTOU window and answer the wrong question — a
+// directory in the file's place, or a permission denial, exists and still cannot
+// be read.
+function readJsonObserved(filePath, label) {
+    const detailOf = (err) => (err && err.message
+        ? String(err.message).split('\n')[0].trim().slice(0, 200) : String(err));
+    let raw;
     try {
-        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    } catch (_) {
-        return null;
+        raw = fs.readFileSync(filePath, 'utf8');
+    } catch (err) {
+        if (err && err.code === 'ENOENT') return { value: null, error: null };   // absent is normal
+        return { value: null, error: `${label} exists but could not be read: ${detailOf(err)}` };
+    }
+    try {
+        return { value: JSON.parse(raw), error: null };
+    } catch (err) {
+        return { value: null, error: `${label} exists but could not be parsed: ${detailOf(err)}` };
     }
 }
 
+// A corrupt config silently reverts agingDays to the default. A project
+// configured to 7 then loses every aging finding in the 8-14 day band, and sync
+// tombstones their dispositions — a threshold nobody changed, applied because a
+// file could not be read.
 function loadAgingDays(projectRoot) {
-    const config = readJsonSafe(path.join(projectRoot, '.evo-lite', 'config.json'));
+    const observed = readJsonObserved(
+        path.join(projectRoot, '.evo-lite', 'config.json'), '.evo-lite/config.json');
+    const config = observed.value;
     const days = config && config.specPortfolio && config.specPortfolio.agingDays;
-    return typeof days === 'number' && days > 0 ? days : DEFAULT_AGING_DAYS;
+    return {
+        days: typeof days === 'number' && days > 0 ? days : DEFAULT_AGING_DAYS,
+        error: observed.error,
+    };
 }
 
+// A corrupt plan-ir empties linkedPlans, which removes every zombie-plan finding
+// AND flips state active -> adopted. That RENAMES `aging-inactive:<spec>` to
+// `aging-no-plan:<spec>` — a different id, so the dispositioned one reads as
+// absent. collectAllFindings happens to degrade on the same file through
+// safeLoadPlanIR, but that is a cross-module coincidence, not a guard: this
+// census must state its own observation.
 function loadPlanIR(projectRoot) {
-    const ir = readJsonSafe(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'));
-    if (!ir || !Array.isArray(ir.plans)) return { plans: [] };
-    return ir;
+    const observed = readJsonObserved(
+        path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+        '.evo-lite/generated/planning/plan-ir.json');
+    const ir = observed.value;
+    return {
+        ir: (!ir || !Array.isArray(ir.plans)) ? { plans: [] } : ir,
+        error: observed.error,
+    };
 }
 
 // Discovery reports HOW it went, not just what it found.
@@ -175,14 +262,22 @@ function deriveBlocker(spec) {
     };
 }
 
-function gitLastCommitISO(projectRoot, relFile) {
+// Observation, not just a value.
+//
+// EMPTY output means "this file has no commit yet" (untracked, or never
+// committed) — a genuine, extremely common, normal answer. THROWING means we
+// could not look at all, and only that may degrade a census; see
+// classifyGitFailure for where the boundary sits.
+function observeLastCommitISO(projectRoot, relFile, memo = null) {
     try {
-        const out = execFileSync('git', ['log', '-1', '--format=%cI', '--', relFile], {
+        const out = String(childProcess.execFileSync('git', ['log', '-1', '--format=%cI', '--', relFile], {
             cwd: projectRoot, encoding: 'utf8', timeout: 5000,
-        }).trim();
-        return out || null;
-    } catch (_) {
-        return null;
+        })).trim();
+        return { iso: out || null, error: null };
+    } catch (err) {
+        if (classifyGitFailure(projectRoot, memo) !== 'unavailable') return { iso: null, error: null };
+        const detail = err && err.message ? String(err.message).split('\n')[0].trim().slice(0, 200) : String(err);
+        return { iso: null, error: `git history for ${relFile} could not be observed: ${detail}` };
     }
 }
 
@@ -197,15 +292,30 @@ function mtimeISO(absPath) {
 // lastTouchedAt = max of `git log -1 --format=%cI -- <file>` across the spec file and
 // each linked plan file; falls back to file mtime when git is unavailable/file untracked.
 // Never throws.
-function resolveLastTouchedAt(projectRoot, relFiles) {
+//
+// Returns { iso, provenance, errors }. PROVENANCE is load-bearing and the reason
+// this returns a record rather than a string: an mtime is a property of THIS
+// CHECKOUT, not of the project's history. It does not survive a clone, and
+// `lastTouchedAt` is inside the aging findings' factInputs — so a decision
+// fingerprinted on an mtime is a decision about this working copy alone. The
+// aging finding derived from it can also VANISH on a fresh checkout, whose
+// mtimes are all "now", pushing idleDays under the threshold. Displaying it to a
+// human stays fine; letting it back a tombstone does not.
+function observeLastTouchedAt(projectRoot, relFiles, memo = null) {
     let max = null;
     let maxEpoch = -Infinity;
+    let provenance = null;
+    const errors = [];
     for (const relFile of relFiles) {
         if (!relFile) continue;
         const posixRel = relFile.replace(/\\/g, '/');
-        let iso = gitLastCommitISO(projectRoot, posixRel);
+        const observed = observeLastCommitISO(projectRoot, posixRel, memo);
+        if (observed.error && !errors.includes(observed.error)) errors.push(observed.error);
+        let iso = observed.iso;
+        let from = 'git';
         if (!iso) {
             iso = mtimeISO(path.join(projectRoot, relFile));
+            from = 'mtime';
         }
         if (!iso) continue;
         const epoch = Date.parse(iso);
@@ -213,9 +323,17 @@ function resolveLastTouchedAt(projectRoot, relFiles) {
         if (epoch > maxEpoch) {
             maxEpoch = epoch;
             max = iso;
+            provenance = from;
         }
     }
-    return max;
+    return { iso: max, provenance, errors };
+}
+
+// Legacy value-shaped accessor, kept for callers (and unit tests) that only want
+// the instant. The registry uses observeLastTouchedAt, because only that shape
+// carries the provenance the disposition layer must respect.
+function resolveLastTouchedAt(projectRoot, relFiles) {
+    return observeLastTouchedAt(projectRoot, relFiles).iso;
 }
 
 // The LAST ```json fenced block in the file that contains a `"criteria"` key.
@@ -281,8 +399,12 @@ function parseRelations(frontmatter) {
 // empty specs array / null lastTouchedAt per entry instead.
 function buildSpecRegistry(projectRoot, opts = {}) {
     const write = opts.write !== false;
-    const agingDays = loadAgingDays(projectRoot);
-    const ir = loadPlanIR(projectRoot);
+    // Collected before anything derived from them, so a census built on an
+    // unreadable input can never call itself complete.
+    const aging = loadAgingDays(projectRoot);
+    const agingDays = aging.days;
+    const loadedIR = loadPlanIR(projectRoot);
+    const ir = loadedIR.ir;
     const plansById = new Map();
     for (const plan of ir.plans) {
         if (plan && plan.id) plansById.set(plan.id, plan);
@@ -290,6 +412,16 @@ function buildSpecRegistry(projectRoot, opts = {}) {
 
     const specs = [];
     const errors = [];
+    // Kept OUT of `errors` on purpose. release-preflight refuses on any registry
+    // error, and a transient git failure or an unparseable local config is not a
+    // reason to block a publish — but each IS a reason to withhold the authority
+    // to tombstone. So they degrade the census only. One memo per build: a
+    // workspace answers the git classifier once, not once per spec file.
+    const observationErrors = [];
+    const gitMemo = {};
+    for (const e of [aging.error, loadedIR.error]) {
+        if (e && !observationErrors.includes(e)) observationErrors.push(e);
+    }
     const sourceWarnings = [];
     const seenSpecIds = new Map();
     let discoveredFileCount = 0;
@@ -361,7 +493,11 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             const plan = plansById.get(planId);
             if (plan && plan.sourcePath) touchFiles.push(plan.sourcePath);
         }
-        const lastTouchedAt = resolveLastTouchedAt(projectRoot, touchFiles);
+        const touched = observeLastTouchedAt(projectRoot, touchFiles, gitMemo);
+        const lastTouchedAt = touched.iso;
+        for (const e of touched.errors) {
+            if (!observationErrors.includes(e)) observationErrors.push(e);
+        }
         const idleDays = lastTouchedAt ? Math.floor((Date.now() - Date.parse(lastTouchedAt)) / DAY_MS) : 0;
 
         const size = computeSizeMetrics(content, body);
@@ -439,6 +575,9 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             statusRecognized,
             linkedPlans,
             lastTouchedAt,
+            // 'git' | 'mtime' | null — where lastTouchedAt actually came from.
+            // A human report may use either; a fingerprint may only use 'git'.
+            lastTouchedProvenance: touched.provenance,
             idleDays,
             size,
             sizeExceeded,
@@ -453,7 +592,45 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         });
     }
 
+    for (const s of specs) s.findings = buildSpecFindings(s, s.size);
+
+    let ledger = { version: 'evo-disposition-ledger@1', entries: [] };
+    // The empty-ledger fallback stays: an unreadable ledger must never remove a
+    // finding (AC7). But it must not be INVISIBLE either. Without this signal every
+    // live decision silently becomes `disposition: null`, and `null` then means two
+    // different things at once — "nobody decided" and "the decisions are unreadable".
+    let dispositionLedgerError = null;
+    try {
+        ledger = readLedger(projectRoot);
+    } catch (err) {
+        dispositionLedgerError = err && err.message ? err.message : 'disposition ledger unreadable';
+    }
+    for (const s of specs) s.findings = s.findings.map(f => annotate(f, ledger));
+
     const blockers = specs.map(deriveBlocker).filter(Boolean);
+
+    const source = {
+        directoryReadable: discovery.directoryReadable,
+        discoveredFileCount,
+        parsedSpecCount: specs.length,
+        discoveredMarkdownFileCount: discovery.files.length,
+        roots: discovery.roots || [],
+        warnings: sourceWarnings,
+        portfolioSourceDrift: specs.length === 0 && Array.isArray(ir.specs) && ir.specs.length > 0,
+        dispositionLedgerError,
+        observationErrors,
+    };
+
+    // `sourceWarnings` mixes two very different things:
+    //   'no usable id: spec:...'  — a design doc under docs/superpowers/specs/.
+    //                               Expected. There are 9 of them today, and they
+    //                               will never be specs.
+    //   'spec parse threw: ...'   — a file that WAS meant to be a spec and blew up.
+    //                               A spec silently vanished from the census.
+    // Gating on warnings.length === 0 (or on discoveredMarkdownFileCount) would
+    // therefore mark this repo permanently incomplete and sync would never
+    // tombstone anything. Gate on the second kind only.
+    const parseFailures = sourceWarnings.filter(w => /parse threw/.test(w.reason));
 
     const registry = {
         // Bumped from @1: the shape gained blockers/errors/source, and a consumer
@@ -464,14 +641,25 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         specs,
         blockers,
         errors,
-        source: {
-            directoryReadable: discovery.directoryReadable,
-            discoveredFileCount,
-            parsedSpecCount: specs.length,
-            discoveredMarkdownFileCount: discovery.files.length,
-            roots: discovery.roots || [],
-            warnings: sourceWarnings,
-            portfolioSourceDrift: specs.length === 0 && Array.isArray(ir.specs) && ir.specs.length > 0,
+        source,
+        // discoveredFileCount counts every file under the strict root plus every file
+        // that parsed anywhere, so `=== specs.length` catches both a strict-root parse
+        // failure and a duplicate id (counted, then dropped).
+        census: {
+            complete: errors.length === 0
+                && source.directoryReadable
+                && source.discoveredFileCount === source.parsedSpecCount
+                && parseFailures.length === 0
+                && !source.portfolioSourceDrift
+                // An unobservable git history means `lastTouchedAt` silently
+                // became a local mtime, which can make an aging finding vanish
+                // outright. Absence seen through that is an observation failure.
+                && observationErrors.length === 0,
+            errors: [
+                ...errors.map(e => e.reason),
+                ...parseFailures.map(w => `${w.path}: ${w.reason}`),
+                ...observationErrors,
+            ],
         },
     };
 
@@ -771,7 +959,7 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
         const relDst = path.relative(projectRoot, targetPath).replace(/\\/g, '/');
         let movedViaGit = false;
         try {
-            execFileSync('git', ['mv', '--', relSrc, relDst], { cwd: projectRoot, stdio: 'pipe' });
+            childProcess.execFileSync('git', ['mv', '--', relSrc, relDst], { cwd: projectRoot, stdio: 'pipe' });
             movedViaGit = true;
         } catch (_) {
             movedViaGit = false;
@@ -779,7 +967,7 @@ function adoptSpec(projectRoot, filePath, opts = {}) {
         if (!movedViaGit) {
             fs.renameSync(absSrc, targetPath);
             try {
-                execFileSync('git', ['add', '--', relDst], { cwd: projectRoot, stdio: 'pipe' });
+                childProcess.execFileSync('git', ['add', '--', relDst], { cwd: projectRoot, stdio: 'pipe' });
             } catch (_) {
                 // best-effort; untracked/no-git is fine here.
             }
@@ -877,6 +1065,13 @@ function reactivateSpec(projectRoot, specId) {
     return { id: specId, state: entry ? entry.state : 'adopted' };
 }
 
+// The single source of truth for the degradation marker. verify() must be able to
+// tell this line apart from a spec-portfolio warning WITHOUT re-typing the string:
+// the marker is a durability signal with its own remedy, and letting it feed
+// verify's `hasWarn` would push "park or reactivate a spec" at an operator whose
+// specs are fine and whose ledger is corrupt.
+const DISPOSITION_LEDGER_WARNING_PREFIX = '⚠️ [disposition-ledger-unreadable]';
+
 function formatWarningLine(spec, warning) {
     if (warning === 'aging-no-plan' || warning === 'aging-inactive') {
         return `⚠️ ${spec.id} 已 ${spec.idleDays} 天无活动 (${spec.state}) — 请表态: mem spec park|reactivate`;
@@ -897,6 +1092,17 @@ function formatWarningLine(spec, warning) {
     return `⚠️ ${spec.id} ${warning}`;
 }
 
+// Per-finding line. Falls back to the legacy per-warning text for every rule
+// whose finding maps 1:1 onto a warning; only size-exceeded needs the
+// dimension, because it is the one rule that splits per instance.
+function formatFindingLine(spec, finding) {
+    if (finding.ruleId === 'size-exceeded') {
+        const { dimension, value, threshold } = finding.factInputs;
+        return `⚠️ ${spec.id} 体量超标 ${dimension}=${value} > ${threshold} (${spec.state}) — 建议拆分或声明 sizeWaiver`;
+    }
+    return formatWarningLine(spec, finding.ruleId);
+}
+
 function formatPortfolioReport(registry) {
     if (!registry) return [];
 
@@ -912,10 +1118,45 @@ function formatPortfolioReport(registry) {
     if (registry.source && registry.source.portfolioSourceDrift) {
         lines.push('⚠️ [portfolio-source-drift] Planning IR contains specs but no valid portfolio entities were discovered.');
     }
-    for (const spec of specs) {
-        for (const warning of (spec.warnings || [])) {
-            lines.push(formatWarningLine(spec, warning));
-        }
+    // Emitted BEFORE the projection, because it changes how every line below it
+    // must be read: with the ledger unreadable, a finding shown as undispositioned
+    // may in fact carry a decision nobody can see right now.
+    if (registry.source && registry.source.dispositionLedgerError) {
+        lines.push(`${DISPOSITION_LEDGER_WARNING_PREFIX} 表态账本读取失败 (${registry.source.dispositionLedgerError})`);
+        lines.push('   findings 完整未删减，但表态状态未知 — 此处的“未处置”不等于“无人表态”；'
+            + '修复 .evo-lite/dispositions.json 后重新查看');
+    }
+    // Projection over the ANNOTATED findings, never a filter of them. The
+    // machine collection (registry.specs[*].findings) keeps every finding it
+    // always had — dispositioning only moves a finding between the sections a
+    // human reads.
+    const all = specs.flatMap(s => (s.findings || []).map(f => ({ f, spec: s })));
+    const actionable = all.filter(x => !x.f.disposition || x.f.disposition.status === 'stale');
+    const handled = all.filter(x => x.f.disposition && x.f.disposition.status === 'current');
+    const reactivated = all.filter(x => x.f.disposition && x.f.disposition.status === 'stale');
+
+    // Guarded, not unconditional. verify() derives report.hasAlerts from
+    // `lines.some(l => l.startsWith('⚠️'))`, so an always-emitted header would
+    // make every clean portfolio raise a permanent alert and push a next-step
+    // that names work nobody has.
+    if (actionable.length) {
+        lines.push(`⚠️ ${actionable.length} 条待处理 finding`);
+        for (const { f, spec } of actionable) lines.push(`   ${formatFindingLine(spec, f)}`);
+    }
+
+    if (handled.length) {
+        const by = {};
+        for (const { f } of handled) by[f.disposition.choice] = (by[f.disposition.choice] || 0) + 1;
+        lines.push('');
+        lines.push(`📋 ${handled.length} 条 finding 已处置`);
+        lines.push(`   ${['not-applicable', 'accepted-debt', 'deferred', 'wont-fix']
+            .map(c => `${c} ${by[c] || 0}`).join(' · ')}`);
+        lines.push('   使用 mem disposition list 查看');
+    }
+    if (reactivated.length) {
+        lines.push('');
+        lines.push(`♻️ ${reactivated.length} 条 disposition 已失效，finding 已重新激活`);
+        lines.push('   使用 mem disposition list --stale 查看');
     }
     return lines;
 }
@@ -1021,6 +1262,8 @@ function registerSpecPortfolioCommands(program) {
 module.exports = {
     SIZE_THRESHOLDS,
     RECOGNIZED_SPEC_STATUSES,
+    SPEC_RULE_VERSIONS,
+    DISPOSITION_LEDGER_WARNING_PREFIX,
     DEFAULT_AGING_DAYS,
     buildSpecRegistry,
     formatPortfolioReport,
@@ -1030,4 +1273,6 @@ module.exports = {
     registerSpecPortfolioCommands,
     // Exported for unit testing (timezone-safe epoch compare, not lexicographic).
     resolveLastTouchedAt,
+    // Exported so a test can assert PROVENANCE, not just the instant.
+    observeLastTouchedAt,
 };

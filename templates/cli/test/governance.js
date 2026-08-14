@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const {
     WORKSPACE_ROOT, TEMPLATE_CLI_DIR, CLI_DIR, INIT_ENTRY, SHARED_CACHE_DIR,
-    createTempRuntimeRoot, writeText, runGit, runPostCommitHook,
+    createTempRuntimeRoot, writeText, runGit, runCli, runPostCommitHook,
     createHookTestRepo, readNdjson, bootstrapRuntime, captureConsole, resetCliModuleCache,
     quiesceSharedResources,
 } = require('./harness');
@@ -43,6 +43,51 @@ function createContainedZvecRoot(name) {
     };
 }
 
+// The REAL `mem disposition sync` action, driven in-process.
+//
+// The observation-failure tests below inject a failing git through
+// `withPatchedExecFileSync`, which replaces `child_process.execFileSync` in THIS
+// process. A spawned CLI (runCli) would run an unpatched child and the fault
+// would never reach the observer, so the assertion would pass for the wrong
+// reason. This is the same reason T-disposition-cli-shadow-failclosed drives
+// `set` in-process.
+async function runDispositionSyncInProcess(workspaceRoot) {
+    const { registerDispositionCommands } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+    const { Command } = require('commander');
+    const previous = process.env.EVO_LITE_ROOT;
+    process.env.EVO_LITE_ROOT = path.join(workspaceRoot, '.evo-lite');
+    try {
+        const program = new Command();
+        program.exitOverride();
+        registerDispositionCommands(program);
+        await program.parseAsync(['disposition', 'sync'], { from: 'user' });
+    } finally {
+        if (previous === undefined) delete process.env.EVO_LITE_ROOT;
+        else process.env.EVO_LITE_ROOT = previous;
+    }
+}
+
+// Builds a git repository whose spec half is clean, so completeness rests only
+// on the observation under test. Returns the paths the caller needs.
+function createObservationRepo(name, extra = {}) {
+    const root = createTempRuntimeRoot(name).workspaceRoot;
+    writeText(path.join(root, 'docs', 'specs', 'ok.md'),
+        ['---', 'id: spec:ok', 'status: done', '---', '', '# OK', ''].join('\n'));
+    for (const [rel, body] of Object.entries(extra.files || {})) {
+        writeText(path.join(root, ...rel.split('/')), body);
+    }
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', 'Evo Test']);
+    runGit(root, ['config', 'user.email', 'evo@example.com']);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-m', 'baseline'], extra.commitEnv || {});
+    const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    writeText(irPath, `${JSON.stringify(extra.planIR || {
+        version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+    }, null, 2)}\n`);
+    return { root, irPath, planIR: JSON.parse(fs.readFileSync(irPath, 'utf8')) };
+}
+
 // [zvec-win-unicode-containment] Task 6 — the ONE place that knows how to spawn
 // a child running this repository's runtime.
 //
@@ -73,6 +118,207 @@ function spawnContainmentChild(envOverrides, args) {
             ...envOverrides,
         },
     });
+}
+
+// --- AC9 durability fixtures -------------------------------------------------
+//
+// `mem commit` refuses to run unless every non-.evo-lite path is staged, and a
+// fresh temp workspace carries untracked scaffold files (AGENTS.md, .agents/,
+// .claude/ ...). So the fixture takes a baseline commit FIRST; everything after
+// it is the change under test.
+function initCommitFixtureRepo(projectRoot) {
+    runGit(projectRoot, ['init']);
+    runGit(projectRoot, ['config', 'user.name', 'Evo Test']);
+    runGit(projectRoot, ['config', 'user.email', 'evo@example.com']);
+    writeText(path.join(projectRoot, 'src', 'feature.js'), 'module.exports = 1;\n');
+    runGit(projectRoot, ['add', '-A']);
+    runGit(projectRoot, ['commit', '-m', 'chore: baseline']);
+}
+
+// Stands in for `disposition sync` running inside the real post-commit hook. It
+// only APPENDS to the tracked ledger, so the file goes dirty without this test
+// having to reproduce the ledger's on-disk schema (a second copy of which would
+// be exactly the drift these tests exist to prevent).
+//
+// `when` is a commit ordinal ('2' = the runtime meta-commit) or 'always'.
+function writeCountingPostCommitHook(projectRoot, when) {
+    const hookPath = path.join(projectRoot, '.git', 'hooks', 'post-commit');
+    writeText(hookPath, [
+        '#!/bin/sh',
+        'n=0',
+        '[ -f .evo-lite/hook-count ] && n=$(cat .evo-lite/hook-count)',
+        'n=$((n+1))',
+        'printf "%s" "$n" > .evo-lite/hook-count',
+        `if [ "${when}" = "always" ] || [ "$n" = "${when}" ]; then`,
+        '  printf "\\n" >> .evo-lite/dispositions.json',
+        'fi',
+        'exit 0',
+        '',
+    ].join('\n'));
+    try { fs.chmodSync(hookPath, '755'); } catch (_) { /* not meaningful on Windows */ }
+}
+
+// Fault injection that reaches dispositionsDirty's git call and NOTHING else.
+//
+// `mem commit` must run in a child: its git work goes through process.cwd(), so
+// an in-process childProcess patch (the T-disposition-track-unknown-ledger shape)
+// cannot observe it without chdir'ing the whole suite. So the same patch is
+// installed in the CHILD through a --require preload.
+//
+// The narrowness is the point. dispositionsDirty is the only caller that invokes
+// `git status --porcelain -- .evo-lite/dispositions.json`; matching that exact
+// argv shape leaves the code commit, the meta-commit, rev-parse, git add and the
+// staging guard's bare `git status --porcelain` delegating to the real binary, so
+// the stages that must genuinely SUCCEED before the probe fails still do — which
+// is the whole premise of both tests below. It also survives the fact that
+// memory.service.js destructures execFileSync at require time (the preload runs
+// first, so it captures the wrapper) while ledger.js resolves it per call.
+//
+// `failFrom` is the 1-based probe ordinal at which the fault starts, and that is
+// how the two fault seams are separated: 1 fails the probe that runs right after
+// track() has written to disk; 2 lets that one answer honestly and fails the
+// probe that runs only after the runtime meta-commit has already landed. Probe
+// calls and thrown faults are recorded to disk so each test can PROVE its
+// injected fault fired rather than assuming it.
+const LEDGER_PROBE_FAULT_MESSAGE = 'fatal: unable to read config file .git/config: Permission denied';
+
+function installLedgerProbeFault(projectRoot, failFrom) {
+    // Both files live under .evo-lite/: getNonEvoLiteGitStatusEntries filters that
+    // prefix out, so the fixture's `--stage=staged` precondition ("every non-
+    // .evo-lite path is staged") is unaffected by the harness itself.
+    const stubPath = path.join(projectRoot, '.evo-lite', 'ledger-probe-fault.js');
+    const counterPath = path.join(projectRoot, '.evo-lite', 'ledger-probe-calls.txt');
+    writeText(stubPath, [
+        "'use strict';",
+        "const cp = require('child_process');",
+        "const fsx = require('fs');",
+        'const real = cp.execFileSync;',
+        `const COUNTER = ${JSON.stringify(counterPath)};`,
+        `const FAIL_FROM = ${JSON.stringify(failFrom)};`,
+        `const MESSAGE = ${JSON.stringify(LEDGER_PROBE_FAULT_MESSAGE)};`,
+        'let calls = 0;',
+        'let thrown = 0;',
+        'function record() {',
+        "    try { fsx.writeFileSync(COUNTER, 'calls=' + calls + ' thrown=' + thrown); } catch (e) {}",
+        '}',
+        'cp.execFileSync = function (command, args) {',
+        "    const isLedgerProbe = command === 'git' && Array.isArray(args)",
+        "        && args[0] === 'status' && args.indexOf('.evo-lite/dispositions.json') !== -1;",
+        '    if (!isLedgerProbe) {',
+        '        return real.apply(this, arguments);',
+        '    }',
+        '    calls += 1;',
+        '    if (calls >= FAIL_FROM) {',
+        '        thrown += 1;',
+        '        record();',
+        '        // No .stderr, so dispositionsDirty rethrows rather than taking its',
+        '        // one "not a git repository" swallow path.',
+        '        throw new Error(MESSAGE);',
+        '    }',
+        '    record();',
+        '    return real.apply(this, arguments);',
+        '};',
+        '',
+    ].join('\n'));
+    return {
+        env: {
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require "${stubPath.replace(/\\/g, '/')}"`]
+                .filter(Boolean).join(' '),
+        },
+        readProbeLog() {
+            if (!fs.existsSync(counterPath)) return { calls: 0, thrown: 0 };
+            const raw = fs.readFileSync(counterPath, 'utf8');
+            return {
+                calls: Number((/calls=(\d+)/.exec(raw) || [])[1] || 0),
+                thrown: Number((/thrown=(\d+)/.exec(raw) || [])[1] || 0),
+            };
+        },
+    };
+}
+
+// Fault injection that reaches exactly ONE commit-identity probe.
+//
+// All three identity probes inside commitWithContext issue the identical argv
+// `git rev-parse --short HEAD`, so matching argv alone cannot separate them, and
+// an ordinal would silently re-aim itself the moment any unrelated probe is added
+// or removed. What genuinely separates them is the repository state at the moment
+// each one runs: every probe fires immediately after a DIFFERENT commit, so
+// HEAD's subject names the site. The stub asks the real git for that subject and
+// throws only when it matches the site under test.
+//
+// `thrown === 0` keeps it to a single shot. getCommitHash() inside track() issues
+// the same argv while HEAD is still the code commit; leaving that one faulted too
+// would change the trajectory line this flow writes and blur what the fixture is
+// actually demonstrating. Calls and thrown faults are recorded to disk so each
+// test can PROVE its fault fired, and so a control can prove its fault did not.
+const REV_PARSE_FAULT_MESSAGE = 'fatal: unable to read HEAD: Permission denied';
+
+function installRevParseFault(projectRoot, headSubject) {
+    const stubPath = path.join(projectRoot, '.evo-lite', 'rev-parse-fault.js');
+    const counterPath = path.join(projectRoot, '.evo-lite', 'rev-parse-calls.txt');
+    writeText(stubPath, [
+        "'use strict';",
+        "const cp = require('child_process');",
+        "const fsx = require('fs');",
+        'const real = cp.execFileSync;',
+        `const COUNTER = ${JSON.stringify(counterPath)};`,
+        `const SUBJECT = ${JSON.stringify(headSubject)};`,
+        `const MESSAGE = ${JSON.stringify(REV_PARSE_FAULT_MESSAGE)};`,
+        'let calls = 0;',
+        'let thrown = 0;',
+        'function record() {',
+        "    try { fsx.writeFileSync(COUNTER, 'calls=' + calls + ' thrown=' + thrown); } catch (e) {}",
+        '}',
+        'cp.execFileSync = function (command, args, options) {',
+        "    const isIdentityProbe = command === 'git' && Array.isArray(args) && args.length === 3",
+        "        && args[0] === 'rev-parse' && args[1] === '--short' && args[2] === 'HEAD';",
+        '    if (!isIdentityProbe) {',
+        '        return real.apply(this, arguments);',
+        '    }',
+        '    calls += 1;',
+        "    let subject = '';",
+        '    try {',
+        "        subject = String(real('git', ['log', '-1', '--format=%s'], {",
+        '            cwd: (options && options.cwd) || process.cwd(),',
+        "            encoding: 'utf8',",
+        '        })).trim();',
+        "    } catch (e) { subject = ''; }",
+        '    if (thrown === 0 && subject === SUBJECT) {',
+        '        thrown += 1;',
+        '        record();',
+        '        throw new Error(MESSAGE);',
+        '    }',
+        '    record();',
+        '    return real.apply(this, arguments);',
+        '};',
+        '',
+    ].join('\n'));
+    return {
+        env: {
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require "${stubPath.replace(/\\/g, '/')}"`]
+                .filter(Boolean).join(' '),
+        },
+        readProbeLog() {
+            if (!fs.existsSync(counterPath)) return { calls: 0, thrown: 0 };
+            const raw = fs.readFileSync(counterPath, 'utf8');
+            return {
+                calls: Number((/calls=(\d+)/.exec(raw) || [])[1] || 0),
+                thrown: Number((/thrown=(\d+)/.exec(raw) || [])[1] || 0),
+            };
+        },
+    };
+}
+
+// A subject no commit in these fixtures ever carries, so a control run installs
+// the identical plumbing and never fires.
+const REV_PARSE_FAULT_NEVER = 'chore: a subject no fixture commit ever uses';
+
+function parseCliJson(res, label) {
+    const start = res.stdout.indexOf('{');
+    const end = res.stdout.lastIndexOf('}');
+    assert.ok(start !== -1 && end > start,
+        `${label} must print a JSON payload. status: ${res.status} stdout: ${res.stdout} stderr: ${res.stderr}`);
+    return JSON.parse(res.stdout.slice(start, end + 1));
 }
 
 async function runGovernanceTests() {
@@ -214,6 +460,13 @@ async function runGovernanceTests() {
                 assert.ok(hook.includes('plan progress'), 'hook must reference plan progress');
                 assert.ok(hook.includes('plan gaps --last-commit --changed-files-from-env'), 'hook must evaluate last-commit gaps');
                 assert.ok(hook.includes('dashboard build'), 'hook must reference dashboard build');
+                // The hook CALLS the explicit command and nothing else. Any shell-side
+                // reimplementation of tombstone logic would be a second, unreviewed
+                // writer of an irreversible governance mutation.
+                assert.ok(hook.includes('run_and_record "disposition sync" disposition sync'),
+                    'hook must invoke the explicit `disposition sync` command through run_and_record');
+                assert.ok(!/orphanedAt|dispositions\.json/.test(hook),
+                    'the hook must never reimplement tombstone logic or touch the ledger file itself');
                 const reportWriteIdx = hook.indexOf('HOOK_REPORT_PATH');
                 const dashboardBuildIdx = hook.indexOf('run_and_record "dashboard build"');
                 assert.ok(reportWriteIdx > 0 && dashboardBuildIdx > 0, 'hook must contain both report write and dashboard build');
@@ -236,7 +489,7 @@ async function runGovernanceTests() {
                 runPostCommitHook(repo.projectRoot);
 
                 const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
-                assert.ok(findings.some(f => f.id === 'R006:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
+                assert.ok(findings.some(f => f.id === 'R006:file:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
             } finally {
                 fs.rmSync(repo.projectRoot, { recursive: true, force: true });
             }
@@ -282,7 +535,7 @@ async function runGovernanceTests() {
                 runPostCommitHook(repo.projectRoot);
 
                 const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
-                assert.ok(findings.some(f => f.id === 'R006:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
+                assert.ok(findings.some(f => f.id === 'R006:file:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
             } finally {
                 fs.rmSync(repo.projectRoot, { recursive: true, force: true });
             }
@@ -5543,6 +5796,2579 @@ async function runGovernanceTests() {
             console.log('✅ T7-8-call-chain-audit passed');
         }
 
+        console.log('T-disposition-fingerprint. Canonical hashing is stable across key and set order ...');
+        {
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const a = fp.computeFingerprint({ ruleId: 'R005', ruleVersion: 1,
+                factInputs: { alpha: 1, linkedFiles: ['b', 'a'] } });
+            const b = fp.computeFingerprint({ ruleId: 'R005', ruleVersion: 1,
+                factInputs: { linkedFiles: ['a', 'b'], alpha: 1 } });
+            assert.strictEqual(a, b, 'key order and set-array order must not change the fingerprint');
+            assert.match(a, /^[0-9a-f]{64}$/, 'fingerprint is sha256 hex');
+
+            const bumped = fp.computeFingerprint({ ruleId: 'R005', ruleVersion: 2,
+                factInputs: { alpha: 1, linkedFiles: ['a', 'b'] } });
+            assert.notStrictEqual(a, bumped, 'ruleVersion participates in the fingerprint');
+
+            const other = fp.computeFingerprint({ ruleId: 'R008', ruleVersion: 1,
+                factInputs: { alpha: 1, linkedFiles: ['a', 'b'] } });
+            assert.notStrictEqual(a, other, 'ruleId participates in the fingerprint');
+
+            assert.strictEqual(
+                fp.canonicalJson({ path: 'a\\b\\c' }),
+                fp.canonicalJson({ path: 'a/b/c' }),
+                'PATH keys are normalized to forward slashes before hashing');
+            assert.notStrictEqual(
+                fp.canonicalJson({ reason: 'a\\b' }),
+                fp.canonicalJson({ reason: 'a/b' }),
+                'a non-path string is NOT path-normalized — blanket rewriting would corrupt prose and shas');
+            assert.strictEqual(
+                fp.canonicalJson({ lastTouchedAt: '2026-08-11T10:00:00+08:00' }),
+                fp.canonicalJson({ lastTouchedAt: '2026-08-11T02:00:00Z' }),
+                'timestamps normalize to UTC — git %cI keeps a local offset that differs per machine');
+            console.log('✅ T-disposition-fingerprint passed');
+        }
+
+        console.log('T-disposition-ledger. Ledger is sorted, single-entry-per-finding, atomic ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-ledger').workspaceRoot;
+
+            assert.deepStrictEqual(led.readLedger(root), { version: led.LEDGER_VERSION, entries: [] },
+                'a missing ledger reads as empty, never throws');
+
+            let ledger = { version: led.LEDGER_VERSION, entries: [] };
+            ledger = led.upsertEntry(ledger, { findingId: 'R008:task:z', ruleId: 'R008', ruleVersion: 1,
+                fingerprint: 'f'.repeat(64), choice: 'accepted-debt', reason: 'r', at: '2026-08-11T00:00:00Z' });
+            ledger = led.upsertEntry(ledger, { findingId: 'R005:task:a', ruleId: 'R005', ruleVersion: 1,
+                fingerprint: 'a'.repeat(64), choice: 'wont-fix', reason: 'r', at: '2026-08-11T00:00:00Z' });
+            led.writeLedger(root, ledger);
+
+            const raw = fs.readFileSync(led.ledgerPath(root), 'utf8');
+            assert.ok(raw.endsWith('\n'), 'ledger ends with a newline');
+            assert.ok(raw.includes('\n  "version"'), 'ledger uses 2-space indent');
+            const onDisk = JSON.parse(raw);
+            assert.deepStrictEqual(onDisk.entries.map(e => e.findingId), ['R005:task:a', 'R008:task:z'],
+                'entries are sorted by findingId so diffs and merges stay sane');
+
+            let again = led.upsertEntry(led.readLedger(root), { findingId: 'R008:task:z', ruleId: 'R008',
+                ruleVersion: 1, fingerprint: 'b'.repeat(64), choice: 'deferred', reason: 'r2',
+                until: 'later', at: '2026-08-12T00:00:00Z' });
+            assert.strictEqual(again.entries.filter(e => e.findingId === 'R008:task:z').length, 1,
+                'set replaces rather than appends — a findingId can never hold two live decisions');
+            assert.strictEqual(again.entries.find(e => e.findingId === 'R008:task:z').choice, 'deferred',
+                'the replacement wins');
+
+            assert.throws(() => led.readLedger.call(null, (() => {
+                fs.writeFileSync(led.ledgerPath(root), '{"version":"wrong","entries":[]}\n');
+                return root;
+            })()), /evo-disposition-ledger@1/, 'a wrong schema version is rejected, not silently accepted');
+
+            // Test dispositionsDirty: non-git directory, clean repo, dirty repo
+            const nonGitRoot = createTempRuntimeRoot('disposition-non-git').workspaceRoot;
+            assert.strictEqual(led.dispositionsDirty(nonGitRoot), false,
+                'non-git directory safely returns false instead of throwing');
+
+            const gitRoot = createTempRuntimeRoot('disposition-git').workspaceRoot;
+            runGit(gitRoot, ['init']);
+            runGit(gitRoot, ['config', 'user.name', 'Test']);
+            runGit(gitRoot, ['config', 'user.email', 'test@example.com']);
+            assert.strictEqual(led.dispositionsDirty(gitRoot), false,
+                'clean git repo with no ledger file returns false');
+
+            ledger = { version: led.LEDGER_VERSION, entries: [] };
+            led.writeLedger(gitRoot, ledger);
+            runGit(gitRoot, ['add', '.evo-lite/dispositions.json']);
+            runGit(gitRoot, ['commit', '-m', 'init: add ledger']);
+            assert.strictEqual(led.dispositionsDirty(gitRoot), false,
+                'clean git repo with committed ledger returns false');
+
+            fs.writeFileSync(led.ledgerPath(gitRoot), '{"version":"evo-disposition-ledger@1","entries":[{"findingId":"R001","ruleId":"R001","ruleVersion":1,"fingerprint":"' + 'a'.repeat(64) + '","choice":"accepted-debt","reason":"test","at":"2026-08-11T00:00:00Z"}]}\n');
+            assert.strictEqual(led.dispositionsDirty(gitRoot), true,
+                'git repo with modified ledger returns true');
+
+            // orphanedAt / orphanedHead: present-but-unrecognisable must fail
+            // closed — the same ruling as the releaseBlocking frontmatter work.
+            // A missing field is tolerated; a field present but malformed makes
+            // the whole ledger a schema error, same as fingerprint/choice.
+            const orphanedRoot = createTempRuntimeRoot('disposition-orphaned-validation').workspaceRoot;
+            const baseEntry = { findingId: 'R008:task:orphan', ruleId: 'R008', ruleVersion: 1,
+                fingerprint: 'c'.repeat(64), choice: 'accepted-debt', reason: 'r', at: '2026-08-11T00:00:00Z' };
+
+            for (const bad of ['', 0, false, null, 'not-a-date']) {
+                fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                    entries: [{ ...baseEntry, orphanedAt: bad }] }) + '\n');
+                assert.throws(() => led.readLedger(orphanedRoot), /invalid or duplicate entry/,
+                    `orphanedAt=${JSON.stringify(bad)} must fail closed, not silently revive a tombstoned decision`);
+            }
+
+            fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                entries: [{ ...baseEntry, orphanedAt: '2026-09-01T00:00:00Z' }] }) + '\n');
+            assert.strictEqual(led.readLedger(orphanedRoot).entries[0].orphanedAt, '2026-09-01T00:00:00Z',
+                'a valid ISO-8601 orphanedAt is accepted');
+
+            fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                entries: [{ ...baseEntry }] }) + '\n');
+            assert.strictEqual(led.readLedger(orphanedRoot).entries[0].findingId, baseEntry.findingId,
+                'an absent orphanedAt is tolerated — it simply means no tombstone');
+
+            for (const badHead of ['', 0, false]) {
+                fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                    entries: [{ ...baseEntry, orphanedAt: '2026-09-01T00:00:00Z', orphanedHead: badHead }] }) + '\n');
+                assert.throws(() => led.readLedger(orphanedRoot), /invalid or duplicate entry/,
+                    `orphanedHead=${JSON.stringify(badHead)} must fail closed`);
+            }
+            fs.writeFileSync(led.ledgerPath(orphanedRoot), JSON.stringify({ version: led.LEDGER_VERSION,
+                entries: [{ ...baseEntry, orphanedAt: '2026-09-01T00:00:00Z', orphanedHead: '1f2e3d4' }] }) + '\n');
+            assert.strictEqual(led.readLedger(orphanedRoot).entries[0].orphanedHead, '1f2e3d4',
+                'a non-empty orphanedHead is accepted');
+
+            console.log('✅ T-disposition-ledger passed');
+        }
+
+        console.log('T-disposition-resolve. CURRENT / STALE / ORPHANED, and tombstones are terminal ...');
+        {
+            const res = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'resolve'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+
+            const finding = { id: 'unknown-status:spec:x', ruleId: 'unknown-status', ruleVersion: 1,
+                factInputs: { declaredStatus: 'closed-experimental' } };
+            const print = fp.computeFingerprint(finding);
+            const entry = { findingId: finding.id, ruleId: 'unknown-status', ruleVersion: 1,
+                fingerprint: print, choice: 'not-applicable', reason: 'r', at: '2026-08-11T00:00:00Z' };
+            let ledger = led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, entry);
+
+            assert.strictEqual(res.effectiveDisposition(finding, ledger).choice, 'not-applicable',
+                'matching fingerprint resolves to CURRENT');
+            assert.strictEqual(res.annotate(finding, ledger).disposition.status, 'current');
+
+            const moved = { ...finding, factInputs: { declaredStatus: 'done' } };
+            assert.strictEqual(res.effectiveDisposition(moved, ledger), null,
+                'a changed fact voids the decision');
+            assert.strictEqual(res.annotate(moved, ledger).disposition.status, 'stale',
+                'stale is annotated, not erased — the reader must see a decision lapsed');
+
+            const bumped = { ...finding, ruleVersion: 2 };
+            assert.strictEqual(res.effectiveDisposition(bumped, ledger), null,
+                'a ruleVersion bump voids every disposition for that rule');
+
+            // NEGATIVE CONTROL — the regression path. Tombstone, then re-emit an
+            // IDENTICAL finding with an IDENTICAL fingerprint.
+            let tombstoned = led.upsertEntry(ledger, { ...entry, orphanedAt: '2026-09-01T00:00:00Z',
+                orphanedHead: '1f2e3d4' });
+            assert.strictEqual(res.effectiveDisposition(finding, tombstoned), null,
+                'a tombstoned entry NEVER returns to CURRENT, even on an identical recurrence');
+            assert.strictEqual(res.annotate(finding, tombstoned).disposition, null,
+                'the recurrence is presented as undispositioned, demanding a fresh decision');
+
+            assert.strictEqual(res.classifyEntry(entry, new Set([finding.id])), 'current');
+            assert.strictEqual(res.classifyEntry(entry, new Set()), 'orphaned',
+                'absent from the emitted set means orphaned');
+
+            // Layer 2 regression coverage: resolve.js must branch on PRESENCE,
+            // not truthiness. In-memory ledgers built by sync/tests never pass
+            // through readLedger's own validation, so the resolver must fail
+            // closed on its own — a present-but-falsy orphanedAt must still
+            // read as TOMBSTONED, never revived as CURRENT.
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'sanity: the baseline entry has no orphanedAt key at all');
+            assert.strictEqual(res.effectiveDisposition(finding, ledger).choice, 'not-applicable',
+                'orphanedAt absent (never regressed) still resolves CURRENT with an identical fingerprint');
+
+            for (const falsyOrphan of ['', 0, false]) {
+                const falsyTombstoned = led.upsertEntry(ledger, { ...entry, orphanedAt: falsyOrphan });
+                assert.strictEqual(res.effectiveDisposition(finding, falsyTombstoned), null,
+                    `orphanedAt=${JSON.stringify(falsyOrphan)} present-but-falsy must still read as TOMBSTONED, not revived as CURRENT`);
+                assert.strictEqual(res.annotate(finding, falsyTombstoned).disposition, null,
+                    `orphanedAt=${JSON.stringify(falsyOrphan)} annotate must present as undispositioned, not stale or current`);
+                assert.strictEqual(
+                    res.classifyEntry({ ...entry, orphanedAt: falsyOrphan }, new Set([finding.id])), 'orphaned',
+                    `orphanedAt=${JSON.stringify(falsyOrphan)} classifyEntry must report orphaned even when present but falsy`);
+            }
+
+            const untouched = { ...finding };
+            res.annotate(untouched, ledger);
+            assert.ok(!('disposition' in untouched), 'annotate must not mutate its input');
+            console.log('✅ T-disposition-resolve passed');
+        }
+
+        console.log('T-disposition-spec-findings. Spec warnings become identified findings ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const root = createTempRuntimeRoot('disposition-spec-findings').workspaceRoot;
+            const w = (file, front) => writeText(path.join(root, 'docs', 'specs', file),
+                ['---', ...front, '---', '', '# S', ''].join('\n'));
+
+            w('u.md', ['id: spec:u', 'status: closed-experimental']);
+            const big = [1,2,3,4,5,6,7,8,9].map(n => `    { "id": "c${n}" }`).join(',\n');
+            w('big.md', ['id: spec:big', 'status: done', 'x: 1']);
+            fs.appendFileSync(path.join(root, 'docs', 'specs', 'big.md'),
+                ['## Acceptance Criteria', '', '```json', '{', '  "criteria": [', big, '  ]', '}', '```', ''].join('\n'));
+
+            const reg = sp.buildSpecRegistry(root, { write: false });
+            const by = Object.fromEntries(reg.specs.map(s => [s.id, s]));
+
+            const uf = by['spec:u'].findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(uf, 'unknown-status is emitted as a finding object');
+            assert.strictEqual(uf.id, 'unknown-status:spec:u', 'canonical id shape');
+            assert.strictEqual(uf.factInputs.declaredStatus, 'closed-experimental',
+                'the fact that made the finding true is declared');
+            assert.strictEqual(uf.ruleVersion, 1);
+
+            const dims = by['spec:big'].findings.filter(f => f.ruleId === 'size-exceeded');
+            assert.ok(dims.length >= 1, 'size-exceeded is emitted per dimension');
+            assert.ok(dims.every(f => /^size-exceeded:spec:big:[a-zA-Z]+$/.test(f.id)),
+                'each breached dimension gets its OWN id — one consent must not cover three decisions');
+            assert.ok(dims.some(f => f.factInputs.dimension === 'acCount' && f.factInputs.value === 9),
+                'the dimension, its value and its threshold are the facts');
+
+            assert.strictEqual(reg.census.complete, true, 'a readable portfolio is a complete census');
+            assert.deepStrictEqual(by['spec:u'].warnings.includes('unknown-status'), true,
+                'the legacy string warnings are untouched');
+
+            // The predicate must not be tripped by the design docs that legitimately
+            // carry no spec id — otherwise the census is never complete and sync is
+            // dead code in this repo.
+            const realReg = sp.buildSpecRegistry(process.cwd(), { write: false });
+            assert.strictEqual(realReg.census.complete, true,
+                'the real repository, with its 9 id-less design docs, is a COMPLETE census');
+            console.log('✅ T-disposition-spec-findings passed');
+        }
+
+        console.log('T-disposition-planning-census. Ten rules, canonical ids, and absence is not silence ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const root = createTempRuntimeRoot('disposition-planning-census').workspaceRoot;
+
+            const degraded = gaps.runPlanningDriftCensus(root, null, {});
+            assert.strictEqual(degraded.complete, false,
+                'a null plan-ir means we could not look — that is NOT an empty finding set');
+            assert.ok(degraded.errors.length > 0, 'the reason is reported, not swallowed');
+
+            const ir = { specs: [], plans: [], tasks: [{ id: 'task:t1', linkedPlan: 'plan:p',
+                linkedFiles: [], status: 'implemented' }] };
+            const ok = gaps.runPlanningDriftCensus(root, ir, { changedFiles: [] });
+            assert.strictEqual(ok.complete, true, 'a real IR yields a complete census');
+
+            const r005 = ok.findings.find(f => f.ruleId === 'R005');
+            assert.strictEqual(r005.id, 'R005:task:t1', 'R005 already conforms — id unchanged');
+            assert.strictEqual(r005.ruleVersion, 1);
+
+            const r003 = ok.findings.find(f => f.ruleId === 'R003');
+            assert.strictEqual(r003.id, 'R003:repo:specs', 'bare R003 is migrated to the canonical shape');
+            assert.deepStrictEqual(r003.factInputs, {},
+                'R003 has no stable facts — it expires through ORPHANED, never through a fingerprint');
+
+            // R009 — a fixture that never actually goes stale would let this
+            // assertion pass identically whether or not ID_MIGRATIONS.R009
+            // exists (`[].every(...)` is trivially true). Build a genuinely
+            // stale IR: an old plan-ir.json plus a newer file under a
+            // PLAN_SOURCE_PATHS directory.
+            const r009Root = createTempRuntimeRoot('disposition-planning-r009-stale').workspaceRoot;
+            const r009IrPath = path.join(r009Root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            writeText(r009IrPath, JSON.stringify({ version: 'evo-plan-ir@1', tasks: [] }, null, 2));
+            const staleTime = new Date(Date.now() - 60 * 60 * 1000);
+            fs.utimesSync(r009IrPath, staleTime, staleTime);
+            writeText(path.join(r009Root, 'docs', 'plans', 'fresh.md'), '# Fresh plan\n');
+
+            const r009 = gaps.runPlanningDriftCensus(r009Root, ir, { changedFiles: [] }).findings
+                .filter(f => f.ruleId === 'R009');
+            assert.ok(r009.length > 0, 'the stale-IR fixture must actually produce an R009 finding — an empty array would make every assertion below vacuous');
+            assert.ok(r009.every(f => /^R009:ir:(plan|architecture)$/.test(f.id)), 'R009 id shape');
+            assert.deepStrictEqual(r009.find(f => f.id === 'R009:ir:plan').factInputs, {},
+                'R009 has no stable facts — it expires through ORPHANED, never through a fingerprint');
+            assert.ok(r009.every(f => !JSON.stringify(f.factInputs).includes('mtime')),
+                'mtime must never enter a fingerprint — it does not survive a clone');
+
+            // R013 — the premise is a git comparison, so the DECLARED value is a fact
+            // input while the live one is ambient. Moving HEAD alone must not void a
+            // disposition, or every commit would void every R013 decision.
+            const meta = { headSha: 'a'.repeat(40), ahead: 1, behind: 0 };
+            const gitA = { headSha: 'b'.repeat(40), ahead: 3, behind: 0, hasUpstream: true,
+                isAncestorOfHead: () => false };
+            const gitB = { ...gitA, headSha: 'c'.repeat(40) };
+            const head = (g) => gaps.runPlanningDriftCensus(root, ir, { metaState: meta, gitState: g })
+                .findings.find(f => f.id === 'R013:context:head');
+            assert.ok(head(gitA), 'R013:context:head uses the canonical id');
+            // Stated as a property, not a bare shape check: this assertion is STRICTLY
+            // STRONGER than the one below it and therefore fires first, so its message
+            // is what an operator actually reads when R013 starts leaking the live head.
+            assert.deepStrictEqual(head(gitA).factInputs, { declaredHeadSha: meta.headSha },
+                'R013 factInputs carries the DECLARED head and NOTHING else — a live-HEAD leak '
+                + 'here would move the fingerprint on every commit and void every R013 decision');
+            assert.deepStrictEqual(head(gitA).factInputs, head(gitB).factInputs,
+                'live HEAD moving alone must NOT change the R013 fingerprint');
+
+            // R006 — occurrence identity, not content. Without a commit there is no
+            // stable occurrence, so the finding must refuse to be dispositioned.
+            const wt = gaps.runPlanningDriftCensus(root, ir, { changedFiles: ['src/x.js'] })
+                .findings.find(f => f.ruleId === 'R006');
+            assert.strictEqual(wt.id, 'R006:file:src/x.js',
+                'R006 migrates to the three-segment canonical shape (spec: R006:file:<path>)');
+            assert.strictEqual(wt.dispositionable, false,
+                'a working-tree R006 has no stable occurrence and must be non-dispositionable');
+
+            // R010 regression — a titleless task must not silently erase every
+            // backlog finding. `item.includes('')` is always true, so coercing
+            // a missing title to '' made EVERY backlog item match EVERY task,
+            // suppressing the whole rule even with a genuinely untracked item
+            // and an unrelated, well-formed task both present.
+            const r010Root = createTempRuntimeRoot('disposition-planning-r010-titleless').workspaceRoot;
+            writeText(path.join(r010Root, '.evo-lite', 'active_context.md'), [
+                '# Active Context', '<!-- BEGIN_META -->', '<!-- END_META -->',
+                '## Focus', '<!-- BEGIN_FOCUS -->', 'focus', '<!-- END_FOCUS -->',
+                '## Backlog', '<!-- BEGIN_BACKLOG -->', '- [ ] [zzzz] Totally untracked backlog item.', '<!-- END_BACKLOG -->',
+                '## Trajectory', '<!-- BEGIN_TRAJECTORY -->', '<!-- END_TRAJECTORY -->', '',
+            ].join('\n'));
+            const r010IR = { specs: [], plans: [], tasks: [
+                { id: 'task:titled', title: 'Some Other Task', linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' },
+                { id: 'task:titleless', linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' }, // no title
+            ] };
+            const r010Findings = gaps.runPlanningDriftCensus(r010Root, r010IR, { changedFiles: [] })
+                .findings.filter(f => f.ruleId === 'R010');
+            assert.ok(r010Findings.some(f => f.id === 'R010:backlog:zzzz'),
+                'a titleless task must not suppress a genuinely untracked backlog item when a well-formed task is also present');
+
+            console.log('✅ T-disposition-planning-census passed');
+        }
+
+        console.log('T-disposition-annotation. Dispositioned findings stay in the collection ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-annotation').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            const first = sp.buildSpecRegistry(root, { write: false });
+            const target = first.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+            assert.strictEqual(target.disposition, null, 'undispositioned findings annotate as null');
+
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: target.id, ruleId: target.ruleId, ruleVersion: target.ruleVersion,
+                fingerprint: fp.computeFingerprint(target), choice: 'not-applicable',
+                reason: 'child convention', at: '2026-08-11T00:00:00Z',
+            }));
+
+            const second = sp.buildSpecRegistry(root, { write: false });
+            const after = second.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+
+            // THE core invariant. If this ever fails, a downstream reader can conclude
+            // a problem does not exist because somebody dispositioned it.
+            assert.ok(after, 'a dispositioned finding MUST remain in the collection');
+            assert.strictEqual(after.disposition.status, 'current');
+            assert.strictEqual(after.disposition.choice, 'not-applicable');
+            assert.strictEqual(second.specs[0].warnings.includes('unknown-status'), true,
+                'the legacy warnings array is likewise not filtered');
+            console.log('✅ T-disposition-annotation passed');
+        }
+
+        console.log('NC1-disposition-cardinality. Same input -> identical finding id set across no ledger / current ledger / stale ledger ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-nc1-cardinality').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            // State 1: no ledger file at all.
+            const noLedgerReg = sp.buildSpecRegistry(root, { write: false });
+            const idsNoLedger = noLedgerReg.specs[0].findings.map(f => f.id).sort();
+            const target = noLedgerReg.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(target, 'precondition: an unknown-status finding must exist, or this control is vacuous');
+
+            // State 2: a CURRENT-matching ledger entry (fingerprint matches the live finding).
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: target.id, ruleId: target.ruleId, ruleVersion: target.ruleVersion,
+                fingerprint: fp.computeFingerprint(target), choice: 'not-applicable',
+                reason: 'nc1 current', at: '2026-08-11T00:00:00Z',
+            }));
+            const currentReg = sp.buildSpecRegistry(root, { write: false });
+            const idsCurrent = currentReg.specs[0].findings.map(f => f.id).sort();
+
+            // State 3: a STALE ledger — same findingId, but a fingerprint that can never
+            // match again (a hand-forged value stands in for "the facts moved").
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: target.id, ruleId: target.ruleId, ruleVersion: target.ruleVersion,
+                fingerprint: 'f'.repeat(64), choice: 'not-applicable',
+                reason: 'nc1 stale', at: '2026-08-11T00:00:00Z',
+            }));
+            const staleReg = sp.buildSpecRegistry(root, { write: false });
+            const idsStale = staleReg.specs[0].findings.map(f => f.id).sort();
+
+            assert.deepStrictEqual(idsCurrent, idsNoLedger,
+                'NC1: a CURRENT-matching ledger must not change the set of finding ids');
+            assert.deepStrictEqual(idsStale, idsNoLedger,
+                'NC1: a STALE ledger must not change the set of finding ids');
+
+            // Only `.disposition` may differ across the three states.
+            const stripDisposition = (findings) => findings
+                .map(({ disposition, ...rest }) => rest)
+                .sort((a, b) => a.id.localeCompare(b.id));
+            assert.deepStrictEqual(stripDisposition(currentReg.specs[0].findings), stripDisposition(noLedgerReg.specs[0].findings),
+                'NC1: under a current ledger, only .disposition may differ from the no-ledger run');
+            assert.deepStrictEqual(stripDisposition(staleReg.specs[0].findings), stripDisposition(noLedgerReg.specs[0].findings),
+                'NC1: under a stale ledger, only .disposition may differ from the no-ledger run');
+
+            assert.strictEqual(currentReg.specs[0].findings.find(f => f.id === target.id).disposition.status, 'current',
+                'NC1 sanity: the current-ledger state really does annotate as current');
+            assert.strictEqual(staleReg.specs[0].findings.find(f => f.id === target.id).disposition.status, 'stale',
+                'NC1 sanity: the stale-ledger state really does annotate as stale');
+            console.log('✅ NC1-disposition-cardinality passed');
+        }
+
+        console.log('NC2-disposition-planning-coverage. `plan gaps` finding collection stays full-size and every finding carries a disposition key ...');
+        {
+            const { spawnSync } = require('child_process');
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const memCli = path.join(TEMPLATE_CLI_DIR, 'memory.js');
+            // memory.js -> memory.service -> db.js -> better-sqlite3, which lives in the
+            // workspace runtime's node_modules (NOT the package's). Same idiom as
+            // harness.js:18 / integration.js child spawns.
+            const nodePath = [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH]
+                .filter(Boolean).join(path.delimiter);
+
+            const runtime = createTempRuntimeRoot('disposition-nc2-planning');
+            const projectRoot = runtime.workspaceRoot;
+            const irPath = path.join(runtime.runtimeRoot, 'generated', 'planning', 'plan-ir.json');
+            writeText(irPath, JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:nc2', linkedPlan: 'plan:nc2', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2));
+
+            const driftReportPath = path.join(runtime.runtimeRoot, 'generated', 'architecture', 'drift-report.json');
+            const runGaps = () => {
+                const res = spawnSync(process.execPath, [memCli, 'plan', 'gaps'], {
+                    env: { ...process.env, EVO_LITE_ROOT: runtime.runtimeRoot, NODE_PATH: nodePath },
+                    encoding: 'utf8',
+                });
+                assert.strictEqual(res.status, 0, `plan gaps must exit 0. stderr: ${res.stderr || ''}`);
+                const report = JSON.parse(fs.readFileSync(driftReportPath, 'utf8'));
+                return report.findings.filter(f => f.scope === 'planning');
+            };
+
+            const before = runGaps();
+            assert.ok(before.length > 0, 'precondition: the fixture must actually produce planning findings, or this control is vacuous');
+            assert.ok(before.every(f => 'disposition' in f), 'NC2: every planning finding carries a disposition key');
+            assert.ok(before.every(f => f.disposition === null), 'NC2: with no ledger, every disposition is null');
+
+            const target = before.find(f => f.ruleId === 'R005');
+            assert.ok(target, 'precondition: R005 (no linkedFiles) must be present for a deterministic disposition target');
+
+            led.writeLedger(projectRoot, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: target.id, ruleId: target.ruleId, ruleVersion: target.ruleVersion,
+                fingerprint: fp.computeFingerprint(target), choice: 'accepted-debt',
+                reason: 'nc2', at: '2026-08-11T00:00:00Z',
+            }));
+
+            const after = runGaps();
+            assert.deepStrictEqual(after.map(f => f.id).sort(), before.map(f => f.id).sort(),
+                'NC2: the planning producer must not lose or gain findings once one is dispositioned');
+            assert.ok(after.every(f => 'disposition' in f), 'NC2: every planning finding still carries a disposition key');
+            const afterTarget = after.find(f => f.id === target.id);
+            assert.strictEqual(afterTarget.disposition.status, 'current', 'NC2: the dispositioned finding resolves current');
+            console.log('✅ NC2-disposition-planning-coverage passed');
+        }
+
+        console.log('NC3-disposition-invalid-ledger-failsafe. A corrupt ledger loses annotation, never a finding ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-nc3-invalid-ledger').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            const clean = sp.buildSpecRegistry(root, { write: false });
+            const cleanIds = clean.specs[0].findings.map(f => f.id).sort();
+            assert.ok(cleanIds.length > 0, 'precondition: findings exist, or this control is vacuous');
+
+            fs.mkdirSync(path.join(root, '.evo-lite'), { recursive: true });
+            fs.writeFileSync(path.join(root, '.evo-lite', 'dispositions.json'), '{ this is not valid json', 'utf8');
+            assert.throws(() => led.readLedger(root), /invalid JSON/,
+                'precondition: readLedger really does throw on this fixture');
+
+            const degraded = sp.buildSpecRegistry(root, { write: false });
+            const degradedIds = degraded.specs[0].findings.map(f => f.id).sort();
+
+            assert.deepStrictEqual(degradedIds, cleanIds,
+                'NC3: no finding may be lost when the ledger is unreadable');
+            assert.ok(degraded.specs[0].findings.every(f => f.disposition === null),
+                'NC3: annotation may be lost (every disposition null) but the findings themselves must survive');
+            console.log('✅ NC3-disposition-invalid-ledger-failsafe passed');
+        }
+
+        console.log('NC3b-disposition-planning-invalid-ledger-failsafe. A corrupt ledger loses annotation, never a planning finding ...');
+        {
+            const { spawnSync } = require('child_process');
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const memCli = path.join(TEMPLATE_CLI_DIR, 'memory.js');
+            // Same CLI-spawn harness as NC2: memory.js -> memory.service -> db.js ->
+            // better-sqlite3, which lives in the workspace runtime's node_modules.
+            const nodePath = [path.join(WORKSPACE_ROOT, '.evo-lite', 'node_modules'), process.env.NODE_PATH]
+                .filter(Boolean).join(path.delimiter);
+
+            const runtime = createTempRuntimeRoot('disposition-nc3b-planning-invalid-ledger');
+            const projectRoot = runtime.workspaceRoot;
+            const irPath = path.join(runtime.runtimeRoot, 'generated', 'planning', 'plan-ir.json');
+            writeText(irPath, JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:nc3b', linkedPlan: 'plan:nc3b', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2));
+
+            const driftReportPath = path.join(runtime.runtimeRoot, 'generated', 'architecture', 'drift-report.json');
+            const runGaps = () => {
+                const res = spawnSync(process.execPath, [memCli, 'plan', 'gaps'], {
+                    env: { ...process.env, EVO_LITE_ROOT: runtime.runtimeRoot, NODE_PATH: nodePath },
+                    encoding: 'utf8',
+                });
+                assert.strictEqual(res.status, 0, `plan gaps must exit 0. stderr: ${res.stderr || ''}`);
+                const report = JSON.parse(fs.readFileSync(driftReportPath, 'utf8'));
+                return report.findings.filter(f => f.scope === 'planning');
+            };
+
+            const clean = runGaps();
+            assert.ok(clean.length > 0, 'precondition: the fixture must actually produce planning findings, or this control is vacuous');
+
+            // Corrupt the ledger: invalid JSON. readLedger() THROWS on this — the
+            // identical 3-line try/catch guard planning.js carries around
+            // readLedger(projectRoot) is otherwise never exercised by the suite.
+            fs.writeFileSync(led.ledgerPath(projectRoot), '{ this is not valid json', 'utf8');
+            assert.throws(() => led.readLedger(projectRoot), /invalid JSON/,
+                'precondition: readLedger really does throw on this fixture');
+
+            const degraded = runGaps();
+            assert.ok(degraded.length > 0, 'precondition: the degraded run must still produce planning findings, or the .every() checks below are vacuous');
+
+            assert.deepStrictEqual(degraded.map(f => f.id).sort(), clean.map(f => f.id).sort(),
+                'NC3b: no planning finding may be lost when the ledger is unreadable');
+            assert.ok(degraded.every(f => 'disposition' in f), 'NC3b: every planning finding still carries a disposition key');
+            assert.ok(degraded.every(f => f.disposition === null),
+                'NC3b: annotation may be lost (every disposition null) but the findings themselves must survive');
+            console.log('✅ NC3b-disposition-planning-invalid-ledger-failsafe passed');
+        }
+
+        console.log('NC4-disposition-legacy-surface. Pre-existing fields stay byte-identical once a finding is dispositioned ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-nc4-legacy-surface').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            const before = sp.buildSpecRegistry(root, { write: false });
+            const beforeTarget = before.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(beforeTarget, 'precondition: unknown-status finding exists');
+            assert.strictEqual(before.specs[0].warnings.includes('unknown-status'), true,
+                'precondition: the legacy warnings array carries the same signal');
+
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: beforeTarget.id, ruleId: beforeTarget.ruleId, ruleVersion: beforeTarget.ruleVersion,
+                fingerprint: fp.computeFingerprint(beforeTarget), choice: 'not-applicable',
+                reason: 'nc4', at: '2026-08-11T00:00:00Z',
+            }));
+
+            const after = sp.buildSpecRegistry(root, { write: false });
+            const afterTarget = after.specs[0].findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(afterTarget, 'the finding must still be present after dispositioning');
+            assert.notStrictEqual(afterTarget.disposition, null, 'precondition: the finding really is now dispositioned');
+
+            // Whichever pre-existing fields this producer emits (spec-portfolio findings
+            // carry id / ruleId / ruleVersion / factInputs — no separate rule/type/level/
+            // message/evidence/suggestedAction) must be untouched by dispositioning.
+            for (const key of ['id', 'ruleId', 'ruleVersion', 'factInputs']) {
+                assert.deepStrictEqual(afterTarget[key], beforeTarget[key],
+                    `NC4: field "${key}" must be byte-identical to the undispositioned run`);
+            }
+            assert.strictEqual(after.specs[0].warnings.includes('unknown-status'), true,
+                'NC4: the legacy warnings array still contains the warning after dispositioning');
+            console.log('✅ NC4-disposition-legacy-surface passed');
+        }
+
+        console.log('T-disposition-sync. A degraded census must never manufacture an ORPHANED ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const { collectAllFindings } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            const root = createTempRuntimeRoot('disposition-sync').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+
+            // A live disposition on a finding that exists right now.
+            const wasSet = runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'accepted-debt', '--reason', 'child convention']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every later assertion is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            // Genuinely resolve the finding AND break the planning producer. BOTH
+            // halves are load-bearing. The danger this test exists for is a round
+            // that OBSERVES an absence it was never entitled to observe — so the
+            // finding must actually be gone. If it were left emitted, deleting the
+            // fail-closed guard would still tombstone nothing, the ledger would
+            // stay byte-identical anyway, and the test would prove nothing.
+            fs.writeFileSync(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: done', '---', '', '# S', ''].join('\n'));
+            const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            fs.mkdirSync(path.dirname(irPath), { recursive: true });
+            fs.writeFileSync(irPath, 'not json at all');
+            const degradedRound = collectAllFindings(root);
+            assert.strictEqual(degradedRound.complete, false, 'precondition: the round really is degraded');
+            assert.ok(!degradedRound.findings.some(f => f.id === 'unknown-status:spec:u'),
+                'precondition: the degraded round DOES see the finding as absent — that is exactly '
+                + 'the trap the fail-closed guard exists to refuse');
+
+            const degraded = runCli(root, ['disposition', 'sync']);
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'a degraded round leaves the ledger BYTE-IDENTICAL — observation failure is not fact change');
+            assert.ok(/degrad/i.test(degraded.stdout + degraded.stderr),
+                'the degradation is reported, never silent');
+
+            // Repair the producer. The finding is already genuinely resolved.
+            fs.rmSync(irPath, { force: true });
+            runCli(root, ['plan', 'scan']);
+            const round = collectAllFindings(root);
+            assert.strictEqual(round.complete, true,
+                `precondition: the repaired round is complete. errors: ${JSON.stringify(round.errors)}`);
+            runCli(root, ['disposition', 'sync']);
+            const entry = led.readLedger(root).entries.find(e => e.findingId === 'unknown-status:spec:u');
+            assert.ok(entry.orphanedAt, 'only a complete census may tombstone');
+            console.log('✅ T-disposition-sync passed');
+        }
+
+        console.log('T-disposition-sync-stale. A STALE entry is still OBSERVED and must never be tombstoned ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const { collectAllFindings } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            const root = createTempRuntimeRoot('disposition-sync-stale').workspaceRoot;
+            const spec = status => writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', `status: ${status}`, '---', '', '# S', ''].join('\n'));
+
+            spec('closed-experimental');
+            const wasSet = runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'accepted-debt', '--reason', 'child convention']);
+            assert.strictEqual(wasSet.status, 0, `precondition: set must succeed. stderr: ${wasSet.stderr}`);
+
+            // Same finding id, DIFFERENT fact. `unknown-status` hashes
+            // declaredStatus, so a second invented word keeps the id and moves the
+            // fingerprint: the decision no longer covers the fact it was made
+            // about. That is STALE — a live finding awaiting a fresh human call —
+            // and it is the case a naive "the ledger entry no longer matches, so
+            // close it" implementation would silently destroy.
+            spec('closed-provisional');
+            runCli(root, ['plan', 'scan']);
+
+            const round = collectAllFindings(root);
+            assert.strictEqual(round.complete, true,
+                `precondition: the round is complete, so sync is not merely refusing. errors: ${JSON.stringify(round.errors)}`);
+            const live = round.findings.find(f => f.id === 'unknown-status:spec:u');
+            assert.ok(live, 'precondition: the finding is still emitted');
+            assert.strictEqual(live.disposition.status, 'stale',
+                'precondition: the entry really is STALE, not current — otherwise this tests nothing');
+
+            const res = runCli(root, ['disposition', 'sync']);
+            assert.strictEqual(res.status, 0, `sync must succeed on a complete round. stderr: ${res.stderr}`);
+            const entry = led.readLedger(root).entries.find(e => e.findingId === 'unknown-status:spec:u');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'a STALE entry is still OBSERVED — only authoritative ABSENCE may tombstone');
+            assert.match(res.stdout, /0 tombstoned/, 'and sync says so: nothing was closed this round');
+            console.log('✅ T-disposition-sync-stale passed');
+        }
+
+        console.log('T-disposition-sync-idempotent. A tombstone is TERMINAL — a second sync must not re-stamp it ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-sync-idempotent').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'wont-fix', '--reason', 'child convention']).status, 0,
+                'precondition: set must succeed');
+
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: done', '---', '', '# S', ''].join('\n'));
+            runCli(root, ['plan', 'scan']);
+
+            const first = runCli(root, ['disposition', 'sync']);
+            assert.match(first.stdout, /1 tombstoned/,
+                `precondition: the first sync really tombstoned the entry. stdout: ${first.stdout} stderr: ${first.stderr}`);
+            const afterFirst = fs.readFileSync(led.ledgerPath(root), 'utf8');
+            const orphanedAtFirst = led.readLedger(root).entries[0].orphanedAt;
+            const orphanedHeadFirst = led.readLedger(root).entries[0].orphanedHead;
+            assert.ok(orphanedAtFirst, 'precondition: the tombstone carries orphanedAt');
+
+            const second = runCli(root, ['disposition', 'sync']);
+            assert.strictEqual(second.status, 0, `the second sync must succeed. stderr: ${second.stderr}`);
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), afterFirst,
+                'a second sync over an existing tombstone leaves the ledger BYTE-IDENTICAL');
+            assert.strictEqual(led.readLedger(root).entries[0].orphanedAt, orphanedAtFirst,
+                'orphanedAt is the date a governance decision CLOSED — re-stamping it every run erases that fact');
+            assert.strictEqual(led.readLedger(root).entries[0].orphanedHead, orphanedHeadFirst,
+                'orphanedHead likewise records WHERE the absence was proven, once');
+            assert.match(second.stdout, /0 tombstoned/, 'the second round finds nothing left to close');
+            console.log('✅ T-disposition-sync-idempotent passed');
+        }
+
+        console.log('T-disposition-sync-never-stages. sync writes the WORKING TREE only — never the index, never HEAD ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-sync-never-stages').workspaceRoot;
+            runGit(root, ['init']);
+            runGit(root, ['config', 'user.name', 'Evo Test']);
+            runGit(root, ['config', 'user.email', 'evo@example.com']);
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'accepted-debt', '--reason', 'child convention']).status, 0,
+                'precondition: set must succeed');
+            runGit(root, ['add', '-A']);
+            runGit(root, ['commit', '-m', 'baseline carrying a live disposition']);
+
+            // Resolve the finding for real, then observe it through a complete round.
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: done', '---', '', '# S', ''].join('\n'));
+            runCli(root, ['plan', 'scan']);
+
+            // OBSERVED git state, not a source grep. "the source contains no
+            // `git add`" is not the property under test — "the index did not move"
+            // is, and only git can answer that.
+            const headBefore = runGit(root, ['rev-parse', 'HEAD']);
+            const stagedBefore = runGit(root, ['diff', '--cached', '--name-only']);
+            assert.strictEqual(stagedBefore, '', 'precondition: nothing is staged going in');
+
+            const res = runCli(root, ['disposition', 'sync']);
+            assert.match(res.stdout, /1 tombstoned/,
+                `precondition: this round really did write a tombstone, so "index unchanged" is not vacuous. `
+                + `stdout: ${res.stdout} stderr: ${res.stderr}`);
+
+            assert.strictEqual(runGit(root, ['rev-parse', 'HEAD']), headBefore,
+                'sync must never commit — HEAD is unchanged');
+            assert.strictEqual(runGit(root, ['diff', '--cached', '--name-only']), stagedBefore,
+                'sync must never stage — the index is unchanged');
+            assert.match(runGit(root, ['status', '--porcelain']), /\.evo-lite\/dispositions\.json/,
+                'the tombstone lands in the WORKING TREE, dirty and visible, for a human to commit');
+
+            const entry = led.readLedger(root).entries[0];
+            assert.strictEqual(entry.orphanedHead, headBefore,
+                'the tombstone records the head absence was proven at — provenance, never part of the fingerprint');
+            console.log('✅ T-disposition-sync-never-stages passed');
+        }
+
+        console.log('T-disposition-presentation. Actionable count leads; debt stays visible; the machine collection does not move ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-presentation').workspaceRoot;
+            const specFile = (n, status) => writeText(path.join(root, 'docs', 'specs', `${n}.md`),
+                ['---', `id: spec:${n}`, `status: ${status}`, '---', '', '# S', ''].join('\n'));
+            for (const n of ['a', 'b']) specFile(n, 'closed-experimental');
+
+            const reg0 = sp.buildSpecRegistry(root, { write: false });
+            const idsBefore = reg0.specs.flatMap(s => s.findings.map(f => f.id)).sort();
+            assert.strictEqual(idsBefore.length, 2,
+                'precondition: two undispositioned findings, or the collapse below proves nothing');
+            const f0 = reg0.specs[0].findings[0];
+            const dispositionedSpecId = reg0.specs[0].id;
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: f0.id, ruleId: f0.ruleId, ruleVersion: f0.ruleVersion,
+                fingerprint: fp.computeFingerprint(f0), choice: 'not-applicable',
+                reason: 'r', at: '2026-08-11T00:00:00Z',
+            }));
+
+            const reg1 = sp.buildSpecRegistry(root, { write: false });
+            // AC7. Presentation collapses; the machine collection must not move.
+            // Same fixture, with and without a ledger, identical finding ids.
+            assert.deepStrictEqual(reg1.specs.flatMap(s => s.findings.map(f => f.id)).sort(), idsBefore,
+                'AC7: dispositioning is a PRESENTATION change — registry.specs[*].findings keeps '
+                + 'exactly the same ids and count');
+
+            const lines = sp.formatPortfolioReport(reg1);
+            const text = lines.join('\n');
+            assert.ok(/1 条待处理 finding/.test(text), 'the actionable count leads — that is the number a reader needs');
+            assert.ok(/1 条 finding 已处置/.test(text), 'dispositioned debt stays permanently visible');
+            assert.ok(/not-applicable 1/.test(text), 'the breakdown by choice is shown');
+            const warnLines = lines.filter(l => l.trim().startsWith('⚠️'));
+            assert.ok(!warnLines.some(l => l.includes(dispositionedSpecId)),
+                'a dispositioned finding is collapsed out of the actionable list, not deleted from data');
+            assert.ok(warnLines.some(l => l.includes('spec:b')),
+                'the undispositioned finding is still named in full');
+
+            // A lapsed decision is REPORTED as lapsed. Same finding id, different
+            // fact -> the fingerprint moves, the entry goes stale, and the finding
+            // is actionable again AND announced as reactivated.
+            specFile(dispositionedSpecId.replace('spec:', ''), 'closed-provisional');
+            const reg2 = sp.buildSpecRegistry(root, { write: false });
+            const stale = reg2.specs.flatMap(s => s.findings).find(f => f.id === f0.id);
+            assert.strictEqual(stale.disposition.status, 'stale', 'precondition: the entry really did lapse');
+            const staleText = sp.formatPortfolioReport(reg2).join('\n');
+            assert.ok(/2 条待处理 finding/.test(staleText), 'a lapsed decision returns its finding to the actionable list');
+            assert.ok(/1 条 disposition 已失效/.test(staleText), 'and the lapse itself is announced, never silent');
+            assert.ok(!/条 finding 已处置/.test(staleText), 'with nothing live left, the handled section is not printed');
+            console.log('✅ T-disposition-presentation passed');
+        }
+
+        console.log('T-disposition-presentation-no-phantom-alert. A zero-actionable portfolio must not raise a verify alert ...');
+        {
+            const runtime = createTempRuntimeRoot('disposition-no-phantom-alert');
+            const root = runtime.workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'not-applicable', '--reason', 'child convention']).status, 0,
+                'precondition: set must succeed, or every assertion below is vacuous');
+
+            const sp = require(path.join(CLI_DIR, 'spec-portfolio'));
+            const reg = sp.buildSpecRegistry(root, { write: false });
+            const findings = reg.specs.flatMap(s => s.findings);
+            assert.strictEqual(findings.length, 1,
+                'precondition: the finding is STILL in the machine collection — this is not a filter');
+            assert.strictEqual(findings[0].disposition.status, 'current',
+                'precondition: zero actionable findings remain');
+            assert.ok(!sp.formatPortfolioReport(reg).some(l => l.startsWith('⚠️')),
+                'a portfolio with zero actionable findings emits no top-level ⚠️ line — verify derives '
+                + 'hasAlerts from exactly that prefix');
+
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+            let report;
+            const output = await captureConsole(async () => { report = await loaded.service.verify(); });
+            assert.ok(!output.split('\n').some(l => l.startsWith('⚠️') && /条待处理 finding/.test(l)),
+                'verify must not print an actionable header for a portfolio with nothing actionable');
+            assert.ok(!report.nextSteps.some(s => s.includes('表态老化/超标 spec')),
+                'and it must not push the 表态 next-step for work nobody has');
+            assert.strictEqual(report.hasAlerts, false,
+                'a fully dispositioned portfolio must not make verify report an alert');
+            console.log('✅ T-disposition-presentation-no-phantom-alert passed');
+        }
+
+        console.log('T-disposition-durability-commit. A dirty ledger joins the REAL staged file set of mem commit ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-durability-commit').workspaceRoot;
+            initCommitFixtureRepo(root);
+
+            // Dirty the ledger BEFORE the commit flow runs.
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            assert.match(runGit(root, ['status', '--porcelain']), /\.evo-lite\/dispositions\.json/,
+                'precondition: the ledger really is uncommitted going in');
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', 'Closed the durability loop for the disposition ledger in one explicit flow.',
+                '--code-message', 'feat: durability fixture', '--mechanism', 'DurabilityClosure', '--json']);
+            const payload = parseCliJson(res, 'mem commit --json');
+
+            // OBSERVED git state, not a source grep. "the source pushes the path"
+            // is not the property under test — "the produced commit carries the
+            // file" is, and only git can answer that.
+            assert.strictEqual(payload.runtime.status, 'written',
+                `the runtime meta-commit must succeed. stderr: ${res.stderr}`);
+            const committed = runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', payload.runtime.commitHash]);
+            assert.ok(committed.split('\n').includes('.evo-lite/dispositions.json'),
+                'AC9: the commit mem commit PRODUCED must contain .evo-lite/dispositions.json — '
+                + 'warning about the debt is not closing it');
+            assert.ok(!/dispositions\.json/.test(runGit(root, ['status', '--porcelain'])),
+                'AC9: and the ledger is no longer dirty afterwards');
+            assert.ok((payload.runtime.files || []).includes('.evo-lite/dispositions.json'),
+                'the reported file set names the ledger it actually staged');
+            assert.strictEqual(payload.runtime.closureCommitHash, null,
+                'negative control: no retry ran on the first-order path, so no closure commit may be reported');
+
+            // The one source-shape check worth keeping: the constant is already
+            // workspace-relative, so relativizing it again yields a broken pathspec.
+            // (Belt and braces only — the assertions above are the evidence.)
+            for (const dir of [TEMPLATE_CLI_DIR, CLI_DIR]) {
+                assert.ok(!/toWorkspaceGitPath\(\s*DISPOSITIONS_GIT_PATH/
+                    .test(fs.readFileSync(path.join(dir, 'memory.service.js'), 'utf8')),
+                'the ledger path is already workspace-relative — relativizing it again yields a broken pathspec');
+            }
+            console.log('✅ T-disposition-durability-commit passed');
+        }
+
+        console.log('T-disposition-durability-second-order. A tombstone written BY the meta-commit is closed by a retry ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-durability-second-order').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            assert.ok(!/dispositions\.json/.test(runGit(root, ['status', '--porcelain'])),
+                'precondition: the ledger starts CLEAN, so the first file-set push cannot be what rescues this');
+
+            // Stand in for `disposition sync` inside post-commit: the meta-commit is
+            // itself a commit, so the hook fires and can dirty the ledger AFTER we
+            // already staged it. Commit 1 is the code commit, commit 2 the
+            // meta-commit, commit 3 the closure retry.
+            writeCountingPostCommitHook(root, '2');
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', 'Closed a tombstone that post-commit wrote after the meta-commit landed.',
+                '--code-message', 'feat: second order fixture', '--mechanism', 'DurabilityClosure', '--json']);
+            const payload = parseCliJson(res, 'mem commit --json');
+
+            assert.strictEqual(payload.runtime.status, 'written',
+                'a second-order tombstone must be CLOSED, not merely reported'
+                + ` [mem commit stderr: ${res.stderr.trim() || '(empty)'}]`);
+            assert.ok(runGit(root, ['log', '--format=%s']).split('\n')
+                .includes('chore(meta): close disposition tombstones written by post-commit'),
+            'the closure retry commit must exist — the tombstone post-commit wrote is not in the meta-commit');
+            assert.ok(runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'])
+                .split('\n').includes('.evo-lite/dispositions.json'),
+            'and that retry commit is the one carrying the ledger');
+            assert.ok(!/dispositions\.json/.test(runGit(root, ['status', '--porcelain'])),
+                'nothing is left dirty once the retry has run');
+
+            // The PAYLOAD, not git alone. A closure achieved but reported against
+            // the wrong commit is the same class of defect as a closure claimed and
+            // not achieved: no field may name a commit that lacks what it claims.
+            assert.ok(payload.runtime.closureCommitHash,
+                'a successful retry must be REPORTED — the payload must name the commit that carries the tombstone, '
+                + 'because commitHash was read before the retry and names a meta-commit without the ledger');
+            assert.ok(runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r',
+                payload.runtime.closureCommitHash]).split('\n').includes('.evo-lite/dispositions.json'),
+            'the commit the payload names for the closure must actually contain .evo-lite/dispositions.json');
+            assert.ok((payload.runtime.files || []).includes('.evo-lite/dispositions.json'),
+                'and the reported runtime file set must name the ledger this flow committed');
+            assert.ok(!runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r',
+                payload.runtime.commitHash]).split('\n').includes('.evo-lite/dispositions.json'),
+            'negative control: the meta-commit really does NOT carry the ledger, so reporting it there '
+                + 'would have been false rather than merely imprecise');
+            console.log('✅ T-disposition-durability-second-order passed');
+        }
+
+        console.log('T-disposition-durability-honesty. A ledger still dirty after the retry is reported partial, never written ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-durability-honesty').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+
+            // An unexpected writer that dirties the ledger after EVERY commit,
+            // including the closure retry's own post-commit. One retry is all the
+            // contract promises; past that the only honest answer is `partial`.
+            writeCountingPostCommitHook(root, 'always');
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', 'Attempted closure while an unexpected writer keeps dirtying the ledger.',
+                '--code-message', 'feat: honesty fixture', '--mechanism', 'DurabilityClosure', '--json']);
+            const payload = parseCliJson(res, 'mem commit --json');
+
+            const stillDirty = /dispositions\.json/.test(runGit(root, ['status', '--porcelain']));
+            assert.strictEqual(stillDirty, true,
+                'precondition: the writer really did win, or `partial` would be the wrong verdict to test');
+            assert.notStrictEqual(payload.runtime.status, 'written',
+                'FORBIDDEN: reporting runtime.status = "written" while git still shows dispositions.json dirty');
+            assert.strictEqual(payload.runtime.status, 'partial',
+                'an unclosed tombstone is reported as partial');
+            assert.ok(payload.runtime.message.includes('git add .evo-lite/dispositions.json'),
+                'and the message names the manual fix rather than leaving the operator to guess');
+            console.log('✅ T-disposition-durability-honesty passed');
+        }
+
+        console.log('T-disposition-track-reports. context track does not commit — so it must REPORT the pending tombstone ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const root = createTempRuntimeRoot('disposition-track-reports').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+
+            const details = 'Recorded the trajectory for a run whose disposition ledger state is under test here.';
+            const clean = runCli(root, ['context', 'track', details, '--mechanism', 'TrackClosure']);
+            assert.strictEqual(clean.status, 0, `precondition: track must succeed. stderr: ${clean.stderr}`);
+            assert.ok(clean.stdout.includes('- closure: complete'),
+                'a clean ledger must not drift the existing behaviour — closure still reports complete');
+            assert.ok(clean.stdout.includes('- dispositions: clean'), 'and it says WHY, not just the verdict');
+
+            fs.appendFileSync(led.ledgerPath(root), '\n');
+            assert.match(runGit(root, ['status', '--porcelain']), /\.evo-lite\/dispositions\.json/,
+                'precondition: the ledger really is dirty for the second run');
+            const dirty = runCli(root, ['context', 'track', details, '--mechanism', 'TrackClosure']);
+            assert.strictEqual(dirty.status, 0, `track must still succeed. stderr: ${dirty.stderr}`);
+            assert.ok(!dirty.stdout.includes('- closure: complete'),
+                'closure: complete must NOT be printed while a tombstone sits uncommitted');
+            assert.ok(dirty.stdout.includes('- closure: partial'), 'the verdict degrades to partial');
+            assert.ok(dirty.stdout.includes('- dispositions: pending (uncommitted tombstone)'),
+                'and the reason is visible, not just the verdict');
+            console.log('✅ T-disposition-track-reports passed');
+        }
+
+        console.log('T-disposition-track-unknown-ledger. An unreadable ledger state degrades fail-closed, never into a crash ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const trackResult = {
+                mechanism: 'TrackClosure',
+                chunkCount: 1,
+                archivePath: 'C:/tmp/mem_fixture.md',
+                resolvedLine: null,
+                status: { archive: 'written', context: 'updated', resolve: 'not_requested' },
+            };
+            const realExecFileSync = childProcess.execFileSync;
+            const withLedgerProbe = (onProbe, fn) => withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && args[0] === 'status'
+                    && args.includes('.evo-lite/dispositions.json')) {
+                    return onProbe();
+                }
+                return realExecFileSync(command, args, options);
+            }, fn);
+
+            let clean = null;
+            await withLedgerProbe(() => '', async () => { clean = cliModule.formatTrackResult(trackResult); });
+            assert.ok(clean.includes('- closure: complete'),
+                'precondition: this very result is a COMPLETE closure while the ledger reads clean — '
+                + 'otherwise the degradation below proves nothing');
+
+            let out = null;
+            let threw = null;
+            // Only the ledger probe fails: a corrupt .git / permission error /
+            // transient EPERM, i.e. every case dispositionsDirty deliberately
+            // RETHROWS rather than reporting as clean.
+            await withLedgerProbe(() => {
+                throw new Error('fatal: unable to read config file .git/config: Permission denied');
+            }, async () => {
+                try { out = cliModule.formatTrackResult(trackResult); } catch (err) { threw = err; }
+            });
+
+            assert.strictEqual(threw, null,
+                'an unreadable ledger state must NOT throw out of formatTrackResult — track() has already '
+                + 'written archive, trajectory and context, and an uncaught git failure here turns a '
+                + 'SUCCESSFUL track into a hard CLI failure (run().catch prints ❌ and exits 1)');
+            assert.ok(!out.includes('- closure: complete'),
+                'fail-closed: an UNKNOWN durability state is not a clean one, so closure: complete must not be printed');
+            assert.ok(out.includes('- closure: partial'), 'the verdict degrades to partial');
+            assert.ok(/- dispositions: unknown \(.+\)/.test(out),
+                'and the unknown state is NAMED with its reason, never silently reported as clean');
+            console.log('✅ T-disposition-track-unknown-ledger passed');
+        }
+
+        console.log('T-disposition-commit-probe-after-track. A ledger PROBE failure must not re-label a track that already wrote to disk ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a commit whose ledger probe fails after track already wrote to disk.';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // Healthy-path CONTROL, identical plumbing, fault ordinal out of reach.
+            // Without it the degraded assertions below could all pass for reasons
+            // that have nothing to do with the probe.
+            {
+                const root = createTempRuntimeRoot('disposition-commit-probe-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                const fault = installLedgerProbeFault(root, 99);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', 'feat: probe control',
+                    '--mechanism', 'ProbeControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(fault.readProbeLog().thrown, 0,
+                    'control precondition: the preload is installed but never fires');
+                assert.strictEqual(res.status, 0, `control: an unfaulted mem commit exits 0. stderr: ${res.stderr}`);
+                assert.strictEqual(payload.track.status, 'complete', 'control: context track completes');
+                assert.strictEqual(payload.runtime.status, 'written', 'control: the meta-commit lands');
+                assert.strictEqual(payload.errorStage, null,
+                    'control: no stage is blamed when the durability probe can actually run');
+                assert.strictEqual(payload.dispositions.state, 'clean',
+                    'control: a readable, committed ledger reads clean — so `unknown` below is the fault talking');
+                assert.ok(nextStepOf(payload).includes('已完成一次显式闭环'),
+                    'control: the healthy flow still reports a complete closure');
+            }
+
+            const root = createTempRuntimeRoot('disposition-commit-probe-after-track').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            // Ordinal 1: the FIRST ledger probe fails — the one that runs after
+            // track() has already written archive, trajectory and active_context.
+            const fault = installLedgerProbeFault(root, 1);
+            const contextPath = path.join(root, '.evo-lite', 'active_context.md');
+            const contextBefore = fs.readFileSync(contextPath, 'utf8');
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', 'feat: probe after track',
+                '--mechanism', 'ProbeAfterTrack', '--json'], fault.env);
+            const payload = parseCliJson(res, 'mem commit --json (probe fault after track)');
+
+            // Self-check FIRST, and deliberately mutation-invariant: it proves the
+            // injected fault fired without itself being the thing under test, so a
+            // regression reddens on the property assertions that follow.
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected ledger-probe fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+
+            // THE PROPERTY: an observer failure must not re-interpret a completed,
+            // irreversible side effect.
+            assert.strictEqual(payload.track.status, 'complete',
+                'a durability PROBE failure must not re-label a context track that ALREADY wrote archive, '
+                + 'trajectory and active_context.md to disk — the stage completed and must keep saying so');
+            assert.notStrictEqual(payload.errorStage, 'track',
+                'and the track stage must not be blamed for an observer that could not run');
+
+            // The side effect really did happen — checked on DISK, not in the payload.
+            assert.ok(payload.track.result && payload.track.result.archivePath,
+                'the completed track must still report the archive it wrote');
+            assert.ok(fs.existsSync(payload.track.result.archivePath),
+                'the archive track wrote is STILL on disk — this is exactly the irreversible side effect '
+                + 'that a "remediate context track" instruction would duplicate');
+            assert.notStrictEqual(fs.readFileSync(contextPath, 'utf8'), contextBefore,
+                'and active_context.md really was mutated, so re-running track would mutate it a second time');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请先补救 context track'),
+                'FORBIDDEN: the remediation must not instruct the operator to redo context track — '
+                + `following it writes a second archive and a second trajectory entry [next_step: ${nextStep}]`);
+            assert.ok(!nextStep.includes('请补做 runtime state 的 meta-commit'),
+                'nor to redo the meta-commit');
+            assert.ok(nextStep.includes('dispositions.json'),
+                'it must NAME the durability probe as the thing that failed');
+
+            // `unknown` is its own state: not clean, not pending, and never a
+            // closure-complete claim.
+            assert.strictEqual(payload.dispositions.state, 'unknown',
+                'an unreadable durability probe is UNKNOWN — distinct from clean and from pending');
+            assert.ok(String(payload.dispositions.detail || '').includes('Permission denied'),
+                'and it carries the reason rather than swallowing it');
+            assert.strictEqual(payload.errorStage, 'disposition-probe',
+                'the observer gets its OWN stage name, so no mutating stage inherits its blame');
+            const rendered = cliModule.formatCommitFlowResult(payload);
+            assert.ok(rendered.includes('- dispositions: unknown ('),
+                'the unknown state is printed, not hidden');
+            assert.ok(!rendered.includes('- closure: complete') && !nextStep.includes('已完成一次显式闭环'),
+                'fail-closed: an UNKNOWN durability state must not permit any closure-complete claim');
+            assert.strictEqual(res.status, 2,
+                'and the CLI still exits non-zero — unknown is not clean');
+            console.log('✅ T-disposition-commit-probe-after-track passed');
+        }
+
+        console.log('T-disposition-commit-probe-after-meta-commit. A probe failure must not re-label a meta-commit that already landed ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a commit whose ledger probe fails after the meta-commit landed.';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // Healthy-path CONTROL for this seam: the SAME ordinal-2 probe answers
+            // normally, so the degraded run below differs in exactly one thing.
+            {
+                const root = createTempRuntimeRoot('disposition-commit-meta-probe-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                const fault = installLedgerProbeFault(root, 99);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', 'feat: meta probe control',
+                    '--mechanism', 'MetaProbeControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(res.status, 0, `control: an unfaulted mem commit exits 0. stderr: ${res.stderr}`);
+                assert.ok(fault.readProbeLog().calls >= 2,
+                    'control precondition: the flow really does probe the ledger AFTER the meta-commit — '
+                    + 'otherwise ordinal 2 would not be the post-meta-commit seam');
+                assert.strictEqual(payload.runtime.status, 'written', 'control: the meta-commit is reported written');
+                assert.strictEqual(payload.errorStage, null, 'control: nothing is blamed');
+                assert.ok(nextStepOf(payload).includes('已完成一次显式闭环'),
+                    'control: the healthy flow still reports a complete closure');
+            }
+
+            const root = createTempRuntimeRoot('disposition-commit-probe-after-meta').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            // Ordinal 2: the first probe ANSWERS; the fault lands only on the probe
+            // that runs after the runtime meta-commit has genuinely been created.
+            const fault = installLedgerProbeFault(root, 2);
+
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', 'feat: probe after meta commit',
+                '--mechanism', 'ProbeAfterMeta', '--json'], fault.env);
+            const payload = parseCliJson(res, 'mem commit --json (probe fault after meta-commit)');
+
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected ledger-probe fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+            assert.ok(probeLog.calls >= 2,
+                'self-check: the first probe answered and the fault landed on a LATER one — this is the '
+                + `post-meta-commit seam, not the post-track seam (log: ${JSON.stringify(probeLog)})`);
+
+            // THE PROPERTY.
+            assert.notStrictEqual(payload.runtime.status, 'failed',
+                'a durability PROBE failure must not re-label a runtime meta-commit that GENUINELY landed');
+            assert.notStrictEqual(payload.errorStage, 'meta-commit',
+                'and the meta-commit stage must not be blamed for an observer that could not run');
+            assert.strictEqual(payload.runtime.status, 'written',
+                'the stage that completed keeps saying so');
+
+            // The commit is verified against GIT, not by reading the payload back.
+            assert.ok(payload.runtime.commitHash,
+                'runtime.commitHash must keep naming the commit the flow created');
+            assert.match(runGit(root, ['rev-parse', '--verify', `${payload.runtime.commitHash}^{commit}`]),
+                /^[0-9a-f]{40}$/,
+                'the reported runtime commit must resolve to a real commit object in the repository');
+            assert.strictEqual(runGit(root, ['log', '-1', '--format=%s', payload.runtime.commitHash]),
+                'chore(meta): snapshot evo-lite runtime state',
+                'and that commit really is the runtime meta-commit this flow made');
+            assert.ok(runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', payload.runtime.commitHash])
+                .split('\n').includes('.evo-lite/active_context.md'),
+            'and it carries the runtime state it claims to carry');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请补做 runtime state 的 meta-commit'),
+                'FORBIDDEN: the remediation must not ask for another meta-commit — one already exists at '
+                + `${payload.runtime.commitHash} [next_step: ${nextStep}]`);
+            assert.ok(!nextStep.includes('请先补救 context track'), 'nor for another context track');
+            assert.ok(nextStep.includes('dispositions.json'),
+                'it must NAME the durability probe as the thing that failed');
+
+            assert.strictEqual(payload.dispositions.state, 'unknown',
+                'the durability reading that could not be taken is UNKNOWN');
+            assert.strictEqual(payload.errorStage, 'disposition-probe',
+                'blamed on the observer, which is the only thing that failed');
+            assert.ok(!nextStep.includes('已完成一次显式闭环'),
+                'fail-closed: an UNKNOWN durability state must not permit a closure-complete claim');
+            assert.ok(!runGit(root, ['log', '--format=%s']).split('\n')
+                .includes('chore(meta): close disposition tombstones written by post-commit'),
+            'negative control: an UNKNOWN probe is not a PENDING one, so no closure retry may be attempted');
+            console.log('✅ T-disposition-commit-probe-after-meta-commit passed');
+        }
+
+        console.log('T-disposition-shadow-observation-failclosed. An incomplete WORKING-TREE census must refuse, never read as "no shadow" ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const { registerDispositionCommands } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            const { Command } = require('commander');
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+
+            // One builder, three runs. The ONLY differences between them are the
+            // health of the working-tree git observation and whether a real second
+            // occurrence exists — everything else is identical, so each verdict can
+            // only be attributed to the thing under test.
+            const buildFixture = (name) => {
+                const fixtureRoot = createTempRuntimeRoot(name).workspaceRoot;
+                writeText(path.join(fixtureRoot, 'src', 'shadow.js'), 'v1');
+                runGit(fixtureRoot, ['init']);
+                runGit(fixtureRoot, ['config', 'user.name', 'Evo Test']);
+                runGit(fixtureRoot, ['config', 'user.email', 'evo@example.com']);
+                runGit(fixtureRoot, ['add', '.']);
+                runGit(fixtureRoot, ['commit', '-m', 'add unlinked file']);   // committed R006 exists
+                // checkR006 short-circuits to [] on a null planIR, so an IR must
+                // exist. Written AFTER the commit: isGovernanceInfraFile filters
+                // `.evo-lite/**` out of the changed set, so an uncommitted IR does
+                // not itself become an R006 occurrence.
+                writeText(path.join(fixtureRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                    JSON.stringify({
+                        version: 'evo-plan-ir@1', specs: [], plans: [],
+                        tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: [], status: 'implemented' }],
+                        warnings: [],
+                    }, null, 2));
+                return fixtureRoot;
+            };
+            // In-process, for the same reason T-disposition-cli-shadow-failclosed is:
+            // the fault below patches execFileSync in THIS process, and a spawned CLI
+            // would run an unpatched child where the fault never reaches the observer.
+            const setInProcess = async (fixtureRoot) => {
+                const previous = process.env.EVO_LITE_ROOT;
+                process.env.EVO_LITE_ROOT = path.join(fixtureRoot, '.evo-lite');
+                try {
+                    const program = new Command();
+                    program.exitOverride();
+                    registerDispositionCommands(program);
+                    await program.parseAsync(['disposition', 'set', 'R006:file:src/shadow.js',
+                        '--choice', 'accepted-debt', '--reason', 'x'], { from: 'user' });
+                    return null;
+                } catch (err) {
+                    return err;
+                } finally {
+                    if (previous === undefined) delete process.env.EVO_LITE_ROOT;
+                    else process.env.EVO_LITE_ROOT = previous;
+                }
+            };
+
+            // HEALTHY CONTROL 1 — git works, no second occurrence: ACCEPTED. Without
+            // it every refusal below could be "this fixture refuses everything".
+            const acceptRoot = buildFixture('disposition-shadow-observation-accept');
+            const accepted = await setInProcess(acceptRoot);
+            assert.strictEqual(accepted, null,
+                'control: a committed R006 whose working tree is clean must still be dispositionable '
+                + `[${accepted && accepted.message}]`);
+            assert.strictEqual(led.readLedger(acceptRoot).entries.length, 1,
+                'control: and the decision really was written — the guard must not have become a blanket refusal');
+
+            // HEALTHY CONTROL 2 — git works, a REAL shadow: refused, and the message
+            // says a shadow was FOUND. This is the wording the degraded case must not
+            // borrow.
+            const shadowRoot = buildFixture('disposition-shadow-observation-shadow');
+            fs.writeFileSync(path.join(shadowRoot, 'src', 'shadow.js'), 'v2');
+            const shadowErr = await setInProcess(shadowRoot);
+            assert.ok(shadowErr, 'control: one findingId with two live occurrences is still refused');
+            assert.match(String(shadowErr.message), /also has an uncommitted change in the working tree/,
+                'control: and THAT refusal names a shadow that was found');
+
+            // THE PROPERTY: the working-tree observation cannot be TAKEN.
+            const faultRoot = buildFixture('disposition-shadow-observation-unavailable');
+            const realExecFileSync = childProcess.execFileSync;
+            let faultHits = 0;
+            let faulted = null;
+            await withPatchedExecFileSync((command, args, options) => {
+                // ONLY the worktree changed-file read. The committed census reads
+                // `diff-tree --no-commit-id --name-only -r --root HEAD`, and
+                // classifyGitFailure's own `rev-parse --git-dir` / `rev-parse --verify
+                // HEAD` must SUCCEED — that success is precisely what classifies this
+                // as `unavailable` (a repository is here and we still could not read
+                // it) rather than the normal `no-repository` / `no-commits` answers.
+                if (command === 'git' && Array.isArray(args) && args.join(' ') === 'diff --name-only HEAD') {
+                    faultHits += 1;
+                    throw new Error('fatal: unable to read index file: Permission denied');
+                }
+                return realExecFileSync(command, args, options);
+            }, async () => { faulted = await setInProcess(faultRoot); });
+
+            assert.ok(faultHits >= 1,
+                `self-check: the injected working-tree observation fault must actually have fired (hits=${faultHits})`);
+            assert.ok(faulted,
+                'FORBIDDEN: an UNAVAILABLE working-tree observation must not read as "no shadow" — the census '
+                + 'returns complete:false with an empty findings list, and consuming .findings alone lets `set` '
+                + 'bind the decision to the COMMITTED occurrence, the exact mis-binding this guard exists to prevent');
+            assert.match(String(faulted.message), /working tree shadow check could not be completed/,
+                'the refusal must name the check that could not be COMPLETED');
+            assert.ok(!/also has an uncommitted change in the working tree/.test(String(faulted.message)),
+                'and it must stay distinguishable from the shadow-FOUND refusal — "I could not look" is not "I looked and saw one"');
+            assert.strictEqual(led.readLedger(faultRoot).entries.length, 0,
+                'and nothing was written: a governance decision bound to an unverified occurrence IS the harm');
+            console.log('✅ T-disposition-shadow-observation-failclosed passed');
+        }
+
+        console.log('T-verify-ledger-probe-alerts. An unreadable disposition probe is an ALERT — verify may not then claim "no active alerts" ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const runtime = createTempRuntimeRoot('verify-ledger-probe-alerts');
+            const planningDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(planningDir, { recursive: true });
+            fs.writeFileSync(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+            }, null, 2), 'utf8');
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+
+            // HEALTHY CONTROL. The temp workspace is not a git repository, so
+            // dispositionsDirty takes its one legitimate swallow path and reads
+            // clean — this run is the "otherwise clean repo" the degraded run below
+            // must stop claiming.
+            let controlReport = null;
+            const controlOut = await captureConsole(async () => { controlReport = await loaded.service.verify(); });
+            assert.strictEqual(controlReport.hasAlerts, false,
+                'control: with the probe answering, this fixture really is alert-free — otherwise the '
+                + 'assertions below would pass for a reason that has nothing to do with the probe');
+            assert.ok(controlOut.includes('✅ Verify completed with no active alerts.'),
+                'control: and it says so');
+
+            const realExecFileSync = childProcess.execFileSync;
+            let probeHits = 0;
+            let faultReport = null;
+            const faultOut = await withPatchedExecFileSync((command, args, options) => {
+                // Exactly dispositionsDirty's argv and nothing else, so every other
+                // observation verify takes still answers honestly.
+                if (command === 'git' && Array.isArray(args) && args[0] === 'status'
+                    && args.indexOf('.evo-lite/dispositions.json') !== -1) {
+                    probeHits += 1;
+                    // No `.stderr`, so dispositionsDirty RETHROWS instead of taking
+                    // its "not a git repository" swallow.
+                    throw new Error('fatal: unable to read config file .git/config: Permission denied');
+                }
+                return realExecFileSync(command, args, options);
+            }, async () => captureConsole(async () => { faultReport = await loaded.service.verify(); }));
+
+            assert.ok(probeHits >= 1,
+                `self-check: the injected disposition-probe fault must actually have fired (hits=${probeHits})`);
+            assert.ok(faultOut.includes('dispositions.json 提交状态未知'),
+                'precondition: the unknown-probe warning really is printed on this run');
+
+            // THE PROPERTY: `unknown` is not `clean`, so it cannot coexist with a
+            // no-alerts verdict.
+            assert.strictEqual(faultReport.hasAlerts, true,
+                'a durability probe that could not be READ is an alert — unknown is NOT clean, and this is the '
+                + 'visible closure surface where that ruling either holds or does not');
+            assert.ok(!faultOut.includes('✅ Verify completed with no active alerts.'),
+                'FORBIDDEN: printing "dispositions.json 提交状态未知" and then "no active alerts" in the same run '
+                + 'tells the operator the opposite of what was observed');
+            assert.ok(faultReport.nextSteps.some(step => step.includes('dispositions.json')),
+                'the unknown probe pushes its OWN next step naming the ledger, rather than borrowing another surface\'s');
+            assert.ok(faultOut.includes('git status --porcelain -- .evo-lite/dispositions.json'),
+                'and that step is actually PRINTED, naming how to inspect the probe by hand');
+            assert.strictEqual(faultReport.dispositionsDurability, 'unknown',
+                'and the durability reading is recorded as UNKNOWN — not clean, not pending');
+
+            // THE ONE CARVE-OUT, asserted so nobody widens the alert by accident and
+            // nobody narrows it either. `spawnSync git EPERM` means this Node runtime
+            // cannot invoke git AT ALL — verify's own git-status check already
+            // classifies exactly that as an environment limitation (ℹ️ degraded, no
+            // alert, use the wrapper scripts), and the two git observations inside one
+            // verify must not disagree about what a blocked invocation means. It is
+            // still recorded as its own state rather than reported clean.
+            let blockedReport = null;
+            const blockedOut = await withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && Array.isArray(args) && args[0] === 'status'
+                    && args.indexOf('.evo-lite/dispositions.json') !== -1) {
+                    const error = new Error('spawnSync git EPERM');
+                    error.code = 'EPERM';
+                    throw error;
+                }
+                return realExecFileSync(command, args, options);
+            }, async () => captureConsole(async () => { blockedReport = await loaded.service.verify(); }));
+            assert.strictEqual(blockedReport.dispositionsDurability, 'blocked',
+                'a runtime that cannot spawn git at all is BLOCKED — recorded, never silently reported as clean');
+            assert.ok(blockedOut.includes('dispositions.json 提交状态未观测'),
+                'and it is printed, naming the environment rather than the repository');
+            assert.strictEqual(blockedReport.hasAlerts, false,
+                'consistency: the same condition verify already reports as ℹ️ degraded for its own git check '
+                + 'does not become an alert only for the ledger probe');
+
+            // THE DISCRIMINATOR. This fixture differs from the one above in exactly
+            // one respect: git RAN and exited non-zero (`status` is set) instead of
+            // failing to launch. The stderr wording is the Windows phrasing git emits
+            // when it could not read a repository file — and the older
+            // isGitInvocationBlocked predicate matched that STRING, so this repository
+            // failure used to be swallowed as an environment note on Windows while the
+            // identical failure alerted on POSIX, whose wording is `Permission denied`.
+            // A platform-asymmetric silence is worse than either answer applied
+            // consistently, and it silences precisely the condition this probe exists
+            // for.
+            let ranReport = null;
+            const ranOut = await withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && Array.isArray(args) && args[0] === 'status'
+                    && args.indexOf('.evo-lite/dispositions.json') !== -1) {
+                    const error = new Error('Command failed: git status --porcelain -- .evo-lite/dispositions.json');
+                    error.status = 128;               // git RAN — this is the repository's problem
+                    error.stderr = 'error: unable to read .git/index: Access is denied.';
+                    throw error;
+                }
+                return realExecFileSync(command, args, options);
+            }, async () => captureConsole(async () => { ranReport = await loaded.service.verify(); }));
+            assert.strictEqual(ranReport.dispositionsDurability, 'unknown',
+                'FORBIDDEN: git RAN and could not read the repository, so this is a finding about the repo — '
+                + 'classifying it as an environment blackout silences it on Windows only, because the '
+                + 'POSIX wording of the same failure does not match that string');
+            assert.strictEqual(ranReport.hasAlerts, true,
+                'and it alerts, exactly like the POSIX-worded failure above — the platform must not decide '
+                + 'whether an unreadable ledger is worth telling the operator about');
+            assert.ok(!ranOut.includes('✅ Verify completed with no active alerts.'),
+                'FORBIDDEN: reporting no active alerts for a ledger nobody could read');
+
+            quiesceSharedResources();
+            loaded.db.closeDb();
+            console.log('✅ T-verify-ledger-probe-alerts passed');
+        }
+
+        console.log('T-verify-next-steps-render-once. An EARLY alert must not strip the steps pushed after it ...');
+        {
+            const runtime = createTempRuntimeRoot('verify-next-steps-early-alert');
+            const planningDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(planningDir, { recursive: true });
+            fs.writeFileSync(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+            }, null, 2), 'utf8');
+            // EVO_LITE_FORCE_GIT_DIRTY fires an alert in verify's git block, which
+            // runs long BEFORE collectOperatorNextSteps pushes `plan progress`. It is
+            // the same shape as the real "templateSync: out-of-sync" alert that made
+            // T13 look flaky three times on this branch: any early alert at all used
+            // to strip every later step from the OUTPUT while leaving it in the JSON.
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                EVO_LITE_SKIP_GIT_STATUS: '0',
+                EVO_LITE_FORCE_GIT_DIRTY: '1',
+            });
+            let report = null;
+            const output = await captureConsole(async () => { report = await loaded.service.verify(); });
+
+            assert.strictEqual(report.hasAlerts, true,
+                'self-check: the early alert really did fire, so this run takes the alerting render path');
+            assert.ok(output.includes('📋 建议下一步:'), 'an alerting run prints its next-step section');
+            assert.ok(report.nextSteps.some(step => step.includes('plan progress')),
+                'precondition: a LATE producer really did push `plan progress` into the report');
+            // THE PROPERTY, asserted on OUTPUT — the JSON already had it.
+            assert.ok(output.includes('plan progress'),
+                'FORBIDDEN: a step pushed AFTER the render point exists in report.nextSteps but never reaches the '
+                + 'operator — rendering before collectOperatorNextSteps runs silently drops every late step');
+            assert.ok(output.includes('先整理当前 Git 工作区'),
+                'and the EARLY step is not lost either — rendering once must cost neither side its steps');
+
+            quiesceSharedResources();
+            loaded.db.closeDb();
+            console.log('✅ T-verify-next-steps-render-once passed');
+        }
+
+        console.log('T-verify-next-steps-late-alert. A run whose ONLY alert fires late must still print a next-step section ...');
+        {
+            const buildLateAlertRuntime = async (name, failedLastRun) => {
+                const runtime = createTempRuntimeRoot(name);
+                const planningDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
+                fs.mkdirSync(planningDir, { recursive: true });
+                fs.writeFileSync(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
+                    version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+                }, null, 2), 'utf8');
+                if (failedLastRun) {
+                    // readGovernanceRunState reports `failed-last-run`, and verify's
+                    // governance block — which sits AFTER the old render point — is
+                    // then the only thing that sets hasAlerts on this run.
+                    writeText(path.join(runtime.runtimeRoot, 'generated', 'governance', 'post-commit-last-run.json'),
+                        JSON.stringify({ event: 'post-commit', commands: [{ name: 'plan scan', ok: false }] }, null, 2));
+                }
+                const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+                let report = null;
+                const output = await captureConsole(async () => { report = await loaded.service.verify(); });
+                quiesceSharedResources();
+                loaded.db.closeDb();
+                return { report, output };
+            };
+
+            // HEALTHY CONTROL: the identical fixture with a healthy governance run
+            // prints the clean shape, so the section below cannot be "this fixture
+            // always prints one".
+            const control = await buildLateAlertRuntime('verify-late-alert-control', false);
+            assert.strictEqual(control.report.hasAlerts, false, 'control: no alert fires at all');
+            assert.ok(control.output.includes('🧭 常用治理动作:'),
+                'control: the clean shape still reads as 常用治理动作, distinct from the alerting one');
+            assert.ok(control.output.includes('✅ Verify completed with no active alerts.'),
+                'control: and it still says no active alerts');
+
+            const late = await buildLateAlertRuntime('verify-late-alert-degraded', true);
+            assert.strictEqual(late.report.governance.status, 'failed-last-run',
+                'self-check: the injected governance failure really is what alerts here');
+            assert.strictEqual(late.report.hasAlerts, true, 'self-check: and it did set hasAlerts');
+            assert.ok(!late.output.includes('✅ Verify completed with no active alerts.'),
+                'an alerting run does not claim to be alert-free');
+            // THE PROPERTY.
+            assert.ok(late.output.includes('📋 建议下一步:'),
+                'FORBIDDEN: an alerting run that prints NO next-step section at all — with the render before the '
+                + 'alert, the alerting block is skipped as not-yet-alerting and the clean block is skipped as '
+                + 'now-alerting, so every remediation vanishes from the output');
+            assert.ok(late.output.includes('post-commit-last-run.json'),
+                'and the late alert\'s own remediation is the one printed');
+            assert.ok(late.output.includes('plan progress'),
+                'together with every operator step pushed after it');
+            console.log('✅ T-verify-next-steps-late-alert passed');
+        }
+
+        console.log('T-commit-identity-code-commit. An unreadable hash after the CODE commit must not lose the whole flow ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a commit whose code-commit hash could not be read back.';
+            const codeMessage = 'feat: identity code fixture';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // HEALTHY CONTROL: identical plumbing, a subject no commit here carries.
+            {
+                const root = createTempRuntimeRoot('commit-identity-code-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                const fault = installRevParseFault(root, REV_PARSE_FAULT_NEVER);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', codeMessage,
+                    '--mechanism', 'IdentityCodeControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(fault.readProbeLog().thrown, 0,
+                    'control precondition: the preload is installed but never fires');
+                assert.ok(fault.readProbeLog().calls >= 1,
+                    'control precondition: it did SEE the identity probes, so the matcher reaches them');
+                assert.strictEqual(res.status, 0, `control: an unfaulted mem commit exits 0. stderr: ${res.stderr}`);
+                assert.ok(payload.code.commitHash, 'control: the code commit hash is read and reported');
+                assert.strictEqual(payload.errorStage, null, 'control: nothing is blamed');
+                assert.ok(nextStepOf(payload).includes('已完成一次显式闭环'),
+                    'control: the healthy flow still reports a complete closure');
+            }
+
+            const root = createTempRuntimeRoot('commit-identity-code').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            // Fires on the probe that runs while HEAD is the code commit — and the
+            // code commit has, by then, already been created.
+            const fault = installRevParseFault(root, codeMessage);
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', codeMessage,
+                '--mechanism', 'IdentityCode', '--json'], fault.env);
+
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected identity fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+
+            // The mutation is verified against GIT, never by reading the payload back.
+            assert.ok(runGit(root, ['log', '--format=%s']).split('\n').includes(codeMessage),
+                'precondition: the code commit GENUINELY landed before the probe ran');
+
+            // THE PROPERTY: the probe sits outside every try in commitWithContext, so
+            // an unguarded throw escapes the whole function.
+            assert.ok(res.stdout.includes('"stageMode"'),
+                'FORBIDDEN: a commit that already landed leaves the CLI printing a bare error and no payload at '
+                + `all — an identity probe may not abort the flow it observes [stdout: ${res.stdout.trim().slice(0, 200)}]`);
+            const payload = parseCliJson(res, 'mem commit --json (identity fault after code commit)');
+            assert.strictEqual(payload.code.status, 'written',
+                'the code snapshot stage completed and must keep saying so');
+            assert.strictEqual(payload.track.status, 'complete',
+                'and the flow CONTINUED: an unreadable hash must not skip context track for a commit that exists');
+            assert.strictEqual(payload.code.commitIdentity.state, 'unknown',
+                'the identity that could not be read is UNKNOWN — a null hash with a stated reason, not silence');
+            assert.ok(String(payload.code.commitIdentity.detail || '').includes('Permission denied'),
+                'and it carries the reason rather than swallowing it');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请先补救 context track') && !nextStep.includes('请补做 runtime state 的 meta-commit'),
+                `FORBIDDEN: the remediation must not ask for a repeat of any stage [next_step: ${nextStep}]`);
+            assert.ok(nextStep.includes('不要重复提交'),
+                'it must say the commits are already in history');
+            assert.ok(cliModule.formatCommitFlowResult(payload).includes('- code_commit: unknown ('),
+                'and the unknown identity is PRINTED, never a silently missing line');
+            console.log('✅ T-commit-identity-code-commit passed');
+        }
+
+        console.log('T-commit-identity-meta-commit. An unreadable hash after the META commit must not re-label it failed ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a commit whose meta-commit hash could not be read back.';
+            const META_SUBJECT = 'chore(meta): snapshot evo-lite runtime state';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // HEALTHY CONTROL.
+            {
+                const root = createTempRuntimeRoot('commit-identity-meta-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                const fault = installRevParseFault(root, REV_PARSE_FAULT_NEVER);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', 'feat: identity meta control',
+                    '--mechanism', 'IdentityMetaControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(fault.readProbeLog().thrown, 0,
+                    'control precondition: the preload is installed but never fires');
+                assert.strictEqual(res.status, 0, `control: an unfaulted mem commit exits 0. stderr: ${res.stderr}`);
+                assert.ok(payload.runtime.commitHash, 'control: the meta-commit hash is read and reported');
+                assert.strictEqual(payload.errorStage, null, 'control: nothing is blamed');
+            }
+
+            const root = createTempRuntimeRoot('commit-identity-meta').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            const fault = installRevParseFault(root, META_SUBJECT);
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', 'feat: identity meta fixture',
+                '--mechanism', 'IdentityMeta', '--json'], fault.env);
+            const payload = parseCliJson(res, 'mem commit --json (identity fault after meta-commit)');
+
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected identity fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+
+            // Verified against GIT.
+            assert.ok(runGit(root, ['log', '--format=%s']).split('\n').includes(META_SUBJECT),
+                'precondition: the runtime meta-commit GENUINELY landed before the probe ran');
+
+            // THE PROPERTY.
+            assert.notStrictEqual(payload.runtime.status, 'failed',
+                'FORBIDDEN: an identity probe inside the meta-commit try re-labels a commit that already landed '
+                + 'as a failed stage');
+            assert.strictEqual(payload.runtime.status, 'written',
+                'the stage that completed keeps saying so');
+            assert.notStrictEqual(payload.errorStage, 'meta-commit',
+                'and the meta-commit stage must not be blamed for an observer that could not run');
+            assert.strictEqual(payload.runtime.commitIdentity.state, 'unknown',
+                'the hash that could not be read is UNKNOWN, with its reason');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请补做 runtime state 的 meta-commit'),
+                `FORBIDDEN: the remediation must not ask for another meta-commit — one already exists [next_step: ${nextStep}]`);
+            assert.ok(!nextStep.includes('请先补救 context track'), 'nor for another context track');
+            assert.ok(nextStep.includes('不要重复提交'), 'it says the commits are already in history');
+            assert.ok(cliModule.formatCommitFlowResult(payload).includes('- runtime_commit: unknown ('),
+                'and the unknown identity is printed rather than dropped');
+            console.log('✅ T-commit-identity-meta-commit passed');
+        }
+
+        console.log('T-commit-identity-closure-commit. An unreadable hash after the CLOSURE commit must not drop its attribution ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a closure commit whose hash could not be read back.';
+            const CLOSURE_SUBJECT = 'chore(meta): close disposition tombstones written by post-commit';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // HEALTHY CONTROL: the same second-order fixture with the probe answering.
+            {
+                const root = createTempRuntimeRoot('commit-identity-closure-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                writeCountingPostCommitHook(root, '2');
+                const fault = installRevParseFault(root, REV_PARSE_FAULT_NEVER);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', 'feat: identity closure control',
+                    '--mechanism', 'IdentityClosureControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(fault.readProbeLog().thrown, 0,
+                    'control precondition: the preload is installed but never fires');
+                assert.ok(payload.runtime.closureCommitHash,
+                    'control precondition: the closure retry really does run in this fixture, and its hash is read');
+                assert.ok((payload.runtime.files || []).includes('.evo-lite/dispositions.json'),
+                    'control: and the attribution names the ledger that retry committed');
+                assert.strictEqual(payload.errorStage, null, 'control: nothing is blamed');
+            }
+
+            const root = createTempRuntimeRoot('commit-identity-closure').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            // Commit 1 is the code commit, commit 2 the meta-commit; the hook dirties
+            // the ledger on commit 2, which is what forces the closure retry (commit 3).
+            writeCountingPostCommitHook(root, '2');
+            const fault = installRevParseFault(root, CLOSURE_SUBJECT);
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', 'feat: identity closure fixture',
+                '--mechanism', 'IdentityClosure', '--json'], fault.env);
+            const payload = parseCliJson(res, 'mem commit --json (identity fault after closure commit)');
+
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected identity fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+
+            // Verified against GIT.
+            assert.ok(runGit(root, ['log', '--format=%s']).split('\n').includes(CLOSURE_SUBJECT),
+                'precondition: the closure commit GENUINELY landed before the probe ran');
+            assert.ok(runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'])
+                .split('\n').includes('.evo-lite/dispositions.json'),
+            'precondition: and that commit really is the one carrying the ledger');
+
+            // THE PROPERTY: attribution must survive an observer that could not run.
+            assert.ok((payload.runtime.files || []).includes('.evo-lite/dispositions.json'),
+                'FORBIDDEN: the payload stops naming the ledger this flow committed — the rev-parse throw was '
+                + 'swallowed and took the file-set push with it, leaving the reported attribution contradicting disk');
+            assert.notStrictEqual(payload.runtime.status, 'failed',
+                'and a closure that landed is not a failed stage');
+            assert.strictEqual(payload.runtime.status, 'written',
+                'the stage that completed keeps saying so');
+            assert.strictEqual(payload.runtime.closureCommitIdentity.state, 'unknown',
+                'the closure hash that could not be read is UNKNOWN, stated rather than silently absent');
+            assert.strictEqual(payload.runtime.closureCommitHash, null,
+                'and no hash is invented for it');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请补做 runtime state 的 meta-commit')
+                && !nextStep.includes('请先补救 context track'),
+            `FORBIDDEN: the remediation must not ask for a repeat of any stage [next_step: ${nextStep}]`);
+            assert.ok(nextStep.includes('不要重复提交'), 'it says the commits are already in history');
+            assert.ok(cliModule.formatCommitFlowResult(payload).includes('- runtime_closure_commit: unknown ('),
+                'and the unknown closure identity is printed');
+            console.log('✅ T-commit-identity-closure-commit passed');
+        }
+
+        console.log('T-disposition-ledger-unreadable. A corrupt ledger degrades VISIBLY — findings complete,表态 state UNKNOWN ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const sp = require(path.join(CLI_DIR, 'spec-portfolio'));
+            const DEGRADATION_MARKER = /⚠️ \[disposition-ledger-unreadable\]/;
+            const runtime = createTempRuntimeRoot('disposition-corrupt-ledger');
+            const root = runtime.workspaceRoot;
+            const driftReportPath = path.join(root, '.evo-lite', 'generated', 'architecture', 'drift-report.json');
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            runCli(root, ['plan', 'scan']);
+
+            // The fixture carries a REAL live decision on EACH producer. Without one,
+            // "the ledger could not be read" would have nothing to lose and the whole
+            // block would pass vacuously.
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'unknown-status:spec:u',
+                '--choice', 'not-applicable', '--reason', 'child convention']).status, 0,
+            'precondition: the spec-producer disposition must be set');
+            assert.strictEqual(runCli(root, ['disposition', 'set', 'R004:repo:plans',
+                '--choice', 'accepted-debt', '--reason', 'no plans yet by design']).status, 0,
+            'precondition: the planning-producer disposition must be set');
+            const validLedger = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            const specSurface = () => {
+                const registry = sp.buildSpecRegistry(root, { write: false });
+                const findings = registry.specs.flatMap(s => s.findings);
+                return { registry, findings, ids: findings.map(f => f.id).sort(),
+                    text: sp.formatPortfolioReport(registry).join('\n') };
+            };
+            const planSurface = () => {
+                const res = runCli(root, ['plan', 'gaps']);
+                assert.strictEqual(res.status, 0, `plan gaps must keep working. stderr: ${res.stderr}`);
+                const findings = JSON.parse(fs.readFileSync(driftReportPath, 'utf8'))
+                    .findings.filter(f => f.scope === 'planning');
+                return { findings, ids: findings.map(f => f.id).sort(), text: res.stdout };
+            };
+
+            // --- Phase 1: VALID ledger ---
+            const spec1 = specSurface();
+            const plan1 = planSurface();
+            assert.ok(spec1.ids.length > 0 && plan1.ids.length > 0,
+                'precondition: both producers emit findings, or every id comparison below is vacuous');
+            assert.strictEqual(spec1.findings.find(f => f.id === 'unknown-status:spec:u').disposition.status,
+                'current', 'precondition: the spec finding really does resolve to a CURRENT disposition');
+            assert.strictEqual(plan1.findings.find(f => f.id === 'R004:repo:plans').disposition.status,
+                'current', 'precondition: the planning finding really does resolve to a CURRENT disposition');
+            // Match the EMITTED marker, not the bare id: `plan gaps` prints an
+            // absolute report path, so a substring probe also matches any temp
+            // directory whose name happens to contain the id.
+            const degraded = text => DEGRADATION_MARKER.test(text);
+            const degradationLine = text => (text.split('\n').find(l => DEGRADATION_MARKER.test(l)) || '(none)');
+            assert.ok(!degraded(spec1.text),
+                `a valid ledger reports no degradation on the spec surface [got: ${degradationLine(spec1.text)}]`);
+            assert.ok(!degraded(plan1.text),
+                `a valid ledger reports no degradation on the plan gaps surface [got: ${degradationLine(plan1.text)}]`);
+
+            // --- Phase 2a: NO ledger at all. This is the confusable state — every
+            // finding reads `disposition: null` because nobody has decided anything.
+            fs.rmSync(led.ledgerPath(root), { force: true });
+            const specNone = specSurface();
+            const planNone = planSurface();
+            assert.ok(specNone.findings.every(f => f.disposition === null)
+                && planNone.findings.every(f => f.disposition === null),
+            'precondition: with no ledger, every finding is an ordinary undispositioned finding');
+
+            // --- Phase 2b: CORRUPT ledger ---
+            fs.writeFileSync(led.ledgerPath(root), '{ this is not json at all', 'utf8');
+            const spec2 = specSurface();
+            const plan2 = planSurface();
+
+            assert.deepStrictEqual(spec2.ids, spec1.ids,
+                'AC7: an unreadable ledger must not cost a single spec finding');
+            assert.deepStrictEqual(plan2.ids, plan1.ids,
+                'AC7: an unreadable ledger must not cost a single planning finding');
+            assert.ok(spec2.findings.every(f => f.disposition === null)
+                && plan2.findings.every(f => f.disposition === null),
+            'precondition: the corruption really does erase every annotation — so the REPORTED '
+                + 'degradation is the only thing left that can distinguish the two states');
+
+            // THE PROPERTY, not a substring: "the ledger is unreadable" must not
+            // present identically to "nobody has decided". Both surfaces above are
+            // byte-identical in their finding content; only the degradation signal
+            // can tell them apart.
+            assert.notStrictEqual(spec2.text, specNone.text,
+                'an unreadable ledger must NOT present identically to "nobody has decided anything" — '
+                + 'on the spec surface the two states are indistinguishable to a reader');
+            assert.notStrictEqual(plan2.text, planNone.text,
+                'an unreadable ledger must NOT present identically to "nobody has decided anything" — '
+                + 'on the plan gaps surface the two states are indistinguishable to a reader');
+            assert.ok(degraded(spec2.text)
+                && /未处置.*不等于.*无人表态|不等于/.test(spec2.text),
+            'and the difference NAMES the cause: null here does not mean "no decision"');
+            assert.ok(degraded(plan2.text),
+                'plan gaps names the same cause on its own surface');
+
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+            let report;
+            await captureConsole(async () => { report = await loaded.service.verify(); });
+            assert.strictEqual(report.hasAlerts, true,
+                'a genuinely degraded ledger MUST make verify alert');
+            // Presence only, and the message says so. This fixture HAS a genuine
+            // actionable spec finding (the corruption stripped its disposition), so
+            // the 表态老化/超标 next-step legitimately fires here too and an absence
+            // check would be false. The absence property is owned by
+            // T-disposition-ledger-alerting below, whose fixture has zero specs.
+            assert.ok(report.nextSteps.some(s => s.includes('.evo-lite/dispositions.json')),
+                'the ledger degradation gets its own next-step');
+
+            // --- Phase 3: RESTORED ---
+            fs.writeFileSync(led.ledgerPath(root), validLedger, 'utf8');
+            const spec3 = specSurface();
+            const plan3 = planSurface();
+            assert.deepStrictEqual(spec3.ids, spec1.ids, 'restoring the ledger keeps the same spec findings');
+            assert.deepStrictEqual(plan3.ids, plan1.ids, 'restoring the ledger keeps the same planning findings');
+            assert.strictEqual(spec3.findings.find(f => f.id === 'unknown-status:spec:u').disposition.status,
+                'current', 'the CURRENT spec disposition displays normally again');
+            assert.strictEqual(plan3.findings.find(f => f.id === 'R004:repo:plans').disposition.status,
+                'current', 'the CURRENT planning disposition displays normally again');
+            assert.ok(!degraded(spec3.text)
+                && !degraded(plan3.text),
+            'and the degradation signal disappears with the degradation');
+            console.log('✅ T-disposition-ledger-unreadable passed');
+        }
+
+        console.log('T-disposition-ledger-alerting. A corrupt ledger must not prescribe the SPEC remedy ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const sp = require(path.join(CLI_DIR, 'spec-portfolio'));
+            // ZERO specs on purpose. With an actionable spec finding present, the
+            // 表态老化/超标 next-step fires legitimately and the absence check below
+            // would be masked — which is exactly how the first version of this
+            // assertion read as coverage while checking nothing.
+            const runtime = createTempRuntimeRoot('disposition-ledger-alerting');
+            const root = runtime.workspaceRoot;
+            fs.mkdirSync(path.join(root, '.evo-lite'), { recursive: true });
+            fs.writeFileSync(led.ledgerPath(root), '{ this is not json at all', 'utf8');
+
+            const registry = sp.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(registry.specs.length, 0, 'precondition: the fixture really has zero specs');
+            assert.ok(registry.source.dispositionLedgerError,
+                'precondition: the ledger really is unreadable, or nothing below is exercised');
+            const lines = sp.formatPortfolioReport(registry);
+            assert.ok(lines.some(l => l.startsWith(sp.DISPOSITION_LEDGER_WARNING_PREFIX)),
+                'the degradation stays VISIBLE in the human portfolio report');
+            assert.strictEqual(
+                lines.filter(l => l.startsWith('⚠️') && !l.startsWith(sp.DISPOSITION_LEDGER_WARNING_PREFIX)).length, 0,
+                'precondition: the ledger marker is the ONLY ⚠️ line — so any spec remedy below '
+                + 'can only have come from it');
+
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+            let report;
+            await captureConsole(async () => { report = await loaded.service.verify(); });
+            assert.strictEqual(report.hasAlerts, true,
+                'the degradation still alerts — it is a real problem, just not a spec-portfolio one');
+            assert.ok(report.nextSteps.some(s => s.includes('.evo-lite/dispositions.json')),
+                'and it prescribes its own remedy: fix the ledger');
+            assert.ok(!report.nextSteps.some(s => s.includes('表态老化/超标 spec')),
+                'an unreadable ledger must NOT prescribe the spec park/reactivate remedy — '
+                + 'this portfolio has no specs at all, so that instruction names work nobody has');
+            console.log('✅ T-disposition-ledger-alerting passed');
+        }
+
+        console.log('T-disposition-r006-occurrence. A rolled-back change is a NEW occurrence, never the dispositioned one ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const root = createTempRuntimeRoot('disposition-r006-occurrence').workspaceRoot;
+            runGit(root, ['init']);
+            runGit(root, ['config', 'user.name', 'Evo Test']);
+            runGit(root, ['config', 'user.email', 'evo@example.com']);
+
+            // checkR006 short-circuits to [] on a null planIR, so an IR must exist.
+            // It stays uncommitted on purpose: isGovernanceInfraFile filters
+            // `.evo-lite/**` out of the changed-file set, so it cannot become a
+            // finding of its own and pollute the comparison.
+            const ir = { version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: [], status: 'implemented' }],
+                warnings: [] };
+            writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                `${JSON.stringify(ir, null, 2)}\n`);
+
+            const commitBody = (body, message) => {
+                writeText(path.join(root, 'src', 'x.js'), body);
+                runGit(root, ['add', '--', 'src/x.js']);
+                runGit(root, ['commit', '-m', message]);
+            };
+            // COMMITTED observation mode — the same `{ lastCommit: true }` every
+            // disposition command uses. A working-tree R006 has no occurrence at
+            // all and is marked non-dispositionable, so it can never reach here.
+            const snap = () => {
+                const f = gaps.runPlanningDriftCensus(root, ir, { lastCommit: true })
+                    .findings.find(x => x.id === 'R006:file:src/x.js');
+                assert.ok(f, 'precondition: this commit really does emit the R006 finding under test');
+                return { head: runGit(root, ['rev-parse', 'HEAD']), status: f.factInputs.status,
+                    path: f.factInputs.path, print: fp.computeFingerprint(f) };
+            };
+
+            commitBody('A\n', 'seed A');
+            commitBody('B\n', 'C1: A -> B');    // C1 — the change a human dispositions
+            const c1 = snap();
+            commitBody('A\n', 'C2: B -> A');    // C2 — rollback; the decision goes stale
+            commitBody('B\n', 'C3: A -> B again');
+            const c3 = snap();                  // C3 — byte-identical in content to C1's result
+
+            // Preconditions that survive the mutation, so the verdict below is the
+            // only thing a dropped `occurrence` can move.
+            assert.strictEqual(c3.path, c1.path, 'precondition: same file across C1 and C3');
+            assert.strictEqual(c3.status, c1.status,
+                'precondition: same change status across C1 and C3 — the rollback reproduces C1 exactly, '
+                + 'which is what makes a content-derived identity collide');
+            assert.notStrictEqual(c3.head, c1.head,
+                'precondition: C3 is a distinct commit, so there IS an occurrence to distinguish it by');
+
+            assert.notStrictEqual(c3.print, c1.print,
+                'C3 fingerprint != C1 — a rolled-back-and-reapplied change is a NEW occurrence; '
+                + 'reusing C1\'s fingerprint would silently revive the disposition a human made once');
+            console.log('✅ T-disposition-r006-occurrence passed');
+        }
+
+        console.log('T-disposition-census-parse-failure. A spec that BLEW UP under the compatibility root blocks the round ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const root = createTempRuntimeRoot('disposition-census-parse-failure').workspaceRoot;
+            const victim = path.join(root, 'docs', 'superpowers', 'specs', 'boom.md');
+            writeText(victim, ['---', 'id: spec:boom', 'status: done', '---', '', '# B', ''].join('\n'));
+
+            assert.strictEqual(sp.buildSpecRegistry(root, { write: false }).census.complete, true,
+                'precondition: intact, the same compatibility-root spec is a COMPLETE census — '
+                + 'so only the injected fault can move the verdict below');
+
+            // CALL-COUNTED, not a blanket throw. buildSpecRegistry reads the file
+            // ITSELF first, and a failure on that read lands in `errors` and
+            // `continue`s — parseSpecFile would never run, `spec parse threw` would
+            // never be produced, and the census would be incomplete for an entirely
+            // different reason. Read #1 must SUCCEED; only read #2, the one inside
+            // parseSpecFile, throws.
+            const realRead = fs.readFileSync;
+            let victimReads = 0;
+            let reg = null;
+            try {
+                fs.readFileSync = function (p, ...rest) {
+                    if (String(p) === victim) {
+                        victimReads += 1;
+                        if (victimReads >= 2) throw new Error('injected read fault');
+                    }
+                    return realRead.call(this, p, ...rest);
+                };
+                reg = sp.buildSpecRegistry(root, { write: false });
+            } finally {
+                fs.readFileSync = realRead;
+            }
+
+            assert.ok(victimReads >= 2,
+                "calibration sanity: parseSpecFile's own read of the victim must have been reached — "
+                + 'a fault that only hits read #1 exercises the `unreadable` branch instead');
+            assert.deepStrictEqual(reg.errors, [],
+                'precondition: nothing else degraded this round, so the parse failure is the SOLE reason');
+            assert.strictEqual(reg.source.discoveredFileCount, reg.source.parsedSpecCount,
+                'precondition: the file/spec count still agrees — that predicate cannot be what fails');
+            assert.ok((reg.source.warnings || []).some(w => /parse threw/.test(w.reason)),
+                'precondition: the fault really produced a `spec parse threw` sourceWarning');
+
+            assert.strictEqual(reg.census.complete, false,
+                'a parse failure under the compatibility root blocks the round, even though '
+                + 'the id-less design docs beside it do not');
+            console.log('✅ T-disposition-census-parse-failure passed');
+        }
+
+        console.log('T-disposition-list-degraded. A degraded census must not manufacture an ORPHANED in `list` ...');
+        {
+            const root = createTempRuntimeRoot('disposition-list-degraded').workspaceRoot;
+            // A clean spec half, so completeness rests entirely on the planning
+            // producer we are about to break.
+            writeText(path.join(root, 'docs', 'specs', 'ok.md'),
+                ['---', 'id: spec:ok', 'status: active', '---', '', '# OK', ''].join('\n'));
+            const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            writeText(irPath, `${JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [{ id: 'plan:p', status: 'active' }],
+                tasks: [{ id: 'task:t1', linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2)}\n`);
+
+            // The dispositioned finding MUST come from the producer we break. An
+            // `unknown-status:spec:*` entry would survive a broken plan-ir
+            // untouched, `byId` would still hit, and the `complete ? 'orphaned' :
+            // 'unobserved'` line would never execute — the guard unreachable and
+            // any mutation of it dead. R005 is derived from plan-ir, so breaking
+            // plan-ir makes it genuinely absent from the round.
+            const before = parseCliJson(runCli(root, ['disposition', 'list', '--json']), 'disposition list --json');
+            assert.strictEqual(before.complete, true,
+                `precondition: the intact fixture is a COMPLETE census. errors: ${JSON.stringify(before.errors)}`);
+            const wasSet = runCli(root, ['disposition', 'set', 'R005:task:t1',
+                '--choice', 'accepted-debt', '--reason', 'tracked elsewhere']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+
+            fs.writeFileSync(irPath, 'not json');   // degrade THAT producer
+            const res = runCli(root, ['disposition', 'list', '--json']);
+            const parsed = parseCliJson(res, 'disposition list --json');
+            assert.strictEqual(parsed.complete, false, 'precondition: the degraded census is reported as such');
+            const entry = parsed.entries.find(e => e.findingId === 'R005:task:t1');
+            assert.ok(entry, 'precondition: the ledger entry is still listed — degradation hides nothing');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'precondition: no tombstone exists, so the status can only come from the census branch');
+            assert.strictEqual(entry.status, 'unobserved',
+                'a finding we could not look for is unobserved — ORPHANED means a complete census PROVED absence');
+            console.log('✅ T-disposition-list-degraded passed');
+        }
+
+        // --- Observation failure must never impersonate a change in fact ---
+        //
+        // Three observers used to swallow a git failure and return an EMPTY
+        // result, which is indistinguishable from a genuine absence. `sync` reads
+        // absence from a complete census as PROOF and writes a TERMINAL
+        // tombstone, so each of these was a path from "git hiccuped" to "a human
+        // governance decision is permanently destroyed".
+        //
+        // Every fault below fails exactly ONE git question and lets every other
+        // git call — crucially the classifier's own probes — reach real git. That
+        // is what makes the injected condition "git could not answer this", not
+        // "there is no repository here", which is a normal state this tool
+        // supports and must never degrade.
+
+        console.log('T-observation-changed-files. A git diff that FAILED must not read as a clean tree ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const realExec = childProcess.execFileSync;
+
+            const { root, planIR } = createObservationRepo('observation-changed-files', {
+                files: { 'src/a.js': 'module.exports = 1;\n' },
+                planIR: {
+                    version: 'evo-plan-ir@1', specs: [], plans: [],
+                    tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: ['docs/plans/p.md'], status: 'planning-only' }],
+                    warnings: [],
+                },
+            });
+            const findingId = 'R006:file:src/a.js';
+
+            // Healthy control. Without it the degraded assertion could pass
+            // vacuously — a finding that was never emitted cannot vanish.
+            const healthy = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.strictEqual(healthy.complete, true,
+                `precondition: a working git yields a COMPLETE census. errors: ${JSON.stringify(healthy.errors)}`);
+            assert.ok(healthy.findings.some(f => f.id === findingId),
+                'precondition: a working git emits the R006 finding this test is about');
+
+            const wasSet = runCli(root, ['disposition', 'set', findingId,
+                '--choice', 'accepted-debt', '--reason', 'tracked in the next plan']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            let hits = 0;
+            await withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && (args || [])[0] === 'diff-tree' && (args || []).includes('--name-only')) {
+                    hits += 1;
+                    throw new Error('fatal: unable to read tree object: Permission denied');
+                }
+                return realExec(command, args, options);
+            }, async () => {
+                const degraded = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+                assert.ok(hits > 0,
+                    'self-check: the injected git failure must actually have been reached, or this test proves nothing');
+                assert.strictEqual(degraded.complete, false,
+                    'a changed-file set that could not be READ degrades the census — an unreadable diff is not a clean tree');
+                assert.ok(degraded.errors.some(e => /R006 changed-file set \(git diff-tree\) could not be observed/.test(e)),
+                    `the census names WHAT could not be observed. errors: ${JSON.stringify(degraded.errors)}`);
+                assert.ok(!degraded.findings.some(f => f.id === findingId),
+                    'precondition: the failure really does make the finding vanish — that is the trap a complete '
+                    + 'census would have read as authoritative absence');
+                await captureConsole(() => runDispositionSyncInProcess(root));
+            });
+
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'a round whose changed-file observation FAILED leaves the ledger BYTE-IDENTICAL — '
+                + 'observation failure is not fact change');
+            const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+            assert.ok(entry, 'the entry is still there at all');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'no tombstone: only an OBSERVED absence may close a governance decision');
+            console.log('✅ T-observation-changed-files passed');
+        }
+
+        console.log('T-observation-git-state. R013 that could not READ git must degrade, not fall silent ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const realExec = childProcess.execFileSync;
+
+            const { root, planIR } = createObservationRepo('observation-git-state');
+            // A META headSha that is a well-formed sha and is NOT in this repo, so
+            // R013 has something real to report while git is healthy.
+            const declaredHeadSha = '0123456789abcdef0123456789abcdef01234567';
+            writeText(path.join(root, '.evo-lite', 'active_context.md'), [
+                '# Active Context', '', '<!-- BEGIN_META -->',
+                `headSha: ${declaredHeadSha}`, 'ahead: 5', 'behind: 0', '<!-- END_META -->', '',
+            ].join('\n'));
+            // Land it as its own commit so HEAD's changed set is governance
+            // infrastructure only. R006 then short-circuits before it reads an
+            // occurrence, which is what isolates this test on R013's observer
+            // alone: `git rev-parse HEAD` serves both, and a shared failure would
+            // let R006's propagation stand in for the one under test.
+            runGit(root, ['add', '--', '.evo-lite/active_context.md']);
+            runGit(root, ['commit', '-m', 'record META']);
+            const findingId = 'R013:context:head';
+
+            const healthy = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.strictEqual(healthy.complete, true,
+                `precondition: a working git yields a COMPLETE census. errors: ${JSON.stringify(healthy.errors)}`);
+            assert.ok(healthy.findings.some(f => f.id === findingId),
+                'precondition: a working git emits the R013 finding this test is about');
+
+            const wasSet = runCli(root, ['disposition', 'set', findingId,
+                '--choice', 'deferred', '--reason', 'refreshing META after the next commit', '--until', 'next commit']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            let hits = 0;
+            await withPatchedExecFileSync((command, args, options) => {
+                const argv = args || [];
+                // ONLY the plain `git rev-parse HEAD` read. The classifier's probes
+                // (`rev-parse --git-dir`, `rev-parse --verify HEAD`) still reach real
+                // git, so this reads as "a live repository whose HEAD could not be
+                // read", never as "this is not a repository".
+                if (command === 'git' && argv.length === 2 && argv[0] === 'rev-parse' && argv[1] === 'HEAD') {
+                    hits += 1;
+                    throw new Error('fatal: unable to read HEAD: Permission denied');
+                }
+                return realExec(command, args, options);
+            }, async () => {
+                const degraded = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+                assert.ok(hits > 0,
+                    'self-check: the injected git failure must actually have been reached, or this test proves nothing');
+                assert.strictEqual(degraded.complete, false,
+                    'live git state that could not be READ degrades the census — R013 falling silent is not "no drift"');
+                assert.ok(degraded.errors.some(e => /R013 live git state \(git rev-parse HEAD\) could not be observed/.test(e)),
+                    `the census names WHAT could not be observed. errors: ${JSON.stringify(degraded.errors)}`);
+                assert.ok(!degraded.findings.some(f => f.id === findingId),
+                    'precondition: the failure really does make the finding vanish — that is the trap a complete '
+                    + 'census would have read as authoritative absence');
+                await captureConsole(() => runDispositionSyncInProcess(root));
+            });
+
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'a round whose live-git observation FAILED leaves the ledger BYTE-IDENTICAL — '
+                + 'observation failure is not fact change');
+            const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+            assert.ok(entry, 'the entry is still there at all');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'no tombstone: only an OBSERVED absence may close a governance decision');
+
+            // A DECLARED upstream whose remote-tracking ref was pruned. `@{u}`
+            // tests RESOLVABILITY; `branch.<name>.merge` is what records that an
+            // upstream exists. Any `fetch --prune` after a remote branch is
+            // deleted lands here, and treating it as "no upstream" suppresses
+            // R013:sync under a clean census — but the ahead/behind is not "now
+            // in agreement", it is UNKNOWABLE.
+            const branch = runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+            // `remote add` is what installs the fetch refspec that maps
+            // refs/heads/<branch> on origin to refs/remotes/origin/<branch>;
+            // without it @{u} cannot resolve even with the branch config set.
+            // The URL is never contacted — nothing here reaches the network.
+            runGit(root, ['remote', 'add', 'origin', 'https://example.invalid/x.git']);
+            runGit(root, ['config', `branch.${branch}.remote`, 'origin']);
+            runGit(root, ['config', `branch.${branch}.merge`, `refs/heads/${branch}`]);
+            runGit(root, ['update-ref', `refs/remotes/origin/${branch}`, 'HEAD']);
+            const syncFindingId = 'R013:context:sync';
+            const withUpstream = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.strictEqual(withUpstream.complete, true,
+                `precondition: a resolvable upstream is a COMPLETE census. errors: ${JSON.stringify(withUpstream.errors)}`);
+            assert.ok(withUpstream.findings.some(f => f.id === syncFindingId),
+                'precondition: with the tracking ref present R013 CAN compare ahead/behind, and reports the disagreement');
+
+            runGit(root, ['update-ref', '-d', `refs/remotes/origin/${branch}`]);   // exactly what fetch --prune does
+            const pruned = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.ok(!pruned.findings.some(f => f.id === syncFindingId),
+                'precondition: the pruned ref really does make the finding vanish');
+            assert.strictEqual(pruned.complete, false,
+                'a DECLARED upstream whose tracking ref was pruned makes ahead/behind UNKNOWABLE, not equal — '
+                + 'resolvability is not existence');
+            assert.ok(pruned.errors.some(e => /R013 ahead\/behind/.test(e)),
+                `the census names what could not be observed. errors: ${JSON.stringify(pruned.errors)}`);
+
+            // And the genuinely normal case stays silent: no upstream was ever
+            // declared, so there is nothing to compare and nothing to report.
+            runGit(root, ['config', '--unset', `branch.${branch}.merge`]);
+            const noUpstream = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+            assert.strictEqual(noUpstream.complete, true,
+                `a branch with no declared upstream is a COMPLETE census. errors: ${JSON.stringify(noUpstream.errors)}`);
+            console.log('✅ T-observation-git-state passed');
+        }
+
+        console.log('T-observation-last-touched. An unreadable git history must not become a local mtime ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const realExec = childProcess.execFileSync;
+
+            const oldStamp = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString();
+            const { root } = createObservationRepo('observation-last-touched', {
+                files: {
+                    'docs/specs/aged.md': ['---', 'id: spec:aged', 'status: adopted', '---', '', '# Aged', ''].join('\n'),
+                },
+                commitEnv: { GIT_AUTHOR_DATE: oldStamp, GIT_COMMITTER_DATE: oldStamp },
+            });
+            const findingId = 'aging-no-plan:spec:aged';
+
+            const healthy = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(healthy.census.complete, true,
+                `precondition: a working git yields a COMPLETE spec census. errors: ${JSON.stringify(healthy.census.errors)}`);
+            const healthySpec = healthy.specs.find(s => s.id === 'spec:aged');
+            assert.strictEqual(healthySpec.lastTouchedProvenance, 'git',
+                'precondition: with git working, lastTouchedAt is GIT evidence — a fact of the project, not of this checkout');
+            const healthyFinding = (healthySpec.findings || []).find(f => f.id === findingId);
+            assert.ok(healthyFinding, 'precondition: a working git emits the aging finding this test is about');
+            assert.notStrictEqual(healthyFinding.dispositionable, false,
+                'precondition: a git-derived aging finding IS dispositionable, or the set below could not happen');
+
+            const wasSet = runCli(root, ['disposition', 'set', findingId,
+                '--choice', 'wont-fix', '--reason', 'kept as a reference spec']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            let hits = 0;
+            await withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && (args || [])[0] === 'log') {
+                    hits += 1;
+                    throw new Error('fatal: unable to read commit object: Permission denied');
+                }
+                return realExec(command, args, options);
+            }, async () => {
+                const degraded = specPortfolio.buildSpecRegistry(root, { write: false });
+                assert.ok(hits > 0,
+                    'self-check: the injected git failure must actually have been reached, or this test proves nothing');
+                assert.strictEqual(degraded.census.complete, false,
+                    'a git history that could not be READ degrades the spec census — the fallback silently swapped '
+                    + 'a project fact for a property of this checkout');
+                assert.ok(degraded.census.errors.some(e => /git history for .* could not be observed/.test(e)),
+                    `the census names WHAT could not be observed. errors: ${JSON.stringify(degraded.census.errors)}`);
+                const spec = degraded.specs.find(s => s.id === 'spec:aged');
+                assert.strictEqual(spec.lastTouchedProvenance, 'mtime',
+                    'precondition: the fallback really did fire, so the date now comes from the filesystem');
+                assert.ok(!(spec.findings || []).some(f => f.id === findingId),
+                    'precondition: the mtime of a freshly written checkout pushes idleDays under the threshold and the '
+                    + 'finding VANISHES — that is the trap a complete census would have read as authoritative absence');
+                await captureConsole(() => runDispositionSyncInProcess(root));
+            });
+
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'a round whose git history was unreadable leaves the ledger BYTE-IDENTICAL — '
+                + 'observation failure is not fact change');
+            const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+            assert.ok(entry, 'the entry is still there at all');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'no tombstone: only an OBSERVED absence may close a governance decision');
+
+            // The OTHER half of the mtime rule, and a different question from the
+            // one above. Here git works perfectly and simply reports that this file
+            // has no commit — a normal, extremely common state (any spec written but
+            // not yet committed). That must NOT degrade the census. But the date it
+            // falls back to is this checkout's mtime, which no clone reproduces, so
+            // the finding stays visible and stays OUT of the disposition id space.
+            const untrackedStamp = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000);
+            const untrackedPath = path.join(root, 'docs', 'specs', 'fresh.md');
+            writeText(untrackedPath, ['---', 'id: spec:fresh', 'status: adopted', '---', '', '# Fresh', ''].join('\n'));
+            fs.utimesSync(untrackedPath, untrackedStamp, untrackedStamp);
+            const mixed = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(mixed.census.complete, true,
+                `an UNCOMMITTED spec is a normal state, never an observation failure. errors: ${JSON.stringify(mixed.census.errors)}`);
+            const fresh = mixed.specs.find(s => s.id === 'spec:fresh');
+            assert.strictEqual(fresh.lastTouchedProvenance, 'mtime',
+                'precondition: an uncommitted file really does fall back to its mtime');
+            const freshFinding = (fresh.findings || []).find(f => f.id === 'aging-no-plan:spec:fresh');
+            assert.ok(freshFinding, 'the finding is still EMITTED — nothing is ever filtered out of the collection (AC7)');
+            assert.strictEqual(freshFinding.dispositionable, false,
+                'but it is kept out of the disposition id space: a fingerprint over a filesystem mtime describes '
+                + 'one working copy, not the project, and would lapse the moment anyone else looked');
+            const refused = runCli(root, ['disposition', 'set', 'aging-no-plan:spec:fresh',
+                '--choice', 'wont-fix', '--reason', 'nope']);
+            assert.notStrictEqual(refused.status, 0, 'and `set` actually refuses it rather than recording a local-only decision');
+            console.log('✅ T-observation-last-touched passed');
+        }
+
+        console.log('T-observation-source-json. A file that exists and cannot be parsed is not an absent one ...');
+        {
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+
+            // Ten idle days against a CONFIGURED threshold of 7. If the config
+            // silently reverts to the default 14, every finding in the 8-14 band
+            // disappears — a threshold nobody changed, applied because a file
+            // could not be read.
+            const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+            const { root } = createObservationRepo('observation-source-json', {
+                files: {
+                    'docs/specs/aged.md': ['---', 'id: spec:aged', 'status: adopted', '---', '', '# Aged', ''].join('\n'),
+                    '.evo-lite/config.json': `${JSON.stringify({ specPortfolio: { agingDays: 7 } }, null, 2)}\n`,
+                },
+                commitEnv: { GIT_AUTHOR_DATE: tenDaysAgo, GIT_COMMITTER_DATE: tenDaysAgo },
+            });
+            const configPath = path.join(root, '.evo-lite', 'config.json');
+            const findingId = 'aging-no-plan:spec:aged';
+
+            const healthy = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(healthy.agingDays, 7, 'precondition: the CONFIGURED threshold is in force');
+            assert.strictEqual(healthy.census.complete, true,
+                `precondition: the intact fixture is a COMPLETE census. errors: ${JSON.stringify(healthy.census.errors)}`);
+            assert.ok((healthy.specs.find(s => s.id === 'spec:aged').findings || []).some(f => f.id === findingId),
+                'precondition: 10 idle days exceeds the configured 7, so the finding exists');
+
+            const wasSet = runCli(root, ['disposition', 'set', findingId,
+                '--choice', 'wont-fix', '--reason', 'kept as a reference spec']);
+            assert.strictEqual(wasSet.status, 0,
+                `precondition: set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+            const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+            fs.writeFileSync(configPath, '{ specPortfolio: this is not json');
+            const degraded = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(degraded.agingDays, 14,
+                'precondition: the corrupt config really does revert the threshold to the default');
+            assert.strictEqual(degraded.census.complete, false,
+                'a config that EXISTS and could not be parsed degrades the census — the threshold now in force is '
+                + 'not the one this project configured');
+            assert.ok(degraded.census.errors.some(e => /config\.json exists but could not be parsed/.test(e)),
+                `the census names WHAT could not be read. errors: ${JSON.stringify(degraded.census.errors)}`);
+            assert.ok(!(degraded.specs.find(s => s.id === 'spec:aged').findings || []).some(f => f.id === findingId),
+                'precondition: the reverted threshold really does make the finding vanish (10 < 14) — that is the '
+                + 'trap a complete census would have read as authoritative absence');
+
+            const sync = runCli(root, ['disposition', 'sync']);
+            assert.ok(/degrad/i.test(sync.stdout + sync.stderr),
+                `the degradation is reported, never silent. stdout: ${sync.stdout}`);
+            assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                'an unreadable config leaves the ledger BYTE-IDENTICAL — observation failure is not fact change');
+            const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+            assert.ok(entry, 'the entry is still there at all');
+            assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                'no tombstone: only an OBSERVED absence may close a governance decision');
+
+            // The positive control for the same distinction: an ABSENT config is
+            // the normal state with a defined default, and must NOT degrade.
+            fs.rmSync(configPath);
+            assert.strictEqual(specPortfolio.buildSpecRegistry(root, { write: false }).census.complete, true,
+                'an ABSENT config is normal — only an unreadable one degrades');
+
+            // Same rule for plan-ir, where the damage is subtler: an empty
+            // linkedPlans removes every zombie-plan finding AND flips state
+            // active -> adopted, which RENAMES aging-inactive:<spec> to
+            // aging-no-plan:<spec>. collectAllFindings happens to degrade on the
+            // same file through safeLoadPlanIR, but that is a cross-module
+            // coincidence — the spec census must state its own observation.
+            const irPath = path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            fs.writeFileSync(irPath, 'not json at all');
+            const irDegraded = specPortfolio.buildSpecRegistry(root, { write: false });
+            assert.strictEqual(irDegraded.census.complete, false,
+                'an unparseable plan-ir degrades the SPEC census on its own authority, not by borrowing another '
+                + "module's guard");
+            assert.ok(irDegraded.census.errors.some(e => /plan-ir\.json exists but could not be parsed/.test(e)),
+                `the census names WHAT could not be read. errors: ${JSON.stringify(irDegraded.census.errors)}`);
+
+            fs.rmSync(irPath);
+            assert.strictEqual(specPortfolio.buildSpecRegistry(root, { write: false }).census.complete, true,
+                'an ABSENT plan-ir is normal — a project with no planning IR is not a project whose IR is broken');
+            console.log('✅ T-observation-source-json passed');
+        }
+
+        console.log('T-observation-not-a-repo. A workspace that is simply not a git repo is NORMAL, never degraded ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+
+            // The boundary this test defends: if "git said no" were treated as an
+            // observation failure, every non-repo workspace — most fixtures, and
+            // plenty of real projects — would be permanently incomplete and `sync`
+            // would never tombstone anything again. That is strictly worse than the
+            // bug the degradation above exists to fix.
+            const bare = createTempRuntimeRoot('observation-not-a-repo').workspaceRoot;
+            writeText(path.join(bare, 'docs', 'specs', 'ok.md'),
+                ['---', 'id: spec:ok', 'status: done', '---', '', '# OK', ''].join('\n'));
+            writeText(path.join(bare, 'src', 'a.js'), 'module.exports = 1;\n');
+            const planIR = { version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [] };
+            writeText(path.join(bare, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                `${JSON.stringify(planIR, null, 2)}\n`);
+
+            assert.strictEqual(gaps.classifyGitFailure(bare), 'no-repository',
+                'precondition: the classifier recognizes a non-repository as such');
+            for (const options of [{}, { lastCommit: true }]) {
+                const census = gaps.runPlanningDriftCensus(bare, planIR, options);
+                assert.strictEqual(census.complete, true,
+                    `a non-repository workspace is a COMPLETE planning census (${JSON.stringify(options)}). `
+                    + `errors: ${JSON.stringify(census.errors)}`);
+            }
+            assert.strictEqual(specPortfolio.buildSpecRegistry(bare, { write: false }).census.complete, true,
+                'and a COMPLETE spec census — no git evidence anywhere is an answer, not a failure');
+
+            // A repository whose HEAD is unborn is the same kind of normal: there is
+            // genuinely no history to read yet.
+            const unborn = createTempRuntimeRoot('observation-unborn-head').workspaceRoot;
+            writeText(path.join(unborn, 'docs', 'specs', 'ok.md'),
+                ['---', 'id: spec:ok', 'status: done', '---', '', '# OK', ''].join('\n'));
+            writeText(path.join(unborn, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                `${JSON.stringify(planIR, null, 2)}\n`);
+            runGit(unborn, ['init']);
+            assert.strictEqual(gaps.classifyGitFailure(unborn), 'no-commits',
+                'precondition: a repository with no commits is classified apart from both a failure and a non-repo');
+            const unbornCensus = gaps.runPlanningDriftCensus(unborn, planIR, { lastCommit: true });
+            assert.strictEqual(unbornCensus.complete, true,
+                `an unborn HEAD is a COMPLETE census. errors: ${JSON.stringify(unbornCensus.errors)}`);
+            assert.strictEqual(specPortfolio.buildSpecRegistry(unborn, { write: false }).census.complete, true,
+                'and so is its spec census');
+
+            // --- The negative half. Without it this block encodes the WRONG
+            // assumption: that "git said no" is always one of the two normal
+            // states above. A git probe answers "can git OPEN this repository?",
+            // and every reason it cannot — a deleted HEAD, an ownership refusal,
+            // a truncated ref, git absent from PATH — fails EXACTLY like "there
+            // is no repository here". A repository that exists and cannot be read
+            // must degrade, or this whole fix is re-armed through its own
+            // boundary and sync tombstones from a silently empty observation.
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const brokenRepoCase = async (name, describe, breakIt) => {
+                const { root, planIR } = createObservationRepo(name, {
+                    files: { 'src/a.js': 'module.exports = 1;\n' },
+                    planIR: {
+                        version: 'evo-plan-ir@1', specs: [], plans: [],
+                        tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: ['docs/plans/p.md'], status: 'planning-only' }],
+                        warnings: [],
+                    },
+                });
+                const findingId = 'R006:file:src/a.js';
+
+                const intact = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+                assert.strictEqual(intact.complete, true,
+                    `${describe}: precondition — the INTACT repo is a complete census. errors: ${JSON.stringify(intact.errors)}`);
+                assert.ok(intact.findings.some(f => f.id === findingId),
+                    `${describe}: precondition — the intact repo emits the finding this case is about`);
+                const wasSet = runCli(root, ['disposition', 'set', findingId,
+                    '--choice', 'accepted-debt', '--reason', 'tracked in the next plan']);
+                assert.strictEqual(wasSet.status, 0,
+                    `${describe}: precondition — set must succeed, or every assertion below is vacuous. stderr: ${wasSet.stderr}`);
+                const before = fs.readFileSync(led.ledgerPath(root), 'utf8');
+
+                breakIt(root);
+
+                // The census property first: that is the behaviour that protects
+                // the decision. The classifier verdict is asserted below as the
+                // explanation, not as the thing under test.
+                const degraded = gaps.runPlanningDriftCensus(root, planIR, { lastCommit: true });
+                assert.strictEqual(degraded.complete, false,
+                    `${describe}: a BROKEN repository degrades the census — an unreadable repo is not an empty one`);
+                assert.strictEqual(gaps.classifyGitFailure(root), 'unavailable',
+                    `${describe}: a repository that EXISTS and cannot be read is UNAVAILABLE — never "no repository" `
+                    + 'and never "no commits". The .git directory is right there.');
+                assert.ok(degraded.errors.some(e => /could not be observed/.test(e)),
+                    `${describe}: the census names what could not be observed. errors: ${JSON.stringify(degraded.errors)}`);
+                assert.ok(!degraded.findings.some(f => f.id === findingId),
+                    `${describe}: precondition — the breakage really does make the finding vanish, which is exactly `
+                    + 'what a complete census would have read as authoritative absence');
+
+                const sync = runCli(root, ['disposition', 'sync']);
+                assert.ok(/degrad/i.test(sync.stdout + sync.stderr),
+                    `${describe}: the degradation is reported, never silent. stdout: ${sync.stdout}`);
+                assert.strictEqual(fs.readFileSync(led.ledgerPath(root), 'utf8'), before,
+                    `${describe}: a BROKEN repository leaves the ledger BYTE-IDENTICAL — observation failure is not fact change`);
+                const entry = led.readLedger(root).entries.find(e => e.findingId === findingId);
+                assert.ok(entry, `${describe}: the entry is still there at all`);
+                assert.ok(!Object.prototype.hasOwnProperty.call(entry, 'orphanedAt'),
+                    `${describe}: no tombstone survives a repository we could not read`);
+            };
+
+            // git reports "fatal: not a git repository" for this — verified.
+            await brokenRepoCase('observation-broken-head', 'missing .git/HEAD', (root) => {
+                fs.rmSync(path.join(root, '.git', 'HEAD'));
+                assert.ok(fs.existsSync(path.join(root, '.git')),
+                    'precondition: .git is still present — the repository EXISTS, it is BROKEN');
+            });
+
+            // Not hypothetical: this project's own memory records Windows
+            // NUL-filling .git/refs/heads/main, recovered from the reflog. git
+            // reports "Needed a single revision", which looks exactly like an
+            // unborn HEAD — hence the reflog evidence check.
+            await brokenRepoCase('observation-zeroed-ref', 'NUL-zeroed branch ref with the reflog intact', (root) => {
+                const gitDir = path.join(root, '.git');
+                const ref = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim().replace(/^ref:\s*/, '');
+                fs.writeFileSync(path.join(gitDir, ...ref.split('/')), Buffer.alloc(41, 0));
+                assert.ok(fs.statSync(path.join(gitDir, 'logs', 'HEAD')).size > 0,
+                    'precondition: the reflog survived — that is the evidence this repo HAS had commits, '
+                    + 'and it is what made the recorded incident recoverable');
+            });
+            console.log('✅ T-observation-not-a-repo passed');
+        }
+
         console.log('T-spec-status-vocabulary. An invented spec status is surfaced, never silently bucketed ...');
         {
             const specPortfolio = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
@@ -5728,9 +8554,17 @@ async function runGovernanceTests() {
             const report = specPortfolio.formatPortfolioReport(registry);
             assert.strictEqual(report[0], '📋 [Spec Portfolio]: adopted=3 active=1 parked=1 shipped=1',
                 'first report line summarizes counts per state');
-            const warnLines = report.slice(1);
-            assert.strictEqual(warnLines.length, 3, 'one WARN line per warning across the fixture');
-            assert.ok(warnLines.every(l => l.startsWith('⚠️')), 'every warning line is prefixed with the WARN glyph');
+            // Task 9 changed the SHAPE, not the content: the ⚠️ glyph now leads a
+            // single actionable header and the per-finding lines are indented
+            // beneath it. The old promise — one TOP-LEVEL ⚠️ line per warning — is
+            // genuinely retired; what is still promised is that every actionable
+            // finding gets its own named line.
+            assert.strictEqual(report[1], '⚠️ 3 条待处理 finding',
+                'the actionable count leads the projection');
+            const warnLines = report.slice(2);
+            assert.strictEqual(warnLines.length, 3, 'one line per actionable finding across the fixture');
+            assert.ok(warnLines.every(l => l.startsWith('   ⚠️')),
+                'every finding line is indented under the header and keeps the WARN glyph');
             assert.ok(warnLines.some(l => l.includes('spec:c') && l.includes('天无活动')), 'aging-no-plan line mentions spec:c and idle days');
             assert.ok(warnLines.some(l => l.includes('spec:b') && l.includes('zombie')), 'zombie-plan line mentions spec:b');
             assert.ok(warnLines.some(l => l.includes('spec:e') && l.includes('体量超标')), 'size-exceeded line mentions spec:e');
@@ -5998,7 +8832,12 @@ async function runGovernanceTests() {
                 });
                 const portfolioLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]:'));
                 assert.ok(portfolioLine, 'verify output must include a 📋 [Spec Portfolio]: line');
-                assert.ok(output.split('\n').some(l => l.startsWith('⚠️') && l.includes('spec:m')),
+                // Task 9: the glyph leads the actionable HEADER; the spec-named
+                // line is indented beneath it. Both halves are asserted so the
+                // relaxation of `startsWith` cannot hide a lost header.
+                assert.ok(output.split('\n').some(l => l.startsWith('⚠️') && /条待处理 finding/.test(l)),
+                    'verify output must include the ⚠️ actionable header');
+                assert.ok(output.split('\n').some(l => l.trim().startsWith('⚠️') && l.includes('spec:m')),
                     'verify output must include a ⚠️ aging warning line for spec:m');
                 assert.strictEqual(report.hasAlerts, true, 'report.hasAlerts must be true when a spec portfolio warning fires');
                 assert.ok(report.specPortfolio, 'report.specPortfolio must be populated');

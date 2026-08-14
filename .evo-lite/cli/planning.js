@@ -87,15 +87,36 @@ function registerPlanCommands(program, deps = {}) {
         .action(async (options) => {
             const { runPlanningDrift } = require('./planning/gaps');
             const { loadReport, saveReport, mergeFindings } = require('./architecture/diff');
+            const { readLedger } = require('./disposition/ledger');
+            const { annotate } = require('./disposition/resolve');
             const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
             const planIR = fs.existsSync(irPath) ? JSON.parse(fs.readFileSync(irPath, 'utf8')) : null;
             if (!planIR) console.log('No plan-ir.json found. Run: mem plan scan first.\n');
 
             console.log('Running planning drift checks...\n');
-            const newFindings = runPlanningDrift(projectRoot, planIR, {
+            let newFindings = runPlanningDrift(projectRoot, planIR, {
                 lastCommit: !!options.lastCommit,
                 changedFilesFromEnv: !!options.changedFilesFromEnv,
             });
+
+            let ledger = { version: 'evo-disposition-ledger@1', entries: [] };
+            // Same contract as the spec producer: the empty-ledger fallback keeps every
+            // finding (AC7), but the degradation is REPORTED. Silently substituting an
+            // empty ledger turns every live decision into `disposition: null`, which a
+            // reader would take as "nobody has decided" rather than "the decision
+            // record could not be read".
+            let dispositionLedgerError = null;
+            try {
+                ledger = readLedger(projectRoot);
+            } catch (err) {
+                dispositionLedgerError = err && err.message ? err.message : 'disposition ledger unreadable';
+            }
+            newFindings = newFindings.map(f => annotate(f, ledger));
+            if (dispositionLedgerError) {
+                console.log(`⚠️ [disposition-ledger-unreadable] 表态账本读取失败 (${dispositionLedgerError})`);
+                console.log('   findings 完整未删减，但表态状态未知 — 此处的“未处置”不等于“无人表态”；'
+                    + '修复 .evo-lite/dispositions.json 后重新查看\n');
+            }
 
             const existing = loadReport(projectRoot);
             existing.findings = mergeFindings(existing.findings, newFindings, 'planning');

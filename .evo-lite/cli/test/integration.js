@@ -9,7 +9,7 @@ const {
     CLI_DIR, WORKSPACE_ROOT, TEMPLATE_CONTEXT_PATH, SHARED_CACHE_DIR,
     TEMPLATE_CLI_DIR, TEMPLATE_ROOT_DIR, INIT_ENTRY,
     createTempRuntimeRoot, createTempTemplateCli, copyRecursive, createTempTemplateRoot,
-    ensureParent, writeText, runGit, getGitShell, runPostCommitHook,
+    ensureParent, writeText, runGit, runCli, getGitShell, runPostCommitHook,
     createHookTestRepo, runInitializer,
     quiesceSharedResources,
     readNdjson, createLegacyInitProject, createModernInitProject,
@@ -3595,7 +3595,7 @@ async function runIntegrationTests() {
                 runPostCommitHook(repo.projectRoot);
 
                 const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
-                assert.ok(findings.some(f => f.id === 'R006:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
+                assert.ok(findings.some(f => f.id === 'R006:file:src/foo.js'), 'code-only commit should produce an R006 finding for src/foo.js');
             } finally {
                 fs.rmSync(repo.projectRoot, { recursive: true, force: true });
             }
@@ -3641,7 +3641,7 @@ async function runIntegrationTests() {
                 runPostCommitHook(repo.projectRoot);
 
                 const findings = JSON.parse(fs.readFileSync(repo.findingsPath, 'utf8'));
-                assert.ok(findings.some(f => f.id === 'R006:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
+                assert.ok(findings.some(f => f.id === 'R006:file:src/root.js'), 'root commit should still surface src/root.js in R006 findings');
             } finally {
                 fs.rmSync(repo.projectRoot, { recursive: true, force: true });
             }
@@ -4078,6 +4078,287 @@ async function runIntegrationTests() {
                 fs.rmSync(root, { recursive: true, force: true });
             }
             console.log('✅ T-governance-cli passed');
+        }
+
+        console.log('T-disposition-cli. set validates its inputs and never trusts the caller ...');
+        {
+            const root = createTempRuntimeRoot('disposition-cli').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: closed-experimental', '---', '', '# S', ''].join('\n'));
+            const run = (args) => runCli(root, ['disposition', ...args]);
+
+            let r = run(['set', 'unknown-status:spec:does-not-exist', '--choice', 'wont-fix', '--reason', 'x']);
+            assert.notStrictEqual(r.status, 0, 'refuses to disposition a finding that is not emitted');
+
+            r = run(['set', 'unknown-status:spec:u', '--choice', 'invented', '--reason', 'x']);
+            assert.notStrictEqual(r.status, 0, 'choice is a closed vocabulary');
+
+            r = run(['set', 'unknown-status:spec:u', '--choice', 'accepted-debt', '--reason', '']);
+            assert.notStrictEqual(r.status, 0, 'reason is mandatory');
+
+            r = run(['set', 'unknown-status:spec:u', '--choice', 'deferred', '--reason', 'later']);
+            assert.notStrictEqual(r.status, 0, 'deferred without until is rejected — no bare deferral');
+
+            r = run(['set', 'unknown-status:spec:u', '--choice', 'deferred', '--reason', 'later',
+                     '--until', '2026-09-01']);
+            assert.strictEqual(r.status, 0, 'deferred with until is accepted');
+
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const entry = led.readLedger(root).entries[0];
+            assert.match(entry.fingerprint, /^[0-9a-f]{64}$/, 'the system derived the fingerprint');
+            assert.strictEqual(entry.until, '2026-09-01');
+            assert.ok('head' in entry, 'provenance head is recorded (never part of the fingerprint)');
+
+            // MERGED-CENSUS COMPLETENESS. Task 8's `sync` tombstones orphaned
+            // ledger entries only when the round that observed their absence was
+            // COMPLETE. `collectAllFindings` merges two independent producers
+            // (spec-portfolio + planning), so completeness must come from BOTH —
+            // a merged census that only reflects one producer would let sync
+            // tombstone from an incomplete round. At this point the spec census
+            // is clean (one well-formed spec, no parse failures) but no
+            // plan-ir.json has been written yet, so the planning producer is
+            // degraded; the merge must surface that.
+            const { collectAllFindings } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            assert.strictEqual(collectAllFindings(root).complete, false,
+                'merged census is incomplete while the planning producer has not run, ' +
+                'even though the spec census alone is clean');
+
+            // POSITIVE CONTROL: the four refusal assertions above only prove
+            // something if `disposition` actually registered as a command group.
+            // safeRegister() swallows a require-time throw and continues without
+            // it — every `mem disposition ...` call would then exit non-zero with
+            // "unknown command", making all four `notStrictEqual(status, 0)`
+            // checks pass vacuously. The 'deferred with until is accepted' assertion
+            // just above (status === 0, plus the ledger entry it produced) is that
+            // positive control: it can only pass if the real `set` handler ran.
+
+            // SHADOW AMBIGUITY. The reachable case is not "an uncommitted file" —
+            // that one is simply absent from the committed census and would be
+            // rejected by the `no such finding` branch, making the guard
+            // unreachable and the mutation dead. The real case is the SAME path
+            // carrying a committed R006 AND a further uncommitted change: one
+            // findingId, two occurrences.
+            // harness exports runGit(cwd, args); there is no gitInit/gitCommitAll.
+            runGit(root, ['init']);
+            runGit(root, ['config', 'user.name', 'Evo Test']);
+            runGit(root, ['config', 'user.email', 'evo@example.com']);
+            ensureParent(path.join(root, 'src', 'shadow.js'));
+            fs.writeFileSync(path.join(root, 'src', 'shadow.js'), 'v1');
+            runGit(root, ['add', '.']);
+            runGit(root, ['commit', '-m', 'add unlinked file']);           // committed R006 now exists
+
+            // checkR006 short-circuits to [] when planIR is null (planning/gaps.js),
+            // so a plan-ir.json must exist for R006 to emit anything at all. Written
+            // AFTER the commit, not before: isGovernanceInfraFile() filters
+            // `.evo-lite/**` out of the changed-file set, so an uncommitted IR does
+            // not itself produce an R006 finding.
+            writeText(path.join(root, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2));
+
+            fs.writeFileSync(path.join(root, 'src', 'shadow.js'), 'v2');   // worktree R006 too
+
+            const committed = collectAllFindings(root).findings.find(f => f.id === 'R006:file:src/shadow.js');
+            assert.ok(committed, 'the committed occurrence IS in the disposition id space');
+            const shadowed = run(['set', 'R006:file:src/shadow.js', '--choice', 'accepted-debt', '--reason', 'x']);
+            assert.notStrictEqual(shadowed.status, 0,
+                'one findingId with two live occurrences must be refused, not silently bound to the committed one');
+            assert.match(shadowed.stderr + shadowed.stdout, /working tree/,
+                'the refusal explains which ambiguity to resolve');
+
+            const listed = run(['list', '--json']);
+            assert.ok(listed.stdout.includes('2026-09-01'),
+                'until is shown by default so a lapsed deferral cannot sit unseen');
+
+            assert.strictEqual(run(['revoke', 'unknown-status:spec:u']).status, 0);
+            assert.strictEqual(led.readLedger(root).entries.length, 0, 'revoke removes the entry');
+            console.log('✅ T-disposition-cli passed');
+        }
+
+        console.log('T-disposition-cli-spec-half. merged census honors the SPEC producer\'s completeness too ...');
+        {
+            const specHalfRoot = createTempRuntimeRoot('disposition-cli-spec-half').workspaceRoot;
+            // A docs/specs file with no usable `id: spec:...` frontmatter is a real
+            // parse failure — buildSpecRegistry pushes it to `errors` (docs/specs is
+            // the strict root, unlike docs/superpowers/specs), degrading
+            // `census.complete`. The planning producer stays fully complete (a
+            // valid, empty plan-ir.json, no fatal warnings), isolating the SPEC
+            // half specifically — the fix-round-1 gap was that nothing exercised
+            // this half at all.
+            writeText(path.join(specHalfRoot, 'docs', 'specs', 'broken.md'),
+                ['---', 'title: not a spec', '---', '', '# no id here', ''].join('\n'));
+            writeText(path.join(specHalfRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+            }, null, 2));
+            const { collectAllFindings: collectSpecHalf } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            assert.strictEqual(collectSpecHalf(specHalfRoot).complete, false,
+                'merged census is incomplete when only the SPEC producer is degraded, even though planning is complete');
+            console.log('✅ T-disposition-cli-spec-half passed');
+        }
+
+        console.log('T-disposition-cli-planir-fatal. merged census honors plan-ir.json\'s own fatal scan warnings ...');
+        {
+            const planIrFatalRoot = createTempRuntimeRoot('disposition-cli-planir-fatal').workspaceRoot;
+            // A syntactically valid evo-plan-ir@1 (proper specs/plans/tasks arrays,
+            // so runPlanningDriftCensus's OWN `!planIR` check never fires) whose
+            // `warnings` carries a level:'error' entry is safeLoadPlanIR's Mode B:
+            // planIR comes back non-null but `error` is set. Mode A (missing/
+            // corrupt/wrong-version plan-ir.json, planIR: null) is already
+            // double-covered by runPlanningDriftCensus's own `!planIR` check, so it
+            // cannot isolate the `if (error) {...}` line in collectAllFindings —
+            // Mode B is the only fixture where that line is the SOLE thing
+            // degrading the merged census. A clean, well-formed spec keeps the
+            // SPEC half complete so this isolates Mode B specifically.
+            writeText(path.join(planIrFatalRoot, 'docs', 'specs', 'ok.md'),
+                ['---', 'id: spec:ok', 'status: active', '---', '', '# OK', ''].join('\n'));
+            writeText(path.join(planIrFatalRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [],
+                warnings: [{ level: 'error', message: 'spec scan blew up mid-parse' }],
+            }, null, 2));
+            const { collectAllFindings: collectPlanIrFatal } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            assert.strictEqual(collectPlanIrFatal(planIrFatalRoot).complete, false,
+                'merged census is incomplete when plan-ir.json carries a fatal scan warning, even though it parses cleanly');
+            console.log('✅ T-disposition-cli-planir-fatal passed');
+        }
+
+        console.log('T-disposition-cli-shadow-failclosed. R006 shadow guard fails CLOSED when the second read cannot complete ...');
+        {
+            const shadowFailRoot = createTempRuntimeRoot('disposition-cli-shadow-failclosed').workspaceRoot;
+            ensureParent(path.join(shadowFailRoot, 'src', 'shadow2.js'));
+            fs.writeFileSync(path.join(shadowFailRoot, 'src', 'shadow2.js'), 'v1');
+            runGit(shadowFailRoot, ['init']);
+            runGit(shadowFailRoot, ['config', 'user.name', 'Evo Test']);
+            runGit(shadowFailRoot, ['config', 'user.email', 'evo@example.com']);
+            runGit(shadowFailRoot, ['add', '.']);
+            runGit(shadowFailRoot, ['commit', '-m', 'add unlinked file']);
+            const shadowIrPath = path.join(shadowFailRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            writeText(shadowIrPath, JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [],
+                tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: [], status: 'implemented' }],
+                warnings: [],
+            }, null, 2));
+
+            // TOCTOU simulation. `set` reads plan-ir.json (via safeLoadPlanIR) TWICE:
+            // once through collectAllFindings to discover the committed R006
+            // finding, and again inside the R006 shadow guard to check the working
+            // tree. Both read the same on-disk file, so within one synchronous
+            // command they normally agree — the failure mode this guard defends is
+            // exactly the case where they don't (the file vanishes or corrupts
+            // between the two reads). That is reproduced with a call-counted
+            // `fs.existsSync` stub: calls #1 and #2 to this exact path
+            // (collectAllFindings's own safeLoadPlanIR, then checkR009's staleness
+            // check inside that same runPlanningDriftCensus call) are left
+            // untouched — committed discovery must still succeed — and only call
+            // #3 (the shadow guard's own, independent safeLoadPlanIR read) is made
+            // to report the file missing. This sequence was verified empirically
+            // (a throwaway calibration script, logging each call) before being
+            // locked in here — it is not a guess, and this sanity-checks itself
+            // below via `existsCallCount`.
+            //
+            // Must run in-process (not through runCli's spawned subprocess):
+            // only an in-process caller can install this stub before invoking the
+            // real `set` action and remove it immediately after.
+            const { registerDispositionCommands } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            const { Command } = require('commander');
+            const origExistsSync = fs.existsSync;
+            const previousEvoLiteRoot = process.env.EVO_LITE_ROOT;
+            let existsCallCount = 0;
+            let caught = null;
+            try {
+                fs.existsSync = (p) => {
+                    if (String(p) === shadowIrPath) {
+                        existsCallCount++;
+                        if (existsCallCount === 3) return false;
+                    }
+                    return origExistsSync(p);
+                };
+                process.env.EVO_LITE_ROOT = path.join(shadowFailRoot, '.evo-lite');
+                const program = new Command();
+                program.exitOverride();
+                registerDispositionCommands(program);
+                try {
+                    await program.parseAsync(
+                        ['disposition', 'set', 'R006:file:src/shadow2.js', '--choice', 'accepted-debt', '--reason', 'x'],
+                        { from: 'user' }
+                    );
+                } catch (err) {
+                    caught = err;
+                }
+            } finally {
+                fs.existsSync = origExistsSync;
+                if (previousEvoLiteRoot === undefined) delete process.env.EVO_LITE_ROOT;
+                else process.env.EVO_LITE_ROOT = previousEvoLiteRoot;
+            }
+            assert.strictEqual(existsCallCount >= 3, true,
+                "calibration sanity: the shadow guard's own safeLoadPlanIR read must have been reached");
+            assert.ok(caught, 'set must refuse when the working-tree shadow check cannot be completed, not silently pass');
+            assert.match(String(caught && caught.message), /working tree shadow check could not be completed/,
+                'the refusal explains that the check itself failed, not that a shadow was found');
+            console.log('✅ T-disposition-cli-shadow-failclosed passed');
+        }
+
+        console.log('T-disposition-cli-revoke-failclosed. revoke never reports success when nothing was revoked ...');
+        {
+            const revokeRoot = createTempRuntimeRoot('disposition-cli-revoke-failclosed').workspaceRoot;
+            const run = (args) => runCli(revokeRoot, ['disposition', ...args]);
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+
+            // Two entries so "removed the right one" is distinguishable from
+            // "removed all of them". revoke only filters the raw ledger — it
+            // never needs a live finding — so these are constructed directly
+            // rather than round-tripped through `set`.
+            let ledger = { version: led.LEDGER_VERSION, entries: [] };
+            ledger = led.upsertEntry(ledger, {
+                findingId: 'R008:task:keep', ruleId: 'R008', ruleVersion: 1,
+                fingerprint: 'a'.repeat(64), choice: 'accepted-debt', reason: 'keep me',
+                at: '2026-08-11T00:00:00Z',
+            });
+            ledger = led.upsertEntry(ledger, {
+                findingId: 'R008:task:gone', ruleId: 'R008', ruleVersion: 1,
+                fingerprint: 'b'.repeat(64), choice: 'wont-fix', reason: 'revoke me',
+                at: '2026-08-11T00:00:00Z',
+            });
+            led.writeLedger(revokeRoot, ledger);
+
+            const ledgerFile = led.ledgerPath(revokeRoot);
+
+            // (a) WRONG ID: exit != 0, the message explains nothing matched, and
+            // the ledger file is BYTE-IDENTICAL to what it was before the call —
+            // captured as raw bytes, not re-read through readLedger, so a
+            // corrupting rewrite that still happens to parse would still be caught.
+            const bytesBeforeWrongId = fs.readFileSync(ledgerFile);
+            const wrong = run(['revoke', 'R008:task:does-not-exist']);
+            assert.notStrictEqual(wrong.status, 0, 'revoking an id with no entry must not succeed');
+            assert.match(wrong.stderr + wrong.stdout, /no disposition entry exists/,
+                'the refusal explains that nothing matched');
+            const bytesAfterWrongId = fs.readFileSync(ledgerFile);
+            assert.ok(bytesBeforeWrongId.equals(bytesAfterWrongId),
+                'a failed revoke must not rewrite the ledger at all — byte-identical before and after');
+
+            // (b) CORRECT ID: exit == 0, and EXACTLY that one entry disappears
+            // while the other survives unchanged — proves "removed the right
+            // one", not "removed everything" or "removed nothing but exited 0".
+            const correct = run(['revoke', 'R008:task:gone']);
+            assert.strictEqual(correct.status, 0, correct.stderr);
+            const afterCorrect = led.readLedger(revokeRoot);
+            assert.strictEqual(afterCorrect.entries.length, 1, 'exactly one entry was removed');
+            assert.strictEqual(afterCorrect.entries[0].findingId, 'R008:task:keep',
+                'the surviving entry is the one that was never targeted — the right entry was removed, not the wrong one');
+
+            // (c) SECOND REVOKE OF THE SAME ID: exit != 0 and byte-identical again —
+            // the guard holds after a legitimate revoke, not just on a typo.
+            const bytesBeforeSecond = fs.readFileSync(ledgerFile);
+            const second = run(['revoke', 'R008:task:gone']);
+            assert.notStrictEqual(second.status, 0, 'revoking an already-revoked id must not succeed');
+            assert.match(second.stderr + second.stdout, /no disposition entry exists/,
+                'the refusal explains that nothing matched');
+            const bytesAfterSecond = fs.readFileSync(ledgerFile);
+            assert.ok(bytesBeforeSecond.equals(bytesAfterSecond),
+                'the second (no-op) revoke attempt must not rewrite the ledger — byte-identical before and after');
+
+            console.log('✅ T-disposition-cli-revoke-failclosed passed');
         }
 
         console.log('--- All CLI integration tests passed! ---');
