@@ -236,6 +236,83 @@ function installLedgerProbeFault(projectRoot, failFrom) {
     };
 }
 
+// Fault injection that reaches exactly ONE commit-identity probe.
+//
+// All three identity probes inside commitWithContext issue the identical argv
+// `git rev-parse --short HEAD`, so matching argv alone cannot separate them, and
+// an ordinal would silently re-aim itself the moment any unrelated probe is added
+// or removed. What genuinely separates them is the repository state at the moment
+// each one runs: every probe fires immediately after a DIFFERENT commit, so
+// HEAD's subject names the site. The stub asks the real git for that subject and
+// throws only when it matches the site under test.
+//
+// `thrown === 0` keeps it to a single shot. getCommitHash() inside track() issues
+// the same argv while HEAD is still the code commit; leaving that one faulted too
+// would change the trajectory line this flow writes and blur what the fixture is
+// actually demonstrating. Calls and thrown faults are recorded to disk so each
+// test can PROVE its fault fired, and so a control can prove its fault did not.
+const REV_PARSE_FAULT_MESSAGE = 'fatal: unable to read HEAD: Permission denied';
+
+function installRevParseFault(projectRoot, headSubject) {
+    const stubPath = path.join(projectRoot, '.evo-lite', 'rev-parse-fault.js');
+    const counterPath = path.join(projectRoot, '.evo-lite', 'rev-parse-calls.txt');
+    writeText(stubPath, [
+        "'use strict';",
+        "const cp = require('child_process');",
+        "const fsx = require('fs');",
+        'const real = cp.execFileSync;',
+        `const COUNTER = ${JSON.stringify(counterPath)};`,
+        `const SUBJECT = ${JSON.stringify(headSubject)};`,
+        `const MESSAGE = ${JSON.stringify(REV_PARSE_FAULT_MESSAGE)};`,
+        'let calls = 0;',
+        'let thrown = 0;',
+        'function record() {',
+        "    try { fsx.writeFileSync(COUNTER, 'calls=' + calls + ' thrown=' + thrown); } catch (e) {}",
+        '}',
+        'cp.execFileSync = function (command, args, options) {',
+        "    const isIdentityProbe = command === 'git' && Array.isArray(args) && args.length === 3",
+        "        && args[0] === 'rev-parse' && args[1] === '--short' && args[2] === 'HEAD';",
+        '    if (!isIdentityProbe) {',
+        '        return real.apply(this, arguments);',
+        '    }',
+        '    calls += 1;',
+        "    let subject = '';",
+        '    try {',
+        "        subject = String(real('git', ['log', '-1', '--format=%s'], {",
+        '            cwd: (options && options.cwd) || process.cwd(),',
+        "            encoding: 'utf8',",
+        '        })).trim();',
+        "    } catch (e) { subject = ''; }",
+        '    if (thrown === 0 && subject === SUBJECT) {',
+        '        thrown += 1;',
+        '        record();',
+        '        throw new Error(MESSAGE);',
+        '    }',
+        '    record();',
+        '    return real.apply(this, arguments);',
+        '};',
+        '',
+    ].join('\n'));
+    return {
+        env: {
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require "${stubPath.replace(/\\/g, '/')}"`]
+                .filter(Boolean).join(' '),
+        },
+        readProbeLog() {
+            if (!fs.existsSync(counterPath)) return { calls: 0, thrown: 0 };
+            const raw = fs.readFileSync(counterPath, 'utf8');
+            return {
+                calls: Number((/calls=(\d+)/.exec(raw) || [])[1] || 0),
+                thrown: Number((/thrown=(\d+)/.exec(raw) || [])[1] || 0),
+            };
+        },
+    };
+}
+
+// A subject no commit in these fixtures ever carries, so a control run installs
+// the identical plumbing and never fires.
+const REV_PARSE_FAULT_NEVER = 'chore: a subject no fixture commit ever uses';
+
 function parseCliJson(res, label) {
     const start = res.stdout.indexOf('{');
     const end = res.stdout.lastIndexOf('}');
@@ -6959,6 +7036,508 @@ async function runGovernanceTests() {
                 .includes('chore(meta): close disposition tombstones written by post-commit'),
             'negative control: an UNKNOWN probe is not a PENDING one, so no closure retry may be attempted');
             console.log('✅ T-disposition-commit-probe-after-meta-commit passed');
+        }
+
+        console.log('T-disposition-shadow-observation-failclosed. An incomplete WORKING-TREE census must refuse, never read as "no shadow" ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const { registerDispositionCommands } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'commands'));
+            const { Command } = require('commander');
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+
+            // One builder, three runs. The ONLY differences between them are the
+            // health of the working-tree git observation and whether a real second
+            // occurrence exists — everything else is identical, so each verdict can
+            // only be attributed to the thing under test.
+            const buildFixture = (name) => {
+                const fixtureRoot = createTempRuntimeRoot(name).workspaceRoot;
+                writeText(path.join(fixtureRoot, 'src', 'shadow.js'), 'v1');
+                runGit(fixtureRoot, ['init']);
+                runGit(fixtureRoot, ['config', 'user.name', 'Evo Test']);
+                runGit(fixtureRoot, ['config', 'user.email', 'evo@example.com']);
+                runGit(fixtureRoot, ['add', '.']);
+                runGit(fixtureRoot, ['commit', '-m', 'add unlinked file']);   // committed R006 exists
+                // checkR006 short-circuits to [] on a null planIR, so an IR must
+                // exist. Written AFTER the commit: isGovernanceInfraFile filters
+                // `.evo-lite/**` out of the changed set, so an uncommitted IR does
+                // not itself become an R006 occurrence.
+                writeText(path.join(fixtureRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'),
+                    JSON.stringify({
+                        version: 'evo-plan-ir@1', specs: [], plans: [],
+                        tasks: [{ id: 'task:t1', linkedPlan: 'plan:p1', linkedFiles: [], status: 'implemented' }],
+                        warnings: [],
+                    }, null, 2));
+                return fixtureRoot;
+            };
+            // In-process, for the same reason T-disposition-cli-shadow-failclosed is:
+            // the fault below patches execFileSync in THIS process, and a spawned CLI
+            // would run an unpatched child where the fault never reaches the observer.
+            const setInProcess = async (fixtureRoot) => {
+                const previous = process.env.EVO_LITE_ROOT;
+                process.env.EVO_LITE_ROOT = path.join(fixtureRoot, '.evo-lite');
+                try {
+                    const program = new Command();
+                    program.exitOverride();
+                    registerDispositionCommands(program);
+                    await program.parseAsync(['disposition', 'set', 'R006:file:src/shadow.js',
+                        '--choice', 'accepted-debt', '--reason', 'x'], { from: 'user' });
+                    return null;
+                } catch (err) {
+                    return err;
+                } finally {
+                    if (previous === undefined) delete process.env.EVO_LITE_ROOT;
+                    else process.env.EVO_LITE_ROOT = previous;
+                }
+            };
+
+            // HEALTHY CONTROL 1 — git works, no second occurrence: ACCEPTED. Without
+            // it every refusal below could be "this fixture refuses everything".
+            const acceptRoot = buildFixture('disposition-shadow-observation-accept');
+            const accepted = await setInProcess(acceptRoot);
+            assert.strictEqual(accepted, null,
+                'control: a committed R006 whose working tree is clean must still be dispositionable '
+                + `[${accepted && accepted.message}]`);
+            assert.strictEqual(led.readLedger(acceptRoot).entries.length, 1,
+                'control: and the decision really was written — the guard must not have become a blanket refusal');
+
+            // HEALTHY CONTROL 2 — git works, a REAL shadow: refused, and the message
+            // says a shadow was FOUND. This is the wording the degraded case must not
+            // borrow.
+            const shadowRoot = buildFixture('disposition-shadow-observation-shadow');
+            fs.writeFileSync(path.join(shadowRoot, 'src', 'shadow.js'), 'v2');
+            const shadowErr = await setInProcess(shadowRoot);
+            assert.ok(shadowErr, 'control: one findingId with two live occurrences is still refused');
+            assert.match(String(shadowErr.message), /also has an uncommitted change in the working tree/,
+                'control: and THAT refusal names a shadow that was found');
+
+            // THE PROPERTY: the working-tree observation cannot be TAKEN.
+            const faultRoot = buildFixture('disposition-shadow-observation-unavailable');
+            const realExecFileSync = childProcess.execFileSync;
+            let faultHits = 0;
+            let faulted = null;
+            await withPatchedExecFileSync((command, args, options) => {
+                // ONLY the worktree changed-file read. The committed census reads
+                // `diff-tree --no-commit-id --name-only -r --root HEAD`, and
+                // classifyGitFailure's own `rev-parse --git-dir` / `rev-parse --verify
+                // HEAD` must SUCCEED — that success is precisely what classifies this
+                // as `unavailable` (a repository is here and we still could not read
+                // it) rather than the normal `no-repository` / `no-commits` answers.
+                if (command === 'git' && Array.isArray(args) && args.join(' ') === 'diff --name-only HEAD') {
+                    faultHits += 1;
+                    throw new Error('fatal: unable to read index file: Permission denied');
+                }
+                return realExecFileSync(command, args, options);
+            }, async () => { faulted = await setInProcess(faultRoot); });
+
+            assert.ok(faultHits >= 1,
+                `self-check: the injected working-tree observation fault must actually have fired (hits=${faultHits})`);
+            assert.ok(faulted,
+                'FORBIDDEN: an UNAVAILABLE working-tree observation must not read as "no shadow" — the census '
+                + 'returns complete:false with an empty findings list, and consuming .findings alone lets `set` '
+                + 'bind the decision to the COMMITTED occurrence, the exact mis-binding this guard exists to prevent');
+            assert.match(String(faulted.message), /working tree shadow check could not be completed/,
+                'the refusal must name the check that could not be COMPLETED');
+            assert.ok(!/also has an uncommitted change in the working tree/.test(String(faulted.message)),
+                'and it must stay distinguishable from the shadow-FOUND refusal — "I could not look" is not "I looked and saw one"');
+            assert.strictEqual(led.readLedger(faultRoot).entries.length, 0,
+                'and nothing was written: a governance decision bound to an unverified occurrence IS the harm');
+            console.log('✅ T-disposition-shadow-observation-failclosed passed');
+        }
+
+        console.log('T-verify-ledger-probe-alerts. An unreadable disposition probe is an ALERT — verify may not then claim "no active alerts" ...');
+        {
+            const { withPatchedExecFileSync } = require('./harness');
+            const runtime = createTempRuntimeRoot('verify-ledger-probe-alerts');
+            const planningDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(planningDir, { recursive: true });
+            fs.writeFileSync(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+            }, null, 2), 'utf8');
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+
+            // HEALTHY CONTROL. The temp workspace is not a git repository, so
+            // dispositionsDirty takes its one legitimate swallow path and reads
+            // clean — this run is the "otherwise clean repo" the degraded run below
+            // must stop claiming.
+            let controlReport = null;
+            const controlOut = await captureConsole(async () => { controlReport = await loaded.service.verify(); });
+            assert.strictEqual(controlReport.hasAlerts, false,
+                'control: with the probe answering, this fixture really is alert-free — otherwise the '
+                + 'assertions below would pass for a reason that has nothing to do with the probe');
+            assert.ok(controlOut.includes('✅ Verify completed with no active alerts.'),
+                'control: and it says so');
+
+            const realExecFileSync = childProcess.execFileSync;
+            let probeHits = 0;
+            let faultReport = null;
+            const faultOut = await withPatchedExecFileSync((command, args, options) => {
+                // Exactly dispositionsDirty's argv and nothing else, so every other
+                // observation verify takes still answers honestly.
+                if (command === 'git' && Array.isArray(args) && args[0] === 'status'
+                    && args.indexOf('.evo-lite/dispositions.json') !== -1) {
+                    probeHits += 1;
+                    // No `.stderr`, so dispositionsDirty RETHROWS instead of taking
+                    // its "not a git repository" swallow.
+                    throw new Error('fatal: unable to read config file .git/config: Permission denied');
+                }
+                return realExecFileSync(command, args, options);
+            }, async () => captureConsole(async () => { faultReport = await loaded.service.verify(); }));
+
+            assert.ok(probeHits >= 1,
+                `self-check: the injected disposition-probe fault must actually have fired (hits=${probeHits})`);
+            assert.ok(faultOut.includes('dispositions.json 提交状态未知'),
+                'precondition: the unknown-probe warning really is printed on this run');
+
+            // THE PROPERTY: `unknown` is not `clean`, so it cannot coexist with a
+            // no-alerts verdict.
+            assert.strictEqual(faultReport.hasAlerts, true,
+                'a durability probe that could not be READ is an alert — unknown is NOT clean, and this is the '
+                + 'visible closure surface where that ruling either holds or does not');
+            assert.ok(!faultOut.includes('✅ Verify completed with no active alerts.'),
+                'FORBIDDEN: printing "dispositions.json 提交状态未知" and then "no active alerts" in the same run '
+                + 'tells the operator the opposite of what was observed');
+            assert.ok(faultReport.nextSteps.some(step => step.includes('dispositions.json')),
+                'the unknown probe pushes its OWN next step naming the ledger, rather than borrowing another surface\'s');
+            assert.ok(faultOut.includes('git status --porcelain -- .evo-lite/dispositions.json'),
+                'and that step is actually PRINTED, naming how to inspect the probe by hand');
+            assert.strictEqual(faultReport.dispositionsDurability, 'unknown',
+                'and the durability reading is recorded as UNKNOWN — not clean, not pending');
+
+            // THE ONE CARVE-OUT, asserted so nobody widens the alert by accident and
+            // nobody narrows it either. `spawnSync git EPERM` means this Node runtime
+            // cannot invoke git AT ALL — verify's own git-status check already
+            // classifies exactly that as an environment limitation (ℹ️ degraded, no
+            // alert, use the wrapper scripts), and the two git observations inside one
+            // verify must not disagree about what a blocked invocation means. It is
+            // still recorded as its own state rather than reported clean.
+            let blockedReport = null;
+            const blockedOut = await withPatchedExecFileSync((command, args, options) => {
+                if (command === 'git' && Array.isArray(args) && args[0] === 'status'
+                    && args.indexOf('.evo-lite/dispositions.json') !== -1) {
+                    const error = new Error('spawnSync git EPERM');
+                    error.code = 'EPERM';
+                    throw error;
+                }
+                return realExecFileSync(command, args, options);
+            }, async () => captureConsole(async () => { blockedReport = await loaded.service.verify(); }));
+            assert.strictEqual(blockedReport.dispositionsDurability, 'blocked',
+                'a runtime that cannot spawn git at all is BLOCKED — recorded, never silently reported as clean');
+            assert.ok(blockedOut.includes('dispositions.json 提交状态未观测'),
+                'and it is printed, naming the environment rather than the repository');
+            assert.strictEqual(blockedReport.hasAlerts, false,
+                'consistency: the same condition verify already reports as ℹ️ degraded for its own git check '
+                + 'does not become an alert only for the ledger probe');
+
+            quiesceSharedResources();
+            loaded.db.closeDb();
+            console.log('✅ T-verify-ledger-probe-alerts passed');
+        }
+
+        console.log('T-verify-next-steps-render-once. An EARLY alert must not strip the steps pushed after it ...');
+        {
+            const runtime = createTempRuntimeRoot('verify-next-steps-early-alert');
+            const planningDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(planningDir, { recursive: true });
+            fs.writeFileSync(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+            }, null, 2), 'utf8');
+            // EVO_LITE_FORCE_GIT_DIRTY fires an alert in verify's git block, which
+            // runs long BEFORE collectOperatorNextSteps pushes `plan progress`. It is
+            // the same shape as the real "templateSync: out-of-sync" alert that made
+            // T13 look flaky three times on this branch: any early alert at all used
+            // to strip every later step from the OUTPUT while leaving it in the JSON.
+            const loaded = await bootstrapRuntime(runtime.runtimeRoot, {
+                EVO_LITE_SKIP_GIT_STATUS: '0',
+                EVO_LITE_FORCE_GIT_DIRTY: '1',
+            });
+            let report = null;
+            const output = await captureConsole(async () => { report = await loaded.service.verify(); });
+
+            assert.strictEqual(report.hasAlerts, true,
+                'self-check: the early alert really did fire, so this run takes the alerting render path');
+            assert.ok(output.includes('📋 建议下一步:'), 'an alerting run prints its next-step section');
+            assert.ok(report.nextSteps.some(step => step.includes('plan progress')),
+                'precondition: a LATE producer really did push `plan progress` into the report');
+            // THE PROPERTY, asserted on OUTPUT — the JSON already had it.
+            assert.ok(output.includes('plan progress'),
+                'FORBIDDEN: a step pushed AFTER the render point exists in report.nextSteps but never reaches the '
+                + 'operator — rendering before collectOperatorNextSteps runs silently drops every late step');
+            assert.ok(output.includes('先整理当前 Git 工作区'),
+                'and the EARLY step is not lost either — rendering once must cost neither side its steps');
+
+            quiesceSharedResources();
+            loaded.db.closeDb();
+            console.log('✅ T-verify-next-steps-render-once passed');
+        }
+
+        console.log('T-verify-next-steps-late-alert. A run whose ONLY alert fires late must still print a next-step section ...');
+        {
+            const buildLateAlertRuntime = async (name, failedLastRun) => {
+                const runtime = createTempRuntimeRoot(name);
+                const planningDir = path.join(runtime.runtimeRoot, 'generated', 'planning');
+                fs.mkdirSync(planningDir, { recursive: true });
+                fs.writeFileSync(path.join(planningDir, 'plan-ir.json'), JSON.stringify({
+                    version: 'evo-plan-ir@1', specs: [], plans: [], tasks: [], warnings: [],
+                }, null, 2), 'utf8');
+                if (failedLastRun) {
+                    // readGovernanceRunState reports `failed-last-run`, and verify's
+                    // governance block — which sits AFTER the old render point — is
+                    // then the only thing that sets hasAlerts on this run.
+                    writeText(path.join(runtime.runtimeRoot, 'generated', 'governance', 'post-commit-last-run.json'),
+                        JSON.stringify({ event: 'post-commit', commands: [{ name: 'plan scan', ok: false }] }, null, 2));
+                }
+                const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+                let report = null;
+                const output = await captureConsole(async () => { report = await loaded.service.verify(); });
+                quiesceSharedResources();
+                loaded.db.closeDb();
+                return { report, output };
+            };
+
+            // HEALTHY CONTROL: the identical fixture with a healthy governance run
+            // prints the clean shape, so the section below cannot be "this fixture
+            // always prints one".
+            const control = await buildLateAlertRuntime('verify-late-alert-control', false);
+            assert.strictEqual(control.report.hasAlerts, false, 'control: no alert fires at all');
+            assert.ok(control.output.includes('🧭 常用治理动作:'),
+                'control: the clean shape still reads as 常用治理动作, distinct from the alerting one');
+            assert.ok(control.output.includes('✅ Verify completed with no active alerts.'),
+                'control: and it still says no active alerts');
+
+            const late = await buildLateAlertRuntime('verify-late-alert-degraded', true);
+            assert.strictEqual(late.report.governance.status, 'failed-last-run',
+                'self-check: the injected governance failure really is what alerts here');
+            assert.strictEqual(late.report.hasAlerts, true, 'self-check: and it did set hasAlerts');
+            assert.ok(!late.output.includes('✅ Verify completed with no active alerts.'),
+                'an alerting run does not claim to be alert-free');
+            // THE PROPERTY.
+            assert.ok(late.output.includes('📋 建议下一步:'),
+                'FORBIDDEN: an alerting run that prints NO next-step section at all — with the render before the '
+                + 'alert, the alerting block is skipped as not-yet-alerting and the clean block is skipped as '
+                + 'now-alerting, so every remediation vanishes from the output');
+            assert.ok(late.output.includes('post-commit-last-run.json'),
+                'and the late alert\'s own remediation is the one printed');
+            assert.ok(late.output.includes('plan progress'),
+                'together with every operator step pushed after it');
+            console.log('✅ T-verify-next-steps-late-alert passed');
+        }
+
+        console.log('T-commit-identity-code-commit. An unreadable hash after the CODE commit must not lose the whole flow ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a commit whose code-commit hash could not be read back.';
+            const codeMessage = 'feat: identity code fixture';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // HEALTHY CONTROL: identical plumbing, a subject no commit here carries.
+            {
+                const root = createTempRuntimeRoot('commit-identity-code-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                const fault = installRevParseFault(root, REV_PARSE_FAULT_NEVER);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', codeMessage,
+                    '--mechanism', 'IdentityCodeControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(fault.readProbeLog().thrown, 0,
+                    'control precondition: the preload is installed but never fires');
+                assert.ok(fault.readProbeLog().calls >= 1,
+                    'control precondition: it did SEE the identity probes, so the matcher reaches them');
+                assert.strictEqual(res.status, 0, `control: an unfaulted mem commit exits 0. stderr: ${res.stderr}`);
+                assert.ok(payload.code.commitHash, 'control: the code commit hash is read and reported');
+                assert.strictEqual(payload.errorStage, null, 'control: nothing is blamed');
+                assert.ok(nextStepOf(payload).includes('已完成一次显式闭环'),
+                    'control: the healthy flow still reports a complete closure');
+            }
+
+            const root = createTempRuntimeRoot('commit-identity-code').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            // Fires on the probe that runs while HEAD is the code commit — and the
+            // code commit has, by then, already been created.
+            const fault = installRevParseFault(root, codeMessage);
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', codeMessage,
+                '--mechanism', 'IdentityCode', '--json'], fault.env);
+
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected identity fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+
+            // The mutation is verified against GIT, never by reading the payload back.
+            assert.ok(runGit(root, ['log', '--format=%s']).split('\n').includes(codeMessage),
+                'precondition: the code commit GENUINELY landed before the probe ran');
+
+            // THE PROPERTY: the probe sits outside every try in commitWithContext, so
+            // an unguarded throw escapes the whole function.
+            assert.ok(res.stdout.includes('"stageMode"'),
+                'FORBIDDEN: a commit that already landed leaves the CLI printing a bare error and no payload at '
+                + `all — an identity probe may not abort the flow it observes [stdout: ${res.stdout.trim().slice(0, 200)}]`);
+            const payload = parseCliJson(res, 'mem commit --json (identity fault after code commit)');
+            assert.strictEqual(payload.code.status, 'written',
+                'the code snapshot stage completed and must keep saying so');
+            assert.strictEqual(payload.track.status, 'complete',
+                'and the flow CONTINUED: an unreadable hash must not skip context track for a commit that exists');
+            assert.strictEqual(payload.code.commitIdentity.state, 'unknown',
+                'the identity that could not be read is UNKNOWN — a null hash with a stated reason, not silence');
+            assert.ok(String(payload.code.commitIdentity.detail || '').includes('Permission denied'),
+                'and it carries the reason rather than swallowing it');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请先补救 context track') && !nextStep.includes('请补做 runtime state 的 meta-commit'),
+                `FORBIDDEN: the remediation must not ask for a repeat of any stage [next_step: ${nextStep}]`);
+            assert.ok(nextStep.includes('不要重复提交'),
+                'it must say the commits are already in history');
+            assert.ok(cliModule.formatCommitFlowResult(payload).includes('- code_commit: unknown ('),
+                'and the unknown identity is PRINTED, never a silently missing line');
+            console.log('✅ T-commit-identity-code-commit passed');
+        }
+
+        console.log('T-commit-identity-meta-commit. An unreadable hash after the META commit must not re-label it failed ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a commit whose meta-commit hash could not be read back.';
+            const META_SUBJECT = 'chore(meta): snapshot evo-lite runtime state';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // HEALTHY CONTROL.
+            {
+                const root = createTempRuntimeRoot('commit-identity-meta-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                const fault = installRevParseFault(root, REV_PARSE_FAULT_NEVER);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', 'feat: identity meta control',
+                    '--mechanism', 'IdentityMetaControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(fault.readProbeLog().thrown, 0,
+                    'control precondition: the preload is installed but never fires');
+                assert.strictEqual(res.status, 0, `control: an unfaulted mem commit exits 0. stderr: ${res.stderr}`);
+                assert.ok(payload.runtime.commitHash, 'control: the meta-commit hash is read and reported');
+                assert.strictEqual(payload.errorStage, null, 'control: nothing is blamed');
+            }
+
+            const root = createTempRuntimeRoot('commit-identity-meta').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            const fault = installRevParseFault(root, META_SUBJECT);
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', 'feat: identity meta fixture',
+                '--mechanism', 'IdentityMeta', '--json'], fault.env);
+            const payload = parseCliJson(res, 'mem commit --json (identity fault after meta-commit)');
+
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected identity fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+
+            // Verified against GIT.
+            assert.ok(runGit(root, ['log', '--format=%s']).split('\n').includes(META_SUBJECT),
+                'precondition: the runtime meta-commit GENUINELY landed before the probe ran');
+
+            // THE PROPERTY.
+            assert.notStrictEqual(payload.runtime.status, 'failed',
+                'FORBIDDEN: an identity probe inside the meta-commit try re-labels a commit that already landed '
+                + 'as a failed stage');
+            assert.strictEqual(payload.runtime.status, 'written',
+                'the stage that completed keeps saying so');
+            assert.notStrictEqual(payload.errorStage, 'meta-commit',
+                'and the meta-commit stage must not be blamed for an observer that could not run');
+            assert.strictEqual(payload.runtime.commitIdentity.state, 'unknown',
+                'the hash that could not be read is UNKNOWN, with its reason');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请补做 runtime state 的 meta-commit'),
+                `FORBIDDEN: the remediation must not ask for another meta-commit — one already exists [next_step: ${nextStep}]`);
+            assert.ok(!nextStep.includes('请先补救 context track'), 'nor for another context track');
+            assert.ok(nextStep.includes('不要重复提交'), 'it says the commits are already in history');
+            assert.ok(cliModule.formatCommitFlowResult(payload).includes('- runtime_commit: unknown ('),
+                'and the unknown identity is printed rather than dropped');
+            console.log('✅ T-commit-identity-meta-commit passed');
+        }
+
+        console.log('T-commit-identity-closure-commit. An unreadable hash after the CLOSURE commit must not drop its attribution ...');
+        {
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const cliModule = require(path.join(CLI_DIR, 'memory.js'));
+            const details = 'Recorded the trajectory for a closure commit whose hash could not be read back.';
+            const CLOSURE_SUBJECT = 'chore(meta): close disposition tombstones written by post-commit';
+            const nextStepOf = payload => (cliModule.formatCommitFlowResult(payload).split('\n')
+                .find(line => line.startsWith('- next_step: ')) || '');
+
+            // HEALTHY CONTROL: the same second-order fixture with the probe answering.
+            {
+                const root = createTempRuntimeRoot('commit-identity-closure-control').workspaceRoot;
+                led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+                initCommitFixtureRepo(root);
+                writeCountingPostCommitHook(root, '2');
+                const fault = installRevParseFault(root, REV_PARSE_FAULT_NEVER);
+                writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+                runGit(root, ['add', '--', 'src/feature.js']);
+                const res = runCli(root, ['commit', details, '--code-message', 'feat: identity closure control',
+                    '--mechanism', 'IdentityClosureControl', '--json'], fault.env);
+                const payload = parseCliJson(res, 'mem commit --json (healthy control)');
+                assert.strictEqual(fault.readProbeLog().thrown, 0,
+                    'control precondition: the preload is installed but never fires');
+                assert.ok(payload.runtime.closureCommitHash,
+                    'control precondition: the closure retry really does run in this fixture, and its hash is read');
+                assert.ok((payload.runtime.files || []).includes('.evo-lite/dispositions.json'),
+                    'control: and the attribution names the ledger that retry committed');
+                assert.strictEqual(payload.errorStage, null, 'control: nothing is blamed');
+            }
+
+            const root = createTempRuntimeRoot('commit-identity-closure').workspaceRoot;
+            led.writeLedger(root, { version: led.LEDGER_VERSION, entries: [] });
+            initCommitFixtureRepo(root);
+            // Commit 1 is the code commit, commit 2 the meta-commit; the hook dirties
+            // the ledger on commit 2, which is what forces the closure retry (commit 3).
+            writeCountingPostCommitHook(root, '2');
+            const fault = installRevParseFault(root, CLOSURE_SUBJECT);
+            writeText(path.join(root, 'src', 'feature.js'), 'module.exports = 2;\n');
+            runGit(root, ['add', '--', 'src/feature.js']);
+            const res = runCli(root, ['commit', details, '--code-message', 'feat: identity closure fixture',
+                '--mechanism', 'IdentityClosure', '--json'], fault.env);
+            const payload = parseCliJson(res, 'mem commit --json (identity fault after closure commit)');
+
+            const probeLog = fault.readProbeLog();
+            assert.ok(probeLog.thrown >= 1,
+                `self-check: the injected identity fault must actually have fired (log: ${JSON.stringify(probeLog)})`);
+
+            // Verified against GIT.
+            assert.ok(runGit(root, ['log', '--format=%s']).split('\n').includes(CLOSURE_SUBJECT),
+                'precondition: the closure commit GENUINELY landed before the probe ran');
+            assert.ok(runGit(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'])
+                .split('\n').includes('.evo-lite/dispositions.json'),
+            'precondition: and that commit really is the one carrying the ledger');
+
+            // THE PROPERTY: attribution must survive an observer that could not run.
+            assert.ok((payload.runtime.files || []).includes('.evo-lite/dispositions.json'),
+                'FORBIDDEN: the payload stops naming the ledger this flow committed — the rev-parse throw was '
+                + 'swallowed and took the file-set push with it, leaving the reported attribution contradicting disk');
+            assert.notStrictEqual(payload.runtime.status, 'failed',
+                'and a closure that landed is not a failed stage');
+            assert.strictEqual(payload.runtime.status, 'written',
+                'the stage that completed keeps saying so');
+            assert.strictEqual(payload.runtime.closureCommitIdentity.state, 'unknown',
+                'the closure hash that could not be read is UNKNOWN, stated rather than silently absent');
+            assert.strictEqual(payload.runtime.closureCommitHash, null,
+                'and no hash is invented for it');
+
+            const nextStep = nextStepOf(payload);
+            assert.ok(!nextStep.includes('请补做 runtime state 的 meta-commit')
+                && !nextStep.includes('请先补救 context track'),
+            `FORBIDDEN: the remediation must not ask for a repeat of any stage [next_step: ${nextStep}]`);
+            assert.ok(nextStep.includes('不要重复提交'), 'it says the commits are already in history');
+            assert.ok(cliModule.formatCommitFlowResult(payload).includes('- runtime_closure_commit: unknown ('),
+                'and the unknown closure identity is printed');
+            console.log('✅ T-commit-identity-closure-commit passed');
         }
 
         console.log('T-disposition-ledger-unreadable. A corrupt ledger degrades VISIBLY — findings complete,表态 state UNKNOWN ...');
