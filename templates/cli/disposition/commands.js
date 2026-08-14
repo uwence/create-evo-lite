@@ -123,8 +123,23 @@ function registerDispositionCommands(program) {
                         + 'check could not be completed (plan-ir.json is missing or unreadable); '
                         + 'run `mem plan scan` and try again');
                 }
-                const shadow = runPlanningDriftCensus(projectRoot, planIR, {})   // worktree mode
-                    .findings.find(f => f.id === findingId);
+                // The census answers in THREE parts — {findings, complete, errors} —
+                // and this guard needs all three. Consuming `.findings` alone
+                // collapses "I could not look" back into "there is nothing there":
+                // when the WORKING-TREE git observation is unavailable the census
+                // returns complete:false with a named error and a findings list that
+                // simply LACKS the shadow, so `shadow === undefined` would let `set`
+                // proceed and bind the decision to the COMMITTED occurrence — the
+                // exact silent mis-binding this guard exists to prevent. Same
+                // fail-closed ruling as the `!planIR` branch above, applied to the
+                // other way the check can fail to happen.
+                const worktree = runPlanningDriftCensus(projectRoot, planIR, {});   // worktree mode
+                if (!worktree.complete) {
+                    throw new Error(`${findingId} cannot be dispositioned — the working tree shadow `
+                        + `check could not be completed (${(worktree.errors || []).join('; ') || 'observation degraded'}); `
+                        + 'repair the working-tree git observation and try again');
+                }
+                const shadow = worktree.findings.find(f => f.id === findingId);
                 if (shadow) {
                     throw new Error(`${findingId} also has an uncommitted change in the working tree — `
                         + 'commit or revert it first, so the decision binds to exactly one occurrence');
