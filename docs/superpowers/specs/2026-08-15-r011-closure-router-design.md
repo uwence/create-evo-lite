@@ -66,9 +66,18 @@ candidate detection            (unchanged: linked plans all checkbox-complete, s
         ↓
 readinessOf(specPath)          (authoritative, read-only, from the verification contract)
         ↓
-READY | NOT_READY | UNCONTRACTED | UNOBSERVABLE
+READY | BLOCKED | NO-CONTRACT  ... or a throw
         ↓
-R011 renders that verdict — it does not compute one
+R011 maps that verdict into a finding type — it computes no verdict of its own
+```
+
+Note the two vocabularies, deliberately kept separate. `readinessOf` speaks the **existing** `previewClose` language — `READY` / `BLOCKED` / `NO-CONTRACT` — because inventing new words there would force a compatibility mapping back into `previewClose` and break the promise that its behaviour is unchanged. The four-state vocabulary belongs to **R011's findings only**:
+
+```
+READY        → spec-closure-ready
+BLOCKED      → spec-closure-not-ready
+NO-CONTRACT  → spec-closure-uncontracted
+throw        → spec-closure-unobservable
 ```
 
 Checkboxes retain exactly one job: deciding that a spec is *worth checking*. They never establish that it may be closed.
@@ -77,12 +86,20 @@ This satisfies both frozen prohibitions structurally rather than by discipline. 
 
 ### The four states
 
-| type | condition | level | closure advice |
-|---|---|---|---|
-| `spec-closure-ready` | contract present, authoritative readiness `READY` | `info` | route to `mem verify-contract close --preview <spec>` |
-| `spec-closure-not-ready` | contract present, readiness not `READY` | `warning` | name the blocking criteria; no closure advice |
-| `spec-closure-uncontracted` | no contract can serve as closure authority | `warning` | add a criteria block, or close manually and record why |
-| `spec-closure-unobservable` | readiness could not be computed this round | `warning` | none |
+| type | condition | level | dispositionable | closure advice |
+|---|---|---|---|---|
+| `spec-closure-ready` | contract present, readiness `READY` | `info` | **false** | route to `mem close <spec> --preview` |
+| `spec-closure-not-ready` | contract present, readiness `BLOCKED` | `warning` | true | name the blocking criteria; no closure imperative |
+| `spec-closure-uncontracted` | readiness `NO-CONTRACT` | `warning` | true | state that no authoritative verdict exists; suggest establishing or repairing a verification contract; **no closure imperative** |
+| `spec-closure-unobservable` | readiness could not be computed this round | `warning` | **false** | none |
+
+`spec-closure-uncontracted` must NOT tell the operator to close manually. Doing so would reintroduce the second defect this spec exists to remove — advice that routes around the close transaction. If the project later needs a supported path for legacy contract-less closure, that workflow gets its own design; R011 does not invent it.
+
+The `dispositionable` values are frozen here rather than left to the implementer, because `set` treats any finding without an explicit `false` as dispositionable:
+
+- **`ready` is `false`** — it is positive routing information, not a governance fact. "Accepted debt" and "won't fix" have no meaning against *"this spec is ready to close"*.
+- **`unobservable` is `false`** — and this one is load-bearing. It reports an observer failure, not a stable fact about the spec. Allowing a human to disposition it would let *"I could not see"* be answered with *"I accept that"*, which is the exact semantic crack this project's observation discipline exists to close. A spec cannot claim that a failure to observe must never impersonate a change in fact and then offer that failure up for disposition.
+- **`not_ready` and `uncontracted` are `true`** — these are genuine, stable governance facts about the spec, and deferring or accepting them is a legitimate human decision.
 
 Four distinct types under one rule id, not one message with a caveat. The reason is the disposition ledger: `computeFingerprint` hashes `{ruleId, ruleVersion, factInputs}` and **the message is not in it**. A caveat appended to the message would not change decision identity, so a human dispositioning *"close this spec"* as `wont-fix` would silently also dispose of *"this spec cannot be evidenced"* — two different claims sharing one decision identity, which is precisely what the ledger exists to prevent.
 
@@ -101,6 +118,8 @@ The rule is stated once and holds everywhere:
 
 Presence evidence never promotes to satisfaction evidence, regardless of quantity.
 
+Two boundaries follow, and both are frozen. Presence evidence may appear **only as display context**: it must never enter R011's state selection, and it must never enter `factInputs` or anything else the fingerprint reads — otherwise a file appearing on disk would lapse a human's decision about a criterion that has not moved. And it must be read from a surface that already exists; the implementation must not author a fourth evidence evaluator to obtain it. Which existing surface is a plan-level choice.
+
 ### `readinessOf()` — the extraction
 
 `previewClose` is already read-only (pinned by test T39, *"previewClose is read-only"*) and already accepts injected `statusFn` / `planStateFn`. But it also reads plan files and assembles mutation-action strings, and a drift rule has no business touching a mutation vocabulary.
@@ -108,10 +127,14 @@ Presence evidence never promotes to satisfaction evidence, regardless of quantit
 A thin export is added to `close-preview.js`:
 
 ```
-readinessOf(specPath, opts) -> { readiness, blockers, contractPresent }
+readinessOf(specPath, opts) -> { readiness: 'READY' | 'BLOCKED' | 'NO-CONTRACT',
+                                 blockers, contractPresent }
+                            MAY THROW on observation failure
 ```
 
-It computes only the contract load and the criteria verdicts. `previewClose` is refactored to call it and is otherwise **behaviourally unchanged** — its existing tests are the regression net for that claim.
+It computes only the contract load and the criteria verdicts, and it keeps `previewClose`'s existing readiness vocabulary unchanged. It does not catch — an unreadable evidence store must reach the caller, because `readinessOf` cannot know whether its caller wants to fail the command or degrade a census.
+
+`previewClose` is refactored to call it and is otherwise **behaviourally unchanged** — its existing tests are the regression net for that claim.
 
 `readinessOf` is the only new surface. Nothing else moves, and in particular the confidence bands stay in `progress.js`: they have real consumers in `dashboard-data.js` and `inspector.js` for ranking human display, and promoting them into a shared module would make a display heuristic look authoritative.
 
@@ -136,12 +159,34 @@ readiness observation fails
 
 ### `ruleVersion` 1 → 2
 
-Both the fact inputs and the claim semantics change. `factInputs` must carry the authoritative state itself — not only in `type` or `message`, or a disposition taken while a spec was `UNCONTRACTED` would silently carry over once a contract is added and the verdict becomes `NOT_READY`.
+Both the fact inputs and the claim semantics change.
+
+`ruleVersion: 2` lapses every existing R011 disposition **once**. It does nothing about facts that move afterwards — that is the fingerprint's job, and the fingerprint reads only `factInputs`.
+
+So `factInputs` must carry the authoritative state **and the identity of what makes it that state**:
+
+```json
+{ "closureState": "NOT_READY", "blockers": ["ac1=FAIL", "ac3=STALE"] }
+```
+
+Carrying `closureState` alone would repeat, inside `NOT_READY`, exactly the collapse the four types exist to prevent. These two rounds are different facts:
+
+```
+NOT_READY  blockers: ac1=FAIL          →   NOT_READY  blockers: ac3=STALE
+NOT_READY  contract invalid            →   NOT_READY  contract valid, ac2 FAIL
+```
+
+With only the state recorded, the fingerprint is identical across both transitions, and a `deferred` decision taken about *"ac1 is failing"* silently carries over to *"ac3 has gone stale"* — a decision inherited by a fact it was never made about.
+
+Requirements on the blocker identity:
+
+- **Canonically ordered** so a reordering by the verdict engine does not lapse a decision that nothing real has invalidated. This is the same rule `canonicalJson` already applies to set-valued keys.
+- **A malformed contract needs a stable validation-failure identity too** — a digest or equivalent over the validation findings — not just an error string in the message. Otherwise every edit to a broken contract that leaves it broken differently is invisible to the fingerprint, and every edit that only changes the error wording lapses a decision for no reason.
 
 Each transition then correctly lapses the old decision rather than inheriting it:
 
 ```
-UNCONTRACTED  →  (contract added)     →  NOT_READY  →  (criteria pass)  →  READY
+UNCONTRACTED  →  (contract added)  →  NOT_READY  →  (criteria pass)  →  READY
 ```
 
 The mother repo has no `dispositions.json`, so migration costs nothing here. **Child hives may hold CURRENT R011 dispositions and must be checked before rollout** — a rollout note, not part of this implementation.
@@ -179,13 +224,13 @@ That is a genuine ergonomic regression for the true-positive case. The trade is 
     },
     {
       "id": "ac2",
-      "description": "R011 renders a verdict it received and computes none of its own: gaps.js contains no closure-readiness logic, no confidence threshold, and no duplicate of any evidence predicate.",
+      "description": "gaps.js contains no independent closure-readiness decision logic, no confidence threshold and no duplicate of any evidence predicate; it may only map the authoritative readiness result into R011 finding types.",
       "dependsOn": ["templates/cli/planning/gaps.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
     {
       "id": "ac3",
-      "description": "R011 emits exactly four mutually exclusive types — spec-closure-ready, spec-closure-not-ready, spec-closure-uncontracted, spec-closure-unobservable — with levels info, warning, warning, warning respectively.",
+      "description": "R011 emits exactly four mutually exclusive types — spec-closure-ready, spec-closure-not-ready, spec-closure-uncontracted, spec-closure-unobservable — with levels info, warning, warning, warning and dispositionable false, true, true, false respectively.",
       "dependsOn": ["templates/cli/planning/gaps.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -198,18 +243,18 @@ That is a genuine ergonomic regression for the true-positive case. The trade is 
     {
       "id": "ac5",
       "description": "When readiness cannot be computed, the finding is retained as spec-closure-unobservable, the failure is recorded through the observation sink, the planning census reports complete false, disposition sync writes no tombstone that round, and no closure advice is emitted.",
-      "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/disposition/commands.js"],
+      "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/verification/close-preview.js", "templates/cli/disposition/commands.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
     {
       "id": "ac6",
-      "description": "readinessOf is exported from close-preview.js, computes only contract load and criteria verdicts, performs no write, and previewClose delegates to it with its own behaviour unchanged as pinned by its existing tests.",
+      "description": "readinessOf is exported from close-preview.js returning previewClose's existing READY / BLOCKED / NO-CONTRACT vocabulary, computes only contract load and criteria verdicts, performs no write, propagates observation failure to its caller rather than catching it, and previewClose delegates to it with its own behaviour unchanged as pinned by its existing tests.",
       "dependsOn": ["templates/cli/verification/close-preview.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
     {
       "id": "ac7",
-      "description": "PLANNING_RULE_VERSIONS.R011 is 2, and factInputs carries the authoritative closure state so that a transition between UNCONTRACTED, NOT_READY and READY lapses a prior disposition instead of inheriting it.",
+      "description": "PLANNING_RULE_VERSIONS.R011 is 2, and factInputs carries both the authoritative closure state and a canonically ordered blocker identity — with a stable validation-failure identity when the contract is malformed — so that a change of blocking criteria within one state lapses a prior disposition, while a mere reordering does not. Presence evidence never appears in factInputs.",
       "dependsOn": ["templates/cli/planning/gaps.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
