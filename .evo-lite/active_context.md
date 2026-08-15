@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 9c8be0af83593aabbb2f8902cfff3fefb271e4d5
-> upstreamSha: 9c8be0af83593aabbb2f8902cfff3fefb271e4d5
+> headSha: 3e09455918915298276605722263deaaf91c3788
+> upstreamSha: 3e09455918915298276605722263deaaf91c3788
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-08-14T14:47:14.277Z
+> focusUpdatedAt: 2026-08-15T01:54:31.612Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -28,6 +28,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [3e09455] 2026-08-15 HookStatusFreshness: [235a] hook-status-freshness shipped and merged via PR #47 (merge 3e09455, reviewed head 975a67a, CI
 - [9c8be0a] 2026-08-14 DispositionLedger: Disposition ledger shipped and merged to main via PR #46 (merge 9c8be0a, reviewed head 6ade6c3). A g
 - [0965f6e] 2026-08-10 SpecStatusVocabularyLayer1: Spec 状态词汇表收敛（分层清洗第 1 层）+ 一处 park 误判更正。PR #43 合入 main@e7488aa，PR #44 合入 main@0965f6e，两个 PR CI 均 6/6 全
 - [d7ab3b6] 2026-08-09 SpecPortfolioAgingDispositionRound2: Spec Portfolio 老化处置第二轮 + 治理缺陷登记。PR #41 经普通两父 merge 合入 main@d7ab3b6，PR CI 6/6 全绿（含 containment + rele
@@ -37,7 +38,6 @@
 - [a5b1fa8] 2026-08-08 TestTempRootLifecycleClosure: PR #29 merged by ordinary two-parent merge at main@a5b1fa8641110db29f24a5e1b9af906039ff2755, with re
 - [78a792e] 2026-08-07 ZvecWinUnicodeContainmentClosure: [zvec-win-unicode-containment] P0 / release-blocker 收口。AC1-AC7 全部交付并合入 main@78a792e。 问题：Windows 上部分非
 - [6780911] 2026-08-03 MemoryLockWinCimSnapshotReliabilityClosure: Phase 3A 已通过 PR #14 合入 main@d48108a。实现 getProcessSnapshotResult 结构化分类、兼容 wrapper、两个生产调用点 fail-closed
-- [201ba1a] 2026-08-01 MemoryLockWinCimSnapshotReactivation: [memory-lock-win-cim-snapshot-reliability] 由 parked residual 重新激活为 active release-gate reliability b
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
