@@ -45,6 +45,8 @@
 
 > ⚠️ 此区域无锚点保护，可自由追加灵感与低优先级任务，但严禁在此堆积已完成任务。
 
+- [focus-auto-advance-manual-intent-overwrite] P1 / governance correctness / design-needed — `advanceFocusFromCommit()` 把 commit message 里第一个字面 `plan:<slug>` / `spec:<slug>` 提及当作替换 BEGIN_FOCUS 的授权。2026-08-15 真实复现：`[7f8c]` 是人工设定的当前 focus，R011 设计 commit 仅把 `spec:disposition-ledger` 作为范围外例子提及，post-commit auto-advance 就静默把人工 focus 换成了 Disposition Ledger plan。这违反已交付的 Phase-2 合同「auto-advance must be conservative, never silently overwrite an intentional manual focus」。核心区分：**reference != focus-transfer authorization**；当前实现既未证明人类意图转移，也未检查现 FOCUS 是否为人工设定。不得靠追加更多子串启发式来打补丁——先冻结 ownership/provenance 或等价的显式 transfer contract。候选方向（待 brainstorming 比较，勿今日实现）：A 显式 focus-transfer trailer；B manual/derived provenance；C CAS 式「仅当旧 focus 满足某条件才自动替换」。修复前，跨引用较多的 commit 应设 `EVO_LITE_NO_FOCUS_AUTOADVANCE=1`，并在 post-commit 后核对 BEGIN_FOCUS。当前 active backlog 已满 5/5，故先驻留此区，待 `[7f8c]` 结束腾出槽位再 promote。
+
 - 考虑 `raw_memory/` 原始文件层（YAML Frontmatter + Markdown），提升向量库抗毁性与换模型能力（参考 Gemini 设计文档讨论）。
 - [f9b1] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
 - [llm-wiki] Karpathy LLM-wiki 思路: raw_memory 之上建主题页蒸馏层(主题页知识单元/原地更新/密集互链/低频维护),与 code wiki 互为姐妹投影。等 spec:spec-portfolio-governance 落地后作首批 adopt 候选。详见该 spec Follow-ups。
