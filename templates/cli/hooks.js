@@ -135,21 +135,31 @@ function registerHookCommands(program) {
     hook.command('status')
         .description('Check whether the post-commit governance hook is installed.')
         .action(() => {
-            const projectRoot = getWorkspaceRoot();
-            const hookPath = path.join(projectRoot, '.git', 'hooks', 'post-commit');
-            if (!fs.existsSync(hookPath)) {
+            const result = diffInstalledHook(getWorkspaceRoot());
+            if (result.status === 'no-hook') {
                 console.log('post-commit: not installed');
                 console.log('  install: mem hook install');
                 process.exitCode = 1;
                 return;
             }
-            const content = fs.readFileSync(hookPath, 'utf8');
-            if (content.includes(SENTINEL_BEGIN)) {
-                console.log('post-commit: evo-lite hook installed');
-            } else {
+            if (result.status === 'no-block') {
                 console.log('post-commit: exists (third-party, no evo-lite block)');
                 console.log('  install: mem hook install  (will append without overwriting)');
+                // Deliberate behavior change: unmanaged third-party hooks are not
+                // healthy Evo-Lite status, even though install will append safely.
+                process.exitCode = 1;
+                return;
             }
+            if (result.status === 'in-sync') {
+                console.log('post-commit: evo-lite hook installed and current');
+                return;
+            }
+            // diffInstalledHook intentionally uses exact artifact equality. A CRLF
+            // rewrite of this shell hook is drift, not an ignorable text variant.
+            console.log('post-commit: evo-lite hook installed but OUTDATED');
+            console.log('  inspect: mem hook diff');
+            console.log('  update: mem hook install');
+            process.exitCode = 1;
         });
 
     hook.command('advise <event>')

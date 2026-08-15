@@ -3152,6 +3152,89 @@ async function runGovernanceTests() {
             console.log('✅ T22 hook diff drift detection passed');
         }
 
+        console.log('T22a. Testing hook status reports freshness states without mutation ...');
+        {
+            const { buildHookBody } = require(path.join(TEMPLATE_CLI_DIR, 'hooks'));
+            const createStatusRepo = (name) => {
+                const root = fs.mkdtempSync(path.join(os.tmpdir(), `evo-hook-status-${name}-`));
+                runGit(root, ['init']);
+                return root;
+            };
+            const hookPathFor = (root) => path.join(root, '.git', 'hooks', 'post-commit');
+            const writeHook = (root, body) => fs.writeFileSync(hookPathFor(root), body, 'utf8');
+
+            const noHookRoot = createStatusRepo('no-hook');
+            try {
+                const status = runCli(noHookRoot, ['hook', 'status']);
+                assert.strictEqual(status.status, 1, 'missing post-commit hook must exit 1');
+                assert.ok(/not installed/.test(status.stdout), 'missing post-commit hook must report not installed');
+                assert.ok(/mem hook install/.test(status.stdout), 'missing post-commit hook must print install hint');
+            } finally {
+                fs.rmSync(noHookRoot, { recursive: true, force: true });
+            }
+
+            const noBlockRoot = createStatusRepo('no-block');
+            try {
+                writeHook(noBlockRoot, '#!/bin/sh\nprintf "third-party\\n"\n');
+                const before = fs.readFileSync(hookPathFor(noBlockRoot));
+                const status = runCli(noBlockRoot, ['hook', 'status']);
+                assert.strictEqual(status.status, 1,
+                    'third-party hook without evo-lite block deliberately exits 1 so automation cannot treat unmanaged status as healthy');
+                assert.ok(/third-party/.test(status.stdout) && /no evo-lite block/.test(status.stdout),
+                    'third-party hook must be reported as having no evo-lite block');
+                assert.ok(/append without overwriting/.test(status.stdout), 'third-party hook status must recommend append, not overwrite');
+                assert.deepStrictEqual(fs.readFileSync(hookPathFor(noBlockRoot)), before,
+                    'third-party hook status must leave hook bytes unchanged');
+            } finally {
+                fs.rmSync(noBlockRoot, { recursive: true, force: true });
+            }
+
+            const inSyncRoot = createStatusRepo('in-sync');
+            try {
+                writeHook(inSyncRoot, buildHookBody());
+                const status = runCli(inSyncRoot, ['hook', 'status']);
+                assert.strictEqual(status.status, 0, 'current managed hook must exit 0');
+                assert.ok(/installed/.test(status.stdout) && /current/.test(status.stdout),
+                    'current managed hook must be reported installed and current');
+            } finally {
+                fs.rmSync(inSyncRoot, { recursive: true, force: true });
+            }
+
+            const driftedRoot = createStatusRepo('drifted');
+            try {
+                writeHook(driftedRoot, buildHookBody().replace('run_and_record "disposition sync" disposition sync\n', ''));
+                const before = fs.readFileSync(hookPathFor(driftedRoot));
+                const status = runCli(driftedRoot, ['hook', 'status']);
+                assert.ok(/OUTDATED/.test(status.stdout),
+                    'stale current hook missing disposition sync must be reported as OUTDATED, not current');
+                assert.strictEqual(status.status, 1, 'stale managed hook must exit 1');
+                assert.ok(/mem hook diff/.test(status.stdout), 'stale managed hook status must recommend `mem hook diff` first');
+                assert.ok(/mem hook install/.test(status.stdout), 'stale managed hook status must recommend `mem hook install` after diff review');
+                assert.ok(!/expected\[|installed\[/.test(status.stdout),
+                    'hook status must not print line-level diff body; that belongs to hook diff');
+                assert.deepStrictEqual(fs.readFileSync(hookPathFor(driftedRoot)), before,
+                    'stale managed hook status must leave hook bytes unchanged');
+            } finally {
+                fs.rmSync(driftedRoot, { recursive: true, force: true });
+            }
+
+            const crlfRoot = createStatusRepo('crlf');
+            try {
+                writeHook(crlfRoot, buildHookBody().replace(/\n/g, '\r\n'));
+                const before = fs.readFileSync(hookPathFor(crlfRoot));
+                const status = runCli(crlfRoot, ['hook', 'status']);
+                assert.strictEqual(status.status, 1, 'CRLF-converted managed hook must exit 1 as drifted');
+                assert.ok(/OUTDATED/.test(status.stdout),
+                    'CRLF-converted hook is intentionally OUTDATED: status judges exact freshness of a canonical installed artifact and does not guess whether a given drift happens to remain executable');
+                assert.deepStrictEqual(fs.readFileSync(hookPathFor(crlfRoot)), before,
+                    'CRLF-converted hook status must leave hook bytes unchanged');
+            } finally {
+                fs.rmSync(crlfRoot, { recursive: true, force: true });
+            }
+
+            console.log('✅ T22a hook status freshness states passed');
+        }
+
         console.log('T23. Testing plan new scaffolds spec + plan stubs ...');
         {
             const { scaffoldPlanStubs } = require(path.join(TEMPLATE_CLI_DIR, 'planning'));
