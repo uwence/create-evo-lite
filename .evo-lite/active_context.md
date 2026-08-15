@@ -3,17 +3,17 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 3e09455918915298276605722263deaaf91c3788
-> upstreamSha: 3e09455918915298276605722263deaaf91c3788
+> headSha: 94e28d0909700f4642ad7e3d62e7128ac39e0c91
+> upstreamSha: 94e28d0909700f4642ad7e3d62e7128ac39e0c91
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-08-15T01:54:31.612Z
+> focusUpdatedAt: 2026-08-15T02:12:18.985Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
 
 <!-- BEGIN_FOCUS -->
-[hook-status-freshness] NEXT / AUTHORIZED ([235a]): 让 `mem hook status` 消费已经存在的 `diffInstalledHook()` freshness evidence，报告四态 no-hook / no-block / in-sync / drifted，drifted 时 exit != 0 并提示 `mem hook diff` + `mem hook install`；status 保持纯 observer，绝不改写 hook。SCOPE HARD-LOCKED — IN: templates/cli/hooks.js + 镜像 + 测试；OUT: mem verify、自动升级、hook install 行为重设计、P1-B contract、其他 known debt。起源：Disposition Ledger 合并后 installed hook 比模板旧两个月，功能静默失活而所有绿色都是真的。[0ce0] verify-hook-runtime-health = QUEUED / DESIGN-NEEDED，实现未授权。[3d78] 与 [attp-lw-memory-identity] 保持 BLOCKED，不因空闲而硬开。
+[backlog-priority-pass] NEXT / INVESTIGATION-ONLY: 在把 [progress-empty-evidence-vacuous-pass] 提升为实现任务之前，先在当前 main 上重新验证它。零 linkedFiles 被表示成 ratio=1 这个事实仍然存在，但它通往 R011 的那条因果链必须对着当前代码重新证明——progress.js 现在另有 hasPositiveFileEvidence 要求 total>0 && exist>0，而 R011 直接读 planIR.tasks[].status、不读 progress-report.json，所以原登记描述的传导路径至少无法从代码直接证成。查清后再与 [0ce0] verify-hook-runtime-health 比较 correctness risk，决定下一个正式 NEXT。尚未授权任何生产改动。[0ce0] 保持 QUEUED / DESIGN-NEEDED；[3d78] 与 [attp-lw-memory-identity] 保持 BLOCKED。原则：旧的治理判断不因曾经成立而永远成立——事实变了就必须重新失效，backlog debt 自己也守这条。
 <!-- END_FOCUS -->
 
 ## 🚧 活跃任务 (≤ 5 条)
@@ -21,13 +21,13 @@
 <!-- BEGIN_BACKLOG -->
 - [ ] [3d78] [attp-hive-rollout] Distribute the already-accepted ATTP runtime and invoke the idempotent takeover installer in selected child repositories through hive nurture. 独立 rollout 议题,不是 ATTP MVP 的一部分 —— MVP 已 ACCEPTED & CLOSED(spec:agent-takeover-trigger-protocol)。需要自己的范围/试点子仓/失败回滚策略/验收门。前置提醒:子仓装上守卫后项目外 Edit/Write 会被 deny;root-launch-only 限制同样适用。新增前置依赖(spec:zvec-win-unicode-containment §12,Task 9C 登记):Windows 目标子仓必须在分发前调用 [zvec-win-unicode-containment] 的 containment decision 接口;判定非 SAFE 时拒绝分发并给出结构化原因,不得静默跳过。该依赖未满足前不得执行对应的 Windows rollout。
 - [ ] [attp-lw-memory-identity] [attp-lw-memory-identity] RESIDUAL / blocked-upstream — waiting-host-contract。承载 spec:attp-linked-worktree-memory-identity(status: parked)。缺口:git linked worktree 中宿主对 transcript 用当前 worktree 身份、对 memory 用【主工作树】身份,两者不同源,且该映射在路径大小写维度上失稳(小写拼写启动时重定向消失,而 git 仍返回规范大小写)。PreToolUse 完整键集无任何 memory root 字段;Git identity 到 memory root 差一层未文档化且有损的 slug 编码(非 ASCII 塌成 '-',NTFS 上非单射);~/.claude.json 用户可编辑、无 slug 字段、同项目五种非规范拼写。证据 docs/validation/attp-guard-allowlist-step0c-worktree-memory-identity.md(终止分支 B ∧ C)。已正式排除:slug 重实现 / 目录扫描 / target 自证 / 注册表推断 / git common-dir 猜 slug / settings 或 receipt 配置额外根。当前守卫在该拓扑下 fail-closed 是正确行为,【不需要生产改动】。重新开启需宿主提供权威 memory identity(见 residual spec 的四条条件)。本条同时是 [attp-hive-rollout] 的解阻依据:A 目标子仓全为独立单工作树 / B rollout 增加 topology preflight / C 宿主提供权威 memory identity;「多数子仓可能不是 worktree」不构成解阻证据。
-- [ ] [235a] [hook-status-freshness] P1: `mem hook status` 目前只验证 post-commit 中存在 evo-lite managed block，不验证已安装 block 是否与当前 `buildHookBody()` 一致。Dogfood 已证明 stale hook 会让新合入的 post-commit 能力静默失活，即使 full suite 与 CI 全绿。已有 `diffInstalledHook()` 可区分 no-hook / no-block / in-sync / drifted。目标：status 对 drifted 明确报告 outdated、返回非零并提示 `mem hook diff` / `mem hook install`；status 保持纯 observer，不自动改写 hook。
 - [ ] [0ce0] [verify-hook-runtime-health] P1-B / design-needed: 评估 `mem verify` 是否应把 stale/missing installed hook 纳入总体治理健康状态。实现前必须先冻结 contract：无 `.git/hooks` 环境、npm pack/scaffold、CI checkout、child project 各自是否要求 hook installed/current；不得搭在 hook-status-freshness 小修上顺手实现。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [94e28d0] 2026-08-15 BacklogResolve: [235a] hook-status-freshness RESOLVED: shipped via PR #47 (merge 3e09455, reviewed head 975a67a, CI 
 - [3e09455] 2026-08-15 HookStatusFreshness: [235a] hook-status-freshness shipped and merged via PR #47 (merge 3e09455, reviewed head 975a67a, CI
 - [9c8be0a] 2026-08-14 DispositionLedger: Disposition ledger shipped and merged to main via PR #46 (merge 9c8be0a, reviewed head 6ade6c3). A g
 - [0965f6e] 2026-08-10 SpecStatusVocabularyLayer1: Spec 状态词汇表收敛（分层清洗第 1 层）+ 一处 park 误判更正。PR #43 合入 main@e7488aa，PR #44 合入 main@0965f6e，两个 PR CI 均 6/6 全
@@ -37,7 +37,6 @@
 - [364505a] 2026-08-08 BacklogEditCliGapClosure: PR #31 merged by ordinary two-parent merge at main@364505aafcd44747b70d7a228d5edf99a9d71906 with rev
 - [a5b1fa8] 2026-08-08 TestTempRootLifecycleClosure: PR #29 merged by ordinary two-parent merge at main@a5b1fa8641110db29f24a5e1b9af906039ff2755, with re
 - [78a792e] 2026-08-07 ZvecWinUnicodeContainmentClosure: [zvec-win-unicode-containment] P0 / release-blocker 收口。AC1-AC7 全部交付并合入 main@78a792e。 问题：Windows 上部分非
-- [6780911] 2026-08-03 MemoryLockWinCimSnapshotReliabilityClosure: Phase 3A 已通过 PR #14 合入 main@d48108a。实现 getProcessSnapshotResult 结构化分类、兼容 wrapper、两个生产调用点 fail-closed
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
