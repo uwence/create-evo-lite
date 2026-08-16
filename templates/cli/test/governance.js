@@ -1216,6 +1216,65 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T38a. readinessOf answers readiness alone, and previewClose still agrees with it ...');
+        {
+            const cp = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            assert.strictEqual(typeof cp.readinessOf, 'function', 'readinessOf must be exported');
+
+            const root = createTempRuntimeRoot('readiness-of').workspaceRoot;
+            const specDir = path.join(root, 'docs', 'specs');
+            const writeSpec = (name, criteriaJson) => {
+                const p = path.join(specDir, name);
+                writeText(p, ['---', `id: spec:${name.replace(/\.md$/, '')}`, 'status: draft', '---', '',
+                    '# S', '', '## Acceptance Criteria', '', '```json', criteriaJson, '```', ''].join('\n'));
+                return p;
+            };
+            const oneCmd = JSON.stringify({ criteria: [{ id: 'ac-1', description: 'd',
+                dependsOn: ['x'], verifier: { type: 'command', params: { cmd: 'true' } } }] }, null, 2);
+
+            const readyPath = writeSpec('ready.md', oneCmd);
+            const r = cp.readinessOf(readyPath, { root, statusFn: () => [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }] });
+            assert.strictEqual(r.readiness, 'READY', 'all-PASS is READY');
+            assert.strictEqual(r.contractStatus, 'valid', 'a well-formed criteria block is a valid contract');
+            assert.strictEqual(r.contractPresent, true, 'a criteria block means a contract is present');
+
+            const blockedPath = writeSpec('blocked.md', oneCmd);
+            const b = cp.readinessOf(blockedPath, { root, statusFn: () => [{ criterionId: 'ac-1', verdict: 'FAIL', detail: 'd' }] });
+            assert.strictEqual(b.readiness, 'BLOCKED', 'a non-PASS verdict is BLOCKED');
+            assert.deepStrictEqual(b.blockers.map(x => x.criterionId), ['ac-1'], 'the blocking criterion is named');
+
+            const nonePath = writeSpec('none.md', JSON.stringify({ criteria: [] }));
+            const n = cp.readinessOf(nonePath, { root, statusFn: () => [] });
+            assert.strictEqual(n.readiness, 'NO-CONTRACT', 'an empty criteria block is NO-CONTRACT');
+            assert.strictEqual(n.contractStatus, 'absent', 'and it reports no contract, not an invalid one');
+            assert.strictEqual(n.contractPresent, false);
+
+            // The authority accessor carries no closure UX. previewClose keeps its
+            // own note, so a future consumer cannot inherit "close manually" advice
+            // simply by acquiring the authoritative verdict.
+            for (const res of [r, b, n]) {
+                assert.ok(!/close manually|criteria block for a real gate/.test(JSON.stringify(res)),
+                    'FORBIDDEN: readinessOf carrying previewClose note prose');
+            }
+
+            // THE REFACTOR PROPERTY: previewClose must not have drifted from the
+            // function it now delegates to. If these ever disagree, previewClose
+            // has grown a second readiness opinion — which is the defect this
+            // whole change removes, reappearing one layer down.
+            const planStateFn = () => ({ planId: 'plan:t', found: false, tasksTotal: 0, tasksImplemented: 0, uncheckedBoxes: 0 });
+            for (const [label, sp, verdicts] of [
+                ['READY', readyPath, [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }]],
+                ['BLOCKED', blockedPath, [{ criterionId: 'ac-1', verdict: 'FAIL', detail: 'd' }]],
+                ['NO-CONTRACT', nonePath, []],
+            ]) {
+                const viaPreview = cp.previewClose(sp, { root, planStateFn, statusFn: () => verdicts });
+                const viaReadiness = cp.readinessOf(sp, { root, statusFn: () => verdicts });
+                assert.strictEqual(viaPreview.readiness, viaReadiness.readiness,
+                    `${label}: previewClose and readinessOf must never disagree about readiness`);
+            }
+            console.log('✅ T38a readinessOf extraction');
+        }
+
         console.log('T39. Testing close-commands export + previewClose is read-only ...');
         {
             const commands = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-commands'));

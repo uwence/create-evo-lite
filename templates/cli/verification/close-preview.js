@@ -80,13 +80,53 @@ function defaultPlanStates(root, specPath) {
     return { planIds, plans, unresolvedPlanIds };
 }
 
+// The authoritative closure readiness, and nothing else. Split out of
+// previewClose so a consumer that only needs the verdict — R011 — does not
+// have to touch plan state or the mutation action list to get it.
+//
+// It returns contractStatus rather than prose: an authority accessor states
+// what is true, and leaves how to phrase the next step to its caller.
+//
+// It deliberately does NOT catch. An unreadable evidence store must reach the
+// caller: this function cannot know whether its caller wants to fail a
+// command or degrade a census, and guessing would turn "I could not look"
+// into "there is nothing there" — the exact impersonation this project
+// forbids.
+function readinessOf(specPath, opts = {}) {
+    const root = opts.root || process.cwd();
+    const specText = fs.readFileSync(specPath, 'utf8');
+    const contract = loadValidatedContract(specText);
+    const typeById = {};
+    for (const c of contract.criteria) typeById[c.id] = c.verifier && c.verifier.type;
+
+    if (!contract.ok) {
+        return {
+            readiness: 'BLOCKED', contractStatus: 'invalid', contractPresent: true, criteria: [],
+            blockers: contract.findings.map(f => ({ criterionId: f.id, verdict: 'INVALID', remedy: f.message })),
+        };
+    }
+    if (contract.noContract) {
+        return {
+            readiness: 'NO-CONTRACT', contractStatus: 'absent', contractPresent: false,
+            criteria: [], blockers: [],
+        };
+    }
+
+    const statusFn = opts.statusFn || function (sp) { return require('./engine').statusSpec(sp, { root }); };
+    const verdicts = statusFn(specPath);
+    const blockers = verdicts.filter(v => v.verdict !== 'PASS').map(v => ({
+        criterionId: v.criterionId, verdict: v.verdict, remedy: remedyFor(v.verdict, typeById[v.criterionId]),
+    }));
+    return {
+        readiness: blockers.length ? 'BLOCKED' : 'READY',
+        contractStatus: 'valid', contractPresent: true, criteria: verdicts, blockers,
+    };
+}
+
 function previewClose(specPath, opts = {}) {
     const root = opts.root || process.cwd();
     const specText = fs.readFileSync(specPath, 'utf8');
     const fm = parseFrontmatter(specText).frontmatter || {};
-    const contract = loadValidatedContract(specText);
-    const typeById = {};
-    for (const c of contract.criteria) typeById[c.id] = c.verifier && c.verifier.type;
 
     // planStateFn stays supported for the singular injection existing tests use;
     // it is wrapped into the collection shape so every consumer sees one shape.
@@ -139,28 +179,24 @@ function previewClose(specPath, opts = {}) {
     if (fm.status !== 'done') actions.push('set spec status: done');
     if (totalTasks > 0) actions.push(`backfill R008 evidence for ${totalTasks} task(s)`);
 
-    // Malformed contract (present but invalid) → fail-closed, never READY.
-    if (!contract.ok) {
-        return {
-            readiness: 'BLOCKED', criteria: [], plan: planState, actions, warnings,
-            blockers: contract.findings.map(f => ({ criterionId: f.id, verdict: 'INVALID', remedy: f.message })),
-            note: 'contract is invalid — fix the criteria block (mem verify-contract lint <spec>)',
-        };
-    }
+    const r = readinessOf(specPath, { root, statusFn: opts.statusFn });
 
-    if (contract.noContract) {
-        return {
-            readiness: 'NO-CONTRACT', criteria: [], plan: planState, blockers: [], actions: [], warnings,
-            note: 'no machine-readable acceptance criteria — add a criteria block for a real gate, or close manually',
-        };
+    // The note is previewClose's own voice, kept verbatim. readinessOf reports
+    // contractStatus; phrasing the operator's next step is not an authority's job.
+    // NO-CONTRACT also keeps its historical empty action list while the invalid
+    // branch keeps its populated one — preserved deliberately, T38 pins it.
+    if (r.contractStatus === 'absent') {
+        return { readiness: r.readiness, criteria: r.criteria, plan: planState,
+            blockers: r.blockers, actions: [], warnings,
+            note: 'no machine-readable acceptance criteria — add a criteria block for a real gate, or close manually' };
     }
-
-    const statusFn = opts.statusFn || function (sp) { return require('./engine').statusSpec(sp, { root }); };
-    const verdicts = statusFn(specPath);
-    const blockers = verdicts.filter(v => v.verdict !== 'PASS').map(v => ({
-        criterionId: v.criterionId, verdict: v.verdict, remedy: remedyFor(v.verdict, typeById[v.criterionId]),
-    }));
-    return { readiness: blockers.length ? 'BLOCKED' : 'READY', criteria: verdicts, plan: planState, blockers, actions, warnings };
+    if (r.contractStatus === 'invalid') {
+        return { readiness: r.readiness, criteria: r.criteria, plan: planState,
+            blockers: r.blockers, actions, warnings,
+            note: 'contract is invalid — fix the criteria block (mem verify-contract lint <spec>)' };
+    }
+    return { readiness: r.readiness, criteria: r.criteria, plan: planState,
+        blockers: r.blockers, actions, warnings };
 }
 
-module.exports = { previewClose, remedyFor, defaultPlanState, defaultPlanStates };
+module.exports = { previewClose, readinessOf, remedyFor, defaultPlanState, defaultPlanStates };
