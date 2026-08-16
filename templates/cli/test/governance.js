@@ -3719,6 +3719,39 @@ async function runGovernanceTests() {
             console.log('✅ T-contract-identity passed');
         }
 
+        console.log('T-r011-real-repo. The two specs this defect was found on stop being told to close ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const { scanPlanning } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'scan'));
+
+            // Built from tracked sources, never from .evo-lite/generated/**: that
+            // directory is git-ignored and npm test does not create it, so reading
+            // it would make this criterion pass locally and never run in CI.
+            const ir = scanPlanning(WORKSPACE_ROOT);
+            const findings = gaps.checkR011(WORKSPACE_ROOT, ir, {}, null);
+
+            const expected = {
+                'spec:governance-observation-budget': 'task:governance-observation-budget-t5',
+                'spec:planning-truth-controls': 'task:planning-truth-controls-t6',
+            };
+            const seen = findings.filter(f => Object.keys(expected).includes(f.id.replace('R011:', '')));
+            assert.strictEqual(seen.length, 2,
+                'precondition: both specs are still R011 candidates on this tree, or this control proves nothing');
+            for (const f of seen) {
+                const specId = f.id.replace('R011:', '');
+                assert.strictEqual(f.type, 'spec-closure-uncontracted',
+                    `${specId}: no criteria block means no authoritative verdict`);
+                assert.ok(!/status:\s*done/.test(f.suggestedAction || ''),
+                    `${specId}: FORBIDDEN — the advice a human overruled by hand on 2026-08-10`);
+                assert.ok(!/mem close/.test(f.suggestedAction || ''),
+                    `${specId}: an uncontracted spec must not be routed at a command that would refuse it`);
+                assert.match(f.message, new RegExp(expected[specId].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+                    `${specId}: the unevidenced task must be named — a human closing this spec needs to see `
+                    + 'WHICH work has nothing behind it');
+            }
+            console.log('✅ T-r011-real-repo passed');
+        }
+
         console.log('T26b. Testing R011 groups by spec: an incomplete sibling plan suppresses the nag ...');
         {
             const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
