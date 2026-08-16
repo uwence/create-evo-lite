@@ -94,11 +94,10 @@ the loop that scans the `// --- R011 ---` section's source text for
 `.gitRefs`, `.linkedFilesTotal`, etc. — is never reached in this run.
 
 That the static guard bears load in its own right was proven **separately, by
-a controller probe**: injecting a behaviour-neutral `.gitRefs` read into the
-R011 section (a `const` binding that is declared and never used, so the
-function's return value is unchanged) reddened the static assertion directly —
-`FORBIDDEN: the R011 section reads .gitRefs` — with exit 1, and restoring the
-section returned the suite to green.
+a controller probe**. It is recorded in full — exact mutation, exact failing
+assertion, exit code and restore hash — as **P2** in *Controller probes* at the
+end of this document. That section, not a session report, is the durable
+provenance for this claim.
 
 Record M17 as **effective against the forbidden implementation** (the
 re-derivation mutation), and record the neutral probe as the **separate**
@@ -285,3 +284,119 @@ type-mapping and unevidenced-naming logic in isolation. That logic's isolated
 proof is `T-r011-router`'s job, and M15/M16 correctly land there first. No
 fixture was altered to force a different landing spot, per the brief's
 prohibition on fixture massaging.
+
+That reasoning explains why M15/M16 land where they do. It does **not** answer
+whether `T-r011-real-repo` can fail at all on its own — and a block that cannot
+fail is decorative however well its purpose reads. That question is settled
+separately by **P1** in *Controller probes* below: it does fail on its own, on
+its own assertion, while every synthetic block stays green.
+
+---
+
+## Controller probes — not part of M0–M20
+
+M0–M20 are the twenty-one mutations frozen in the implementation plan. The
+probes below are **not** members of that set and do not renumber it. They were
+run by the controller after the fact, each to answer a question the planned
+mutations could not, because a planned mutation broke an earlier assertion and
+so never exercised the guard it was aimed at.
+
+Each entry transcribes what was actually run and observed. Nothing here is
+reconstructed from reasoning.
+
+### P1 — real-repo default-readiness probe (settles `T-r011-real-repo`)
+
+**Question.** M15 and M16 both redden `T-r011-router`'s earlier synthetic
+assertions, so neither shows that `T-r011-real-repo` bears any load of its own.
+Can that block fail at all?
+
+**The seam that makes an isolated probe possible.** `checkR011` resolves its
+readiness source as:
+
+```js
+const readinessFn = options.readinessFn
+    || ((sp) => require('../verification/close-preview').readinessOf(sp, { root: projectRoot }));
+```
+
+`T-r011-real-repo` calls `gaps.checkR011(WORKSPACE_ROOT, ir, {}, null)` — it is
+the **only** caller in the suite that passes no `readinessFn` and therefore the
+only one that reaches the default. `T-r011-router`, `T-r011-unobservable` and
+`T-r011-fingerprint` all inject their own.
+
+**Mutation applied** (both mirrors), replacing only the default fallback:
+
+```js
+const readinessFn = options.readinessFn
+    || ((sp) => ({ readiness: 'BLOCKED', blockers: [], contractStatus: 'valid', contractPresent: true }));
+```
+
+**Why it is neutral.** Every test that injects `readinessFn` never evaluates the
+fallback expression, so their behaviour is bit-for-bit unchanged.
+
+**Observed** — `node .evo-lite/cli/test.js governance`, exit **1**:
+
+```
+✅ T-r011-router passed
+...
+T-r011-real-repo. The two specs this defect was found on stop being told to close ...
+❌ Governance test failed: AssertionError [ERR_ASSERTION]: spec:governance-observation-budget: no criteria block means no authoritative verdict
+```
+
+`T-r011-router` reached its own `✅` line — the probe passed through every
+synthetic block untouched — and `T-r011-real-repo` failed on **its own**
+assertion.
+
+**Restore.** `templates/cli/planning/gaps.js` was copied aside before mutating
+and copied back afterwards (never `git checkout --`). Template, live mirror and
+backup all read
+`46d54311a6ab8ba76e8c12f655be5a0ee234c655435b7320408e7ad3cf245a8e`, and the
+full suite returned exit 0 at 445 blocks.
+
+**Verdict: EFFECTIVE.** `T-r011-real-repo` carries independent integration
+load: it fails when the real default readiness wiring is broken, even though
+every synthetic block still passes.
+
+### P2 — behaviour-neutral raw-material read (settles the AC2 static guard)
+
+**Question.** M17 reddens a semantic assertion that runs before the AC2 static
+source scan, so the scan itself is never executed under M17. Does that scan
+bear load?
+
+**Mutation applied** (both mirrors), inside `r011Unevidenced`'s filter callback:
+
+```js
+const _probe = e && e.evidence ? e.evidence.gitRefs : null;
+```
+
+**Why it is neutral.** The binding is declared and never read, so the callback's
+return value — and therefore every finding, message and `factInputs` the suite
+observes — is unchanged. Only the R011 section's *source text* changes.
+
+**Observed** — `node .evo-lite/cli/test.js governance`, exit **1**:
+
+```
+❌ Governance test failed: AssertionError [ERR_ASSERTION]: FORBIDDEN: the R011 section reads .gitRefs — that is progress.js's raw material, and deciding from it here re-derives the evidence predicate AC2 forbids duplicating
+```
+
+**Restore.** Copied back from the pre-mutation copy; template, live mirror and
+backup all read
+`c81f123a6b8d4605e29b54e4ee4e873441bbf423880325f679b9e791ecb47e62`, and the
+governance scope returned to green.
+
+**Verdict: EFFECTIVE.** The AC2 source guard fails on a source-level
+reintroduction of the forbidden read even when behaviour is identical, which is
+precisely the property AC2 states.
+
+*(P1 and P2 record different files at different points in this branch's
+history, so their gaps.js hashes differ: `c81f123` is the Task 2 state, and
+`46d54311` the Task 4 state that P1 ran against.)*
+
+### What these two probes have in common
+
+Both exist because a planned mutation was aimed at a guard that something
+**earlier** also asserts. That is the standing lesson stated under M17, seen
+twice on this branch — M17 in Task 2, M15/M16 in Task 5 — which makes it a
+pattern in how the matrix was designed rather than two isolated accidents.
+When designing a mutation, ask first: *what else asserts this, and does it run
+before my target?* If the answer is yes, the row needs a companion probe that
+is neutral to everything ahead of it.
