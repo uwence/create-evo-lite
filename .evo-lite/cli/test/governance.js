@@ -3423,11 +3423,130 @@ async function runGovernanceTests() {
             console.log('✅ T26 R012 focus-health passed');
         }
 
+        console.log('T-r011-router. R011 renders the authoritative verdict and never invents one ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            assert.strictEqual(gaps.PLANNING_RULE_VERSIONS.R011, 2,
+                'R011 ruleVersion must bump in the SAME commit as the semantics change — new claims '
+                + 'published under the old version are what ruleVersion exists to prevent');
+
+            const root = createTempRuntimeRoot('r011-router').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: draft', '---', '', '# S', ''].join('\n'));
+            const ir = {
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:u', status: 'draft', sourcePath: 'docs/specs/u.md' }],
+                plans: [{ id: 'plan:u', status: 'draft', linkedSpec: 'spec:u' }],
+                tasks: [
+                    { id: 'task:u1', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: ['a.js'], evidence: [] },
+                    { id: 'task:u2', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [] },
+                    { id: 'task:u3', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [], readOnly: true },
+                ],
+                warnings: [],
+            };
+            // The stub publishes only the CONCLUSION, exactly as evaluateTask now
+            // does. If R011 needed more than this to answer the question, it would
+            // be re-deriving the predicate.
+            const evidenceFn = (task) => ({
+                id: task.id,
+                evidence: { hasPositiveEvidence: (task.linkedFiles || []).length > 0 },
+            });
+            const r011 = (readiness, blockers) => gaps.checkR011(root, ir, {
+                readinessFn: () => ({ readiness, blockers: blockers || [],
+                    contractStatus: readiness === 'NO-CONTRACT' ? 'absent' : 'valid',
+                    contractPresent: readiness !== 'NO-CONTRACT' }),
+                evidenceFn,
+            }, null);
+
+            const ready = r011('READY')[0];
+            assert.strictEqual(ready.type, 'spec-closure-ready', 'READY maps to spec-closure-ready');
+            assert.strictEqual(ready.level, 'info', 'ready is good news, not an alert');
+            assert.strictEqual(ready.dispositionable, false,
+                'ready is positive routing information — accepted-debt has no meaning against it');
+            assert.match(ready.suggestedAction, /mem close docs\/specs\/u\.md --preview/,
+                'ready routes to the close transaction with the argument the CLI actually accepts: a PATH');
+            assert.ok(!/mem close spec:/.test(ready.suggestedAction),
+                'FORBIDDEN: mem close <spec-id> — close-commands passes the argument straight to '
+                + 'fs.readFileSync, so an id produces ENOENT, not a preview');
+
+            const notReady = r011('BLOCKED', [{ criterionId: 'ac-1', verdict: 'FAIL' }])[0];
+            assert.strictEqual(notReady.type, 'spec-closure-not-ready', 'BLOCKED maps to spec-closure-not-ready');
+            assert.strictEqual(notReady.level, 'warning');
+            assert.strictEqual(notReady.dispositionable, true, 'a blocked spec is a real governance fact');
+            assert.match(notReady.message, /ac-1/, 'the blocking criterion is named for the operator');
+
+            const unc = r011('NO-CONTRACT')[0];
+            assert.strictEqual(unc.type, 'spec-closure-uncontracted', 'NO-CONTRACT maps to spec-closure-uncontracted');
+            assert.strictEqual(unc.level, 'warning');
+            assert.strictEqual(unc.dispositionable, true);
+
+            // Presence evidence appears as DISPLAY CONTEXT and nowhere else: the
+            // task with no files and no git refs is named, the one with evidence
+            // is not, and neither reaches factInputs.
+            assert.match(unc.message, /task:u2/, 'the unevidenced task is named for the human');
+            assert.ok(!/task:u1/.test(unc.message), 'a task with evidence is not listed as unevidenced');
+            assert.ok(!/task:u3/.test(unc.message),
+                'a readOnly task is exempt from implementation evidence (R005, R008) — listing it as having '
+                + 'no evidence of its own is a false prompt');
+            assert.ok(!/task:u1|task:u2|task:u3|linkedFiles|archiveHits|confidence/.test(JSON.stringify(unc.factInputs)),
+                'FORBIDDEN: presence evidence in factInputs — a file appearing on disk would lapse a '
+                + 'human decision about a criterion that has not moved');
+
+            // AC2, as a source-level property rather than a reviewer's promise:
+            // gaps.js must hold no duplicate of an evidence predicate. Calling the
+            // evaluator and then re-deciding from its raw materials would satisfy
+            // the letter and rebuild the defect.
+            //
+            // Scoped to the R011 section, not the whole file: R008 legitimately
+            // carries archiveHits in its OWN factInputs (gaps.js:446), and a
+            // whole-file scan would redden on that unrelated line.
+            const gapsSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps.js'), 'utf8');
+            const r011Start = gapsSrc.indexOf('// --- R011 ---');
+            const r011End = gapsSrc.indexOf('// --- R012 ---');
+            assert.ok(r011Start > -1 && r011End > r011Start,
+                'the R011 section markers must exist — this assertion is scoped by them');
+            const r011Src = gapsSrc.slice(r011Start, r011End);
+            // Property-access form, not substring: this section is REQUIRED to name
+            // these fields in prose ("do not re-derive from gitRefs"), and a bare
+            // includes() would make the correct implementation, correctly
+            // commented, permanently red — a guard whose green state is unreachable.
+            for (const raw of ['linkedFilesExist', 'linkedFilesTotal', 'linkedFilesRatio', 'gitRefs', 'archiveHits', 'confidence']) {
+                assert.ok(!new RegExp(`\\.${raw}\\b`).test(r011Src),
+                    `FORBIDDEN: the R011 section reads .${raw} — that is progress.js's raw material, and `
+                    + 'deciding from it here re-derives the evidence predicate AC2 forbids duplicating');
+            }
+            assert.ok(r011Src.includes('hasPositiveEvidence'),
+                'R011 consumes the published conclusion, which is the only evidence surface it may touch');
+
+            // closureState is DERIVED, never hand-written.
+            assert.strictEqual(typeof gaps.r011ClosureState, 'function', 'r011ClosureState must be exported');
+            for (const f of [ready, notReady, unc]) {
+                assert.strictEqual(f.factInputs.closureState, gaps.r011ClosureState(f.type),
+                    `${f.type}: closureState must come from r011ClosureState, not a hand-picked synonym`);
+            }
+
+            // THE PROPERTY THE WHOLE CHANGE EXISTS FOR: no state may tell the
+            // operator to hand-edit the frontmatter, because that routes around
+            // the close transaction's lock, dirty-tree check, journal and rollback.
+            for (const f of [ready, notReady, unc]) {
+                assert.ok(!/status:\s*done/.test(f.suggestedAction),
+                    `FORBIDDEN: ${f.type} recommends hand-editing status: done — the bypass this change removes`);
+            }
+            assert.ok(!/mem close/.test(unc.suggestedAction),
+                'uncontracted must not point at a command that would refuse it — close-apply rejects anything not READY');
+            console.log('✅ T-r011-router passed');
+        }
+
         console.log('T26b. Testing R011 groups by spec: an incomplete sibling plan suppresses the nag ...');
         {
             const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
             delete require.cache[gapsPath];
             const { checkR011 } = require(gapsPath);
+
+            const stubReadiness = () => ({ readiness: 'NO-CONTRACT', blockers: [],
+                contractStatus: 'absent', contractPresent: false });
+            const run = (ir) => checkR011(WORKSPACE_ROOT, ir,
+                { readinessFn: stubReadiness, evidenceFn: () => null }, null);
 
             // Multi-plan spec: a shipped 4a-style plan + a parked 4b-style plan
             // with open tasks. The spec is intentionally still open — R011 must
@@ -3443,21 +3562,21 @@ async function runGovernanceTests() {
                     { id: 'plan:multi-b/task-1', linkedPlan: 'plan:multi-b', status: 'todo' },
                 ],
             };
-            assert.strictEqual(checkR011(multi).length, 0,
+            assert.strictEqual(run(multi).length, 0,
                 'R011 must not fire while a sibling plan of the same spec still has open tasks');
 
             // Single complete plan on a non-done spec → exactly one finding, and
-            // the message keeps the legacy single-plan wording.
+            // the message keeps naming the plan, in the new router wording.
             const single = {
                 specs: [{ id: 'spec:single', status: 'draft', sourcePath: 'docs/specs/single.md' }],
                 plans: [{ id: 'plan:single-a', status: 'done', linkedSpec: 'spec:single', sourcePath: 'docs/plans/sa.md' }],
                 tasks: [{ id: 'plan:single-a/task-1', linkedPlan: 'plan:single-a', status: 'implemented' }],
             };
-            const one = checkR011(single);
+            const one = run(single);
             assert.strictEqual(one.length, 1, 'R011 must fire when every linked plan is complete');
             assert.strictEqual(one[0].id, 'R011:spec:single');
-            assert.ok(one[0].message.includes('linked plan plan:single-a has all tasks implemented'),
-                'single-plan message must keep the legacy wording');
+            assert.ok(one[0].message.includes('linked plan plan:single-a is checkbox-complete'),
+                'single-plan message keeps naming the plan, in the new router wording');
 
             // Two complete plans on one spec → still exactly ONE finding (the old
             // per-plan loop emitted duplicate R011:<spec> ids here).
@@ -3472,7 +3591,7 @@ async function runGovernanceTests() {
                     { id: 'plan:dup-b/task-1', linkedPlan: 'plan:dup-b', status: 'implemented' },
                 ],
             };
-            assert.strictEqual(checkR011(dup).length, 1,
+            assert.strictEqual(run(dup).length, 1,
                 'R011 must emit one finding per spec, not one per complete plan');
             console.log('✅ T26b R011 spec-grouped multi-plan passed');
         }
