@@ -17,7 +17,7 @@ linkedSpec: spec:r011-closure-router
 
 **Frozen design:** `docs/superpowers/specs/2026-08-15-r011-closure-router-design.md` at `494b20c`. Where this plan and the spec disagree, the spec wins — stop and report rather than resolving it yourself.
 
-**Revision:** supersedes the `e19c949` draft, which was reviewed CHANGES REQUIRED (5 Important, 2 Minor). Every change is recorded in `## What changed since e19c949` at the end.
+**Revision:** third draft. `e19c949` was reviewed CHANGES REQUIRED (5 Important, 2 Minor); `f538e5e` fixed those 6 and was reviewed CHANGES REQUIRED again (3 Important, 2 Minor) with the malformed-contract identity ruled **Option 2, ratified**. Both rounds are recorded at the end.
 
 ## Global Constraints
 
@@ -31,7 +31,7 @@ linkedSpec: spec:r011-closure-router
 - **`git checkout -- <file>` destroys uncommitted work.** To restore after a mutation experiment, copy the file aside first and copy it back. This has destroyed work twice on this project.
 - **Do not set focus or touch `.evo-lite/active_context.md`.** If a commit message names a `plan:<slug>` or `spec:<slug>`, post-commit auto-advance may overwrite the human's focus. Prefix such commits with `EVO_LITE_NO_FOCUS_AUTOADVANCE=1`.
 - **`ruleVersion` may never lag the semantics inside a single commit.** Every commit runs a real post-commit governance pass. A commit that ships new R011 claim semantics and new `factInputs` while `PLANNING_RULE_VERSIONS.R011` is still `1` publishes a state `ruleVersion` exists to forbid, even on a repo that currently holds no dispositions.
-- **Presence evidence is display context only.** Git refs, linked files, archive hits and checkboxes may never enter state selection and may never enter `factInputs`. No fourth evidence evaluator may be written — presence is read from `progress.js`'s existing `evaluateTask`, and its `confidence` band is never read.
+- **Presence evidence is display context only.** Git refs, linked files, archive hits and checkboxes may never enter state selection and may never enter `factInputs`. No fourth evidence evaluator may be written, and **no evidence predicate may be re-derived** (AC2): `gaps.js` reads `evaluateTask`'s published `hasPositiveEvidence` conclusion and none of its raw materials, and never reads `confidence`.
 - **Each task proves its own guards.** The mutations belonging to a task run inside that task, before its commit. Task 5 consolidates the report; it is not where a guard is first shown to bear load.
 - **Out of scope, do not touch:** `parse-markdown.js`'s checkbox→plan-status promotion (`[a8a8]`), the three disagreeing archive-evidence mechanisms, `validateGitRef`'s fail-open catch, `loadArchiveEvidenceMap`'s swallow, `takeover-session.js`, `spec:disposition-ledger`'s invalid contract, `mem verify`, and every other known debt.
 
@@ -53,21 +53,47 @@ Three vocabularies exist. Each has exactly one home. **Do not invent a fourth sp
 |---|---|---|
 | `templates/cli/verification/close-preview.js` | owns the authoritative readiness computation | gains `readinessOf()`; `previewClose()` delegates to it and is otherwise behaviourally unchanged |
 | `templates/cli/planning/gaps.js` | emits planning drift findings | `checkR011` gains a project root, options and an observation sink, calls `readinessOf()`, maps to four types, carries the new `factInputs`; `PLANNING_RULE_VERSIONS.R011` → 2 |
-| `templates/cli/planning/progress.js` | owns the per-task evidence evaluation | **additive export only** — `evaluateTask` joins `module.exports`. No logic change. |
-| `templates/cli/verification/validate-contract.js` | owns contract parsing and validation | **additive returns only** — `parseSpecCriteria` also returns the raw block text, `loadValidatedContract` propagates it as `contractSource`. No validation logic change, no new failure codes. **Ratification required — see below.** |
+| `templates/cli/planning/progress.js` | owns the per-task evidence evaluation **and the definition of positive evidence** | **additive only** — `evaluateTask` joins `module.exports`, and its already-computed `hasPositiveEvidence` joins the `evidence` object it returns. No logic change. |
+| `templates/cli/verification/validate-contract.js` | owns contract parsing, validation **and contract identity** | **additive only** — `parseSpecCriteria` also returns the raw block text, `loadValidatedContract` propagates it as `contractSource` on every path that located a block, and `validationIdentityOf()` joins the exports beside `criterionDigest`. No validation logic change, no new failure codes. |
 | `templates/cli/test/governance.js` | governance test suite | all new tests; T26b updated |
 
 Mirrors of the first four under `.evo-lite/cli/` change identically.
 
 ### Two file-set expansions, and their standing
 
-**`progress.js` — decided at plan level, no ratification needed.** The frozen spec says presence evidence "must be read from a surface that already exists; the implementation must not author a fourth evidence evaluator to obtain it. **Which existing surface is a plan-level choice.**" This plan chooses `evaluateTask`, because it already owns this project's definition of *positive evidence*. Re-deriving that boolean inside `gaps.js` would install a second, weaker authority over a question that already has a designed one — the exact defect this whole item exists to remove. Only its structured `evidence` fields are read; `confidence` is not, and the bands stay in `progress.js` as the spec requires.
+**`progress.js` — decided at plan level.** The frozen spec says presence evidence "must be read from a surface that already exists; the implementation must not author a fourth evidence evaluator to obtain it. **Which existing surface is a plan-level choice.**" This plan chooses `evaluateTask`, because it already owns this project's definition of *positive evidence*.
 
-**`validate-contract.js` — RATIFICATION REQUIRED BEFORE TASK 4.** Tasks 1-3 and 5 do not touch it; Task 4 does. See the next section. Tasks 1, 2, 3 may be authorized and executed while this ruling is outstanding.
+AC2's requirement is stronger than "call the evaluator": *`gaps.js` contains **no duplicate of any evidence predicate**.* Reading `evaluateTask`'s raw materials and re-deciding from them in `gaps.js` — `validGitRefs === 0 && !(linkedFilesTotal > 0 && linkedFilesExist > 0)` — would satisfy the letter and violate the point, leaving `progress.js` computing the ingredients and `gaps.js` re-deciding what they mean. So `evaluateTask` publishes the conclusion it already reaches at `progress.js:57`, and `gaps.js` may read **only** `evidence.hasPositiveEvidence`. Task 2 pins that with a source-level assertion, not a reviewer's promise.
 
-## Pending ratification — the malformed-contract identity (blocks Task 4 only)
+`confidence` stays unread and the bands stay in `progress.js`, as the spec requires.
 
-AC7 requires a stable validation-failure identity for a malformed contract. The frozen design suggests the input: *"a digest or equivalent over the validation findings"*. It also states two properties in the same sentence:
+**`validate-contract.js` — ratified 2026-08-16.** Tasks 1-3 and 5 do not touch it; Task 4 does.
+
+## RATIFIED: Option 2 — the invalid-contract identity
+
+**Ruled by the human on 2026-08-16. Option 1 (digest the validation messages) is REJECTED. This is not a spec amendment: the frozen design says "a digest *or equivalent*", and Option 2 is ruled to be that equivalent. AC7 stands as written.**
+
+Frozen wording:
+
+> Identity is derived from stable authored cause, never diagnostic prose.
+> For the failure boundary actually observed:
+> - rejected `specId` / `linkedPlan` values participate when identity validation fails;
+> - for a present criteria block, its normalized raw block text participates;
+> - stable finding ids participate in canonical order;
+> - `finding.message` / V8 parser prose never participates.
+>
+> Use full SHA-256.
+
+Two consequences that Task 4 implements, both from the review:
+
+- **Every path that located a criteria block carries the source**, not only the JSON parse-error branch. Two different criterion-level failures on the same `ac-1` — missing `description` versus missing `dependsOn` — produce the same finding id and the same `INVALID` verdict, so without the block text they would share one identity.
+- **Full `sha256:<64 hex>`**, matching `criterionDigest`'s existing convention at `validate-contract.js:169`. A truncation to 64 bits buys 48 characters and shrinks a durable governance identity's collision space.
+
+The normalization is already free: `parseSpecCriteria` splits on `/\r?\n/` and rejoins with `\n`, so CRLF and LF forms of the same authored block digest identically.
+
+### Why the rejected option was rejected
+
+AC7 requires a stable validation-failure identity for an invalid contract. The frozen design suggests the input: *"a digest or equivalent over the validation findings"*. It also states two properties in the same sentence:
 
 - an edit that leaves the contract **broken differently** must lapse the decision;
 - an edit that only changes the **error wording** must not.
@@ -83,9 +109,9 @@ Measured against the current source, those two cannot both be satisfied from the
 
 So a digest over finding **ids** collapses every JSON malformation to `contract` — the AC7 violation. A digest over finding **messages** discriminates correctly but makes decision identity depend on V8's `JSON.parse` prose, which is engine-internal and carries a character offset, on a project whose CI runs three Node majors. That is the *"lapses a decision for no reason"* failure the same spec sentence forbids.
 
-**This is a gap in the frozen contract, not an implementation choice, so it is not mine to close.** The two options:
+The two options as put to the human:
 
-| | Option 1 — digest the findings | Option 2 — digest the cause (recommended) |
+| | Option 1 — digest the findings (REJECTED) | Option 2 — digest the cause (RATIFIED) |
 |---|---|---|
 | input | `{id, message}` pairs | frontmatter `id` + `linkedPlan` + raw criteria block text + sorted finding ids |
 | broken-differently lapses | ✅ | ✅ |
@@ -94,7 +120,7 @@ So a digest over finding **ids** collapses every JSON malformation to `contract`
 | file set | unchanged | `validate-contract.js` gains two additive return fields |
 | over-lapse | none | a whitespace edit inside a still-broken block lapses the decision — conservative direction |
 
-Option 2 needs **no new failure codes** — `parseSpecCriteria` already computes the block text and simply does not return it. Task 4 below is written against Option 2. **If the ruling is Option 1, Task 4's Step 3 must be rewritten before dispatch; do not let an implementer choose.**
+Option 2 needs **no new failure codes** — `parseSpecCriteria` already computes the block text and simply does not return it.
 
 ---
 
@@ -333,7 +359,7 @@ EOF
 - Consumes: `readinessOf(specPath, opts)` from Task 1.
 - Produces: `checkR011(projectRoot, planIR, options, observation)`. `options` accepts `{ readinessFn, evidenceFn }`; both default to the real implementations, and both exist so the four states can be tested as properties instead of by constructing evidence stores. The `observation` sink is used in Task 3 — accept and ignore it here.
 - Produces: `r011ClosureState(type)`, used by every state including Task 3's.
-- Produces (from `progress.js`): `evaluateTask(task, projectRoot)`, unchanged, now exported.
+- Produces (from `progress.js`): `evaluateTask(task, projectRoot)`, now exported, and its returned `evidence` object now also carries `hasPositiveEvidence` — the boolean it already computes.
 
 `checkR011`'s candidate detection is unchanged: a spec is a candidate when it is not already `done` and every linked plan has at least one task and all its tasks are `readOnly` or `implemented`. Checkboxes decide only that a spec is **worth checking**.
 
@@ -361,17 +387,16 @@ Add to `templates/cli/test/governance.js`:
                 tasks: [
                     { id: 'task:u1', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: ['a.js'], evidence: [] },
                     { id: 'task:u2', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [] },
+                    { id: 'task:u3', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [], readOnly: true },
                 ],
                 warnings: [],
             };
+            // The stub publishes only the CONCLUSION, exactly as evaluateTask now
+            // does. If R011 needed more than this to answer the question, it would
+            // be re-deriving the predicate.
             const evidenceFn = (task) => ({
                 id: task.id,
-                evidence: {
-                    gitRefs: task.id === 'task:u1' ? [{ ref: 'git:abc', valid: true }] : [],
-                    linkedFilesTotal: (task.linkedFiles || []).length,
-                    linkedFilesExist: (task.linkedFiles || []).length,
-                    linkedFilesRatio: 1, archiveHits: 0,
-                },
+                evidence: { hasPositiveEvidence: (task.linkedFiles || []).length > 0 },
             });
             const r011 = (readiness, blockers) => gaps.checkR011(root, ir, {
                 readinessFn: () => ({ readiness, blockers: blockers || [],
@@ -407,9 +432,34 @@ Add to `templates/cli/test/governance.js`:
             // is not, and neither reaches factInputs.
             assert.match(unc.message, /task:u2/, 'the unevidenced task is named for the human');
             assert.ok(!/task:u1/.test(unc.message), 'a task with evidence is not listed as unevidenced');
-            assert.ok(!/task:u1|task:u2|linkedFiles|archiveHits|confidence/.test(JSON.stringify(unc.factInputs)),
+            assert.ok(!/task:u3/.test(unc.message),
+                'a readOnly task is exempt from implementation evidence (R005, R008) — listing it as having '
+                + 'no evidence of its own is a false prompt');
+            assert.ok(!/task:u1|task:u2|task:u3|linkedFiles|archiveHits|confidence/.test(JSON.stringify(unc.factInputs)),
                 'FORBIDDEN: presence evidence in factInputs — a file appearing on disk would lapse a '
                 + 'human decision about a criterion that has not moved');
+
+            // AC2, as a source-level property rather than a reviewer's promise:
+            // gaps.js must hold no duplicate of an evidence predicate. Calling the
+            // evaluator and then re-deciding from its raw materials would satisfy
+            // the letter and rebuild the defect.
+            //
+            // Scoped to the R011 section, not the whole file: R008 legitimately
+            // carries archiveHits in its OWN factInputs (gaps.js:446), and a
+            // whole-file scan would redden on that unrelated line.
+            const gapsSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps.js'), 'utf8');
+            const r011Start = gapsSrc.indexOf('// --- R011 ---');
+            const r011End = gapsSrc.indexOf('// --- R012 ---');
+            assert.ok(r011Start > -1 && r011End > r011Start,
+                'the R011 section markers must exist — this assertion is scoped by them');
+            const r011Src = gapsSrc.slice(r011Start, r011End);
+            for (const raw of ['linkedFilesExist', 'linkedFilesTotal', 'linkedFilesRatio', 'gitRefs', 'archiveHits', 'confidence']) {
+                assert.ok(!r011Src.includes(raw),
+                    `FORBIDDEN: the R011 section reads ${raw} — that is progress.js's raw material, and `
+                    + 'deciding from it here re-derives the evidence predicate AC2 forbids duplicating');
+            }
+            assert.ok(r011Src.includes('hasPositiveEvidence'),
+                'R011 consumes the published conclusion, which is the only evidence surface it may touch');
 
             // closureState is DERIVED, never hand-written.
             assert.strictEqual(typeof gaps.r011ClosureState, 'function', 'r011ClosureState must be exported');
@@ -442,11 +492,28 @@ Expected: FAIL on the `PLANNING_RULE_VERSIONS.R011` assertion, then on the signa
 
 - [ ] **Step 3: Write minimal implementation**
 
-First, in `templates/cli/planning/progress.js`, export the existing evaluator. **No logic change:**
+First, in `templates/cli/planning/progress.js`, publish the conclusion `evaluateTask` already reaches and export it. **No logic change — `hasPositiveEvidence` is the existing local at line 57, now returned:**
+
+```js
+        evidence: {
+            gitRefs,
+            linkedFilesRatio: filesResult.ratio,
+            linkedFilesTotal: filesResult.total,
+            linkedFilesExist: filesResult.exist,
+            archiveHits,
+            // Published so consumers can ask "is there positive evidence?" without
+            // re-deriving it from the raw materials. The definition lives here and
+            // only here; a second copy in a drift rule is the defect this whole
+            // change exists to remove.
+            hasPositiveEvidence,
+        },
+```
 
 ```js
 module.exports = { evaluateTask, evaluateProgress, writeProgressReport, checkArchiveHits };
 ```
+
+The added key is purely additive — no test asserts this object's exact shape, and no consumer in `dashboard-data.js` or `inspector.js` reads its subfields.
 
 Then replace `checkR011`'s signature and finding construction in `templates/cli/planning/gaps.js`. The candidate loop above it is unchanged.
 
@@ -505,14 +572,22 @@ Inside the candidate loop, replace the `findings.push({...})` block:
         });
 ```
 
-Add the presence-evidence reader and the two renderers next to `checkR011`:
+Add the presence-evidence reader and the two renderers next to `checkR011`. **All of them must sit between the `// --- R011 ---` marker (`gaps.js:545`) and `// --- R012 ---` (`gaps.js:590`)** — the AC2 assertion is scoped by those markers, and a helper placed outside them escapes the check:
 
 ```js
-// Presence evidence, for the operator's eyes only. It is read from the surface
-// that already owns this project's definition of positive evidence — a second
-// copy inside a drift rule would be the very "weaker second authority" this
-// change exists to delete. The confidence band is deliberately NOT read: the
-// spec keeps it in progress.js so a display heuristic cannot look authoritative.
+// Presence evidence, for the operator's eyes only.
+//
+// This function CONSUMES a verdict; it does not reach one. `hasPositiveEvidence`
+// is progress.js's conclusion, and reading `gitRefs` / `linkedFilesTotal` /
+// `linkedFilesExist` here to re-derive it would rebuild the predicate one layer
+// down — AC2 forbids any duplicate of an evidence predicate in this file, and
+// that is the same "weaker second authority" shape this whole change deletes.
+// The confidence band is deliberately NOT read: the spec keeps it in progress.js
+// so a display heuristic cannot look authoritative.
+//
+// readOnly tasks are excluded, matching R005 (gaps.js:365) and R008 (gaps.js:436):
+// they are exempt from implementation evidence by design, so listing one as
+// having "no evidence of its own" would be a false prompt to a human.
 //
 // Best-effort by design. Presence never selects a state and never reaches
 // factInputs, so failing to read it withholds context — it makes no claim about
@@ -521,13 +596,11 @@ function r011Unevidenced(planIR, plans, projectRoot, options) {
     const evaluate = options.evidenceFn
         || ((task, root) => require('./progress').evaluateTask(task, root));
     const planIds = plans.map(p => p.id);
-    const tasks = (planIR.tasks || []).filter(t => planIds.includes(t.linkedPlan));
+    const tasks = (planIR.tasks || []).filter(t => planIds.includes(t.linkedPlan) && !t.readOnly);
     try {
         return tasks.filter(t => {
             const e = evaluate(t, projectRoot);
-            if (!e || !e.evidence) return false;
-            const validRefs = (e.evidence.gitRefs || []).filter(g => g && g.valid).length;
-            return validRefs === 0 && !(e.evidence.linkedFilesTotal > 0 && e.evidence.linkedFilesExist > 0);
+            return !!e && !!e.evidence && e.evidence.hasPositiveEvidence === false;
         }).map(t => t.id);
     } catch (_) {
         return null;   // null = "not read", distinct from [] = "read, none found"
@@ -641,6 +714,8 @@ Copy each file aside before mutating and restore by copying back — **never `gi
 | M8 | revert `PLANNING_RULE_VERSIONS.R011` to `1` | `R011 ruleVersion must bump in the SAME commit` |
 | M9 | change READY's action to `mem close ${spec.id} --preview` | `FORBIDDEN: mem close <spec-id>` |
 | M10 | drop the unevidenced clause from the uncontracted message | `the unevidenced task is named for the human` |
+| M17 | in `r011Unevidenced`, replace `e.evidence.hasPositiveEvidence === false` with the re-derivation `(e.evidence.gitRefs \|\| []).filter(g => g && g.valid).length === 0 && !(e.evidence.linkedFilesTotal > 0 && e.evidence.linkedFilesExist > 0)` | `FORBIDDEN: the R011 section reads gitRefs` |
+| M18 | drop the `!t.readOnly` filter | `a readOnly task is exempt from implementation evidence` |
 
 A red landing anywhere else — an unrelated block, a crash, a non-zero exit alone — is `INEFFECTIVE — guard is decorative` and must be recorded as such, not relabelled. An INEFFECTIVE row is a legitimate and valuable outcome; do not massage a fixture until it goes red.
 
@@ -852,7 +927,7 @@ EOF
 
 ### Task 4: Fingerprint carries what makes the state what it is
 
-> **GATE: do not start this task until the human has ruled on `## Pending ratification`.** It is written against Option 2. Under Option 1, Step 3 changes and this plan must be amended first.
+> Written against **Option 2, ratified 2026-08-16**. The identity algorithm is frozen in this task; an implementer does not choose it.
 
 **Files:**
 - Modify: `templates/cli/verification/validate-contract.js` (additive returns only)
@@ -869,7 +944,10 @@ EOF
 
 **Interfaces:**
 - Consumes: `computeFingerprint({ruleId, ruleVersion, factInputs})` from `templates/cli/disposition/fingerprint.js`.
-- Produces: `readinessOf(...).validationIdentity` — a 16-hex-char digest, present **only** when `contractStatus === 'invalid'`, absent otherwise.
+- Produces: `validationIdentityOf(contract) -> 'sha256:<64 hex>'` in `validate-contract.js`, exported beside `criterionDigest`. It is a pure function of a `loadValidatedContract` result, which is what makes the message-invariance property testable without a filesystem.
+- Produces: `readinessOf(...).validationIdentity` — that string, present **only** when `contractStatus === 'invalid'`, absent otherwise.
+
+The identity helper lives in `validate-contract.js`, not `close-preview.js`: the contract's identity belongs beside the contract, `crypto` and `canonicalize` are already imported there (`criterionDigest` at line 169 uses both), and a pure `contract -> identity` function is a seam a test can drive directly.
 
 Task 2 already emits `blockers` as a sorted `criterionId=verdict` array and bumped the version. This task adds the malformed-contract identity and proves all four discrimination properties.
 
@@ -885,7 +963,6 @@ Two measured facts about the sort, so nobody re-litigates it mid-task:
         {
             const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
             const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
-            const cp = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
 
             const root = createTempRuntimeRoot('r011-fingerprint').workspaceRoot;
             writeText(path.join(root, 'docs', 'specs', 'u.md'),
@@ -905,8 +982,6 @@ Two measured facts about the sort, so nobody re-litigates it mid-task:
                 return fp.computeFingerprint({ ruleId: f.rule, ruleVersion: gaps.PLANNING_RULE_VERSIONS.R011, factInputs: f.factInputs });
             };
             const blocked = (blockers) => ({ readiness: 'BLOCKED', blockers, contractStatus: 'valid', contractPresent: true });
-            const invalid = (identity, message) => ({ readiness: 'BLOCKED', contractStatus: 'invalid', contractPresent: true,
-                validationIdentity: identity, blockers: [{ criterionId: 'contract', verdict: 'INVALID', remedy: message }] });
 
             // 1. different failing criteria are different facts
             assert.notStrictEqual(printOf(blocked([{ criterionId: 'ac-1', verdict: 'FAIL' }])),
@@ -920,36 +995,94 @@ Two measured facts about the sort, so nobody re-litigates it mid-task:
                 printOf(blocked([{ criterionId: 'ac-3', verdict: 'STALE' }, { criterionId: 'ac-1', verdict: 'FAIL' }])),
                 'a mere reordering by the verdict engine must NOT lapse a decision that nothing real invalidated');
 
-            // 3. two DIFFERENT malformations are different facts, even though both
-            //    reduce to the single finding id `contract`
-            assert.notStrictEqual(printOf(invalid('aaaaaaaaaaaaaaaa', 'x')), printOf(invalid('bbbbbbbbbbbbbbbb', 'y')),
-                'FORBIDDEN: every malformed contract sharing one fingerprint — finding ids collapse all JSON '
-                + 'failures to `contract`, so identity must come from the cause, not the id');
-
-            // 4. re-wording an error message is not a change of fact
-            assert.strictEqual(printOf(invalid('aaaaaaaaaaaaaaaa', 'Unexpected token at position 7')),
-                printOf(invalid('aaaaaaaaaaaaaaaa', 'Expected double-quoted property name at position 7')),
-                'a validator or V8 rewording must NOT lapse a decision — CI runs three Node majors and the '
-                + 'JSON parser message is engine prose with an offset, not a contract');
-
-            // and the identity is actually computed from the spec source, not stubbed
-            const badPath = path.join(root, 'docs', 'specs', 'bad.md');
-            const withBlock = (body) => ['---', 'id: spec:bad', 'status: draft', '---', '',
-                '## Acceptance Criteria', '', '```json', body, '```', ''].join('\n');
-            writeText(badPath, withBlock('{ "criteria": [ }'));
-            const idA = cp.readinessOf(badPath, { root }).validationIdentity;
-            writeText(badPath, withBlock('{ "criteria": [{ "id": } ] }'));
-            const idB = cp.readinessOf(badPath, { root }).validationIdentity;
-            assert.ok(idA && idB, 'an invalid contract must carry a validationIdentity');
-            assert.notStrictEqual(idA, idB, 'two differently-broken blocks must not share one identity');
-            writeText(badPath, withBlock('{ "criteria": [ }'));
-            assert.strictEqual(cp.readinessOf(badPath, { root }).validationIdentity, idA,
-                'restoring the same broken block must restore the same identity — it is a function of the cause');
-            assert.strictEqual(cp.readinessOf(path.join(root, 'docs', 'specs', 'u.md'), { root }).validationIdentity, undefined,
-                'a spec with no contract carries no validation identity');
+            // 3. the identity reaches the fingerprint at all. Two contracts that
+            //    differ ONLY in validationIdentity must fingerprint differently;
+            //    otherwise everything proved in T-contract-identity is stranded
+            //    one layer below factInputs.
+            const invalid = (identity) => ({ readiness: 'BLOCKED', contractStatus: 'invalid', contractPresent: true,
+                validationIdentity: identity, blockers: [{ criterionId: 'contract', verdict: 'INVALID' }] });
+            assert.notStrictEqual(printOf(invalid('sha256:aa')), printOf(invalid('sha256:bb')),
+                'FORBIDDEN: validationIdentity not reaching factInputs — finding ids collapse every JSON '
+                + 'failure to `contract`, so without it every malformed contract shares one fingerprint');
             console.log('✅ T-r011-fingerprint passed');
         }
+
+        console.log('T-contract-identity. Identity comes from the authored cause, never the diagnostic ...');
+        {
+            const vc = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const cp = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            assert.strictEqual(typeof vc.validationIdentityOf, 'function', 'validationIdentityOf must be exported');
+
+            const root = createTempRuntimeRoot('contract-identity').workspaceRoot;
+            const specPath = path.join(root, 'docs', 'specs', 'bad.md');
+            const write = (frontmatter, body) => {
+                writeText(specPath, ['---', ...frontmatter, '---', '', '# S', '',
+                    ...(body === null ? [] : ['## Acceptance Criteria', '', '```json', body, '```']), ''].join('\n'));
+                return cp.readinessOf(specPath, { root }).validationIdentity;
+            };
+            const ok = ['id: spec:bad', 'status: draft'];
+            const criterion = (extra) => JSON.stringify({ criteria: [Object.assign({ id: 'ac-1' }, extra)] }, null, 2);
+
+            // (a) two different JSON malformations
+            const jsonA = write(ok, '{ "criteria": [ }');
+            const jsonB = write(ok, '{ "criteria": [{ "id": } ] }');
+            assert.ok(jsonA && jsonB, 'an invalid contract must carry a validationIdentity');
+            assert.ok(jsonA.startsWith('sha256:') && jsonA.length === 71,
+                'full SHA-256 with the repo prefix, like criterionDigest — a durable governance identity is '
+                + 'not a UI short code');
+            assert.notStrictEqual(jsonA, jsonB, 'two differently-broken blocks must not share one identity');
+            assert.strictEqual(write(ok, '{ "criteria": [ }'), jsonA,
+                'restoring the same broken block restores the same identity — it is a function of the cause');
+
+            // (b) two different CRITERION-LEVEL failures. Both produce finding id
+            //     `ac-1` and verdict INVALID, so ids alone cannot tell them apart.
+            const missingDescription = write(ok, criterion({ dependsOn: ['x'], verifier: { type: 'manual', params: {} } }));
+            const missingDependsOn = write(ok, criterion({ description: 'd', verifier: { type: 'manual', params: {} } }));
+            assert.ok(missingDescription && missingDependsOn,
+                'a criterion-level validation failure is an invalid contract too, and needs an identity');
+            assert.notStrictEqual(missingDescription, missingDependsOn,
+                'FORBIDDEN: two different criterion-level failures sharing one identity — both report id ac-1 '
+                + 'and verdict INVALID, so the block text is the only thing that tells them apart');
+
+            // (c) frontmatter identity failures, which never reach a criteria block
+            const idA = write(['id: not-a-spec-id', 'status: draft'], null);
+            const idB = write(['id: also-not-valid', 'status: draft'], null);
+            assert.notStrictEqual(idA, idB,
+                'FORBIDDEN: two different rejected spec ids sharing one identity — they return before any '
+                + 'block is parsed, so the rejected value is the only discriminator');
+            const lpA = write([...ok, 'linkedPlan: bad-one'], null);
+            const lpB = write([...ok, 'linkedPlan: bad-two'], null);
+            assert.notStrictEqual(lpA, lpB, 'and the same holds for two different rejected linkedPlan values');
+
+            // (d) THE INVARIANCE, driven through the pure seam so the authored cause
+            //     can be held fixed while the diagnostic prose changes. A filesystem
+            //     test cannot express this: changing the message means changing the
+            //     source that produced it.
+            const base = {
+                specId: 'spec:bad', linkedPlan: null, contractSource: '{ "criteria": [ }',
+                findings: [{ id: 'contract', level: 'error', message: 'invalid JSON in criteria block: Unexpected token' }],
+            };
+            const reworded = Object.assign({}, base, {
+                findings: [{ id: 'contract', level: 'error',
+                    message: 'invalid JSON in criteria block: Expected double-quoted property name at position 7' }],
+            });
+            assert.strictEqual(vc.validationIdentityOf(base), vc.validationIdentityOf(reworded),
+                'a validator or V8 rewording must NOT lapse a decision — CI runs three Node majors and the '
+                + 'JSON parser message is engine prose with a character offset, not a contract');
+            assert.notStrictEqual(vc.validationIdentityOf(base),
+                vc.validationIdentityOf(Object.assign({}, base, { contractSource: '{ "criteria": ] }' })),
+                'while a different authored cause under the same message still differs');
+
+            // and a healthy spec carries none of this
+            writeText(path.join(root, 'docs', 'specs', 'fine.md'),
+                ['---', 'id: spec:fine', 'status: draft', '---', '', '# S', ''].join('\n'));
+            assert.strictEqual(cp.readinessOf(path.join(root, 'docs', 'specs', 'fine.md'), { root }).validationIdentity, undefined,
+                'a spec with no contract carries no validation identity');
+            console.log('✅ T-contract-identity passed');
+        }
 ```
+
+The `criterion()` fixtures in (b) are built to fail exactly one rule each — `validateCriteria` requires a string `description` and a non-empty `dependsOn` array, so omitting one omits exactly one. If either fixture ever produces two findings, the assertion still holds but says less; report it rather than adjusting the message.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -958,7 +1091,7 @@ cp templates/cli/test/governance.js .evo-lite/cli/test/governance.js
 node .evo-lite/cli/test.js governance
 ```
 
-Expected: FAIL on property 3 — `validationIdentity` does not exist yet, so both invalid rounds produce the same `factInputs`.
+Expected: FAIL on `validationIdentityOf must be exported`, and on property 3 — `validationIdentity` does not exist yet, so both invalid rounds produce the same `factInputs`.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -980,7 +1113,7 @@ In `templates/cli/verification/validate-contract.js`, return the block text that
 
 The two early returns (`no "## Acceptance Criteria" heading found`, `no ```json criteria block`) keep `blockText: ''` — both are the NO-CONTRACT opt-out, where no identity is needed.
 
-In `loadValidatedContract`, propagate it on the malformed branch only:
+In `loadValidatedContract`, propagate it on **both** invalid paths — the malformed-block branch:
 
 ```js
         return { ok: false, noContract: false, specId, linkedPlan, criteria: [],
@@ -988,32 +1121,56 @@ In `loadValidatedContract`, propagate it on the malformed branch only:
             findings: [finding('contract', parsed.error)] };
 ```
 
-In `templates/cli/verification/close-preview.js`, add `const crypto = require('crypto');` to the requires (it is not currently imported), and compute the identity on the invalid branch of `readinessOf`:
+and the criterion-validation branch, which is the one the prior draft missed:
+
+```js
+    const findings = validateCriteria(parsed.criteria);
+    return { ok: findings.length === 0, noContract: parsed.criteria.length === 0, specId, linkedPlan,
+        criteria: parsed.criteria, contractSource: parsed.blockText || '', findings };
+```
+
+Without the second, a criterion missing its `description` and the same criterion missing its `dependsOn` both report finding id `ac-1` with verdict `INVALID` and would share one identity. The two frontmatter-identity branches (`id`, `linkedPlan`) return before any block is located and correctly carry no source: there, the rejected value is the discriminator.
+
+Add the identity function to `validate-contract.js`, beside `criterionDigest` and following its exact shape:
+
+```js
+// Identity of the authored CAUSE of a contract's invalidity, never of the
+// diagnostic that reported it. A validation finding is { id, level, message }
+// and nothing else: ids alone collapse every JSON malformation to `contract`
+// and every failure of one criterion to that criterion's id, while messages
+// carry V8's parser prose and a character offset — engine text that must not
+// sit inside a human decision's identity on a repo whose CI spans three Node
+// majors. What is stable is what the author wrote.
+//
+// Pure by design: a test can hold the cause fixed and vary the message, which
+// no filesystem fixture can express.
+function validationIdentityOf(contract) {
+    const c = contract || {};
+    const norm = canonicalize({
+        specId: c.specId == null ? null : String(c.specId),
+        linkedPlan: c.linkedPlan == null ? null : String(c.linkedPlan),
+        findingIds: (c.findings || []).map(f => f.id).sort(),
+        source: c.contractSource || '',
+    });
+    return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex');
+}
+```
+
+`canonicalize` sorts object keys but leaves arrays alone, so the explicit `.sort()` on `findingIds` is load-bearing. Full SHA-256 with the `sha256:` prefix matches `criterionDigest` at line 169.
+
+Export it: `validationIdentityOf` joins `module.exports` beside `criterionDigest`.
+
+In `templates/cli/verification/close-preview.js`, import it alongside `loadValidatedContract` — **no `crypto` import is added to this file** — and call it on the invalid branch of `readinessOf`:
 
 ```js
     if (!contract.ok) {
-        // Identity of the CAUSE, not of the complaint. A validation finding is
-        // { id, level, message } and nothing else, so every JSON malformation
-        // collapses to the single id `contract` — digesting ids alone cannot
-        // tell two broken contracts apart. Digesting messages would work, but
-        // would put V8's JSON parser prose (with a character offset) inside a
-        // human decision's identity, on a project whose CI spans three Node
-        // majors. The authored text that caused the failure is the stable input.
-        const validationIdentity = crypto.createHash('sha256').update(JSON.stringify({
-            specId: contract.specId == null ? null : String(contract.specId),
-            linkedPlan: contract.linkedPlan == null ? null : String(contract.linkedPlan),
-            findingIds: contract.findings.map(f => f.id).sort(),
-            source: contract.contractSource || '',
-        })).digest('hex').slice(0, 16);
         return {
             readiness: 'BLOCKED', contractStatus: 'invalid', contractPresent: true, criteria: [],
-            validationIdentity,
+            validationIdentity: validationIdentityOf(contract),
             blockers: contract.findings.map(f => ({ criterionId: f.id, verdict: 'INVALID', remedy: f.message })),
         };
     }
 ```
-
-`specId` and `linkedPlan` are in the digest because their own two failure classes carry the rejected value only in the message: without them, `spec:BAD1` and `spec:BAD2` would share one identity.
 
 In `templates/cli/planning/gaps.js`, carry it into `factInputs` when — and only when — it exists:
 
@@ -1034,7 +1191,7 @@ cp templates/cli/planning/gaps.js .evo-lite/cli/planning/gaps.js
 node .evo-lite/cli/test.js
 ```
 
-Expected: PASS, 443 blocks. Every pre-existing `validate-contract` and `verify-contract` test must still pass — this task adds return fields and removes none.
+Expected: PASS, 444 blocks — this task adds two. Every pre-existing `validate-contract` and `verify-contract` test must still pass — this task adds return fields and removes none.
 
 - [ ] **Step 5: Run this task's mutations**
 
@@ -1042,11 +1199,15 @@ Expected: PASS, 443 blocks. Every pre-existing `validate-contract` and `verify-c
 |---|---|---|
 | M5 | remove `.sort()` from `blockerIds` | `a mere reordering ... must NOT lapse a decision` |
 | M6 | drop `blockers` from `factInputs` | `ac-1=FAIL and ac-3=STALE sharing one fingerprint` |
-| M12 | drop `validationIdentity` from `factInputs` | `every malformed contract sharing one fingerprint` |
-| M13 | replace the digest input `source` with `contract.findings.map(f => f.message)` | `a validator or V8 rewording must NOT lapse a decision` |
-| M14 | drop `specId`/`linkedPlan` from the digest input | *expected INEFFECTIVE unless you add a case for it* — record honestly which |
+| M12 | drop `validationIdentity` from `factInputs` | `validationIdentity not reaching factInputs` |
+| M13 | in `validationIdentityOf`, replace the `source` input with `(c.findings \|\| []).map(f => f.message)` | `a validator or V8 rewording must NOT lapse a decision` |
+| M14 | drop `specId` and `linkedPlan` from `validationIdentityOf`'s input | `two different rejected spec ids sharing one identity` |
+| M19 | drop `contractSource` from the criterion-validation return in `loadValidatedContract` | `two different criterion-level failures sharing one identity` |
+| M20 | truncate the digest with `.slice(0, 16)` after `digest('hex')` | `full SHA-256 with the repo prefix` |
 
-M14 is included precisely because this plan predicts it is not covered by the tests above. Record the outcome as measured. If it is `INEFFECTIVE`, say so and stop — do not add a test during a mutation run.
+**Every row here is expected `effective`, and that is the point of this revision.** The prior draft's M13 and M14 fired against stub fixtures that pinned `validationIdentity` to a literal, so mutating the real digest could not redden them — a guard that cannot fail is decorative no matter how load-bearing it looks. M13 now runs against the pure seam in T-contract-identity (d), and M14 against the real frontmatter cases in (c).
+
+If any row still comes back `INEFFECTIVE`, that is a finding about this plan, not a row to massage: stop and report it.
 
 - [ ] **Step 6: Commit**
 
@@ -1056,19 +1217,27 @@ git add templates/cli/verification/validate-contract.js .evo-lite/cli/verificati
         templates/cli/planning/gaps.js .evo-lite/cli/planning/gaps.js \
         templates/cli/test/governance.js .evo-lite/cli/test/governance.js
 git commit -F - <<'EOF'
-feat(verification): give a malformed contract a stable identity of its own
+feat(verification): give an invalid contract a stable identity of its own
 
 factInputs already carried a canonically sorted blocker identity. Without one
-for the malformed case, every broken contract shared a fingerprint: a validation
-finding is { id, level, message }, so all JSON failures collapse to the single
-id `contract`, and a decision taken about one malformation would be inherited by
-the next.
+for the invalid case, every broken contract shared a fingerprint: a validation
+finding is { id, level, message }, so all JSON failures collapse to the id
+`contract` and every failure of one criterion collapses to that criterion's id.
+A decision taken about one malformation would be inherited by the next.
 
-The identity digests the CAUSE — frontmatter id, linkedPlan, the raw criteria
-block text and the sorted finding ids — not the complaint. Digesting messages
-would also discriminate, but it would put V8's JSON parser prose and its
-character offset inside a human decision's identity, on a repo whose CI spans
-three Node majors.
+validationIdentityOf digests the CAUSE — frontmatter id, linkedPlan, the raw
+criteria block text and the sorted finding ids — never the complaint. Digesting
+messages would also discriminate, but it would put V8's JSON parser prose and
+its character offset inside a human decision's identity, on a repo whose CI
+spans three Node majors.
+
+It lives beside criterionDigest, shares its canonicalization and its full
+sha256: prefix, and is pure — which is what lets a test hold the authored cause
+fixed while the diagnostic changes, a property no filesystem fixture can state.
+
+contractSource is carried on every path that located a criteria block, not only
+the JSON parse error: a criterion missing its description and the same criterion
+missing its dependsOn both report id ac-1 with verdict INVALID.
 
 parseSpecCriteria now also returns the block text it already isolated. No
 validation logic changed and no failure codes were added.
@@ -1175,7 +1344,7 @@ git status --porcelain
 node .evo-lite/cli/test.js
 ```
 
-Expected: no modification outside the new doc and the test file; full suite green at 444 blocks.
+Expected: no modification outside the new doc and the test file; full suite green at 445 blocks.
 
 ```bash
 git add templates/cli/test/governance.js .evo-lite/cli/test/governance.js \
@@ -1199,11 +1368,23 @@ EOF
 
 ---
 
-## What changed since `e19c949`
+## What changed since `f538e5e` (review round 2)
 
 | review item | change |
 |---|---|
-| Important 1 | `## Pending ratification` records the frozen contract's gap and the two options; Task 4 is written against Option 2 and gated on the human's ruling. The digest input is frozen in the plan, not left to the implementer. |
+| ratification | Option 2 RATIFIED, Option 1 REJECTED. The section is now a frozen ruling, and Task 4's gate is lifted. |
+| Important 1 | `evaluateTask` publishes `hasPositiveEvidence`; `r011Unevidenced` consumes only that. The re-derivation from `gitRefs`/`linkedFiles*` is gone, and AC2 is pinned by a source-level assertion scoped to the `// --- R011 ---` section — scoped because R008 legitimately carries `archiveHits` at `gaps.js:446` and a whole-file scan would redden there. M17 mutates the re-derivation back. |
+| Important 2 | `contractSource` now propagates on the criterion-validation return too, not only the JSON parse-error branch. T-contract-identity (b) drives two criterion-level failures that share finding id `ac-1`; M19 removes the propagation. |
+| Important 3 | `validationIdentityOf(contract)` is a pure exported seam in `validate-contract.js`. The stubbed identity fixtures are reduced to one plumbing check (does the identity reach `factInputs`), and all discrimination moved to real `readinessOf` runs plus the seam. M13 and M14 now have assertions they can actually redden; M19 and M20 added. |
+| Minor 1 | Full `sha256:<64 hex>`, matching `criterionDigest` (`validate-contract.js:169`). M20 pins it. |
+| Minor 2 | `r011Unevidenced` filters `!t.readOnly`, matching R005 (`gaps.js:365`) and R008 (`gaps.js:436`); a `readOnly` fixture and M18 pin it. |
+| — | Task 4 now adds two test blocks, so the expected counts move to 444 (Task 4) and 445 (Task 5). |
+
+## What changed since `e19c949` (review round 1)
+
+| review item | change |
+|---|---|
+| Important 1 | Raised as a gap in the frozen contract rather than resolved unilaterally; ruled Option 2 in round 2 (above). |
 | Important 2 | M1/M7/M8/M9/M10 moved into Task 2, M2/M3/M4/M11 into Task 3, M5/M6/M12/M13/M14 into Task 4, M15/M16 into Task 5, M0 added to Task 1. Task 5 now only consolidates the record. Old M4 (`remove continue`) replaced with deleting the push, because the original would have reddened on a TypeError. |
 | Important 3 | READY routes to `mem close <spec.sourcePath> --preview`; a negative assertion forbids the id form; M9 pins it. |
 | Important 4 | `PLANNING_RULE_VERSIONS.R011 → 2` moved into Task 2, asserted there, and M8 moved with it. Task 4 keeps only the identity work. |
