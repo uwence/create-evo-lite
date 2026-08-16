@@ -3537,6 +3537,66 @@ async function runGovernanceTests() {
             console.log('✅ T-r011-router passed');
         }
 
+        console.log('T-r011-unobservable. A readiness we could not read is not a spec we may close ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const root = createTempRuntimeRoot('r011-unobservable').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: draft', '---', '', '# S', ''].join('\n'));
+            const ir = {
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:u', status: 'draft', sourcePath: 'docs/specs/u.md' }],
+                plans: [{ id: 'plan:u', status: 'draft', linkedSpec: 'spec:u' }],
+                tasks: [{ id: 'task:u1', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [] }],
+                warnings: [],
+            };
+            const boom = () => { throw new Error('disposition ledger is invalid JSON'); };
+            const evidenceFn = () => ({ id: 'task:u1', evidence: { gitRefs: [], linkedFilesTotal: 0, linkedFilesExist: 0 } });
+
+            // Control first: with readiness readable, the census is complete and
+            // the finding is NOT unobservable. Without this the degraded
+            // assertions below could pass for the wrong reason.
+            const healthy = gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'NO-CONTRACT', blockers: [], contractStatus: 'absent', contractPresent: false }),
+                evidenceFn,
+            });
+            assert.strictEqual(healthy.complete, true, 'precondition: a readable round is complete');
+            const healthyR011 = healthy.findings.filter(f => f.rule === 'R011');
+            assert.strictEqual(healthyR011.length, 1, 'precondition: exactly one R011 finding is emitted');
+            assert.strictEqual(healthyR011[0].type, 'spec-closure-uncontracted');
+
+            const degraded = gaps.runPlanningDriftCensus(root, ir, { readinessFn: boom, evidenceFn });
+            const r011 = degraded.findings.filter(f => f.rule === 'R011');
+
+            assert.strictEqual(r011.length, 1,
+                'FORBIDDEN: dropping the finding — an absence in a COMPLETE census is read by sync as proof, '
+                + 'and it tombstones the human decision terminally');
+            assert.strictEqual(r011[0].type, 'spec-closure-unobservable');
+            assert.strictEqual(r011[0].factInputs.closureState, gaps.r011ClosureState('spec-closure-unobservable'),
+                'unobservable derives its closureState like every other state — no hand-written string');
+            assert.strictEqual(r011[0].dispositionable, false,
+                'a failure to observe is not a fact about the spec — it must not be dispositionable as accepted');
+            assert.strictEqual(r011[0].suggestedAction, null,
+                'no closure advice of any kind when readiness could not be read');
+            assert.strictEqual(degraded.complete, false,
+                'the census degrades so sync writes no tombstone this round');
+            assert.ok(degraded.errors.some(e => /R011|readiness/i.test(e)),
+                'and the degradation names what could not be observed');
+
+            // The asymmetry, pinned: unreadable PRESENCE withholds context, it does
+            // not degrade the round. Presence selects no state and enters no
+            // factInputs, so it makes no claim that silence could falsify.
+            const presenceBlind = gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'NO-CONTRACT', blockers: [], contractStatus: 'absent', contractPresent: false }),
+                evidenceFn: () => { throw new Error('git is unavailable'); },
+            });
+            assert.strictEqual(presenceBlind.complete, true,
+                'unreadable presence evidence must NOT degrade the census — it is display context, not a fact input');
+            assert.strictEqual(presenceBlind.findings.filter(f => f.rule === 'R011')[0].type,
+                'spec-closure-uncontracted', 'and the authoritative state is unaffected by it');
+            console.log('✅ T-r011-unobservable passed');
+        }
+
         console.log('T26b. Testing R011 groups by spec: an incomplete sibling plan suppresses the nag ...');
         {
             const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));

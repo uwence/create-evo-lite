@@ -663,7 +663,31 @@ function checkR011(projectRoot, planIR, options = {}, observation = null) {
         const readinessFn = options.readinessFn
             || ((sp) => require('../verification/close-preview').readinessOf(sp, { root: projectRoot }));
         const specPath = path.join(projectRoot, spec.sourcePath);
-        const verdict = readinessFn(specPath, spec);
+        let verdict;
+        try {
+            verdict = readinessFn(specPath, spec);
+        } catch (err) {
+            // Retain the finding, withdraw the advice. Suppressing it would remove
+            // it from the census, and `sync` reads an absence from a COMPLETE
+            // census as proof — tombstoning a human decision terminally. Degrading
+            // the census is the conservative direction; erasing the finding is not.
+            if (observation) {
+                observation.unavailable(`R011 closure readiness for ${spec.id}`, err);
+            }
+            findings.push({
+                id: `R011:${spec.id}`,
+                rule: 'R011',
+                scope: 'planning',
+                level: 'warning',
+                type: 'spec-closure-unobservable',
+                message: `Spec ${spec.id} closure readiness could not be read: ${err && err.message ? err.message : String(err)}`,
+                evidence: [spec.sourcePath],
+                suggestedAction: null,
+                dispositionable: false,
+                factInputs: { closureState: r011ClosureState('spec-closure-unobservable') },
+            });
+            continue;
+        }
 
         const type = R011_TYPE_BY_READINESS[verdict.readiness];
         const blockerIds = (verdict.blockers || []).map(b => `${b.criterionId}=${b.verdict}`).sort();
