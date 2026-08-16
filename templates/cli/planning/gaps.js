@@ -709,7 +709,9 @@ function checkR011(projectRoot, planIR, options = {}, observation = null) {
             evidence: [spec.sourcePath],
             suggestedAction: r011Action(spec, type),
             dispositionable: !R011_NON_DISPOSITIONABLE.includes(type),
-            factInputs: { closureState: r011ClosureState(type), blockers: blockerIds },
+            factInputs: verdict.validationIdentity
+                ? { closureState: r011ClosureState(type), blockers: blockerIds, validationIdentity: verdict.validationIdentity }
+                : { closureState: r011ClosureState(type), blockers: blockerIds },
         });
     }
     return findings;

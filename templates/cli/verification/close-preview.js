@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { loadValidatedContract } = require('./validate-contract');
+const { loadValidatedContract, validationIdentityOf } = require('./validate-contract');
 const { parseFrontmatter, parseSpecFile, resolveLinkedPlanIds, countTrackedUncheckedBoxes } = require('../planning/parse-markdown');
 
 function remedyFor(verdict, verifierType) {
@@ -102,6 +102,7 @@ function readinessOf(specPath, opts = {}) {
     if (!contract.ok) {
         return {
             readiness: 'BLOCKED', contractStatus: 'invalid', contractPresent: true, criteria: [],
+            validationIdentity: validationIdentityOf(contract),
             blockers: contract.findings.map(f => ({ criterionId: f.id, verdict: 'INVALID', remedy: f.message })),
         };
     }

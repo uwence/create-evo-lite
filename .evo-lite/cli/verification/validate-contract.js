@@ -100,13 +100,14 @@ function parseSpecCriteria(specText) {
     }
     const end = lines.findIndex((l, i) => i >= start && /^```\s*$/.test(l));
     if (end === -1) {
-        return { criteria: [], error: 'unterminated ```json block' };
+        return { criteria: [], error: 'unterminated ```json block', blockText: lines.slice(start).join('\n') };
     }
+    const blockText = lines.slice(start, end).join('\n');
     try {
-        const parsed = JSON.parse(lines.slice(start, end).join('\n'));
-        return { criteria: Array.isArray(parsed.criteria) ? parsed.criteria : [], error: null };
+        const parsed = JSON.parse(blockText);
+        return { criteria: Array.isArray(parsed.criteria) ? parsed.criteria : [], error: null, blockText };
     } catch (e) {
-        return { criteria: [], error: `invalid JSON in criteria block: ${e.message}` };
+        return { criteria: [], error: `invalid JSON in criteria block: ${e.message}`, blockText };
     }
 }
 
@@ -139,10 +140,13 @@ function loadValidatedContract(specText) {
         if (optedOut) {
             return { ok: true, noContract: true, specId, linkedPlan, criteria: [], findings: [] };
         }
-        return { ok: false, noContract: false, specId, linkedPlan, criteria: [], findings: [finding('contract', parsed.error)] };
+        return { ok: false, noContract: false, specId, linkedPlan, criteria: [],
+            contractSource: parsed.blockText || '',
+            findings: [finding('contract', parsed.error)] };
     }
     const findings = validateCriteria(parsed.criteria);
-    return { ok: findings.length === 0, noContract: parsed.criteria.length === 0, specId, linkedPlan, criteria: parsed.criteria, findings };
+    return { ok: findings.length === 0, noContract: parsed.criteria.length === 0, specId, linkedPlan,
+        criteria: parsed.criteria, contractSource: parsed.blockText || '', findings };
 }
 
 // Recursively sort object keys so the JSON is canonical regardless of author key order.
@@ -169,4 +173,25 @@ function criterionDigest(criterion) {
     return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex');
 }
 
-module.exports = { validateCriteria, validateEvidenceRecord, parseSpecCriteria, loadValidatedContract, criterionDigest, SCHEMA };
+// Identity of the authored CAUSE of a contract's invalidity, never of the
+// diagnostic that reported it. A validation finding is { id, level, message }
+// and nothing else: ids alone collapse every JSON malformation to `contract`
+// and every failure of one criterion to that criterion's id, while messages
+// carry V8's parser prose and a character offset — engine text that must not
+// sit inside a human decision's identity on a repo whose CI spans three Node
+// majors. What is stable is what the author wrote.
+//
+// Pure by design: a test can hold the cause fixed and vary the message, which
+// no filesystem fixture can express.
+function validationIdentityOf(contract) {
+    const c = contract || {};
+    const norm = canonicalize({
+        specId: c.specId == null ? null : String(c.specId),
+        linkedPlan: c.linkedPlan == null ? null : String(c.linkedPlan),
+        findingIds: (c.findings || []).map(f => f.id).sort(),
+        source: c.contractSource || '',
+    });
+    return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex');
+}
+
+module.exports = { validateCriteria, validateEvidenceRecord, parseSpecCriteria, loadValidatedContract, criterionDigest, validationIdentityOf, SCHEMA };

@@ -3597,6 +3597,128 @@ async function runGovernanceTests() {
             console.log('✅ T-r011-unobservable passed');
         }
 
+        console.log('T-r011-fingerprint. Different blockers are different facts, reordered ones are not ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+
+            const root = createTempRuntimeRoot('r011-fingerprint').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: draft', '---', '', '# S', ''].join('\n'));
+            const ir = {
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:u', status: 'draft', sourcePath: 'docs/specs/u.md' }],
+                plans: [{ id: 'plan:u', status: 'draft', linkedSpec: 'spec:u' }],
+                tasks: [{ id: 'task:u1', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [] }],
+                warnings: [],
+            };
+            const printOf = (verdict) => {
+                const f = gaps.checkR011(root, ir, {
+                    readinessFn: () => verdict,
+                    evidenceFn: () => ({ id: 'task:u1', evidence: { gitRefs: [], linkedFilesTotal: 0, linkedFilesExist: 0 } }),
+                }, null)[0];
+                return fp.computeFingerprint({ ruleId: f.rule, ruleVersion: gaps.PLANNING_RULE_VERSIONS.R011, factInputs: f.factInputs });
+            };
+            const blocked = (blockers) => ({ readiness: 'BLOCKED', blockers, contractStatus: 'valid', contractPresent: true });
+
+            // 1. different failing criteria are different facts
+            assert.notStrictEqual(printOf(blocked([{ criterionId: 'ac-1', verdict: 'FAIL' }])),
+                printOf(blocked([{ criterionId: 'ac-3', verdict: 'STALE' }])),
+                'FORBIDDEN: ac-1=FAIL and ac-3=STALE sharing one fingerprint — a decision taken about the '
+                + 'first would be silently inherited by the second, which is the collapse the four types exist to prevent');
+
+            // 2. a reordering is not a change of fact
+            assert.strictEqual(
+                printOf(blocked([{ criterionId: 'ac-1', verdict: 'FAIL' }, { criterionId: 'ac-3', verdict: 'STALE' }])),
+                printOf(blocked([{ criterionId: 'ac-3', verdict: 'STALE' }, { criterionId: 'ac-1', verdict: 'FAIL' }])),
+                'a mere reordering by the verdict engine must NOT lapse a decision that nothing real invalidated');
+
+            // 3. the identity reaches the fingerprint at all. Two contracts that
+            //    differ ONLY in validationIdentity must fingerprint differently;
+            //    otherwise everything proved in T-contract-identity is stranded
+            //    one layer below factInputs.
+            const invalid = (identity) => ({ readiness: 'BLOCKED', contractStatus: 'invalid', contractPresent: true,
+                validationIdentity: identity, blockers: [{ criterionId: 'contract', verdict: 'INVALID' }] });
+            assert.notStrictEqual(printOf(invalid('sha256:aa')), printOf(invalid('sha256:bb')),
+                'FORBIDDEN: validationIdentity not reaching factInputs — finding ids collapse every JSON '
+                + 'failure to `contract`, so without it every malformed contract shares one fingerprint');
+            console.log('✅ T-r011-fingerprint passed');
+        }
+
+        console.log('T-contract-identity. Identity comes from the authored cause, never the diagnostic ...');
+        {
+            const vc = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const cp = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            assert.strictEqual(typeof vc.validationIdentityOf, 'function', 'validationIdentityOf must be exported');
+
+            const root = createTempRuntimeRoot('contract-identity').workspaceRoot;
+            const specPath = path.join(root, 'docs', 'specs', 'bad.md');
+            const write = (frontmatter, body) => {
+                writeText(specPath, ['---', ...frontmatter, '---', '', '# S', '',
+                    ...(body === null ? [] : ['## Acceptance Criteria', '', '```json', body, '```']), ''].join('\n'));
+                return cp.readinessOf(specPath, { root }).validationIdentity;
+            };
+            const ok = ['id: spec:bad', 'status: draft'];
+            const criterion = (extra) => JSON.stringify({ criteria: [Object.assign({ id: 'ac-1' }, extra)] }, null, 2);
+
+            // (a) two different JSON malformations
+            const jsonA = write(ok, '{ "criteria": [ }');
+            const jsonB = write(ok, '{ "criteria": [{ "id": } ] }');
+            assert.ok(jsonA && jsonB, 'an invalid contract must carry a validationIdentity');
+            assert.ok(jsonA.startsWith('sha256:') && jsonA.length === 71,
+                'full SHA-256 with the repo prefix, like criterionDigest — a durable governance identity is '
+                + 'not a UI short code');
+            assert.notStrictEqual(jsonA, jsonB, 'two differently-broken blocks must not share one identity');
+            assert.strictEqual(write(ok, '{ "criteria": [ }'), jsonA,
+                'restoring the same broken block restores the same identity — it is a function of the cause');
+
+            // (b) two different CRITERION-LEVEL failures. Both produce finding id
+            //     `ac-1` and verdict INVALID, so ids alone cannot tell them apart.
+            const missingDescription = write(ok, criterion({ dependsOn: ['x'], verifier: { type: 'manual', params: { reason: 'fixture' } } }));
+            const missingDependsOn = write(ok, criterion({ description: 'd', verifier: { type: 'manual', params: { reason: 'fixture' } } }));
+            assert.ok(missingDescription && missingDependsOn,
+                'a criterion-level validation failure is an invalid contract too, and needs an identity');
+            assert.notStrictEqual(missingDescription, missingDependsOn,
+                'FORBIDDEN: two different criterion-level failures sharing one identity — both report id ac-1 '
+                + 'and verdict INVALID, so the block text is the only thing that tells them apart');
+
+            // (c) frontmatter identity failures, which never reach a criteria block
+            const idA = write(['id: not-a-spec-id', 'status: draft'], null);
+            const idB = write(['id: also-not-valid', 'status: draft'], null);
+            assert.notStrictEqual(idA, idB,
+                'FORBIDDEN: two different rejected spec ids sharing one identity — they return before any '
+                + 'block is parsed, so the rejected value is the only discriminator');
+            const lpA = write([...ok, 'linkedPlan: bad-one'], null);
+            const lpB = write([...ok, 'linkedPlan: bad-two'], null);
+            assert.notStrictEqual(lpA, lpB, 'and the same holds for two different rejected linkedPlan values');
+
+            // (d) THE INVARIANCE, driven through the pure seam so the authored cause
+            //     can be held fixed while the diagnostic prose changes. A filesystem
+            //     test cannot express this: changing the message means changing the
+            //     source that produced it.
+            const base = {
+                specId: 'spec:bad', linkedPlan: null, contractSource: '{ "criteria": [ }',
+                findings: [{ id: 'contract', level: 'error', message: 'invalid JSON in criteria block: Unexpected token' }],
+            };
+            const reworded = Object.assign({}, base, {
+                findings: [{ id: 'contract', level: 'error',
+                    message: 'invalid JSON in criteria block: Expected double-quoted property name at position 7' }],
+            });
+            assert.strictEqual(vc.validationIdentityOf(base), vc.validationIdentityOf(reworded),
+                'a validator or V8 rewording must NOT lapse a decision — CI runs three Node majors and the '
+                + 'JSON parser message is engine prose with a character offset, not a contract');
+            assert.notStrictEqual(vc.validationIdentityOf(base),
+                vc.validationIdentityOf(Object.assign({}, base, { contractSource: '{ "criteria": ] }' })),
+                'while a different authored cause under the same message still differs');
+
+            // and a healthy spec carries none of this
+            writeText(path.join(root, 'docs', 'specs', 'fine.md'),
+                ['---', 'id: spec:fine', 'status: draft', '---', '', '# S', ''].join('\n'));
+            assert.strictEqual(cp.readinessOf(path.join(root, 'docs', 'specs', 'fine.md'), { root }).validationIdentity, undefined,
+                'a spec with no contract carries no validation identity');
+            console.log('✅ T-contract-identity passed');
+        }
+
         console.log('T26b. Testing R011 groups by spec: an incomplete sibling plan suppresses the nag ...');
         {
             const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
