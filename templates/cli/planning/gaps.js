@@ -674,17 +674,24 @@ function checkR011(projectRoot, planIR, options = {}, observation = null) {
             if (observation) {
                 observation.unavailable(`R011 closure readiness for ${spec.id}`, err);
             }
+            // Every type-derived field comes from this one `type`, exactly as the
+            // healthy branch below does. Hand-writing `level: 'warning'` and
+            // `dispositionable: false` here would agree with the tables today and
+            // silently stop agreeing the day either table changes — the same
+            // "two hand-written things that agree is not an identity contract"
+            // this file already refuses for closureState.
+            const type = 'spec-closure-unobservable';
             findings.push({
                 id: `R011:${spec.id}`,
                 rule: 'R011',
                 scope: 'planning',
-                level: 'warning',
-                type: 'spec-closure-unobservable',
+                level: R011_INFO_TYPES.includes(type) ? 'info' : 'warning',
+                type,
                 message: `Spec ${spec.id} closure readiness could not be read: ${err && err.message ? err.message : String(err)}`,
                 evidence: [spec.sourcePath],
                 suggestedAction: null,
-                dispositionable: false,
-                factInputs: { closureState: r011ClosureState('spec-closure-unobservable') },
+                dispositionable: !R011_NON_DISPOSITIONABLE.includes(type),
+                factInputs: { closureState: r011ClosureState(type) },
             });
             continue;
         }
