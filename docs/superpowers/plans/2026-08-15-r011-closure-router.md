@@ -15,9 +15,9 @@ linkedSpec: spec:r011-closure-router
 
 **Tech Stack:** Node >= 20, CommonJS only, no ESM. No new dependencies.
 
-**Frozen design:** `docs/superpowers/specs/2026-08-15-r011-closure-router-design.md` at `494b20c`. Where this plan and the spec disagree, the spec wins — stop and report rather than resolving it yourself.
+**Frozen design:** `docs/superpowers/specs/2026-08-15-r011-closure-router-design.md`, frozen at `494b20c`, amended at `398f134` (`ac2`/`ac7`/`ac8` `dependsOn` only — no description, architecture or ratified decision changed; contract lint 8/8 valid). Where this plan and the spec disagree, the spec wins — stop and report rather than resolving it yourself.
 
-**Revision:** third draft. `e19c949` was reviewed CHANGES REQUIRED (5 Important, 2 Minor); `f538e5e` fixed those 6 and was reviewed CHANGES REQUIRED again (3 Important, 2 Minor) with the malformed-contract identity ruled **Option 2, ratified**. Both rounds are recorded at the end.
+**Revision:** fourth draft. `e19c949` was reviewed CHANGES REQUIRED (5 Important, 2 Minor); `f538e5e` fixed those 6 and was reviewed CHANGES REQUIRED again (3 Important, 2 Minor) with the malformed-contract identity ruled **Option 2, ratified**. Both rounds are recorded at the end.
 
 ## Global Constraints
 
@@ -453,9 +453,13 @@ Add to `templates/cli/test/governance.js`:
             assert.ok(r011Start > -1 && r011End > r011Start,
                 'the R011 section markers must exist — this assertion is scoped by them');
             const r011Src = gapsSrc.slice(r011Start, r011End);
+            // Property-access form, not substring: this section is REQUIRED to name
+            // these fields in prose ("do not re-derive from gitRefs"), and a bare
+            // includes() would make the correct implementation, correctly
+            // commented, permanently red — a guard whose green state is unreachable.
             for (const raw of ['linkedFilesExist', 'linkedFilesTotal', 'linkedFilesRatio', 'gitRefs', 'archiveHits', 'confidence']) {
-                assert.ok(!r011Src.includes(raw),
-                    `FORBIDDEN: the R011 section reads ${raw} — that is progress.js's raw material, and `
+                assert.ok(!new RegExp(`\\.${raw}\\b`).test(r011Src),
+                    `FORBIDDEN: the R011 section reads .${raw} — that is progress.js's raw material, and `
                     + 'deciding from it here re-derives the evidence predicate AC2 forbids duplicating');
             }
             assert.ok(r011Src.includes('hasPositiveEvidence'),
@@ -1036,8 +1040,8 @@ Two measured facts about the sort, so nobody re-litigates it mid-task:
 
             // (b) two different CRITERION-LEVEL failures. Both produce finding id
             //     `ac-1` and verdict INVALID, so ids alone cannot tell them apart.
-            const missingDescription = write(ok, criterion({ dependsOn: ['x'], verifier: { type: 'manual', params: {} } }));
-            const missingDependsOn = write(ok, criterion({ description: 'd', verifier: { type: 'manual', params: {} } }));
+            const missingDescription = write(ok, criterion({ dependsOn: ['x'], verifier: { type: 'manual', params: { reason: 'fixture' } } }));
+            const missingDependsOn = write(ok, criterion({ description: 'd', verifier: { type: 'manual', params: { reason: 'fixture' } } }));
             assert.ok(missingDescription && missingDependsOn,
                 'a criterion-level validation failure is an invalid contract too, and needs an identity');
             assert.notStrictEqual(missingDescription, missingDependsOn,
@@ -1082,7 +1086,7 @@ Two measured facts about the sort, so nobody re-litigates it mid-task:
         }
 ```
 
-The `criterion()` fixtures in (b) are built to fail exactly one rule each — `validateCriteria` requires a string `description` and a non-empty `dependsOn` array, so omitting one omits exactly one. If either fixture ever produces two findings, the assertion still holds but says less; report it rather than adjusting the message.
+The `criterion()` fixtures in (b) fail exactly one rule each: `validateCriteria` requires a string `description` and a non-empty `dependsOn` array, and `manual`'s `requiredParams` is `["reason"]` (`contract-schema.json`) — hence the `reason` in the fixture. Without it both fixtures would *also* be missing a required param, and the claim "exactly one rule each" would be false even though the assertion still passed. If either fixture ever produces two findings, report it rather than adjusting the message.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1333,7 +1337,7 @@ Same restore discipline: copy aside, copy back, confirm sha256, re-run green.
 
 - [ ] **Step 4: Write the consolidated matrix**
 
-Write `docs/validation/r011-closure-router-mutation-matrix.md` covering **every** mutation from Tasks 1-5 — M0, M1-M16 — with one row each: which task ran it, the mutation and its replacement count, the fixture's path through the target branch on the green baseline, the exact failing assertion text, the restored sha256, and an explicit `effective` / `INEFFECTIVE — guard is decorative` verdict.
+Write `docs/validation/r011-closure-router-mutation-matrix.md` covering **every** mutation from Tasks 1-5 — M0 through M20, twenty-one rows — with one row each: which task ran it, the mutation and its replacement count, the fixture's path through the target branch on the green baseline, the exact failing assertion text, the restored sha256, and an explicit `effective` / `INEFFECTIVE — guard is decorative` verdict.
 
 Take each row's evidence from that task's report. Do not re-run a mutation to fill a gap in the record — if a row's evidence is missing, say the record is incomplete.
 
@@ -1367,6 +1371,15 @@ EOF
 ```
 
 ---
+
+## What changed since `28499eb` (review round 3)
+
+| review item | change |
+|---|---|
+| Important 1 | The AC2 source guard matches property access (`\.gitRefs\b`) instead of a substring. The prior form could never go green: the same section is required to *name* those fields in prose, so a correct, correctly-commented implementation reddened its own guard. M17 still fires — it reintroduces real `.gitRefs` / `.linkedFilesTotal` accesses. |
+| Important 2 | Frozen spec amended at `398f134`: `ac2`/`ac8` gain `progress.js`; `ac7` gains `close-preview.js`, `validate-contract.js` and `contract-schema.json`. Metadata only — no description, architecture or ratified decision touched, and `verify-contract lint` reports 8/8 valid. Ratifying Option 2 moved AC7's core out of `gaps.js`; leaving the dependency graph behind would have let a spec written to stop inherited stale decisions hold PASS evidence that outlived the file producing it. |
+| Minor 1 | `manual` fixtures carry `params: { reason: 'fixture' }`. `contract-schema.json` lists `reason` as a required param, so without it both fixtures were *also* missing a param and "exactly one rule each" was false — the assertion passed while the plan's claim did not. |
+| Minor 2 | The consolidated matrix is M0 through M20, twenty-one rows. |
 
 ## What changed since `f538e5e` (review round 2)
 
