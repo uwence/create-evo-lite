@@ -3594,6 +3594,31 @@ async function runGovernanceTests() {
                 'unreadable presence evidence must NOT degrade the census — it is display context, not a fact input');
             assert.strictEqual(presenceBlind.findings.filter(f => f.rule === 'R011')[0].type,
                 'spec-closure-uncontracted', 'and the authoritative state is unaffected by it');
+
+            // A readiness vocabulary this rule does not know is a failure to
+            // observe the authority, not a fact about the spec. Without the
+            // guard the type lookup yields undefined and the renderers fall
+            // through to their last branch — claiming the spec has no
+            // machine-readable contract and telling the operator to add one,
+            // on a finding a human is then invited to dispose of.
+            const future = gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'FUTURE-STATE', blockers: [] }),
+                evidenceFn,
+            });
+            const futureR011 = future.findings.filter(f => f.rule === 'R011');
+            assert.strictEqual(futureR011.length, 1,
+                'an unmappable readiness keeps its finding, exactly like any other failure to observe');
+            assert.strictEqual(futureR011[0].type, 'spec-closure-unobservable',
+                'FORBIDDEN: rendering an unknown authority value as a fact about the spec — the fall-through '
+                + 'claims "no machine-readable acceptance contract" about a spec that may have one');
+            assert.strictEqual(futureR011[0].dispositionable, false,
+                'a human must not be invited to dispose of a claim this rule never managed to make');
+            assert.strictEqual(futureR011[0].suggestedAction, null,
+                'no closure advice can follow from a verdict that was never understood');
+            assert.strictEqual(future.complete, false,
+                'the census degrades, so sync writes no tombstone from a round R011 could not interpret');
+            assert.ok(future.errors.some(e => /unsupported closure readiness/i.test(e)),
+                'and the degradation names the unsupported value rather than failing anonymously');
             console.log('✅ T-r011-unobservable passed');
         }
 

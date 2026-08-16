@@ -391,7 +391,46 @@ precisely the property AC2 states.
 history, so their gaps.js hashes differ: `c81f123` is the Task 2 state, and
 `46d54311` the Task 4 state that P1 ran against.)*
 
-### What these two probes have in common
+### P3 — unsupported readiness must fail closed (merge-preflight guard)
+
+**Question.** The whole-branch review found that `R011_TYPE_BY_READINESS` has no
+default case. An unmapped readiness produced `type: undefined`,
+`dispositionable: true`, `closureState: "undefined"` — and, because both
+renderers fall through to their last branch, the message *"has no
+machine-readable acceptance contract"* and the advice *"Add or repair the
+acceptance criteria block"*, about a spec that may well have one. A failure to
+map the authority was being rendered as a fact about the spec, on a finding a
+human was then invited to dispose of. Unreachable today, since `readinessOf` is
+exhaustive over three keys — but it sits exactly on the authority/consumer seam
+this whole feature exists to discipline, and it fell toward a positive claim
+rather than toward "we could not look".
+
+**Fix.** A guard inside the existing `try`, so an unmappable readiness throws
+and is handled by the `spec-closure-unobservable` path already designed for a
+failure to observe. No fifth state, no guess, and the catch block and healthy
+branch are untouched.
+
+**Mutation applied** (both mirrors): delete the guard, restoring the
+fall-through.
+
+**Observed** — `node .evo-lite/cli/test.js governance`, exit **1**:
+
+```
+❌ Governance test failed: AssertionError [ERR_ASSERTION]: FORBIDDEN: rendering an unknown authority value as a fact about the spec — the fall-through claims "no machine-readable acceptance contract" about a spec that may have one
+```
+
+Every assertion ahead of it in `T-r011-unobservable` — the healthy control, the
+degraded-readiness round and the presence-blind round — passed first, so
+nothing masked this one.
+
+**Restore.** Copied back; template, live mirror and backup all read
+`30caed86d0f4c7134f6cc882f55813020bee18aec112c9ec9949fef735429d11`, governance
+scope green at 386 blocks, full suite exit 0 at 445.
+
+**Verdict: EFFECTIVE.** The guard is the only thing standing between an
+unrecognised authority value and a fabricated governance fact.
+
+### What these probes have in common
 
 Both exist because a planned mutation was aimed at a guard that something
 **earlier** also asserts. That is the standing lesson stated under M17, seen

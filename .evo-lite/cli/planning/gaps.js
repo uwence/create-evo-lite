@@ -666,6 +666,20 @@ function checkR011(projectRoot, planIR, options = {}, observation = null) {
         let verdict;
         try {
             verdict = readinessFn(specPath, spec);
+            // A readiness this rule cannot map is a failure to OBSERVE the
+            // authority, not a fact about the spec. Without this throw the
+            // lookup below yields undefined and the renderers fall through to
+            // their last branch — which asserts the spec "has no
+            // machine-readable acceptance contract" and tells the operator to
+            // add one, a positive claim about a spec that may well have one,
+            // carried on a dispositionable finding. Routing it into the
+            // unobservable path instead reuses the behaviour already designed
+            // for "we could not look": no advice, not dispositionable, census
+            // degraded. It adds no fifth state and guesses nothing.
+            if (!R011_TYPE_BY_READINESS[verdict && verdict.readiness]) {
+                throw new Error('R011 received unsupported closure readiness: '
+                    + JSON.stringify(verdict && verdict.readiness));
+            }
         } catch (err) {
             // Retain the finding, withdraw the advice. Suppressing it would remove
             // it from the census, and `sync` reads an absence from a COMPLETE
