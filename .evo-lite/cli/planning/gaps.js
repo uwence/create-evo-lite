@@ -666,19 +666,38 @@ function checkR011(projectRoot, planIR, options = {}, observation = null) {
         let verdict;
         try {
             verdict = readinessFn(specPath, spec);
-            // A readiness this rule cannot map is a failure to OBSERVE the
-            // authority, not a fact about the spec. Without this throw the
-            // lookup below yields undefined and the renderers fall through to
-            // their last branch — which asserts the spec "has no
-            // machine-readable acceptance contract" and tells the operator to
-            // add one, a positive claim about a spec that may well have one,
-            // carried on a dispositionable finding. Routing it into the
-            // unobservable path instead reuses the behaviour already designed
-            // for "we could not look": no advice, not dispositionable, census
-            // degraded. It adds no fifth state and guesses nothing.
-            if (!R011_TYPE_BY_READINESS[verdict && verdict.readiness]) {
-                throw new Error('R011 received unsupported closure readiness: '
-                    + JSON.stringify(verdict && verdict.readiness));
+            // One protocol guard over the whole authority result, not one patch
+            // per field. A verdict this rule cannot consume is a failure to
+            // OBSERVE the authority, not a fact about the spec — so it goes to
+            // the unobservable path already designed for "we could not look":
+            // no advice, not dispositionable, census degraded. No fifth state,
+            // and nothing guessed.
+            //
+            // Two ways the old code failed without it. An unmappable `readiness`
+            // left `type` undefined and both renderers fell through to their
+            // last branch, asserting the spec "has no machine-readable
+            // acceptance contract" and telling the operator to add one — a
+            // positive claim about a spec that may well have one, on a finding
+            // a human was then invited to dispose of. And a `blockers` that is
+            // not a well-formed array crashed `.map` OUTSIDE this try, taking
+            // the whole census down instead of degrading it.
+            //
+            // The element check is not paranoia: `[{}]` passes Array.isArray and
+            // renders as the blocker id "undefined=undefined", which then enters
+            // the message AND the fingerprint — a fabricated fact, silently.
+            //
+            // `blockers` is a contract field of readinessOf's frozen surface, so
+            // absent is NOT tolerated here. The `|| []` this replaces was old
+            // defensive slack, and slack must not be read back as the contract.
+            const readiness = verdict && verdict.readiness;
+            const blockers = verdict && verdict.blockers;
+            const validBlockers = Array.isArray(blockers) && blockers.every(b =>
+                b && typeof b === 'object'
+                && typeof b.criterionId === 'string' && b.criterionId.length > 0
+                && typeof b.verdict === 'string' && b.verdict.length > 0);
+            if (!R011_TYPE_BY_READINESS[readiness] || !validBlockers) {
+                throw new Error('R011 received unsupported closure readiness result: '
+                    + JSON.stringify(verdict));
             }
         } catch (err) {
             // Retain the finding, withdraw the advice. Suppressing it would remove
@@ -711,7 +730,11 @@ function checkR011(projectRoot, planIR, options = {}, observation = null) {
         }
 
         const type = R011_TYPE_BY_READINESS[verdict.readiness];
-        const blockerIds = (verdict.blockers || []).map(b => `${b.criterionId}=${b.verdict}`).sort();
+        // No `|| []` fallback: the guard above has already established that
+        // blockers is a well-formed array. Leaving the fallback would state,
+        // in code, that absent blockers are legal — which is exactly the slack
+        // the guard exists to remove.
+        const blockerIds = verdict.blockers.map(b => `${b.criterionId}=${b.verdict}`).sort();
 
         findings.push({
             id: `R011:${spec.id}`,

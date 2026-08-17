@@ -430,6 +430,62 @@ scope green at 386 blocks, full suite exit 0 at 445.
 **Verdict: EFFECTIVE.** The guard is the only thing standing between an
 unrecognised authority value and a fabricated governance fact.
 
+### P4 — the guard covers the authority RESULT, not one field (PR-level review)
+
+**Question.** P3 taught `checkR011` to reject a `readiness` it cannot map. The
+PR-level reviewer asked the sibling question: what about a verdict that is
+**malformed rather than absent** — mapped readiness, but `blockers` not a
+well-formed array?
+
+**What was wrong.** `blockerIds` is built *after* the try:
+
+```js
+const blockerIds = (verdict.blockers || []).map(b => `${b.criterionId}=${b.verdict}`).sort();
+```
+
+Measured before the fix: `blockers: {}` or `'nope'` threw
+`TypeError: (verdict.blockers || []).map is not a function`, and the throw
+escaped `checkR011` **and** `runPlanningDriftCensus`. The census did not
+degrade — the command crashed. That is the one outcome this rule is built never
+to produce.
+
+Two shapes survive an `Array.isArray` check alone and are worse than a crash:
+`[null]` throws on property access, and `[{}]` renders the blocker identity
+`"undefined=undefined"`, which then enters **both** the operator's message and
+the fingerprint — a fabricated fact, silently.
+
+**Fix.** One protocol guard over the whole authority result, inside the existing
+try: readiness must be mappable, and `blockers` must be an array whose every
+element carries a non-empty string `criterionId` and `verdict`. `blockers` is a
+contract field of `readinessOf`'s frozen surface, so absent is not tolerated;
+the `|| []` fallback is removed, because leaving it would state in code that
+absent blockers are legal — the slack the guard exists to delete.
+
+**Mutation applied** (both mirrors): revert the guard to readiness-only and
+restore the `|| []` fallback.
+
+**Observed** — `node .evo-lite/cli/test.js governance`, exit **1**:
+
+```
+❌ Governance test failed: TypeError: (verdict.blockers || []).map is not a function
+```
+
+This row reddens on a **TypeError rather than an assertion**, and that is the
+correct evidence here rather than an `INEFFECTIVE` verdict: the defect under
+guard *is* an uncaught TypeError escaping the census, so reproducing it is the
+proof. Every other row in this document must redden on a property, because
+every other guard protects a property.
+
+**Restore.** Copied back; template, live mirror and backup all read
+`f36473bbd208bb4d47e03853971dfab03d276259e1d2cf77ed8f7667a0a95825`, governance
+scope green at 386 blocks, full suite exit 0 at 445.
+
+**Verdict: EFFECTIVE.** Five malformed shapes — `{}`, `'nope'`, `[null]`,
+`[{}]`, absent — all now yield `spec-closure-unobservable` with no advice, not
+dispositionable, census degraded. A well-formed `BLOCKED` verdict still takes
+the normal path and still builds `['ac-1=FAIL']`, so the guard rejects malformed
+input rather than everything.
+
 ### What these probes have in common
 
 Both exist because a planned mutation was aimed at a guard that something

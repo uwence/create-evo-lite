@@ -3619,6 +3619,52 @@ async function runGovernanceTests() {
                 'the census degrades, so sync writes no tombstone from a round R011 could not interpret');
             assert.ok(future.errors.some(e => /unsupported closure readiness/i.test(e)),
                 'and the degradation names the unsupported value rather than failing anonymously');
+
+            // The guard covers the whole authority RESULT, not just `readiness`.
+            // `blockerIds` is built outside this try, so a malformed `blockers`
+            // used to throw a TypeError that escaped the census entirely — the
+            // round crashed instead of degrading, which is the one outcome this
+            // rule is built never to produce.
+            const malformed = (blockers) => gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'BLOCKED', blockers, contractStatus: 'valid', contractPresent: true }),
+                evidenceFn,
+            });
+            for (const [label, blockers] of [
+                ['an object', {}],
+                ['a string', 'nope'],
+                // [null] is the case an Array.isArray check alone would wave
+                // through, and [{}] renders as the blocker id
+                // "undefined=undefined" — a fabricated fact reaching both the
+                // message and the fingerprint.
+                ['an array of null', [null]],
+                ['an array of shapeless objects', [{}]],
+                ['absent', undefined],
+            ]) {
+                const round = malformed(blockers);
+                const f = round.findings.filter(x => x.rule === 'R011');
+                assert.strictEqual(f.length, 1, `${label}: the finding survives a malformed verdict`);
+                assert.strictEqual(f[0].type, 'spec-closure-unobservable',
+                    `FORBIDDEN: blockers as ${label} must fail closed, not crash the census or render a fact`);
+                assert.strictEqual(f[0].dispositionable, false, `${label}: not dispositionable`);
+                assert.strictEqual(f[0].suggestedAction, null, `${label}: no advice`);
+                assert.strictEqual(round.complete, false, `${label}: the census degrades`);
+                assert.ok(!/undefined=undefined/.test(f[0].message),
+                    `${label}: FORBIDDEN — a shapeless blocker rendered as a blocker identity`);
+            }
+
+            // Control: a well-formed BLOCKED verdict still takes the normal path.
+            // Without this the assertions above could pass by rejecting everything.
+            const wellFormed = gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'BLOCKED', contractStatus: 'valid', contractPresent: true,
+                    blockers: [{ criterionId: 'ac-1', verdict: 'FAIL' }] }),
+                evidenceFn,
+            });
+            const wf = wellFormed.findings.filter(x => x.rule === 'R011')[0];
+            assert.strictEqual(wf.type, 'spec-closure-not-ready',
+                'precondition: a well-formed verdict is NOT swept into unobservable by the shape guard');
+            assert.deepStrictEqual(wf.factInputs.blockers, ['ac-1=FAIL'],
+                'and its blocker identity is still built from the verdict');
+            assert.strictEqual(wellFormed.complete, true, 'a readable, well-formed round stays complete');
             console.log('✅ T-r011-unobservable passed');
         }
 
