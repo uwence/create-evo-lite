@@ -37,7 +37,8 @@ Nothing here assigns HEALTHY / DEGRADED / FAIL. Nothing here repairs, reinstalls
 or rewrites a hook. The fact layer observes and records; `[0ce0]` later consumes
 `participation × realization × runnability` and assigns governance health. Two
 runnability gaps discovered during design are likewise NOT fixed here — they are
-registered as the separate debt `[hook-runtime-runnability]` (see Out of scope).
+identified by this design and must be registered separately as
+`[hook-runtime-runnability]` (see Out of scope).
 
 ## Design
 
@@ -231,8 +232,10 @@ hook-install-command  mem hook install was invoked explicitly
 
 `install.reason` and each component's `reason` are fixed by this spec under
 "v1 controlled vocabularies" below, not by the implementation.
-`diagnostic.predicateQualification` admits `qualified` and `unavailable` only;
-being diagnostic, it feeds no verdict and is not validated as a gate.
+`diagnostic.predicateQualification` is asymmetric by design: the **writer MUST**
+emit only `qualified` or `unavailable`, while the **reader MAY ignore** any
+unrecognised diagnostic value when deciding document validity. Diagnostic values
+feed no verdict, so an unexpected one degrades a diagnostic, never the document.
 
 An unrecognised member of any controlled vocabulary makes the document
 `UNOBSERVABLE` rather than being passed through — within the validation scope
@@ -244,7 +247,25 @@ frozen under "Reader epistemic states", which does not include interior events.
 C-1   events + current are replaced as one atomic whole-file write
 C-2a  current.derivedFrom == lastEvent.id
 C-2b  sha256(JSON.stringify([current.participation])) == lastEvent.resultingCurrentDigest
+C-2c  current.participation == lastEvent.intent.participation
 ```
+
+C-2c is not redundant with C-2a and C-2b. Those two prove that `current` is bound
+to *some* well-formed event and that its digest is internally consistent — they do
+not prove it is the participation that event's intent actually produced. Without
+C-2c this document satisfies every other rule while its authoritative `current`
+contradicts the intent it claims to derive from:
+
+```
+lastEvent.intent.participation    non-participating
+lastEvent.install                 absent
+current.participation             participating
+lastEvent.resultingCurrentDigest  sha256(["participating"])
+current.derivedFrom               = recomputed lastEvent.id
+```
+
+C-2c is a single field comparison against the last event, not a replay of history,
+so it stays inside the frozen validation scope.
 
 The authoritative projection of `current` is `participation` alone. `derivedFrom`
 must not enter the digest: `resultingCurrentDigest` participates in `event.id`, and
@@ -297,7 +318,7 @@ here, together with the outcome each may accompany:
 ```
 install.reason
   realized       created-managed-hook | updated-managed-block
-                 | appended-managed-block | already-current
+                 | appended-managed-block
   unrealized     hooks-dir-missing | hooks-dir-not-directory | write-failed
   indeterminate  hooks-dir-unobservable | post-write-observation-failed
 
@@ -322,7 +343,50 @@ A component `reason` is `null` if and only if its verdict is `satisfied`, and a
 non-null `reason` must belong to the set permitted for that verdict. Extending any
 vocabulary requires `schemaVersion: 2`.
 
-`seq` is the sole ordering authority. `recordedAt` participates in the identity
+There is deliberately no `already-current` member. The installer today always
+writes — it replaces an existing managed block unconditionally at
+`templates/cli/hooks.js:74-87` and has no byte-identical skip branch — so the
+member would describe a producer state that does not exist. An invocation that
+changes nothing observable still records an event, under whichever of the three
+`realized` reasons describes the write it actually performed. If a
+byte-identical no-write branch is ever introduced, the vocabulary extends then,
+under `schemaVersion: 2`.
+
+**`write-failed` alone has no authority to produce `unrealized`.** A thrown write
+is an operation result, not a fact about the artifact; the post-write authoritative
+observation still runs and still decides:
+
+```
+write threw + observation positively proves the body is not established
+  → unrealized    / write-failed
+
+write threw + observation cannot establish the final state
+  → indeterminate / post-write-observation-failed
+
+write threw + observation proves the managed body is current
+  → realized      / (the reason describing the write that was attempted)
+```
+
+The third row is not a curiosity: a write can throw after its bytes have landed.
+Recording `unrealized` from the exception alone would let an operation result
+overrule an observation — the same inversion the errno mapping above forbids on the
+topology side.
+
+`seq` is the sole ordering authority, and its value domain is frozen so that
+"monotonic" is a rule rather than an aspiration:
+
+```
+seq            a positive safe integer
+first event    seq = 1
+next event     seq = previous lastEvent.seq + 1
+```
+
+The writer owes this monotonicity. The validator checks only the shape of the last
+event's `seq` and, when appending, that the new value is exactly one greater than
+the one it read — no scan or replay of interior events, so the frozen validation
+scope is untouched.
+
+`recordedAt` participates in the identity
 hash — two identical installs are two events — but MUST NOT participate in event
 ordering, latest-event selection, deduplication, `current` derivation,
 participation, install outcome, runnability verdict, or `[0ce0]` health policy.
@@ -470,7 +534,7 @@ git rev-parse --absolute-git-dir
     → NO-GIT-ADMIN-TOPOLOGY
     → no provenance document is created
     → hook installation is not attempted
-    → exit 0; this is a legitimate environment, not a failure
+    → exit code is producer-specific, see below
 
   git unavailable, cannot be spawned, or fails for any other reason
     → OWNER-UNRESOLVED
@@ -478,17 +542,61 @@ git rev-parse --absolute-git-dir
     → reported on stderr and exits non-zero
 ```
 
+`NO-GIT-ADMIN-TOPOLOGY` is one fact with two legitimate readings, and flattening
+them would silently change an existing contract:
+
+```
+scaffold on a non-Git target
+  → a legitimate environment with no hook container
+  → the hook phase is not itself fatal to the scaffold
+
+explicit mem hook install outside a Git repository
+  → an explicit command that cannot be fulfilled
+  → non-zero, preserving today's behaviour at templates/cli/hooks.js:111-115
+```
+
+The environment fact is the same; what differs is whether the caller asked for
+something that cannot be delivered. This is stated here rather than left to be
+inferred from the generic preflight, precisely because the generic reading would
+quietly relax the explicit command.
+
 `OWNER-UNRESOLVED` is not `NO-GIT-ADMIN-TOPOLOGY`, and neither is the reader's
 `UNKNOWN`. A document that is absent because no Git administrative context exists,
 and a document that is absent because we could not find out, are different facts;
 collapsing them would rebuild the very confusion this spec removes, one layer up.
 
-The preflight exists to obey one rule: **when it is already known that the
-provenance transaction cannot complete, no avoidable hook mutation may be
-performed first.** Creating the owner directory during preflight — rather than at
-commit time — is what makes the check load-bearing instead of decorative. Failures
-that cannot be foreseen (the disk filling between preflight and commit) remain
-governed by the two-dimension reporting rule below.
+**A read-before-mutate gate runs second, at the same rank, still before any
+mutation.** The producer must read the existing document before it can append to
+it, and what it finds governs whether it may proceed:
+
+```
+ABSENT
+  → this workspace has no history
+  → the first event may be initialised with seq = 1
+
+VALID
+  → continue from the last event
+
+UNOBSERVABLE
+  → the existing document MUST NOT be overwritten
+  → the hook MUST NOT be mutated
+  → the file is left byte-for-byte unchanged
+  → reported and exits non-zero
+```
+
+The `UNOBSERVABLE` row is the whole point of the gate. The natural implementation —
+read fails, treat as empty, start at `seq = 1`, overwrite — converts *"I could not
+read the history"* into *"there was never any history"*, which is this debt's
+original defect reproduced inside its own remedy. A corrupt document is evidence
+that something went wrong and must survive as such; silently replacing it destroys
+the only record of it.
+
+Both gates exist to obey one rule: **when it is already known that the provenance
+transaction cannot complete, no avoidable hook mutation may be performed first.**
+Creating the owner directory during preflight — rather than at commit time — is
+what makes the first check load-bearing instead of decorative. Failures that cannot
+be foreseen (the disk filling between preflight and commit) remain governed by the
+two-dimension reporting rule below.
 
 Order thereafter: mutate the artifact, observe the result, then commit provenance.
 The write follows the established idiom at `templates/cli/takeover-install.js:294` —
@@ -525,12 +633,12 @@ exactly three regions:
 ```
 top-level     kind, schemaVersion
 current       shape, participation enum
-last event    shape, id recomputation from the 20-slot projection,
+last event    shape, seq shape, id recomputation from the 20-slot projection,
               conditional install/runnability presence,
               controlled-vocabulary membership,
               reason-null-iff-satisfied,
               runnability.verdict == mechanical aggregation of its components
-plus          events non-empty, C-2a, C-2b
+plus          events non-empty, C-2a, C-2b, C-2c
 ```
 
 Recomputing the aggregation is required, not optional. Checking only that the four
@@ -596,19 +704,19 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac3",
-      "description": "Integrity holds as C-1, C-2a and C-2b: the document is replaced atomically as a whole; current.derivedFrom equals the last event id; and sha256 over the canonical projection of current.participation alone equals lastEvent.resultingCurrentDigest. No current.digest field exists, and current.derivedFrom does not participate in that digest.",
+      "description": "Integrity holds as C-1, C-2a, C-2b and C-2c: the document is replaced atomically as a whole; current.derivedFrom equals the last event id; sha256 over the canonical projection of current.participation alone equals lastEvent.resultingCurrentDigest; and current.participation equals lastEvent.intent.participation. A document that satisfies C-2a and C-2b while its current.participation contradicts the last event's intent — for example a non-participating last event under a participating current whose digest and derivedFrom both recompute correctly — is rejected as UNOBSERVABLE. No current.digest field exists, and current.derivedFrom does not participate in that digest.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
     {
       "id": "ac4",
-      "description": "event.id is sha256 over JSON.stringify of the frozen 20-slot canonical projection, in the exact order the spec lists, with every field absent under the conditional shape contributing null so the array length is constant across event kinds. id itself, the whole of diagnostic, and free-text error messages are excluded, and no machine-random UUID participates. seq is the only ordering authority: a document whose recordedAt values run backwards still yields the same latest event, the same current derivation, and the same verdicts as one whose timestamps ascend.",
+      "description": "event.id is sha256 over JSON.stringify of the frozen 20-slot canonical projection, in the exact order the spec lists, with every field absent under the conditional shape contributing null so the array length is constant across event kinds. id itself, the whole of diagnostic, and free-text error messages are excluded, and no machine-random UUID participates. seq is a positive safe integer, is 1 on the first event, and each appended event carries exactly one more than the event it was appended to; the validator checks that shape on the last event without scanning interior events. seq is the only ordering authority: a document whose recordedAt values run backwards still yields the same latest event, the same current derivation, and the same verdicts as one whose timestamps ascend.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
     {
       "id": "ac5",
-      "description": "unrealized is produced only by an errno-preserving observation primitive, and the frozen mapping is enforced: ENOENT yields unrealized with reason hooks-dir-missing, a successful stat of a non-directory yields unrealized with reason hooks-dir-not-directory, and every other observation error yields indeterminate with reason hooks-dir-unobservable. A permission error such as EACCES therefore never yields unrealized. existsSync returning false can never produce unrealized, and realized requires positive proof rather than absence of a negative. A chmod failure is recorded in install.chmod and changes neither install.outcome nor any runnability verdict.",
+      "description": "unrealized is produced only by an errno-preserving observation primitive, and the frozen mapping is enforced: ENOENT yields unrealized with reason hooks-dir-missing, a successful stat of a non-directory yields unrealized with reason hooks-dir-not-directory, and every other observation error yields indeterminate with reason hooks-dir-unobservable. A permission error such as EACCES therefore never yields unrealized. A thrown write likewise carries no authority on its own: the post-write observation still runs, so a write that throws after its bytes landed yields realized, one that throws with the final state unestablishable yields indeterminate with reason post-write-observation-failed, and only a write that throws with the body positively proven absent yields unrealized with reason write-failed. existsSync returning false can never produce unrealized, and realized requires positive proof rather than absence of a negative. A chmod failure is recorded in install.chmod and changes neither install.outcome nor any runnability verdict. No already-current reason exists in v1.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -656,8 +764,14 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac13",
-      "description": "Owner resolution runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document, no install attempt, exit zero. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. A run that cannot record provenance never performs an avoidable hook mutation first, and OWNER-UNRESOLVED, NO-GIT-ADMIN-TOPOLOGY, and the reader's UNKNOWN are three distinct states that no code path collapses.",
+      "description": "Owner resolution runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document and no install attempt, and the exit code is producer-specific — a scaffold run does not fail on the hook phase, while an explicit mem hook install outside a Git repository still exits non-zero as it does today. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. A run that cannot record provenance never performs an avoidable hook mutation first, and OWNER-UNRESOLVED, NO-GIT-ADMIN-TOPOLOGY, and the reader's UNKNOWN are three distinct states that no code path collapses.",
       "dependsOn": ["index.js", "templates/cli/hooks.js"],
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+    },
+    {
+      "id": "ac14",
+      "description": "A read-before-mutate gate runs before any hook mutation. An absent document permits initialising the first event at seq 1; a valid document is continued from its last event; an UNOBSERVABLE document stops the run — the hook is not mutated, the existing file is left byte-for-byte identical as verified by digest before and after, the condition is reported, and the exit code is non-zero. No path treats an unreadable document as empty history, and no path renumbers a continuing document back to seq 1.",
+      "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     }
   ]
