@@ -834,12 +834,26 @@ original defect reproduced inside its own remedy. A corrupt document is evidence
 that something went wrong and must survive as such; silently replacing it destroys
 the only record of it.
 
-Both gates exist to obey one rule: **when it is already known that the provenance
-transaction cannot complete, no avoidable hook mutation may be performed first.**
-Creating the owner directory during preflight — rather than at commit time — is
-what makes the first check load-bearing instead of decorative. Failures that cannot
-be foreseen (the disk filling between preflight and commit) remain governed by the
-two-dimension reporting rule below.
+All three gates enforce one rule, with exactly one carve-out:
+
+```
+NESTED-TARGET
+  → the sole deliberate out-of-v1-provenance mutation exception;
+    legacy installer behaviour is left unchanged and claims nothing
+
+SCOPE-UNRESOLVED
+OWNER-UNRESOLVED
+UNOBSERVABLE existing document
+provenance-commit failure known before mutation
+  → no avoidable hook mutation
+```
+
+Everything but the first row is an in-scope or unresolved run that has already
+learned its provenance transaction cannot be established or completed, and none of
+them may touch the artifact before failing. Creating the owner directory during
+preflight — rather than at commit time — is what makes that check load-bearing
+instead of decorative. Failures that cannot be foreseen (the disk filling between
+preflight and commit) remain governed by the two-dimension reporting rule below.
 
 Order thereafter: mutate the artifact, observe the result, then commit provenance.
 The write follows the established idiom at `templates/cli/takeover-install.js:294` —
@@ -1034,7 +1048,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac13",
-      "description": "A workspace-scope preflight runs before owner resolution and is total. When git rev-parse --show-toplevel succeeds, the target is compared to it by path identity: SAME continues, DISTINCT is NESTED-TARGET, and UNESTABLISHED is SCOPE-UNRESOLVED — NESTED-TARGET is reachable from DISTINCT alone, so injecting a realpath failure yields SCOPE-UNRESOLVED and never NESTED-TARGET. When git positively reports the target is not a repository the state is NO-GIT-ADMIN-TOPOLOGY with its producer-specific exit, never swallowed into SCOPE-UNRESOLVED or NESTED-TARGET. When git is unavailable or the query fails for any other reason the state is SCOPE-UNRESOLVED, reported with a non-zero exit. Every non-SAME branch short-circuits before any owner is resolved, before any owner directory is created, and before any document is opened — verified by asserting that no evo-lite directory appears under the enclosing worktree's git-dir after scaffolding a nested target. NESTED-TARGET and SCOPE-UNRESOLVED share that stopping point and no more: NESTED-TARGET leaves legacy installer behaviour unchanged, whereas SCOPE-UNRESOLVED fails closed and mutates no hook, verified by injecting a realpath failure and asserting the hook file is byte-identical before and after — or absent throughout — so that no run ever changes the artifact while unable to record it. Owner resolution then runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document and no install attempt, and the exit code is producer-specific — a scaffold run does not fail on the hook phase, while an explicit mem hook install outside a Git repository still exits non-zero as it does today. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. A run that cannot record provenance never performs an avoidable hook mutation first, and the six states are mutually exclusive with no code path collapsing any pair: the four topology states NO-GIT-ADMIN-TOPOLOGY, SCOPE-UNRESOLVED, NESTED-TARGET and OWNER-UNRESOLVED, and the two document states UNKNOWN and UNOBSERVABLE. In particular no topology state is ever reported as UNKNOWN or UNOBSERVABLE.",
+      "description": "A workspace-scope preflight runs before owner resolution and is total. When git rev-parse --show-toplevel succeeds, the target is compared to it by path identity: SAME continues, DISTINCT is NESTED-TARGET, and UNESTABLISHED is SCOPE-UNRESOLVED — NESTED-TARGET is reachable from DISTINCT alone, so injecting a realpath failure yields SCOPE-UNRESOLVED and never NESTED-TARGET. When git positively reports the target is not a repository the state is NO-GIT-ADMIN-TOPOLOGY with its producer-specific exit, never swallowed into SCOPE-UNRESOLVED or NESTED-TARGET. When git is unavailable or the query fails for any other reason the state is SCOPE-UNRESOLVED, reported with a non-zero exit. Every non-SAME branch short-circuits before any owner is resolved, before any owner directory is created, and before any document is opened — verified by asserting that no evo-lite directory appears under the enclosing worktree's git-dir after scaffolding a nested target. NESTED-TARGET and SCOPE-UNRESOLVED share that stopping point and no more: NESTED-TARGET leaves legacy installer behaviour unchanged, whereas SCOPE-UNRESOLVED fails closed and mutates no hook, verified by injecting a realpath failure and asserting the hook file is byte-identical before and after — or absent throughout — so that no run ever changes the artifact while unable to record it. Owner resolution then runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document and no install attempt, and the exit code is producer-specific — a scaffold run does not fail on the hook phase, while an explicit mem hook install outside a Git repository still exits non-zero as it does today. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. Except for the deliberate NESTED-TARGET legacy-installer exception, which is the sole out-of-v1-provenance mutation carve-out, any in-scope or unresolved run that cannot establish or complete its provenance transaction performs no avoidable hook mutation before failing. The six states are mutually exclusive with no code path collapsing any pair: the four topology states NO-GIT-ADMIN-TOPOLOGY, SCOPE-UNRESOLVED, NESTED-TARGET and OWNER-UNRESOLVED, and the two document states UNKNOWN and UNOBSERVABLE. In particular no topology state is ever reported as UNKNOWN or UNOBSERVABLE.",
       "dependsOn": ["index.js", "templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
