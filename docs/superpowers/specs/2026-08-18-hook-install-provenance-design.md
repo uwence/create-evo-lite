@@ -145,15 +145,21 @@ pathIdentity(target, worktreeTopLevel)
 
   SAME           → in scope; owner is resolved and provenance is read and written
   DISTINCT       → NESTED-TARGET
-  UNESTABLISHED  → NESTED-TARGET (scope cannot be established, so nothing is claimed)
+  UNESTABLISHED  → SCOPE-UNRESOLVED
 
-NESTED-TARGET
+NESTED-TARGET and SCOPE-UNRESOLVED both
   → provenance processing short-circuits BEFORE any owner resolution or
     document access: no owner directory is created, no document is read,
     no document is written
   → any legacy installer behaviour that still runs is outside the provenance
     transaction defined by this spec and produces no provenance claim
 ```
+
+`NESTED-TARGET` may be produced by `DISTINCT` and by nothing else. It is a positive
+topology assertion — *this target is not the worktree top-level* — and
+`UNESTABLISHED` is precisely the state in which we are not entitled to assert it.
+Routing an unresolvable comparison to `NESTED-TARGET` would be a consumer treating
+`UNESTABLISHED` as `DISTINCT`, which the primitive forbids.
 
 **`NESTED-TARGET` is a topology state, not a document state.** It sits beside
 `NO-GIT-ADMIN-TOPOLOGY` and `OWNER-UNRESOLVED`, and it is emphatically *not*
@@ -678,15 +684,43 @@ owner and create `<outer-git-dir>/evo-lite` before ever noticing the target is
 nested — writing into a context it is forbidden to touch. Order is therefore part
 of the contract, not an implementation detail:
 
+It is also the gate that first meets a target which is not a Git repository at all,
+since `git -C <target> rev-parse --show-toplevel` fails there (exit 128,
+*"fatal: not a git repository"*) — the owner query below never gets the chance to
+classify it. The gate must therefore be total, and every branch must preserve what
+was actually established:
+
 ```
 0  bind every Git query to the target workspace
+
 1  git -C <target> rev-parse --show-toplevel
-2  pathIdentity(target, worktreeTopLevel)
-     SAME                     → continue to owner resolution
-     DISTINCT | UNESTABLISHED → NESTED-TARGET, stop provenance processing here
+
+   succeeds with a path
+     → pathIdentity(target, worktreeTopLevel)
+         SAME           → continue to owner resolution
+         DISTINCT       → NESTED-TARGET
+         UNESTABLISHED  → SCOPE-UNRESOLVED
+
+   git ran and positively reports this is not a repository
+     → NO-GIT-ADMIN-TOPOLOGY
+     → producer-specific exit, exactly as defined for that state below
+
+   git unavailable, cannot be spawned, or fails for any other reason
+     → SCOPE-UNRESOLVED
 ```
 
-Only after this may owner resolution run.
+```
+SCOPE-UNRESOLVED
+  → no provenance owner is resolved, no document is accessed
+  → no provenance transaction is performed
+  → reported and exits non-zero
+```
+
+It is named for what was attempted. Calling it `OWNER-UNRESOLVED` would overstate
+the facts: the owner query has not run yet, and a name that claims more than
+happened is the failure mode this whole design exists to prevent.
+
+Only after this gate resolves to `SAME` may owner resolution run.
 
 **Owner-resolution preflight runs second, still before any mutation.** The owner
 root comes from one authority query, and its failure modes are not interchangeable:
@@ -813,12 +847,12 @@ from being manufactured.
 from `indeterminate`, which is a component's verdict inside a well-formed document.
 The two must never be spelled with one word.
 
-Both are distinct again from the **topology states** — `NO-GIT-ADMIN-TOPOLOGY`,
-`OWNER-UNRESOLVED`, `NESTED-TARGET` — which are decided before any document is
-opened and describe whether this target has a provenance context at all. A topology
-state must never be reported as a document state: none of them may become `UNKNOWN`
-or `UNOBSERVABLE`, because both of those are claims about a document this target was
-entitled to read.
+Both are distinct again from the four **topology states** — `NO-GIT-ADMIN-TOPOLOGY`,
+`SCOPE-UNRESOLVED`, `NESTED-TARGET`, `OWNER-UNRESOLVED` — which are decided before
+any document is opened and describe whether this target has a provenance context at
+all. A topology state must never be reported as a document state: none of them may
+become `UNKNOWN` or `UNOBSERVABLE`, because both of those are claims about a
+document this target was entitled to read. The six states are mutually exclusive.
 
 Producer and reader share one `validateHookProvenanceV1()` — the lesson recorded at
 `templates/cli/takeover-install.js:281`, where a split shape contract lets a writer
@@ -888,7 +922,7 @@ ones: unknown members matter exactly where validation reaches.
   "acceptanceCriteria": [
     {
       "id": "ac1",
-      "description": "The provenance document is stored at <git rev-parse --absolute-git-dir>/evo-lite/hook-provenance.json. The path is obtained from that authority query alone; no code joins projectRoot with '.git', and the document carries no projectRoot, gitDir, commonDir, or root-commit identity field. Two linked worktrees of one repository hold separate documents. A target whose path identity against git rev-parse --show-toplevel is not SAME is NESTED-TARGET: it neither reads nor writes the enclosing worktree's document and creates no owner directory there, so scaffolding a nested second project cannot alter the participation the enclosing worktree already recorded. NESTED-TARGET is reported as a topology state and never as UNKNOWN or UNOBSERVABLE. A target reached through a junction or symlink alias of the worktree root resolves as SAME and is therefore in scope, not nested.",
+      "description": "The provenance document is stored at <git rev-parse --absolute-git-dir>/evo-lite/hook-provenance.json. The path is obtained from that authority query alone; no code joins projectRoot with '.git', and the document carries no projectRoot, gitDir, commonDir, or root-commit identity field. Two linked worktrees of one repository hold separate documents. A target whose path identity against git rev-parse --show-toplevel is DISTINCT is NESTED-TARGET: it neither reads nor writes the enclosing worktree's document and creates no owner directory there, so scaffolding a nested second project cannot alter the participation the enclosing worktree already recorded. NESTED-TARGET is reported as a topology state and never as UNKNOWN or UNOBSERVABLE. A target reached through a junction or symlink alias of the worktree root resolves as SAME and is therefore in scope, not nested.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -960,7 +994,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac13",
-      "description": "A workspace-scope preflight runs before owner resolution: the target is compared to git rev-parse --show-toplevel by path identity, and anything other than SAME short-circuits as NESTED-TARGET before any owner is resolved, before any owner directory is created, and before any document is opened — verified by asserting that no evo-lite directory appears under the enclosing worktree's git-dir after scaffolding a nested target. Owner resolution then runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document and no install attempt, and the exit code is producer-specific — a scaffold run does not fail on the hook phase, while an explicit mem hook install outside a Git repository still exits non-zero as it does today. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. A run that cannot record provenance never performs an avoidable hook mutation first, and OWNER-UNRESOLVED, NO-GIT-ADMIN-TOPOLOGY, NESTED-TARGET, the reader's UNKNOWN, and the reader's UNOBSERVABLE are five distinct states that no code path collapses; in particular no topology state is ever reported as UNKNOWN.",
+      "description": "A workspace-scope preflight runs before owner resolution and is total. When git rev-parse --show-toplevel succeeds, the target is compared to it by path identity: SAME continues, DISTINCT is NESTED-TARGET, and UNESTABLISHED is SCOPE-UNRESOLVED — NESTED-TARGET is reachable from DISTINCT alone, so injecting a realpath failure yields SCOPE-UNRESOLVED and never NESTED-TARGET. When git positively reports the target is not a repository the state is NO-GIT-ADMIN-TOPOLOGY with its producer-specific exit, never swallowed into SCOPE-UNRESOLVED or NESTED-TARGET. When git is unavailable or the query fails for any other reason the state is SCOPE-UNRESOLVED, reported with a non-zero exit. Every non-SAME branch short-circuits before any owner is resolved, before any owner directory is created, and before any document is opened — verified by asserting that no evo-lite directory appears under the enclosing worktree's git-dir after scaffolding a nested target. Owner resolution then runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document and no install attempt, and the exit code is producer-specific — a scaffold run does not fail on the hook phase, while an explicit mem hook install outside a Git repository still exits non-zero as it does today. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. A run that cannot record provenance never performs an avoidable hook mutation first, and the six states are mutually exclusive with no code path collapsing any pair: the four topology states NO-GIT-ADMIN-TOPOLOGY, SCOPE-UNRESOLVED, NESTED-TARGET and OWNER-UNRESOLVED, and the two document states UNKNOWN and UNOBSERVABLE. In particular no topology state is ever reported as UNKNOWN or UNOBSERVABLE.",
       "dependsOn": ["index.js", "templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
