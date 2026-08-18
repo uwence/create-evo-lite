@@ -51,6 +51,19 @@ context, at:
 <git rev-parse --absolute-git-dir>/evo-lite/hook-provenance.json
 ```
 
+**Every Git authority query in this contract MUST be bound to the workspace being
+operated on**, as `git -C <target> …` or an equivalent `cwd: <target>`, never to
+the process's ambient working directory. This applies to the owner query here, to
+the locator query below, and to any Git query added later.
+
+The hazard is concrete, not theoretical: the CLI takes a target path
+(`index.js:93` `[project-path]`, resolved at `index.js:292`), so
+`create-evo-lite ../repo-B` run from inside repo A would, under an unbound query,
+resolve **A's** git-dir as the provenance owner while mutating **B's** hook — the
+record and the artifact describing different repositories. `ensureGitWorkspace()`
+already establishes the correct idiom by passing `cwd: targetDir`; this contract
+inherits it rather than inventing one.
+
 Ownership is structural — a property of the storage location — so the schema
 carries no identity field at all. Measured consequences:
 
@@ -158,6 +171,24 @@ A target that is not a Git repository and is scaffolded with `--no-git` has no G
 administrative container, therefore **no provenance document** — which is not
 `non-participating`. A missing document must never impersonate explicit
 non-participation; `[0ce0]` may later read Git topology and rule NOT-APPLICABLE.
+
+This forces one combination to be stated rather than inferred, because two
+otherwise-correct rules would contradict each other on it:
+
+```
+--no-hooks, existing Git admin topology
+  → non-participation is durably recorded, as it should be
+
+--no-hooks + --no-git, target is not a Git repository
+  → there is nowhere to record it, and a .git MUST NOT be created to gain one
+  → no provenance document
+  → the opt-out is honoured in this run; it simply leaves no persistent record
+```
+
+Creating a repository in order to store an opt-out would let a hook-participation
+flag manufacture a Git repository — precisely the coupling DD#1 severed, running
+backwards. The recording of an intent never outranks the boundary of the command
+that carried it.
 
 ### Document shape
 
@@ -267,6 +298,27 @@ current.derivedFrom               = recomputed lastEvent.id
 C-2c is a single field comparison against the last event, not a replay of history,
 so it stays inside the frozen validation scope.
 
+```
+C-2d  intent.source and intent.participation are coherent
+
+      scaffold-no-hooks                       ↔ non-participating
+      scaffold-default | hook-install-command ↔ participating
+```
+
+C-2d does not overlap C-2c. C-2c binds `current` to the last event's
+`participation`; C-2d binds that `participation` to the producer authority
+entitled to declare it. Without it, this last event passes everything else:
+
+```
+intent.source          hook-install-command
+intent.participation   non-participating
+current.participation  non-participating
+```
+
+C-2c holds, both enum members are legal, and an explicit request to install has
+been recorded as an explicit refusal to participate. A violation on the last event
+makes the document `UNOBSERVABLE`.
+
 The authoritative projection of `current` is `participation` alone. `derivedFrom`
 must not enter the digest: `resultingCurrentDigest` participates in `event.id`, and
 `derivedFrom` equals `event.id`, so including it closes a cycle
@@ -357,7 +409,9 @@ is an operation result, not a fact about the artifact; the post-write authoritat
 observation still runs and still decides:
 
 ```
-write threw + observation positively proves the body is not established
+write threw + observation positively proves the expected managed body
+                is not established — including a failed update that left an
+                older managed body in place, which is not physical absence
   → unrealized    / write-failed
 
 write threw + observation cannot establish the final state
@@ -615,11 +669,20 @@ the state that must never look like success.
 ### Reader epistemic states
 
 ```
-document absent                                   → UNKNOWN        (legacy absence)
+open/stat → ENOENT                                → ABSENT → UNKNOWN  (legacy absence)
+open/stat → any other I/O error                   → UNOBSERVABLE
 unparseable / not an object                       → UNOBSERVABLE
 unrecognised kind or schemaVersion                → UNOBSERVABLE
-C-2a or C-2b fails                                → UNOBSERVABLE   (desynced)
+C-2a, C-2b, C-2c or C-2d fails                    → UNOBSERVABLE      (desynced)
 ```
+
+The provenance document's own absence is subject to the same rule as the hooks
+directory probe: **only a positive `ENOENT` may produce `ABSENT`.** A permission
+error, an unreadable mount, or any other I/O failure is a failure to observe and
+reads `UNOBSERVABLE`. `existsSync()` returning false is never sufficient on its own
+— it would collapse "not there" and "could not look" into one bit, at the one place
+where that collapse becomes `UNKNOWN`, the state this whole design exists to stop
+from being manufactured.
 
 `UNOBSERVABLE` is the reader's epistemic state about the document. It is distinct
 from `indeterminate`, which is a component's verdict inside a well-formed document.
@@ -638,7 +701,8 @@ last event    shape, seq shape, id recomputation from the 20-slot projection,
               controlled-vocabulary membership,
               reason-null-iff-satisfied,
               runnability.verdict == mechanical aggregation of its components
-plus          events non-empty, C-2a, C-2b, C-2c
+              intent.source ↔ intent.participation coherence
+plus          events non-empty, C-2a, C-2b, C-2c, C-2d
 ```
 
 Recomputing the aggregation is required, not optional. Checking only that the four
@@ -704,7 +768,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac3",
-      "description": "Integrity holds as C-1, C-2a, C-2b and C-2c: the document is replaced atomically as a whole; current.derivedFrom equals the last event id; sha256 over the canonical projection of current.participation alone equals lastEvent.resultingCurrentDigest; and current.participation equals lastEvent.intent.participation. A document that satisfies C-2a and C-2b while its current.participation contradicts the last event's intent — for example a non-participating last event under a participating current whose digest and derivedFrom both recompute correctly — is rejected as UNOBSERVABLE. No current.digest field exists, and current.derivedFrom does not participate in that digest.",
+      "description": "Integrity holds as C-1, C-2a, C-2b, C-2c and C-2d: the document is replaced atomically as a whole; current.derivedFrom equals the last event id; sha256 over the canonical projection of current.participation alone equals lastEvent.resultingCurrentDigest; current.participation equals lastEvent.intent.participation; and the last event's intent.source and intent.participation are coherent, with scaffold-no-hooks paired only to non-participating and scaffold-default or hook-install-command paired only to participating. Two documents that satisfy every other rule are rejected as UNOBSERVABLE: one whose participating current sits over a non-participating last event with a correctly recomputed digest and derivedFrom, and one whose last event pairs hook-install-command with non-participating. No current.digest field exists, and current.derivedFrom does not participate in that digest.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -716,7 +780,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac5",
-      "description": "unrealized is produced only by an errno-preserving observation primitive, and the frozen mapping is enforced: ENOENT yields unrealized with reason hooks-dir-missing, a successful stat of a non-directory yields unrealized with reason hooks-dir-not-directory, and every other observation error yields indeterminate with reason hooks-dir-unobservable. A permission error such as EACCES therefore never yields unrealized. A thrown write likewise carries no authority on its own: the post-write observation still runs, so a write that throws after its bytes landed yields realized, one that throws with the final state unestablishable yields indeterminate with reason post-write-observation-failed, and only a write that throws with the body positively proven absent yields unrealized with reason write-failed. existsSync returning false can never produce unrealized, and realized requires positive proof rather than absence of a negative. A chmod failure is recorded in install.chmod and changes neither install.outcome nor any runnability verdict. No already-current reason exists in v1.",
+      "description": "unrealized is produced only by an errno-preserving observation primitive, and the frozen mapping is enforced: ENOENT yields unrealized with reason hooks-dir-missing, a successful stat of a non-directory yields unrealized with reason hooks-dir-not-directory, and every other observation error yields indeterminate with reason hooks-dir-unobservable. A permission error such as EACCES therefore never yields unrealized. A thrown write likewise carries no authority on its own: the post-write observation still runs, so a write that throws after its bytes landed yields realized, one that throws with the final state unestablishable yields indeterminate with reason post-write-observation-failed, and only a write that throws with the expected managed body positively proven not established yields unrealized with reason write-failed — a failed update that leaves an older managed body in place is such a case, so the criterion is not satisfied by testing physical absence alone. existsSync returning false can never produce unrealized, and realized requires positive proof rather than absence of a negative. A chmod failure is recorded in install.chmod and changes neither install.outcome nor any runnability verdict. No already-current reason exists in v1.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -746,13 +810,13 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac10",
-      "description": "A single validateHookProvenanceV1 is used by both producer and reader, and its scope is exactly the top level, current, and the last event. An absent document reads UNKNOWN; an unparseable document, an unrecognised kind or schemaVersion, an unrecognised controlled-vocabulary member in current or the last event, a component reason that is non-null on satisfied or absent on a non-satisfied verdict, a runnability.verdict that does not equal the mechanical aggregation of its own components, and a C-2a or C-2b failure each read UNOBSERVABLE. The same violations written into an interior event leave the reader state unchanged, because interior events are not inspected. UNOBSERVABLE and indeterminate remain distinct vocabularies, and a scaffold with no Git administrative container produces no document rather than a non-participating one.",
+      "description": "A single validateHookProvenanceV1 is used by both producer and reader, and its scope is exactly the top level, current, and the last event. Only a positive ENOENT on the document makes it ABSENT and therefore UNKNOWN; any other I/O error reading it, and existsSync alone in place of an errno-preserving probe, must not produce UNKNOWN. An unparseable document, an unrecognised kind or schemaVersion, an unrecognised controlled-vocabulary member in current or the last event, a component reason that is non-null on satisfied or absent on a non-satisfied verdict, a runnability.verdict that does not equal the mechanical aggregation of its own components, and a C-2a, C-2b, C-2c or C-2d failure each read UNOBSERVABLE. The same violations written into an interior event leave the reader state unchanged, because interior events are not inspected. UNOBSERVABLE and indeterminate remain distinct vocabularies, and a scaffold with no Git administrative container produces no document rather than a non-participating one.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
     {
       "id": "ac11",
-      "description": "A --no-hooks option is the sole authority for explicit non-participation and is recorded as intent.source scaffold-no-hooks with participation non-participating. It is not the sole authority for participation: scaffold-default and hook-install-command both produce participating intent. --no-git retains its narrow meaning of skipping git init only and never determines participation, expressed as a reverse property: holding the Git topology fixed, toggling --no-git does not suppress hook participation or the install attempt. What that attempt then realizes remains decided by topology and observation, so the criterion asserts nothing about outcome.",
+      "description": "A --no-hooks option is the sole authority for explicit non-participation and, whenever a Git administrative container exists, is durably recorded as intent.source scaffold-no-hooks with participation non-participating. On a target that is not a Git repository scaffolded with --no-git, the opt-out is honoured for that run but produces no provenance document, and no .git is created in order to store it. It is not the sole authority for participation: scaffold-default and hook-install-command both produce participating intent. --no-git retains its narrow meaning of skipping git init only and never determines participation, expressed as a reverse property: holding the Git topology fixed, toggling --no-git does not suppress hook participation or the install attempt. What that attempt then realizes remains decided by topology and observation, so the criterion asserts nothing about outcome.",
       "dependsOn": ["index.js", "templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -772,6 +836,12 @@ ones: unknown members matter exactly where validation reaches.
       "id": "ac14",
       "description": "A read-before-mutate gate runs before any hook mutation. An absent document permits initialising the first event at seq 1; a valid document is continued from its last event; an UNOBSERVABLE document stops the run — the hook is not mutated, the existing file is left byte-for-byte identical as verified by digest before and after, the condition is reported, and the exit code is non-zero. No path treats an unreadable document as empty history, and no path renumbers a continuing document back to seq 1.",
       "dependsOn": ["templates/cli/hooks.js"],
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+    },
+    {
+      "id": "ac15",
+      "description": "Every Git authority query is bound to the workspace being operated on, via git -C or an equivalent cwd, and never to the process working directory. The controller is A to B: running the scaffold from inside repository A against a target path in repository B resolves B's git-dir as the provenance owner and B's active hooks directory as the locator answer, and writes no provenance into A. No Git invocation anywhere in this contract omits the target binding.",
+      "dependsOn": ["index.js", "templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     }
   ]
