@@ -225,7 +225,7 @@ That is a genuine ergonomic regression for the true-positive case. The trade is 
     {
       "id": "ac2",
       "description": "gaps.js contains no independent closure-readiness decision logic, no confidence threshold and no duplicate of any evidence predicate; it may only map the authoritative readiness result into R011 finding types.",
-      "dependsOn": ["templates/cli/planning/gaps.js"],
+      "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/planning/progress.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
     {
@@ -255,13 +255,13 @@ That is a genuine ergonomic regression for the true-positive case. The trade is 
     {
       "id": "ac7",
       "description": "PLANNING_RULE_VERSIONS.R011 is 2, and factInputs carries both the authoritative closure state and a canonically ordered blocker identity — with a stable validation-failure identity when the contract is malformed — so that a change of blocking criteria within one state lapses a prior disposition, while a mere reordering does not. Presence evidence never appears in factInputs.",
-      "dependsOn": ["templates/cli/planning/gaps.js"],
+      "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/verification/close-preview.js", "templates/cli/verification/validate-contract.js", "templates/cli/verification/contract-schema.json"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
     {
       "id": "ac8",
       "description": "On the mother repo the two currently-flagged specs — spec:governance-observation-budget and spec:planning-truth-controls — become spec-closure-uncontracted naming their unevidenced tasks, and neither receives closure advice.",
-      "dependsOn": ["templates/cli/planning/gaps.js"],
+      "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/planning/progress.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     }
   ]

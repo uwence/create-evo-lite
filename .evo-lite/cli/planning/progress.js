@@ -94,6 +94,11 @@ function evaluateTask(task, projectRoot) {
             linkedFilesTotal: filesResult.total,
             linkedFilesExist: filesResult.exist,
             archiveHits,
+            // Published so consumers can ask "is there positive evidence?" without
+            // re-deriving it from the raw materials. The definition lives here and
+            // only here; a second copy in a drift rule is the defect this whole
+            // change exists to remove.
+            hasPositiveEvidence,
         },
     };
 }
@@ -139,4 +144,4 @@ function writeProgressReport(report, projectRoot) {
     return outPath;
 }
 
-module.exports = { evaluateProgress, writeProgressReport, checkArchiveHits };
+module.exports = { evaluateTask, evaluateProgress, writeProgressReport, checkArchiveHits };

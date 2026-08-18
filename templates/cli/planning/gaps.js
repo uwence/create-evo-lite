@@ -292,9 +292,13 @@ function hasArchiveEvidence(task) {
 
 // --- Disposition identity: canonical ids, rule versions and declared facts ---
 
+// R011 is 2 because both its fact inputs and its claim semantics changed: it
+// stopped asserting "this spec should be closed" from checkbox state and began
+// reporting an authoritative closure verdict. The bump lapses every existing
+// R011 disposition ONCE; every later change of fact is the fingerprint's job.
 const PLANNING_RULE_VERSIONS = Object.freeze({
     R003: 1, R004: 1, R005: 1, R006: 1, R008: 1,
-    R009: 1, R010: 1, R011: 1, R012: 1, R013: 1,
+    R009: 1, R010: 1, R011: 2, R012: 1, R013: 1,
 });
 
 // Mechanical id migrations — only for rules whose new id is derivable from the
@@ -310,13 +314,6 @@ const ID_MIGRATIONS = {
 
 function sha256(value) {
     return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
-}
-
-// The statuses of every task belonging to the plans linked to a spec. Sorted by
-// the fingerprint layer (taskStatuses is in SET_KEYS), so order is irrelevant.
-function planTaskStatuses(planIR, plans) {
-    const ids = new Set(plans.map(p => p.id));
-    return (planIR.tasks || []).filter(t => ids.has(t.linkedPlan)).map(t => `${t.id}=${t.status}`);
 }
 
 // --- R003 ---
@@ -544,7 +541,98 @@ function checkR010(projectRoot, planIR) {
 
 // --- R011 ---
 
-function checkR011(planIR) {
+// R011 is a closure ROUTER, not a closure judge.
+//
+// It used to read `t.status === 'implemented'` — a hand-ticked checkbox — and
+// tell the operator to set `status: done`. close-preview.js had already ruled
+// that task completion is "Advisory only — NEVER affects readiness", so R011
+// was a second, weaker authority over a question that already had a designed
+// one, recommending the exact terminal act that ruling governs.
+//
+// Checkboxes now decide one thing only: that a spec is worth CHECKING. The
+// verdict comes from readinessOf(), which R011 renders and never recomputes.
+const R011_TYPE_BY_READINESS = Object.freeze({
+    'READY': 'spec-closure-ready',
+    'BLOCKED': 'spec-closure-not-ready',
+    'NO-CONTRACT': 'spec-closure-uncontracted',
+});
+// Frozen ARRAYS, not Sets — this repo has been bitten by Object.freeze(new Set())
+// reporting frozen while add() still works. Lookup is .includes().
+const R011_INFO_TYPES = Object.freeze(['spec-closure-ready']);
+const R011_NON_DISPOSITIONABLE = Object.freeze(['spec-closure-ready', 'spec-closure-unobservable']);
+
+// The one derivation. Every state goes through it, including unobservable:
+// two hand-written strings that happen to agree are not an identity contract.
+function r011ClosureState(type) {
+    return String(type).replace(/^spec-closure-/, '');
+}
+
+// Presence evidence, for the operator's eyes only.
+//
+// This function CONSUMES a verdict; it does not reach one. `hasPositiveEvidence`
+// is progress.js's conclusion, and reading `gitRefs` / `linkedFilesTotal` /
+// `linkedFilesExist` here to re-derive it would rebuild the predicate one layer
+// down — AC2 forbids any duplicate of an evidence predicate in this file, and
+// that is the same "weaker second authority" shape this whole change deletes.
+// The confidence band is deliberately NOT read: the spec keeps it in progress.js
+// so a display heuristic cannot look authoritative.
+//
+// readOnly tasks are excluded, matching R005 (gaps.js:365) and R008 (gaps.js:436):
+// they are exempt from implementation evidence by design, so listing one as
+// having "no evidence of its own" would be a false prompt to a human.
+//
+// Best-effort by design. Presence never selects a state and never reaches
+// factInputs, so failing to read it withholds context — it makes no claim about
+// the spec, and must not degrade the census the way an unreadable READINESS does.
+function r011Unevidenced(planIR, plans, projectRoot, options) {
+    const evaluate = options.evidenceFn
+        || ((task, root) => require('./progress').evaluateTask(task, root));
+    const planIds = plans.map(p => p.id);
+    const tasks = (planIR.tasks || []).filter(t => planIds.includes(t.linkedPlan) && !t.readOnly);
+    try {
+        return tasks.filter(t => {
+            const e = evaluate(t, projectRoot);
+            return !!e && !!e.evidence && e.evidence.hasPositiveEvidence === false;
+        }).map(t => t.id);
+    } catch (_) {
+        return null;   // null = "not read", distinct from [] = "read, none found"
+    }
+}
+
+function r011EvidenceClause(unevidenced) {
+    if (unevidenced === null) return ' (linked task evidence could not be read)';
+    if (!unevidenced.length) return '';
+    return ` — tasks with no evidence of their own: ${unevidenced.join(', ')}`;
+}
+
+function r011Message(spec, plans, type, blockerIds, unevidenced) {
+    const shape = plans.length > 1
+        ? `all ${plans.length} linked plans are checkbox-complete`
+        : `linked plan ${plans[0].id} is checkbox-complete`;
+    if (type === 'spec-closure-ready') {
+        return `Spec ${spec.id} is [${spec.status}] and its acceptance contract is satisfied — ${shape}`;
+    }
+    if (type === 'spec-closure-not-ready') {
+        return `Spec ${spec.id} is [${spec.status}] and ${shape}, but its acceptance contract is not satisfied: `
+            + `${blockerIds.join(', ')}${r011EvidenceClause(unevidenced)}`;
+    }
+    return `Spec ${spec.id} is [${spec.status}] and ${shape}, but has no machine-readable acceptance contract`
+        + ` — checkbox state is not closure evidence${r011EvidenceClause(unevidenced)}`;
+}
+
+function r011Action(spec, type) {
+    if (type === 'spec-closure-ready') {
+        // A PATH, not an id: close-commands.js passes this argument straight to
+        // fs.readFileSync. `mem close spec:foo --preview` is ENOENT, not a preview.
+        return `Run the close transaction: mem close ${spec.sourcePath} --preview`;
+    }
+    if (type === 'spec-closure-not-ready') {
+        return `Resolve the failing criteria in ${spec.sourcePath}, then re-check readiness`;
+    }
+    return `Add or repair the acceptance criteria block in ${spec.sourcePath} so closure has an authoritative verdict`;
+}
+
+function checkR011(projectRoot, planIR, options = {}, observation = null) {
     if (!planIR) return [];
     const specMap = new Map((planIR.specs || []).map(s => [s.id, s]));
 
@@ -572,16 +660,95 @@ function checkR011(planIR) {
         };
         if (!plans.every(isComplete)) continue;
 
+        const readinessFn = options.readinessFn
+            || ((sp) => require('../verification/close-preview').readinessOf(sp, { root: projectRoot }));
+        const specPath = path.join(projectRoot, spec.sourcePath);
+        let verdict;
+        try {
+            verdict = readinessFn(specPath, spec);
+            // One protocol guard over the whole authority result, not one patch
+            // per field. A verdict this rule cannot consume is a failure to
+            // OBSERVE the authority, not a fact about the spec — so it goes to
+            // the unobservable path already designed for "we could not look":
+            // no advice, not dispositionable, census degraded. No fifth state,
+            // and nothing guessed.
+            //
+            // Two ways the old code failed without it. An unmappable `readiness`
+            // left `type` undefined and both renderers fell through to their
+            // last branch, asserting the spec "has no machine-readable
+            // acceptance contract" and telling the operator to add one — a
+            // positive claim about a spec that may well have one, on a finding
+            // a human was then invited to dispose of. And a `blockers` that is
+            // not a well-formed array crashed `.map` OUTSIDE this try, taking
+            // the whole census down instead of degrading it.
+            //
+            // The element check is not paranoia: `[{}]` passes Array.isArray and
+            // renders as the blocker id "undefined=undefined", which then enters
+            // the message AND the fingerprint — a fabricated fact, silently.
+            //
+            // `blockers` is a contract field of readinessOf's frozen surface, so
+            // absent is NOT tolerated here. The `|| []` this replaces was old
+            // defensive slack, and slack must not be read back as the contract.
+            const readiness = verdict && verdict.readiness;
+            const blockers = verdict && verdict.blockers;
+            const validBlockers = Array.isArray(blockers) && blockers.every(b =>
+                b && typeof b === 'object'
+                && typeof b.criterionId === 'string' && b.criterionId.length > 0
+                && typeof b.verdict === 'string' && b.verdict.length > 0);
+            if (!R011_TYPE_BY_READINESS[readiness] || !validBlockers) {
+                throw new Error('R011 received unsupported closure readiness result: '
+                    + JSON.stringify(verdict));
+            }
+        } catch (err) {
+            // Retain the finding, withdraw the advice. Suppressing it would remove
+            // it from the census, and `sync` reads an absence from a COMPLETE
+            // census as proof — tombstoning a human decision terminally. Degrading
+            // the census is the conservative direction; erasing the finding is not.
+            if (observation) {
+                observation.unavailable(`R011 closure readiness for ${spec.id}`, err);
+            }
+            // Every type-derived field comes from this one `type`, exactly as the
+            // healthy branch below does. Hand-writing `level: 'warning'` and
+            // `dispositionable: false` here would agree with the tables today and
+            // silently stop agreeing the day either table changes — the same
+            // "two hand-written things that agree is not an identity contract"
+            // this file already refuses for closureState.
+            const type = 'spec-closure-unobservable';
+            findings.push({
+                id: `R011:${spec.id}`,
+                rule: 'R011',
+                scope: 'planning',
+                level: R011_INFO_TYPES.includes(type) ? 'info' : 'warning',
+                type,
+                message: `Spec ${spec.id} closure readiness could not be read: ${err && err.message ? err.message : String(err)}`,
+                evidence: [spec.sourcePath],
+                suggestedAction: null,
+                dispositionable: !R011_NON_DISPOSITIONABLE.includes(type),
+                factInputs: { closureState: r011ClosureState(type) },
+            });
+            continue;
+        }
+
+        const type = R011_TYPE_BY_READINESS[verdict.readiness];
+        // No `|| []` fallback: the guard above has already established that
+        // blockers is a well-formed array. Leaving the fallback would state,
+        // in code, that absent blockers are legal — which is exactly the slack
+        // the guard exists to remove.
+        const blockerIds = verdict.blockers.map(b => `${b.criterionId}=${b.verdict}`).sort();
+
         findings.push({
             id: `R011:${spec.id}`,
             rule: 'R011',
             scope: 'planning',
-            level: 'warning',
-            type: 'spec-status-drift',
-            message: `Spec ${spec.id} is [${spec.status}] but ${plans.length > 1 ? `all ${plans.length} linked plans have` : `linked plan ${plans[0].id} has`} all tasks implemented`,
+            level: R011_INFO_TYPES.includes(type) ? 'info' : 'warning',
+            type,
+            message: r011Message(spec, plans, type, blockerIds, r011Unevidenced(planIR, plans, projectRoot, options)),
             evidence: [spec.sourcePath],
-            suggestedAction: `Update status in ${spec.sourcePath} to: status: done`,
-            factInputs: { specStatus: spec.status, taskStatuses: planTaskStatuses(planIR, plans) },
+            suggestedAction: r011Action(spec, type),
+            dispositionable: !R011_NON_DISPOSITIONABLE.includes(type),
+            factInputs: verdict.validationIdentity
+                ? { closureState: r011ClosureState(type), blockers: blockerIds, validationIdentity: verdict.validationIdentity }
+                : { closureState: r011ClosureState(type), blockers: blockerIds },
         });
     }
     return findings;
@@ -782,7 +949,7 @@ function runPlanningDriftCensus(projectRoot, planIR, options = {}) {
         ...checkR003(projectRoot), ...checkR004(projectRoot), ...checkR005(planIR),
         ...checkR006(projectRoot, planIR, options, observation), ...checkR008(planIR),
         ...checkR009(projectRoot), ...checkR010(projectRoot, planIR),
-        ...checkR011(planIR), ...checkR012(projectRoot, planIR, options),
+        ...checkR011(projectRoot, planIR, options, observation), ...checkR012(projectRoot, planIR, options),
         ...checkR013(projectRoot, options, observation),
     ].map(f => ({
         ...f,
@@ -808,6 +975,7 @@ module.exports = {
     checkR008,
     checkR009,
     checkR011,
+    r011ClosureState,
     checkR012,
     checkR013,
     getChangedFiles,

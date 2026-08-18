@@ -1216,6 +1216,65 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T38a. readinessOf answers readiness alone, and previewClose still agrees with it ...');
+        {
+            const cp = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            assert.strictEqual(typeof cp.readinessOf, 'function', 'readinessOf must be exported');
+
+            const root = createTempRuntimeRoot('readiness-of').workspaceRoot;
+            const specDir = path.join(root, 'docs', 'specs');
+            const writeSpec = (name, criteriaJson) => {
+                const p = path.join(specDir, name);
+                writeText(p, ['---', `id: spec:${name.replace(/\.md$/, '')}`, 'status: draft', '---', '',
+                    '# S', '', '## Acceptance Criteria', '', '```json', criteriaJson, '```', ''].join('\n'));
+                return p;
+            };
+            const oneCmd = JSON.stringify({ criteria: [{ id: 'ac-1', description: 'd',
+                dependsOn: ['x'], verifier: { type: 'command', params: { cmd: 'true' } } }] }, null, 2);
+
+            const readyPath = writeSpec('ready.md', oneCmd);
+            const r = cp.readinessOf(readyPath, { root, statusFn: () => [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }] });
+            assert.strictEqual(r.readiness, 'READY', 'all-PASS is READY');
+            assert.strictEqual(r.contractStatus, 'valid', 'a well-formed criteria block is a valid contract');
+            assert.strictEqual(r.contractPresent, true, 'a criteria block means a contract is present');
+
+            const blockedPath = writeSpec('blocked.md', oneCmd);
+            const b = cp.readinessOf(blockedPath, { root, statusFn: () => [{ criterionId: 'ac-1', verdict: 'FAIL', detail: 'd' }] });
+            assert.strictEqual(b.readiness, 'BLOCKED', 'a non-PASS verdict is BLOCKED');
+            assert.deepStrictEqual(b.blockers.map(x => x.criterionId), ['ac-1'], 'the blocking criterion is named');
+
+            const nonePath = writeSpec('none.md', JSON.stringify({ criteria: [] }));
+            const n = cp.readinessOf(nonePath, { root, statusFn: () => [] });
+            assert.strictEqual(n.readiness, 'NO-CONTRACT', 'an empty criteria block is NO-CONTRACT');
+            assert.strictEqual(n.contractStatus, 'absent', 'and it reports no contract, not an invalid one');
+            assert.strictEqual(n.contractPresent, false);
+
+            // The authority accessor carries no closure UX. previewClose keeps its
+            // own note, so a future consumer cannot inherit "close manually" advice
+            // simply by acquiring the authoritative verdict.
+            for (const res of [r, b, n]) {
+                assert.ok(!/close manually|criteria block for a real gate/.test(JSON.stringify(res)),
+                    'FORBIDDEN: readinessOf carrying previewClose note prose');
+            }
+
+            // THE REFACTOR PROPERTY: previewClose must not have drifted from the
+            // function it now delegates to. If these ever disagree, previewClose
+            // has grown a second readiness opinion — which is the defect this
+            // whole change removes, reappearing one layer down.
+            const planStateFn = () => ({ planId: 'plan:t', found: false, tasksTotal: 0, tasksImplemented: 0, uncheckedBoxes: 0 });
+            for (const [label, sp, verdicts] of [
+                ['READY', readyPath, [{ criterionId: 'ac-1', verdict: 'PASS', detail: 'd' }]],
+                ['BLOCKED', blockedPath, [{ criterionId: 'ac-1', verdict: 'FAIL', detail: 'd' }]],
+                ['NO-CONTRACT', nonePath, []],
+            ]) {
+                const viaPreview = cp.previewClose(sp, { root, planStateFn, statusFn: () => verdicts });
+                const viaReadiness = cp.readinessOf(sp, { root, statusFn: () => verdicts });
+                assert.strictEqual(viaPreview.readiness, viaReadiness.readiness,
+                    `${label}: previewClose and readinessOf must never disagree about readiness`);
+            }
+            console.log('✅ T38a readinessOf extraction');
+        }
+
         console.log('T39. Testing close-commands export + previewClose is read-only ...');
         {
             const commands = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-commands'));
@@ -3364,11 +3423,416 @@ async function runGovernanceTests() {
             console.log('✅ T26 R012 focus-health passed');
         }
 
+        console.log('T-r011-router. R011 renders the authoritative verdict and never invents one ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            assert.strictEqual(gaps.PLANNING_RULE_VERSIONS.R011, 2,
+                'R011 ruleVersion must bump in the SAME commit as the semantics change — new claims '
+                + 'published under the old version are what ruleVersion exists to prevent');
+
+            const root = createTempRuntimeRoot('r011-router').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: draft', '---', '', '# S', ''].join('\n'));
+            const ir = {
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:u', status: 'draft', sourcePath: 'docs/specs/u.md' }],
+                plans: [{ id: 'plan:u', status: 'draft', linkedSpec: 'spec:u' }],
+                tasks: [
+                    { id: 'task:u1', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: ['a.js'], evidence: [] },
+                    { id: 'task:u2', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [] },
+                    { id: 'task:u3', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [], readOnly: true },
+                ],
+                warnings: [],
+            };
+            // The stub publishes only the CONCLUSION, exactly as evaluateTask now
+            // does. If R011 needed more than this to answer the question, it would
+            // be re-deriving the predicate.
+            const evidenceFn = (task) => ({
+                id: task.id,
+                evidence: { hasPositiveEvidence: (task.linkedFiles || []).length > 0 },
+            });
+            const r011 = (readiness, blockers) => gaps.checkR011(root, ir, {
+                readinessFn: () => ({ readiness, blockers: blockers || [],
+                    contractStatus: readiness === 'NO-CONTRACT' ? 'absent' : 'valid',
+                    contractPresent: readiness !== 'NO-CONTRACT' }),
+                evidenceFn,
+            }, null);
+
+            const ready = r011('READY')[0];
+            assert.strictEqual(ready.type, 'spec-closure-ready', 'READY maps to spec-closure-ready');
+            assert.strictEqual(ready.level, 'info', 'ready is good news, not an alert');
+            assert.strictEqual(ready.dispositionable, false,
+                'ready is positive routing information — accepted-debt has no meaning against it');
+            assert.match(ready.suggestedAction, /mem close docs\/specs\/u\.md --preview/,
+                'ready routes to the close transaction with the argument the CLI actually accepts: a PATH');
+            assert.ok(!/mem close spec:/.test(ready.suggestedAction),
+                'FORBIDDEN: mem close <spec-id> — close-commands passes the argument straight to '
+                + 'fs.readFileSync, so an id produces ENOENT, not a preview');
+
+            const notReady = r011('BLOCKED', [{ criterionId: 'ac-1', verdict: 'FAIL' }])[0];
+            assert.strictEqual(notReady.type, 'spec-closure-not-ready', 'BLOCKED maps to spec-closure-not-ready');
+            assert.strictEqual(notReady.level, 'warning');
+            assert.strictEqual(notReady.dispositionable, true, 'a blocked spec is a real governance fact');
+            assert.match(notReady.message, /ac-1/, 'the blocking criterion is named for the operator');
+
+            const unc = r011('NO-CONTRACT')[0];
+            assert.strictEqual(unc.type, 'spec-closure-uncontracted', 'NO-CONTRACT maps to spec-closure-uncontracted');
+            assert.strictEqual(unc.level, 'warning');
+            assert.strictEqual(unc.dispositionable, true);
+
+            // Presence evidence appears as DISPLAY CONTEXT and nowhere else: the
+            // task with no files and no git refs is named, the one with evidence
+            // is not, and neither reaches factInputs.
+            assert.match(unc.message, /task:u2/, 'the unevidenced task is named for the human');
+            assert.ok(!/task:u1/.test(unc.message), 'a task with evidence is not listed as unevidenced');
+            assert.ok(!/task:u3/.test(unc.message),
+                'a readOnly task is exempt from implementation evidence (R005, R008) — listing it as having '
+                + 'no evidence of its own is a false prompt');
+            assert.ok(!/task:u1|task:u2|task:u3|linkedFiles|archiveHits|confidence/.test(JSON.stringify(unc.factInputs)),
+                'FORBIDDEN: presence evidence in factInputs — a file appearing on disk would lapse a '
+                + 'human decision about a criterion that has not moved');
+
+            // AC2, as a source-level property rather than a reviewer's promise:
+            // gaps.js must hold no duplicate of an evidence predicate. Calling the
+            // evaluator and then re-deciding from its raw materials would satisfy
+            // the letter and rebuild the defect.
+            //
+            // Scoped to the R011 section, not the whole file: R008 legitimately
+            // carries archiveHits in its OWN factInputs (gaps.js:446), and a
+            // whole-file scan would redden on that unrelated line.
+            const gapsSrc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps.js'), 'utf8');
+            const r011Start = gapsSrc.indexOf('// --- R011 ---');
+            const r011End = gapsSrc.indexOf('// --- R012 ---');
+            assert.ok(r011Start > -1 && r011End > r011Start,
+                'the R011 section markers must exist — this assertion is scoped by them');
+            const r011Src = gapsSrc.slice(r011Start, r011End);
+            // Property-access form, not substring: this section is REQUIRED to name
+            // these fields in prose ("do not re-derive from gitRefs"), and a bare
+            // includes() would make the correct implementation, correctly
+            // commented, permanently red — a guard whose green state is unreachable.
+            for (const raw of ['linkedFilesExist', 'linkedFilesTotal', 'linkedFilesRatio', 'gitRefs', 'archiveHits', 'confidence']) {
+                assert.ok(!new RegExp(`\\.${raw}\\b`).test(r011Src),
+                    `FORBIDDEN: the R011 section reads .${raw} — that is progress.js's raw material, and `
+                    + 'deciding from it here re-derives the evidence predicate AC2 forbids duplicating');
+            }
+            assert.ok(r011Src.includes('hasPositiveEvidence'),
+                'R011 consumes the published conclusion, which is the only evidence surface it may touch');
+
+            // closureState is DERIVED, never hand-written.
+            assert.strictEqual(typeof gaps.r011ClosureState, 'function', 'r011ClosureState must be exported');
+            for (const f of [ready, notReady, unc]) {
+                assert.strictEqual(f.factInputs.closureState, gaps.r011ClosureState(f.type),
+                    `${f.type}: closureState must come from r011ClosureState, not a hand-picked synonym`);
+            }
+
+            // THE PROPERTY THE WHOLE CHANGE EXISTS FOR: no state may tell the
+            // operator to hand-edit the frontmatter, because that routes around
+            // the close transaction's lock, dirty-tree check, journal and rollback.
+            for (const f of [ready, notReady, unc]) {
+                assert.ok(!/status:\s*done/.test(f.suggestedAction),
+                    `FORBIDDEN: ${f.type} recommends hand-editing status: done — the bypass this change removes`);
+            }
+            assert.ok(!/mem close/.test(unc.suggestedAction),
+                'uncontracted must not point at a command that would refuse it — close-apply rejects anything not READY');
+            console.log('✅ T-r011-router passed');
+        }
+
+        console.log('T-r011-unobservable. A readiness we could not read is not a spec we may close ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const root = createTempRuntimeRoot('r011-unobservable').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: draft', '---', '', '# S', ''].join('\n'));
+            const ir = {
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:u', status: 'draft', sourcePath: 'docs/specs/u.md' }],
+                plans: [{ id: 'plan:u', status: 'draft', linkedSpec: 'spec:u' }],
+                tasks: [{ id: 'task:u1', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [] }],
+                warnings: [],
+            };
+            const boom = () => { throw new Error('disposition ledger is invalid JSON'); };
+            const evidenceFn = () => ({ id: 'task:u1', evidence: { gitRefs: [], linkedFilesTotal: 0, linkedFilesExist: 0 } });
+
+            // Control first: with readiness readable, the census is complete and
+            // the finding is NOT unobservable. Without this the degraded
+            // assertions below could pass for the wrong reason.
+            const healthy = gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'NO-CONTRACT', blockers: [], contractStatus: 'absent', contractPresent: false }),
+                evidenceFn,
+            });
+            assert.strictEqual(healthy.complete, true, 'precondition: a readable round is complete');
+            const healthyR011 = healthy.findings.filter(f => f.rule === 'R011');
+            assert.strictEqual(healthyR011.length, 1, 'precondition: exactly one R011 finding is emitted');
+            assert.strictEqual(healthyR011[0].type, 'spec-closure-uncontracted');
+
+            const degraded = gaps.runPlanningDriftCensus(root, ir, { readinessFn: boom, evidenceFn });
+            const r011 = degraded.findings.filter(f => f.rule === 'R011');
+
+            assert.strictEqual(r011.length, 1,
+                'FORBIDDEN: dropping the finding — an absence in a COMPLETE census is read by sync as proof, '
+                + 'and it tombstones the human decision terminally');
+            assert.strictEqual(r011[0].type, 'spec-closure-unobservable');
+            assert.strictEqual(r011[0].factInputs.closureState, gaps.r011ClosureState('spec-closure-unobservable'),
+                'unobservable derives its closureState like every other state — no hand-written string');
+            assert.strictEqual(r011[0].dispositionable, false,
+                'a failure to observe is not a fact about the spec — it must not be dispositionable as accepted');
+            assert.strictEqual(r011[0].suggestedAction, null,
+                'no closure advice of any kind when readiness could not be read');
+            assert.strictEqual(degraded.complete, false,
+                'the census degrades so sync writes no tombstone this round');
+            assert.ok(degraded.errors.some(e => /R011|readiness/i.test(e)),
+                'and the degradation names what could not be observed');
+
+            // The asymmetry, pinned: unreadable PRESENCE withholds context, it does
+            // not degrade the round. Presence selects no state and enters no
+            // factInputs, so it makes no claim that silence could falsify.
+            const presenceBlind = gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'NO-CONTRACT', blockers: [], contractStatus: 'absent', contractPresent: false }),
+                evidenceFn: () => { throw new Error('git is unavailable'); },
+            });
+            assert.strictEqual(presenceBlind.complete, true,
+                'unreadable presence evidence must NOT degrade the census — it is display context, not a fact input');
+            assert.strictEqual(presenceBlind.findings.filter(f => f.rule === 'R011')[0].type,
+                'spec-closure-uncontracted', 'and the authoritative state is unaffected by it');
+
+            // A readiness vocabulary this rule does not know is a failure to
+            // observe the authority, not a fact about the spec. Without the
+            // guard the type lookup yields undefined and the renderers fall
+            // through to their last branch — claiming the spec has no
+            // machine-readable contract and telling the operator to add one,
+            // on a finding a human is then invited to dispose of.
+            const future = gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'FUTURE-STATE', blockers: [] }),
+                evidenceFn,
+            });
+            const futureR011 = future.findings.filter(f => f.rule === 'R011');
+            assert.strictEqual(futureR011.length, 1,
+                'an unmappable readiness keeps its finding, exactly like any other failure to observe');
+            assert.strictEqual(futureR011[0].type, 'spec-closure-unobservable',
+                'FORBIDDEN: rendering an unknown authority value as a fact about the spec — the fall-through '
+                + 'claims "no machine-readable acceptance contract" about a spec that may have one');
+            assert.strictEqual(futureR011[0].dispositionable, false,
+                'a human must not be invited to dispose of a claim this rule never managed to make');
+            assert.strictEqual(futureR011[0].suggestedAction, null,
+                'no closure advice can follow from a verdict that was never understood');
+            assert.strictEqual(future.complete, false,
+                'the census degrades, so sync writes no tombstone from a round R011 could not interpret');
+            assert.ok(future.errors.some(e => /unsupported closure readiness/i.test(e)),
+                'and the degradation names the unsupported value rather than failing anonymously');
+
+            // The guard covers the whole authority RESULT, not just `readiness`.
+            // `blockerIds` is built outside this try, so a malformed `blockers`
+            // used to throw a TypeError that escaped the census entirely — the
+            // round crashed instead of degrading, which is the one outcome this
+            // rule is built never to produce.
+            const malformed = (blockers) => gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'BLOCKED', blockers, contractStatus: 'valid', contractPresent: true }),
+                evidenceFn,
+            });
+            for (const [label, blockers] of [
+                ['an object', {}],
+                ['a string', 'nope'],
+                // [null] is the case an Array.isArray check alone would wave
+                // through, and [{}] renders as the blocker id
+                // "undefined=undefined" — a fabricated fact reaching both the
+                // message and the fingerprint.
+                ['an array of null', [null]],
+                ['an array of shapeless objects', [{}]],
+                ['absent', undefined],
+            ]) {
+                const round = malformed(blockers);
+                const f = round.findings.filter(x => x.rule === 'R011');
+                assert.strictEqual(f.length, 1, `${label}: the finding survives a malformed verdict`);
+                assert.strictEqual(f[0].type, 'spec-closure-unobservable',
+                    `FORBIDDEN: blockers as ${label} must fail closed, not crash the census or render a fact`);
+                assert.strictEqual(f[0].dispositionable, false, `${label}: not dispositionable`);
+                assert.strictEqual(f[0].suggestedAction, null, `${label}: no advice`);
+                assert.strictEqual(round.complete, false, `${label}: the census degrades`);
+                assert.ok(!/undefined=undefined/.test(f[0].message),
+                    `${label}: FORBIDDEN — a shapeless blocker rendered as a blocker identity`);
+            }
+
+            // Control: a well-formed BLOCKED verdict still takes the normal path.
+            // Without this the assertions above could pass by rejecting everything.
+            const wellFormed = gaps.runPlanningDriftCensus(root, ir, {
+                readinessFn: () => ({ readiness: 'BLOCKED', contractStatus: 'valid', contractPresent: true,
+                    blockers: [{ criterionId: 'ac-1', verdict: 'FAIL' }] }),
+                evidenceFn,
+            });
+            const wf = wellFormed.findings.filter(x => x.rule === 'R011')[0];
+            assert.strictEqual(wf.type, 'spec-closure-not-ready',
+                'precondition: a well-formed verdict is NOT swept into unobservable by the shape guard');
+            assert.deepStrictEqual(wf.factInputs.blockers, ['ac-1=FAIL'],
+                'and its blocker identity is still built from the verdict');
+            assert.strictEqual(wellFormed.complete, true, 'a readable, well-formed round stays complete');
+            console.log('✅ T-r011-unobservable passed');
+        }
+
+        console.log('T-r011-fingerprint. Different blockers are different facts, reordered ones are not ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+
+            const root = createTempRuntimeRoot('r011-fingerprint').workspaceRoot;
+            writeText(path.join(root, 'docs', 'specs', 'u.md'),
+                ['---', 'id: spec:u', 'status: draft', '---', '', '# S', ''].join('\n'));
+            const ir = {
+                version: 'evo-plan-ir@1',
+                specs: [{ id: 'spec:u', status: 'draft', sourcePath: 'docs/specs/u.md' }],
+                plans: [{ id: 'plan:u', status: 'draft', linkedSpec: 'spec:u' }],
+                tasks: [{ id: 'task:u1', linkedPlan: 'plan:u', status: 'implemented', linkedFiles: [], evidence: [] }],
+                warnings: [],
+            };
+            const printOf = (verdict) => {
+                const f = gaps.checkR011(root, ir, {
+                    readinessFn: () => verdict,
+                    evidenceFn: () => ({ id: 'task:u1', evidence: { gitRefs: [], linkedFilesTotal: 0, linkedFilesExist: 0 } }),
+                }, null)[0];
+                return fp.computeFingerprint({ ruleId: f.rule, ruleVersion: gaps.PLANNING_RULE_VERSIONS.R011, factInputs: f.factInputs });
+            };
+            const blocked = (blockers) => ({ readiness: 'BLOCKED', blockers, contractStatus: 'valid', contractPresent: true });
+
+            // 1. different failing criteria are different facts
+            assert.notStrictEqual(printOf(blocked([{ criterionId: 'ac-1', verdict: 'FAIL' }])),
+                printOf(blocked([{ criterionId: 'ac-3', verdict: 'STALE' }])),
+                'FORBIDDEN: ac-1=FAIL and ac-3=STALE sharing one fingerprint — a decision taken about the '
+                + 'first would be silently inherited by the second, which is the collapse the four types exist to prevent');
+
+            // 2. a reordering is not a change of fact
+            assert.strictEqual(
+                printOf(blocked([{ criterionId: 'ac-1', verdict: 'FAIL' }, { criterionId: 'ac-3', verdict: 'STALE' }])),
+                printOf(blocked([{ criterionId: 'ac-3', verdict: 'STALE' }, { criterionId: 'ac-1', verdict: 'FAIL' }])),
+                'a mere reordering by the verdict engine must NOT lapse a decision that nothing real invalidated');
+
+            // 3. the identity reaches the fingerprint at all. Two contracts that
+            //    differ ONLY in validationIdentity must fingerprint differently;
+            //    otherwise everything proved in T-contract-identity is stranded
+            //    one layer below factInputs.
+            const invalid = (identity) => ({ readiness: 'BLOCKED', contractStatus: 'invalid', contractPresent: true,
+                validationIdentity: identity, blockers: [{ criterionId: 'contract', verdict: 'INVALID' }] });
+            assert.notStrictEqual(printOf(invalid('sha256:aa')), printOf(invalid('sha256:bb')),
+                'FORBIDDEN: validationIdentity not reaching factInputs — finding ids collapse every JSON '
+                + 'failure to `contract`, so without it every malformed contract shares one fingerprint');
+            console.log('✅ T-r011-fingerprint passed');
+        }
+
+        console.log('T-contract-identity. Identity comes from the authored cause, never the diagnostic ...');
+        {
+            const vc = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
+            const cp = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+            assert.strictEqual(typeof vc.validationIdentityOf, 'function', 'validationIdentityOf must be exported');
+
+            const root = createTempRuntimeRoot('contract-identity').workspaceRoot;
+            const specPath = path.join(root, 'docs', 'specs', 'bad.md');
+            const write = (frontmatter, body) => {
+                writeText(specPath, ['---', ...frontmatter, '---', '', '# S', '',
+                    ...(body === null ? [] : ['## Acceptance Criteria', '', '```json', body, '```']), ''].join('\n'));
+                return cp.readinessOf(specPath, { root }).validationIdentity;
+            };
+            const ok = ['id: spec:bad', 'status: draft'];
+            const criterion = (extra) => JSON.stringify({ criteria: [Object.assign({ id: 'ac-1' }, extra)] }, null, 2);
+
+            // (a) two different JSON malformations
+            const jsonA = write(ok, '{ "criteria": [ }');
+            const jsonB = write(ok, '{ "criteria": [{ "id": } ] }');
+            assert.ok(jsonA && jsonB, 'an invalid contract must carry a validationIdentity');
+            assert.ok(jsonA.startsWith('sha256:') && jsonA.length === 71,
+                'full SHA-256 with the repo prefix, like criterionDigest — a durable governance identity is '
+                + 'not a UI short code');
+            assert.notStrictEqual(jsonA, jsonB, 'two differently-broken blocks must not share one identity');
+            assert.strictEqual(write(ok, '{ "criteria": [ }'), jsonA,
+                'restoring the same broken block restores the same identity — it is a function of the cause');
+
+            // (b) two different CRITERION-LEVEL failures. Both produce finding id
+            //     `ac-1` and verdict INVALID, so ids alone cannot tell them apart.
+            const missingDescription = write(ok, criterion({ dependsOn: ['x'], verifier: { type: 'manual', params: { reason: 'fixture' } } }));
+            const missingDependsOn = write(ok, criterion({ description: 'd', verifier: { type: 'manual', params: { reason: 'fixture' } } }));
+            assert.ok(missingDescription && missingDependsOn,
+                'a criterion-level validation failure is an invalid contract too, and needs an identity');
+            assert.notStrictEqual(missingDescription, missingDependsOn,
+                'FORBIDDEN: two different criterion-level failures sharing one identity — both report id ac-1 '
+                + 'and verdict INVALID, so the block text is the only thing that tells them apart');
+
+            // (c) frontmatter identity failures, which never reach a criteria block
+            const idA = write(['id: not-a-spec-id', 'status: draft'], null);
+            const idB = write(['id: also-not-valid', 'status: draft'], null);
+            assert.notStrictEqual(idA, idB,
+                'FORBIDDEN: two different rejected spec ids sharing one identity — they return before any '
+                + 'block is parsed, so the rejected value is the only discriminator');
+            const lpA = write([...ok, 'linkedPlan: bad-one'], null);
+            const lpB = write([...ok, 'linkedPlan: bad-two'], null);
+            assert.notStrictEqual(lpA, lpB, 'and the same holds for two different rejected linkedPlan values');
+
+            // (d) THE INVARIANCE, driven through the pure seam so the authored cause
+            //     can be held fixed while the diagnostic prose changes. A filesystem
+            //     test cannot express this: changing the message means changing the
+            //     source that produced it.
+            const base = {
+                specId: 'spec:bad', linkedPlan: null, contractSource: '{ "criteria": [ }',
+                findings: [{ id: 'contract', level: 'error', message: 'invalid JSON in criteria block: Unexpected token' }],
+            };
+            const reworded = Object.assign({}, base, {
+                findings: [{ id: 'contract', level: 'error',
+                    message: 'invalid JSON in criteria block: Expected double-quoted property name at position 7' }],
+            });
+            assert.strictEqual(vc.validationIdentityOf(base), vc.validationIdentityOf(reworded),
+                'a validator or V8 rewording must NOT lapse a decision — CI runs three Node majors and the '
+                + 'JSON parser message is engine prose with a character offset, not a contract');
+            assert.notStrictEqual(vc.validationIdentityOf(base),
+                vc.validationIdentityOf(Object.assign({}, base, { contractSource: '{ "criteria": ] }' })),
+                'while a different authored cause under the same message still differs');
+
+            // and a healthy spec carries none of this
+            writeText(path.join(root, 'docs', 'specs', 'fine.md'),
+                ['---', 'id: spec:fine', 'status: draft', '---', '', '# S', ''].join('\n'));
+            assert.strictEqual(cp.readinessOf(path.join(root, 'docs', 'specs', 'fine.md'), { root }).validationIdentity, undefined,
+                'a spec with no contract carries no validation identity');
+            console.log('✅ T-contract-identity passed');
+        }
+
+        console.log('T-r011-real-repo. The two specs this defect was found on stop being told to close ...');
+        {
+            const gaps = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const { scanPlanning } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'scan'));
+
+            // Built from tracked sources, never from .evo-lite/generated/**: that
+            // directory is git-ignored and npm test does not create it, so reading
+            // it would make this criterion pass locally and never run in CI.
+            const ir = scanPlanning(WORKSPACE_ROOT);
+            const findings = gaps.checkR011(WORKSPACE_ROOT, ir, {}, null);
+
+            const expected = {
+                'spec:governance-observation-budget': 'task:governance-observation-budget-t5',
+                'spec:planning-truth-controls': 'task:planning-truth-controls-t6',
+            };
+            const seen = findings.filter(f => Object.keys(expected).includes(f.id.replace('R011:', '')));
+            assert.strictEqual(seen.length, 2,
+                'precondition: both specs are still R011 candidates on this tree, or this control proves nothing');
+            for (const f of seen) {
+                const specId = f.id.replace('R011:', '');
+                assert.strictEqual(f.type, 'spec-closure-uncontracted',
+                    `${specId}: no criteria block means no authoritative verdict`);
+                assert.ok(!/status:\s*done/.test(f.suggestedAction || ''),
+                    `${specId}: FORBIDDEN — the advice a human overruled by hand on 2026-08-10`);
+                assert.ok(!/mem close/.test(f.suggestedAction || ''),
+                    `${specId}: an uncontracted spec must not be routed at a command that would refuse it`);
+                assert.match(f.message, new RegExp(expected[specId].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+                    `${specId}: the unevidenced task must be named — a human closing this spec needs to see `
+                    + 'WHICH work has nothing behind it');
+            }
+            console.log('✅ T-r011-real-repo passed');
+        }
+
         console.log('T26b. Testing R011 groups by spec: an incomplete sibling plan suppresses the nag ...');
         {
             const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
             delete require.cache[gapsPath];
             const { checkR011 } = require(gapsPath);
+
+            const stubReadiness = () => ({ readiness: 'NO-CONTRACT', blockers: [],
+                contractStatus: 'absent', contractPresent: false });
+            const run = (ir) => checkR011(WORKSPACE_ROOT, ir,
+                { readinessFn: stubReadiness, evidenceFn: () => null }, null);
 
             // Multi-plan spec: a shipped 4a-style plan + a parked 4b-style plan
             // with open tasks. The spec is intentionally still open — R011 must
@@ -3384,21 +3848,21 @@ async function runGovernanceTests() {
                     { id: 'plan:multi-b/task-1', linkedPlan: 'plan:multi-b', status: 'todo' },
                 ],
             };
-            assert.strictEqual(checkR011(multi).length, 0,
+            assert.strictEqual(run(multi).length, 0,
                 'R011 must not fire while a sibling plan of the same spec still has open tasks');
 
             // Single complete plan on a non-done spec → exactly one finding, and
-            // the message keeps the legacy single-plan wording.
+            // the message keeps naming the plan, in the new router wording.
             const single = {
                 specs: [{ id: 'spec:single', status: 'draft', sourcePath: 'docs/specs/single.md' }],
                 plans: [{ id: 'plan:single-a', status: 'done', linkedSpec: 'spec:single', sourcePath: 'docs/plans/sa.md' }],
                 tasks: [{ id: 'plan:single-a/task-1', linkedPlan: 'plan:single-a', status: 'implemented' }],
             };
-            const one = checkR011(single);
+            const one = run(single);
             assert.strictEqual(one.length, 1, 'R011 must fire when every linked plan is complete');
             assert.strictEqual(one[0].id, 'R011:spec:single');
-            assert.ok(one[0].message.includes('linked plan plan:single-a has all tasks implemented'),
-                'single-plan message must keep the legacy wording');
+            assert.ok(one[0].message.includes('linked plan plan:single-a is checkbox-complete'),
+                'single-plan message keeps naming the plan, in the new router wording');
 
             // Two complete plans on one spec → still exactly ONE finding (the old
             // per-plan loop emitted duplicate R011:<spec> ids here).
@@ -3413,7 +3877,7 @@ async function runGovernanceTests() {
                     { id: 'plan:dup-b/task-1', linkedPlan: 'plan:dup-b', status: 'implemented' },
                 ],
             };
-            assert.strictEqual(checkR011(dup).length, 1,
+            assert.strictEqual(run(dup).length, 1,
                 'R011 must emit one finding per spec, not one per complete plan');
             console.log('✅ T26b R011 spec-grouped multi-plan passed');
         }
