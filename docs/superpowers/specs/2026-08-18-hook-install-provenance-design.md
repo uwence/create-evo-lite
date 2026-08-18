@@ -87,6 +87,44 @@ common dir different active hooks directories; a single shared document would pu
 two legitimate owners in permanent contention over one `current`. This is not the
 accepted concurrency loss — it is structural.
 
+**One Evo-Lite governance root per Git worktree — v1 scope.** The document is keyed
+by worktree, so two Evo-Lite targets inside one worktree would share one
+authoritative `current`:
+
+```
+repo/                 ← one worktree, one git-dir
+  .evo-lite/          project A
+  child/.evo-lite/    project B
+
+scaffold B --no-hooks  →  same git-dir  →  same document
+                       →  current = non-participating
+later read from A      →  A inherits B's opt-out
+```
+
+That is not the accepted concurrent audit loss; it is one target's declared intent
+being served to another as authoritative. The rule:
+
+```
+target resolves to the Git worktree top-level
+  → owner established; provenance is read and written normally
+
+target is a nested subdirectory of a worktree
+  → NESTED-TARGET
+  → this target MUST NOT read or write the enclosing worktree's document
+  → no provenance is recorded for it
+  → hook installation behaviour is unchanged
+```
+
+The resulting state — a live hook with no provenance — reads `UNKNOWN`, which is
+the honest answer and an already-blessed combination. Deliberately *not* chosen:
+refusing to install, which would be an unratified behaviour change (today
+`ensureGitWorkspace()` accepts any directory inside a worktree, since
+`git rev-parse --is-inside-work-tree` is true from a subdirectory while
+`--absolute-git-dir` returns the enclosing worktree's git-dir); and adding a target
+namespace to the document, which would reopen the ownership-identity and rebind
+design that O1′ closed. The worktree top-level is obtained from the same bound
+authority, `git -C <target> rev-parse --show-toplevel`.
+
 **Provenance owner is the current worktree's governance context; the hook artifact's
 owner may be broader.** The two are different layers. Linked worktrees may share
 one `post-commit` file while holding separate provenance, and a worktree that never
@@ -511,21 +549,52 @@ domain before they are compared at all. The authority returns a **directory**;
 `install.targetPath` is a **file**. Comparing them directly would report
 `not-satisfied` for an ordinary, correct default installation.
 
+A lexical difference is not a physical difference, and only a physical difference
+can positively establish that Git will use some other artifact. The comparison is
+therefore a ladder, and it never stops at string inequality:
+
 ```
 canon(p) = path.resolve(p), every '\' replaced by '/', any trailing '/' removed
+real(p)  = fs.realpathSync.native(p), then canon
 
-satisfied       canon(activeHooksDir) === canon(path.dirname(install.targetPath))
-not-satisfied   they differ, and still differ when compared case-insensitively
-indeterminate   they are equal only under case-insensitive comparison
-                → reason path-comparison-ambiguous
-indeterminate   the authority query is unavailable or fails
+1  canon equal, or equal only under case-insensitive comparison
+     → satisfied
+
+2  canon differs → resolve both physically
+     real(activeHooksDir) === real(dirname(install.targetPath))
+       → satisfied
+     both resolved, and they differ
+       → not-satisfied
+     either side cannot be resolved (ENOENT, permission, any other error)
+       → indeterminate / path-comparison-ambiguous
+
+3  the authority query is unavailable or fails
+     → indeterminate
 ```
 
-The case rule exists because Windows paths may differ only in drive-letter or
-component case between what Git canonicalises and what Node resolves. Deciding
-that by sniffing `process.platform` would re-introduce a platform constant where a
-fact is needed, so a difference we cannot establish becomes `indeterminate` —
-never a manufactured `not-satisfied`.
+The case-insensitive branch is now `satisfied` rather than a separate ambiguous
+state: two paths equal but for case are, on this evidence, the same location, and
+step 2 exists to settle anything stronger. Deciding case by sniffing
+`process.platform` would re-introduce a platform constant where a fact is needed.
+
+Step 2 is not defensive programming; it is a measured false negative. On Windows,
+through a directory junction:
+
+```
+git -C evo-alias rev-parse --path-format=absolute --git-path hooks
+  → …/evo-real/.git/hooks
+path.resolve('evo-alias/.git/hooks')
+  → …/evo-alias/.git/hooks
+fs.realpathSync.native(…)
+  → …/evo-real/.git/hooks
+```
+
+The strings differ in both case-sensitive and case-insensitive comparison while
+naming one directory. Under lexical comparison alone an ordinary aliased checkout
+reports `not-satisfied` — a fabricated positive claim that Git is using something
+else. `realpathSync.native`, not the pure-JS `fs.realpathSync`, is the repository's
+established primitive for real-path identity
+(`templates/cli/takeover-receipt.js:16`, `templates/cli/takeover-adapter.js:290`).
 
 `locator` compares against `install.targetPath` and stores no copy of it —
 no `expectedPath`, `mutationTarget`, or `configuredTarget`.
@@ -657,6 +726,16 @@ The write follows the established idiom at `templates/cli/takeover-install.js:29
 temp write, read back, schema-validate, fingerprint-compare, `renameSync` — with
 cleanup failure surfaced through `AggregateError` rather than swallowed.
 
+**The provenance `rename` is the transaction commit point. After it succeeds, no
+fallible business operation or artifact mutation belonging to this invocation may
+occur.** The idiom this inherits carries the rule in its own source
+(`templates/cli/takeover-install.js:421`, *"原子替换;此后不得再有可失败的业务操作"*),
+and the spec must carry it too, or an implementation that appends one more
+check-and-write after the rename is formally compliant while reporting failure for
+an authoritative transaction that already committed — or worse, mutating the
+artifact after the record of it is sealed, so provenance and reality diverge in the
+one window nothing is watching.
+
 A no-op invocation MUST still record an event. One invocation commits provenance
 exactly once. v1 accepts concurrency loss: two simultaneous installers may lose
 one audit event.
@@ -756,7 +835,7 @@ ones: unknown members matter exactly where validation reaches.
   "acceptanceCriteria": [
     {
       "id": "ac1",
-      "description": "The provenance document is stored at <git rev-parse --absolute-git-dir>/evo-lite/hook-provenance.json. The path is obtained from that authority query alone; no code joins projectRoot with '.git', and the document carries no projectRoot, gitDir, commonDir, or root-commit identity field. Two linked worktrees of one repository hold separate documents.",
+      "description": "The provenance document is stored at <git rev-parse --absolute-git-dir>/evo-lite/hook-provenance.json. The path is obtained from that authority query alone; no code joins projectRoot with '.git', and the document carries no projectRoot, gitDir, commonDir, or root-commit identity field. Two linked worktrees of one repository hold separate documents. A target that does not resolve to its worktree top-level is NESTED-TARGET: it neither reads nor writes the enclosing worktree's document, so scaffolding a nested second project cannot alter the participation the enclosing worktree already recorded, and that nested target subsequently reads UNKNOWN.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -786,7 +865,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac6",
-      "description": "locator is decided from git rev-parse --path-format=absolute --git-path hooks, and the comparison is made in one domain: the canonicalised active hooks directory against the canonicalised dirname of install.targetPath, never against the file path itself. An ordinary default installation on Windows, where Git returns forward slashes and Node resolves backslashes, yields satisfied. Paths equal only under case-insensitive comparison yield indeterminate with reason path-comparison-ambiguous rather than not-satisfied, and no branch keys off process.platform. locator stores no copy of the target path. When the command is unsupported or fails the verdict is indeterminate; no code falls back to git rev-parse --git-path hooks and resolves a relative result itself. A worktree whose core.hooksPath points elsewhere yields locator not-satisfied.",
+      "description": "locator is decided from git rev-parse --path-format=absolute --git-path hooks, and the comparison is made in one domain: the canonicalised active hooks directory against the canonicalised dirname of install.targetPath, never against the file path itself. An ordinary default installation on Windows, where Git returns forward slashes and Node resolves backslashes, yields satisfied, as do paths equal only under case-insensitive comparison, and no branch keys off process.platform. A lexical difference never by itself yields not-satisfied: both sides are resolved with realpathSync.native, equal real paths yield satisfied, only two successfully resolved and genuinely distinct real paths yield not-satisfied, and a resolution that fails on either side yields indeterminate with reason path-comparison-ambiguous. A checkout reached through a directory junction or symlink, where Git answers with the real path and Node resolves the alias, yields satisfied. not-satisfied is reserved for a positively established distinct active location, which a core.hooksPath redirected to a genuinely different directory produces. locator stores no copy of the target path. When the command is unsupported or fails the verdict is indeterminate; no code falls back to git rev-parse --git-path hooks and resolves a relative result itself.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -804,7 +883,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac9",
-      "description": "The producer mutates, observes, then commits provenance through the temp-write, read-back, schema-validate, fingerprint-compare, rename idiom, records an event even for a no-op invocation, and commits exactly once per invocation. When the artifact changed but provenance could not be committed, the command reports the two dimensions separately and exits non-zero.",
+      "description": "The producer mutates, observes, then commits provenance through the temp-write, read-back, schema-validate, fingerprint-compare, rename idiom, records an event even for a no-op invocation, and commits exactly once per invocation. The rename is the commit point: no fallible business operation and no artifact mutation belonging to the invocation occurs after it returns, verified by a mutation that injects a throwing step immediately after the rename and must be shown to have no post-rename step to attach to. When the artifact changed but provenance could not be committed, the command reports the two dimensions separately and exits non-zero.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -840,7 +919,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac15",
-      "description": "Every Git authority query is bound to the workspace being operated on, via git -C or an equivalent cwd, and never to the process working directory. The controller is A to B: running the scaffold from inside repository A against a target path in repository B resolves B's git-dir as the provenance owner and B's active hooks directory as the locator answer, and writes no provenance into A. No Git invocation anywhere in this contract omits the target binding.",
+      "description": "Every Git authority query is bound to the workspace being operated on, via git -C or an equivalent cwd, and never to the process working directory. The controller is A to B: running the scaffold from inside repository A against a target path in repository B resolves B's git-dir as the provenance owner and B's active hooks directory as the locator answer, and writes no provenance into A. No Git authority or provenance-observation invocation defined by this contract omits the target binding; Git commands inside the managed hook body are out of scope, since they run in the working directory Git sets for the hook.",
       "dependsOn": ["index.js", "templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     }
