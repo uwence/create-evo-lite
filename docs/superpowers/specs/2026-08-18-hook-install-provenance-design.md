@@ -64,6 +64,37 @@ record and the artifact describing different repositories. `ensureGitWorkspace()
 already establishes the correct idiom by passing `cwd: targetDir`; this contract
 inherits it rather than inventing one.
 
+### Path identity
+
+Two paths are compared by one shared primitive, used everywhere this contract asks
+whether two paths name the same location. It answers with three states, never two:
+
+```
+canon(p) = path.resolve(p), every '\' replaced by '/', any trailing '/' removed
+real(p)  = fs.realpathSync.native(p), then canon
+
+canon(a) === canon(b)                         → SAME
+otherwise, resolve both physically
+  real(a) === real(b)                         → SAME
+  both resolved and they differ               → DISTINCT
+  either side cannot be resolved              → UNESTABLISHED
+```
+
+**Exact canonical equality is the only lexical shortcut.** Every other difference —
+including one that is only a difference of case — goes to physical resolution.
+Case-insensitive equality carries no authority of its own: on a case-sensitive
+filesystem `hooks/Foo` and `hooks/foo` are two real directories, so treating them
+as equal would fabricate a positive claim in exactly the way this contract forbids.
+Windows drive-letter and component case differences still reach `SAME`, by
+resolution rather than by assumption.
+
+`realpathSync.native`, not the pure-JS `fs.realpathSync`, is the repository's
+established primitive for real-path identity
+(`templates/cli/takeover-receipt.js:16`, `templates/cli/takeover-adapter.js:290`).
+
+`DISTINCT` is the only state that positively establishes a difference. No consumer
+of this primitive may treat `UNESTABLISHED` as either `SAME` or `DISTINCT`.
+
 Ownership is structural — a property of the storage location — so the schema
 carries no identity field at all. Measured consequences:
 
@@ -104,26 +135,40 @@ later read from A      →  A inherits B's opt-out
 That is not the accepted concurrent audit loss; it is one target's declared intent
 being served to another as authoritative. The rule:
 
-```
-target resolves to the Git worktree top-level
-  → owner established; provenance is read and written normally
+The classification uses the shared **Path identity** primitive against
+`git -C <target> rev-parse --show-toplevel`, never string equality — a target
+reached through a junction or symlink alias of the worktree root would otherwise be
+misclassified as nested by the very mistake the locator ladder exists to prevent:
 
-target is a nested subdirectory of a worktree
-  → NESTED-TARGET
-  → this target MUST NOT read or write the enclosing worktree's document
-  → no provenance is recorded for it
-  → hook installation behaviour is unchanged
+```
+pathIdentity(target, worktreeTopLevel)
+
+  SAME           → in scope; owner is resolved and provenance is read and written
+  DISTINCT       → NESTED-TARGET
+  UNESTABLISHED  → NESTED-TARGET (scope cannot be established, so nothing is claimed)
+
+NESTED-TARGET
+  → provenance processing short-circuits BEFORE any owner resolution or
+    document access: no owner directory is created, no document is read,
+    no document is written
+  → any legacy installer behaviour that still runs is outside the provenance
+    transaction defined by this spec and produces no provenance claim
 ```
 
-The resulting state — a live hook with no provenance — reads `UNKNOWN`, which is
-the honest answer and an already-blessed combination. Deliberately *not* chosen:
-refusing to install, which would be an unratified behaviour change (today
-`ensureGitWorkspace()` accepts any directory inside a worktree, since
-`git rev-parse --is-inside-work-tree` is true from a subdirectory while
-`--absolute-git-dir` returns the enclosing worktree's git-dir); and adding a target
-namespace to the document, which would reopen the ownership-identity and rebind
-design that O1′ closed. The worktree top-level is obtained from the same bound
-authority, `git -C <target> rev-parse --show-toplevel`.
+**`NESTED-TARGET` is a topology state, not a document state.** It sits beside
+`NO-GIT-ADMIN-TOPOLOGY` and `OWNER-UNRESOLVED`, and it is emphatically *not*
+`UNKNOWN`: `UNKNOWN` may only arise from a positive `ENOENT` on a document this
+target is entitled to read, whereas here the enclosing worktree's document may well
+exist and this target is simply forbidden to look at it. Reporting `UNKNOWN` would
+assert an observation that was never permitted to be made. `[0ce0]` must handle
+`NESTED-TARGET` on its own terms rather than reading it as absent provenance.
+
+Deliberately *not* chosen: refusing to install, which would be an unratified
+behaviour change (today `ensureGitWorkspace()` accepts any directory inside a
+worktree, since `git rev-parse --is-inside-work-tree` is true from a subdirectory
+while `--absolute-git-dir` returns the enclosing worktree's git-dir); and adding a
+target namespace to the document, which would reopen the ownership-identity and
+rebind design that O1′ closed.
 
 **Provenance owner is the current worktree's governance context; the hook artifact's
 owner may be broader.** The two are different layers. Linked worktrees may share
@@ -549,36 +594,22 @@ domain before they are compared at all. The authority returns a **directory**;
 `install.targetPath` is a **file**. Comparing them directly would report
 `not-satisfied` for an ordinary, correct default installation.
 
-A lexical difference is not a physical difference, and only a physical difference
-can positively establish that Git will use some other artifact. The comparison is
-therefore a ladder, and it never stops at string inequality:
+The verdict is the shared **Path identity** primitive applied to the two, mapped
+directly:
 
 ```
-canon(p) = path.resolve(p), every '\' replaced by '/', any trailing '/' removed
-real(p)  = fs.realpathSync.native(p), then canon
+pathIdentity(activeHooksDir, dirname(install.targetPath))
 
-1  canon equal, or equal only under case-insensitive comparison
-     → satisfied
+  SAME           → satisfied
+  DISTINCT       → not-satisfied
+  UNESTABLISHED  → indeterminate / path-comparison-ambiguous
 
-2  canon differs → resolve both physically
-     real(activeHooksDir) === real(dirname(install.targetPath))
-       → satisfied
-     both resolved, and they differ
-       → not-satisfied
-     either side cannot be resolved (ENOENT, permission, any other error)
-       → indeterminate / path-comparison-ambiguous
-
-3  the authority query is unavailable or fails
-     → indeterminate
+the authority query is unavailable or fails
+                 → indeterminate
 ```
 
-The case-insensitive branch is now `satisfied` rather than a separate ambiguous
-state: two paths equal but for case are, on this evidence, the same location, and
-step 2 exists to settle anything stronger. Deciding case by sniffing
-`process.platform` would re-introduce a platform constant where a fact is needed.
-
-Step 2 is not defensive programming; it is a measured false negative. On Windows,
-through a directory junction:
+Physical resolution is not defensive programming here; it is a measured false
+negative. On Windows, through a directory junction:
 
 ```
 git -C evo-alias rev-parse --path-format=absolute --git-path hooks
@@ -589,12 +620,10 @@ fs.realpathSync.native(…)
   → …/evo-real/.git/hooks
 ```
 
-The strings differ in both case-sensitive and case-insensitive comparison while
-naming one directory. Under lexical comparison alone an ordinary aliased checkout
-reports `not-satisfied` — a fabricated positive claim that Git is using something
-else. `realpathSync.native`, not the pure-JS `fs.realpathSync`, is the repository's
-established primitive for real-path identity
-(`templates/cli/takeover-receipt.js:16`, `templates/cli/takeover-adapter.js:290`).
+The strings differ under both case-sensitive and case-insensitive comparison while
+naming one directory. Stopping at lexical inequality would report `not-satisfied`
+for an ordinary aliased checkout — a fabricated positive claim that Git is using
+something else.
 
 `locator` compares against `install.targetPath` and stores no copy of it —
 no `expectedPath`, `mutationTarget`, or `configuredTarget`.
@@ -642,8 +671,25 @@ else                          → satisfied
 
 ### Producer transaction
 
-**Owner-resolution preflight runs before any mutation.** The owner root comes from
-one authority query, and its failure modes are not interchangeable:
+**A workspace-scope preflight runs first, before owner resolution.** A nested
+target's `--absolute-git-dir` succeeds and returns the enclosing worktree's
+git-dir, so an implementation that begins at owner resolution would establish that
+owner and create `<outer-git-dir>/evo-lite` before ever noticing the target is
+nested — writing into a context it is forbidden to touch. Order is therefore part
+of the contract, not an implementation detail:
+
+```
+0  bind every Git query to the target workspace
+1  git -C <target> rev-parse --show-toplevel
+2  pathIdentity(target, worktreeTopLevel)
+     SAME                     → continue to owner resolution
+     DISTINCT | UNESTABLISHED → NESTED-TARGET, stop provenance processing here
+```
+
+Only after this may owner resolution run.
+
+**Owner-resolution preflight runs second, still before any mutation.** The owner
+root comes from one authority query, and its failure modes are not interchangeable:
 
 ```
 git rev-parse --absolute-git-dir
@@ -688,7 +734,7 @@ quietly relax the explicit command.
 and a document that is absent because we could not find out, are different facts;
 collapsing them would rebuild the very confusion this spec removes, one layer up.
 
-**A read-before-mutate gate runs second, at the same rank, still before any
+**A read-before-mutate gate runs third, at the same rank, still before any
 mutation.** The producer must read the existing document before it can append to
 it, and what it finds governs whether it may proceed:
 
@@ -767,6 +813,13 @@ from being manufactured.
 from `indeterminate`, which is a component's verdict inside a well-formed document.
 The two must never be spelled with one word.
 
+Both are distinct again from the **topology states** — `NO-GIT-ADMIN-TOPOLOGY`,
+`OWNER-UNRESOLVED`, `NESTED-TARGET` — which are decided before any document is
+opened and describe whether this target has a provenance context at all. A topology
+state must never be reported as a document state: none of them may become `UNKNOWN`
+or `UNOBSERVABLE`, because both of those are claims about a document this target was
+entitled to read.
+
 Producer and reader share one `validateHookProvenanceV1()` — the lesson recorded at
 `templates/cli/takeover-install.js:281`, where a split shape contract lets a writer
 publish a document its own reader rejects. Its validation scope is frozen as
@@ -835,7 +888,7 @@ ones: unknown members matter exactly where validation reaches.
   "acceptanceCriteria": [
     {
       "id": "ac1",
-      "description": "The provenance document is stored at <git rev-parse --absolute-git-dir>/evo-lite/hook-provenance.json. The path is obtained from that authority query alone; no code joins projectRoot with '.git', and the document carries no projectRoot, gitDir, commonDir, or root-commit identity field. Two linked worktrees of one repository hold separate documents. A target that does not resolve to its worktree top-level is NESTED-TARGET: it neither reads nor writes the enclosing worktree's document, so scaffolding a nested second project cannot alter the participation the enclosing worktree already recorded, and that nested target subsequently reads UNKNOWN.",
+      "description": "The provenance document is stored at <git rev-parse --absolute-git-dir>/evo-lite/hook-provenance.json. The path is obtained from that authority query alone; no code joins projectRoot with '.git', and the document carries no projectRoot, gitDir, commonDir, or root-commit identity field. Two linked worktrees of one repository hold separate documents. A target whose path identity against git rev-parse --show-toplevel is not SAME is NESTED-TARGET: it neither reads nor writes the enclosing worktree's document and creates no owner directory there, so scaffolding a nested second project cannot alter the participation the enclosing worktree already recorded. NESTED-TARGET is reported as a topology state and never as UNKNOWN or UNOBSERVABLE. A target reached through a junction or symlink alias of the worktree root resolves as SAME and is therefore in scope, not nested.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -865,7 +918,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac6",
-      "description": "locator is decided from git rev-parse --path-format=absolute --git-path hooks, and the comparison is made in one domain: the canonicalised active hooks directory against the canonicalised dirname of install.targetPath, never against the file path itself. An ordinary default installation on Windows, where Git returns forward slashes and Node resolves backslashes, yields satisfied, as do paths equal only under case-insensitive comparison, and no branch keys off process.platform. A lexical difference never by itself yields not-satisfied: both sides are resolved with realpathSync.native, equal real paths yield satisfied, only two successfully resolved and genuinely distinct real paths yield not-satisfied, and a resolution that fails on either side yields indeterminate with reason path-comparison-ambiguous. A checkout reached through a directory junction or symlink, where Git answers with the real path and Node resolves the alias, yields satisfied. not-satisfied is reserved for a positively established distinct active location, which a core.hooksPath redirected to a genuinely different directory produces. locator stores no copy of the target path. When the command is unsupported or fails the verdict is indeterminate; no code falls back to git rev-parse --git-path hooks and resolves a relative result itself.",
+      "description": "locator is decided from git rev-parse --path-format=absolute --git-path hooks, and the comparison is made in one domain: the canonicalised active hooks directory against the canonicalised dirname of install.targetPath, never against the file path itself. The verdict is the shared path-identity primitive mapped as SAME to satisfied, DISTINCT to not-satisfied, and UNESTABLISHED to indeterminate with reason path-comparison-ambiguous. Exact canonical equality is the only lexical shortcut: paths differing only in case are NOT treated as equal but are sent to physical resolution, so on a case-sensitive filesystem two really distinct directories named Foo and foo yield not-satisfied rather than satisfied, while Windows drive-letter and component case differences still reach satisfied by resolving to the same real path. No branch keys off process.platform, and no lexical difference by itself yields not-satisfied. A checkout reached through a directory junction or symlink, where Git answers with the real path and Node resolves the alias, yields satisfied. not-satisfied is reserved for a positively established distinct active location, which a core.hooksPath redirected to a genuinely different directory produces. locator stores no copy of the target path. When the command is unsupported or fails the verdict is indeterminate; no code falls back to git rev-parse --git-path hooks and resolves a relative result itself.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -907,7 +960,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac13",
-      "description": "Owner resolution runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document and no install attempt, and the exit code is producer-specific — a scaffold run does not fail on the hook phase, while an explicit mem hook install outside a Git repository still exits non-zero as it does today. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. A run that cannot record provenance never performs an avoidable hook mutation first, and OWNER-UNRESOLVED, NO-GIT-ADMIN-TOPOLOGY, and the reader's UNKNOWN are three distinct states that no code path collapses.",
+      "description": "A workspace-scope preflight runs before owner resolution: the target is compared to git rev-parse --show-toplevel by path identity, and anything other than SAME short-circuits as NESTED-TARGET before any owner is resolved, before any owner directory is created, and before any document is opened — verified by asserting that no evo-lite directory appears under the enclosing worktree's git-dir after scaffolding a nested target. Owner resolution then runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document and no install attempt, and the exit code is producer-specific — a scaffold run does not fail on the hook phase, while an explicit mem hook install outside a Git repository still exits non-zero as it does today. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. A run that cannot record provenance never performs an avoidable hook mutation first, and OWNER-UNRESOLVED, NO-GIT-ADMIN-TOPOLOGY, NESTED-TARGET, the reader's UNKNOWN, and the reader's UNOBSERVABLE are five distinct states that no code path collapses; in particular no topology state is ever reported as UNKNOWN.",
       "dependsOn": ["index.js", "templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
