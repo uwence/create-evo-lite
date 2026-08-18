@@ -147,13 +147,36 @@ pathIdentity(target, worktreeTopLevel)
   DISTINCT       → NESTED-TARGET
   UNESTABLISHED  → SCOPE-UNRESOLVED
 
-NESTED-TARGET and SCOPE-UNRESOLVED both
+NESTED-TARGET
   → provenance processing short-circuits BEFORE any owner resolution or
     document access: no owner directory is created, no document is read,
     no document is written
-  → any legacy installer behaviour that still runs is outside the provenance
-    transaction defined by this spec and produces no provenance claim
+  → legacy installer behaviour MAY continue unchanged; whatever it does is
+    outside the provenance transaction defined by this spec and produces
+    no provenance claim
+
+SCOPE-UNRESOLVED
+  → provenance processing short-circuits at the same point
+  → the hook MUST NOT be mutated
+  → reported and exits non-zero
 ```
+
+The two share a stopping point and nothing else, because their evidence differs.
+`NESTED-TARGET` is positive knowledge that this target lies outside v1's provenance
+scope, so leaving the legacy installer alone is a deliberate, bounded exception.
+`SCOPE-UNRESOLVED` is a failed observation — we were supposed to classify the scope
+and could not — which is not a licence to act. Granting it the same exception would
+produce precisely the state the transaction rules exist to prevent:
+
+```
+show-toplevel succeeds, realpathSync.native fails with EACCES
+  → SCOPE-UNRESOLVED
+  → legacy installer runs anyway
+  → the hook changed, provenance cannot account for it, exit is non-zero
+```
+
+An artifact mutated with no record able to explain it is the original defect, made
+worse by having been foreseeable.
 
 `NESTED-TARGET` may be produced by `DISTINCT` and by nothing else. It is a positive
 topology assertion — *this target is not the worktree top-level* — and
@@ -265,14 +288,29 @@ This forces one combination to be stated rather than inferred, because two
 otherwise-correct rules would contradict each other on it:
 
 ```
---no-hooks, existing Git admin topology
+--no-hooks, target has an established in-scope provenance context
+             (workspace scope SAME and owner established)
   → non-participation is durably recorded, as it should be
 
 --no-hooks + --no-git, target is not a Git repository
-  → there is nowhere to record it, and a .git MUST NOT be created to gain one
+  → NO-GIT-ADMIN-TOPOLOGY: there is nowhere to record it, and a .git MUST NOT
+    be created to gain one
   → no provenance document
-  → the opt-out is honoured in this run; it simply leaves no persistent record
+
+--no-hooks on a nested target
+  → NESTED-TARGET: a Git administrative container exists but belongs to the
+    enclosing worktree, which this target may not write
+  → no provenance document for this target
+
+--no-hooks under SCOPE-UNRESOLVED or OWNER-UNRESOLVED
+  → the opt-out cannot be durably recorded, so the run fails closed
 ```
+
+In the first three rows the opt-out is honoured for that run; only the first leaves
+a persistent record. The precondition is an **in-scope** context, not merely a
+nearby `.git` — a nested target has a Git administrative container it is forbidden
+to write, so requiring a durable record there would demand something the ownership
+contract prohibits.
 
 Creating a repository in order to store an opt-out would let a hook-participation
 flag manufacture a Git repository — precisely the coupling DD#1 severed, running
@@ -713,6 +751,8 @@ was actually established:
 SCOPE-UNRESOLVED
   → no provenance owner is resolved, no document is accessed
   → no provenance transaction is performed
+  → the hook MUST NOT be mutated — this state fails closed, and unlike
+    NESTED-TARGET it grants no legacy-installer exception
   → reported and exits non-zero
 ```
 
@@ -982,7 +1022,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac11",
-      "description": "A --no-hooks option is the sole authority for explicit non-participation and, whenever a Git administrative container exists, is durably recorded as intent.source scaffold-no-hooks with participation non-participating. On a target that is not a Git repository scaffolded with --no-git, the opt-out is honoured for that run but produces no provenance document, and no .git is created in order to store it. It is not the sole authority for participation: scaffold-default and hook-install-command both produce participating intent. --no-git retains its narrow meaning of skipping git init only and never determines participation, expressed as a reverse property: holding the Git topology fixed, toggling --no-git does not suppress hook participation or the install attempt. What that attempt then realizes remains decided by topology and observation, so the criterion asserts nothing about outcome.",
+      "description": "A --no-hooks option is the sole authority for explicit non-participation and, whenever the target has an established in-scope provenance context — workspace scope SAME and owner established — is durably recorded as intent.source scaffold-no-hooks with participation non-participating. The precondition is in-scope ownership, not the mere presence of a nearby .git: on a target that is not a Git repository scaffolded with --no-git, and on a nested target whose enclosing worktree owns the only container, the opt-out is honoured for that run but produces no provenance document, and no .git is created in order to store one. Under SCOPE-UNRESOLVED or OWNER-UNRESOLVED the opt-out cannot be durably recorded and the run fails closed instead. It is not the sole authority for participation: scaffold-default and hook-install-command both produce participating intent. --no-git retains its narrow meaning of skipping git init only and never determines participation, expressed as a reverse property: holding the Git topology fixed, toggling --no-git does not suppress hook participation or the install attempt. What that attempt then realizes remains decided by topology and observation, so the criterion asserts nothing about outcome.",
       "dependsOn": ["index.js", "templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -994,7 +1034,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac13",
-      "description": "A workspace-scope preflight runs before owner resolution and is total. When git rev-parse --show-toplevel succeeds, the target is compared to it by path identity: SAME continues, DISTINCT is NESTED-TARGET, and UNESTABLISHED is SCOPE-UNRESOLVED — NESTED-TARGET is reachable from DISTINCT alone, so injecting a realpath failure yields SCOPE-UNRESOLVED and never NESTED-TARGET. When git positively reports the target is not a repository the state is NO-GIT-ADMIN-TOPOLOGY with its producer-specific exit, never swallowed into SCOPE-UNRESOLVED or NESTED-TARGET. When git is unavailable or the query fails for any other reason the state is SCOPE-UNRESOLVED, reported with a non-zero exit. Every non-SAME branch short-circuits before any owner is resolved, before any owner directory is created, and before any document is opened — verified by asserting that no evo-lite directory appears under the enclosing worktree's git-dir after scaffolding a nested target. Owner resolution then runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document and no install attempt, and the exit code is producer-specific — a scaffold run does not fail on the hook phase, while an explicit mem hook install outside a Git repository still exits non-zero as it does today. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. A run that cannot record provenance never performs an avoidable hook mutation first, and the six states are mutually exclusive with no code path collapsing any pair: the four topology states NO-GIT-ADMIN-TOPOLOGY, SCOPE-UNRESOLVED, NESTED-TARGET and OWNER-UNRESOLVED, and the two document states UNKNOWN and UNOBSERVABLE. In particular no topology state is ever reported as UNKNOWN or UNOBSERVABLE.",
+      "description": "A workspace-scope preflight runs before owner resolution and is total. When git rev-parse --show-toplevel succeeds, the target is compared to it by path identity: SAME continues, DISTINCT is NESTED-TARGET, and UNESTABLISHED is SCOPE-UNRESOLVED — NESTED-TARGET is reachable from DISTINCT alone, so injecting a realpath failure yields SCOPE-UNRESOLVED and never NESTED-TARGET. When git positively reports the target is not a repository the state is NO-GIT-ADMIN-TOPOLOGY with its producer-specific exit, never swallowed into SCOPE-UNRESOLVED or NESTED-TARGET. When git is unavailable or the query fails for any other reason the state is SCOPE-UNRESOLVED, reported with a non-zero exit. Every non-SAME branch short-circuits before any owner is resolved, before any owner directory is created, and before any document is opened — verified by asserting that no evo-lite directory appears under the enclosing worktree's git-dir after scaffolding a nested target. NESTED-TARGET and SCOPE-UNRESOLVED share that stopping point and no more: NESTED-TARGET leaves legacy installer behaviour unchanged, whereas SCOPE-UNRESOLVED fails closed and mutates no hook, verified by injecting a realpath failure and asserting the hook file is byte-identical before and after — or absent throughout — so that no run ever changes the artifact while unable to record it. Owner resolution then runs as a preflight before any hook mutation and separates three outcomes. When git rev-parse --absolute-git-dir succeeds the owner root is established and its evo-lite subdirectory is created during preflight. When git reports the target is not a repository the run is NO-GIT-ADMIN-TOPOLOGY: no document and no install attempt, and the exit code is producer-specific — a scaffold run does not fail on the hook phase, while an explicit mem hook install outside a Git repository still exits non-zero as it does today. When git is unavailable or fails for any other reason the run is OWNER-UNRESOLVED: the hook is not mutated at all, the condition is reported, and the exit code is non-zero. A run that cannot record provenance never performs an avoidable hook mutation first, and the six states are mutually exclusive with no code path collapsing any pair: the four topology states NO-GIT-ADMIN-TOPOLOGY, SCOPE-UNRESOLVED, NESTED-TARGET and OWNER-UNRESOLVED, and the two document states UNKNOWN and UNOBSERVABLE. In particular no topology state is ever reported as UNKNOWN or UNOBSERVABLE.",
       "dependsOn": ["index.js", "templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
