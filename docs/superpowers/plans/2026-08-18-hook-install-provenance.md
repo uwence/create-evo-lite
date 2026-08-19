@@ -733,6 +733,30 @@ Append to `templates/cli/test/hook-provenance.js`:
         assert.strictEqual(classifyTopology(bare).state, 'SCOPE-UNRESOLVED',
             'a bare repository exits 128 but is NOT a positive not-a-repository answer');
 
+        // The owner gate uses the SAME taxonomy. Injected sequentially: the scope
+        // query succeeds, the owner query then answers not-a-repository.
+        const seq = (() => {
+            let n = 0;
+            return (dir, args) => {
+                n += 1;
+                if (n === 1) return { status: 0, stdout: root, stderr: '' };
+                return { status: 128, stdout: '', stderr: 'fatal: not a git repository (or any of the parent directories): .git\n' };
+            };
+        })();
+        assert.strictEqual(classifyTopology(root, { gitQuery: seq }).state, 'NO-GIT-ADMIN-TOPOLOGY',
+            'a positive not-a-repository answer at the owner gate is the same topology fact');
+
+        const seqOther = (() => {
+            let n = 0;
+            return () => {
+                n += 1;
+                if (n === 1) return { status: 0, stdout: root, stderr: '' };
+                return { status: 128, stdout: '', stderr: 'fatal: this operation must be run in a work tree\n' };
+            };
+        })();
+        assert.strictEqual(classifyTopology(root, { gitQuery: seqOther }).state, 'OWNER-UNRESOLVED',
+            'any other owner-query failure stays OWNER-UNRESOLVED');
+
         const unavailable = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
         assert.strictEqual(classifyTopology(root, { gitQuery: unavailable }).state, 'SCOPE-UNRESOLVED',
             'an unavailable git must be SCOPE-UNRESOLVED');
@@ -756,11 +780,17 @@ Append to `templates/cli/test/hook-provenance.js`:
         execFileSync('git', ['-C', outer, 'init', '-q'], { stdio: 'ignore' });
         execFileSync('git', ['-C', inner, 'init', '-q'], { stdio: 'ignore' });
 
+        // M6a removes the binding from the OWNER query only, so the scope query
+        // still answers for B and this fixture-validity assertion stays green —
+        // the red then lands on the owner assertion below rather than absorbing
+        // the mutation here. Dropping the binding from both queries would make
+        // pathIdentity(inner, outer) DISTINCT, turn this into NESTED-TARGET, and
+        // fail on the wrong line.
         const prev = process.cwd();
         process.chdir(outer);
         try {
             const r = classifyTopology(inner);
-            assert.strictEqual(r.state, 'IN-SCOPE');
+            assert.strictEqual(r.state, 'IN-SCOPE', 'fixture validity: B must classify as in scope');
             assert.strictEqual(
                 require('../hook-provenance/path-identity').pathIdentity(
                     path.dirname(path.dirname(r.provenancePath)), path.join(inner, '.git')),
@@ -860,8 +890,11 @@ function classifyTopology(targetDir, deps = {}) {
         return { state: 'OWNER-UNRESOLVED', detail: `git unavailable: ${err.message}` };
     }
     if (owner.status !== 0 || !owner.stdout) {
-        // Scope already established that a worktree is here, so a not-a-repository
-        // answer at this point is itself a failure, not a topology fact.
+        // Same taxonomy as the scope gate, not a local simplification. It is rare
+        // to get here (scope just established a worktree) but a repository can be
+        // removed between the two queries, and the frozen states do not change
+        // because a branch is unlikely.
+        if (isPositiveNotARepository(owner)) return { state: 'NO-GIT-ADMIN-TOPOLOGY' };
         return { state: 'OWNER-UNRESOLVED', detail: `owner query failed (${owner.status})` };
     }
 
@@ -889,7 +922,7 @@ Expected: PASS.
 | # | Mutation | Must go red on |
 |---|---|---|
 | M5 | change `identity === 'UNESTABLISHED'` to also return `NESTED-TARGET` | HP7 "must be SCOPE-UNRESOLVED, never NESTED-TARGET" |
-| M6 | drop `'-C', targetDir` from `defaultGitQuery` | HP8 "must be the TARGET git-dir" |
+| M6a | drop `'-C', targetDir` from the **owner** query only | HP8 "must be the TARGET git-dir" |
 | M7 | return `SCOPE-UNRESOLVED` on every `top.status !== 0` | HP7 "a non-repository must not be swallowed into SCOPE-UNRESOLVED" |
 | M7b | replace `isPositiveNotARepository` with `res.status !== 0` | HP7 "a bare repository … is NOT a positive not-a-repository answer" |
 
@@ -978,9 +1011,24 @@ Satisfies ac5, ac6, ac7, ac8.
             || (sh.verdict === 'indeterminate' && sh.reason === 'no-safe-parser'),
             `a valid sh hook is satisfied where sh exists, otherwise no-safe-parser (got ${JSON.stringify(sh)})`);
 
+        // "Aligned" is asserted on WHICH interpreter was invoked, not on a grammar
+        // difference between sh and bash. Measured on the Windows/msys development
+        // host, `sh` IS bash (GNU bash 5.2.37), so every syntax-difference fixture
+        // — including array literals — exits 0 under both, and a hardcoded `sh -n`
+        // mutation could never be falsified there. Observing the argv makes this
+        // control host-independent.
         const bashHook = path.join(root, 'bash');
-        fs.writeFileSync(bashHook, '#!/bin/bash\nshopt -s nullglob\nexit 0\n');
-        assert.notStrictEqual(observeInterpreter(bashHook).verdict, 'not-satisfied',
+        fs.writeFileSync(bashHook, '#!/bin/bash\na=(one two)\necho "${a[0]}"\n');
+        const invoked = [];
+        const spy = Object.create(fs);
+        spy.__execFileSync = (bin, args, opts) => {
+            invoked.push(bin);
+            return require('child_process').execFileSync(bin, args, opts);
+        };
+        const b = observeInterpreter(bashHook, spy);
+        assert.deepStrictEqual(invoked, ['/bin/bash'],
+            `the interpreter named by the shebang is the one consulted (saw ${invoked.join(', ')})`);
+        assert.notStrictEqual(b.verdict, 'not-satisfied',
             'bash-legal syntax under a bash shebang must not be reported not-satisfied');
 
         const py = path.join(root, 'py'); fs.writeFileSync(py, '#!/usr/bin/env python\nprint(1)\n');
@@ -1029,6 +1077,30 @@ Satisfies ac5, ac6, ac7, ac8.
         execFileSync('git', ['-C', repo, 'config', 'core.hooksPath', elsewhere], { stdio: 'ignore' });
         assert.deepStrictEqual(observeLocator({ targetDir: repo, targetPath }),
             { verdict: 'not-satisfied', reason: 'active-hooks-dir-differs' });
+    }
+
+    console.log('HP12b. observation: the locator query is bound to B, not to the caller ...');
+    {
+        const { observeLocator } = require('../hook-provenance/observe');
+        const { execFileSync } = require('child_process');
+        const A = tmp('locA');
+        const B = tmp('locB');
+        execFileSync('git', ['-C', A, 'init', '-q'], { stdio: 'ignore' });
+        execFileSync('git', ['-C', B, 'init', '-q'], { stdio: 'ignore' });
+        // A's active hooks directory is redirected, so an unbound query would
+        // answer with A's and report B's ordinary installation as not-satisfied.
+        const decoy = path.join(A, 'decoy-hooks');
+        fs.mkdirSync(decoy);
+        execFileSync('git', ['-C', A, 'config', 'core.hooksPath', decoy], { stdio: 'ignore' });
+
+        const prev = process.cwd();
+        process.chdir(A);
+        try {
+            assert.deepStrictEqual(
+                observeLocator({ targetDir: B, targetPath: path.join(B, '.git', 'hooks', 'post-commit') }),
+                { verdict: 'satisfied', reason: null },
+                'the active hooks directory must be B\'s, even when the caller stands in A');
+        } finally { process.chdir(prev); }
     }
 ```
 
@@ -1146,9 +1218,13 @@ function observeInterpreter(hookPath, fsOps = fs) {
     }
 
     // Interpreter-ALIGNED syntax check: a bash hook is checked by bash, so
-    // bash-legal syntax is not reported as a defect.
+    // bash-legal syntax is not reported as a defect. The spawn goes through
+    // fsOps.__execFileSync when present so a test can observe WHICH interpreter
+    // was consulted — on hosts where sh and bash are the same binary a grammar
+    // difference cannot distinguish them, but the argv always can.
+    const spawn = fsOps.__execFileSync || execFileSync;
     try {
-        execFileSync(parsed.command, ['-n', hookPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+        spawn(parsed.command, ['-n', hookPath], { stdio: ['ignore', 'ignore', 'pipe'] });
         return { verdict: 'satisfied', reason: null, shebang: first };
     } catch (err) {
         // The parser could not be run at all (absent, not spawnable) — that is a
@@ -1194,10 +1270,11 @@ Expected: PASS.
 |---|---|---|
 | M8 | map every `statSync` throw to `unrealized / hooks-dir-missing` | HP9 "a permission error is a failure to observe" |
 | M9 | compare `res.stdout` to `targetPath` instead of its dirname | HP12 "must be satisfied, not a directory-vs-file mismatch" |
-| M10 | run `sh -n` regardless of the shebang | HP11 "bash-legal syntax … must not be reported not-satisfied" |
+| M10 | run `sh -n` regardless of the shebang | HP11 "the interpreter named by the shebang is the one consulted" |
 | M10b | return a constant `satisfied` from `observeExecutable` | HP10 "v1 has no qualified executable predicate on any host" |
 | M10c | drop the absolute-interpreter `statSync` and run `path.basename(command)` | HP11 "must not be answered by a PATH lookalike" |
 | M10d | make `parseShebang` take `words[1]` even when it starts with `-` | HP11 "must not be read as an incompatible interpreter" |
+| M6b | drop `'-C', targetDir` from the **locator** query only | HP12b "must be B's, even when the caller stands in A" |
 
 - [ ] **Step 6: Commit**
 
@@ -1418,7 +1495,8 @@ Satisfies ac2, ac9, ac13 end to end, and the producer half of ac5.
 **Interfaces:**
 - Consumes: everything from Tasks 1–5.
 - Produces: `installPostCommitHook(targetDir, options = {})` returning
-  `{ topology, provenance: 'committed' | 'not-attempted' | 'failed', artifact: 'mutated' | 'unchanged', event }`.
+  `{ topology, provenance: 'committed' | 'not-attempted' | 'failed', artifact: 'unchanged' | 'modified' | 'indeterminate' | 'legacy', event }`.
+  `artifact` is decided by digesting the hook file before and after, never by "a write was attempted"; `legacy` marks the nested exception, whose artifact effects are outside this transaction.
   `options.participation` defaults to `'participating'`; `options.source` defaults to `'scaffold-default'`. The existing zero-argument call sites keep working.
 
 **Order, which is part of the contract:**
@@ -1578,6 +1656,21 @@ const { classifyTopology } = require('./hook-provenance/topology');
 const { readProvenance, appendEvent } = require('./hook-provenance/store');
 const { observeHooksDir, observeRunnability } = require('./hook-provenance/observe');
 
+// The artifact dimension of the two-dimension report. `null` means the file was
+// absent — a fact — while `undefined` means the digest could not be taken.
+function digestFile(p, fsOps) {
+    try {
+        return 'sha256:' + crypto.createHash('sha256').update(fsOps.readFileSync(p)).digest('hex');
+    } catch (err) {
+        return err && err.code === 'ENOENT' ? null : undefined;
+    }
+}
+
+function compareArtifact(before, after) {
+    if (before === undefined || after === undefined) return 'indeterminate';
+    return before === after ? 'unchanged' : 'modified';
+}
+
 // Returns { reason, threw, phase } and never throws. `phase` distinguishes a
 // failure BEFORE any write was issued from one during the write: the caller must
 // not chmod, nor claim a write was attempted, for the former.
@@ -1634,14 +1727,34 @@ function observeInstalled(targetDir, attemptedReason) {
     return { outcome: 'indeterminate', reason: 'post-write-observation-failed' };
 }
 
-// The implementation base's behaviour, preserved verbatim for the one topology
-// where the provenance layer declines to participate. Do not "improve" it here.
-function legacyInstallPostCommitHook(targetDir, fsOps) {
+// The implementation base's behaviour, character for character, for the one
+// topology where the provenance layer declines to participate. It deliberately
+// does NOT call writeManagedHook: that helper swallows read and write errors so
+// the observation can decide, whereas the base propagates them. Reusing it here
+// would quietly change the nested exception's failure semantics, and the frozen
+// contract is that legacy behaviour is unchanged — including how it fails.
+function legacyInstallPostCommitHook(targetDir) {
     const hooksDir = path.join(targetDir, '.git', 'hooks');
-    if (!fsOps.existsSync(hooksDir)) return;
+    if (!fs.existsSync(hooksDir)) return;
+
+    const hookBody = buildHookBody();
     const hookPath = path.join(hooksDir, 'post-commit');
-    writeManagedHook(hookPath, buildHookBody(), fsOps);
-    try { fsOps.chmodSync(hookPath, '755'); } catch (_) {}
+
+    if (fs.existsSync(hookPath)) {
+        let content = fs.readFileSync(hookPath, 'utf8');
+        if (content.includes(SENTINEL_BEGIN)) {
+            content = content.replace(
+                new RegExp(`${SENTINEL_BEGIN}[\\s\\S]*?${SENTINEL_END}`),
+                hookBody
+            );
+        } else {
+            content = content.trimEnd() + '\n\n' + hookBody + '\n';
+        }
+        fs.writeFileSync(hookPath, content);
+    } else {
+        fs.writeFileSync(hookPath, '#!/bin/sh\n' + hookBody + '\n');
+    }
+    try { fs.chmodSync(hookPath, '755'); } catch (_) {}
 }
 
 function installPostCommitHook(targetDir, options = {}) {
@@ -1658,9 +1771,14 @@ function installPostCommitHook(targetDir, options = {}) {
         // no-op. It usually is one (a nested child has no .git/hooks of its own),
         // but "usually no-op" is a result, not a policy, and turning the result
         // into the policy would silently change behaviour where the directory
-        // does exist. So the pre-provenance path runs exactly as it did at the
-        // implementation base, and only the provenance layer short-circuits.
-        legacyInstallPostCommitHook(targetDir, fsOps);
+        // does exist.
+        //
+        // The exception covers the loss of PROVENANCE, not the loss of the user's
+        // explicit refusal. An opt-out is honoured for the run wherever it is
+        // expressed; what nesting costs is only the durable record of it. So
+        // participation is checked FIRST — running the installer here would let a
+        // topology fact overrule an explicit instruction.
+        if (participation === 'participating') legacyInstallPostCommitHook(targetDir);
         return { topology: topo.state, provenance: 'not-attempted', artifact: 'legacy', event: null };
     }
     if (topo.state === 'NO-GIT-ADMIN-TOPOLOGY') {
@@ -1684,6 +1802,8 @@ function installPostCommitHook(targetDir, options = {}) {
     const hookPath = path.join(hooksDir, 'post-commit');
     let artifact = 'unchanged';
 
+    const preImage = digestFile(hookPath, fsOps);
+
     if (participation === 'participating') {
         const dir = observeHooksDir(hooksDir, fsOps);
         if (dir.outcome !== null) {
@@ -1692,12 +1812,20 @@ function installPostCommitHook(targetDir, options = {}) {
             const w = writeManagedHook(hookPath, buildHookBody(), fsOps);
 
             if (w.phase === 'pre-write') {
-                // Reading the existing hook failed, so no write was ever issued.
-                // Do not chmod, and do not claim an attempted write.
-                draft.install = { outcome: 'indeterminate', reason: 'post-write-observation-failed',
-                    targetPath: hookPath };
+                // BLOCKED — see "Open design gap" below. Reading the existing
+                // hook failed, so no write was issued; v1's install.reason
+                // vocabulary has no member for that, and every available member
+                // would state something untrue. Do not implement this branch
+                // until the gap is ruled on.
+                throw new Error('pre-write observation failure: unrepresentable in v1 — see plan §Open design gap');
             } else {
-                artifact = 'mutated';
+                // "A write was attempted" is not "the artifact changed". A write
+                // can throw before altering a byte, and reporting `mutated` there
+                // would put an unproven fact in the failure message — the same
+                // inversion the outcome rules forbid. The artifact dimension is
+                // decided by comparing the file before and after, and stays
+                // `indeterminate` when either digest could not be taken.
+                artifact = compareArtifact(preImage, digestFile(hookPath, fsOps));
                 let chmodThrew = false;
                 try { fsOps.chmodSync(hookPath, '755'); } catch (_) { chmodThrew = true; }
 
@@ -1783,6 +1911,11 @@ Two of these need an assertion that does not exist yet. Write them first, in Tas
         assert.strictEqual(r.event.install.reason, 'created-managed-hook',
             'the reason describes what was found before the write, not what the exception suggests');
 
+        // BLOCKED on the open design gap below. Written here so the shape of the
+        // required control is on record, but Task 6 must not be started until the
+        // gap is ruled on, and this block must not be "made to pass" by choosing
+        // a reason that misstates what happened.
+        //
         // A failure BEFORE any write was issued is not an attempted write: no
         // chmod, and no chmod field. Otherwise a read failure would be recorded
         // as though the artifact had been touched.
@@ -1821,6 +1954,19 @@ Two of these need an assertion that does not exist yet. Write them first, in Tas
             'the artifact is written and observed before provenance is committed');
         assert.ok(order.lastIndexOf('provenance') > order.lastIndexOf('artifact'),
             'the provenance commit is the last write of the invocation');
+    }
+
+    console.log('HP24. producer: the artifact dimension is observed, not assumed ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('artifactdim');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+
+        assert.strictEqual(installPostCommitHook(repo).artifact, 'modified',
+            'the first install changes the file');
+        assert.strictEqual(installPostCommitHook(repo).artifact, 'unchanged',
+            'the artifact dimension reports unchanged when nothing changed — "a write was attempted" is not "the artifact changed"');
     }
 
     console.log('HP23. producer: the rename is the commit point ...');
@@ -1866,13 +2012,19 @@ Two of these need an assertion that does not exist yet. Write them first, in Tas
 
 | # | Mutation | Must go red on |
 |---|---|---|
-| M14 | let `NESTED-TARGET` fall through to owner resolution | HP16 "must not create an owner directory" |
-| M14b | replace `legacyInstallPostCommitHook(...)` with a bare `return` | HP16 "preserves legacy installer behaviour, it does not freeze it" |
-| M14c | let `SCOPE-UNRESOLVED` fall through instead of throwing | HP16b "the hook is byte-identical" |
+Three of these must be built as **neutral** mutations. Letting a branch "fall through" reaches code that dereferences `topo.ownerRoot`, which is `undefined` outside `IN-SCOPE`; the run then dies on a `TypeError` before the guarded assertion is evaluated, and a control that goes red somewhere earlier proves nothing about its target. Each is therefore expressed as the smallest change that makes the *guarded property* false and leaves everything before it true.
+
+| # | Mutation | Must go red on |
+|---|---|---|
+| M14 | inside the `NESTED-TARGET` branch, add `fsOps.mkdirSync(path.join(topo.worktreeTop, '.git', 'evo-lite'), { recursive: true })` before returning | HP16 "must not create an owner directory in the enclosing worktree" |
+| M14b | replace `legacyInstallPostCommitHook(targetDir)` with a bare `return` | HP16 "preserves legacy installer behaviour, it does not freeze it" |
+| M14c | in the `SCOPE-UNRESOLVED` / `OWNER-UNRESOLVED` branch, replace the `throw` with `legacyInstallPostCommitHook(targetDir); return { topology: topo.state, provenance: 'not-attempted', artifact: 'legacy', event: null };` — granting it the nested exception rather than crashing | HP16b "SCOPE-UNRESOLVED grants no legacy exception: the hook is byte-identical" |
+| M14d | move the `participation === 'participating'` check after the legacy call in the `NESTED-TARGET` branch | HP20 "a nested --no-hooks still refuses the hook" |
 | M15 | set `outcome = 'unrealized', reason = 'write-failed'` in the write's catch and skip `observeInstalled` | HP21 "a thrown write whose bytes landed must not be recorded as unrealized" |
 | M15b | derive the reason after the write from `diffInstalledHook` instead of from what was found before it | HP21 "the reason describes what was found before the write" |
 | M15c | chmod on the `pre-write` phase too | HP21 "and chmod is never called on that path" |
-| M16 | move the `appendEvent` call above the artifact write | HP22 "the provenance commit is the last write of the invocation" |
+| M16 | after `appendEvent` returns, add `fsOps.writeFileSync(hookPath, buildHookBody())` — an artifact write following the commit, leaving every earlier step untouched. Simply hoisting `appendEvent` above the write instead would hand the validator a draft with no `install`, so the commit would be rejected and the run would die before HP22's order assertion ran | HP22 "the provenance commit is the last write of the invocation" |
+| M16d | replace `compareArtifact(preImage, digestFile(...))` with the literal `'modified'` | HP24 "the artifact dimension reports unchanged when nothing changed" |
 | M16b | add a `fsOps.statSync(hookPath)` immediately after `appendEvent` returns | HP23 "no fallible operation may follow the commit rename" |
 
 - [ ] **Step 7: Commit**
@@ -1945,6 +2097,17 @@ Satisfies ac11.
             '--no-git', '--no-hooks', '--no-initial-commit'], { stdio: 'ignore' });
         assert.strictEqual(fs.existsSync(path.join(outer, '.git', 'evo-lite')), false,
             'a nested opt-out must not write into the enclosing worktree');
+
+        // Nesting costs the durable RECORD of the opt-out, never the opt-out
+        // itself. With the hooks directory present, the legacy installer would
+        // otherwise write — so this is where a topology fact could overrule an
+        // explicit instruction, and must not.
+        const inner2 = path.join(outer, 'inner2');
+        fs.mkdirSync(path.join(inner2, '.git', 'hooks'), { recursive: true });
+        execFileSync(process.execPath, [path.join(WORKSPACE_ROOT, 'index.js'), inner2,
+            '--no-git', '--no-hooks', '--no-initial-commit'], { stdio: 'ignore' });
+        assert.strictEqual(fs.existsSync(path.join(inner2, '.git', 'hooks', 'post-commit')), false,
+            'a nested --no-hooks still refuses the hook; only the record is lost');
     }
 ```
 
@@ -2021,7 +2184,9 @@ Create `docs/validation/hook-install-provenance-ac-matrix.md` with one row per a
 
 - [ ] **Step 4: Record the mutation results**
 
-In the same document, one table with every mutation M1–M17: `exit`, `guardHit` (did the intended assertion fail, not merely some assertion), the failing assertion text, and the restoration proof (sha256 of the source before mutating and after restoring, and mirror equality). Any row with `guardHit = false` is redesigned and re-run; it must not be counted as effective.
+In the same document, one table with **every mutation ID declared by Tasks 1–7** — not a hardcoded range, since the set grew during review and a literal `M1–M17` would silently omit the later ones. Collect the IDs by grepping the plan's mutation tables and assert the count matches; **expected count = 32**. A missing row fails the step rather than relying on someone counting by hand.
+
+Each row records `exit`, `guardHit` (did the *intended* assertion fail, not merely some assertion), the failing assertion text, and the restoration proof (sha256 of the source before mutating and after restoring, and mirror equality). Any row with `guardHit = false` is redesigned and re-run; it must not be counted as effective. Where a control cannot be falsified on this host — as with anything depending on `sh` and `bash` being different binaries, which they are not under msys — record it as *not falsifiable here* and name the CI leg that does falsify it. Never count it as effective.
 
 - [ ] **Step 5: Commit**
 
@@ -2031,6 +2196,49 @@ git commit -m "docs(validation): AC traceability and mutation evidence for hook 
 ```
 
 ---
+
+## Open design gap — Task 6 is BLOCKED on this ruling
+
+**An observation that fails after the topology gates and before the write is
+unrepresentable in the frozen v1 vocabulary.**
+
+The concrete instance is reading the existing `post-commit` before rewriting it.
+The hooks directory is fine, so none of `hooks-dir-missing`,
+`hooks-dir-not-directory` or `hooks-dir-unobservable` is true. No write was
+issued, so `write-failed` is false and — under the `chmod` conditional shape —
+recording `post-write-observation-failed` would additionally assert that a write
+was attempted, requiring a `chmod` field for an operation that never ran. Every
+available member states something that did not happen.
+
+This is the frozen contract failing to enumerate a reachable combination, not an
+implementation choice. Per the standing rule, the gap is reported here rather
+than patched: choosing the least-wrong member would put a false statement into a
+record whose entire purpose is that its statements are true.
+
+**Same-origin check.** The class is "an observation that fails between the
+topology gates and the write". In the current installer that class has exactly
+one member, the pre-write read; the write itself and the post-write observation
+are both covered. The gap is therefore narrow, but it is a class, and a ruling
+should name the class rather than only its one instance today.
+
+Three shapes are available, and the choice is the design authority's:
+
+```
+A  add a v1 reason, e.g. pre-write-observation-failed
+     smallest change; but it extends a frozen vocabulary, so it is a
+     schemaVersion question, not a plan question
+
+B  make chmod's presence depend on the write being ISSUED rather than on the
+   reason, and reuse post-write-observation-failed
+     no new member; but the reason then names a phase that was never reached
+
+C  rule the case out of v1 by requiring the pre-write read to be infallible
+     honest only if the producer can guarantee it, which it cannot
+```
+
+Until this is ruled, Task 6's `pre-write` branch throws rather than fabricating a
+record, HP21's second block is written but not expected to pass, and **Task 6 must
+not be started**. Tasks 1–5 and 7 are unaffected.
 
 ## Out of scope for this plan
 
