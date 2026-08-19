@@ -711,7 +711,7 @@ Run each one alone, restore between runs, and record `exit`, the assertion that 
 | M3 | replace the aggregation comparison with `true` | HP6 "runnability.verdict must equal the aggregation" |
 | M4 | make the validator walk `raw.events` instead of only the last | HP6 "malformed interior event must not change the reader state" |
 | M4b | delete the `chmod` conditional-shape block | HP6 "a pre-write outcome must carry no chmod" |
-| M4d | keep `pre-write-observation-failed` in `PRE_WRITE_REASONS` but make the pre-write branch permissive — `if (preWrite && inst.chmod !== undefined && inst.chmod.attempted !== true)` — so a chmod is tolerated there while its absence stays legal. Removing the reason from `PRE_WRITE_REASONS` outright would make the *legal* fixture illegal for lacking chmod, so the run would die on the preceding assertion | HP6 "it must not claim a chmod: the write was never issued" |
+| M4d | keep the outer `if (preWrite)` intact and weaken only its **inner** rejection to `if (inst.chmod !== undefined && inst.chmod.attempted !== true)`, so a well-formed chmod is wrongly tolerated on a pre-write outcome while its absence stays legal. Weakening the outer condition instead would drop the legal no-chmod fixture into the `else if (!inst.chmod)` arm and fail on the preceding assertion | HP6 "it must not claim a chmod: the write was never issued" |
 | M4c | delete the top-level `runnability.reason` rejection | HP6 "runnability must have no top-level reason" |
 | M4e | delete the `current.digest` rejection | HP6 "current.digest must not exist" |
 
@@ -1110,15 +1110,22 @@ Satisfies ac5, ac6, ac7, ac8.
             'a declared interpreter that is not present must not be answered by a PATH lookalike');
         assert.strictEqual(g.reason, 'no-safe-parser');
 
-        // `env -S` is a legal form this parser cannot resolve; the contract says
-        // an unparseable interpreter is indeterminate, never a manufactured
-        // incompatible-interpreter.
-        const envS = path.join(root, 'envs');
-        fs.writeFileSync(envS, '#!/usr/bin/env -S bash -e\nexit 0\n');
-        const e = observeInterpreter(envS);
-        assert.strictEqual(e.verdict, 'indeterminate',
-            'an option-bearing env shebang must not be read as an incompatible interpreter');
-        assert.strictEqual(e.reason, 'ambiguous-interpreter');
+        // Any form v1 cannot prove completely is ambiguous. The contract says an
+        // unparseable interpreter is indeterminate, never a manufactured
+        // incompatible-interpreter and never a satisfied.
+        for (const [name, line] of [
+            ['envs', '#!/usr/bin/env -S bash -e'],
+            ['envopt', '#!/usr/bin/env bash -e'],
+            ['bashopt', '#!/bin/bash --definitely-invalid-option'],
+            ['barenv', '#!env bash'],
+        ]) {
+            const p = path.join(root, name);
+            fs.writeFileSync(p, `${line}\nexit 0\n`);
+            const v = observeInterpreter(p);
+            assert.strictEqual(v.verdict, 'indeterminate',
+                `${line} is not a form v1 can prove, so it is indeterminate`);
+            assert.strictEqual(v.reason, 'ambiguous-interpreter', `reason for ${line}`);
+        }
     }
 
     console.log('HP12. observation: locator compares directory to directory ...');
@@ -1242,16 +1249,31 @@ const SH_FAMILY = ['sh', 'bash', 'dash', 'ash', 'ksh', 'zsh'];
 //   #!/bin/sh              → { entry: '/bin/sh',      parser: '/bin/sh' }
 //   #!/usr/bin/env bash    → { entry: '/usr/bin/env', parser: 'bash' }
 //   #!/usr/bin/env -S bash → null   (option-bearing env; not parsed here)
+// v1 supports only the two forms it can prove completely, by EXACT token count.
+// Anything else is ambiguous, and ambiguous is indeterminate.
+//
+//   1 token, not env    → { entry: t0,   parser: t0 }
+//   2 tokens, env first → { entry: env,  parser: t1 }
+//   everything else     → null
+//
+// The token count is load-bearing, not tidiness. Silently dropping trailing
+// tokens turns `#!/bin/bash --definitely-invalid-option` into a plain
+// `/bin/bash -n` check that exits 0, while the hook as declared cannot start at
+// all — a fabricated `satisfied` for an inert hook. Measured: `bash -n` on that
+// file exits 0; executing the file exits 2.
 function parseShebang(line) {
     const words = line.slice(2).trim().split(/\s+/).filter(Boolean);
-    if (words.length === 0) return null;
-    if (path.basename(words[0]) === 'env') {
-        // Any option to env (-S, -i, NAME=value …) puts the real interpreter
-        // somewhere this parser will not guess at.
-        if (!words[1] || words[1].startsWith('-') || words[1].includes('=')) return null;
+    if (words.length === 1 && path.basename(words[0]) !== 'env') {
+        return { entry: words[0], parser: words[0] };
+    }
+    if (words.length === 2 && path.basename(words[0]) === 'env') {
+        // An option or assignment where the interpreter should be (-S, -i,
+        // NAME=value) puts the real interpreter somewhere this parser will not
+        // guess at.
+        if (words[1].startsWith('-') || words[1].includes('=')) return null;
         return { entry: words[0], parser: words[1] };
     }
-    return { entry: words[0], parser: words[0] };
+    return null;
 }
 
 function observeInterpreter(hookPath, fsOps = fs) {
@@ -1340,7 +1362,8 @@ Expected: PASS.
 | M10b | return a constant `satisfied` from `observeExecutable` | HP10 "v1 has no qualified executable predicate on any host" |
 | M10c | drop the absolute-entry `statSync` gate | HP11 "must not be answered by a PATH lookalike" |
 | M10e | apply the presence gate to `parsed.parser` instead of `parsed.entry` | HP11 "an absent env entry must not be answered by a PATH bash" |
-| M10d | make `parseShebang` take `words[1]` even when it starts with `-` | HP11 "must not be read as an incompatible interpreter" |
+| M10d | make `parseShebang` take `words[1]` even when it starts with `-` | HP11 "`#!/usr/bin/env -S bash -e` is not a form v1 can prove" |
+| M10f | relax the exact token counts to `words.length >= 1` / `>= 2`, dropping the trailing tokens | HP11 "`#!/bin/bash --definitely-invalid-option` is not a form v1 can prove" |
 | M6b | drop `'-C', targetDir` from the **locator** query only | HP12b "must be B's, even when the caller stands in A" |
 
 - [ ] **Step 6: Commit**
@@ -1824,23 +1847,37 @@ function writeManagedHook(hookPath, hookBody, fsOps) {
 // Positive proof that the EXPECTED managed body is established. A thrown write
 // has no authority here: bytes can land and the call still throw, so the write's
 // exception is evidence about the operation, and this is the fact.
-// `diff` is injectable so a controller can make the post-write observation itself
-// fail, rather than hoping the host produces a permission error at the right
-// moment. A control that depends on the host's mood is not a control.
-function observeInstalled(targetDir, attemptedReason, diffFn = diffInstalledHook) {
-    let diff;
-    try { diff = diffFn(targetDir); }
-    catch (_) { return { outcome: 'indeterminate', reason: 'post-write-observation-failed' }; }
+// The provenance producer's OWN post-write observer. It deliberately does not
+// call diffInstalledHook: that function opens with `if (!fs.existsSync(hookPath))
+// return { status: 'no-hook' }`, and existsSync collapses absent, unreachable and
+// wrong-type into one bit. Routing realization through it would let a hook that
+// merely became unreadable after the write be recorded as `unrealized` — "I could
+// not see it" wearing the clothes of "it is not there", at the single most
+// load-bearing point in the contract.
+//
+// diffInstalledHook keeps its existing status/diff consumers unchanged; this is a
+// second, errno-preserving reader for a different question.
+function observeInstalled(hookPath, attemptedReason, fsOps = fs) {
+    let content;
+    try {
+        content = fsOps.readFileSync(hookPath, 'utf8');
+    } catch (err) {
+        if (err && err.code === 'ENOENT') {
+            // Positively absent: the write did not establish the body.
+            return { outcome: 'unrealized', reason: 'write-failed' };
+        }
+        // Every other errno is a failure to observe, never a fact about the file.
+        return { outcome: 'indeterminate', reason: 'post-write-observation-failed' };
+    }
 
-    if (diff.status === 'in-sync') {
-        return { outcome: 'realized', reason: attemptedReason || 'updated-managed-block' };
+    const match = content.match(new RegExp(`${SENTINEL_BEGIN}[\\s\\S]*?${SENTINEL_END}`));
+    if (match && match[0] === buildHookBody()) {
+        return { outcome: 'realized', reason: attemptedReason };
     }
-    if (diff.status === 'no-hook' || diff.status === 'no-block' || diff.status === 'drifted') {
-        // Includes the failed update that left an OLDER managed body in place:
-        // the file exists, but the expected body is positively not established.
-        return { outcome: 'unrealized', reason: 'write-failed' };
-    }
-    return { outcome: 'indeterminate', reason: 'post-write-observation-failed' };
+    // The file is readable and the expected body is positively not in it —
+    // including a failed update that left an OLDER managed body in place, and a
+    // concurrent overwrite between the write and this read.
+    return { outcome: 'unrealized', reason: 'write-failed' };
 }
 
 // The implementation base's behaviour, character for character, for the one
@@ -1919,13 +1956,15 @@ function installPostCommitHook(targetDir, options = {}) {
     let artifactContent = 'not-observed';
     let chmodEvidence = null;
 
-    const preImage = digestFile(hookPath, fsOps);
-
     if (participation === 'participating') {
         const dir = observeHooksDir(hooksDir, fsOps);
         if (dir.outcome !== null) {
             draft.install = { outcome: dir.outcome, reason: dir.reason, targetPath: hookPath };
         } else {
+            // Taken here, not at the top of the function: a non-participating run
+            // must never read the artifact at all, or the code would contradict an
+            // interface that says it does not look.
+            const preImage = digestFile(hookPath, fsOps);
             const w = writeManagedHook(hookPath, buildHookBody(), fsOps);
 
             if (w.phase === 'pre-write') {
@@ -1950,7 +1989,7 @@ function installPostCommitHook(targetDir, options = {}) {
                 // that field claim more than the digests it was derived from.
                 chmodEvidence = { issued: true, threw: chmodThrew };
 
-                const observed = observeInstalled(targetDir, w.reason, options.diffFn);
+                const observed = observeInstalled(hookPath, w.reason, fsOps);
                 draft.install = {
                     outcome: observed.outcome,
                     reason: observed.reason,
@@ -2040,27 +2079,10 @@ Two of these need an assertion that does not exist yet. Write them first, in Tas
         assert.strictEqual(r.event.install.reason, 'created-managed-hook',
             'the reason describes what was found before the write, not what the exception suggests');
 
-        // A failure BEFORE any write was issued is not an issued write: no chmod
-        // call, and no chmod field. Otherwise a read failure would be recorded as
-        // though the artifact had been touched.
-        const repo2 = tmp('prewrite');
-        execFileSync('git', ['-C', repo2, 'init', '-q'], { stdio: 'ignore' });
-        fs.writeFileSync(path.join(repo2, '.git', 'hooks', 'post-commit'), '#!/bin/sh\n');
-        let chmodCalls = 0;
-        const preFail = Object.create(fs);
-        preFail.readFileSync = (p, enc) => {
-            if (String(p).endsWith('post-commit')) throw Object.assign(new Error('denied'), { code: 'EACCES' });
-            return fs.readFileSync(p, enc);
-        };
-        preFail.chmodSync = (...a) => { chmodCalls += 1; return fs.chmodSync(...a); };
-        const r2 = installPostCommitHook(repo2, { fsOps: preFail });
-        assert.strictEqual(r2.event.install.reason, 'pre-write-observation-failed');
-        assert.strictEqual(r2.event.install.outcome, 'indeterminate');
-        assert.strictEqual(r2.event.install.chmod, undefined,
-            'a pre-write read failure records no chmod: the write was never issued');
-        assert.strictEqual(chmodCalls, 0, 'and chmod is never called on that path');
-        assert.strictEqual(r2.event.install.expectedBodyDigest, undefined);
-        assert.strictEqual(r2.event.runnability, undefined);
+        // The pre-write phase is NOT duplicated here. HP25 owns it. A second
+        // pre-write controller in this block would absorb every mutation aimed at
+        // the pre-write branch — HP21 runs first, so the red would land here
+        // instead of on the property HP25 exists to guard.
     }
 
     console.log('HP25. producer: a failed pre-write observation does not swallow the intent (ac16) ...');
@@ -2181,13 +2203,32 @@ Two of these need an assertion that does not exist yet. Write them first, in Tas
         assert.strictEqual(a.event.runnability, undefined,
             'an unrealized event carries no runnability');
 
-        // B. The post-write observation itself cannot run.
+        // B. The write is issued, and the artifact then becomes UNREADABLE. This
+        //    is the row that decides whether the errno rule survives all the way
+        //    to realization: an observer built on existsSync would call this
+        //    `no-hook` and record unrealized/write-failed — a failure to observe
+        //    impersonating a fact. The injection targets the real observer, not a
+        //    stubbed-out one, so it also proves the producer does not route
+        //    realization through diffInstalledHook.
         const repoB = tmp('phase23b');
         execFileSync('git', ['-C', repoB, 'init', '-q'], { stdio: 'ignore' });
-        const b = installPostCommitHook(repoB, {
-            diffFn: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
-        });
-        assert.strictEqual(b.event.install.outcome, 'indeterminate');
+        const hookB = path.join(repoB, '.git', 'hooks', 'post-commit');
+        let written = false;
+        const blind = Object.create(fs);
+        blind.writeFileSync = (p, data, enc) => {
+            const out = fs.writeFileSync(p, data, enc);
+            if (String(p) === hookB) written = true;
+            return out;
+        };
+        blind.readFileSync = (p, enc) => {
+            if (written && String(p) === hookB) {
+                throw Object.assign(new Error('denied'), { code: 'EACCES' });
+            }
+            return fs.readFileSync(p, enc);
+        };
+        const b = installPostCommitHook(repoB, { fsOps: blind });
+        assert.strictEqual(b.event.install.outcome, 'indeterminate',
+            'an unreadable artifact after an issued write is a failure to observe, not unrealized');
         assert.strictEqual(b.event.install.reason, 'post-write-observation-failed');
         assert.deepStrictEqual(b.event.install.chmod, { attempted: true, threw: false },
             'phase-2/3 again: a failed observation after an issued write still carries chmod');
@@ -2281,15 +2322,16 @@ Three of these must be built as **neutral** mutations. Letting a branch "fall th
 | M14c | in the `SCOPE-UNRESOLVED` / `OWNER-UNRESOLVED` branch, replace the `throw` with `legacyInstallPostCommitHook(targetDir); return { topology: topo.state, provenance: 'not-attempted', artifactContent: 'not-observed', chmodEvidence: null, event: null };` — granting it the nested exception rather than crashing | HP16b "SCOPE-UNRESOLVED grants no legacy exception: the hook is byte-identical" |
 | M14d | move the `participation === 'participating'` check after the legacy call in the `NESTED-TARGET` branch | HP16c "a nested opt-out still refuses the hook" — a **Task 6** guard, because HP20 does not exist until Task 7 and a mutation cannot be run against a test that has not been written |
 | M15 | set `outcome = 'unrealized', reason = 'write-failed'` in the write's catch and skip `observeInstalled` | HP21 "a thrown write whose bytes landed must not be recorded as unrealized" |
-| M15b | derive the reason after the write from `diffInstalledHook` instead of from what was found before it | HP21 "the reason describes what was found before the write" |
-| M15c | chmod on the `pre-write` phase too | HP21 "and chmod is never called on that path" |
+| M15b | derive the `realized` reason after the write from the observed content instead of from what `writeManagedHook` found before it — e.g. always `'updated-managed-block'` | HP21 "the reason describes what was found before the write" |
+| M15c | chmod on the `pre-write` phase too | HP25 "chmod is never called" |
 | M15d | in the `pre-write` branch, record `post-write-observation-failed` instead | HP25 "install.reason is pre-write-observation-failed" |
-| M15e | in the `pre-write` branch, commit the event but derive `current` from the install outcome instead of the intent — a change confined to the supersession property. Returning early instead would kill HP21's pre-write block first, on the line that dereferences `r2.event.install` | HP25 "a failed install must not swallow the intent that superseded the opt-out" |
+| M15e | in the `pre-write` branch, return before `appendEvent` instead of recording. HP25 is now the only pre-write controller, so nothing earlier absorbs this; deriving `current` from the outcome instead would be rejected by C-2c inside `appendEvent` and never reach the assertion | HP25 "exactly one event is committed" |
 | M16 | after `appendEvent` returns, add `fsOps.writeFileSync(hookPath, buildHookBody())` — an artifact write following the commit, leaving every earlier step untouched. Simply hoisting `appendEvent` above the write instead would hand the validator a draft with no `install`, so the commit would be rejected and the run would die before HP22's order assertion ran | HP22 "the provenance commit is the last write of the invocation" |
 | M16d | replace `compareArtifact(preImage, digestFile(...))` with the literal `'modified'` | HP24 "artifactContent reports unchanged when no byte changed" |
-| M18 | in the post-write branch, use `w.threw ? 'unrealized' : 'realized'` instead of consulting `observeInstalled` | HP26 "a write that returned success but did not establish the expected body is write-failed" |
-| M19 | map a thrown `diffFn` to `unrealized / write-failed` | HP26 "install.reason is post-write-observation-failed" |
-| M20 | in the `appendEvent` catch, rethrow `err` unchanged instead of the enriched error | HP27 "the artifact dimension is reported as the fact it is, beside the provenance failure" |
+| M18 | in the post-write branch, use `w.threw ? 'unrealized' : 'realized'` instead of consulting `observeInstalled` | HP26-A "a write that returned success but did not establish the expected body is write-failed" |
+| M19 | in `observeInstalled`, map **every** read error to `unrealized / write-failed` instead of only `ENOENT` | HP26-B "an unreadable artifact after an issued write is a failure to observe, not unrealized" — the first assertion of that block, which is the outcome |
+| M19b | implement `observeInstalled` as `diffInstalledHook(targetDir)` with the old status mapping, reintroducing `existsSync` | HP26-B, same assertion |
+| M20 | in the `appendEvent` catch, drop only `e.artifactContent` while keeping `provenance` and `chmodEvidence` | HP27 "the artifact dimension is reported as the fact it is, beside the provenance failure" — rethrowing `err` unchanged instead would fail first on `caught.provenance === 'failed'` |
 | M16b | add a `fsOps.statSync(hookPath)` immediately after `appendEvent` returns | HP23 "no fallible operation may follow the commit rename" |
 
 - [ ] **Step 7: Commit**
@@ -2449,7 +2491,7 @@ Create `docs/validation/hook-install-provenance-ac-matrix.md` with one row per a
 
 - [ ] **Step 4: Record the mutation results**
 
-In the same document, one table with **every mutation ID declared by Tasks 1–7** — not a hardcoded range, since the set grew during review and a literal `M1–M17` would silently omit the later ones. Collect the IDs by grepping the plan's mutation tables and assert the count matches; **expected count = 40**. A missing row fails the step rather than relying on someone counting by hand.
+In the same document, one table with **every mutation ID declared by Tasks 1–7** — not a hardcoded range, since the set grew during review and a literal `M1–M17` would silently omit the later ones. Collect the IDs by grepping the plan's mutation tables and assert the count matches; **expected count = 42**. A missing row fails the step rather than relying on someone counting by hand.
 
 Each row records `exit`, `guardHit` (did the *intended* assertion fail, not merely some assertion), the failing assertion text, and the restoration proof (sha256 of the source before mutating and after restoring, and mirror equality). Any row with `guardHit = false` is redesigned and re-run; it must not be counted as effective. Where a control cannot be falsified on this host — as with anything depending on `sh` and `bash` being different binaries, which they are not under msys — record it as *not falsifiable here* and name the CI leg that does falsify it. Never count it as effective.
 
