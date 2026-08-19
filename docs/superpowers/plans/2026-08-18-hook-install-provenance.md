@@ -1045,9 +1045,7 @@ Satisfies ac5, ac6, ac7, ac8.
         const { observeInterpreter } = require('../hook-provenance/observe');
         const root = tmp('interp');
 
-        const shHook = path.join(root, 'sh'); fs.writeFileSync(shHook, '#!/bin/sh
-exit 0
-');
+        const shHook = path.join(root, 'sh'); fs.writeFileSync(shHook, '#!/bin/sh\nexit 0\n');
         const sh = observeInterpreter(shHook);
         // On a host with no /bin/sh the honest answer is no-safe-parser, not a
         // verdict; asserting `satisfied` unconditionally would demand a fact the
@@ -1069,10 +1067,7 @@ exit 0
         // that path happens not to exist.
         const declared = path.join(root, 'fake-prefix', 'bash');
         const bashHook = path.join(root, 'bash');
-        fs.writeFileSync(bashHook, `#!${declared}
-a=(one two)
-echo "${'${a[0]}'}"
-`);
+        fs.writeFileSync(bashHook, '#!' + declared + '\na=(one two)\necho "${a[0]}"\n');
         const invoked = [];
         const statted = [];
         const spy = Object.create(fs);
@@ -1087,14 +1082,11 @@ echo "${'${a[0]}'}"
 
         // Not a supported shell family. One token, absolute, so it parses — and
         // then fails on the family, which is a positive fact about the hook.
-        const py = path.join(root, 'py'); fs.writeFileSync(py, '#!/usr/bin/python3
-print(1)
-');
+        const py = path.join(root, 'py'); fs.writeFileSync(py, '#!/usr/bin/python3\nprint(1)\n');
         assert.deepStrictEqual(observeInterpreter(py),
             { verdict: 'not-satisfied', reason: 'incompatible-interpreter', shebang: '#!/usr/bin/python3' });
 
-        const none = path.join(root, 'none'); fs.writeFileSync(none, 'echo hi
-');
+        const none = path.join(root, 'none'); fs.writeFileSync(none, 'echo hi\n');
         assert.strictEqual(observeInterpreter(none).verdict, 'indeterminate');
         assert.strictEqual(observeInterpreter(none).reason, 'missing-shebang');
 
@@ -1102,9 +1094,7 @@ print(1)
         // same-named binary found on PATH would report satisfied for a hook Git
         // cannot execute at all — a fabricated positive.
         const ghost = path.join(root, 'ghost');
-        fs.writeFileSync(ghost, '#!/opt/definitely-not-here/bash
-exit 0
-');
+        fs.writeFileSync(ghost, '#!/opt/definitely-not-here/bash\nexit 0\n');
         const g = observeInterpreter(ghost);
         assert.strictEqual(g.verdict, 'indeterminate',
             'a declared interpreter that is not present must not be answered by a PATH lookalike');
@@ -1125,13 +1115,16 @@ exit 0
             ['bashopt', '#!/bin/bash --definitely-invalid-option'],
         ]) {
             const p = path.join(root, name);
-            fs.writeFileSync(p, `${line}
-exit 0
-`);
+            fs.writeFileSync(p, line + '\nexit 0\n');
             const v = observeInterpreter(p);
-            assert.strictEqual(v.verdict, 'indeterminate',
-                `${line} is not a form v1 can prove end to end, so it is indeterminate`);
-            assert.strictEqual(v.reason, 'ambiguous-interpreter', `reason for ${line}`);
+            // reason FIRST, deliberately. Several of these forms would still be
+            // `indeterminate` under a broken parser — `#!bash` that slipped past
+            // the absolute check merely fails the presence gate and lands on
+            // no-safe-parser — so asserting the verdict first would leave the
+            // mutations aimed here with no guard they can actually turn red.
+            assert.strictEqual(v.reason, 'ambiguous-interpreter',
+                `${line} is not a form v1 can prove end to end, so it is ambiguous`);
+            assert.strictEqual(v.verdict, 'indeterminate', `verdict for ${line}`);
         }
     }
 
@@ -1364,10 +1357,10 @@ Expected: PASS.
 | M9 | compare `res.stdout` to `targetPath` instead of its dirname | HP12 "must be satisfied, not a directory-vs-file mismatch" |
 | M10 | spawn `path.basename(parsed.entry)` instead of the declared entry, letting PATH resolve it | HP11 "the syntax check runs through that SAME declared entry" |
 | M10b | return a constant `satisfied` from `observeExecutable` | HP10 "v1 has no qualified executable predicate on any host" |
-| M10c | drop the `statSync` presence gate | HP11 "a declared interpreter that is not present must not be answered by a PATH lookalike" |
-| M10e | drop the `path.isAbsolute` requirement from `parseShebang` | HP11 "`#!bash` is not a form v1 can prove end to end" |
-| M10d | re-admit the two-token env form in `parseShebang`, returning the second token as the interpreter | HP11 "`#!/usr/bin/env bash` is not a form v1 can prove end to end" |
-| M10f | relax `words.length !== 1` to `words.length < 1`, dropping trailing tokens | HP11 "`#!/bin/bash --definitely-invalid-option` is not a form v1 can prove end to end" |
+| M10c | drop the `statSync` presence gate | HP11 "presence is established for the DECLARED entry" — the positive controller asserts the gate directly and so goes red first; the ghost case is a second, weaker witness |
+| M10e | drop the `path.isAbsolute` requirement from `parseShebang` | HP11 "`#!bash` is not a form v1 can prove end to end" — the reason assertion. The verdict stays `indeterminate` under this mutation (the presence gate rejects a bare `bash`), so only the reason can witness it |
+| M10d | re-admit the two-token env form in `parseShebang`, returning the second token as the interpreter | HP11 "`#!/usr/bin/env bash` is not a form v1 can prove end to end" — the reason assertion, which now runs first |
+| M10f | relax `words.length !== 1` to `words.length < 1`, dropping trailing tokens | HP11 "`#!/bin/bash --definitely-invalid-option` is not a form v1 can prove end to end" — the reason assertion. Whether the verdict also changes depends on whether this host has /bin/bash, so the verdict is not a host-independent guard and the reason is |
 | M6b | drop `'-C', targetDir` from the **locator** query only | HP12b "must be B's, even when the caller stands in A" |
 
 - [ ] **Step 6: Commit**
@@ -2471,6 +2464,18 @@ git commit -m "feat(cli): --no-hooks is the authority for explicit non-participa
 **Files:**
 - Create: `docs/validation/hook-install-provenance-ac-matrix.md`
 - Verify: every file under `templates/cli/hook-provenance/` and `templates/cli/test/hook-provenance.js` against its mirror
+
+- [ ] **Step 0: Syntax-check every JS fence in this plan**
+
+Extract each ```js fence to a temp file and run `node --check` on it. This plan's
+code blocks were twice damaged by tooling that collapsed backslashes, turning
+`'#!/bin/sh\n…'` into a string literal broken across real newlines — a defect no
+amount of reading catches reliably and that would fail the whole suite with a
+`SyntaxError` before a single assertion ran.
+
+Exactly one fence is a deliberate fragment rather than a program: the single
+`.option('--no-hooks', …)` line in Task 7 Step 3, which is shown as the line to
+add beside `index.js:95`. Every other fence must parse. Record the count.
 
 - [ ] **Step 1: Prove the mirrors are byte-identical**
 
