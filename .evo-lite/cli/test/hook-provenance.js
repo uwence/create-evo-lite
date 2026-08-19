@@ -80,6 +80,31 @@ async function runHookProvenanceTests() {
             'a permission failure during resolution must be UNESTABLISHED');
     }
 
+    console.log('HP3b. path identity: the NATIVE resolver is the one consulted ...');
+    {
+        // Post-approval evidence amendment. Every other fixture resolves
+        // identically through fs.realpathSync and fs.realpathSync.native — the
+        // boom mock makes both throw, and real directories resolve the same way
+        // either way — so nothing here could catch a regression to the pure-JS
+        // resolver. That choice was deliberate (see the same reasoning at
+        // templates/cli/takeover-receipt.js:16): only the native call returns the
+        // on-disk casing that the case rule in HP1 depends on, which makes this
+        // gap the one that would hide the other.
+        //
+        // Here the two resolvers disagree, so the verdict itself reveals which
+        // one was asked.
+        const calls = { base: 0, native: 0 };
+        const split = {
+            realpathSync: Object.assign(
+                () => { calls.base += 1; return '/conflated'; },
+                { native: (p) => { calls.native += 1; return `/native${p}`; } }),
+        };
+        assert.strictEqual(pathIdentity('/x/a', '/x/b', split), 'DISTINCT',
+            'the verdict must follow realpathSync.native, which separates these, not the base resolver, which conflates them');
+        assert.strictEqual(calls.base, 0, 'the pure-JS resolver must never be consulted');
+        assert.strictEqual(calls.native, 2, 'both sides are resolved through the native resolver');
+    }
+
     console.log('--- hook-provenance tests passed! ---');
 }
 
