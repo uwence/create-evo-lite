@@ -1061,18 +1061,21 @@ Satisfies ac5, ac6, ac7, ac8.
         // mutation could never be falsified there. Observing the argv makes this
         // control host-independent.
         //
-        // The entry path is fabricated and both fs calls are injected, so the
-        // control does not depend on this host having any particular shell
+        // The declared entry is a FIXED supported path, and both fs calls are
+        // injected, so the control does not depend on this host having that shell
         // installed — otherwise a CORRECT implementation would fail it wherever
-        // that path happens not to exist.
-        const declared = path.join(root, 'fake-prefix', 'bash');
+        // /bin/bash happens not to exist. Fabricating a path under the temp root
+        // instead, as an earlier draft did, would prove nothing: the control would
+        // only show that the implementation stats and spawns the same string,
+        // which is true of a basename allowlist too.
+        const declared = '/bin/bash';
         const bashHook = path.join(root, 'bash');
         fs.writeFileSync(bashHook, '#!' + declared + '\na=(one two)\necho "${a[0]}"\n');
         const invoked = [];
         const statted = [];
         const spy = Object.create(fs);
         spy.statSync = (p) => { statted.push(String(p)); return { isFile: () => true }; };
-        spy.__execFileSync = (bin, args) => { invoked.push(bin); return ''; };
+        spy.__execFileSync = (bin) => { invoked.push(bin); return ''; };
         const b = observeInterpreter(bashHook, spy);
         assert.deepStrictEqual(statted, [declared],
             'presence is established for the DECLARED entry, not for a name resolved elsewhere');
@@ -1080,34 +1083,41 @@ Satisfies ac5, ac6, ac7, ac8.
             `the syntax check runs through that SAME declared entry (saw ${invoked.join(', ')})`);
         assert.strictEqual(b.verdict, 'satisfied');
 
-        // Not a supported shell family. One token, absolute, so it parses — and
-        // then fails on the family, which is a positive fact about the hook.
-        const py = path.join(root, 'py'); fs.writeFileSync(py, '#!/usr/bin/python3\nprint(1)\n');
-        assert.deepStrictEqual(observeInterpreter(py),
-            { verdict: 'not-satisfied', reason: 'incompatible-interpreter', shebang: '#!/usr/bin/python3' });
+        // A qualified entry that is not present. This is the only route to
+        // no-safe-parser now that unqualified paths are ambiguous, so it is
+        // injected rather than relying on a path this host happens to lack.
+        const absent = Object.create(fs);
+        absent.statSync = () => { throw Object.assign(new Error('nope'), { code: 'ENOENT' }); };
+        assert.deepStrictEqual(observeInterpreter(bashHook, absent),
+            { verdict: 'indeterminate', reason: 'no-safe-parser', shebang: '#!' + declared },
+            'a qualified interpreter that is not present is indeterminate, never satisfied');
+
+        // The one route to not-satisfied in v1: a qualified, present interpreter
+        // rejects the body's syntax. `incompatible-interpreter` is unreachable
+        // here by design — see the note in observe.js.
+        const rejecting = Object.create(fs);
+        rejecting.statSync = () => ({ isFile: () => true });
+        rejecting.__execFileSync = () => { throw Object.assign(new Error('parse error'), { status: 2 }); };
+        assert.deepStrictEqual(observeInterpreter(bashHook, rejecting),
+            { verdict: 'not-satisfied', reason: 'syntax-rejected', shebang: '#!' + declared });
 
         const none = path.join(root, 'none'); fs.writeFileSync(none, 'echo hi\n');
         assert.strictEqual(observeInterpreter(none).verdict, 'indeterminate');
         assert.strictEqual(observeInterpreter(none).reason, 'missing-shebang');
 
-        // The shebang names an ABSOLUTE interpreter that does not exist. Running a
-        // same-named binary found on PATH would report satisfied for a hook Git
-        // cannot execute at all — a fabricated positive.
-        const ghost = path.join(root, 'ghost');
-        fs.writeFileSync(ghost, '#!/opt/definitely-not-here/bash\nexit 0\n');
-        const g = observeInterpreter(ghost);
-        assert.strictEqual(g.verdict, 'indeterminate',
-            'a declared interpreter that is not present must not be answered by a PATH lookalike');
-        assert.strictEqual(g.reason, 'no-safe-parser');
-
-        // Every form v1 cannot prove end to end is ambiguous — including the env
-        // wrapper, which v1 deliberately does not support. Measured: `#!env bash`
-        // exits 127 ("required file not found") while a PATH bash would answer
-        // satisfied, and a /tmp/env that exists without the executable bit passes
-        // stat while the hook exits 126. Neither is a state this observer may turn
-        // into a positive verdict.
+        // Every form v1 cannot prove end to end is ambiguous — the env wrapper,
+        // which v1 deliberately does not support; any trailing token; a relative
+        // entry; and any absolute path outside the supported set, however it is
+        // named. Measured: `#!env bash` exits 127 ("required file not found")
+        // while a PATH bash would answer satisfied; a /tmp/env that exists without
+        // the executable bit passes stat while the hook exits 126; and a stub at
+        // <tmp>/fake/bash that ignores its arguments and exits 0 passes a basename
+        // check, a stat and a `-n` spawn while being no shell at all. None of
+        // these is a state this observer may turn into a positive verdict.
         for (const [name, line] of [
             ['relbash', '#!bash'],
+            ['tmpbash', '#!/tmp/tools/bash'],
+            ['py', '#!/usr/bin/python3'],
             ['barenv', '#!env bash'],
             ['envbash', '#!/usr/bin/env bash'],
             ['envs', '#!/usr/bin/env -S bash -e'],
@@ -1240,7 +1250,20 @@ function observeExecutable(_hookPath, _fsOps = fs) {
         predicate: null, qualification: 'unavailable' };
 }
 
-const SH_FAMILY = ['sh', 'bash', 'dash', 'ash', 'ksh', 'zsh'];
+// v1 qualifies an interpreter by its EXACT declared path, never by basename.
+// A file named `bash` is not thereby a Bash. Measured: a stub at
+// <tmp>/fake/bash that ignores its arguments and exits 0 passes a basename
+// check, passes stat, and passes a `-n` spawn — yielding `satisfied` for a hook
+// no shell ever validated. Worse, reaching that verdict means having EXECUTED an
+// unidentified program, which is outside Class 2's grant of read, parse and
+// syntax-check.
+//
+// So the qualification is an allowlist of paths whose identity this contract is
+// willing to assume, and it holds exactly the two the managed hook itself uses
+// or could plausibly be written with. Everything else — `/tmp/bash`,
+// `/opt/custom/bash`, `/usr/bin/python3` — is unqualified, and unqualified is
+// ambiguous, not a verdict.
+const SUPPORTED_ENTRIES = ['/bin/sh', '/bin/bash'];
 
 // Resolve what the shebang ACTUALLY declares. `entry` is the program the kernel
 // starts, and in v1 it is also the program consulted for the aligned `-n` check —
@@ -1252,9 +1275,11 @@ const SH_FAMILY = ['sh', 'bash', 'dash', 'ash', 'ksh', 'zsh'];
 //   a single token, absolute → { entry: t0 }
 //   anything else            → null → ambiguous-interpreter → indeterminate
 //
-// So `#!/bin/sh` and `#!/bin/bash` are provable, and `#!bash`, `#!env bash`,
-// `#!/usr/bin/env bash`, `#!/usr/bin/env -S bash -e` and
-// `#!/bin/bash --definitely-invalid-option` are all ambiguous.
+// The entry is then qualified against SUPPORTED_ENTRIES below, so `#!/bin/sh`
+// and `#!/bin/bash` are provable while `#!bash`, `#!env bash`,
+// `#!/usr/bin/env bash`, `#!/usr/bin/env -S bash -e`,
+// `#!/bin/bash --definitely-invalid-option` and `#!/tmp/tools/bash` are all
+// ambiguous.
 //
 // Both restrictions are load-bearing, and each has a measured counterexample.
 // Dropping trailing tokens turns `#!/bin/bash --definitely-invalid-option` into a
@@ -1291,9 +1316,15 @@ function observeInterpreter(hookPath, fsOps = fs) {
     const parsed = parseShebang(first);
     if (!parsed) return { verdict: 'indeterminate', reason: 'ambiguous-interpreter', shebang: first };
 
-    if (!SH_FAMILY.includes(path.basename(parsed.entry))) {
-        // A byte-correct managed block under a python shebang is still inert.
-        return { verdict: 'not-satisfied', reason: 'incompatible-interpreter', shebang: first };
+    if (!SUPPORTED_ENTRIES.includes(parsed.entry)) {
+        // Includes `#!/usr/bin/python3`. v1 does NOT report that as
+        // incompatible-interpreter: a path named python3 is no more proof of
+        // Python than one named bash is proof of Bash, and "positively
+        // incompatible" is a claim, not an absence. `incompatible-interpreter`
+        // is therefore unreachable in v1 — the same shape as `executable`, which
+        // stands at indeterminate because no qualified predicate exists yet.
+        // `not-satisfied` stays reachable through `syntax-rejected`.
+        return { verdict: 'indeterminate', reason: 'ambiguous-interpreter', shebang: first };
     }
 
     // The declared entry is the program the kernel will start; establish that it
@@ -1357,8 +1388,8 @@ Expected: PASS.
 | M9 | compare `res.stdout` to `targetPath` instead of its dirname | HP12 "must be satisfied, not a directory-vs-file mismatch" |
 | M10 | spawn `path.basename(parsed.entry)` instead of the declared entry, letting PATH resolve it | HP11 "the syntax check runs through that SAME declared entry" |
 | M10b | return a constant `satisfied` from `observeExecutable` | HP10 "v1 has no qualified executable predicate on any host" |
-| M10c | drop the `statSync` presence gate | HP11 "presence is established for the DECLARED entry" — the positive controller asserts the gate directly and so goes red first; the ghost case is a second, weaker witness |
-| M10e | drop the `path.isAbsolute` requirement from `parseShebang` | HP11 "`#!bash` is not a form v1 can prove end to end" — the reason assertion. The verdict stays `indeterminate` under this mutation (the presence gate rejects a bare `bash`), so only the reason can witness it |
+| M10c | drop the `statSync` presence gate | HP11 "presence is established for the DECLARED entry" — the positive controller asserts the gate directly and so goes red first; the injected-absent case is a second witness |
+| M10e | replace the exact `SUPPORTED_ENTRIES` qualification with a basename check against a shell-family list — the degradation this contract exists to prevent, since a path named `bash` is not a Bash | HP11 "`#!/tmp/tools/bash` is not a form v1 can prove end to end". Note this subsumes the older `path.isAbsolute` mutation: dropping that check leaves `#!bash` failing the allowlist anyway, so it had no guard that could witness it |
 | M10d | re-admit the two-token env form in `parseShebang`, returning the second token as the interpreter | HP11 "`#!/usr/bin/env bash` is not a form v1 can prove end to end" — the reason assertion, which now runs first |
 | M10f | relax `words.length !== 1` to `words.length < 1`, dropping trailing tokens | HP11 "`#!/bin/bash --definitely-invalid-option` is not a form v1 can prove end to end" — the reason assertion. Whether the verdict also changes depends on whether this host has /bin/bash, so the verdict is not a host-independent guard and the reason is |
 | M6b | drop `'-C', targetDir` from the **locator** query only | HP12b "must be B's, even when the caller stands in A" |
