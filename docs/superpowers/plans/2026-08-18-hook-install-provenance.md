@@ -1045,7 +1045,9 @@ Satisfies ac5, ac6, ac7, ac8.
         const { observeInterpreter } = require('../hook-provenance/observe');
         const root = tmp('interp');
 
-        const shHook = path.join(root, 'sh'); fs.writeFileSync(shHook, '#!/bin/sh\nexit 0\n');
+        const shHook = path.join(root, 'sh'); fs.writeFileSync(shHook, '#!/bin/sh
+exit 0
+');
         const sh = observeInterpreter(shHook);
         // On a host with no /bin/sh the honest answer is no-safe-parser, not a
         // verdict; asserting `satisfied` unconditionally would demand a fact the
@@ -1054,49 +1056,45 @@ Satisfies ac5, ac6, ac7, ac8.
             || (sh.verdict === 'indeterminate' && sh.reason === 'no-safe-parser'),
             `a valid sh hook is satisfied where sh exists, otherwise no-safe-parser (got ${JSON.stringify(sh)})`);
 
-        // "Aligned" is asserted on WHICH interpreter was invoked, not on a grammar
+        // "Aligned" is asserted on WHICH binary was consulted, not on a grammar
         // difference between sh and bash. Measured on the Windows/msys development
         // host, `sh` IS bash (GNU bash 5.2.37), so every syntax-difference fixture
         // — including array literals — exits 0 under both, and a hardcoded `sh -n`
         // mutation could never be falsified there. Observing the argv makes this
         // control host-independent.
-        // `#!/usr/bin/env bash` separates the two roles: entry /usr/bin/env,
-        // parser bash. The entry still passes the presence gate, so the control
-        // injects a satisfying statSync rather than depending on this host having
-        // a stat-able /usr/bin/env — otherwise a CORRECT implementation would fail
-        // the control on hosts that lack it, and `invoked` would stay empty.
+        //
+        // The entry path is fabricated and both fs calls are injected, so the
+        // control does not depend on this host having any particular shell
+        // installed — otherwise a CORRECT implementation would fail it wherever
+        // that path happens not to exist.
+        const declared = path.join(root, 'fake-prefix', 'bash');
         const bashHook = path.join(root, 'bash');
-        fs.writeFileSync(bashHook, '#!/usr/bin/env bash\na=(one two)\necho "${a[0]}"\n');
+        fs.writeFileSync(bashHook, `#!${declared}
+a=(one two)
+echo "${'${a[0]}'}"
+`);
         const invoked = [];
         const statted = [];
         const spy = Object.create(fs);
         spy.statSync = (p) => { statted.push(String(p)); return { isFile: () => true }; };
-        spy.__execFileSync = (bin, args, opts) => {
-            invoked.push(bin);
-            return require('child_process').execFileSync(bin, args, opts);
-        };
+        spy.__execFileSync = (bin, args) => { invoked.push(bin); return ''; };
         const b = observeInterpreter(bashHook, spy);
-        assert.deepStrictEqual(statted, ['/usr/bin/env'],
-            'the ENTRY interpreter is the one whose presence is established');
-        assert.deepStrictEqual(invoked, ['bash'],
-            `the PARSER named by the shebang is the one consulted (saw ${invoked.join(', ')})`);
-        assert.notStrictEqual(b.verdict, 'not-satisfied',
-            'bash-legal syntax under a bash shebang must not be reported not-satisfied');
+        assert.deepStrictEqual(statted, [declared],
+            'presence is established for the DECLARED entry, not for a name resolved elsewhere');
+        assert.deepStrictEqual(invoked, [declared],
+            `the syntax check runs through that SAME declared entry (saw ${invoked.join(', ')})`);
+        assert.strictEqual(b.verdict, 'satisfied');
 
-        // The same rule applies to env: a PATH bash cannot answer whether the
-        // declared entry exists.
-        const ghostEnv = path.join(root, 'ghostenv');
-        fs.writeFileSync(ghostEnv, '#!/opt/definitely-not-here/env bash\nexit 0\n');
-        const ge = observeInterpreter(ghostEnv);
-        assert.strictEqual(ge.verdict, 'indeterminate',
-            'an absent env entry must not be answered by a PATH bash');
-        assert.strictEqual(ge.reason, 'no-safe-parser');
-
-        const py = path.join(root, 'py'); fs.writeFileSync(py, '#!/usr/bin/env python\nprint(1)\n');
+        // Not a supported shell family. One token, absolute, so it parses — and
+        // then fails on the family, which is a positive fact about the hook.
+        const py = path.join(root, 'py'); fs.writeFileSync(py, '#!/usr/bin/python3
+print(1)
+');
         assert.deepStrictEqual(observeInterpreter(py),
-            { verdict: 'not-satisfied', reason: 'incompatible-interpreter', shebang: '#!/usr/bin/env python' });
+            { verdict: 'not-satisfied', reason: 'incompatible-interpreter', shebang: '#!/usr/bin/python3' });
 
-        const none = path.join(root, 'none'); fs.writeFileSync(none, 'echo hi\n');
+        const none = path.join(root, 'none'); fs.writeFileSync(none, 'echo hi
+');
         assert.strictEqual(observeInterpreter(none).verdict, 'indeterminate');
         assert.strictEqual(observeInterpreter(none).reason, 'missing-shebang');
 
@@ -1104,26 +1102,35 @@ Satisfies ac5, ac6, ac7, ac8.
         // same-named binary found on PATH would report satisfied for a hook Git
         // cannot execute at all — a fabricated positive.
         const ghost = path.join(root, 'ghost');
-        fs.writeFileSync(ghost, '#!/opt/definitely-not-here/bash\nexit 0\n');
+        fs.writeFileSync(ghost, '#!/opt/definitely-not-here/bash
+exit 0
+');
         const g = observeInterpreter(ghost);
         assert.strictEqual(g.verdict, 'indeterminate',
             'a declared interpreter that is not present must not be answered by a PATH lookalike');
         assert.strictEqual(g.reason, 'no-safe-parser');
 
-        // Any form v1 cannot prove completely is ambiguous. The contract says an
-        // unparseable interpreter is indeterminate, never a manufactured
-        // incompatible-interpreter and never a satisfied.
+        // Every form v1 cannot prove end to end is ambiguous — including the env
+        // wrapper, which v1 deliberately does not support. Measured: `#!env bash`
+        // exits 127 ("required file not found") while a PATH bash would answer
+        // satisfied, and a /tmp/env that exists without the executable bit passes
+        // stat while the hook exits 126. Neither is a state this observer may turn
+        // into a positive verdict.
         for (const [name, line] of [
+            ['relbash', '#!bash'],
+            ['barenv', '#!env bash'],
+            ['envbash', '#!/usr/bin/env bash'],
             ['envs', '#!/usr/bin/env -S bash -e'],
             ['envopt', '#!/usr/bin/env bash -e'],
             ['bashopt', '#!/bin/bash --definitely-invalid-option'],
-            ['barenv', '#!env bash'],
         ]) {
             const p = path.join(root, name);
-            fs.writeFileSync(p, `${line}\nexit 0\n`);
+            fs.writeFileSync(p, `${line}
+exit 0
+`);
             const v = observeInterpreter(p);
             assert.strictEqual(v.verdict, 'indeterminate',
-                `${line} is not a form v1 can prove, so it is indeterminate`);
+                `${line} is not a form v1 can prove end to end, so it is indeterminate`);
             assert.strictEqual(v.reason, 'ambiguous-interpreter', `reason for ${line}`);
         }
     }
@@ -1242,38 +1249,40 @@ function observeExecutable(_hookPath, _fsOps = fs) {
 
 const SH_FAMILY = ['sh', 'bash', 'dash', 'ash', 'ksh', 'zsh'];
 
-// Resolve what the shebang ACTUALLY declares, separating the two roles the line
-// can carry. `entry` is the program the kernel starts — the only thing whose
-// presence decides whether the hook can run at all. `parser` is the shell whose
-// grammar the body is written in, used for the aligned `-n` check.
-//   #!/bin/sh              → { entry: '/bin/sh',      parser: '/bin/sh' }
-//   #!/usr/bin/env bash    → { entry: '/usr/bin/env', parser: 'bash' }
-//   #!/usr/bin/env -S bash → null   (option-bearing env; not parsed here)
-// v1 supports only the two forms it can prove completely, by EXACT token count.
-// Anything else is ambiguous, and ambiguous is indeterminate.
+// Resolve what the shebang ACTUALLY declares. `entry` is the program the kernel
+// starts, and in v1 it is also the program consulted for the aligned `-n` check —
+// one binary answering for itself, never a stand-in.
 //
-//   1 token, not env    → { entry: t0,   parser: t0 }
-//   2 tokens, env first → { entry: env,  parser: t1 }
-//   everything else     → null
+// v1 recognises exactly ONE positive form, and it is deliberately the narrowest
+// one that can be proved end to end:
 //
-// The token count is load-bearing, not tidiness. Silently dropping trailing
-// tokens turns `#!/bin/bash --definitely-invalid-option` into a plain
-// `/bin/bash -n` check that exits 0, while the hook as declared cannot start at
-// all — a fabricated `satisfied` for an inert hook. Measured: `bash -n` on that
-// file exits 0; executing the file exits 2.
+//   a single token, absolute → { entry: t0 }
+//   anything else            → null → ambiguous-interpreter → indeterminate
+//
+// So `#!/bin/sh` and `#!/bin/bash` are provable, and `#!bash`, `#!env bash`,
+// `#!/usr/bin/env bash`, `#!/usr/bin/env -S bash -e` and
+// `#!/bin/bash --definitely-invalid-option` are all ambiguous.
+//
+// Both restrictions are load-bearing, and each has a measured counterexample.
+// Dropping trailing tokens turns `#!/bin/bash --definitely-invalid-option` into a
+// plain `-n` check that exits 0 while the hook as declared cannot start (running
+// it exits 2). Accepting a relative entry lets `#!env bash` be answered by
+// whatever `bash` is on PATH, while the hook itself exits 127, "required file not
+// found". There is one rule underneath both: the only program that can answer
+// whether the declared interpreter works is that exact declared program.
+//
+// The `env` wrapper is therefore NOT supported in v1. Supporting it honestly
+// would mean proving the whole entry chain — that /usr/bin/env exists AND is
+// executable AND resolves `bash` the way the kernel will — and stat'ing env only
+// to then run a PATH bash proves none of it: a /tmp/env that exists without the
+// executable bit passes stat, `bash -n` succeeds, and the real hook exits 126.
+// The frozen design never required env support; it only forbids manufacturing a
+// positive verdict out of a state we cannot establish.
 function parseShebang(line) {
     const words = line.slice(2).trim().split(/\s+/).filter(Boolean);
-    if (words.length === 1 && path.basename(words[0]) !== 'env') {
-        return { entry: words[0], parser: words[0] };
-    }
-    if (words.length === 2 && path.basename(words[0]) === 'env') {
-        // An option or assignment where the interpreter should be (-S, -i,
-        // NAME=value) puts the real interpreter somewhere this parser will not
-        // guess at.
-        if (words[1].startsWith('-') || words[1].includes('=')) return null;
-        return { entry: words[0], parser: words[1] };
-    }
-    return null;
+    if (words.length !== 1) return null;
+    if (!path.isAbsolute(words[0])) return null;
+    return { entry: words[0] };
 }
 
 function observeInterpreter(hookPath, fsOps = fs) {
@@ -1289,30 +1298,25 @@ function observeInterpreter(hookPath, fsOps = fs) {
     const parsed = parseShebang(first);
     if (!parsed) return { verdict: 'indeterminate', reason: 'ambiguous-interpreter', shebang: first };
 
-    if (!SH_FAMILY.includes(path.basename(parsed.parser))) {
+    if (!SH_FAMILY.includes(path.basename(parsed.entry))) {
         // A byte-correct managed block under a python shebang is still inert.
         return { verdict: 'not-satisfied', reason: 'incompatible-interpreter', shebang: first };
     }
 
-    // An ABSOLUTE entry path is the program the kernel will start. Running some
-    // other program that happens to share a name on PATH would answer a question
-    // about a different binary — reporting satisfied for a hook that cannot start.
-    // This applies to `env` exactly as it applies to a shell: with
-    // `#!/opt/nowhere/env bash`, the entry is /opt/nowhere/env, and a PATH bash
-    // says nothing about whether that file exists.
-    if (path.isAbsolute(parsed.entry)) {
-        try { fsOps.statSync(parsed.entry); }
-        catch (_) { return { verdict: 'indeterminate', reason: 'no-safe-parser', shebang: first }; }
-    }
+    // The declared entry is the program the kernel will start; establish that it
+    // is there before asking it anything.
+    try { fsOps.statSync(parsed.entry); }
+    catch (_) { return { verdict: 'indeterminate', reason: 'no-safe-parser', shebang: first }; }
 
-    // Interpreter-ALIGNED syntax check: a bash hook is checked by bash, so
-    // bash-legal syntax is not reported as a defect. The spawn goes through
-    // fsOps.__execFileSync when present so a test can observe WHICH interpreter
-    // was consulted — on hosts where sh and bash are the same binary a grammar
-    // difference cannot distinguish them, but the argv always can.
+    // Interpreter-ALIGNED syntax check, run through the SAME declared entry: a
+    // bash hook is checked by that bash, so bash-legal syntax is not reported as
+    // a defect. The spawn goes through fsOps.__execFileSync when present so a test
+    // can observe WHICH binary was consulted — on hosts where sh and bash are the
+    // same file a grammar difference cannot distinguish them, but the argv always
+    // can.
     const spawn = fsOps.__execFileSync || execFileSync;
     try {
-        spawn(parsed.parser, ['-n', hookPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+        spawn(parsed.entry, ['-n', hookPath], { stdio: ['ignore', 'ignore', 'pipe'] });
         return { verdict: 'satisfied', reason: null, shebang: first };
     } catch (err) {
         // The parser could not be run at all (absent, not spawnable) — that is a
@@ -1358,12 +1362,12 @@ Expected: PASS.
 |---|---|---|
 | M8 | map every `statSync` throw to `unrealized / hooks-dir-missing` | HP9 "a permission error is a failure to observe" |
 | M9 | compare `res.stdout` to `targetPath` instead of its dirname | HP12 "must be satisfied, not a directory-vs-file mismatch" |
-| M10 | run `sh -n` regardless of the shebang | HP11 "the interpreter named by the shebang is the one consulted" |
+| M10 | spawn `path.basename(parsed.entry)` instead of the declared entry, letting PATH resolve it | HP11 "the syntax check runs through that SAME declared entry" |
 | M10b | return a constant `satisfied` from `observeExecutable` | HP10 "v1 has no qualified executable predicate on any host" |
-| M10c | drop the absolute-entry `statSync` gate | HP11 "must not be answered by a PATH lookalike" |
-| M10e | apply the presence gate to `parsed.parser` instead of `parsed.entry` | HP11 "an absent env entry must not be answered by a PATH bash" |
-| M10d | make `parseShebang` take `words[1]` even when it starts with `-` | HP11 "`#!/usr/bin/env -S bash -e` is not a form v1 can prove" |
-| M10f | relax the exact token counts to `words.length >= 1` / `>= 2`, dropping the trailing tokens | HP11 "`#!/bin/bash --definitely-invalid-option` is not a form v1 can prove" |
+| M10c | drop the `statSync` presence gate | HP11 "a declared interpreter that is not present must not be answered by a PATH lookalike" |
+| M10e | drop the `path.isAbsolute` requirement from `parseShebang` | HP11 "`#!bash` is not a form v1 can prove end to end" |
+| M10d | re-admit the two-token env form in `parseShebang`, returning the second token as the interpreter | HP11 "`#!/usr/bin/env bash` is not a form v1 can prove end to end" |
+| M10f | relax `words.length !== 1` to `words.length < 1`, dropping trailing tokens | HP11 "`#!/bin/bash --definitely-invalid-option` is not a form v1 can prove end to end" |
 | M6b | drop `'-C', targetDir` from the **locator** query only | HP12b "must be B's, even when the caller stands in A" |
 
 - [ ] **Step 6: Commit**
