@@ -1070,7 +1070,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac12",
-      "description": "Within a present install object, targetPath records the intended mutation target and is present on every outcome including unrealized, expectedBodyDigest appears only when the outcome is realized, and chmod appears only when a write was attempted. diagnostic is optional on every event, is permitted on non-participating events, and never feeds any verdict. Every reason value used anywhere belongs to the v1 vocabulary fixed by this spec, and no vocabulary member originates in the implementation.",
+      "description": "Within a present install object, targetPath records the intended mutation target and is present on every outcome including unrealized, expectedBodyDigest appears only when the outcome is realized, and chmod is present if and only if the hook write was issued: it is absent on every phase-1 outcome and present on every phase-2/3 outcome. diagnostic is optional on every event, is permitted on non-participating events, and never feeds any verdict. Every reason value used anywhere belongs to the v1 vocabulary fixed by this spec, and no vocabulary member originates in the implementation.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
