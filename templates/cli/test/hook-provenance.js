@@ -10,6 +10,36 @@ function tmp(name) {
     return fs.mkdtempSync(path.join(os.tmpdir(), `evo-hp-${name}-`));
 }
 
+function validateOk(raw) {
+    const { validateHookProvenanceV1 } = require('../hook-provenance/schema');
+    return validateHookProvenanceV1(raw).ok;
+}
+
+function participatingDoc(S) {
+    const ev = {
+        seq: 1, recordedAt: '2026-08-18T00:00:00.000Z',
+        intent: { participation: 'participating', source: 'scaffold-default' },
+        install: {
+            outcome: 'realized', reason: 'created-managed-hook',
+            targetPath: '/r/.git/hooks/post-commit', expectedBodyDigest: 'sha256:b',
+            chmod: { attempted: true, threw: false },
+        },
+        runnability: {
+            verdict: 'indeterminate',
+            locator: { verdict: 'satisfied', reason: null },
+            executable: { verdict: 'indeterminate', reason: 'no-qualified-predicate' },
+            interpreter: { verdict: 'satisfied', reason: null },
+        },
+        resultingCurrentDigest: S.currentDigest('participating'),
+    };
+    ev.id = S.eventId(ev);
+    return {
+        kind: S.KIND, schemaVersion: S.SCHEMA_VERSION,
+        current: { participation: 'participating', derivedFrom: ev.id },
+        events: [ev],
+    };
+}
+
 async function runHookProvenanceTests() {
     console.log('--- Starting hook-provenance tests ---');
 
@@ -103,6 +133,179 @@ async function runHookProvenanceTests() {
             'the verdict must follow realpathSync.native, which separates these, not the base resolver, which conflates them');
         assert.strictEqual(calls.base, 0, 'the pure-JS resolver must never be consulted');
         assert.strictEqual(calls.native, 2, 'both sides are resolved through the native resolver');
+    }
+
+    console.log('HP4. schema: projection is fixed-length and excludes diagnostic ...');
+    {
+        const S = require('../hook-provenance/schema');
+        const optOut = {
+            seq: 1, id: 'sha256:x', recordedAt: '2026-08-18T00:00:00.000Z',
+            intent: { participation: 'non-participating', source: 'scaffold-no-hooks' },
+            resultingCurrentDigest: S.currentDigest('non-participating'),
+            diagnostic: { gitVersion: '2.48.1' },
+        };
+        const full = JSON.parse(JSON.stringify(optOut));
+        full.intent = { participation: 'participating', source: 'scaffold-default' };
+        full.install = {
+            outcome: 'realized', reason: 'created-managed-hook',
+            targetPath: '/r/.git/hooks/post-commit', expectedBodyDigest: 'sha256:b',
+            chmod: { attempted: true, threw: false },
+        };
+        full.runnability = {
+            verdict: 'indeterminate',
+            locator: { verdict: 'satisfied', reason: null },
+            executable: { verdict: 'indeterminate', reason: 'no-qualified-predicate' },
+            interpreter: { verdict: 'satisfied', reason: null },
+        };
+        full.resultingCurrentDigest = S.currentDigest('participating');
+
+        assert.strictEqual(S.eventProjection(optOut).length, 20, 'projection must be 20 slots');
+        assert.strictEqual(S.eventProjection(full).length, 20,
+            'projection length must not vary with event kind');
+
+        const before = S.eventId(full);
+        full.diagnostic = { gitVersion: '9.9.9', coreFileMode: true, shebang: '#!/bin/bash' };
+        assert.strictEqual(S.eventId(full), before, 'diagnostic must not affect event identity');
+        full.recordedAt = '2026-08-19T00:00:00.000Z';
+        assert.notStrictEqual(S.eventId(full), before, 'recordedAt participates in identity');
+    }
+
+    console.log('HP5. schema: aggregation is mechanical ...');
+    {
+        const { aggregateRunnability } = require('../hook-provenance/schema');
+        const c = v => ({ verdict: v, reason: v === 'satisfied' ? null : 'no-qualified-predicate' });
+        assert.strictEqual(aggregateRunnability({
+            locator: c('satisfied'), executable: c('satisfied'), interpreter: c('satisfied'),
+        }), 'satisfied');
+        assert.strictEqual(aggregateRunnability({
+            locator: c('satisfied'), executable: c('indeterminate'), interpreter: c('satisfied'),
+        }), 'indeterminate');
+        assert.strictEqual(aggregateRunnability({
+            locator: c('not-satisfied'), executable: c('indeterminate'), interpreter: c('satisfied'),
+        }), 'not-satisfied', 'not-satisfied dominates indeterminate');
+    }
+
+    console.log('HP6. validator: the four integrity rules and the shape rules ...');
+    {
+        const S = require('../hook-provenance/schema');
+        const makeDoc = () => {
+            const ev = {
+                seq: 1, recordedAt: '2026-08-18T00:00:00.000Z',
+                intent: { participation: 'non-participating', source: 'scaffold-no-hooks' },
+                resultingCurrentDigest: S.currentDigest('non-participating'),
+            };
+            ev.id = S.eventId(ev);
+            return {
+                kind: S.KIND, schemaVersion: S.SCHEMA_VERSION,
+                current: { participation: 'non-participating', derivedFrom: ev.id },
+                events: [ev],
+            };
+        };
+
+        assert.strictEqual(validateOk(makeDoc()), true, 'a well-formed document must validate');
+
+        // C-2a
+        const a = makeDoc(); a.current.derivedFrom = 'sha256:' + '0'.repeat(64);
+        assert.strictEqual(validateOk(a), false, 'C-2a: derivedFrom must equal the last event id');
+
+        // C-2b + C-2c together: current contradicts the intent that produced it,
+        // while derivedFrom and the digest are both recomputed correctly.
+        const b = makeDoc();
+        b.current.participation = 'participating';
+        b.events[0].resultingCurrentDigest = S.currentDigest('participating');
+        b.events[0].id = S.eventId(b.events[0]);
+        b.current.derivedFrom = b.events[0].id;
+        assert.strictEqual(validateOk(b), false,
+            'C-2c: participating current over a non-participating intent must be rejected');
+
+        // C-2d
+        const d = makeDoc();
+        d.events[0].intent = { participation: 'non-participating', source: 'hook-install-command' };
+        d.events[0].id = S.eventId(d.events[0]);
+        d.current.derivedFrom = d.events[0].id;
+        assert.strictEqual(validateOk(d), false,
+            'C-2d: an explicit install may not be recorded as an explicit opt-out');
+
+        // Conditional shape
+        const e = makeDoc();
+        e.events[0].install = { outcome: 'realized', reason: 'created-managed-hook',
+            targetPath: '/x', expectedBodyDigest: 'sha256:b', chmod: { attempted: true, threw: false } };
+        e.events[0].id = S.eventId(e.events[0]);
+        e.current.derivedFrom = e.events[0].id;
+        assert.strictEqual(validateOk(e), false,
+            'a non-participating event must carry no install');
+
+        // Stored verdict may not overrule the rule that produced it
+        const f = participatingDoc(S);
+        f.events[0].runnability.verdict = 'satisfied';
+        f.events[0].runnability.executable = { verdict: 'not-satisfied',
+            reason: 'predicate-reports-not-executable' };
+        f.events[0].id = S.eventId(f.events[0]);
+        f.current.derivedFrom = f.events[0].id;
+        assert.strictEqual(validateOk(f), false,
+            'runnability.verdict must equal the aggregation of its components');
+
+        // Unknown vocabulary in the last event
+        const g = participatingDoc(S);
+        g.events[0].install.reason = 'already-current';
+        g.events[0].id = S.eventId(g.events[0]);
+        g.current.derivedFrom = g.events[0].id;
+        assert.strictEqual(validateOk(g), false, 'already-current is not a v1 reason');
+
+        // chmod is present if and only if a write was attempted
+        const i = participatingDoc(S);
+        i.events[0].install = { outcome: 'unrealized', reason: 'hooks-dir-missing',
+            targetPath: '/x/post-commit', chmod: { attempted: false, threw: false } };
+        delete i.events[0].runnability;
+        i.events[0].id = S.eventId(i.events[0]);
+        i.current.derivedFrom = i.events[0].id;
+        assert.strictEqual(validateOk(i), false,
+            'a pre-write outcome must carry no chmod: no write was attempted');
+
+        const j = participatingDoc(S);
+        delete j.events[0].install.chmod;
+        j.events[0].id = S.eventId(j.events[0]);
+        j.current.derivedFrom = j.events[0].id;
+        assert.strictEqual(validateOk(j), false,
+            'an outcome that follows an issued write must carry chmod');
+
+        // pre-write-observation-failed is a phase-1 outcome: no write was issued,
+        // so it carries no chmod. This is the member the amendment added, and the
+        // one a reason-list implementation is most likely to put on the wrong side.
+        const pw = participatingDoc(S);
+        pw.events[0].install = { outcome: 'indeterminate', reason: 'pre-write-observation-failed',
+            targetPath: '/r/.git/hooks/post-commit' };
+        delete pw.events[0].runnability;
+        pw.events[0].id = S.eventId(pw.events[0]);
+        pw.current.derivedFrom = pw.events[0].id;
+        assert.strictEqual(validateOk(pw), true,
+            'pre-write-observation-failed with no chmod is a legal v1 event');
+
+        const pwBad = JSON.parse(JSON.stringify(pw));
+        pwBad.events[0].install.chmod = { attempted: true, threw: false };
+        pwBad.events[0].id = S.eventId(pwBad.events[0]);
+        pwBad.current.derivedFrom = pwBad.events[0].id;
+        assert.strictEqual(validateOk(pwBad), false,
+            'and it must not claim a chmod: the write was never issued');
+
+        // current.digest was deleted by the design; the shared validator must not
+        // quietly re-admit it as a third representation of current.participation.
+        const cd = makeDoc();
+        cd.current.digest = S.currentDigest(cd.current.participation);
+        assert.strictEqual(validateOk(cd), false, 'current.digest must not exist');
+
+        // runnability has no top-level reason
+        const k = participatingDoc(S);
+        k.events[0].runnability.reason = 'no-qualified-predicate';
+        k.events[0].id = S.eventId(k.events[0]);
+        k.current.derivedFrom = k.events[0].id;
+        assert.strictEqual(validateOk(k), false, 'runnability must have no top-level reason');
+
+        // Interior events are deliberately not inspected
+        const h = participatingDoc(S);
+        h.events.unshift({ seq: 0, id: 'nonsense', intent: { participation: 'wat', source: 'wat' } });
+        assert.strictEqual(validateOk(h), true,
+            'a malformed interior event must not change the reader state');
     }
 
     console.log('--- hook-provenance tests passed! ---');
