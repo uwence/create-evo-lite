@@ -10,6 +10,8 @@ created: 2026-08-18
 **Backlog:** `[hook-install-provenance]`, prerequisite of `[0ce0] verify-hook-runtime-health`
 **Architecture:** A′ — two orthogonal axes, `provenance × live observation`. Frozen by the human. Alternative B (single health signal) and C (environment-classifier rows) were considered and rejected.
 
+**Amendment history.** `0c22702413ac5ac39e871f2abb7c911ec86074b6` was approved and frozen, then found — during implementation planning, before any production code existed — to have no truthful way to record an observation that fails after the topology gates and before any write is issued. That SHA is **SUPERSEDED BEFORE IMPLEMENTATION**, not extended in place: no producer had shipped and no v1 document had ever been written, so this amendment defines the first implementable v1 rather than growing a released schema. `schemaVersion` therefore stays `1`. Once this producer ships and a v1 document can persist, any further vocabulary change requires `schemaVersion: 2`.
+
 ## Problem
 
 `installPostCommitHook()` returns nothing and records nothing. When it silently
@@ -373,7 +375,10 @@ Beyond the conditional shape above, within a present `install` object:
   that could not be written is the whole value of the record
 - `expectedBodyDigest` is present only when `outcome = realized`; there is no
   digest of a body that was not established
-- `chmod` is present whenever a write was attempted, absent otherwise
+- `chmod` is present if and only if the write was **issued** — that is, on every
+  phase-2/3 outcome and on none of the phase-1 outcomes (see the phase mapping
+  under "Observation primitives"). "Issued", not "attempted": an observation that
+  fails before the write is reached has attempted nothing
 
 `diagnostic` is optional on every event and carries no authority: it is raw
 observation, never a verdict input. It is permitted on `non-participating` events
@@ -499,7 +504,8 @@ install.reason
   realized       created-managed-hook | updated-managed-block
                  | appended-managed-block
   unrealized     hooks-dir-missing | hooks-dir-not-directory | write-failed
-  indeterminate  hooks-dir-unobservable | post-write-observation-failed
+  indeterminate  hooks-dir-unobservable | pre-write-observation-failed
+                 | post-write-observation-failed
 
 locator.reason
   satisfied      (null)
@@ -533,23 +539,45 @@ under `schemaVersion: 2`.
 
 **`write-failed` alone has no authority to produce `unrealized`.** A thrown write
 is an operation result, not a fact about the artifact; the post-write authoritative
-observation still runs and still decides:
+observation still runs and still decides. The reasons are named for the **phase**
+whose observation failed, not for the exception that was seen, and the complete
+mapping is:
 
 ```
-write threw + observation positively proves the expected managed body
-                is not established — including a failed update that left an
-                older managed body in place, which is not physical absence
-  → unrealized    / write-failed
+PHASE 1  pre-write observation — nothing has been written yet
+  hooks dir ENOENT               → unrealized    / hooks-dir-missing
+  hooks dir is not a directory   → unrealized    / hooks-dir-not-directory
+  hooks dir any other error      → indeterminate / hooks-dir-unobservable
+  existing hook unreadable       → indeterminate / pre-write-observation-failed
+  ─ chmod is ABSENT on every phase-1 outcome: no write was issued
 
-write threw + observation cannot establish the final state
-  → indeterminate / post-write-observation-failed
-
-write threw + observation proves the managed body is current
-  → realized      / (the reason describing the write that was attempted)
+PHASE 2+3  the write was issued, then observed
+  expected managed body established        → realized      / created-managed-hook
+                                                           | updated-managed-block
+                                                           | appended-managed-block
+  expected body positively NOT established → unrealized    / write-failed
+  final state cannot be established        → indeterminate / post-write-observation-failed
+  ─ chmod is PRESENT on every phase-2/3 outcome: a write was issued
 ```
 
-The third row is not a curiosity: a write can throw after its bytes have landed.
-Recording `unrealized` from the exception alone would let an operation result
+Two rows carry the weight.
+
+**`pre-write-observation-failed`** states a phase fact: the topology and provenance
+gates were passed, and the artifact observation needed to decide the mutation could
+not be completed *before any write was issued*. It must not be spelled
+`post-write-observation-failed`; that would put a phase the run never reached into
+a record whose only purpose is that its statements are true. And because no write
+was issued, it carries no `chmod`.
+
+**`write-failed` is scoped to the write phase, not to the exception.** It means the
+write phase did not establish the expected managed body — whether or not the write
+threw. So a write that throws after its bytes have landed is `realized`, and a
+write that returns success whose result is then found not to be the expected body
+(a concurrent overwrite between the write and the observation, a sentinel
+replacement that produced something else) is `unrealized / write-failed`. Reading
+it as "the write call raised" would leave the second case unnamed.
+
+Recording `unrealized` from an exception alone would let an operation result
 overrule an observation — the same inversion the errno mapping above forbids on the
 topology side.
 
@@ -1000,7 +1028,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac5",
-      "description": "unrealized is produced only by an errno-preserving observation primitive, and the frozen mapping is enforced: ENOENT yields unrealized with reason hooks-dir-missing, a successful stat of a non-directory yields unrealized with reason hooks-dir-not-directory, and every other observation error yields indeterminate with reason hooks-dir-unobservable. A permission error such as EACCES therefore never yields unrealized. A thrown write likewise carries no authority on its own: the post-write observation still runs, so a write that throws after its bytes landed yields realized, one that throws with the final state unestablishable yields indeterminate with reason post-write-observation-failed, and only a write that throws with the expected managed body positively proven not established yields unrealized with reason write-failed — a failed update that leaves an older managed body in place is such a case, so the criterion is not satisfied by testing physical absence alone. existsSync returning false can never produce unrealized, and realized requires positive proof rather than absence of a negative. A chmod failure is recorded in install.chmod and changes neither install.outcome nor any runnability verdict. No already-current reason exists in v1.",
+      "description": "unrealized is produced only by an errno-preserving observation primitive, and the frozen phase mapping is enforced in full. In phase 1, before any write is issued: ENOENT on the hooks directory yields unrealized with reason hooks-dir-missing, a successful stat of a non-directory yields unrealized with reason hooks-dir-not-directory, any other hooks-directory error yields indeterminate with reason hooks-dir-unobservable, and an unreadable existing hook yields indeterminate with reason pre-write-observation-failed — never post-write-observation-failed, and every phase-1 outcome carries no chmod because no write was issued. A permission error such as EACCES therefore never yields unrealized. In phases 2 and 3 the write was issued and every outcome carries chmod: a write that throws after its bytes landed yields realized, a final state that cannot be established yields indeterminate with reason post-write-observation-failed, and the expected managed body positively proven not established yields unrealized with reason write-failed — which is scoped to the write phase rather than to the exception, so it also covers a write that returned success whose result is then found not to be the expected body, and a failed update leaving an older managed body in place, so the criterion is not satisfied by testing physical absence alone. existsSync returning false can never produce unrealized, and realized requires positive proof rather than absence of a negative. A chmod failure is recorded in install.chmod and changes neither install.outcome nor any runnability verdict. No already-current reason exists in v1.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
@@ -1062,6 +1090,12 @@ ones: unknown members matter exactly where validation reaches.
       "id": "ac15",
       "description": "Every Git authority query is bound to the workspace being operated on, via git -C or an equivalent cwd, and never to the process working directory. The controller is A to B: running the scaffold from inside repository A against a target path in repository B resolves B's git-dir as the provenance owner and B's active hooks directory as the locator answer, and writes no provenance into A. No Git authority or provenance-observation invocation defined by this contract omits the target binding; Git commands inside the managed hook body are out of scope, since they run in the working directory Git sets for the hook.",
       "dependsOn": ["index.js", "templates/cli/hooks.js"],
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+    },
+    {
+      "id": "ac16",
+      "description": "One controller exercises the pre-write phase end to end and proves both halves at once. Starting from a document whose current is non-participating, an explicit hook-install-command runs against a workspace where reading the existing post-commit fails with EACCES. The hook file is byte-identical before and after; chmod is never called; exactly one event is committed; that event carries intent participating with source hook-install-command, install outcome indeterminate with reason pre-write-observation-failed, no chmod, no expectedBodyDigest and no runnability; and current becomes participating. A failed observation is therefore never dressed as a write, and a failed install never swallows the intent that superseded an earlier opt-out.",
+      "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     }
   ]
