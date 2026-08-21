@@ -347,6 +347,150 @@ async function runHookProvenanceTests() {
             'a malformed interior event must not change the reader state');
     }
 
+    console.log('HP7 step 0. fixture validity: the temp root has no git ancestor ...');
+    {
+        const { execFileSync } = require('child_process');
+        const probe = tmp('fixture-gate');
+        let status;
+        try {
+            execFileSync('git', ['-C', probe, 'rev-parse', '--show-toplevel'],
+                { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+                  env: { ...process.env, LC_ALL: 'C', LC_MESSAGES: 'C', LANGUAGE: '' } });
+            status = 0;
+        } catch (err) {
+            status = typeof err.status === 'number' ? err.status : null;
+        }
+        assert.notStrictEqual(status, 0,
+            'FIXTURE INVALID, not a classifier failure: os.tmpdir() lies inside a git '
+          + 'repository on this host, so every NO-GIT-ADMIN-TOPOLOGY fixture below '
+          + 'would be asserting something it cannot mean');
+    }
+
+    console.log('HP7. topology: the scope gate is total ...');
+    {
+        const { classifyTopology } = require('../hook-provenance/topology');
+        const root = tmp('scope');
+        const { execFileSync } = require('child_process');
+        execFileSync('git', ['-C', root, 'init', '-q'], { stdio: 'ignore' });
+        const child = path.join(root, 'child');
+        fs.mkdirSync(child);
+
+        assert.strictEqual(classifyTopology(root).state, 'IN-SCOPE',
+            'a worktree top-level target is in scope');
+
+        // Task 3 claims the storage half of ac1, so it proves the layout it
+        // produces. The two literal segments are the contract; comparing only the
+        // git-dir would hold for any two trailing segments.
+        const inScope = classifyTopology(root);
+        assert.strictEqual(path.basename(inScope.provenancePath), 'hook-provenance.json',
+            'the document is named hook-provenance.json');
+        assert.strictEqual(path.basename(path.dirname(inScope.provenancePath)), 'evo-lite',
+            'it lives in the evo-lite subdirectory');
+        assert.strictEqual(
+            pathIdentity(path.dirname(path.dirname(inScope.provenancePath)),
+                path.join(root, '.git')),
+            'SAME',
+            'and that subdirectory is inside the TARGET git-dir');
+
+        assert.strictEqual(classifyTopology(child).state, 'NESTED-TARGET',
+            'a nested directory must not claim the enclosing worktree');
+
+        const plain = tmp('plain');
+        assert.strictEqual(classifyTopology(plain).state, 'NO-GIT-ADMIN-TOPOLOGY',
+            'a non-repository must not be swallowed into SCOPE-UNRESOLVED');
+
+        // A non-zero exit is not an authority on "no repository": a BARE repo also
+        // exits 128, with a different message, and it is a query failure.
+        const bare = tmp('bare');
+        execFileSync('git', ['init', '-q', '--bare', bare], { stdio: 'ignore' });
+        assert.strictEqual(classifyTopology(bare).state, 'SCOPE-UNRESOLVED',
+            'a bare repository exits 128 but is NOT a positive not-a-repository answer');
+
+        // The owner gate uses the SAME taxonomy. Injected sequentially: the scope
+        // query succeeds, the owner query then answers not-a-repository.
+        const seq = (() => {
+            let n = 0;
+            return (dir, args) => {
+                n += 1;
+                if (n === 1) return { status: 0, stdout: root, stderr: '' };
+                return { status: 128, stdout: '', stderr: 'fatal: not a git repository (or any of the parent directories): .git\n' };
+            };
+        })();
+        assert.strictEqual(classifyTopology(root, { gitQuery: seq }).state, 'NO-GIT-ADMIN-TOPOLOGY',
+            'a positive not-a-repository answer at the owner gate is the same topology fact');
+
+        const seqOther = (() => {
+            let n = 0;
+            return () => {
+                n += 1;
+                if (n === 1) return { status: 0, stdout: root, stderr: '' };
+                return { status: 128, stdout: '', stderr: 'fatal: this operation must be run in a work tree\n' };
+            };
+        })();
+        assert.strictEqual(classifyTopology(root, { gitQuery: seqOther }).state, 'OWNER-UNRESOLVED',
+            'any other owner-query failure stays OWNER-UNRESOLVED');
+
+        const unavailable = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+        assert.strictEqual(classifyTopology(root, { gitQuery: unavailable }).state, 'SCOPE-UNRESOLVED',
+            'an unavailable git must be SCOPE-UNRESOLVED');
+
+        // The owner catch is unreachable through `unavailable` above: that injector
+        // throws on the FIRST call, so the scope gate answers and the owner gate is
+        // never entered. This sequence lets scope succeed and makes ONLY the owner
+        // query throw, so the owner catch is the one thing that can produce this
+        // verdict — a repository that is removed, or a git that stops being
+        // spawnable, between the two queries.
+        const throwOnOwner = (() => {
+            let n = 0;
+            return () => {
+                n += 1;
+                if (n === 1) return { status: 0, stdout: root, stderr: '' };
+                throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+            };
+        })();
+        assert.strictEqual(classifyTopology(root, { gitQuery: throwOnOwner }).state,
+            'OWNER-UNRESOLVED',
+            'a git that stops answering between the scope and owner queries is '
+          + 'OWNER-UNRESOLVED, never SCOPE-UNRESOLVED');
+
+        // NESTED-TARGET is reachable from DISTINCT alone.
+        const failingRealpath = {
+            realpathSync: Object.assign(() => { throw new Error('x'); },
+                { native: () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); } }),
+        };
+        const injected = classifyTopology(child, { fsOps: failingRealpath });
+        assert.strictEqual(injected.state, 'SCOPE-UNRESOLVED',
+            'an unresolvable comparison must be SCOPE-UNRESOLVED, never NESTED-TARGET');
+    }
+
+    console.log('HP8. topology: owner path comes from the bound authority ...');
+    {
+        const { classifyTopology } = require('../hook-provenance/topology');
+        const { execFileSync } = require('child_process');
+        const outer = tmp('bindA');
+        const inner = tmp('bindB');
+        execFileSync('git', ['-C', outer, 'init', '-q'], { stdio: 'ignore' });
+        execFileSync('git', ['-C', inner, 'init', '-q'], { stdio: 'ignore' });
+
+        // M6a removes the binding from the OWNER query only, so the scope query
+        // still answers for B and this fixture-validity assertion stays green —
+        // the red then lands on the owner assertion below rather than absorbing
+        // the mutation here. Dropping the binding from both queries would make
+        // pathIdentity(inner, outer) DISTINCT, turn this into NESTED-TARGET, and
+        // fail on the wrong line.
+        const prev = process.cwd();
+        process.chdir(outer);
+        try {
+            const r = classifyTopology(inner);
+            assert.strictEqual(r.state, 'IN-SCOPE', 'fixture validity: B must classify as in scope');
+            assert.strictEqual(
+                require('../hook-provenance/path-identity').pathIdentity(
+                    path.dirname(path.dirname(r.provenancePath)), path.join(inner, '.git')),
+                'SAME',
+                'the owner must be the TARGET git-dir, never the caller cwd git-dir');
+        } finally { process.chdir(prev); }
+    }
+
     console.log('--- hook-provenance tests passed! ---');
 }
 
