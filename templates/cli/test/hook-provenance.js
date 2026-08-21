@@ -21,7 +21,7 @@ function participatingDoc(S) {
         intent: { participation: 'participating', source: 'scaffold-default' },
         install: {
             outcome: 'realized', reason: 'created-managed-hook',
-            targetPath: '/r/.git/hooks/post-commit', expectedBodyDigest: 'sha256:b',
+            targetPath: '/r/.git/hooks/post-commit', expectedBodyDigest: 'sha256:' + 'a'.repeat(64),
             chmod: { attempted: true, threw: false },
         },
         runnability: {
