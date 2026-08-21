@@ -87,8 +87,14 @@ const eventId = (e) => sha256(JSON.stringify(eventProjection(e)));
 function aggregateRunnability(r) {
     const parts = [r.locator, r.executable, r.interpreter];
     if (parts.some(p => p && p.verdict === 'not-satisfied')) return 'not-satisfied';
-    if (parts.some(p => !p || p.verdict === 'indeterminate')) return 'indeterminate';
-    return 'satisfied';
+    // `satisfied` is POSITIVE evidence, so all three components must earn it.
+    // Anything else — absent, null, no verdict at all, or a verdict outside the
+    // vocabulary — is a failure to observe, and a failure to observe is
+    // indeterminate, never positive. This is a public export that the producer
+    // calls before any document exists, so it cannot lean on the validator to
+    // screen its input.
+    if (parts.every(p => p && p.verdict === 'satisfied')) return 'satisfied';
+    return 'indeterminate';
 }
 
 function validateComponent(name, c, errors) {
@@ -184,8 +190,12 @@ function validateHookProvenanceV1(raw) {
             if (inst.chmod !== undefined) errors.push(`install.chmod must be absent for ${inst.reason}`);
         } else if (!inst.chmod || typeof inst.chmod !== 'object') {
             errors.push('install.chmod required when the hook write was issued');
-        } else if (inst.chmod.attempted !== true || typeof inst.chmod.threw !== 'boolean') {
-            errors.push('install.chmod must be { attempted: true, threw: boolean }');
+        } else if (typeof inst.chmod.attempted !== 'boolean' || typeof inst.chmod.threw !== 'boolean') {
+            // The design fixes chmod's PRESENCE to the write phase and nothing
+            // more. A producer that issued the write and then skipped the chmod
+            // records { attempted: false }; requiring `true` would reject that
+            // honest record. The fields stay typed.
+            errors.push('install.chmod must be { attempted: boolean, threw: boolean }');
         }
         if (inst.outcome === 'realized') {
             if (typeof inst.expectedBodyDigest !== 'string' || !SHA256_RE.test(inst.expectedBodyDigest)) {

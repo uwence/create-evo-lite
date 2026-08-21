@@ -183,6 +183,18 @@ async function runHookProvenanceTests() {
         assert.strictEqual(aggregateRunnability({
             locator: c('not-satisfied'), executable: c('indeterminate'), interpreter: c('satisfied'),
         }), 'not-satisfied', 'not-satisfied dominates indeterminate');
+
+        // A component that is present but unreadable is a failure to observe.
+        // It must never aggregate to the most permissive answer.
+        assert.strictEqual(aggregateRunnability({
+            locator: c('satisfied'), executable: { verdict: 'wat' }, interpreter: c('satisfied'),
+        }), 'indeterminate', 'an unrecognised component verdict is not positive evidence');
+        assert.strictEqual(aggregateRunnability({
+            locator: c('satisfied'), executable: {}, interpreter: c('satisfied'),
+        }), 'indeterminate', 'a component carrying no verdict is not positive evidence');
+        assert.strictEqual(aggregateRunnability({
+            locator: c('satisfied'), interpreter: c('satisfied'),
+        }), 'indeterminate', 'an absent component is not positive evidence');
     }
 
     console.log('HP6. validator: the four integrity rules and the shape rules ...');
@@ -217,6 +229,17 @@ async function runHookProvenanceTests() {
         b.current.derivedFrom = b.events[0].id;
         assert.strictEqual(validateOk(b), false,
             'C-2c: participating current over a non-participating intent must be rejected');
+
+        // C-2b ALONE. Fixture b recomputes the digest correctly, so C-2c is the
+        // only rule it can violate. Here derivedFrom and participation are both
+        // coherent and only the stored digest disagrees, so C-2b is the sole
+        // guard and deleting it turns this assertion red.
+        const b2 = makeDoc();
+        b2.events[0].resultingCurrentDigest = S.currentDigest('participating');
+        b2.events[0].id = S.eventId(b2.events[0]);
+        b2.current.derivedFrom = b2.events[0].id;
+        assert.strictEqual(validateOk(b2), false,
+            'C-2b: resultingCurrentDigest must equal the digest of current.participation');
 
         // C-2d
         const d = makeDoc();
@@ -268,6 +291,22 @@ async function runHookProvenanceTests() {
         j.current.derivedFrom = j.events[0].id;
         assert.strictEqual(validateOk(j), false,
             'an outcome that follows an issued write must carry chmod');
+
+        // ...but the record may say the chmod was skipped. Presence is fixed to
+        // the write phase; the value of `attempted` is the producer's report.
+        const cf = participatingDoc(S);
+        cf.events[0].install.chmod = { attempted: false, threw: false };
+        cf.events[0].id = S.eventId(cf.events[0]);
+        cf.current.derivedFrom = cf.events[0].id;
+        assert.strictEqual(validateOk(cf), true,
+            'an issued write whose chmod was skipped is a legal v1 record');
+
+        const cfBad = participatingDoc(S);
+        cfBad.events[0].install.chmod = { attempted: 'yes', threw: false };
+        cfBad.events[0].id = S.eventId(cfBad.events[0]);
+        cfBad.current.derivedFrom = cfBad.events[0].id;
+        assert.strictEqual(validateOk(cfBad), false,
+            'chmod fields stay typed: attempted must be a boolean');
 
         // pre-write-observation-failed is a phase-1 outcome: no write was issued,
         // so it carries no chmod. This is the member the amendment added, and the
