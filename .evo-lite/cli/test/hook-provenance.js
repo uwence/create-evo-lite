@@ -502,6 +502,286 @@ async function runHookProvenanceTests() {
         } finally { process.chdir(prev); }
     }
 
+    console.log('HP9. observation: the errno mapping is frozen ...');
+    {
+        const { observeHooksDir } = require('../hook-provenance/observe');
+        const root = tmp('errno');
+        const dir = path.join(root, 'hooks');
+        fs.mkdirSync(dir);
+        assert.strictEqual(observeHooksDir(dir).outcome, null, 'a real directory is usable');
+
+        assert.deepStrictEqual(observeHooksDir(path.join(root, 'gone')),
+            { outcome: 'unrealized', reason: 'hooks-dir-missing' });
+
+        const file = path.join(root, 'afile');
+        fs.writeFileSync(file, 'x');
+        assert.deepStrictEqual(observeHooksDir(file),
+            { outcome: 'unrealized', reason: 'hooks-dir-not-directory' });
+
+        const eacces = { statSync: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } };
+        assert.deepStrictEqual(observeHooksDir(dir, eacces),
+            { outcome: 'indeterminate', reason: 'hooks-dir-unobservable' },
+            'a permission error is a failure to observe, never unrealized');
+    }
+
+    console.log('HP10. observation: executable has no qualified predicate without controllers ...');
+    {
+        const { observeExecutable } = require('../hook-provenance/observe');
+        const root = tmp('exec');
+        const hook = path.join(root, 'post-commit');
+        fs.writeFileSync(hook, '#!/bin/sh\nexit 0\n');
+        // v1 ships no qualified predicate, so this is exact, not a range. A range
+        // would let someone replace the body with a constant `satisfied` and stay green.
+        assert.deepStrictEqual(
+            { verdict: observeExecutable(hook).verdict, reason: observeExecutable(hook).reason },
+            { verdict: 'indeterminate', reason: 'no-qualified-predicate' },
+            'v1 has no qualified executable predicate on any host');
+        const src = fs.readFileSync(
+            path.join(__dirname, '..', 'hook-provenance', 'observe.js'), 'utf8');
+        assert.ok(!/X_OK/.test(src),
+            'accessSync X_OK has no discriminating power and must appear nowhere');
+        assert.ok(!/process\.platform/.test(src),
+            'no verdict may key off the platform constant');
+    }
+
+    console.log('HP11. observation: interpreter is aligned, and never guesses ...');
+    {
+        const { observeInterpreter } = require('../hook-provenance/observe');
+        const root = tmp('interp');
+
+        const shHook = path.join(root, 'sh'); fs.writeFileSync(shHook, '#!/bin/sh\nexit 0\n');
+        const sh = observeInterpreter(shHook);
+        // On a host with no /bin/sh the honest answer is no-safe-parser, not a
+        // verdict; asserting `satisfied` unconditionally would demand a fact the
+        // host cannot supply.
+        assert.ok(sh.verdict === 'satisfied'
+            || (sh.verdict === 'indeterminate' && sh.reason === 'no-safe-parser'),
+            `a valid sh hook is satisfied where sh exists, otherwise no-safe-parser (got ${JSON.stringify(sh)})`);
+
+        // "Aligned" is asserted on WHICH binary was consulted, not on a grammar
+        // difference between sh and bash. Measured on the Windows/msys development
+        // host, `sh` IS bash (GNU bash 5.2.37), so every syntax-difference fixture
+        // — including array literals — exits 0 under both, and a hardcoded `sh -n`
+        // mutation could never be falsified there. Observing the argv makes this
+        // control host-independent.
+        //
+        // The declared entry is a FIXED supported path, and both fs calls are
+        // injected, so the control does not depend on this host having that shell
+        // installed — otherwise a CORRECT implementation would fail it wherever
+        // /bin/bash happens not to exist. Fabricating a path under the temp root
+        // instead, as an earlier draft did, would prove nothing: the control would
+        // only show that the implementation stats and spawns the same string,
+        // which is true of a basename allowlist too.
+        const declared = '/bin/bash';
+        const bashHook = path.join(root, 'bash');
+        fs.writeFileSync(bashHook, '#!' + declared + '\na=(one two)\necho "${a[0]}"\n');
+        const invoked = [];
+        const statted = [];
+        const spy = Object.create(fs);
+        spy.statSync = (p) => { statted.push(String(p)); return { isFile: () => true }; };
+        spy.__execFileSync = (bin) => { invoked.push(bin); return ''; };
+        const b = observeInterpreter(bashHook, spy);
+        assert.deepStrictEqual(statted, [declared],
+            'presence is established for the DECLARED entry, not for a name resolved elsewhere');
+        assert.deepStrictEqual(invoked, [declared],
+            `the syntax check runs through that SAME declared entry (saw ${invoked.join(', ')})`);
+        assert.strictEqual(b.verdict, 'satisfied');
+
+        // A qualified entry that is not present. This is the only route to
+        // no-safe-parser now that unqualified paths are ambiguous, so it is
+        // injected rather than relying on a path this host happens to lack.
+        const absent = Object.create(fs);
+        absent.statSync = () => { throw Object.assign(new Error('nope'), { code: 'ENOENT' }); };
+        assert.deepStrictEqual(observeInterpreter(bashHook, absent),
+            { verdict: 'indeterminate', reason: 'no-safe-parser', shebang: '#!' + declared },
+            'a qualified interpreter that is not present is indeterminate, never satisfied');
+
+        // The one route to not-satisfied in v1: a qualified, present interpreter
+        // rejects the body's syntax. `incompatible-interpreter` is unreachable
+        // here by design — see the note in observe.js.
+        const rejecting = Object.create(fs);
+        rejecting.statSync = () => ({ isFile: () => true });
+        rejecting.__execFileSync = () => { throw Object.assign(new Error('parse error'), { status: 2 }); };
+        assert.deepStrictEqual(observeInterpreter(bashHook, rejecting),
+            { verdict: 'not-satisfied', reason: 'syntax-rejected', shebang: '#!' + declared });
+
+        const none = path.join(root, 'none'); fs.writeFileSync(none, 'echo hi\n');
+        assert.strictEqual(observeInterpreter(none).verdict, 'indeterminate');
+        assert.strictEqual(observeInterpreter(none).reason, 'missing-shebang');
+
+        // Every form v1 cannot prove end to end is ambiguous — the env wrapper,
+        // which v1 deliberately does not support; any trailing token; a relative
+        // entry; and any absolute path outside the supported set, however it is
+        // named. Measured: `#!env bash` exits 127 ("required file not found")
+        // while a PATH bash would answer satisfied; a /tmp/env that exists without
+        // the executable bit passes stat while the hook exits 126; and a stub at
+        // <tmp>/fake/bash that ignores its arguments and exits 0 passes a basename
+        // check, a stat and a `-n` spawn while being no shell at all. None of
+        // these is a state this observer may turn into a positive verdict.
+        for (const [name, line] of [
+            ['relbash', '#!bash'],
+            ['tmpbash', '#!/tmp/tools/bash'],
+            ['py', '#!/usr/bin/python3'],
+            ['barenv', '#!env bash'],
+            ['envbash', '#!/usr/bin/env bash'],
+            ['envs', '#!/usr/bin/env -S bash -e'],
+            ['envopt', '#!/usr/bin/env bash -e'],
+            ['bashopt', '#!/bin/bash --definitely-invalid-option'],
+        ]) {
+            const p = path.join(root, name);
+            fs.writeFileSync(p, line + '\nexit 0\n');
+            const v = observeInterpreter(p);
+            // reason FIRST, deliberately. Several of these forms would still be
+            // `indeterminate` under a broken parser — `#!bash` that slipped past
+            // the absolute check merely fails the presence gate and lands on
+            // no-safe-parser — so asserting the verdict first would leave the
+            // mutations aimed here with no guard they can actually turn red.
+            assert.strictEqual(v.reason, 'ambiguous-interpreter',
+                `${line} is not a form v1 can prove end to end, so it is ambiguous`);
+            assert.strictEqual(v.verdict, 'indeterminate', `verdict for ${line}`);
+        }
+    }
+
+    console.log('HP12. observation: locator compares directory to directory ...');
+    {
+        const { observeLocator } = require('../hook-provenance/observe');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('loc');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        const targetPath = path.join(repo, '.git', 'hooks', 'post-commit');
+
+        assert.deepStrictEqual(observeLocator({ targetDir: repo, targetPath }),
+            { verdict: 'satisfied', reason: null },
+            'a default installation must be satisfied, not a directory-vs-file mismatch');
+
+        const elsewhere = path.join(repo, 'other-hooks');
+        fs.mkdirSync(elsewhere);
+        execFileSync('git', ['-C', repo, 'config', 'core.hooksPath', elsewhere], { stdio: 'ignore' });
+        assert.deepStrictEqual(observeLocator({ targetDir: repo, targetPath }),
+            { verdict: 'not-satisfied', reason: 'active-hooks-dir-differs' });
+
+        // Three distinct ways to fail to OBSERVE. Each is asserted on its own so
+        // each has a guard a mutation can turn red; a single combined assertion
+        // would let one branch hide behind another.
+        const unaskable = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+        assert.deepStrictEqual(
+            observeLocator({ targetDir: repo, targetPath, gitQuery: unaskable }),
+            { verdict: 'indeterminate', reason: 'authority-query-unavailable' },
+            'an authority that cannot be asked is indeterminate, never not-satisfied');
+
+        const refusing = () => ({ status: 128, stdout: '', stderr: 'fatal: something else\n' });
+        assert.deepStrictEqual(
+            observeLocator({ targetDir: repo, targetPath, gitQuery: refusing }),
+            { verdict: 'indeterminate', reason: 'authority-query-failed' },
+            'an authority that answers with a failure is indeterminate, never not-satisfied');
+
+        // The two paths differ lexically, so the comparison must reach physical
+        // resolution — which the injected fsOps then refuses. UNESTABLISHED is
+        // precisely the state in which no verdict about the location is earned.
+        const unresolvable = {
+            realpathSync: Object.assign(() => { throw new Error('x'); },
+                { native: () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); } }),
+        };
+        const answering = () => ({ status: 0, stdout: '/some/other/hooks', stderr: '' });
+        assert.deepStrictEqual(
+            observeLocator({ targetDir: repo, targetPath, gitQuery: answering, fsOps: unresolvable }),
+            { verdict: 'indeterminate', reason: 'path-comparison-ambiguous' },
+            'a comparison that cannot be established is indeterminate, never not-satisfied');
+
+        // ac6 forbids falling back to the relative form and resolving it here.
+        // Asserted against the source, like HP10's X_OK guard, because a fallback
+        // fires only where the primary query is unsupported — a state no fixture
+        // on this host can reach. The legitimate query names --git-path exactly
+        // once; a fallback necessarily adds a second.
+        const locSrc = fs.readFileSync(
+            path.join(__dirname, '..', 'hook-provenance', 'observe.js'), 'utf8');
+        assert.strictEqual((locSrc.match(/--git-path/g) || []).length, 1,
+            'ac6: exactly one hooks-path query may exist, so nothing can fall back '
+          + 'to the relative form and resolve it itself');
+        assert.ok(/--path-format=absolute/.test(locSrc),
+            'ac6: and that one query asks the authority for an absolute answer');
+    }
+
+    console.log('HP12b. observation: the locator query is bound to B, not to the caller ...');
+    {
+        const { observeLocator } = require('../hook-provenance/observe');
+        const { execFileSync } = require('child_process');
+        const A = tmp('locA');
+        const B = tmp('locB');
+        execFileSync('git', ['-C', A, 'init', '-q'], { stdio: 'ignore' });
+        execFileSync('git', ['-C', B, 'init', '-q'], { stdio: 'ignore' });
+        // A's active hooks directory is redirected, so an unbound query would
+        // answer with A's and report B's ordinary installation as not-satisfied.
+        const decoy = path.join(A, 'decoy-hooks');
+        fs.mkdirSync(decoy);
+        execFileSync('git', ['-C', A, 'config', 'core.hooksPath', decoy], { stdio: 'ignore' });
+
+        const prev = process.cwd();
+        process.chdir(A);
+        try {
+            assert.deepStrictEqual(
+                observeLocator({ targetDir: B, targetPath: path.join(B, '.git', 'hooks', 'post-commit') }),
+                { verdict: 'satisfied', reason: null },
+                'the active hooks directory must be B\'s, even when the caller stands in A');
+        } finally { process.chdir(prev); }
+    }
+
+    console.log('HP13. observation: observeRunnability yields a shape the shared validator accepts ...');
+    {
+        const { observeRunnability } = require('../hook-provenance/observe');
+        const S = require('../hook-provenance/schema');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('runnab');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        const targetPath = path.join(repo, '.git', 'hooks', 'post-commit');
+        fs.writeFileSync(targetPath, '#!/bin/sh\nexit 0\n');
+
+        const { runnability, diagnostic } = observeRunnability({ targetDir: repo, targetPath });
+
+        assert.deepStrictEqual(Object.keys(runnability).sort(),
+            ['executable', 'interpreter', 'locator', 'verdict'],
+            'runnability carries the verdict and the three components, nothing else');
+        for (const name of ['locator', 'executable', 'interpreter']) {
+            assert.deepStrictEqual(Object.keys(runnability[name]).sort(), ['reason', 'verdict'],
+                `${name} is stripped to { verdict, reason } — no diagnostic leaks into a verdict`);
+        }
+        assert.strictEqual(runnability.reason, undefined, 'runnability has no top-level reason');
+
+        // The verdict must be the SHARED aggregation, not one computed here. Two
+        // authorities answering "is this runnable" is exactly what this contract
+        // forbids.
+        assert.strictEqual(runnability.verdict, S.aggregateRunnability(runnability),
+            'the verdict is the shared mechanical aggregation of its components');
+
+        // Interface self-proof: the ONE shared validator accepts an event carrying
+        // this runnability, so the producer can never be handed a shape its own
+        // store will reject. This is not Task 6's transaction — nothing is stored.
+        const ev = {
+            seq: 1, recordedAt: '2026-08-18T00:00:00.000Z',
+            intent: { participation: 'participating', source: 'scaffold-default' },
+            install: {
+                outcome: 'realized', reason: 'created-managed-hook', targetPath,
+                expectedBodyDigest: 'sha256:' + 'a'.repeat(64),
+                chmod: { attempted: true, threw: false },
+            },
+            runnability,
+            resultingCurrentDigest: S.currentDigest('participating'),
+        };
+        ev.id = S.eventId(ev);
+        const doc = {
+            kind: S.KIND, schemaVersion: S.SCHEMA_VERSION,
+            current: { participation: 'participating', derivedFrom: ev.id },
+            events: [ev],
+        };
+        const verdict = S.validateHookProvenanceV1(doc);
+        assert.strictEqual(verdict.ok, true,
+            `the shared validator accepts this runnability (${JSON.stringify(verdict.errors)})`);
+
+        assert.deepStrictEqual(Object.keys(diagnostic).sort(),
+            ['executablePredicate', 'predicateQualification', 'shebang'],
+            'diagnostic carries the raw observations and never feeds a verdict');
+    }
+
     console.log('--- hook-provenance tests passed! ---');
 }
 
