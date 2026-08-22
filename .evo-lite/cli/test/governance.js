@@ -14623,6 +14623,9 @@ async function runGovernanceTests() {
 
         await runChildRuntimeTests();
 
+        const { runHookProvenanceTests } = require('./hook-provenance');
+        await runHookProvenanceTests();
+
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {
         console.error('❌ Governance test failed:', error);
