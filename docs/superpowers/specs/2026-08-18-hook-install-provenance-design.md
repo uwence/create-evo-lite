@@ -12,6 +12,36 @@ created: 2026-08-18
 
 **Amendment history.** `0c22702413ac5ac39e871f2abb7c911ec86074b6` was approved and frozen, then found — during implementation planning, before any production code existed — to have no truthful way to record an observation that fails after the topology gates and before any write is issued. That SHA is **SUPERSEDED BEFORE IMPLEMENTATION**, not extended in place: no producer had shipped and no v1 document had ever been written, so this amendment defines the first implementable v1 rather than growing a released schema. `schemaVersion` therefore stays `1`. Once this producer ships and a v1 document can persist, any further vocabulary change requires `schemaVersion: 2`.
 
+**Amendment 2 — interpreter reachability, still before any producer shipped.** A
+read-only audit of the Task 4 plan, run before a line of observation code existed,
+found `a8c8986` and the approved implementation plan in direct conflict. This
+document required that "an incompatible interpreter family **is** [reported
+not-satisfied]"; the plan had already narrowed v1 so that `#!/usr/bin/python3`,
+any unsupported absolute entry, an `env` wrapper and a relative entry all yield
+`indeterminate / ambiguous-interpreter`, and stated in as many words that
+`incompatible-interpreter` is unreachable. The plan had been narrowed across four
+commits; this document was never amended to follow, so Task 4's header claimed to
+satisfy an acceptance criterion its own specified implementation provably could
+not meet — a task that would have gone fully green while leaving `ac8`
+unsatisfied.
+
+The narrowing is **upheld**, because the wider rule violated the invariant this
+whole contract exists to enforce: being unable to prove what an interpreter IS is
+not the same as having proven that it is INCOMPATIBLE. `ac8` and the
+**interpreter** section are amended to state the reachable set, and a note under
+the vocabulary block records that membership is not producer reachability.
+`incompatible-interpreter` and `predicate-qualification-failed` both stay frozen
+and unreachable.
+
+`a8c8986` is amended, not rewritten: it remains the SHA the implementation plan
+was approved against, and Tasks 1–3 were accepted under it. `schemaVersion` stays
+`1` — this narrows what a producer emits and removes no member, so no document
+that was legal before becomes illegal now.
+
+Still OPEN and deliberately NOT settled here: whether `install.chmod` may be
+ABSENT on a phase-2/3 outcome. `ac12` continues to require its presence. That is a
+separate design question and must not be folded into this amendment.
+
 ## Problem
 
 `installPostCommitHook()` returns nothing and records nothing. When it silently
@@ -528,6 +558,18 @@ A component `reason` is `null` if and only if its verdict is `satisfied`, and a
 non-null `reason` must belong to the set permitted for that verdict. Extending any
 vocabulary requires `schemaVersion: 2`.
 
+**Vocabulary membership is not producer reachability.** These sets fix what a
+document may legally SAY; they do not assert that v1 has a code path that says it.
+Two members are frozen and deliberately unreachable in v1:
+`interpreter.incompatible-interpreter`, because v1 cannot establish an
+interpreter's family (see **interpreter** below), and
+`executable.predicate-qualification-failed`, because v1 ships no predicate to
+qualify and so never reaches the failure of qualifying one. A reader must not
+infer from a member's presence that some run can produce it, and a reviewer must
+not treat an unreachable member as a missing implementation. Narrowing what a
+producer emits is a producer change, not a vocabulary migration, and does not
+touch `schemaVersion`.
+
 There is deliberately no `already-current` member. The installer today always
 writes — it replaces an existing managed block unconditionally at
 `templates/cli/hooks.js:74-87` and has no byte-identical skip branch — so the
@@ -727,9 +769,32 @@ validation. A hardcoded `sh -n` for every existing hook is rejected: a valid
 
 ```
 satisfied       compatible supported interpreter + static syntax accepted
-not-satisfied   positively established incompatible or malformed entry
+not-satisfied   a qualified, present interpreter rejects the body's syntax
 indeterminate   missing / ambiguous interpreter, or no safe parser available
 ```
+
+An entry is **qualified** only when v1 can prove its identity end to end: a single
+absolute token naming a supported interpreter. Everything else — a relative entry,
+an `env` wrapper, any trailing token, and any absolute path outside the supported
+set — is `ambiguous-interpreter`, hence `indeterminate`.
+
+That is deliberately narrower than "positively established incompatible", which an
+earlier revision required. Seeing a shebang read `/usr/bin/python3` proves only
+where the shebang points. Under v1's Class 1 and Class 2 grant there is no way to
+establish what that file actually is, and promoting a name into a family judgement
+would be the governing invariant's exact failure mode:
+
+```
+cannot prove WHAT IT IS   ≠   has proven THAT IT IS INCOMPATIBLE
+```
+
+Reaching a positive `not-satisfied` there would also require having EXECUTED an
+unidentified program, which Class 2 does not grant.
+
+**In v1 the only reachable interpreter `not-satisfied` is `syntax-rejected`.**
+`incompatible-interpreter` stays in the frozen vocabulary and no producer emits
+it. Vocabulary membership is not a claim that v1 has a producer for that member —
+see the note under the vocabulary block.
 
 Syntax valid ≠ hook executed successfully; the field description must say so.
 
@@ -1046,7 +1111,7 @@ ones: unknown members matter exactly where validation reaches.
     },
     {
       "id": "ac8",
-      "description": "interpreter is decided by shebang inspection plus interpreter-aligned syntax-only validation: a valid bash hook with bash-only syntax is not reported not-satisfied, an incompatible interpreter family is, and a missing or ambiguous shebang yields indeterminate. runnability has no top-level reason and its verdict is the frozen mechanical aggregation of the three components. No managed hook semantics are executed anywhere in the observation path.",
+      "description": "interpreter is decided by shebang inspection plus interpreter-aligned syntax-only validation, and the syntax check runs through the SAME entry the shebang declares, so a valid bash hook with bash-only syntax is never reported not-satisfied. An entry is qualified only when v1 can prove its identity end to end: a single absolute token naming a supported interpreter. A missing shebang yields indeterminate with reason missing-shebang; a relative entry, an env wrapper, any trailing token, and any absolute path outside the supported set all yield indeterminate with reason ambiguous-interpreter; a qualified entry that is not present yields indeterminate with reason no-safe-parser. The ONLY reachable interpreter not-satisfied in v1 is syntax-rejected, produced when a qualified, present interpreter rejects the body's syntax. incompatible-interpreter remains in the frozen vocabulary and no v1 producer emits it: a path named python3 proves where the shebang points and nothing about the file's interpreter family, and promoting that name into a family judgement would turn a failure to observe into a positive fact, besides requiring the execution of an unidentified program that Class 2 does not grant. runnability has no top-level reason and its verdict is the frozen mechanical aggregation of the three components. No managed hook semantics are executed anywhere in the observation path.",
       "dependsOn": ["templates/cli/hooks.js"],
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
     },
