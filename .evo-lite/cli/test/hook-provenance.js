@@ -368,7 +368,7 @@ async function runHookProvenanceTests() {
 
     console.log('HP7. topology: the scope gate is total ...');
     {
-        const { classifyTopology } = require('../hook-provenance/topology');
+        const { classifyTopology, defaultGitQuery } = require('../hook-provenance/topology');
         const root = tmp('scope');
         const { execFileSync } = require('child_process');
         execFileSync('git', ['-C', root, 'init', '-q'], { stdio: 'ignore' });
@@ -381,7 +381,18 @@ async function runHookProvenanceTests() {
         // Task 3 claims the storage half of ac1, so it proves the layout it
         // produces. The two literal segments are the contract; comparing only the
         // git-dir would hold for any two trailing segments.
-        const inScope = classifyTopology(root);
+        //
+        // ONE QUESTION, ONE AUTHORITY. This block answers what the path LOOKS
+        // LIKE. It must not also answer WHOSE git-dir it is: HP8 owns that, and
+        // owns it deliberately, by manufacturing a cwd/target divergence. The
+        // injected query answers for the TARGET no matter what the classifier
+        // passes it, so a mutation that unbinds the owner query stays invisible
+        // here and travels on to HP8's guard. The earlier version of this block
+        // caught that mutation, but only because the suite happens to run inside
+        // a different repository — an ambient accident, not a guard. It shadowed
+        // HP8 and left HP8's assertion unwitnessed.
+        const boundToTarget = (dir, args) => defaultGitQuery(root, args);
+        const inScope = classifyTopology(root, { gitQuery: boundToTarget });
         assert.strictEqual(path.basename(inScope.provenancePath), 'hook-provenance.json',
             'the document is named hook-provenance.json');
         assert.strictEqual(path.basename(path.dirname(inScope.provenancePath)), 'evo-lite',
