@@ -645,19 +645,34 @@ async function runHookProvenanceTests() {
     console.log('HP12. observation: locator compares directory to directory ...');
     {
         const { observeLocator } = require('../hook-provenance/observe');
+        // defaultGitQuery comes from topology, which exports it. observe.js
+        // consumes it but does not re-export, and adding an export would be a
+        // production change this repair is not allowed to make.
+        const { defaultGitQuery } = require('../hook-provenance/topology');
         const { execFileSync } = require('child_process');
         const repo = tmp('loc');
         execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
         const targetPath = path.join(repo, '.git', 'hooks', 'post-commit');
 
-        assert.deepStrictEqual(observeLocator({ targetDir: repo, targetPath }),
+        // ONE QUESTION, ONE AUTHORITY. This block asks whether the comparison is
+        // made directory-to-directory. It must NOT also answer whose git-dir was
+        // asked: HP12b owns that, and owns it deliberately by standing in A while
+        // targeting B. The injected query still runs real Git -- so core.hooksPath
+        // below is genuinely read -- but always against the TARGET, whatever the
+        // observer passes it. Without this, an unbinding mutation was caught here
+        // instead, and only because the suite happens to run inside a different
+        // repository: an ambient accident that shadowed HP12b and left the
+        // load-bearing guard unwitnessed.
+        const boundToRepo = (dir, args) => defaultGitQuery(repo, args);
+
+        assert.deepStrictEqual(observeLocator({ targetDir: repo, targetPath, gitQuery: boundToRepo }),
             { verdict: 'satisfied', reason: null },
             'a default installation must be satisfied, not a directory-vs-file mismatch');
 
         const elsewhere = path.join(repo, 'other-hooks');
         fs.mkdirSync(elsewhere);
         execFileSync('git', ['-C', repo, 'config', 'core.hooksPath', elsewhere], { stdio: 'ignore' });
-        assert.deepStrictEqual(observeLocator({ targetDir: repo, targetPath }),
+        assert.deepStrictEqual(observeLocator({ targetDir: repo, targetPath, gitQuery: boundToRepo }),
             { verdict: 'not-satisfied', reason: 'active-hooks-dir-differs' });
 
         // Three distinct ways to fail to OBSERVE. Each is asserted on its own so
