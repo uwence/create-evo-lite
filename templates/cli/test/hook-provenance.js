@@ -797,6 +797,182 @@ async function runHookProvenanceTests() {
             'diagnostic carries the raw observations and never feeds a verdict');
     }
 
+    console.log('HP14. store: only a positive ENOENT makes the document ABSENT ...');
+    {
+        const { readProvenance } = require('../hook-provenance/store');
+        const root = tmp('read');
+        const p = path.join(root, 'hook-provenance.json');
+        assert.strictEqual(readProvenance(p).state, 'ABSENT');
+
+        fs.writeFileSync(p, '{ not json');
+        assert.strictEqual(readProvenance(p).state, 'UNOBSERVABLE');
+
+        const eacces = { readFileSync: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } };
+        assert.strictEqual(readProvenance(p, eacces).state, 'UNOBSERVABLE',
+            'a permission error must not be reported as ABSENT');
+
+        const src = fs.readFileSync(path.join(__dirname, '..', 'hook-provenance', 'store.js'), 'utf8');
+        assert.ok(!/existsSync/.test(src),
+            'existsSync collapses "not there" and "could not look" at the one place it becomes UNKNOWN');
+
+        // A document that parses cleanly but violates v1. This is the ONLY thing
+        // Task 5 must prove about the seam: that the reader really hands
+        // well-formed JSON to the ONE shared validator and obeys its answer.
+        // Task 2 owns each individual rule; re-proving them here would put two
+        // authorities on one question.
+        const S = require('../hook-provenance/schema');
+        const seamEv = {
+            seq: 1, recordedAt: '2026-08-18T00:00:00.000Z',
+            intent: { participation: 'non-participating', source: 'scaffold-no-hooks' },
+            resultingCurrentDigest: S.currentDigest('non-participating'),
+        };
+        seamEv.id = S.eventId(seamEv);
+        const seam = {
+            kind: S.KIND, schemaVersion: S.SCHEMA_VERSION,
+            current: { participation: 'non-participating', derivedFrom: seamEv.id },
+            events: [seamEv],
+        };
+        assert.strictEqual(S.validateHookProvenanceV1(seam).ok, true,
+            'fixture validity: the seam document must be VALID before one field is broken');
+        // Break exactly one rule, and one that cannot be mistaken for anything
+        // else: derivedFrom stays a well-formed digest, so this is C-2a alone.
+        seam.current.derivedFrom = 'sha256:' + '0'.repeat(64);
+
+        const seamPath = path.join(root, 'seam.json');
+        fs.writeFileSync(seamPath, JSON.stringify(seam, null, 2) + '\n', 'utf8');
+        const seamRead = readProvenance(seamPath);
+        assert.strictEqual(seamRead.state, 'UNOBSERVABLE',
+            'a document that parses but fails the shared validator is UNOBSERVABLE');
+        assert.ok(seamRead.errors.some(e => /C-2a/.test(e)),
+            'and the reason comes from the validator, not from parsing');
+    }
+
+    console.log('HP15. store: seq is monotonic and current follows intent ...');
+    {
+        const { readProvenance, appendEvent } = require('../hook-provenance/store');
+        const root = tmp('append');
+        const p = path.join(root, 'hook-provenance.json');
+
+        const first = appendEvent(p, readProvenance(p), {
+            recordedAt: '2026-08-18T00:00:00.000Z',
+            intent: { participation: 'non-participating', source: 'scaffold-no-hooks' },
+        });
+        assert.strictEqual(first.events[0].seq, 1);
+        assert.strictEqual(first.current.participation, 'non-participating');
+
+        const second = appendEvent(p, readProvenance(p), {
+            recordedAt: '2026-08-18T00:01:00.000Z',
+            intent: { participation: 'participating', source: 'hook-install-command' },
+            // hooks-dir-missing is decided BEFORE any write, so it carries no chmod.
+            install: { outcome: 'unrealized', reason: 'hooks-dir-missing', targetPath: '/x/post-commit' },
+        });
+        assert.strictEqual(second.events[1].seq, 2, 'seq increments by exactly one');
+        assert.strictEqual(second.current.participation, 'participating',
+            'an explicit install supersedes an earlier opt-out even when it did not realize');
+        assert.strictEqual(readProvenance(p).state, 'VALID',
+            'what the producer commits must be what the reader accepts');
+    }
+
+    console.log('HP15b. store: an unobservable document is never overwritten ...');
+    {
+        const { readProvenance, appendEvent } = require('../hook-provenance/store');
+        const crypto = require('crypto');
+        const root = tmp('gate');
+        const p = path.join(root, 'hook-provenance.json');
+        fs.writeFileSync(p, '{ corrupt');
+        const before = crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+
+        assert.throws(() => appendEvent(p, readProvenance(p), {
+            recordedAt: '2026-08-18T00:02:00.000Z',
+            intent: { participation: 'participating', source: 'hook-install-command' },
+            install: { outcome: 'unrealized', reason: 'write-failed', targetPath: '/x',
+                chmod: { attempted: true, threw: true } },
+        }), /unobservable/i, 'appending onto an unobservable document must throw');
+
+        const after = crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+        assert.strictEqual(after, before, 'the corrupt document must be byte-identical afterwards');
+    }
+
+    console.log('HP15c. store: the commit gate refuses bad data before the rename ...');
+    {
+        const { appendEvent } = require('../hook-provenance/store');
+        const S = require('../hook-provenance/schema');
+        const draft = () => ({
+            recordedAt: '2026-08-18T00:03:00.000Z',
+            intent: { participation: 'non-participating', source: 'scaffold-no-hooks' },
+        });
+        const tempsIn = d => fs.readdirSync(d).filter(f => f.includes('.tmp-'));
+
+        // --- A. read-back that parses but the shared validator rejects ---------
+        // Injected at the READ-BACK only. The write itself must still succeed, or
+        // this would prove something about writing rather than about verifying.
+        const rootA = tmp('commit-validate');
+        const pA = path.join(rootA, 'hook-provenance.json');
+        const callsA = { rename: 0 };
+        const opsA = Object.create(fs);
+        opsA.readFileSync = (f, enc) => (String(f).includes('.tmp-')
+            ? JSON.stringify({ kind: 'not-the-kind', schemaVersion: 1 })
+            : fs.readFileSync(f, enc));
+        opsA.renameSync = (...a) => { callsA.rename += 1; return fs.renameSync(...a); };
+        assert.throws(() => appendEvent(pA, { state: 'ABSENT' }, draft(), opsA),
+            /read-back failed validation/,
+            'a temp the shared validator rejects must never be renamed into place');
+        assert.strictEqual(callsA.rename, 0, 'the rename must not have been reached');
+        assert.deepStrictEqual(tempsIn(rootA), [], 'and the temp must have been cleaned up');
+
+        // --- B. read-back that is VALID but is not what we wrote ---------------
+        // The decoy MUST pass the validator. If it did not, gate A would answer
+        // for this fixture and the fingerprint comparison would never be
+        // witnessed — the same shape as C-2b and M6a, a fourth time.
+        const decoyEv = {
+            seq: 1, recordedAt: '2026-01-01T00:00:00.000Z',
+            intent: { participation: 'non-participating', source: 'scaffold-no-hooks' },
+            resultingCurrentDigest: S.currentDigest('non-participating'),
+        };
+        decoyEv.id = S.eventId(decoyEv);
+        const decoy = {
+            kind: S.KIND, schemaVersion: S.SCHEMA_VERSION,
+            current: { participation: 'non-participating', derivedFrom: decoyEv.id },
+            events: [decoyEv],
+        };
+        assert.strictEqual(S.validateHookProvenanceV1(decoy).ok, true,
+            'fixture validity: the decoy must PASS the validator, or gate A answers first');
+
+        const rootB = tmp('commit-fingerprint');
+        const pB = path.join(rootB, 'hook-provenance.json');
+        const callsB = { rename: 0 };
+        const opsB = Object.create(fs);
+        opsB.readFileSync = (f, enc) => (String(f).includes('.tmp-')
+            ? JSON.stringify(decoy)
+            : fs.readFileSync(f, enc));
+        opsB.renameSync = (...a) => { callsB.rename += 1; return fs.renameSync(...a); };
+        assert.throws(() => appendEvent(pB, { state: 'ABSENT' }, draft(), opsB),
+            /read-back mismatch/,
+            'a read-back that is valid but is not what we wrote must never be renamed into place');
+        assert.strictEqual(callsB.rename, 0, 'the rename must not have been reached');
+        assert.deepStrictEqual(tempsIn(rootB), [], 'and the temp must have been cleaned up');
+
+        // --- C. the cleanup itself fails --------------------------------------
+        // Here an orphaned temp is ADMITTED by the contract. What must not happen
+        // is one failure swallowing the other.
+        const rootC = tmp('commit-cleanup');
+        const pC = path.join(rootC, 'hook-provenance.json');
+        const opsC = Object.create(fs);
+        opsC.writeFileSync = () => { throw new Error('primary: disk full'); };
+        opsC.unlinkSync = () => { throw Object.assign(new Error('cleanup: file locked'), { code: 'EBUSY' }); };
+        let caught = null;
+        try { appendEvent(pC, { state: 'ABSENT' }, draft(), opsC); } catch (e) { caught = e; }
+        assert.ok(caught instanceof AggregateError,
+            'a cleanup that also fails must not be collapsed into a single error');
+        assert.strictEqual(caught.errors.length, 2, 'both failures are carried');
+        assert.ok(caught.errors.some(e => /disk full/.test(e.message)),
+            'the primary failure survives the cleanup failure');
+        assert.ok(caught.errors.some(e => /file locked/.test(e.message)),
+            'and the cleanup failure is not silently swallowed');
+        assert.ok(/orphaned temp/.test(caught.message),
+            'and the message says an orphaned temp may remain');
+    }
+
     console.log('--- hook-provenance tests passed! ---');
 }
 
