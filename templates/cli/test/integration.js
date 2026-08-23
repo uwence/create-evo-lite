@@ -3540,6 +3540,7 @@ async function runIntegrationTests() {
             // T11a: fresh install creates hook with sentinel
             const dir1 = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hook1-'));
             try {
+                childProcess.execFileSync('git', ['-C', dir1, 'init', '-q'], { stdio: 'ignore' });
                 fs.mkdirSync(path.join(dir1, '.git', 'hooks'), { recursive: true });
                 installPostCommitHook(dir1);
                 const hook = fs.readFileSync(path.join(dir1, '.git', 'hooks', 'post-commit'), 'utf8');
@@ -3562,6 +3563,7 @@ async function runIntegrationTests() {
             // T11c: pre-existing hook — evo-lite section appended, original content preserved
             const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hook2-'));
             try {
+                childProcess.execFileSync('git', ['-C', dir2, 'init', '-q'], { stdio: 'ignore' });
                 fs.mkdirSync(path.join(dir2, '.git', 'hooks'), { recursive: true });
                 fs.writeFileSync(path.join(dir2, '.git', 'hooks', 'post-commit'), '#!/bin/sh\necho "custom hook"\n');
                 installPostCommitHook(dir2);

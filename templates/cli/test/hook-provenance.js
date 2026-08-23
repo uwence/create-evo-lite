@@ -973,6 +973,671 @@ async function runHookProvenanceTests() {
             'and the message says an orphaned temp may remain');
     }
 
+    console.log('HP16. producer: NESTED-TARGET claims nothing, SCOPE-UNRESOLVED mutates nothing ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('producer');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        const child = path.join(repo, 'child');
+        fs.mkdirSync(child);
+
+        const nested = installPostCommitHook(child);
+        assert.strictEqual(nested.topology, 'NESTED-TARGET');
+        assert.strictEqual(nested.provenance, 'not-attempted');
+        assert.strictEqual(fs.existsSync(path.join(repo, '.git', 'evo-lite')), false,
+            'a nested target must not create an owner directory in the enclosing worktree');
+
+        // Legacy behaviour is PRESERVED, not replaced by the no-op it usually
+        // produces. With child/.git/hooks present, the base implementation writes;
+        // so must this one, while still claiming no provenance.
+        const childHooks = path.join(child, '.git', 'hooks');
+        fs.mkdirSync(childHooks, { recursive: true });
+        const nested2 = installPostCommitHook(child);
+        assert.strictEqual(nested2.provenance, 'not-attempted');
+        assert.strictEqual(fs.existsSync(path.join(childHooks, 'post-commit')), true,
+            'the nested exception preserves legacy installer behaviour, it does not freeze it');
+        assert.strictEqual(fs.existsSync(path.join(repo, '.git', 'evo-lite')), false,
+            'and still writes no provenance anywhere');
+    }
+
+    console.log('HP16c. producer: a nested opt-out still refuses the hook ...');
+    {
+        // The producer-level counterpart of HP20's CLI case, written here so the
+        // property has a guard inside Task 6 rather than waiting for Task 7.
+        // Nesting costs the durable RECORD of an opt-out, never the opt-out.
+        const { installPostCommitHook } = require('../hooks');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('nestedoptout');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        const child = path.join(repo, 'child');
+        fs.mkdirSync(path.join(child, '.git', 'hooks'), { recursive: true });
+
+        const r = installPostCommitHook(child, {
+            participation: 'non-participating', source: 'scaffold-no-hooks',
+        });
+        assert.strictEqual(r.topology, 'NESTED-TARGET');
+        assert.strictEqual(r.provenance, 'not-attempted');
+        assert.strictEqual(fs.existsSync(path.join(child, '.git', 'hooks', 'post-commit')), false,
+            'a nested opt-out still refuses the hook: a topology fact must not overrule an explicit instruction');
+        assert.strictEqual(fs.existsSync(path.join(repo, '.git', 'evo-lite')), false,
+            'and nothing is written into the enclosing worktree');
+    }
+
+    console.log('HP16d. producer: NO-GIT-ADMIN-TOPOLOGY touches nothing and does not throw ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const root = tmp('nogitadmin');
+        // A .git/hooks directory that belongs to no repository. Measured: git
+        // answers "fatal: not a git repository", which is the POSITIVE answer the
+        // classifier requires, so this really is NO-GIT-ADMIN-TOPOLOGY and not a
+        // query failure. The hooks directory exists on purpose: it gives a
+        // mutation that wrongly runs the legacy installer somewhere to write, so
+        // the guard below has real discriminating power.
+        fs.mkdirSync(path.join(root, '.git', 'hooks'), { recursive: true });
+        const hookPath = path.join(root, '.git', 'hooks', 'post-commit');
+
+        const calls = { write: 0, chmod: 0 };
+        const fsOps = Object.create(fs);
+        fsOps.writeFileSync = (...a) => { calls.write += 1; return fs.writeFileSync(...a); };
+        fsOps.chmodSync = (...a) => { calls.chmod += 1; return fs.chmodSync(...a); };
+
+        const r = installPostCommitHook(root, { fsOps });
+        assert.strictEqual(r.topology, 'NO-GIT-ADMIN-TOPOLOGY');
+        assert.strictEqual(fs.existsSync(hookPath), false,
+            'a workspace with no Git administrative container gets no hook, even where a hooks directory exists');
+        assert.strictEqual(calls.write, 0, 'and nothing was written');
+        assert.strictEqual(calls.chmod, 0, 'and nothing was chmod-ed');
+        assert.strictEqual(r.provenance, 'not-attempted');
+        assert.strictEqual(r.artifactContent, 'not-observed');
+        assert.strictEqual(r.chmodEvidence, null);
+        assert.strictEqual(r.event, null);
+    }
+
+    console.log('HP16b. producer: SCOPE-UNRESOLVED mutates nothing ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const crypto = require('crypto');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('failclosed');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        const hookPath = path.join(repo, '.git', 'hooks', 'post-commit');
+        fs.writeFileSync(hookPath, '#!/bin/sh\n# pre-existing\n');
+        const digest = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+        const before = digest(hookPath);
+
+        // Fixture validity: the injection must actually drive the classifier to
+        // SCOPE-UNRESOLVED, or this proves nothing about the fail-closed rule.
+        const failingRealpath = Object.create(fs);
+        failingRealpath.realpathSync = Object.assign(() => { throw new Error('x'); },
+            { native: () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); } });
+        const { classifyTopology } = require('../hook-provenance/topology');
+        const sub = path.join(repo, 'sub');
+        fs.mkdirSync(sub);
+        assert.strictEqual(classifyTopology(sub, { fsOps: failingRealpath }).state, 'SCOPE-UNRESOLVED',
+            'fixture validity: the injection must produce SCOPE-UNRESOLVED');
+
+        assert.throws(() => installPostCommitHook(sub, { fsOps: failingRealpath,
+            deps: { fsOps: failingRealpath } }), /SCOPE-UNRESOLVED/,
+            'a run that cannot classify its own scope must fail rather than proceed');
+        assert.strictEqual(digest(hookPath), before,
+            'SCOPE-UNRESOLVED grants no legacy exception: the hook is byte-identical');
+        assert.strictEqual(fs.existsSync(path.join(repo, '.git', 'evo-lite')), false,
+            'and no owner directory was created');
+    }
+
+    console.log('HP17. producer: a realized install records outcome and runnability ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { readProvenance } = require('../hook-provenance/store');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('realize');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+
+        const r = installPostCommitHook(repo);
+        assert.strictEqual(r.topology, 'IN-SCOPE');
+        assert.strictEqual(r.provenance, 'committed');
+        assert.strictEqual(r.artifactContent, 'modified');
+
+        const doc = readProvenance(path.join(repo, '.git', 'evo-lite', 'hook-provenance.json'));
+        assert.strictEqual(doc.state, 'VALID');
+        const ev = doc.doc.events[doc.doc.events.length - 1];
+        assert.strictEqual(ev.install.outcome, 'realized');
+        assert.strictEqual(ev.install.reason, 'created-managed-hook');
+        assert.ok(ev.runnability, 'a realized event carries runnability');
+        assert.strictEqual(ev.runnability.locator.verdict, 'satisfied');
+        assert.strictEqual(doc.doc.current.participation, 'participating');
+    }
+
+    console.log('HP18. producer: --no-hooks records the opt-out and leaves the hook alone ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { readProvenance } = require('../hook-provenance/store');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('optout');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+
+        const r = installPostCommitHook(repo, { participation: 'non-participating', source: 'scaffold-no-hooks' });
+        // `not-observed`, not `unchanged`: no before/after pair was taken, and
+        // "our code did not write" is not the same fact as "the content did not
+        // change" — an external mutation between the two is possible. The proof
+        // that no hook was written is the file itself, on the next line.
+        assert.strictEqual(r.artifactContent, 'not-observed');
+        assert.strictEqual(r.chmodEvidence, null);
+        assert.strictEqual(fs.existsSync(path.join(repo, '.git', 'hooks', 'post-commit')), false,
+            'an opt-out must not write a hook');
+
+        const doc = readProvenance(path.join(repo, '.git', 'evo-lite', 'hook-provenance.json'));
+        assert.strictEqual(doc.doc.current.participation, 'non-participating');
+        assert.strictEqual(doc.doc.events[0].install, undefined);
+
+        // Supersession: a later explicit install flips current back.
+        installPostCommitHook(repo, { source: 'hook-install-command' });
+        const after = readProvenance(path.join(repo, '.git', 'evo-lite', 'hook-provenance.json'));
+        assert.strictEqual(after.doc.current.participation, 'participating');
+        assert.strictEqual(after.doc.events.length, 2);
+    }
+
+    console.log('HP19. producer: a no-op invocation still records an event ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { readProvenance } = require('../hook-provenance/store');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('noop');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        installPostCommitHook(repo);
+        installPostCommitHook(repo);
+        const doc = readProvenance(path.join(repo, '.git', 'evo-lite', 'hook-provenance.json'));
+        assert.strictEqual(doc.doc.events.length, 2, 'the second, changeless run is still an event');
+        assert.strictEqual(doc.doc.events[1].install.reason, 'updated-managed-block');
+    }
+
+    console.log('HP21. producer: a write that throws after the bytes land is still realized ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('throwafter');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+
+        // Land the bytes, then throw — the exception carries no authority over
+        // what is now on disk, so the observation must still decide.
+        //
+        // The injection is scoped to the ARTIFACT path only. Throwing on every
+        // write would also break the provenance temp write, the whole call would
+        // throw, and the assertions below would never run — a control that tests
+        // nothing while appearing to pass.
+        const hookPath = path.join(repo, '.git', 'hooks', 'post-commit');
+        const fsOps = Object.create(fs);
+        fsOps.writeFileSync = (p, data, enc) => {
+            fs.writeFileSync(p, data, enc);
+            if (String(p) === hookPath) {
+                throw Object.assign(new Error('EIO after write'), { code: 'EIO' });
+            }
+        };
+        const r = installPostCommitHook(repo, { fsOps });
+        assert.strictEqual(r.event.install.outcome, 'realized',
+            'a thrown write whose bytes landed must not be recorded as unrealized');
+        assert.strictEqual(r.event.install.reason, 'created-managed-hook',
+            'the reason describes what was found before the write, not what the exception suggests');
+
+        // The pre-write phase is NOT duplicated here. HP25 owns it. A second
+        // pre-write controller in this block would absorb every mutation aimed at
+        // the pre-write branch — HP21 runs first, so the red would land here
+        // instead of on the property HP25 exists to guard.
+    }
+
+    console.log('HP25. producer: a failed pre-write observation does not swallow the intent (ac16) ...');
+    {
+        // The controller the frozen design names: it proves both halves at once —
+        // a failed observation is not dressed as a write, AND a failed install
+        // does not discard the intent that superseded an earlier opt-out.
+        const { installPostCommitHook } = require('../hooks');
+        const { readProvenance } = require('../hook-provenance/store');
+        const crypto = require('crypto');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('supersede');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        const hookPath = path.join(repo, '.git', 'hooks', 'post-commit');
+        const provenancePath = path.join(repo, '.git', 'evo-lite', 'hook-provenance.json');
+
+        // Start from a recorded opt-out, with a hook already on disk.
+        installPostCommitHook(repo, { participation: 'non-participating', source: 'scaffold-no-hooks' });
+        fs.writeFileSync(hookPath, '#!/bin/sh\n# third-party\n');
+        assert.strictEqual(readProvenance(provenancePath).doc.current.participation, 'non-participating',
+            'fixture validity: current starts non-participating');
+        const digest = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+        const before = digest(hookPath);
+        const eventsBefore = readProvenance(provenancePath).doc.events.length;
+
+        let chmodCalls = 0;
+        const preFail = Object.create(fs);
+        preFail.readFileSync = (p, enc) => {
+            if (String(p) === hookPath) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+            return fs.readFileSync(p, enc);
+        };
+        preFail.chmodSync = (...a) => { chmodCalls += 1; return fs.chmodSync(...a); };
+
+        installPostCommitHook(repo, { source: 'hook-install-command', fsOps: preFail });
+
+        const doc = readProvenance(provenancePath);
+        assert.strictEqual(doc.state, 'VALID');
+        const ev = doc.doc.events[doc.doc.events.length - 1];
+        assert.strictEqual(doc.doc.events.length, eventsBefore + 1, 'exactly one event is committed');
+        assert.strictEqual(digest(hookPath), before, 'the hook is byte-identical');
+        assert.strictEqual(chmodCalls, 0, 'chmod is never called');
+        assert.strictEqual(ev.intent.source, 'hook-install-command');
+        assert.strictEqual(ev.intent.participation, 'participating');
+        assert.strictEqual(ev.install.outcome, 'indeterminate');
+        assert.strictEqual(ev.install.reason, 'pre-write-observation-failed');
+        assert.strictEqual(ev.install.chmod, undefined);
+        assert.strictEqual(ev.install.expectedBodyDigest, undefined);
+        assert.strictEqual(ev.runnability, undefined);
+        assert.strictEqual(doc.doc.current.participation, 'participating',
+            'a failed install must not swallow the intent that superseded the opt-out');
+    }
+
+    console.log('HP22. producer: provenance is committed after the artifact, never before ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('order');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+
+        const order = [];
+        const fsOps = Object.create(fs);
+        fsOps.writeFileSync = (p, data, enc) => {
+            order.push(String(p).includes('hook-provenance') ? 'provenance' : 'artifact');
+            return fs.writeFileSync(p, data, enc);
+        };
+        installPostCommitHook(repo, { fsOps });
+        assert.strictEqual(order[0], 'artifact',
+            'the artifact is written and observed before provenance is committed');
+        assert.ok(order.lastIndexOf('provenance') > order.lastIndexOf('artifact'),
+            'the provenance commit is the last write of the invocation');
+    }
+
+    console.log('HP24. producer: artifact CONTENT is observed, and mode is a separate axis ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('artifactdim');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+
+        assert.strictEqual(installPostCommitHook(repo).artifactContent, 'modified',
+            'the first install changes the file');
+        const second = installPostCommitHook(repo);
+        assert.strictEqual(second.artifactContent, 'unchanged',
+            'artifactContent reports unchanged when no byte changed — "a write was issued" is not "the content changed"');
+        // Mode is its own axis. That rewrite was byte-identical, so artifactContent
+        // is `unchanged` while chmod still ran; folding the two together would let
+        // one of them speak for the other, and chmod can change the artifact
+        // without changing a byte.
+        assert.deepStrictEqual(second.chmodEvidence, { issued: true, threw: false },
+            'chmod is reported as operation evidence on its own axis, not as an artifact fact');
+    }
+
+    console.log('HP26. producer: the phase-2/3 outcomes the amendment named ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { execFileSync } = require('child_process');
+
+        // A. The write RETURNS SUCCESS, and the authoritative observation then
+        //    finds the expected body is not established — a concurrent overwrite
+        //    between the write and the observation. write-failed is scoped to the
+        //    write phase, not to an exception, so this is unrealized/write-failed.
+        //    Without this control an implementation may write `if (!threw) realized`
+        //    and still pass everything else.
+        const repoA = tmp('phase23a');
+        execFileSync('git', ['-C', repoA, 'init', '-q'], { stdio: 'ignore' });
+        const hookA = path.join(repoA, '.git', 'hooks', 'post-commit');
+        const clobber = Object.create(fs);
+        clobber.writeFileSync = (p, data, enc) => {
+            fs.writeFileSync(p, data, enc);
+            if (String(p) === hookA) fs.writeFileSync(p, '#!/bin/sh\n# clobbered by someone else\n');
+        };
+        const a = installPostCommitHook(repoA, { fsOps: clobber });
+        assert.strictEqual(a.event.install.outcome, 'unrealized');
+        assert.strictEqual(a.event.install.reason, 'write-failed',
+            'a write that returned success but did not establish the expected body is write-failed');
+        assert.deepStrictEqual(a.event.install.chmod, { attempted: true, threw: false },
+            'phase-2/3: the write was issued, so chmod is present');
+        assert.strictEqual(a.event.runnability, undefined,
+            'an unrealized event carries no runnability');
+
+        // B. The write is issued, and the artifact then becomes UNREADABLE. This
+        //    is the row that decides whether the errno rule survives all the way
+        //    to realization: an observer built on existsSync would call this
+        //    `no-hook` and record unrealized/write-failed — a failure to observe
+        //    impersonating a fact. The injection targets the real observer, not a
+        //    stubbed-out one, so it also proves the producer does not route
+        //    realization through diffInstalledHook.
+        const repoB = tmp('phase23b');
+        execFileSync('git', ['-C', repoB, 'init', '-q'], { stdio: 'ignore' });
+        const hookB = path.join(repoB, '.git', 'hooks', 'post-commit');
+        let written = false;
+        const blind = Object.create(fs);
+        blind.writeFileSync = (p, data, enc) => {
+            const out = fs.writeFileSync(p, data, enc);
+            if (String(p) === hookB) written = true;
+            return out;
+        };
+        blind.readFileSync = (p, enc) => {
+            if (written && String(p) === hookB) {
+                throw Object.assign(new Error('denied'), { code: 'EACCES' });
+            }
+            return fs.readFileSync(p, enc);
+        };
+        const b = installPostCommitHook(repoB, { fsOps: blind });
+        assert.strictEqual(b.event.install.outcome, 'indeterminate',
+            'an unreadable artifact after an issued write is a failure to observe, not unrealized');
+        assert.strictEqual(b.event.install.reason, 'post-write-observation-failed');
+        assert.deepStrictEqual(b.event.install.chmod, { attempted: true, threw: false },
+            'phase-2/3 again: a failed observation after an issued write still carries chmod');
+        assert.strictEqual(b.event.install.expectedBodyDigest, undefined);
+        assert.strictEqual(b.event.runnability, undefined);
+    }
+
+    console.log('HP27. producer: a committed artifact with an uncommitted record reports both (ac9) ...');
+    {
+        const { installPostCommitHook } = require('../hooks');
+        const { readProvenance } = require('../hook-provenance/store');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('twodim');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        const provenancePath = path.join(repo, '.git', 'evo-lite', 'hook-provenance.json');
+
+        // The artifact write succeeds; only the provenance write fails. Partial
+        // success must never be compressed into one outcome.
+        const failProvenance = Object.create(fs);
+        failProvenance.writeFileSync = (p, data, enc) => {
+            if (String(p).includes('hook-provenance')) {
+                throw Object.assign(new Error('no space'), { code: 'ENOSPC' });
+            }
+            return fs.writeFileSync(p, data, enc);
+        };
+
+        let caught = null;
+        try { installPostCommitHook(repo, { fsOps: failProvenance }); }
+        catch (err) { caught = err; }
+
+        assert.ok(caught, 'the invocation must fail, not report success with a warning');
+        assert.strictEqual(caught.provenance, 'failed');
+        assert.strictEqual(caught.artifactContent, 'modified',
+            'the artifact dimension is reported as the fact it is, beside the provenance failure');
+        assert.deepStrictEqual(caught.chmodEvidence, { issued: true, threw: false });
+        assert.strictEqual(fs.existsSync(path.join(repo, '.git', 'hooks', 'post-commit')), true,
+            'the hook really did change — which is exactly why it must be reported');
+        assert.strictEqual(readProvenance(provenancePath).state, 'ABSENT',
+            'and no half-written document was left behind');
+    }
+
+    console.log('HP23. producer: the rename is the commit point ...');
+    {
+        // HP22 proves ordering (mutate, then record). It does NOT prove the
+        // separate commit-point contract: that after the rename returns, no
+        // fallible step belonging to this invocation may run. That needs its own
+        // observation, because a step added after the rename would keep the same
+        // write order while still being able to fail a committed transaction.
+        const { installPostCommitHook } = require('../hooks');
+        const { readProvenance } = require('../hook-provenance/store');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('commitpoint');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+
+        const provenancePath = path.join(repo, '.git', 'evo-lite', 'hook-provenance.json');
+        const after = [];
+        const fsOps = Object.create(fs);
+        let committed = false;
+        fsOps.renameSync = (a, b) => {
+            const out = fs.renameSync(a, b);
+            if (String(b) === provenancePath) committed = true;
+            return out;
+        };
+        // Record every fallible fs operation issued AFTER the commit rename.
+        for (const op of ['writeFileSync', 'readFileSync', 'renameSync', 'unlinkSync',
+            'mkdirSync', 'chmodSync', 'statSync']) {
+            const original = fs[op].bind(fs);
+            if (op === 'renameSync') continue;
+            fsOps[op] = (...args) => {
+                if (committed) after.push(`${op}:${String(args[0])}`);
+                return original(...args);
+            };
+        }
+
+        const r = installPostCommitHook(repo, { fsOps });
+        assert.strictEqual(r.provenance, 'committed', 'fixture validity: the transaction must have committed');
+        assert.strictEqual(readProvenance(provenancePath).state, 'VALID');
+        assert.deepStrictEqual(after, [],
+            `no fallible operation may follow the commit rename (saw ${after.join(', ')})`);
+    }
+
+    console.log('HP28. producer: an unobservable document stops the run BEFORE the artifact ...');
+    {
+        // Task 5 proves appendEvent refuses to overwrite an unobservable
+        // document. It cannot prove the producer asks BEFORE it writes. A
+        // producer that wrote first and asked second would satisfy every Task 5
+        // assertion while having already changed the hook. That ordering is the
+        // read-before-mutate gate, and it is Task 6's to prove.
+        const { installPostCommitHook } = require('../hooks');
+        const crypto = require('crypto');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('readbeforemutate');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        const hookPath = path.join(repo, '.git', 'hooks', 'post-commit');
+        const provenancePath = path.join(repo, '.git', 'evo-lite', 'hook-provenance.json');
+        fs.writeFileSync(hookPath, '#!/bin/sh\n# pre-existing, must survive\n');
+        fs.mkdirSync(path.dirname(provenancePath), { recursive: true });
+        fs.writeFileSync(provenancePath, '{ corrupt');
+
+        const digest = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+        const hookBefore = digest(hookPath);
+        const docBefore = digest(provenancePath);
+
+        // Fixture validity: the document really must read UNOBSERVABLE, or this
+        // proves nothing about the gate.
+        const { readProvenance } = require('../hook-provenance/store');
+        assert.strictEqual(readProvenance(provenancePath).state, 'UNOBSERVABLE',
+            'fixture validity: the existing document must be unobservable');
+
+        const calls = { write: 0, chmod: 0 };
+        const fsOps = Object.create(fs);
+        fsOps.writeFileSync = (...a) => { calls.write += 1; return fs.writeFileSync(...a); };
+        fsOps.chmodSync = (...a) => { calls.chmod += 1; return fs.chmodSync(...a); };
+
+        assert.throws(() => installPostCommitHook(repo, { fsOps }), /unobservable/i,
+            'an unobservable document must stop the run');
+        assert.strictEqual(digest(hookPath), hookBefore,
+            'the hook is byte-identical: the gate ran BEFORE the artifact was touched');
+        assert.strictEqual(calls.write, 0, 'no write was issued at all');
+        assert.strictEqual(calls.chmod, 0, 'and no chmod was issued');
+        assert.strictEqual(digest(provenancePath), docBefore,
+            'and the unreadable document was not overwritten');
+    }
+
+    console.log('HP29. producer: a phase-1 outcome is recorded and the run stops before any write ...');
+    {
+        // Task 4 proves observeHooksDir classifies. It cannot prove the producer
+        // STOPS on a non-null outcome. An implementation that records the
+        // phase-1 fact and then falls through to the write path can still commit
+        // a document that passes the shared validator, so nothing downstream
+        // catches it. The sequencing is Task 6's own.
+        const { installPostCommitHook } = require('../hooks');
+        const { readProvenance } = require('../hook-provenance/store');
+        const { execFileSync } = require('child_process');
+        const repo = tmp('phase1stop');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        const hooksDir = path.join(repo, '.git', 'hooks');
+        fs.rmSync(hooksDir, { recursive: true, force: true });
+
+        // Fixture validity: the hooks directory must really be gone, or the
+        // phase-1 branch is never entered.
+        const { observeHooksDir } = require('../hook-provenance/observe');
+        assert.deepStrictEqual(observeHooksDir(hooksDir),
+            { outcome: 'unrealized', reason: 'hooks-dir-missing' },
+            'fixture validity: the hooks directory must be positively missing');
+
+        const calls = { write: 0, chmod: 0 };
+        const fsOps = Object.create(fs);
+        fsOps.writeFileSync = (p, ...a) => {
+            if (!String(p).includes('hook-provenance')) calls.write += 1;
+            return fs.writeFileSync(p, ...a);
+        };
+        fsOps.chmodSync = (...a) => { calls.chmod += 1; return fs.chmodSync(...a); };
+
+        installPostCommitHook(repo, { fsOps });
+
+        // The sequencing assertions come FIRST: they are what this block owns.
+        assert.strictEqual(calls.write, 0,
+            'a phase-1 outcome never writes the artifact: the fact was established before any write');
+        assert.strictEqual(calls.chmod, 0, 'and never chmods it');
+
+        const doc = readProvenance(path.join(repo, '.git', 'evo-lite', 'hook-provenance.json'));
+        assert.strictEqual(doc.state, 'VALID');
+        assert.strictEqual(doc.doc.events.length, 1, 'exactly one event is committed');
+        const ev = doc.doc.events[0];
+        assert.strictEqual(ev.install.outcome, 'unrealized');
+        assert.strictEqual(ev.install.reason, 'hooks-dir-missing');
+        assert.strictEqual(ev.install.chmod, undefined, 'phase 1 carries no chmod');
+    }
+
+    console.log('HP30. CLI: the explicit hook install translates core state into exit semantics ...');
+    {
+        // Task 6 Step 4 owns this action. Nothing else in the suite drives it,
+        // and M20 witnesses only the CORE's thrown payload.
+        const { registerHookCommands } = require('../hooks');
+        const { readProvenance } = require('../hook-provenance/store');
+        const { execFileSync } = require('child_process');
+
+        // The established harness in this repo: a minimal fake commander program
+        // that captures each action by its command name.
+        const handlers = {};
+        const fakeCmd = name => {
+            const self = {
+                alias: () => self, description: () => self, option: () => self,
+                command: sub => fakeCmd(sub),
+                action: fn => { handlers[name] = fn; return self; },
+            };
+            return self;
+        };
+        registerHookCommands({ command: name => fakeCmd(name) });
+        assert.strictEqual(typeof handlers.install, 'function',
+            'fixture validity: the install action was captured');
+
+        const prevRoot = process.env.EVO_LITE_ROOT;
+        const prevExit = process.exitCode;
+        const origLog = console.log; const origErr = console.error;
+        const run = ws => {
+            const logs = []; const errs = [];
+            let threw = null;
+            process.env.EVO_LITE_ROOT = path.join(ws, '.evo-lite');
+            console.log = (...a) => logs.push(a.join(' '));
+            console.error = (...a) => errs.push(a.join(' '));
+            process.exitCode = 0;
+            // A throw is captured rather than allowed to escape. Step 4's contract
+            // for every failure branch is "report and exit non-zero", so throwing
+            // is a contract violation — and it must surface as an assertion, not
+            // as a harness crash that proves nothing.
+            try { handlers.install({}); } catch (e) { threw = e; } finally {
+                console.log = origLog; console.error = origErr;
+            }
+            return { code: process.exitCode, logs, errs, threw, out: logs.concat(errs).join('\n') };
+        };
+
+        try {
+            // A. A workspace holding .git/hooks that belongs to no repository.
+            //    Measured: git answers "fatal: not a git repository", so this is
+            //    NO-GIT-ADMIN-TOPOLOGY. The hooks directory exists deliberately —
+            //    the OLD action tested only existsSync(hooksDir) and would have
+            //    installed here, so this fixture discriminates the new rule from
+            //    the one it replaces.
+            const fake = tmp('cli-nogit');
+            fs.mkdirSync(path.join(fake, '.git', 'hooks'), { recursive: true });
+            const a = run(fake);
+            assert.notStrictEqual(a.code, 0,
+                'an explicit hook install with no Git administrative container exits non-zero');
+            assert.strictEqual(fs.existsSync(path.join(fake, '.git', 'hooks', 'post-commit')), false,
+                'and installs no hook');
+
+            // B. The success path must not be collateral damage, and the action
+            //    must declare the source the contract requires. Nothing else in
+            //    the suite proves Step 4 passes hook-install-command.
+            const repo = tmp('cli-ok');
+            execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+            const b = run(repo);
+            assert.strictEqual(b.code, 0, 'a successful explicit install introduces no failure exit');
+            assert.strictEqual(fs.existsSync(path.join(repo, '.git', 'hooks', 'post-commit')), true,
+                'and the hook is installed');
+            const doc = readProvenance(path.join(repo, '.git', 'evo-lite', 'hook-provenance.json'));
+            assert.strictEqual(doc.state, 'VALID');
+            assert.strictEqual(doc.doc.events[doc.doc.events.length - 1].intent.source,
+                'hook-install-command',
+                'the explicit command declares itself as the source, never the scaffold default');
+
+            // C. A BARE repository. Measured: git answers "must be run in a work
+            //    tree", which is NOT the positive not-a-repository answer, so the
+            //    classifier lands on SCOPE-UNRESOLVED. No injection is needed —
+            //    the topology is a property of the fixture itself.
+            const bare = tmp('cli-bare');
+            execFileSync('git', ['init', '-q', '--bare', bare], { stdio: 'ignore' });
+            const { classifyTopology } = require('../hook-provenance/topology');
+            assert.strictEqual(classifyTopology(bare).state, 'SCOPE-UNRESOLVED',
+                'FIXTURE INVALID, not a product failure: this host\'s Git does not put a bare '
+              + 'repository into SCOPE-UNRESOLVED, so the case below cannot mean what it claims');
+            const c = run(bare);
+            assert.strictEqual(c.threw, null,
+                'an unresolved topology is reported by the command, not thrown out of it');
+            assert.notStrictEqual(c.code, 0,
+                'an explicit hook install that cannot resolve its own scope exits non-zero');
+            assert.ok(/SCOPE-UNRESOLVED/.test(c.out), 'and says which condition stopped it');
+            assert.strictEqual(fs.existsSync(path.join(bare, 'hooks', 'post-commit')), false,
+                'and fails closed: no hook is written');
+
+            // D. The artifact write succeeds and only the PROVENANCE rename fails.
+            //    fs.renameSync is instrumented rather than injected, and the patch
+            //    is scoped to exactly the temp -> hook-provenance.json rename:
+            //    measured, it intercepts that one call and lets every other rename
+            //    through. The product API is untouched — a seam added solely to
+            //    observe would be the production change this contract refuses.
+            const twodim = tmp('cli-twodim');
+            execFileSync('git', ['-C', twodim, 'init', '-q'], { stdio: 'ignore' });
+            const twodimHook = path.join(twodim, '.git', 'hooks', 'post-commit');
+            const originalRename = fs.renameSync;
+            let d;
+            try {
+                fs.renameSync = (src, dst) => {
+                    if (String(src).includes('hook-provenance.json.tmp-')
+                        && String(dst).endsWith('hook-provenance.json')) {
+                        throw Object.assign(new Error('injected provenance rename failure'), { code: 'EIO' });
+                    }
+                    return originalRename(src, dst);
+                };
+                d = run(twodim);
+            } finally {
+                fs.renameSync = originalRename;
+            }
+            assert.strictEqual(fs.renameSync, originalRename, 'the instrumentation is restored');
+
+            // Fixture validity, and the whole point of the case: the artifact
+            // really did change, so "both dimensions" is a claim about two real
+            // facts and not about one.
+            assert.strictEqual(fs.existsSync(twodimHook), true,
+                'fixture validity: the hook really was written before the provenance rename failed');
+            assert.strictEqual(
+                readProvenance(path.join(twodim, '.git', 'evo-lite', 'hook-provenance.json')).state,
+                'ABSENT', 'fixture validity: and no provenance document was committed');
+
+            assert.strictEqual(d.threw, null,
+                'a provenance failure after a mutated artifact is reported, not thrown out of the command');
+            assert.notStrictEqual(d.code, 0, 'and exits non-zero');
+            assert.ok(/artifact/i.test(d.out) && /provenance/i.test(d.out),
+                'the command surfaces BOTH dimensions: what the artifact is, and that the record did not commit');
+        } finally {
+            if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT;
+            else process.env.EVO_LITE_ROOT = prevRoot;
+            process.exitCode = prevExit;
+        }
+    }
+
     console.log('--- hook-provenance tests passed! ---');
 }
 
