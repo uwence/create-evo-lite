@@ -1152,6 +1152,111 @@ async function runHookProvenanceTests() {
         assert.strictEqual(doc.doc.events[1].install.reason, 'updated-managed-block');
     }
 
+    console.log('HP20. CLI: --no-git does not suppress hook participation, and --no-hooks is '
+        + 'the sole authority for explicit non-participation ...');
+    {
+        const { execFileSync } = require('child_process');
+        const { readProvenance } = require('../hook-provenance/store');
+        const { classifyTopology } = require('../hook-provenance/topology');
+        const { runInitializer } = require('./harness');
+
+        // Fixture-validity gate helper (amendment I2): a host on which the fixture
+        // does not classify as claimed must fail here, loudly, as an invalid
+        // fixture — never silently pass a scenario that no longer tests what it
+        // claims to test.
+        const fixture = (label, dir, expected) => assert.strictEqual(
+            classifyTopology(dir).state, expected,
+            `FIXTURE INVALID, not a product failure: ${label} is not ${expected} on this host`);
+
+        // The exec stub (amendment I3): Git runs for real, because the topology
+        // under test must be real. `npm ci` is the only other command the scaffold
+        // issues on this path, and it is stubbed to a successful no-op. Anything
+        // else throws loudly — "everything that isn't git succeeds" would let a
+        // future third shell command pass HP20 silently for the wrong reason.
+        const realExecSync = require('child_process').execSync;
+        const gitOnly = (cmd, opts) => {
+            const s = String(cmd);
+            if (/^git\b/.test(s)) return realExecSync(cmd, opts);
+            if (s === 'npm ci') return '';
+            throw new Error(`HP20 exec stub: unexpected command, neither git nor npm ci: ${s}`);
+        };
+
+        // A. An EXISTING repository scaffolded with --no-git: git init is skipped,
+        //    hook participation is not.
+        const repo = tmp('nogit');
+        execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
+        fixture('the --no-git target', repo, 'IN-SCOPE');
+        const rA = await runInitializer(repo, {
+            args: ['--no-git', '--no-initial-commit'], execSyncImpl: gitOnly,
+        });
+        assert.strictEqual(rA.status, 0, 'the scaffold must complete: this block tests intent, not failure');
+        const withGitFlag = readProvenance(path.join(repo, '.git', 'evo-lite', 'hook-provenance.json'));
+        assert.strictEqual(withGitFlag.state, 'VALID');
+        assert.strictEqual(withGitFlag.doc.current.participation, 'participating',
+            '--no-git governs repository initialisation only, never hook participation');
+
+        // B. --no-hooks on an existing repository records the explicit opt-out.
+        const optOut = tmp('nohooks');
+        execFileSync('git', ['-C', optOut, 'init', '-q'], { stdio: 'ignore' });
+        fixture('the --no-hooks target', optOut, 'IN-SCOPE');
+        const rB = await runInitializer(optOut, {
+            args: ['--no-hooks', '--no-initial-commit'], execSyncImpl: gitOnly,
+        });
+        assert.strictEqual(rB.status, 0, 'the scaffold must complete: this block tests intent, not failure');
+        const opted = readProvenance(path.join(optOut, '.git', 'evo-lite', 'hook-provenance.json'));
+        assert.strictEqual(opted.doc.current.participation, 'non-participating');
+        assert.strictEqual(opted.doc.events[0].intent.source, 'scaffold-no-hooks');
+
+        // C. The combination that makes two otherwise-correct rules collide. Recording
+        //    the opt-out requires an in-scope owner; --no-git forbids creating one. The
+        //    opt-out is honoured for the run and leaves no record — and above all, no
+        //    repository is manufactured in order to store it, which would run DD#1
+        //    backwards and let a hook flag create a Git repo.
+        const bare = tmp('nogit-nohooks');
+        assert.strictEqual(fs.existsSync(path.join(bare, '.git')), false,
+            'FIXTURE INVALID: the target must have no .git before the run');
+        fixture('the no-repository target', bare, 'NO-GIT-ADMIN-TOPOLOGY');
+        const rC = await runInitializer(bare, {
+            args: ['--no-git', '--no-hooks', '--no-initial-commit'], execSyncImpl: gitOnly,
+        });
+        assert.strictEqual(rC.status, 0, 'the scaffold must complete: this block tests intent, not failure');
+        assert.strictEqual(fs.existsSync(path.join(bare, '.git')), false,
+            'no .git may be created in order to record an opt-out');
+        assert.strictEqual(fs.existsSync(path.join(bare, '.evo-lite', 'hook-provenance.json')), false,
+            'and no provenance document appears anywhere in the working tree');
+
+        // D. NESTED-TARGET + --no-hooks writes nothing into the enclosing worktree.
+        const outer = tmp('nested-nohooks');
+        execFileSync('git', ['-C', outer, 'init', '-q'], { stdio: 'ignore' });
+        const inner = path.join(outer, 'inner');
+        fs.mkdirSync(inner);
+        fixture('the nested target', inner, 'NESTED-TARGET');
+        const rD = await runInitializer(inner, {
+            args: ['--no-git', '--no-hooks', '--no-initial-commit'], execSyncImpl: gitOnly,
+        });
+        assert.strictEqual(rD.status, 0, 'the scaffold must complete: this block tests intent, not failure');
+        assert.strictEqual(fs.existsSync(path.join(outer, '.git', 'evo-lite')), false,
+            'a nested opt-out must not write into the enclosing worktree');
+
+        // E. Nesting costs the durable RECORD of the opt-out, never the opt-out
+        //    itself. With the hooks directory present, the legacy installer would
+        //    otherwise write — so this is where a topology fact could overrule an
+        //    explicit instruction, and must not. The carrier gate is load-bearing:
+        //    that directory exists precisely so a wrongly-invoked legacy installer
+        //    WOULD write. Without it the scenario cannot discriminate.
+        const inner2 = path.join(outer, 'inner2');
+        fs.mkdirSync(path.join(inner2, '.git', 'hooks'), { recursive: true });
+        assert.strictEqual(fs.existsSync(path.join(inner2, '.git', 'hooks')), true,
+            'FIXTURE INVALID: the local hooks directory must exist, or a wrong legacy invocation has nowhere to write');
+        fixture('the nested carrier target', inner2, 'NESTED-TARGET');
+        const rE = await runInitializer(inner2, {
+            args: ['--no-git', '--no-hooks', '--no-initial-commit'], execSyncImpl: gitOnly,
+        });
+        assert.strictEqual(rE.status, 0, 'the scaffold must complete: this block tests intent, not failure');
+        assert.strictEqual(fs.existsSync(path.join(inner2, '.git', 'hooks', 'post-commit')), false,
+            'a nested --no-hooks still refuses the hook; only the record is lost');
+    }
+
     console.log('HP21. producer: a write that throws after the bytes land is still realized ...');
     {
         const { installPostCommitHook } = require('../hooks');

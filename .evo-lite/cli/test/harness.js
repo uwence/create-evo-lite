@@ -539,7 +539,7 @@ async function runInitializer(projectRoot, options = {}) {
     };
 
     delete require.cache[indexModulePath];
-    process.argv = ['node', INIT_ENTRY, projectRoot, '--yes'];
+    process.argv = ['node', INIT_ENTRY, projectRoot, '--yes', ...(options.args || [])];
     console.log = (...args) => stdout.push(args.join(' '));
     console.warn = (...args) => stderr.push(args.join(' '));
     console.error = (...args) => stderr.push(args.join(' '));
