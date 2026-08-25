@@ -1348,3 +1348,139 @@ Four criteria are `PARTIAL` and four ledger items remain open or carried forward
 **A matrix that is not fully green is the expected outcome of an honest
 reconciliation.** Every residual above names its authority and its owner, and none of
 them is Task 8's to close.
+
+---
+
+# Evidence event — appended 2026-08-25, after Task 8 was accepted
+
+**Append-only.** No statement above is rewritten. In particular §0.2's
+`exit 0 / 445 / 0 AssertionError / 38 HP blocks` **stands**: it was true of the
+environment it was measured in. What it lacked was an environment qualifier, and
+this section supplies one.
+
+```
+Event                Windows CI evidence gap discovered
+Discovered           while preparing PR #49 for final review
+Affected evidence    HP25, HP21, HP27
+Classification       FIXTURE REPRESENTATION DEFECT — not a product defect
+Impact               evidence UNAVAILABLE, not property disproven
+Resolution           interception changed to identity-based matching;
+                     stub-hit assertions added
+Revalidation         Task 6 mutation evidence restored, 9/9 preserved;
+                     Windows CI legs green
+```
+
+## What happened
+
+`feat/hook-install-provenance` had been red on both `windows-latest` legs since
+`35c91cc` (Task 6). `main` was green throughout. Three acceptances — Tasks 6, 7
+and 8 — each recorded a green suite, and each was measured only on one host. The
+controller never consulted CI.
+
+The failing assertion was HP25's *"the hook is byte-identical"*.
+
+Reproduced locally: the fixtures intercepted `fs` operations by comparing path
+**spellings**. Where `TMP` resolves through an 8.3 short name — the CI runner's
+`C:\Users\RUNNER~1\…` — `os.tmpdir()` and `git rev-parse --show-toplevel` name the
+same directory differently, so `String(p) === hookPath` never matched. The fault
+each block meant to inject was never injected.
+
+```
+CI did not disprove the pre-write guard.
+It revealed that the fixture never reached it.
+The ac16 evidence was ABSENT, not failed.
+```
+
+## The audit unit is interception, not failure
+
+A stub miss does not necessarily produce a failing test. A failure-sensitive
+assertion may expose its own bypass; a success-shaped assertion stays green on an
+unexercised path. Therefore the audit's unit is **representation-dependent
+interception**, not observed failure.
+
+| block | prior status | corrected reading |
+|---|---|---|
+| `HP25` | failed | fixture defect detected → evidence restored |
+| `HP21` | passed | **prior CI evidence was vacuous** → evidence restored |
+| `HP27` | passed | **prior CI evidence was vacuous** → evidence restored |
+
+`HP21` and `HP27` are recorded as neither *passed* nor *failed*. Their evidence
+state changed; their test results did not. `HP21` injects a post-write throw and
+then asserts `realized` / `created-managed-hook` — exactly what the uninjected
+success path produces. `HP27` records post-commit operations only once its rename
+matcher arms, then asserts that list is empty; an unarmed matcher leaves it empty
+by default. Both were measured green while proving nothing.
+
+`HP27` carried a line reading `'fixture validity: the transaction must have
+committed'`. It validates the **product's** report, not the **instrument's**
+arming, and so could not see the vacancy.
+
+## Resolution
+
+Interception now matches through `pathIdentity`, the authority the production
+code already uses, comparing the directory and the basename separately because
+the target may not exist at interception time — the split `observeLocator` makes,
+for the same reason. Measured: `path.resolve(short) !== path.resolve(long)`, so
+`path.resolve` is not a substitute; `realpathSync.native` resolves both to one.
+
+Six arming gates were added. Fixing the string comparison closes the
+representation difference that was found; the gates close the ones that were not.
+
+## Revalidation
+
+```
+short-name TMP, reproducing the CI condition    exit 0 · 445 · 0 AssertionError
+ordinary TMP                                    exit 0 · 445 · 0 · 38 HP blocks
+negative control: samePath reverted to ===      exit 1, red on
+                                                "FIXTURE INVALID: the post-write
+                                                 throw was never injected"
+                                                — the block that used to pass silently
+CI at 585d5ec                                   6/6 legs SUCCESS, both windows legs green
+```
+
+Nine Task 6 mutations declare guards inside a changed block. All nine re-run:
+
+```
+M15  HP=29 TRUE    M15b HP=25 FALSE*   M15c HP=30 TRUE
+M15e HP=30 TRUE    M16d HP=32 TRUE     M18  HP=33 FALSE*
+M19  HP=33 TRUE    M19b HP=33 TRUE     M20  HP=34 TRUE
+```
+
+`*` device-level `FALSE`, pre-existing and already reconciled in §2 under Task 6's
+structural guard-identity ruling: the device matches by message string, and the
+plan wrote those assertions without one. Nothing changed here.
+
+**Fixture hardening preserved previously reconciled mutation identities.** Every
+mutation went red on its own declared guard; none was intercepted by a new arming
+gate. Had one been, that mutation would have stopped proving its property and
+started proving that the fixture arms — and would have needed redesign. None did.
+
+The remaining 13 Task 6 mutations declare guards outside the changed blocks and
+were not re-run. `M15d` stays `RETIRED`; its guard is never reached, as recorded.
+
+## Registered, not repaired here
+
+```
+governance.js / integration.js carry the same class of
+representation-dependent interception. Several use path.resolve(), which
+measurement shows is equally vulnerable to the short-name divergence.
+
+status   REGISTERED FOLLOW-UP, separate work item
+reason   this PR owns hook-install-provenance evidence only; widening the fix
+         would reopen acceptance, review and CI evidence scope
+```
+
+## What this changes about the PR's claim
+
+Not:
+
+```
+all green since the first run
+```
+
+but:
+
+```
+evidence challenged  ->  fixture defect isolated  ->  evidence restored
+                     ->  scope preserved
+```
