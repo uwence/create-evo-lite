@@ -1026,3 +1026,159 @@ Step 4  health authority          FIRST PASS FROZEN
 Step 5  verification consequence  NOT ENTERED
 Step 6  implementation            NOT ENTERED
 ```
+
+---
+
+# Step 5 Round 1 — FROZEN: how a consequence is represented and propagated
+
+Append-only. Round 1 freezes **shape and propagation only**. Per-case values —
+which observation on which topology yields which consequence, and whether each
+cell is fail-open or fail-closed — are Round 2 and are **NOT ENTERED**.
+
+The split exists because shape is an architectural constraint while per-case
+values are policy rulings. Freezing them together would let the shape's tidiness
+smuggle in a value nobody adjudicated.
+
+## 5.0 The consequence channels that already exist, measured
+
+```
+report.<domain>          a named per-domain field       attribution PRESERVED
+                         e.g. report.governance = { status, path, report }
+report.hasAlerts = true  26 sites, boolean              attribution LOST
+pushNextStep(step)       32 sites, free-text list       attribution only implicit
+log(...)                111 sites                       human-facing only
+```
+
+An attribution-preserving channel therefore already exists and is already in use
+by the governance domain. Nothing new needs inventing, and §A.4's warning against
+adding a fourth vocabulary is satisfied.
+
+## 5.1 The domain consequence record — FROZEN
+
+```
+{
+    domain,
+    authority,
+    judgement,
+    inputs,
+    reason
+}
+```
+
+All five belong to the evidence chain.
+
+| field | answers | may not become |
+|---|---|---|
+| `domain` | which question domain produced this | an untraceable summary value |
+| `authority` | who holds the power to read the pair as a judgement | absent — without it the judgement degrades to an opaque boolean |
+| `judgement` | that domain's result, and nothing wider | a global verdict, a suggestion, or an action |
+| `inputs` | the pair `(observation, expectation)` — §4.3 | a single half; `observation -> judgement` would restore observation exceeding its authority |
+| `reason` | why this judgement | the authority; `reason: "hook missing"` may never become `authority: "hook missing"` |
+
+A boolean may not serve as the record, and free text may not carry it alone.
+
+## 5.2 Composite is a derived projection — FROZEN
+
+```
+composite judgement  =  a projection DERIVED from the domain judgements
+                     != the domain judgements discarded into one boolean
+```
+
+A boolean summary may exist, as a projection:
+
+```
+hasAlerts = any(domain.judgement requires attention)
+```
+
+It is never the source of truth.
+
+> **A boolean summary is an output projection, not an authority model.**
+
+Continuous with §4.5's *hasAlerts is an output shape, not a health authority*.
+Because the domain records survive the projection, *"who pushed this to
+attention-needed"* stays answerable — the answer did not evaporate at the OR.
+
+## 5.3 `D2` — consequence cannot be defined, and that is recorded, not patched
+
+```
+D2 installation consistency
+    authority    unresolved            (Step 4)
+    consequence  CANNOT BE DEFINED
+
+classification   authority dependency violation
+NOT              missing implementation
+NOT              "Step 5 blocked"
+```
+
+The dependency path, which is a legitimate traversal and not a regression:
+
+```
+Step 5  ->  needs a D2 consequence
+        ->  authority unavailable
+        ->  return to Step 4
+        ->  resolve the authority
+        ->  re-enter Step 5
+```
+
+Two prohibitions hold while it stays unresolved:
+
+```
+An incorrect implementation may not become the authority merely because it
+is available. diffInstalledHook is not eligible by being present.
+
+not connected  !=  decided irrelevant
+The fact that hasAlerts does not currently observe the hook is an ABSENCE,
+not a ruling that hook state is irrelevant to health.
+```
+
+## 5.4 Round 1 boundary
+
+Frozen here:
+
+```
+how a consequence is represented
+how a consequence is propagated
+how a missing authority is handled
+```
+
+Not frozen here, and explicitly deferred to Round 2:
+
+```
+what UNOBSERVABLE yields
+what a missing governance run yields
+what hook drift yields
+fail-open / fail-closed per cell
+```
+
+And still outside Step 5 entirely:
+
+```
+install · repair · rewrite · modify hook       -- remediation, a later layer
+```
+
+### Existing behaviour may not self-promote
+
+Round 2 must rule on each cell explicitly. An existing code path is evidence of
+what the system does, never of what was decided:
+
+```
+existing consequence behaviour   ->   MAY BE RECORDED
+                                 ->   MAY NOT be promoted to approved policy
+                                      by having been there first
+```
+
+---
+
+# Status after Step 5 Round 1
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+Step 4  health authority          FIRST PASS FROZEN
+        D2                        UNRESOLVED, intentional
+Step 5  consequence
+        Round 1  shape            FROZEN
+        Round 2  values           NOT ENTERED
+Step 6  implementation            NOT ENTERED
+```
