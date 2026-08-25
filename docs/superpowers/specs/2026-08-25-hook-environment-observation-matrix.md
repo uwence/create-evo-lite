@@ -794,3 +794,235 @@ Step 4  health authority          NOT ENTERED
 Step 5  verification consequence  NOT ENTERED
 Step 6  implementation            NOT ENTERED
 ```
+
+---
+
+# Step 4 — FROZEN (first pass): health authority
+
+Append-only. Step 4 answers exactly one question:
+
+> **Who owns the power to read a relation between observation and expectation as
+> a health judgement?**
+
+It does **not** answer whether anything is acceptable, what the health states are,
+how domains aggregate, or what should be done about any result. The vocabulary
+ban of §2.8 is lifted only far enough to *name* domains and authorities; no
+verdict is asserted anywhere below.
+
+## 4.0 What already exists, measured
+
+A composite health authority is already in production. It was not designed as
+one; it accumulated.
+
+```
+~20 separate conditions  ->  report.hasAlerts          (boolean OR)
+                         ->  takeover-session.js:66
+                             (verify.hasAlerts || degraded.length > 0)
+                                 ? 'attention-needed' : 'ready'
+```
+
+Two measured facts follow, and both are inputs to this step:
+
+```
+1. The installed hook artifact does not enter this chain AT ALL.
+   verify never consults diffInstalledHook. So today's answer to
+   "does a stale or missing hook affect overall governance health"
+   is: it does not, because it is not on the chain.
+
+2. The governance domain has already made per-case fail-open / fail-closed
+   choices, in code, without naming who made them (§A.11).
+```
+
+`hasAlerts` is retained as a fact about the system. It is **not** adopted as the
+analysis model for Step 4, because a boolean OR over twenty anonymous
+contributors cannot answer *who judged this*.
+
+## 4.1 Health domains — four, by question
+
+| domain | question |
+|---|---|
+| `D1` declaration consistency | can the declaration itself be safely relied upon? |
+| `D2` installation consistency | is the artifact where and what the installation expectation requires? |
+| `D3` execution success | did the most recent governance execution succeed? |
+| `D4` composite | how do multiple domain results form one external summary? |
+
+These four have different lifetimes, different evidence sources, and different
+failure semantics. They may not share one bucket.
+
+## 4.2 Authority per domain
+
+### `D1` — `validateHookProvenanceV1`
+
+It already owns schema legality, the frozen vocabularies, the `C-2` consistency
+family, and the `UNOBSERVABLE` boundary. It is fail-closed by construction:
+
+```
+invalid document  ->  UNOBSERVABLE
+invalid document  ->  NOT "probably absent"
+```
+
+### `D2` — **NO SINGLE AUTHORITY IDENTIFIED**
+
+This is the most important entry in Step 4, and it is deliberately left open.
+
+```
+observeLocator      holds the correct location authority
+                    git rev-parse --path-format=absolute --git-path hooks
+                    honours worktrees and core.hooksPath
+                    BUT it expresses an observation AT MEASUREMENT TIME (§3.5),
+                    which is not the same thing as an authority over the
+                    current installed state
+
+diffInstalledHook   uses path.join(root, '.git', 'hooks')
+                    already registered as authority divergence (§3.4)
+                    a wrong implementation may not become the authority
+```
+
+Frozen state:
+
+```
+D2 installation consistency
+    authority   unresolved
+    reason      the existing observers disagree on the location authority
+```
+
+This is not a defect being concealed. It is the correct outcome of asking the
+question honestly. Naming an authority here to make the table look complete would
+break the layering the whole document exists to protect.
+
+### `D3` — `readGovernanceRunState`
+
+It owns the execution lifecycle: whether the most recent run happened and whether
+its commands succeeded.
+
+### `D4` — see §4.4
+
+## 4.3 A health judgement takes a PAIR
+
+```
+input to any domain judgement  =  (observation, expectation)
+```
+
+Neither half alone may produce a health judgement:
+
+```
+FORBIDDEN   observation alone   -- observation exceeding its authority
+FORBIDDEN   expectation alone   -- declaration exceeding its authority
+```
+
+The path is always:
+
+```
+what was observed  +  what was expected  +  the domain authority's reading
+```
+
+### No automatic mapping of any unresolved state
+
+```
+SCOPE-UNRESOLVED · OWNER-UNRESOLVED · UNOBSERVABLE · EXPECTATION_UNRESOLVED
+```
+
+None of these may be mapped in either direction by default. A domain authority
+may rule on any of them, fail-open or fail-closed — but the ruling must be
+written down, and it must be attributable to that authority. A default is not a
+ruling.
+
+## 4.4 Composite — shape requirement only
+
+Frozen:
+
+```
+Composite health authority requirement:
+
+    the contributor(s) responsible for a composite judgement
+    must remain identifiable
+```
+
+Explicitly **not** frozen, and deferred:
+
+```
+OR · AND · priority · severity · the mapping onto any external summary value
+```
+
+Step 4 settles *who owns the judgement*, never *how results aggregate*.
+
+## 4.5 Registered: a boolean summary is an output shape, not an authority model
+
+```
+report.hasAlerts   may continue to exist
+                   it is an OUTPUT SHAPE
+
+hasAlerts          is NOT a health authority
+                   it cannot answer "who judged this"
+```
+
+## 4.6 Registered existing consequence rule — Step 5's to adjudicate
+
+Measured in `memory.service.js` (§A.11):
+
+```
+governance last-run  healthy          logs only
+                     missing          logs only, does NOT set hasAlerts   <- fail-open
+                     failed-last-run  sets hasAlerts                      <- fail-closed
+                     error            sets hasAlerts                      <- fail-closed
+```
+
+```
+classification   existing consequence rule
+NOT              an authority definition
+status           RECORDED, unchanged by Step 4
+owner            Step 5
+```
+
+Step 4 neither endorses nor overturns it. It is recorded so that Step 5 rules on
+it deliberately rather than inheriting it by silence.
+
+---
+
+# Appendix A (continued) — Step 4 measurements
+
+## A.11 The existing composite and the existing fail-open
+
+```
+templates/cli/memory.service.js
+    report.hasAlerts set from ~20 separate conditions
+
+    governanceRun.status === 'healthy'          -> log only
+                          === 'missing'         -> log only
+                          === 'failed-last-run' -> log + report.hasAlerts = true
+                          otherwise (error)     -> log + report.hasAlerts = true
+
+templates/cli/takeover-session.js:66
+    (verify.hasAlerts || degraded.length > 0) ? 'attention-needed' : 'ready'
+
+templates/cli/takeover-payload.js:34
+    TAKEOVER_HEALTH = { 'ready', 'bootstrap-pending', 'attention-needed' }
+```
+
+`diffInstalledHook` appears nowhere in `verify`. Confirmed by search across
+`templates/cli/`: its only non-test consumers are the `hook status` command and
+the tests.
+
+*(The quoted string values above — `healthy`, `missing`, `failed-last-run`,
+`ready`, `attention-needed` — are measurements of existing code, not verdicts
+asserted by this document.)*
+
+---
+
+# Status after Step 4
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+Step 4  health authority          FIRST PASS FROZEN
+        D1  validateHookProvenanceV1
+        D2  UNRESOLVED  -- registered authority divergence, deliberately open
+        D3  readGovernanceRunState
+        D4  shape requirement only; aggregation deferred
+        recorded: hasAlerts is an output shape, not an authority
+        recorded: governance missing -> no alert, an existing consequence rule
+
+Step 5  verification consequence  NOT ENTERED
+Step 6  implementation            NOT ENTERED
+```
