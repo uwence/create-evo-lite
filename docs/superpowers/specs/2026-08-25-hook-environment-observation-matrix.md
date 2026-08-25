@@ -1484,3 +1484,219 @@ Step 5  consequence
                                   D3 expectation not established
 Step 6  implementation            NOT ENTERED
 ```
+
+---
+
+# Step 4 amendment — `D3` splits by question
+
+Append-only. This is a **question-dimension split inside one domain container**,
+not two new peer health domains. `D3 execution` remains the container.
+
+The split follows the same test that removed `D1`: before adjudicating a domain,
+ask whether it contains more than one question. `D3` contained two, and they have
+different expectation situations.
+
+## E4.7 — `D3(a)` execution outcome
+
+```
+question      Did this execution succeed?
+observation   the recorded execution result
+expectation   a success contract
+status        EXPECTATION_AUTHORITY_UNRESOLVED
+```
+
+An expectation exists in principle — a run either met the success contract or it
+did not. What is missing is a single authority for that contract, because
+**"success" is currently defined twice, and the two definitions are not
+equivalent** (§A.13):
+
+```
+writer, in the hook body      ok: commands.every(item => item.ok)
+reader, in verify             failed = commands.some(c => c && c.ok === false)
+```
+
+A command entry whose `ok` field is absent or null is recorded by the writer as a
+failed run and read by `verify` as `healthy`. An empty command list reads as
+success on both sides — a run that executed nothing.
+
+```
+classification   authority divergence, inside the domain it judges
+status           REGISTERED, NOT ADJUDICATED THIS ROUND
+```
+
+Naming which side wins is a design choice requiring answers this round does not
+have — who consumes the judgement, which stage holds final interpretation, and
+whether a writer's record and a reader's recomputation are permitted to differ at
+all. That choice is not made here, and no code is changed.
+
+## E4.8 — `D3(b)` execution occurrence
+
+```
+question      Should a governance run have happened in this workspace?
+observation   run record presence
+expectation   none established
+status        OBSERVATION_ONLY_DOMAIN
+```
+
+Searched and not found: no provenance declaration, no `config.json` key, no
+policy or strategy file states that a workspace must produce a governance run.
+
+`OBSERVATION_ONLY_DOMAIN` is deliberately not `EXPECTATION_UNRESOLVED`. There is
+no expectation object to be unresolved about.
+
+### What this settles about `missing`
+
+```
+observed        record absent
+NOT observed    expected record absent
+```
+
+Without an expectation, `missing` cannot enter a health comparison at all. The
+long-standing question in the work item's own framing — *does a missing hook or a
+missing run affect overall governance health* — now has a precise answer for this
+half: **it cannot, yet, because nothing has been promised.**
+
+The existing behaviour keeps its Step 4 classification and gains a reason:
+
+```
+missing -> no alert
+    is   existing consequence behaviour without an established
+         expectation contract
+    is NOT an approved fail-open policy
+```
+
+Someone chose a default because a default was required at that line of code. No
+authority recorded the choice. That is what §5.4's *existing behaviour may not
+self-promote* was written for.
+
+## E4.9 — `D3` frozen state
+
+```
+D3 execution
+
+    D3(a) execution outcome
+          observation   governance run result
+          expectation   success contract
+          status        EXPECTATION_AUTHORITY_UNRESOLVED
+          reason        writer/reader success semantics diverge
+
+    D3(b) execution occurrence
+          observation   run record presence
+          expectation   none established
+          status        OBSERVATION_ONLY_DOMAIN
+```
+
+---
+
+# Appendix A (continued)
+
+## A.13 Two non-equivalent definitions of a successful governance run
+
+Both expressions evaluated on the same inputs:
+
+```
+command entry            writer: every(i=>i.ok)   reader: some(c=>c.ok===false)
+all ok                   true                     healthy
+one explicit false       false                    failed-last-run
+ok field MISSING         false                    healthy          <- diverge
+ok is null               false                    healthy          <- diverge
+empty command list       true                     healthy
+```
+
+Sources: `templates/cli/hooks.js`, inside the hook body written at install time;
+`templates/cli/memory.service.js`, `readGovernanceRunState`.
+
+---
+
+# `[0ce0]` Phase 1 — CLOSURE
+
+This phase does not deliver a health matrix. It delivers a layered model that
+cannot fabricate a health judgement, plus every dependency that currently
+prevents one.
+
+That is the correct deliverable. A completed matrix at this point would only have
+been completable by manufacturing the missing contracts to fit the table.
+
+## Frozen
+
+```
+topology model              5 rows, Step 1
+observation model           fact / authority / three-value state, Step 2 + erratum
+expectation model           one authority, five states, binding granularity, Step 3
+authority ownership model   domains, owners, and their gaps, Step 4 + errata
+consequence transport shape Round 1 of Step 5
+```
+
+## Explicitly unresolved, with the reason each is blocked
+
+```
+D2   authority NAMED, NOT INSTANTIATED
+     live installation observer does not exist yet
+     -> cannot produce judgements, so no consequence cells
+
+D3(a) EXPECTATION_AUTHORITY_UNRESOLVED
+     "success" is defined twice and the definitions diverge
+
+D3(b) OBSERVATION_ONLY_DOMAIN
+     nothing has been promised, so nothing can be compared
+
+D4   DEPENDENT
+     a projection cannot be derived from domains that produced no judgements
+```
+
+## Not authorized by this phase
+
+```
+implementation of anything
+introduction of the live installation observer
+any change to verify, hook status, or the producer
+expansion of any health rule
+adjudication of the writer/reader success divergence
+```
+
+## Registered, not repaired
+
+```
+observation authority divergence   effective hook location:
+                                   git probe vs string join            §3.4
+success-definition divergence      writer every() vs reader some()     §A.13
+existing consequence behaviour     governance missing -> no alert      §4.6, E4.8
+```
+
+## The question the work item opened with
+
+> *does a stale, missing, or current hook affect overall governance health?*
+
+Phase 1's answer is not yes or no. It is:
+
+```
+Today: it affects nothing, because the installed hook is not on the
+       hasAlerts chain at all -- an ABSENCE, not a ruling.
+
+Before it can affect anything, three things must exist that do not:
+       an instantiated installation-consistency authority,
+       a single success contract for a governance run,
+       and a statement of what any environment actually promises.
+```
+
+---
+
+# Final status — `[0ce0]` Phase 1
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+Step 4  health authority          FROZEN, with errata
+        D1                        MOVED TO STEP 3
+        D2                        NAMED_NOT_INSTANTIATED
+        D3(a)                     EXPECTATION_AUTHORITY_UNRESOLVED
+        D3(b)                     OBSERVATION_ONLY_DOMAIN
+        D4                        DEPENDENT
+Step 5  consequence
+        Round 1  shape            FROZEN
+        Round 2  values           NOT ENTERED
+Step 6  implementation            NOT ENTERED
+
+PHASE 1 CLOSED
+```
