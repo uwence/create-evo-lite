@@ -1340,3 +1340,147 @@ Step 5  consequence
         Round 2  values           BLOCKED on D2
 Step 6  implementation            NOT ENTERED
 ```
+
+---
+
+# Step 4 amendment — `D2` resolved as an authority, not as an implementation
+
+Append-only, continuing the erratum numbering.
+
+## E4.5 — `D2`'s observation is structured; it is one domain
+
+```
+Installation consistency is one question with a structured observation,
+not multiple independent health domains.
+```
+
+```
+D2 observation
+
+{
+    effectiveHookLocation,
+    locationResolution,
+    installedContent,
+    templateComparison
+}
+```
+
+The internal order is a chain, not a merge:
+
+```
+resolve location  ->  read artifact at that location  ->  compare content
+```
+
+Splitting `D2` into peer domains `D2a` (location) and `D2b` (content) is
+rejected. The content question is not independent of the location question — it
+presupposes it. A peer split would allow:
+
+```
+location wrong + content right  ->  D2b passes  ->  the composite sees
+                                    partial success
+```
+
+and that success would be asserted about a file Git never runs. Attribution is
+not lost by keeping one domain: §5.1's frozen `reason` field distinguishes a
+location mismatch from a content mismatch.
+
+## E4.6 — `D2` authority: `live installation observer`, `NAMED_NOT_INSTANTIATED`
+
+```
+D2 installation consistency
+
+    question        Is the installed artifact consistent with the effective
+                    Git hook target?
+    observation     structured, per E4.5
+    authority role  live installation observer
+    authority status NAMED_NOT_INSTANTIATED
+```
+
+The status is the point. Two different things are now settled separately:
+
+```
+who SHOULD answer this question      settled
+does that answerer exist yet         no
+```
+
+Measured: no live installation observer exists today. `observeRunnability` has
+exactly one call site in the whole tree — `hooks.js:278`, inside the producer, at
+write time (§A.12).
+
+### The existing consumers, and why neither is the authority
+
+```
+observeLocator      holds the correct location rule, but expresses a
+                    write-time historical observation (§3.5)
+                    -> not an authority over the CURRENT installed state
+
+diffInstalledHook   resolves the location by string join (§3.4)
+                    -> an available implementation is not automatically
+                       an authority
+```
+
+Both remain in the document as consumers and as recorded divergence. Neither is
+promoted.
+
+### Naming is not authorizing
+
+```
+Step 4   defines authority OWNERSHIP
+Step 6   decides WHERE and HOW it is instantiated
+```
+
+Explicitly forbidden as a consequence of this amendment:
+
+```
+FORBIDDEN   named authority   ->  modify verify now
+FORBIDDEN   new observer      ->  change any health consequence automatically
+```
+
+`D2` still cannot enter Step 5 Round 2: an authority that is named but not
+instantiated cannot produce judgements, so there are no per-cell consequences to
+adjudicate yet.
+
+### Deliberately not settled here
+
+Whether the live installation observer is invoked by `verify`, by `hook status`,
+or by something else is **authority instantiation topology**, not authority
+ownership. It belongs to Step 6.
+
+---
+
+# Appendix A (continued)
+
+## A.12 No live installation observation exists
+
+```
+observeRunnability call sites, whole tree, excluding tests and its own module:
+    templates/cli/hooks.js:278   -- inside the producer, at write time
+
+buildHookBody   exported from templates/cli/hooks.js
+                deterministic: the only new Date() in the file is the
+                producer's recordedAt at line 192, outside the body builder
+```
+
+---
+
+# Status after the `D2` amendment
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+
+Step 4  health authority
+        D1                        MOVED TO STEP 3
+        D2                        FROZEN — live installation observer,
+                                  NAMED_NOT_INSTANTIATED
+        D3                        EXPECTATION UNDEFINED
+        D4                        DEPENDENT
+
+Step 5  consequence
+        Round 1  shape            FROZEN
+        Round 2  values           BLOCKED
+                                  D2 authority not instantiated
+                                  D3 expectation not established
+Step 6  implementation            NOT ENTERED
+```
