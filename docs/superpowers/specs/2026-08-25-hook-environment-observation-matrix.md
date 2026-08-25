@@ -564,3 +564,233 @@ Step 2  observation framework        APPROVED
 
 Step 3  expectation / contract       NOT ENTERED
 ```
+
+---
+
+# Step 3 — FROZEN: expectation
+
+Ratified after the Step 2 erratum. Append-only: nothing above is rewritten.
+
+Step 3 answers one question only:
+
+> **When we are about to judge a fact, what should we compare it against?**
+
+It does **not** answer what a comparison result means. That is Step 4 onward.
+
+## 3.0 A correction of attribution, carried here rather than edited above
+
+During review it was stated in discussion that the producer's string-joined hook
+path conflicts with `ac1` of the frozen `[hook-install-provenance]` design. That
+attribution was wrong, and is corrected here because the classification matters:
+
+```
+ac1 governs   the PROVENANCE DOCUMENT path
+              "<git rev-parse --absolute-git-dir>/evo-lite/hook-provenance.json"
+ac1 does NOT govern the hook artifact's path
+```
+
+The finding survives; only its classification changes:
+
+```
+was recorded as   acceptance criteria failure
+is               observation authority divergence   (see §3.4)
+```
+
+§2.7 of this document never cited `ac1`, so no frozen text is affected.
+
+## 3.1 Expectation authority — one, and only one
+
+```
+Expectation is derived only from:
+
+    a VALID provenance document
+        current.participation
+```
+
+The chain, and the direction it may never run:
+
+```
+producer intent  ->  current.participation  ->  expectation
+```
+
+`ac2` of the frozen design already fixes that `current` derives from `intent` and
+**not** from `install.outcome`. Step 3 inherits that and adds the negative rules:
+
+```
+FORBIDDEN   hook artifact is present   ->  therefore expected
+FORBIDDEN   topology is IN-SCOPE       ->  therefore participating is expected
+```
+
+Both are observation exceeding its authority.
+
+The CLI, the scaffold, and the explicit command action are **producers**, not
+expectation authorities. Their intent is transient; the document is its durable
+projection.
+
+### `intent.source` is not a second authority
+
+```
+intent.source     answers   WHO produced this declaration
+current.participation answers WHAT is declared
+```
+
+`scaffold-no-hooks` is a provenance origin, not an expectation. The expectation
+is `current.participation = non-participating`. Reading the expectation off the
+source would give the same answer today by coincidence of the C-2d coherence
+rule, and would be the wrong authority tomorrow.
+
+## 3.2 Expectation states — five, none collapsible
+
+```
+EXPECTED                  a declaration exists and reads participating
+NOT_EXPECTED              a declaration exists and reads non-participating
+UNDECLARED                the address resolves; no declaration was ever made
+EXPECTATION_UNRESOLVED    the expectation authority could not be established
+                          reason: document-unobservable | address-unresolved
+NOT_APPLICABLE            no hook administration semantics exist here (R3)
+```
+
+`EXPECTATION_UNRESOLVED` is deliberately named for the *authority*, not for the
+system's knowledge. The expectation is not absent; the authority for it could not
+be established. Two distinct causes are carried in `reason`, following the
+`{state, reason}` shape the observation layer already uses.
+
+The three forbidden collapses:
+
+```
+UNDECLARED      !=  NOT_EXPECTED       absence of a statement is not
+                                       a statement of absence
+EXPECTATION_UNRESOLVED != EXPECTED     unreadable is not "assume participating"
+NOT_APPLICABLE  !=  NOT_EXPECTED       the question not arising is not
+                                       someone having declined
+```
+
+## 3.3 Binding granularity
+
+```
+For each (topology row  x  resolved worktree context):
+    exactly one expectation
+```
+
+It binds to **neither** of these:
+
+```
+NOT the repository      -- N worktrees may carry M hook locations, 1 <= M <= N
+NOT a hook location     -- `current` records no location at all
+```
+
+Measured (§A.10): `current` holds exactly `participation` and `derivedFrom`.
+`current.digest` is forbidden by the schema. The location appears only per event,
+as `install.targetPath`, slot 9 of the frozen 20-slot projection — an install
+record, not a declaration.
+
+### What identifies a worktree context
+
+```
+worktree context is identified by the PROVENANCE DOCUMENT ADDRESS
+    git rev-parse --absolute-git-dir
+
+it is NOT identified by the current hook location
+    git rev-parse --git-path hooks
+```
+
+The two have different lifetimes. The document address is where a declaration
+lives; the hook location is a live observation that `core.hooksPath` can change
+at any time without touching any declaration.
+
+## 3.4 Registered divergence — two authorities for one question
+
+Measured (§A.9). One question — *where is the effective hook location* — is
+answered along two paths that do not agree:
+
+```
+question         effective hook location
+
+authority        git rev-parse --path-format=absolute --git-path hooks
+                 used by observeLocator (observe.js)
+
+implementation   path.join(targetDir,      '.git', 'hooks')   hooks.js:166
+                 path.join(topo.worktreeTop,'.git', 'hooks')  hooks.js:230
+                 path.join(projectRoot,     '.git', 'hooks')  hooks.js:368, 502
+                 used by the producer's write path and by diffInstalledHook
+```
+
+The consequence is measurable and is already recorded by the system itself: on a
+linked worktree, or wherever `core.hooksPath` is set, the producer writes to the
+constructed path and `observeLocator` then correctly records
+
+```
+runnability.locator = { verdict: 'not-satisfied', reason: 'active-hooks-dir-differs' }
+```
+
+The system writes the artifact to a location Git does not use, **and** records
+truthfully that the location is not the one Git uses. The fact layer is behaving
+exactly as designed; the divergence is upstream of it.
+
+```
+classification   observation authority divergence
+                 NOT an acceptance criteria failure  (see §3.0)
+status           REGISTERED_NOT_FIXED
+owner            implementation / verification layer
+action           later authorized change only
+```
+
+This is registered, not turned into a Step 3 contract, and not repaired here.
+
+## 3.5 The recorded locator verdict is historical, not live
+
+`runnability.locator` is an observation made **at write time** and stored in that
+event. `core.hooksPath` may change afterwards; the stored verdict does not.
+
+```
+stored runnability.locator   what was observed when the write was issued
+a live locator observation   a different fact, observed now
+```
+
+Step 3 freezes only that these are two facts. Which of them may serve as a
+comparison basis is not decided here.
+
+---
+
+# Appendix A (continued) — Step 3 measurements
+
+## A.9 `observeLocator` already holds the correct authority
+
+`templates/cli/hook-provenance/observe.js`:
+
+```
+gitQuery(targetDir, ['rev-parse', '--path-format=absolute', '--git-path', 'hooks'])
+
+pathIdentity(answer, dirname(targetPath)):
+    SAME      -> { verdict: 'satisfied',     reason: null }
+    DISTINCT  -> { verdict: 'not-satisfied', reason: 'active-hooks-dir-differs' }
+    otherwise -> { verdict: 'indeterminate', reason: 'path-comparison-ambiguous' }
+```
+
+while the producer computes the path it writes to by string join (§3.4).
+
+## A.10 `current` carries no location
+
+```
+current fields          participation, derivedFrom
+current.digest          forbidden by the validator
+install.targetPath      per event; slot 9 of the 20-slot canonical projection
+```
+
+---
+
+# Status after Step 3
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+        authority                 current.participation, sole
+        states                    5, none collapsible
+        binding                   (topology row x resolved worktree context)
+        registered                observation authority divergence
+
+Step 4  health authority          NOT ENTERED
+Step 5  verification consequence  NOT ENTERED
+Step 6  implementation            NOT ENTERED
+```
