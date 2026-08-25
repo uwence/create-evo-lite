@@ -1,0 +1,1702 @@
+# `[0ce0]` verify-hook-runtime-health — environment and observation matrix
+
+**Nature: `DRAFT / FROZEN-BY-STEP`.** This is not an approved spec amendment and
+not an implementation authorization. Each step is ratified by a human ruling and
+then frozen; later steps **append only** and never rewrite an earlier definition.
+
+**Not yet entered:** health interpretation. Nothing in this document says whether
+any observation is acceptable, expected, or actionable.
+
+| | |
+|---|---|
+| work item | `[0ce0] verify-hook-runtime-health` |
+| prerequisite | `[hook-install-provenance]`, Tasks 1–8 accepted, PR #49 |
+| baseline | `1f9c44b` |
+| branch | `spec/0ce0-hook-environment-observation-matrix` — deliberately NOT `feat/hook-install-provenance`, whose scope is frozen |
+
+## The ordering this document obeys
+
+Ratified before any step began, and not skippable:
+
+```
+1 freeze environments      2 freeze observable facts    3 freeze observation semantics
+4 identify health authority 5 only then define verification consequence
+6 only then discuss implementation
+```
+
+The three layers stay separate:
+
+```
+Topology classification   ->   Observation   ->   Health interpretation
+     where is the target        what can be         is this acceptable
+     and who can own it         established
+```
+
+The danger this ordering exists to prevent is that a measurement system quietly
+becomes a judging system. That collapse is **invisible**: a system that
+adjudicates still emits plausible output, never goes red, and therefore cannot be
+discovered by running it. The defence is the ordering itself — the health
+authority must be named in step 4 *before* step 5 defines a consequence, or step
+5 will appear to follow "naturally" from step 2 with nobody able to see it happen.
+
+## Governing invariants, inherited
+
+> **A failure to OBSERVE must never impersonate a change in FACT.**
+>
+> Corollary: **one question, one authority.**
+
+---
+
+# Step 1 — FROZEN: the row set
+
+Ratified. `Topology = 5 states`. A row is an observable topological relationship,
+not a deployment context.
+
+| row | definition |
+|---|---|
+| `R1 IN-SCOPE` | Git administration exists and the target is within the observable scope |
+| `R2 NESTED-TARGET` | the target lies inside a larger Git-administered scope; owner and enclosing worktree must be distinguished |
+| `R3 NO-GIT-ADMIN-TOPOLOGY` | no Git administrative container; no hook administration can be claimed |
+| `R4 SCOPE-UNRESOLVED` | scope cannot be reliably determined |
+| `R5 OWNER-UNRESOLVED` | owner cannot be reliably determined |
+
+## What the originally-named five "environments" became
+
+The work item was opened naming five environments. Four of them are not rows:
+
+```
+real git working copy   -> R1
+CI checkout             -> R1     same row; the difference is only whether we
+                                  can observe, never what was promised
+npm pack / scaffold     -> R3     a packed artifact carries no .git
+child project           -> R2 when nested, R1 when standalone
+no .git/hooks           -> NOT A ROW. It is an OBSERVATION on R1:
+                                  the repository is there, the administrative
+                                  directory is not
+```
+
+`CI checkout` is not observationally distinguishable from a real working copy by
+any Git or filesystem fact — only by ambient environment variables. Keying a row
+off an ambient signal would let a *missing variable* change the verdict, which is
+the governing invariant violated through a side door.
+
+## Why the two unresolved states are rows
+
+Neither appeared in the original five. They are not damaged versions of normal
+environments; they are the states where the governing invariant is under the most
+pressure. Without them every query failure is forced into a normal row, and that
+row's rules answer on its behalf:
+
+```
+git query failed  ->  assume no git admin  ->  R3      FORBIDDEN
+```
+
+## The expectation axis does not live in the rows
+
+Ratified in step 1 and carried forward. Three axes, kept apart:
+
+| axis | question | values |
+|---|---|---|
+| topology | where is the target and who can own it | the 5 rows above |
+| document state | what can be observed about provenance | `ABSENT` / `UNOBSERVABLE` / `VALID` |
+| participation | what did the producer declare | `participating` / `non-participating` |
+
+Explicitly frozen as three different things:
+
+```
+UNOBSERVABLE   the document cannot be safely judged      (read / validation)
+ABSENT         the document does not exist               (filesystem observation)
+non-participating   the document declares non-participation   (declaration)
+```
+
+Any merge of the first two into the third is observation failure masquerading as
+fact.
+
+---
+
+# Step 2 — FROZEN: the observation matrix
+
+## 2.1 The three-value model
+
+```
+OBSERVED_TRUE     the fact holds
+OBSERVED_FALSE    the fact is POSITIVELY ESTABLISHED not to hold
+UNRESOLVED        the fact could not be established
+```
+
+`UNRESOLVED` is not `OBSERVED_FALSE`. Forbidden transitions, all of them:
+
+```
+UNRESOLVED    ->  NO-GIT
+UNOBSERVABLE  ->  ABSENT
+UNRESOLVED    ->  OBSERVED_FALSE
+query failed  ->  missing
+```
+
+## 2.2 Observation binds to the fact's owner
+
+The authority column answers *"who can answer this question?"* — never *"who
+wants the answer?"* The health layer consumes facts; it never produces them.
+
+## 2.3 The matrix
+
+| topology | observable fact | authority | observation domain |
+|---|---|---|---|
+| `R1` | git scope identity | git probe | confirmed / unresolved |
+| `R1` | owner git-dir | git probe | confirmed / unresolved |
+| `R1` | hooks directory location | git probe `--git-path hooks` | resolved / unresolved |
+| `R1` | hooks directory state | filesystem | exists / missing / inaccessible |
+| `R1` | provenance document state | reader + validator | `ABSENT` / `VALID` / `UNOBSERVABLE` |
+| `R1` | installed hook content | filesystem read | present / absent / unreadable |
+| `R1` | hook-template comparison | diff observation | same / different / unobservable |
+| `R1` | governance last-run record — location | filesystem convention | resolved / unresolved |
+| `R1` | governance last-run record — presence | filesystem read | present / absent / unreadable |
+| `R1` | governance last-run record — content | reader / schema | valid / unobservable |
+| `R2` | enclosing owner relationship | git probe | owner / enclosing / unresolved |
+| `R2` | target-local artifact location | git probe + path identity | `OBSERVED_FALSE` / unresolved |
+| `R3` | git administration presence | git probe | absent / unresolved |
+| `R3` | hook ownership evidence | observation only | unavailable |
+| `R4` | scope query result | git probe | unresolved |
+| `R5` | owner query result | git probe | unresolved |
+
+On `R4` and `R5` every downstream fact is `UNRESOLVED`: the address itself could
+not be established, so no cell below it may be filled. The governance last-run
+record remains readable as a plain filesystem path, but it cannot be tied to any
+Git identity.
+
+## 2.4 Location and state are two different facts
+
+`hooks directory location` answers *"which path should be observed?"*
+`hooks directory state` answers *"is that path there?"*
+
+They have different owners, and the location owner is **git, not the filesystem
+and not string concatenation**. Measured, §A.1–A.2: the naive model
+`repo root + ".git/hooks"` holds only for an ordinary clone.
+
+## 2.5 `ambiguous` is rejected as a term
+
+For a nested target the probe **succeeds** and returns a deterministic answer that
+positively identifies the enclosing repository (§A.3). Nothing is ambiguous.
+
+```
+git probe cannot answer          ->  UNRESOLVED
+git probe answers "the enclosing one"  ->  ENCLOSING
+git probe answers "this one"     ->  OWNER
+```
+
+Writing *belongs elsewhere* as *unknown* is forbidden, because the health layer
+turns unknown into either `assume safe` or `treat as missing` — two different
+wrong answers from one imprecise word.
+
+## 2.6 Structural cardinality — frozen
+
+```
+provenance document        one per worktree          absolute-git-dir
+installed hook             one per hook location     --git-path hooks
+governance last-run record one per work directory    <root>/.evo-lite/generated
+```
+
+Therefore:
+
+```
+N linked worktrees  =  N provenance descriptions  +  1 shared hook artifact
+```
+
+A later rule of the form `document count == hook count` would misjudge every
+linked worktree. This is frozen here so that no such rule can be written.
+
+## 2.7 Registered observation defect — recorded, not repaired
+
+```
+declared observation      hook-template comparison
+frozen location authority git --git-path hooks
+current implementation    path.join(root, '.git', 'hooks', 'post-commit')
+                          templates/cli/hooks.js :: diffInstalledHook
+```
+
+The current implementation cannot reliably establish this fact for the linked
+worktree and `core.hooksPath` cases (§A.1–A.2). Both statements stand together:
+the observation exists in the matrix, and today's implementation cannot always
+produce it.
+
+```
+classification  observation defect
+owner           future implementation / health layer reconciliation
+action here     RECORD_ONLY
+```
+
+Not repaired in this step: it is an implementation change, it would alter the
+existing `hook status` behaviour, and it requires separate authorization.
+
+## 2.8 Vocabulary forbidden in steps 1 and 2
+
+To keep the health layer from leaking upward:
+
+```
+forbidden   healthy · unhealthy · pass · fail · repair · should · must exist
+allowed     exists · missing · present · absent · unresolved · same · different
+            unobservable
+```
+
+(`VALID` as a *document state* is allowed; it names a reader/validator outcome,
+not a judgement about the design.)
+
+---
+
+# Appendix A — measurements
+
+Every non-obvious claim above was measured at `1f9c44b` on Windows with Git for
+Windows. Throwaway repositories, removed afterwards.
+
+## A.1 Linked worktree: `.git` is a file, and the hook is shared
+
+```
+.git is a                         : FILE
+join(root,'.git','hooks') exists  : NO
+rev-parse --absolute-git-dir      : <main>/.git/worktrees/linked
+rev-parse --git-common-dir        : <main>/.git
+rev-parse --git-path hooks        : <main>/.git/hooks        (absolute)
+```
+
+One artifact, written where Git actually looks, then asked about from both sides:
+
+```
+asked from the main worktree   : {"status":"in-sync"}
+asked from the linked worktree : {"status":"no-hook"}
+```
+
+Committing **from the linked worktree**, Git resolved and attempted that same
+file:
+
+```
+error: cannot spawn <main>/.git/hooks/post-commit
+```
+
+So `diffInstalledHook` answered `no-hook` about a hook Git had just tried to run.
+
+*(An earlier attempt at this measurement was invalid — a `mktemp -d` MSYS path
+was resolved by Node as `C:\tmp\…`, so the probe measured a fabricated tree
+rather than the worktree. It was withdrawn and re-run with native paths. Recorded
+because the finding survives only if its measurement history does.)*
+
+## A.2 `core.hooksPath` redirects, and is probe-observable
+
+With both `custom-hooks/post-commit` and `.git/hooks/post-commit` present and
+`core.hooksPath=custom-hooks`, the commit printed:
+
+```
+CUSTOM_RAN
+```
+
+and the redirection is visible to a probe:
+
+```
+git config core.hooksPath      : custom-hooks
+git rev-parse --git-path hooks : custom-hooks
+```
+
+`--git-path hooks` therefore answers correctly in all three cases: ordinary
+clone, linked worktree, and redirected hooks path.
+
+## A.3 A nested target: the probe succeeds and names the enclosing repository
+
+Probing from `outer/child/deep`:
+
+```
+rev-parse --absolute-git-dir : <outer>/.git
+rev-parse --show-toplevel    : <outer>
+rev-parse --git-path hooks   : ../../.git/hooks
+exit status                  : 0
+```
+
+Path identity then establishes `DISTINCT` (target ≠ toplevel), which is what makes
+the row `NESTED-TARGET`. This is the basis for §2.5.
+
+## A.4 Where today's governance status comes from
+
+```
+verify's governance status  <- readGovernanceRunState(projectRoot)
+                               <root>/.evo-lite/generated/governance/post-commit-last-run.json
+                               values: healthy / missing / failed-last-run
+```
+
+It answers *did the hook run, and did its commands succeed* — not *is a hook
+present and in sync*. `diffInstalledHook` is consumed only by `hook status` and
+by tests; `verify` never consults it. Installed-hook freshness is, today, entirely
+outside governance health.
+
+Three separate vocabularies already exist in this neighbourhood — topology (5),
+hook diff (`no-hook` / `no-block` / `in-sync` / `drifted`), and governance run
+(`healthy` / `missing` / `failed-last-run`). Step 3 onward must not add a fourth
+that answers a question one of these already owns.
+
+---
+
+# Status
+
+```
+Step 1  Topology matrix      APPROVED
+Step 2  Observation matrix   APPROVED WITH CHANGES
+        added     hooks directory location
+                  governance last-run record (location / presence / content)
+        rejected  "ambiguous" terminology
+        recorded  diffInstalledHook path-resolution defect
+
+Step 3  observation semantics    NOT ENTERED
+Step 4  health authority         NOT ENTERED
+Step 5  verification consequence NOT ENTERED
+Step 6  implementation           NOT ENTERED
+```
+
+---
+
+# Step 2 erratum — FROZEN before Step 3
+
+**These corrections supersede the named statements in Steps 1–2.** The original
+text above remains preserved as measurement and review history. **Step 3 may not
+begin from the superseded forms.**
+
+Raised by human review of `ac6680f`; every claim below was independently
+re-measured by the controller before being written here (§A.5–A.8).
+
+The root of both P0 items is one sentence, and it is the thing Step 3 would
+otherwise have let a structural fact decide on expectation's behalf:
+
+> **"the same Git owner" is not "the same physical hook location".**
+
+## E2.1 — supersedes §2.6 cardinality
+
+§2.6 froze `N linked worktrees = N provenance descriptions + 1 shared hook
+artifact` as an unconditional structural fact. It is not one. It describes the
+default worktree configuration only.
+
+With `extensions.worktreeConfig = true`, `git config --worktree core.hooksPath`
+gives each worktree its own effective hook location (§A.5). Superseding form:
+
+```
+N resolved worktrees
+    -> N provenance document addresses
+    -> M distinct effective hook locations,   1 <= M <= N
+    -> 0 <= installed hook artifacts <= M
+```
+
+`M` is **not** structurally fixed at 1. And a resolved location does not imply a
+file: location existing and artifact existing are two facts.
+
+§2.6's line `installed hook — one per hook location` is superseded by:
+
+```
+effective hook location     one per resolved worktree context
+installed hook artifact     may be present or absent at that location
+```
+
+Step 3 may therefore **not** write "a repository has one hook expectation".
+
+## E2.2 — supersedes the `R2` `target-local artifact location` row
+
+That row froze `OBSERVED_FALSE`, conflating two independent questions:
+
+```
+Git ownership          who owns the hook administration
+physical path locality where the hook path happens to point
+```
+
+`NESTED-TARGET` positively establishes only the first: `target != Git toplevel`,
+therefore the Git owner is the enclosing repository. It does **not** establish
+that the resolved hooks path lies outside the target directory. Measured (§A.6):
+with `core.hooksPath` pointing inside the nested target, the frozen classifier
+still returns `NESTED-TARGET` while the effective hook location is physically
+inside that target.
+
+**The row is deleted.** `R2` retains exactly:
+
+| topology | observable fact | authority | observation domain |
+|---|---|---|---|
+| `R2` | enclosing owner relationship | git scope / topology probe | enclosing / unresolved |
+| `R2` | hooks directory location | git probe `--git-path hooks` | resolved / unresolved |
+
+If a later step genuinely needs *"is the path physically inside the target?"*, it
+is defined then, as its own fact:
+
+```
+hook-path containment relation    inside / outside / unresolved
+```
+
+It is not manufactured now.
+
+## E2.3 — the governance last-run record is topology-independent
+
+§2.3 listed the record only under `R1`, while the prose beneath it said the
+record stays readable on `R4`/`R5`. Those two statements were inconsistent, and
+the same reasoning covers `R2` and `R3`.
+
+The record lives at a root-local path, `<root>/.evo-lite/generated/…`. Its
+observability does not come from Git topology at all. Superseding form —
+plan B, lifted out of the per-row matrix:
+
+```
+Topology-independent, root-local observation
+    governance last-run record — location   root-local filesystem convention
+                               — presence   filesystem read
+                               — content    reader / schema
+    scope: every topology row
+```
+
+and a separate relationship fact, which **is** topology-dependent:
+
+```
+record <-> Git identity binding    established / unavailable / unresolved
+```
+
+The split exists so that Step 4 cannot read `record exists` as *this record
+describes the currently-owned hook*.
+
+## E2.4 — supersedes the `R3` `hook ownership evidence` row
+
+`authority = observation only` is not an authority. It never answered *who owns
+this fact*, which violates **one question, one authority**. The row is deleted
+and replaced by two rows with real owners:
+
+| topology | observable fact | authority | observation domain |
+|---|---|---|---|
+| `R3` | git administration presence | topology classifier / git probe | positively absent (`OBSERVED_FALSE`) |
+| `R3` | Git hook-location authority available | topology classifier | `OBSERVED_FALSE` |
+
+On `R3` the `hooks directory location` cell is therefore **not filled with
+`UNRESOLVED`** — that would suggest an attempt that failed to conclude. The
+authority for that question is positively absent, so the question does not arise.
+Measured (§A.7): outside any repository the probe exits `128` with the same
+positive not-a-repository answer the frozen classifier already keys on.
+
+## E2.5 — Step 1's CI sentence does not decide expectation
+
+Step 1 wrote of CI checkout: *"same row; the difference is only whether we can
+observe, **never what was promised**."* The first clause is frozen topology and
+stands. The second clause answers **expectation**, which is Step 3's to decide.
+
+Superseding form:
+
+```
+CI checkout and an ordinary working copy share the R1 topology row.
+
+Whether they carry the same hook expectation is intentionally NOT decided
+by Step 1. That belongs to Step 3, and must be derived from the expectation
+authority — never from the fact that their topology matches.
+```
+
+Step 3 may well rule that the expectations are identical. It may not reach that
+ruling by inheritance from a shared row.
+
+---
+
+# Appendix A (continued) — erratum measurements
+
+Measured at `ac6680f`, `git version 2.48.1.windows.1`, throwaway repositories,
+removed afterwards.
+
+## A.5 Per-worktree hook locations are possible (basis for E2.1)
+
+```
+baseline, no worktreeConfig
+    main   : .git/hooks
+    linked : <main>/.git/hooks              -- shared
+
+extensions.worktreeConfig = true
+git config --worktree core.hooksPath main-hooks     (in main)
+git config --worktree core.hooksPath linked-hooks   (in linked)
+
+    main   : main-hooks
+    linked : linked-hooks                   -- two distinct locations
+```
+
+## A.6 A nested target can physically contain its own resolved hooks path (basis for E2.2)
+
+```
+outer repository, target = outer/child/deep
+core.hooksPath = <abs>/outer/child/deep/local-hooks
+
+from the target:
+    --show-toplevel  : <abs>/outer
+    --git-path hooks : <abs>/outer/child/deep/local-hooks
+
+classifyTopology(target) : NESTED-TARGET
+```
+
+Git owner is the enclosing repository; the hook location is inside the target.
+Both at once.
+
+## A.7 Outside any repository (basis for E2.4)
+
+```
+git -C <non-repo> rev-parse --git-path hooks
+    fatal: not a git repository (or any of the parent directories): .git
+    exit 128
+```
+
+## A.8 `--git-path hooks` walks up, so exit 0 is not proof of local ownership
+
+A first attempt at A.7 placed the "non-repository" directory *inside* this
+repository. Git walked up, found this repository, and answered `../../../.git/hooks`
+with exit `0`. The probe was invalid and was re-run outside any repository.
+
+The finding is kept because it is load-bearing: **a successful `--git-path`
+answer does not establish that the queried directory is itself a repository.**
+That is exactly why the frozen classifier resolves scope first, and why `R2`
+exists as a distinct row.
+
+*(A shell error is also recorded: the first re-run printed `exit=0` because `$?`
+had captured a pipeline's `head`, not `git`. The exit code above was re-captured
+without a pipe.)*
+
+---
+
+# Status after the erratum
+
+```
+Step 1  topology row set             APPROVED, unchanged
+        CI expectation sentence      SUPERSEDED by E2.5
+
+Step 2  observation framework        APPROVED
+        cardinality                  SUPERSEDED by E2.1
+        R2 target-local artifact     ROW DELETED by E2.2
+        governance record scope      SUPERSEDED by E2.3
+        R3 authority                 SUPERSEDED by E2.4
+
+Step 3  expectation / contract       NOT ENTERED
+```
+
+---
+
+# Step 3 — FROZEN: expectation
+
+Ratified after the Step 2 erratum. Append-only: nothing above is rewritten.
+
+Step 3 answers one question only:
+
+> **When we are about to judge a fact, what should we compare it against?**
+
+It does **not** answer what a comparison result means. That is Step 4 onward.
+
+## 3.0 A correction of attribution, carried here rather than edited above
+
+During review it was stated in discussion that the producer's string-joined hook
+path conflicts with `ac1` of the frozen `[hook-install-provenance]` design. That
+attribution was wrong, and is corrected here because the classification matters:
+
+```
+ac1 governs   the PROVENANCE DOCUMENT path
+              "<git rev-parse --absolute-git-dir>/evo-lite/hook-provenance.json"
+ac1 does NOT govern the hook artifact's path
+```
+
+The finding survives; only its classification changes:
+
+```
+was recorded as   acceptance criteria failure
+is               observation authority divergence   (see §3.4)
+```
+
+§2.7 of this document never cited `ac1`, so no frozen text is affected.
+
+## 3.1 Expectation authority — one, and only one
+
+```
+Expectation is derived only from:
+
+    a VALID provenance document
+        current.participation
+```
+
+The chain, and the direction it may never run:
+
+```
+producer intent  ->  current.participation  ->  expectation
+```
+
+`ac2` of the frozen design already fixes that `current` derives from `intent` and
+**not** from `install.outcome`. Step 3 inherits that and adds the negative rules:
+
+```
+FORBIDDEN   hook artifact is present   ->  therefore expected
+FORBIDDEN   topology is IN-SCOPE       ->  therefore participating is expected
+```
+
+Both are observation exceeding its authority.
+
+The CLI, the scaffold, and the explicit command action are **producers**, not
+expectation authorities. Their intent is transient; the document is its durable
+projection.
+
+### `intent.source` is not a second authority
+
+```
+intent.source     answers   WHO produced this declaration
+current.participation answers WHAT is declared
+```
+
+`scaffold-no-hooks` is a provenance origin, not an expectation. The expectation
+is `current.participation = non-participating`. Reading the expectation off the
+source would give the same answer today by coincidence of the C-2d coherence
+rule, and would be the wrong authority tomorrow.
+
+## 3.2 Expectation states — five, none collapsible
+
+```
+EXPECTED                  a declaration exists and reads participating
+NOT_EXPECTED              a declaration exists and reads non-participating
+UNDECLARED                the address resolves; no declaration was ever made
+EXPECTATION_UNRESOLVED    the expectation authority could not be established
+                          reason: document-unobservable | address-unresolved
+NOT_APPLICABLE            no hook administration semantics exist here (R3)
+```
+
+`EXPECTATION_UNRESOLVED` is deliberately named for the *authority*, not for the
+system's knowledge. The expectation is not absent; the authority for it could not
+be established. Two distinct causes are carried in `reason`, following the
+`{state, reason}` shape the observation layer already uses.
+
+The three forbidden collapses:
+
+```
+UNDECLARED      !=  NOT_EXPECTED       absence of a statement is not
+                                       a statement of absence
+EXPECTATION_UNRESOLVED != EXPECTED     unreadable is not "assume participating"
+NOT_APPLICABLE  !=  NOT_EXPECTED       the question not arising is not
+                                       someone having declined
+```
+
+## 3.3 Binding granularity
+
+```
+For each (topology row  x  resolved worktree context):
+    exactly one expectation
+```
+
+It binds to **neither** of these:
+
+```
+NOT the repository      -- N worktrees may carry M hook locations, 1 <= M <= N
+NOT a hook location     -- `current` records no location at all
+```
+
+Measured (§A.10): `current` holds exactly `participation` and `derivedFrom`.
+`current.digest` is forbidden by the schema. The location appears only per event,
+as `install.targetPath`, slot 9 of the frozen 20-slot projection — an install
+record, not a declaration.
+
+### What identifies a worktree context
+
+```
+worktree context is identified by the PROVENANCE DOCUMENT ADDRESS
+    git rev-parse --absolute-git-dir
+
+it is NOT identified by the current hook location
+    git rev-parse --git-path hooks
+```
+
+The two have different lifetimes. The document address is where a declaration
+lives; the hook location is a live observation that `core.hooksPath` can change
+at any time without touching any declaration.
+
+## 3.4 Registered divergence — two authorities for one question
+
+Measured (§A.9). One question — *where is the effective hook location* — is
+answered along two paths that do not agree:
+
+```
+question         effective hook location
+
+authority        git rev-parse --path-format=absolute --git-path hooks
+                 used by observeLocator (observe.js)
+
+implementation   path.join(targetDir,      '.git', 'hooks')   hooks.js:166
+                 path.join(topo.worktreeTop,'.git', 'hooks')  hooks.js:230
+                 path.join(projectRoot,     '.git', 'hooks')  hooks.js:368, 502
+                 used by the producer's write path and by diffInstalledHook
+```
+
+The consequence is measurable and is already recorded by the system itself: on a
+linked worktree, or wherever `core.hooksPath` is set, the producer writes to the
+constructed path and `observeLocator` then correctly records
+
+```
+runnability.locator = { verdict: 'not-satisfied', reason: 'active-hooks-dir-differs' }
+```
+
+The system writes the artifact to a location Git does not use, **and** records
+truthfully that the location is not the one Git uses. The fact layer is behaving
+exactly as designed; the divergence is upstream of it.
+
+```
+classification   observation authority divergence
+                 NOT an acceptance criteria failure  (see §3.0)
+status           REGISTERED_NOT_FIXED
+owner            implementation / verification layer
+action           later authorized change only
+```
+
+This is registered, not turned into a Step 3 contract, and not repaired here.
+
+## 3.5 The recorded locator verdict is historical, not live
+
+`runnability.locator` is an observation made **at write time** and stored in that
+event. `core.hooksPath` may change afterwards; the stored verdict does not.
+
+```
+stored runnability.locator   what was observed when the write was issued
+a live locator observation   a different fact, observed now
+```
+
+Step 3 freezes only that these are two facts. Which of them may serve as a
+comparison basis is not decided here.
+
+---
+
+# Appendix A (continued) — Step 3 measurements
+
+## A.9 `observeLocator` already holds the correct authority
+
+`templates/cli/hook-provenance/observe.js`:
+
+```
+gitQuery(targetDir, ['rev-parse', '--path-format=absolute', '--git-path', 'hooks'])
+
+pathIdentity(answer, dirname(targetPath)):
+    SAME      -> { verdict: 'satisfied',     reason: null }
+    DISTINCT  -> { verdict: 'not-satisfied', reason: 'active-hooks-dir-differs' }
+    otherwise -> { verdict: 'indeterminate', reason: 'path-comparison-ambiguous' }
+```
+
+while the producer computes the path it writes to by string join (§3.4).
+
+## A.10 `current` carries no location
+
+```
+current fields          participation, derivedFrom
+current.digest          forbidden by the validator
+install.targetPath      per event; slot 9 of the 20-slot canonical projection
+```
+
+---
+
+# Status after Step 3
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+        authority                 current.participation, sole
+        states                    5, none collapsible
+        binding                   (topology row x resolved worktree context)
+        registered                observation authority divergence
+
+Step 4  health authority          NOT ENTERED
+Step 5  verification consequence  NOT ENTERED
+Step 6  implementation            NOT ENTERED
+```
+
+---
+
+# Step 4 — FROZEN (first pass): health authority
+
+Append-only. Step 4 answers exactly one question:
+
+> **Who owns the power to read a relation between observation and expectation as
+> a health judgement?**
+
+It does **not** answer whether anything is acceptable, what the health states are,
+how domains aggregate, or what should be done about any result. The vocabulary
+ban of §2.8 is lifted only far enough to *name* domains and authorities; no
+verdict is asserted anywhere below.
+
+## 4.0 What already exists, measured
+
+A composite health authority is already in production. It was not designed as
+one; it accumulated.
+
+```
+~20 separate conditions  ->  report.hasAlerts          (boolean OR)
+                         ->  takeover-session.js:66
+                             (verify.hasAlerts || degraded.length > 0)
+                                 ? 'attention-needed' : 'ready'
+```
+
+Two measured facts follow, and both are inputs to this step:
+
+```
+1. The installed hook artifact does not enter this chain AT ALL.
+   verify never consults diffInstalledHook. So today's answer to
+   "does a stale or missing hook affect overall governance health"
+   is: it does not, because it is not on the chain.
+
+2. The governance domain has already made per-case fail-open / fail-closed
+   choices, in code, without naming who made them (§A.11).
+```
+
+`hasAlerts` is retained as a fact about the system. It is **not** adopted as the
+analysis model for Step 4, because a boolean OR over twenty anonymous
+contributors cannot answer *who judged this*.
+
+## 4.1 Health domains — four, by question
+
+| domain | question |
+|---|---|
+| `D1` declaration consistency | can the declaration itself be safely relied upon? |
+| `D2` installation consistency | is the artifact where and what the installation expectation requires? |
+| `D3` execution success | did the most recent governance execution succeed? |
+| `D4` composite | how do multiple domain results form one external summary? |
+
+These four have different lifetimes, different evidence sources, and different
+failure semantics. They may not share one bucket.
+
+## 4.2 Authority per domain
+
+### `D1` — `validateHookProvenanceV1`
+
+It already owns schema legality, the frozen vocabularies, the `C-2` consistency
+family, and the `UNOBSERVABLE` boundary. It is fail-closed by construction:
+
+```
+invalid document  ->  UNOBSERVABLE
+invalid document  ->  NOT "probably absent"
+```
+
+### `D2` — **NO SINGLE AUTHORITY IDENTIFIED**
+
+This is the most important entry in Step 4, and it is deliberately left open.
+
+```
+observeLocator      holds the correct location authority
+                    git rev-parse --path-format=absolute --git-path hooks
+                    honours worktrees and core.hooksPath
+                    BUT it expresses an observation AT MEASUREMENT TIME (§3.5),
+                    which is not the same thing as an authority over the
+                    current installed state
+
+diffInstalledHook   uses path.join(root, '.git', 'hooks')
+                    already registered as authority divergence (§3.4)
+                    a wrong implementation may not become the authority
+```
+
+Frozen state:
+
+```
+D2 installation consistency
+    authority   unresolved
+    reason      the existing observers disagree on the location authority
+```
+
+This is not a defect being concealed. It is the correct outcome of asking the
+question honestly. Naming an authority here to make the table look complete would
+break the layering the whole document exists to protect.
+
+### `D3` — `readGovernanceRunState`
+
+It owns the execution lifecycle: whether the most recent run happened and whether
+its commands succeeded.
+
+### `D4` — see §4.4
+
+## 4.3 A health judgement takes a PAIR
+
+```
+input to any domain judgement  =  (observation, expectation)
+```
+
+Neither half alone may produce a health judgement:
+
+```
+FORBIDDEN   observation alone   -- observation exceeding its authority
+FORBIDDEN   expectation alone   -- declaration exceeding its authority
+```
+
+The path is always:
+
+```
+what was observed  +  what was expected  +  the domain authority's reading
+```
+
+### No automatic mapping of any unresolved state
+
+```
+SCOPE-UNRESOLVED · OWNER-UNRESOLVED · UNOBSERVABLE · EXPECTATION_UNRESOLVED
+```
+
+None of these may be mapped in either direction by default. A domain authority
+may rule on any of them, fail-open or fail-closed — but the ruling must be
+written down, and it must be attributable to that authority. A default is not a
+ruling.
+
+## 4.4 Composite — shape requirement only
+
+Frozen:
+
+```
+Composite health authority requirement:
+
+    the contributor(s) responsible for a composite judgement
+    must remain identifiable
+```
+
+Explicitly **not** frozen, and deferred:
+
+```
+OR · AND · priority · severity · the mapping onto any external summary value
+```
+
+Step 4 settles *who owns the judgement*, never *how results aggregate*.
+
+## 4.5 Registered: a boolean summary is an output shape, not an authority model
+
+```
+report.hasAlerts   may continue to exist
+                   it is an OUTPUT SHAPE
+
+hasAlerts          is NOT a health authority
+                   it cannot answer "who judged this"
+```
+
+## 4.6 Registered existing consequence rule — Step 5's to adjudicate
+
+Measured in `memory.service.js` (§A.11):
+
+```
+governance last-run  healthy          logs only
+                     missing          logs only, does NOT set hasAlerts   <- fail-open
+                     failed-last-run  sets hasAlerts                      <- fail-closed
+                     error            sets hasAlerts                      <- fail-closed
+```
+
+```
+classification   existing consequence rule
+NOT              an authority definition
+status           RECORDED, unchanged by Step 4
+owner            Step 5
+```
+
+Step 4 neither endorses nor overturns it. It is recorded so that Step 5 rules on
+it deliberately rather than inheriting it by silence.
+
+---
+
+# Appendix A (continued) — Step 4 measurements
+
+## A.11 The existing composite and the existing fail-open
+
+```
+templates/cli/memory.service.js
+    report.hasAlerts set from ~20 separate conditions
+
+    governanceRun.status === 'healthy'          -> log only
+                          === 'missing'         -> log only
+                          === 'failed-last-run' -> log + report.hasAlerts = true
+                          otherwise (error)     -> log + report.hasAlerts = true
+
+templates/cli/takeover-session.js:66
+    (verify.hasAlerts || degraded.length > 0) ? 'attention-needed' : 'ready'
+
+templates/cli/takeover-payload.js:34
+    TAKEOVER_HEALTH = { 'ready', 'bootstrap-pending', 'attention-needed' }
+```
+
+`diffInstalledHook` appears nowhere in `verify`. Confirmed by search across
+`templates/cli/`: its only non-test consumers are the `hook status` command and
+the tests.
+
+*(The quoted string values above — `healthy`, `missing`, `failed-last-run`,
+`ready`, `attention-needed` — are measurements of existing code, not verdicts
+asserted by this document.)*
+
+---
+
+# Status after Step 4
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+Step 4  health authority          FIRST PASS FROZEN
+        D1  validateHookProvenanceV1
+        D2  UNRESOLVED  -- registered authority divergence, deliberately open
+        D3  readGovernanceRunState
+        D4  shape requirement only; aggregation deferred
+        recorded: hasAlerts is an output shape, not an authority
+        recorded: governance missing -> no alert, an existing consequence rule
+
+Step 5  verification consequence  NOT ENTERED
+Step 6  implementation            NOT ENTERED
+```
+
+---
+
+# Step 5 Round 1 — FROZEN: how a consequence is represented and propagated
+
+Append-only. Round 1 freezes **shape and propagation only**. Per-case values —
+which observation on which topology yields which consequence, and whether each
+cell is fail-open or fail-closed — are Round 2 and are **NOT ENTERED**.
+
+The split exists because shape is an architectural constraint while per-case
+values are policy rulings. Freezing them together would let the shape's tidiness
+smuggle in a value nobody adjudicated.
+
+## 5.0 The consequence channels that already exist, measured
+
+```
+report.<domain>          a named per-domain field       attribution PRESERVED
+                         e.g. report.governance = { status, path, report }
+report.hasAlerts = true  26 sites, boolean              attribution LOST
+pushNextStep(step)       32 sites, free-text list       attribution only implicit
+log(...)                111 sites                       human-facing only
+```
+
+An attribution-preserving channel therefore already exists and is already in use
+by the governance domain. Nothing new needs inventing, and §A.4's warning against
+adding a fourth vocabulary is satisfied.
+
+## 5.1 The domain consequence record — FROZEN
+
+```
+{
+    domain,
+    authority,
+    judgement,
+    inputs,
+    reason
+}
+```
+
+All five belong to the evidence chain.
+
+| field | answers | may not become |
+|---|---|---|
+| `domain` | which question domain produced this | an untraceable summary value |
+| `authority` | who holds the power to read the pair as a judgement | absent — without it the judgement degrades to an opaque boolean |
+| `judgement` | that domain's result, and nothing wider | a global verdict, a suggestion, or an action |
+| `inputs` | the pair `(observation, expectation)` — §4.3 | a single half; `observation -> judgement` would restore observation exceeding its authority |
+| `reason` | why this judgement | the authority; `reason: "hook missing"` may never become `authority: "hook missing"` |
+
+A boolean may not serve as the record, and free text may not carry it alone.
+
+## 5.2 Composite is a derived projection — FROZEN
+
+```
+composite judgement  =  a projection DERIVED from the domain judgements
+                     != the domain judgements discarded into one boolean
+```
+
+A boolean summary may exist, as a projection:
+
+```
+hasAlerts = any(domain.judgement requires attention)
+```
+
+It is never the source of truth.
+
+> **A boolean summary is an output projection, not an authority model.**
+
+Continuous with §4.5's *hasAlerts is an output shape, not a health authority*.
+Because the domain records survive the projection, *"who pushed this to
+attention-needed"* stays answerable — the answer did not evaporate at the OR.
+
+## 5.3 `D2` — consequence cannot be defined, and that is recorded, not patched
+
+```
+D2 installation consistency
+    authority    unresolved            (Step 4)
+    consequence  CANNOT BE DEFINED
+
+classification   authority dependency violation
+NOT              missing implementation
+NOT              "Step 5 blocked"
+```
+
+The dependency path, which is a legitimate traversal and not a regression:
+
+```
+Step 5  ->  needs a D2 consequence
+        ->  authority unavailable
+        ->  return to Step 4
+        ->  resolve the authority
+        ->  re-enter Step 5
+```
+
+Two prohibitions hold while it stays unresolved:
+
+```
+An incorrect implementation may not become the authority merely because it
+is available. diffInstalledHook is not eligible by being present.
+
+not connected  !=  decided irrelevant
+The fact that hasAlerts does not currently observe the hook is an ABSENCE,
+not a ruling that hook state is irrelevant to health.
+```
+
+## 5.4 Round 1 boundary
+
+Frozen here:
+
+```
+how a consequence is represented
+how a consequence is propagated
+how a missing authority is handled
+```
+
+Not frozen here, and explicitly deferred to Round 2:
+
+```
+what UNOBSERVABLE yields
+what a missing governance run yields
+what hook drift yields
+fail-open / fail-closed per cell
+```
+
+And still outside Step 5 entirely:
+
+```
+install · repair · rewrite · modify hook       -- remediation, a later layer
+```
+
+### Existing behaviour may not self-promote
+
+Round 2 must rule on each cell explicitly. An existing code path is evidence of
+what the system does, never of what was decided:
+
+```
+existing consequence behaviour   ->   MAY BE RECORDED
+                                 ->   MAY NOT be promoted to approved policy
+                                      by having been there first
+```
+
+---
+
+# Status after Step 5 Round 1
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+Step 4  health authority          FIRST PASS FROZEN
+        D2                        UNRESOLVED, intentional
+Step 5  consequence
+        Round 1  shape            FROZEN
+        Round 2  values           NOT ENTERED
+Step 6  implementation            NOT ENTERED
+```
+
+---
+
+# Step 4 erratum — domain boundaries, FROZEN before Step 5 Round 2
+
+Append-only. Step 4 is not overturned; its **domain boundaries** are corrected.
+
+This erratum was triggered by applying §4.3's pairing rule strictly to each
+domain before enumerating any consequence cell. Two of the four domains turned
+out not to have a well-formed pair, and each was missing a *different* half. The
+finding is recorded as a success of the layering, not a failure of it: had the
+consequence table been drawn first, its shape would have manufactured the missing
+halves to fit.
+
+## E4.1 — `D1` is not a health domain; it is an expectation-establishment step
+
+`D1` asked *"can the declaration itself be safely relied upon?"* Its input is not
+a pair:
+
+```
+document state  ->  can an expectation be established?
+```
+
+That is a different question from the one every health domain asks:
+
+```
+(observation, expectation)  ->  what does the comparison mean?
+```
+
+`D1` asks *am I entitled to produce an expectation*. Step 3 already answers it,
+in §3.2:
+
+```
+VALID         ->  EXPECTED / NOT_EXPECTED
+ABSENT        ->  UNDECLARED
+UNOBSERVABLE  ->  EXPECTATION_UNRESOLVED
+```
+
+Keeping `D1` would give one question two owners — Step 3 generating the
+expectation, and `D1` judging whether that expectation is trustworthy — which is
+the exact violation this document exists to prevent.
+
+```
+D1  REMOVED as a health domain
+    the question and its authority (validateHookProvenanceV1) live in Step 3
+```
+
+The validator's authority is unchanged. Only its layer is corrected.
+
+## E4.2 — `D3` has no expectation object, which is not the same as an unresolved one
+
+```
+D3 execution success
+    observation   governance run state
+    authority     readGovernanceRunState
+    expectation   NOT ESTABLISHED
+    status        awaiting contract definition
+```
+
+**`NOT ESTABLISHED` is not `EXPECTATION_UNRESOLVED`.** The distinction is
+load-bearing:
+
+```
+EXPECTATION_UNRESOLVED   an expectation authority EXISTS, and could not be read
+NOT ESTABLISHED          no expectation object has been defined at all
+```
+
+Collapsing the second into the first would imply an authority that does not
+exist, and would then invite a fail-open or fail-closed default for a contract
+nobody has written.
+
+### `participation` is explicitly rejected as `D3`'s expectation
+
+It reads naturally, and that is precisely the risk. The two declarations have
+different lifetimes and different subjects:
+
+```
+participation   whether the provenance producer takes part in the
+                hook-install workflow
+governance run  whether a governance action executed, and with what result
+```
+
+Binding them would silently create a rule that no authority supports:
+
+```
+FORBIDDEN   provenance declaration  =  execution obligation
+```
+
+Whether a governance run is expected at all remains an open contract question,
+owned by a later design decision, not by Step 5.
+
+## E4.3 — `D2` dependency escalation
+
+```
+Installation consequence cannot be defined until the installation
+consistency authority is named.
+```
+
+`D2` is the only domain whose pair is complete:
+
+```
+observation   hook location, hook content, template comparison
+expectation   participation, via Step 3
+authority     UNRESOLVED
+```
+
+So the one domain that is structurally ready is the one that cannot proceed. Step
+5 Round 2 is therefore blocked on a Step 4 resolution, exactly along the return
+path frozen in §5.3.
+
+## E4.4 — the corrected domain set and dependency order
+
+```
+D2 installation consistency   pair complete   authority UNRESOLVED
+D3 execution success          expectation NOT ESTABLISHED
+D4 composite                  DEPENDENT on D2 and D3
+```
+
+`D1` no longer appears; see E4.1.
+
+```
+Step 4 amendment
+    resolve D2 authority
+    record D3 expectation gap
+        |
+        v
+Step 5 Round 2
+    D2 consequence
+    D3 consequence, only if a contract is defined
+        |
+        v
+Step 5 composite
+```
+
+`D4` cannot be defined while `D2` and `D3` are open, because a projection cannot
+be derived from domains that have not produced judgements.
+
+---
+
+# Status after the Step 4 erratum
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+        + D1's question and authority, relocated here by E4.1
+
+Step 4  health authority          FIRST PASS FROZEN, boundaries corrected
+        D1                        MOVED TO STEP 3
+        D2                        UNRESOLVED           <- next work
+        D3                        EXPECTATION UNDEFINED
+        D4                        DEPENDENT
+
+Step 5  consequence
+        Round 1  shape            FROZEN
+        Round 2  values           BLOCKED on D2
+Step 6  implementation            NOT ENTERED
+```
+
+---
+
+# Step 4 amendment — `D2` resolved as an authority, not as an implementation
+
+Append-only, continuing the erratum numbering.
+
+## E4.5 — `D2`'s observation is structured; it is one domain
+
+```
+Installation consistency is one question with a structured observation,
+not multiple independent health domains.
+```
+
+```
+D2 observation
+
+{
+    effectiveHookLocation,
+    locationResolution,
+    installedContent,
+    templateComparison
+}
+```
+
+The internal order is a chain, not a merge:
+
+```
+resolve location  ->  read artifact at that location  ->  compare content
+```
+
+Splitting `D2` into peer domains `D2a` (location) and `D2b` (content) is
+rejected. The content question is not independent of the location question — it
+presupposes it. A peer split would allow:
+
+```
+location wrong + content right  ->  D2b passes  ->  the composite sees
+                                    partial success
+```
+
+and that success would be asserted about a file Git never runs. Attribution is
+not lost by keeping one domain: §5.1's frozen `reason` field distinguishes a
+location mismatch from a content mismatch.
+
+## E4.6 — `D2` authority: `live installation observer`, `NAMED_NOT_INSTANTIATED`
+
+```
+D2 installation consistency
+
+    question        Is the installed artifact consistent with the effective
+                    Git hook target?
+    observation     structured, per E4.5
+    authority role  live installation observer
+    authority status NAMED_NOT_INSTANTIATED
+```
+
+The status is the point. Two different things are now settled separately:
+
+```
+who SHOULD answer this question      settled
+does that answerer exist yet         no
+```
+
+Measured: no live installation observer exists today. `observeRunnability` has
+exactly one call site in the whole tree — `hooks.js:278`, inside the producer, at
+write time (§A.12).
+
+### The existing consumers, and why neither is the authority
+
+```
+observeLocator      holds the correct location rule, but expresses a
+                    write-time historical observation (§3.5)
+                    -> not an authority over the CURRENT installed state
+
+diffInstalledHook   resolves the location by string join (§3.4)
+                    -> an available implementation is not automatically
+                       an authority
+```
+
+Both remain in the document as consumers and as recorded divergence. Neither is
+promoted.
+
+### Naming is not authorizing
+
+```
+Step 4   defines authority OWNERSHIP
+Step 6   decides WHERE and HOW it is instantiated
+```
+
+Explicitly forbidden as a consequence of this amendment:
+
+```
+FORBIDDEN   named authority   ->  modify verify now
+FORBIDDEN   new observer      ->  change any health consequence automatically
+```
+
+`D2` still cannot enter Step 5 Round 2: an authority that is named but not
+instantiated cannot produce judgements, so there are no per-cell consequences to
+adjudicate yet.
+
+### Deliberately not settled here
+
+Whether the live installation observer is invoked by `verify`, by `hook status`,
+or by something else is **authority instantiation topology**, not authority
+ownership. It belongs to Step 6.
+
+---
+
+# Appendix A (continued)
+
+## A.12 No live installation observation exists
+
+```
+observeRunnability call sites, whole tree, excluding tests and its own module:
+    templates/cli/hooks.js:278   -- inside the producer, at write time
+
+buildHookBody   exported from templates/cli/hooks.js
+                deterministic: the only new Date() in the file is the
+                producer's recordedAt at line 192, outside the body builder
+```
+
+---
+
+# Status after the `D2` amendment
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+
+Step 4  health authority
+        D1                        MOVED TO STEP 3
+        D2                        FROZEN — live installation observer,
+                                  NAMED_NOT_INSTANTIATED
+        D3                        EXPECTATION UNDEFINED
+        D4                        DEPENDENT
+
+Step 5  consequence
+        Round 1  shape            FROZEN
+        Round 2  values           BLOCKED
+                                  D2 authority not instantiated
+                                  D3 expectation not established
+Step 6  implementation            NOT ENTERED
+```
+
+---
+
+# Step 4 amendment — `D3` splits by question
+
+Append-only. This is a **question-dimension split inside one domain container**,
+not two new peer health domains. `D3 execution` remains the container.
+
+The split follows the same test that removed `D1`: before adjudicating a domain,
+ask whether it contains more than one question. `D3` contained two, and they have
+different expectation situations.
+
+## E4.7 — `D3(a)` execution outcome
+
+```
+question      Did this execution succeed?
+observation   the recorded execution result
+expectation   a success contract
+status        EXPECTATION_AUTHORITY_UNRESOLVED
+```
+
+An expectation exists in principle — a run either met the success contract or it
+did not. What is missing is a single authority for that contract, because
+**"success" is currently defined twice, and the two definitions are not
+equivalent** (§A.13):
+
+```
+writer, in the hook body      ok: commands.every(item => item.ok)
+reader, in verify             failed = commands.some(c => c && c.ok === false)
+```
+
+A command entry whose `ok` field is absent or null is recorded by the writer as a
+failed run and read by `verify` as `healthy`. An empty command list reads as
+success on both sides — a run that executed nothing.
+
+```
+classification   authority divergence, inside the domain it judges
+status           REGISTERED, NOT ADJUDICATED THIS ROUND
+```
+
+Naming which side wins is a design choice requiring answers this round does not
+have — who consumes the judgement, which stage holds final interpretation, and
+whether a writer's record and a reader's recomputation are permitted to differ at
+all. That choice is not made here, and no code is changed.
+
+## E4.8 — `D3(b)` execution occurrence
+
+```
+question      Should a governance run have happened in this workspace?
+observation   run record presence
+expectation   none established
+status        OBSERVATION_ONLY_DOMAIN
+```
+
+Searched and not found: no provenance declaration, no `config.json` key, no
+policy or strategy file states that a workspace must produce a governance run.
+
+`OBSERVATION_ONLY_DOMAIN` is deliberately not `EXPECTATION_UNRESOLVED`. There is
+no expectation object to be unresolved about.
+
+### What this settles about `missing`
+
+```
+observed        record absent
+NOT observed    expected record absent
+```
+
+Without an expectation, `missing` cannot enter a health comparison at all. The
+long-standing question in the work item's own framing — *does a missing hook or a
+missing run affect overall governance health* — now has a precise answer for this
+half: **it cannot, yet, because nothing has been promised.**
+
+The existing behaviour keeps its Step 4 classification and gains a reason:
+
+```
+missing -> no alert
+    is   existing consequence behaviour without an established
+         expectation contract
+    is NOT an approved fail-open policy
+```
+
+Someone chose a default because a default was required at that line of code. No
+authority recorded the choice. That is what §5.4's *existing behaviour may not
+self-promote* was written for.
+
+## E4.9 — `D3` frozen state
+
+```
+D3 execution
+
+    D3(a) execution outcome
+          observation   governance run result
+          expectation   success contract
+          status        EXPECTATION_AUTHORITY_UNRESOLVED
+          reason        writer/reader success semantics diverge
+
+    D3(b) execution occurrence
+          observation   run record presence
+          expectation   none established
+          status        OBSERVATION_ONLY_DOMAIN
+```
+
+---
+
+# Appendix A (continued)
+
+## A.13 Two non-equivalent definitions of a successful governance run
+
+Both expressions evaluated on the same inputs:
+
+```
+command entry            writer: every(i=>i.ok)   reader: some(c=>c.ok===false)
+all ok                   true                     healthy
+one explicit false       false                    failed-last-run
+ok field MISSING         false                    healthy          <- diverge
+ok is null               false                    healthy          <- diverge
+empty command list       true                     healthy
+```
+
+Sources: `templates/cli/hooks.js`, inside the hook body written at install time;
+`templates/cli/memory.service.js`, `readGovernanceRunState`.
+
+---
+
+# `[0ce0]` Phase 1 — CLOSURE
+
+This phase does not deliver a health matrix. It delivers a layered model that
+cannot fabricate a health judgement, plus every dependency that currently
+prevents one.
+
+That is the correct deliverable. A completed matrix at this point would only have
+been completable by manufacturing the missing contracts to fit the table.
+
+## Frozen
+
+```
+topology model              5 rows, Step 1
+observation model           fact / authority / three-value state, Step 2 + erratum
+expectation model           one authority, five states, binding granularity, Step 3
+authority ownership model   domains, owners, and their gaps, Step 4 + errata
+consequence transport shape Round 1 of Step 5
+```
+
+## Explicitly unresolved, with the reason each is blocked
+
+```
+D2   authority NAMED, NOT INSTANTIATED
+     live installation observer does not exist yet
+     -> cannot produce judgements, so no consequence cells
+
+D3(a) EXPECTATION_AUTHORITY_UNRESOLVED
+     "success" is defined twice and the definitions diverge
+
+D3(b) OBSERVATION_ONLY_DOMAIN
+     nothing has been promised, so nothing can be compared
+
+D4   DEPENDENT
+     a projection cannot be derived from domains that produced no judgements
+```
+
+## Not authorized by this phase
+
+```
+implementation of anything
+introduction of the live installation observer
+any change to verify, hook status, or the producer
+expansion of any health rule
+adjudication of the writer/reader success divergence
+```
+
+## Registered, not repaired
+
+```
+observation authority divergence   effective hook location:
+                                   git probe vs string join            §3.4
+success-definition divergence      writer every() vs reader some()     §A.13
+existing consequence behaviour     governance missing -> no alert      §4.6, E4.8
+```
+
+## The question the work item opened with
+
+> *does a stale, missing, or current hook affect overall governance health?*
+
+Phase 1's answer is not yes or no. It is:
+
+```
+Today: it affects nothing, because the installed hook is not on the
+       hasAlerts chain at all -- an ABSENCE, not a ruling.
+
+Before it can affect anything, three things must exist that do not:
+       an instantiated installation-consistency authority,
+       a single success contract for a governance run,
+       and a statement of what any environment actually promises.
+```
+
+---
+
+# Final status — `[0ce0]` Phase 1
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+Step 4  health authority          FROZEN, with errata
+        D1                        MOVED TO STEP 3
+        D2                        NAMED_NOT_INSTANTIATED
+        D3(a)                     EXPECTATION_AUTHORITY_UNRESOLVED
+        D3(b)                     OBSERVATION_ONLY_DOMAIN
+        D4                        DEPENDENT
+Step 5  consequence
+        Round 1  shape            FROZEN
+        Round 2  values           NOT ENTERED
+Step 6  implementation            NOT ENTERED
+
+PHASE 1 CLOSED
+```
