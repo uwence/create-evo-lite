@@ -1484,3 +1484,39 @@ but:
 evidence challenged  ->  fixture defect isolated  ->  evidence restored
                      ->  scope preserved
 ```
+
+## Acceptance interpretation
+
+Recorded because the sections above settle the **evidence** state and say nothing
+about the **acceptance** state, which left a reader to derive one. A ruling that
+does not reach the artifact that owns it is session state, not project state.
+
+```
+acceptance status        preserved
+evidence qualification   amended
+```
+
+The acceptance state is preserved.
+
+Reason: the affected evidence was incomplete in one environment, because the
+fixture interception was representation-dependent.
+
+The defect invalidated the **evidence path**, not the demonstrated **product
+behaviour**. The acceptance record is therefore qualified by the restored
+evidence, rather than reopened as a product regression.
+
+This is a clarification of an existing disposition, not a re-approval and not a
+rewrite of any acceptance record.
+
+### What is deliberately not claimed
+
+```
+NOT   "Task 6 was always correct"
+NOT   "the CI failure was harmless"
+NOT   "the acceptance was never affected"
+```
+
+The gap was real. For the duration between `35c91cc` and `585d5ec`, the Windows
+CI evidence for those blocks did not exist, and three acceptances were recorded
+without anyone consulting it. What the restoration establishes is the character
+of that gap — an unreached fixture — not its absence.
