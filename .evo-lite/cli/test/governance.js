@@ -453,6 +453,7 @@ async function runGovernanceTests() {
             const { installPostCommitHook } = require(INIT_ENTRY);
             const dir1 = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-governance-hook1-'));
             try {
+                childProcess.execFileSync('git', ['-C', dir1, 'init', '-q'], { stdio: 'ignore' });
                 fs.mkdirSync(path.join(dir1, '.git', 'hooks'), { recursive: true });
                 installPostCommitHook(dir1);
                 const hook = fs.readFileSync(path.join(dir1, '.git', 'hooks', 'post-commit'), 'utf8');
@@ -3193,6 +3194,7 @@ async function runGovernanceTests() {
             const { installPostCommitHook, diffInstalledHook } = require(INIT_ENTRY);
             const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-hook-diff-'));
             try {
+                childProcess.execFileSync('git', ['-C', tmpRoot, 'init', '-q'], { stdio: 'ignore' });
                 fs.mkdirSync(path.join(tmpRoot, '.git', 'hooks'), { recursive: true });
                 installPostCommitHook(tmpRoot);
 
@@ -14622,6 +14624,9 @@ async function runGovernanceTests() {
         console.log('✅ T-takeover-memory-root passed');
 
         await runChildRuntimeTests();
+
+        const { runHookProvenanceTests } = require('./hook-provenance');
+        await runHookProvenanceTests();
 
         console.log('--- Governance-focused CLI tests passed! ---');
     } catch (error) {

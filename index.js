@@ -93,6 +93,7 @@ function buildProgram() {
         .argument('[project-path]', 'Target project path')
         .option('-y, --yes', 'Use default initialization configuration')
         .option('--no-git', 'Skip git repository initialization')
+        .option('--no-hooks', 'Skip Git hook installation and record an explicit opt-out')
         .option('--no-initial-commit', 'Skip automatic baseline scaffold commit')
         .option('--skip-install', 'Scaffold only; skip runtime dependency install (reports runtime-not-ready)')
         .option('--offline', 'Alias for --skip-install: no network install, reports runtime-not-ready')
@@ -486,7 +487,9 @@ async function runInit(targetDirArg, options = {}) {
 
     // 4.5 补齐 Git 前提，避免首次闭环就落入 No-Git 模式。
     const gitWorkspace = ensureGitWorkspace(targetDir, options);
-    installPostCommitHook(targetDir);
+    installPostCommitHook(targetDir, options.hooks === false
+        ? { participation: 'non-participating', source: 'scaffold-no-hooks' }
+        : { participation: 'participating', source: 'scaffold-default' });
 
     // 5. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
     console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander, @modelcontextprotocol/sdk)...');
