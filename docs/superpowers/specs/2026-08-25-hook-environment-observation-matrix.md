@@ -1182,3 +1182,161 @@ Step 5  consequence
         Round 2  values           NOT ENTERED
 Step 6  implementation            NOT ENTERED
 ```
+
+---
+
+# Step 4 erratum — domain boundaries, FROZEN before Step 5 Round 2
+
+Append-only. Step 4 is not overturned; its **domain boundaries** are corrected.
+
+This erratum was triggered by applying §4.3's pairing rule strictly to each
+domain before enumerating any consequence cell. Two of the four domains turned
+out not to have a well-formed pair, and each was missing a *different* half. The
+finding is recorded as a success of the layering, not a failure of it: had the
+consequence table been drawn first, its shape would have manufactured the missing
+halves to fit.
+
+## E4.1 — `D1` is not a health domain; it is an expectation-establishment step
+
+`D1` asked *"can the declaration itself be safely relied upon?"* Its input is not
+a pair:
+
+```
+document state  ->  can an expectation be established?
+```
+
+That is a different question from the one every health domain asks:
+
+```
+(observation, expectation)  ->  what does the comparison mean?
+```
+
+`D1` asks *am I entitled to produce an expectation*. Step 3 already answers it,
+in §3.2:
+
+```
+VALID         ->  EXPECTED / NOT_EXPECTED
+ABSENT        ->  UNDECLARED
+UNOBSERVABLE  ->  EXPECTATION_UNRESOLVED
+```
+
+Keeping `D1` would give one question two owners — Step 3 generating the
+expectation, and `D1` judging whether that expectation is trustworthy — which is
+the exact violation this document exists to prevent.
+
+```
+D1  REMOVED as a health domain
+    the question and its authority (validateHookProvenanceV1) live in Step 3
+```
+
+The validator's authority is unchanged. Only its layer is corrected.
+
+## E4.2 — `D3` has no expectation object, which is not the same as an unresolved one
+
+```
+D3 execution success
+    observation   governance run state
+    authority     readGovernanceRunState
+    expectation   NOT ESTABLISHED
+    status        awaiting contract definition
+```
+
+**`NOT ESTABLISHED` is not `EXPECTATION_UNRESOLVED`.** The distinction is
+load-bearing:
+
+```
+EXPECTATION_UNRESOLVED   an expectation authority EXISTS, and could not be read
+NOT ESTABLISHED          no expectation object has been defined at all
+```
+
+Collapsing the second into the first would imply an authority that does not
+exist, and would then invite a fail-open or fail-closed default for a contract
+nobody has written.
+
+### `participation` is explicitly rejected as `D3`'s expectation
+
+It reads naturally, and that is precisely the risk. The two declarations have
+different lifetimes and different subjects:
+
+```
+participation   whether the provenance producer takes part in the
+                hook-install workflow
+governance run  whether a governance action executed, and with what result
+```
+
+Binding them would silently create a rule that no authority supports:
+
+```
+FORBIDDEN   provenance declaration  =  execution obligation
+```
+
+Whether a governance run is expected at all remains an open contract question,
+owned by a later design decision, not by Step 5.
+
+## E4.3 — `D2` dependency escalation
+
+```
+Installation consequence cannot be defined until the installation
+consistency authority is named.
+```
+
+`D2` is the only domain whose pair is complete:
+
+```
+observation   hook location, hook content, template comparison
+expectation   participation, via Step 3
+authority     UNRESOLVED
+```
+
+So the one domain that is structurally ready is the one that cannot proceed. Step
+5 Round 2 is therefore blocked on a Step 4 resolution, exactly along the return
+path frozen in §5.3.
+
+## E4.4 — the corrected domain set and dependency order
+
+```
+D2 installation consistency   pair complete   authority UNRESOLVED
+D3 execution success          expectation NOT ESTABLISHED
+D4 composite                  DEPENDENT on D2 and D3
+```
+
+`D1` no longer appears; see E4.1.
+
+```
+Step 4 amendment
+    resolve D2 authority
+    record D3 expectation gap
+        |
+        v
+Step 5 Round 2
+    D2 consequence
+    D3 consequence, only if a contract is defined
+        |
+        v
+Step 5 composite
+```
+
+`D4` cannot be defined while `D2` and `D3` are open, because a projection cannot
+be derived from domains that have not produced judgements.
+
+---
+
+# Status after the Step 4 erratum
+
+```
+Step 1  topology row set          APPROVED
+Step 2  observation matrix        APPROVED AFTER ERRATUM
+Step 3  expectation               FROZEN
+        + D1's question and authority, relocated here by E4.1
+
+Step 4  health authority          FIRST PASS FROZEN, boundaries corrected
+        D1                        MOVED TO STEP 3
+        D2                        UNRESOLVED           <- next work
+        D3                        EXPECTATION UNDEFINED
+        D4                        DEPENDENT
+
+Step 5  consequence
+        Round 1  shape            FROZEN
+        Round 2  values           BLOCKED on D2
+Step 6  implementation            NOT ENTERED
+```
