@@ -10,6 +10,25 @@ function tmp(name) {
     return fs.mkdtempSync(path.join(os.tmpdir(), `evo-hp-${name}-`));
 }
 
+// Fixture interception matches by path IDENTITY, never by representation.
+// Task 1 proved a path is not its spelling, and the fixtures below were still
+// comparing spellings. Measured on Windows CI: where TMP resolves through an 8.3
+// short name, os.tmpdir() and `git rev-parse --show-toplevel` name the same
+// directory differently ("...\LONGDI~1\..." vs "...\longdirectoryname\..."), so a
+// `String(p) === target` guard never fires and the fault a block means to inject
+// is never injected. HP25 went red because its assertion happened to be sensitive
+// to its own bypass; HP21 and HP27 stayed green while proving nothing.
+// The directory is compared through the shared authority and the basename
+// exactly, because the target file may not exist yet at interception time — the
+// same split observeLocator makes, for the same reason. `path.resolve` is not a
+// substitute: measured, resolve(short) !== resolve(long).
+function samePath(a, b) {
+    const A = String(a);
+    const B = String(b);
+    return path.basename(A) === path.basename(B)
+        && pathIdentity(path.dirname(A), path.dirname(B)) === 'SAME';
+}
+
 function validateOk(raw) {
     const { validateHookProvenanceV1 } = require('../hook-provenance/schema');
     return validateHookProvenanceV1(raw).ok;
@@ -1273,13 +1292,21 @@ async function runHookProvenanceTests() {
         // nothing while appearing to pass.
         const hookPath = path.join(repo, '.git', 'hooks', 'post-commit');
         const fsOps = Object.create(fs);
+        let injected = 0;
         fsOps.writeFileSync = (p, data, enc) => {
             fs.writeFileSync(p, data, enc);
-            if (String(p) === hookPath) {
+            if (samePath(p, hookPath)) {
+                injected += 1;
                 throw Object.assign(new Error('EIO after write'), { code: 'EIO' });
             }
         };
         const r = installPostCommitHook(repo, { fsOps });
+        // The interception is itself evidence. Without this gate a stub that
+        // never matched leaves the ordinary success path running, and the two
+        // assertions below — 'realized' and 'created-managed-hook' — are exactly
+        // what that path produces. The block would pass having injected nothing.
+        assert.ok(injected > 0,
+            'FIXTURE INVALID: the post-write throw was never injected, so nothing below is evidence');
         assert.strictEqual(r.event.install.outcome, 'realized',
             'a thrown write whose bytes landed must not be recorded as unrealized');
         assert.strictEqual(r.event.install.reason, 'created-managed-hook',
@@ -1316,14 +1343,20 @@ async function runHookProvenanceTests() {
 
         let chmodCalls = 0;
         const preFail = Object.create(fs);
+        let preFailInjected = 0;
         preFail.readFileSync = (p, enc) => {
-            if (String(p) === hookPath) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+            if (samePath(p, hookPath)) {
+                preFailInjected += 1;
+                throw Object.assign(new Error('denied'), { code: 'EACCES' });
+            }
             return fs.readFileSync(p, enc);
         };
         preFail.chmodSync = (...a) => { chmodCalls += 1; return fs.chmodSync(...a); };
 
         installPostCommitHook(repo, { source: 'hook-install-command', fsOps: preFail });
 
+        assert.ok(preFailInjected > 0,
+            'FIXTURE INVALID: the pre-write read failure was never injected, so nothing below is evidence');
         const doc = readProvenance(provenancePath);
         assert.strictEqual(doc.state, 'VALID');
         const ev = doc.doc.events[doc.doc.events.length - 1];
@@ -1396,11 +1429,17 @@ async function runHookProvenanceTests() {
         execFileSync('git', ['-C', repoA, 'init', '-q'], { stdio: 'ignore' });
         const hookA = path.join(repoA, '.git', 'hooks', 'post-commit');
         const clobber = Object.create(fs);
+        let clobbered = 0;
         clobber.writeFileSync = (p, data, enc) => {
             fs.writeFileSync(p, data, enc);
-            if (String(p) === hookA) fs.writeFileSync(p, '#!/bin/sh\n# clobbered by someone else\n');
+            if (samePath(p, hookA)) {
+                clobbered += 1;
+                fs.writeFileSync(p, '#!/bin/sh\n# clobbered by someone else\n');
+            }
         };
         const a = installPostCommitHook(repoA, { fsOps: clobber });
+        assert.ok(clobbered > 0,
+            'FIXTURE INVALID: the third-party clobber was never injected, so nothing below is evidence');
         assert.strictEqual(a.event.install.outcome, 'unrealized');
         assert.strictEqual(a.event.install.reason, 'write-failed',
             'a write that returned success but did not establish the expected body is write-failed');
@@ -1421,18 +1460,23 @@ async function runHookProvenanceTests() {
         const hookB = path.join(repoB, '.git', 'hooks', 'post-commit');
         let written = false;
         const blind = Object.create(fs);
+        let blindInjected = 0;
         blind.writeFileSync = (p, data, enc) => {
             const out = fs.writeFileSync(p, data, enc);
-            if (String(p) === hookB) written = true;
+            if (samePath(p, hookB)) written = true;
             return out;
         };
         blind.readFileSync = (p, enc) => {
-            if (written && String(p) === hookB) {
+            if (written && samePath(p, hookB)) {
+                blindInjected += 1;
                 throw Object.assign(new Error('denied'), { code: 'EACCES' });
             }
             return fs.readFileSync(p, enc);
         };
         const b = installPostCommitHook(repoB, { fsOps: blind });
+        assert.ok(written, 'FIXTURE INVALID: the write was never observed, so the read failure could not arm');
+        assert.ok(blindInjected > 0,
+            'FIXTURE INVALID: the post-write read failure was never injected, so nothing below is evidence');
         assert.strictEqual(b.event.install.outcome, 'indeterminate',
             'an unreadable artifact after an issued write is a failure to observe, not unrealized');
         assert.strictEqual(b.event.install.reason, 'post-write-observation-failed');
@@ -1495,7 +1539,7 @@ async function runHookProvenanceTests() {
         let committed = false;
         fsOps.renameSync = (a, b) => {
             const out = fs.renameSync(a, b);
-            if (String(b) === provenancePath) committed = true;
+            if (samePath(b, provenancePath)) committed = true;
             return out;
         };
         // Record every fallible fs operation issued AFTER the commit rename.
@@ -1511,6 +1555,12 @@ async function runHookProvenanceTests() {
 
         const r = installPostCommitHook(repo, { fsOps });
         assert.strictEqual(r.provenance, 'committed', 'fixture validity: the transaction must have committed');
+        // The line above validates the PRODUCT's report; this one validates the
+        // INSTRUMENT. Without it, a rename the recorder never matched leaves
+        // `after` empty by default rather than by evidence, and the deepStrictEqual
+        // below passes while observing nothing at all.
+        assert.ok(committed,
+            'FIXTURE INVALID: the commit rename was never observed, so the post-commit recorder never armed');
         assert.strictEqual(readProvenance(provenancePath).state, 'VALID');
         assert.deepStrictEqual(after, [],
             `no fallible operation may follow the commit rename (saw ${after.join(', ')})`);
