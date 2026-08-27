@@ -108,6 +108,10 @@ locator
 
 canonical spec authority
     remains on its declared spec branch + SHA
+    that branch is DECLARED authority-exclusive — advanced only by adopted
+    authority transitions — which the locator relies on and cannot verify,
+    so authority hosted on a shared branch such as main is UNSUPPORTED in
+    v1                                                              §5.2a
 
 resolution
     work item
@@ -347,7 +351,10 @@ B   the locator keys on some other already-durable identity whose
 Minimum shape, and it is minimum by argument:
 
 ```
-workItem            string, unique under §4.1a's folded identity
+workItem            string. Folded-identity uniqueness across the document is
+                    a RESOLUTION rule (§4.3, §6.1a step 5), NOT a schema
+                    constraint — see §6.1a for why that distinction is
+                    load-bearing
 canonicalBranch     string, a full branch name
 canonicalSha        string, 40-hex
 authorityEntry      exactly ONE repo-relative path, expected to exist at
@@ -611,7 +618,8 @@ LOCATOR_UNRESOLVED
     this work item
 
 LOCATOR_CONFLICT
-    more than one record whose folded id (§4.1a) equals this work item's
+    more than one record whose folded id (§4.1a) equals the requested work
+    item's folded id. Adjudicated at step 5, never by the schema.  §6.1a
 ```
 
 ### 5.2 Why `LOCATOR_STALE` is a success of the design, not a wart
@@ -638,6 +646,89 @@ Compare against the alternative that looks more convenient: resolving to the
 branch tip closes the window and destroys the guarantee, because it makes any
 push to the spec branch silently redefine the authority. That is
 `branch tip guess`, and it is forbidden.
+
+### 5.2a What the tip check is actually evidence of
+
+**Added after the fifth review, and it is a model boundary rather than a
+wording fix.** The divergence check compares `canonicalSha` against the tip of
+`canonicalBranch`. That is a fact about a **Git ref**. The verdict it feeds is a
+statement about **authority**. Those are only the same thing if
+
+```
+every authority transition        <->   a tip advance of canonicalBranch
+every tip advance of that branch  <->   an authority transition
+```
+
+and nothing had frozen that biconditional. Both halves fail, in opposite
+directions:
+
+```
+FALSE STALE — the branch moves without the authority moving
+
+  canonicalBranch = main, canonicalSha = SHA_A, entry = matrix.md
+  main advances to SHA_B for an unrelated PR; matrix.md untouched;
+  no adoption ruling occurred
+  -> SHA_A != tip -> LOCATOR_STALE, permanently, after any commit
+
+  fail-closed, so it never lies — but a record on a shared branch expires
+  on the next unrelated push. And the tempting repair, advancing
+  canonicalSha to SHA_B to restore green, manufactures a canonical location
+  that no adoption ruling ever established. §8 forbids exactly that.
+
+FALSE RESOLVED — the authority moves without the branch moving
+
+  authority migrates from spec/A @ SHA_A to spec/B @ SHA_B
+  spec/A stays at SHA_A; the locator is not updated
+  -> canonicalSha == spec/A's tip -> RESOLVED
+  -> rooted at an abandoned location, every check green
+```
+
+The governing statement, which is this project's oldest rule at a new layer:
+
+```
+Git branch movement    !=    authority movement
+observation            !=    fact
+```
+
+**The contract this design freezes, and the scope limit that follows.**
+
+```
+DECLARED PRECONDITION
+    canonicalBranch MUST be an AUTHORITY-EXCLUSIVE ref: a branch that
+    advances only when an authority transition for its work items is
+    adopted.
+
+CONSEQUENCE — v1 SCOPE
+    a shared branch is not authority-exclusive, so authority hosted on
+    `main` is UNSUPPORTED by a v1 locator record. [0ce0]'s matrix, which
+    lives on main, therefore has no v1 record — and UNRESOLVED is the
+    honest answer for it, not a gap to backfill.
+
+WHAT THE RESOLVER MAY THEREFORE CLAIM
+    the tip check detects divergence ON THE DECLARED BRANCH, under a
+    precondition the locator itself CANNOT VERIFY.
+```
+
+Two things are named rather than smoothed over:
+
+**The precondition is declared, not established.** Whether a branch is only ever
+advanced by adoptions is a fact about how people use it. No check in `§6.1` can
+see it. The record asserts it; the resolver relies on it; neither proves it —
+the same standing as gate `0`'s identity assumption.
+
+**Even under the precondition, the FALSE RESOLVED case survives.** A migration to
+a *different* branch leaves the declared branch untouched, so the tip check stays
+green while the authority is elsewhere. Making `canonicalBranch` exclusive closes
+the false-STALE half and closes nothing on the other side. That is a second
+named, undetectable failure mode of the LOCATION layer, alongside identity reuse,
+and it is why `§8` requires the adoption ruling to update the **whole** tuple
+rather than trusting a detector to notice.
+
+Option `B` from the review — defining independent authority-location transition
+evidence, so that ordinary ref movement stops standing in for it — is the repair
+that would close both halves and support shared-branch hosting. It is a
+mechanism, it is not designed here, and it is recorded as the successor to this
+scope limit rather than as a gap.
 
 ### 5.3 What the locator may never do
 
@@ -673,6 +764,8 @@ At resolution time, against the declared record:
 3  the declared SHA is an ancestor of the declared branch
 4  the declared authorityEntry exists at that SHA
 5  divergence: declared SHA == branch tip, or not
+       evidence about the declared BRANCH only, and only meaningful under
+       §5.2a's declared authority-exclusivity precondition
 ```
 
 `1`–`4` failing yields `LOCATOR_INVALID`. `5` distinguishes `RESOLVED` from
@@ -716,11 +809,48 @@ implementer's choice:
        observed main SHA (§6.2) — never an ambient copy
        including §9's vocabulary containment — an unknown field is a
        document defect, not a field to ignore
+       and EXCLUDING folded-identity multiplicity, which step 5 owns
 5  ONLY THEN look up the work item under §4.1a's folded identity
 
 any failure in 1-4        ->  LOCATOR_SOURCE_INVALID
 a valid document, 0 keys  ->  LOCATOR_UNRESOLVED
 ```
+
+**Step `4` must not adjudicate duplicate identities.** Added after the fifth
+review. `§4.3` had already required the representation to carry duplicate
+`workItem` declarations through parsing — but a natural reading of `§4.2`'s
+*"unique under §4.1a's folded identity"* makes uniqueness a **schema**
+constraint, and then:
+
+```
+two authored records survive the parser      PASS   (§4.3 works)
+whole-document schema sees a duplicate       FAIL
+step 4 fails
+        -> LOCATOR_SOURCE_INVALID
+        -> LOCATOR_CONFLICT is STILL unreachable
+```
+
+The conflict fact survived the parser only to be consumed by the validator one
+step later. So the split is frozen:
+
+```
+STRUCTURAL / SCHEMA VALIDITY  (step 4)
+    shape, types, vocabulary containment, required fields
+    MUST NOT treat folded workItem multiplicity as a source defect
+
+FOLDED-IDENTITY MULTIPLICITY  (step 5)
+    evaluated after structural validation succeeds
+    0 -> LOCATOR_UNRESOLVED    1 -> verify    >1 -> LOCATOR_CONFLICT
+```
+
+```
+the schema preserves the FACT
+the resolver assigns the MEANING
+```
+
+One question, one authority: a schema that rejected duplicates would be a second
+adjudicator of the same question, and then `LOCATOR_CONFLICT` should not exist at
+all. This design keeps `LOCATOR_CONFLICT`, so the schema does not decide it.
 
 `LOCATOR_SOURCE_INVALID` is named separately rather than folded into
 `LOCATOR_INVALID` because the two answer different questions: *"the locator is
@@ -851,7 +981,7 @@ verification proves LOCATOR INTEGRITY
       !=
 verification proves SPEC CORRECTNESS
 
-and, after the corrections across three reviews:
+and, after the corrections across the reviews to date:
 
 a resolved KEY
       !=
@@ -859,6 +989,9 @@ the intended WORK ITEM                          §4.1b
 declared references are VALID
       !=
 the declared authority set is COMPLETE          §4.2b
+a moved BRANCH
+      !=
+a moved AUTHORITY                              §5.2a
 no divergence among OBSERVED refs
       !=
 the pointer is CURRENT                          §6.3
@@ -951,10 +1084,10 @@ current complete contract.
 ```
 
 That is not a failure of the locator. It is the locator doing its job and
-uncovering two dependencies that were previously invisible because nothing had
-ever tried to resolve authority mechanically. Compressing all three back into one
-`RESOLVED` would manufacture exactly the false certainty this work item exists to
-remove.
+uncovering **three** dependencies — identity, completeness, freshness — that were
+previously invisible because nothing had ever tried to resolve authority
+mechanically. Compressing all three back into one `RESOLVED` would manufacture
+exactly the false certainty this work item exists to remove.
 
 The failure mode this rule exists to prevent has already occurred here. During
 PR #49, a reviewer could not find the design file on the implementation branch
@@ -1030,9 +1163,32 @@ authorityEntry      2026-08-18-hook-install-provenance-design.md   unchanged
 
 The adopted amendment is deliberately NOT named in the record. It is reachable at
 the new SHA, and under §4.2b enumerating the authority set is the authority
-layer's question, not the locator's. The whole locator delta for an adoption is
-therefore **one field**, which is also the smallest thing that can be forgotten
-— and forgetting it produces LOCATOR_STALE, not a silent wrong answer.
+layer's question, not the locator's.
+
+**Corrected after the fifth review.** This paragraph previously continued: *"the
+whole locator delta for an adoption is therefore one field, which is also the
+smallest thing that can be forgotten — and forgetting it produces LOCATOR_STALE,
+not a silent wrong answer."* Both halves generalised PR #52. The delta is one
+field **in that fixture**; the rule above is the tuple. And the consequence of
+forgetting depends on which field was forgotten:
+
+```
+forgot canonicalSha, same declared branch advanced
+    -> LOCATOR_STALE            detected, fail-closed
+
+forgot canonicalBranch, authority migrated to another branch
+    -> the declared branch never moved
+    -> canonicalSha == its tip
+    -> RESOLVED                 NOT detected                        §5.2a
+
+forgot authorityEntry, new root adopted at the same branch
+    -> the old entry still exists at the new SHA
+    -> RESOLVED, rooted at a historical artifact                      §8
+```
+
+`LOCATOR_STALE` is what forgetting looks like in **one** of the three cases. It
+is not a safety net for the other two, which is precisely why the adoption ruling
+owns the whole tuple instead of a detector being trusted to catch omissions.
 
 What must **not** appear anywhere in the record as a result of that adoption:
 
@@ -1129,7 +1285,7 @@ its own authorization.
 
 ```
 Q1  who owns canonical-spec location
-      one locator record on main
+      one locator DOCUMENT on main, one record per work item
       docs/authority/canonical-spec-authority.json
       schema docs/contracts/canonical-spec-authority.schema.md
       BOTH read from the same observed main SHA — the schema is an
@@ -1149,9 +1305,15 @@ Q2  how a work item resolves uniquely
 Q3  what makes a locator stale / invalid / conflicting
       INVALID   branch/SHA/ancestry/authorityEntry check fails
       STALE     all checks pass but the branch advanced past the SHA
-      CONFLICT  duplicate key under the folded identity            §4.1a §5
+      CONFLICT  duplicate key under the folded identity — adjudicated
+                after structural validation, never by the schema
+                                                          §4.1a §5 §6.1a
       reachable != current; the tip is never the answer
-      and SHA==tip only means the OBSERVED refs do not diverge         §6.3
+      SHA==tip only means the OBSERVED refs do not diverge              §6.3
+      and the tip check is evidence about the declared BRANCH, under a
+      declared authority-exclusivity precondition the locator cannot
+      verify. A cross-branch authority migration stays undetectable,
+      so main-hosted authority is UNSUPPORTED in v1                    §5.2a
 
 Q4  what a consumer must do on failure
       STOP, report the verdict, produce NO spec judgement
@@ -1163,7 +1325,10 @@ Q4  what a consumer must do on failure
       — nor that the handle names the work item they intend         §7
 
 Q5  how the pointer advances after an amendment
-      adoption advances canonicalSha, and that is the entire delta
+      the adoption RULING establishes the adopted WHERE tuple; the
+      locator updates exactly the location fields whose adopted values
+      changed. No field is immutable because the event is an amendment
+      PR #52 fixture: canonicalSha only — a fixture, not the rule
       it copies no normative content; the chain stays evidence           §8
 
 Q6  how the locator is proved to be navigation, not spec, authority
@@ -1209,7 +1374,20 @@ who writes the record, and when    ordinary reviewed PR to main at adoption
 work items with no canonical spec  most backlog items have none, and that is
                                    correct. Absence of a record is
                                    UNRESOLVED, which is an honest answer, not
-                                   a gap to backfill.
+                                   a gap to backfill. Under §5.2a the same
+                                   now holds for authority hosted on a shared
+                                   branch — [0ce0]'s matrix on main gets no
+                                   v1 record, and UNRESOLVED is its honest
+                                   answer too.
+
+authority-transition evidence      §5.2a option B: independent evidence that
+                                   an authority transition occurred, so that
+                                   ordinary ref movement stops standing in
+                                   for it. It would close both halves of the
+                                   branch/authority gap and would support
+                                   shared-branch hosting. A mechanism, not
+                                   designed here, and the named successor to
+                                   v1's scope limit.
 
 the ten superpowers documents      out of scope. Whether they should carry
 without id: spec: frontmatter      ids is a planning-IR question with its
@@ -1465,7 +1643,7 @@ The canonical design authority for `[hook-install-provenance]` remains
           dependencies — §11, like §10, is a section a reader may consult
           alone, and it had been silent about all three.
 
-this      design review 4: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
+4bc0ed0   design review 4: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
           fixed here. Round 3's repairs held, including the three the sweep
           found rather than the review. The reviewer gave the criterion for
           the next scan, and it is the right one:
@@ -1532,4 +1710,79 @@ this      design review 4: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
           be canonicalized and re-pointed in one commit and have no window at
           all. Restated as a condition, with a note that the verdicts do not
           depend on which case applies.
+
+this      design review 5: CHANGES_REQUIRED, 3 Important + 3 Minor. All six
+          fixed here. Round 4's repairs held. Important 1 is the first
+          finding since round 1 that is a MODEL boundary rather than
+          propagation residue, and it is the deepest one in the document.
+
+          Important 1 — THE STALE DETECTOR WAS WATCHING GIT, NOT AUTHORITY.
+          The divergence check compares canonicalSha against the tip of
+          canonicalBranch — a fact about a REF — and feeds a verdict about
+          AUTHORITY. That is sound only under a biconditional nothing had
+          frozen, and both halves fail:
+
+            FALSE STALE     main advances for an unrelated PR; the entry is
+                            untouched; no ruling occurred -> LOCATOR_STALE
+                            forever. Fail-closed, so it never lies, but a
+                            record on a shared branch expires on the next
+                            push — and the tempting repair, advancing
+                            canonicalSha to restore green, manufactures a
+                            canonical location no adoption ever established,
+                            which §8 forbids.
+
+            FALSE RESOLVED  authority migrates spec/A -> spec/B; spec/A stays
+                            at its tip; the locator is not updated ->
+                            canonicalSha == tip -> RESOLVED, rooted at an
+                            abandoned location, every check green.
+
+            Git branch movement != authority movement
+            observation != fact, one layer down from where this project
+            usually meets it.
+
+          §5.2a freezes option A/C from the review as one clause: canonicalBranch
+          MUST be an AUTHORITY-EXCLUSIVE ref, and the consequence is a v1 scope
+          limit — authority hosted on a shared branch, [0ce0]'s matrix on main
+          included, is UNSUPPORTED, with UNRESOLVED as its honest answer. Two
+          things are named rather than smoothed: the precondition is DECLARED
+          and unverifiable by the locator, the same standing as gate 0's
+          identity assumption; and exclusivity closes only the FALSE STALE half
+          — a cross-branch migration remains undetectable, a second named
+          undetectable failure mode of the LOCATION layer. Option B, independent
+          authority-transition evidence, is recorded in §11 as the named
+          successor rather than as a gap. Propagated to §2, §6.1 check 5, §6.4
+          ("a moved BRANCH != a moved AUTHORITY"), §10 Q3, §11.
+
+          Important 2 — THE CONFLICT FACT DIED ONE STEP LATER. Round 4 made
+          duplicate records survive the parser; §4.2 still called folded
+          uniqueness a property of the record, so a natural whole-document
+          schema would reject duplicates at step 4 and return
+          LOCATOR_SOURCE_INVALID — leaving LOCATOR_CONFLICT unreachable again,
+          consumed by the validator instead of the parser. §6.1a now splits
+          the two questions: structural/schema validity MUST NOT adjudicate
+          folded-identity multiplicity, which step 5 owns.
+
+            the schema preserves the FACT
+            the resolver assigns the MEANING
+
+          One question, one authority: a schema that rejected duplicates would
+          be a second adjudicator, and then LOCATOR_CONFLICT should not exist.
+          This design keeps the verdict, so the schema does not decide it.
+          §4.2's wording is corrected at the source.
+
+          Important 3 — THE ONE-FIELD DELTA CAME BACK. §8's first half had been
+          corrected to the tuple rule, and two paragraphs later still said "the
+          whole locator delta for an adoption is therefore one field ... and
+          forgetting it produces LOCATOR_STALE"; §10 Q5 still said "adoption
+          advances canonicalSha, and that is the entire delta". Both restated.
+          The second half also mattered on its own: forgetting canonicalSha is
+          detected, but forgetting canonicalBranch (§5.2a) or authorityEntry
+          (§8) both return RESOLVED. STALE is a safety net for one of the three
+          cases, which is exactly why the adoption ruling owns the whole tuple
+          instead of a detector being trusted to catch omissions.
+
+          Minors — §5.1's LOCATOR_CONFLICT sentence was truncated mid-clause;
+          §7 still said the design uncovered "two dependencies" when identity,
+          completeness and freshness make three; §10 Q1 still said "one locator
+          record on main" one round after §3 was corrected to DOCUMENT.
 ```
