@@ -367,18 +367,29 @@ pre-audit happened to enumerate. That the list was already wrong once — twice,
 `hooks.js` counts, since the first revision named neither pair — is the argument,
 not an anecdote.
 
-Two measurements show a token-grep manifest is unsound in **both** directions:
+A token-grep manifest is unsound, and the two directions do **not** rest on the
+same strength of evidence. Stated at the strength each actually earned:
 
 ```
-false positive   code-perception/cache.js:348 returns { reason: 'write-failed' }
-                 — the same token, an unrelated subsystem, not an install.reason
+MEASURED — false positives
 
-false positive   post-commit-code-perception.js:164 diag('post-commit-blob-write-failed')
-                 — a substring, not the token
+  code-perception/cache.js:348 returns { reason: 'write-failed' }
+      the same token, an unrelated subsystem, not an install.reason
+  post-commit-code-perception.js:164 diag('post-commit-blob-write-failed')
+      a substring, not the token
 
-false negative   symmetric and unmeasured: an emission site that computes a
-                 reason into a variable emits no literal to match
+STRUCTURAL, NOT MEASURED — false negatives
+
+  an emission site computing a reason into a variable emits no literal to
+  match. No such site exists today; the argument is that nothing prevents one,
+  not that one was found.
 ```
+
+An earlier revision said *"two measurements show … in both directions"*. They do
+not: the false-negative leg was marked `unmeasured` in the same block. Fabricating
+a fixture to promote it would buy a stronger-sounding claim for a risk that is
+already sound as a structural argument — in a document whose subject is evidence
+that looks better than it is.
 
 ```
 The surfaces listed above are EVIDENCE of the current emission graph.
@@ -402,11 +413,26 @@ producer guard    only one hooks.js checked
 the other hooks.js   a wrong-phase emission is introduced, unnoticed
 ```
 
+**Corrected after the fourth review.** The clause below first read *"must cover
+both CLASSIFICATION surfaces and both EMISSION surfaces"*. That fixed tomorrow's
+boundary at today's count — reintroducing, one paragraph later, the exact failure
+mode §4.7a exists to eliminate.
+
 ```
-Any mechanical enforcement of the reason-phase contract must cover both
-CLASSIFICATION surfaces and both EMISSION surfaces, or prove that one member
-of a pair is mechanically derived from the other. Passing in only one mirror
-of either pair is insufficient evidence.
+Future mechanical enforcement MUST cover:
+
+  - the complete maintained CLASSIFICATION surface; and
+  - EVERY producer path capable of contributing install.reason.
+
+Where any such surface is mirrored, every maintained member of that mirror
+set must be covered, unless mechanical derivation from another member is
+established.
+```
+
+```
+current list    evidence
+complete graph  authority
+mirror set      obligation, whatever its size
 ```
 
 Equal hashes prove `CURRENTLY IN SYNC`. They do not prove that a guard installed
@@ -476,8 +502,9 @@ DESIGN CLOSURE REQUIREMENTS          frozen by the amendment
 
 IMPLEMENTATION / EVIDENCE OBLIGATION  recorded, does NOT gate design closure
 5  mechanical enforcement establishes A and B across the COMPLETE maintained
-   surface — both classification mirrors, and every emission path, not a fixed
-   manifest of them                                             §4.7, §4.7a
+   surface — the whole classification surface, and EVERY producer path capable
+   of contributing install.reason, with every member of any mirror set covered.
+   Not a fixed manifest, and not a fixed count of pairs   §4.7, §4.7a
 ```
 
 ```
@@ -530,7 +557,9 @@ two counterexamples forbidden by prose and by nothing else.
 expected      mechanical enforcement of BOTH invariants:
                 A  a reason added without a phase assignment       -> failure
                 B  a reason reachable from a path in another phase -> failure
-              covering both classification mirrors AND both emission mirrors
+              covering the complete maintained classification surface and EVERY
+              producer path capable of contributing install.reason, with every
+              member of any mirror set covered — not a fixed count of pairs
               exact mechanism deferred; coverage is not
 
 NOT expected  any production-schema change
@@ -638,4 +667,23 @@ revision  §4.7a a file list is a measurement, not the authority — with two
           §4.7  DESIGN CLOSURE now points at the 1-4 layer specifically
           §5    "small" removed, with the contradiction recorded rather than
                 silently edited
+
+a39eea7   fourth review: CHANGES REQUIRED, 1 Important + 1 Minor. Design-closure
+          layering, the "small" contradiction, R2 and R3 all confirmed closed.
+
+          I   the normative clauses in 4.7, 4.8 and 5 still said "both
+              EMISSION surfaces" / "both emission mirrors" — fixing tomorrow's
+              boundary at today's count, one paragraph after 4.7a declared that
+              a list is not the authority
+          m   "two measurements show ... in both directions" overstated a
+              false-negative leg the same block marked unmeasured
+
+this      §4.7 §4.8 §5  every fixed-count phrase replaced by complete-surface
+revision                wording: the whole classification surface, every
+                        producer path capable of contributing install.reason,
+                        and every member of any mirror set whatever its size
+          §4.7a         evidence downgraded to what it earned — MEASURED false
+                        positives, STRUCTURAL-not-measured false negatives, with
+                        a note on why fabricating a fixture would be the wrong
+                        purchase in this document in particular
 ```
