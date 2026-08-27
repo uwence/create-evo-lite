@@ -113,6 +113,13 @@ canonical spec authority
     locator relies on and cannot verify — so a branch shared with other
     work items, main included, is UNSUPPORTED in v1                 §5.2a
 
+location transition
+    the adoption ruling AUTHORIZES it; the locator PUBLISHES it       §3
+    v1 supports only the class whose FAILURE TO PUBLISH is detectable:
+    same branch, SHA advances, entry unchanged. A branch or entry
+    relocation stays a valid authority operation and an unsupported v1
+    discovery transition                                            §5.2b
+
 resolution
     work item
       -> exactly one canonical branch
@@ -175,7 +182,9 @@ TRANSITION AUTHORITY   the adoption ruling
     authorizes the NEXT location state. It decides what the tuple becomes.
 
 STATE AUTHORITY        the locator document on main
-    is the published current location state. It is what consumers query.
+    is the CURRENTLY PUBLISHED location state — "currently" qualifies the
+    publication, never the location's truth, which is gate 3. It is what
+    consumers query.
 ```
 
 Between the ruling and the locator PR the two disagree, and the disagreement has
@@ -660,12 +669,16 @@ LOCATOR_SOURCE_INVALID
     be concluded, including absence.                          §6.1a §6.2
 
 LOCATOR_UNRESOLVED
-    the locator document was read and validated, and it holds no record for
-    this work item
+    the locator document was read and validated, and NO record matches the
+    SUPPLIED KEY under folded-key semantics
 
 LOCATOR_CONFLICT
-    more than one record whose folded id (§4.1a) equals the requested work
-    item's folded id. Adjudicated at step 5, never by the schema.  §6.1a
+    MORE THAN ONE record matches the supplied key under folded-key
+    semantics (§4.1a). Adjudicated at step 5, never by the schema.  §6.1a
+
+    Both are worded over the SUPPLIED KEY, symmetrically with RESOLVED
+    (§4.2c): the locator does not own "the supplied key names the intended
+    work item", so no verdict of its own may assume it.
 ```
 
 ### 5.2 Why `LOCATOR_STALE` is a success of the design, not a wart
@@ -680,12 +693,19 @@ already rooted on `main`, as `[0ce0]`'s matrix is, could in principle be
 canonicalized and re-pointed in one commit and have no window at all. The
 verdicts below do not depend on which case applies.)
 
-The design's claim is not that the window is eliminated. It is that the window
-becomes **detectable**:
+The design's claim is not that the window is eliminated. It is narrower than
+that, and the narrowing matters — `§5.2a` and `§5.2b` show two publication-lag
+classes that stay invisible:
 
 ```
-today     the divergence is invisible; a consumer reads whatever it finds
-after     the divergence has a name, a verdict, and a stop
+the SAME-DECLARED-BRANCH SHA-divergence window becomes detectable
+
+today     that divergence is invisible; a consumer reads whatever it finds
+after     it has a name, a verdict, and a stop
+
+a branch or entry RELOCATION whose publication lags stays undetectable,
+which is why §5.2b puts it outside the supported set instead of claiming
+a guarantee that does not hold
 ```
 
 Compare against the alternative that looks more convenient: resolving to the
@@ -804,6 +824,62 @@ evidence, so that ordinary ref movement stops standing in for it — is the repa
 that would close both halves and support shared-branch hosting. It is a
 mechanism, it is not designed here, and it is recorded as the successor to this
 scope limit rather than as a gap.
+
+### 5.2b Which transitions v1 may claim to support
+
+**Added after the seventh review, and it is the last structural gap rather than
+a wording one.** `§3` separates the authority that *decides* a location change
+from the authority that *publishes* it, and `§8` lets a ruling change the whole
+tuple. Put together with the detectability boundary above, that produced a state
+this design had named the pieces of but never ruled on:
+
+```
+an adoption ruling legitimately establishes a NEW location
+the locator PR has not landed yet
+the resolver returns RESOLVED, rooted at the OLD location
+the consumer is FORBIDDEN to consult the ruling                         §3
+```
+
+Naming the two undetectable cases was not enough. A failure mode that is merely
+*named* still leaves the transition inside the supported set, and then the
+document promises support for something it cannot observe going wrong.
+
+```
+a known false-RESOLVED transition class
+    cannot simultaneously be a SUPPORTED v1 transition class
+```
+
+So the supported set is defined by **detectability of its publication failure**:
+
+```
+V1-SUPPORTED TRANSITION
+    canonicalBranch   unchanged
+    canonicalSha      advances on that same branch
+    authorityEntry    unchanged
+
+    an unpublished update leaves canonicalSha behind the tip
+        -> LOCATOR_STALE, fail-closed, detected
+
+NOT V1-SUPPORTED
+    canonicalBranch relocation      cross-branch migration
+    authorityEntry relocation       a new root at the same branch
+
+    an unpublished update returns RESOLVED, rooted at the old location,
+    with no verdict that distinguishes it                     §5.2a, §8
+```
+
+**This forbids no authority operation.** Relocating a root or migrating a branch
+remains a perfectly valid thing for the project to decide; what v1 cannot do is
+*observe the publication of that decision failing*. So a record may not claim v1
+support across such a transition unless separately established
+transition-publication evidence accompanies it — option `B`, which does not
+exist. Until it does, the honest handling of a relocation is to leave the work
+item **without** a v1 record: `LOCATOR_UNRESOLVED` is an answer a consumer can
+act on, and a silently wrong `RESOLVED` is not.
+
+`[hook-install-provenance] @ e5f74fe` is unaffected: `ae39cbe -> e5f74fe` on one
+branch with the entry unchanged is exactly the supported class, which is also why
+that fixture proved nothing about the other two.
 
 ### 5.3 What the locator may never do
 
@@ -1228,6 +1304,13 @@ Only fields whose adopted location changed are changed. No field is inferred
 to be immutable merely because the event is called an amendment.
 ```
 
+**Bound by §5.2b.** This rule says what a correct update looks like; it does not
+promise that an *incorrect* one is caught. Only the same-branch SHA advance has
+a verdict for its own omission. A ruling that relocates `canonicalBranch` or
+`authorityEntry` is a valid authority operation and an **unsupported v1
+discovery transition**, so the work item leaves v1 support rather than acquiring
+a record whose failure mode is silent.
+
 Q5 stays small, and no `WHAT` is pulled back into the locator: the record still
 holds only location fields, and the adoption ruling still owns what the contract
 says.
@@ -1364,13 +1447,23 @@ its own authorization.
 ## 10. The six closure questions, answered
 
 ```
-Q1  who owns canonical-spec location
-      one locator DOCUMENT on main, one record per work item
-      docs/authority/canonical-spec-authority.json
-      schema docs/contracts/canonical-spec-authority.schema.md
-      BOTH read from the same observed main SHA — the schema is an
-      input to authoritative resolution, so it is bound too      §3 §6.2
-      NOT the spec frontmatter, backlog, planning IR, or PR text        §3
+Q1  who owns canonical-spec location — TWO questions, two owners       §3
+
+   Q1a who AUTHORIZES a location transition
+         the adoption ruling. It decides what the tuple becomes.
+
+   Q1b who owns the PUBLISHED location state consumers query
+         the locator document on main, one record per work item
+         docs/authority/canonical-spec-authority.json
+         schema docs/contracts/canonical-spec-authority.schema.md
+         BOTH read from the same observed main SHA — the schema is an
+         input to authoritative resolution, so it is bound too    §6.2
+
+   the adoption ruling is NOT a parallel discovery source: it authorizes
+   the next state, and consumers still resolve through the locator only
+   NOT the spec frontmatter, backlog, planning IR, or PR text          §3
+   and only transitions whose publication failure is detectable are
+   v1-supported                                                     §5.2b
 
 Q2  how a work item resolves uniquely
       exact-key lookup on the backlog work-item id, compared ASCII
@@ -1384,7 +1477,8 @@ Q2  how a work item resolves uniquely
 
 Q3  what makes a locator stale / invalid / conflicting
       INVALID   branch/SHA/ancestry/authorityEntry check fails
-      STALE     all checks pass but the branch advanced past the SHA
+      STALE     checks 1-4 pass; check 5 observes divergence — the branch
+                advanced past the declared SHA
       CONFLICT  duplicate key under the folded identity — adjudicated
                 after structural validation, never by the schema
                                                           §4.1a §5 §6.1a
@@ -1395,6 +1489,9 @@ Q3  what makes a locator stale / invalid / conflicting
       for adopted transitions OF THIS RECORD'S work item. A cross-branch
       migration stays undetectable, and a branch shared with other work
       items — main included — is UNSUPPORTED in v1                    §5.2a
+      v1 therefore supports only the transition class whose failure to
+      publish is detectable — same branch, SHA advances, entry
+      unchanged; a relocation is unsupported, not merely risky       §5.2b
 
 Q4  what a consumer must do on failure
       STOP, report the verdict, produce NO spec judgement
@@ -1460,6 +1557,15 @@ work items with no canonical spec  most backlog items have none, and that is
                                    branch — [0ce0]'s matrix on main gets no
                                    v1 record, and UNRESOLVED is its honest
                                    answer too.
+
+relocation transitions             §5.2b. Migrating canonicalBranch or
+                                   changing authorityEntry stays a valid
+                                   authority operation and is UNSUPPORTED by
+                                   v1 discovery, because an unpublished
+                                   update to either returns RESOLVED with no
+                                   verdict against it. The honest v1 handling
+                                   is no record — UNRESOLVED — rather than a
+                                   record whose failure mode is silent.
 
 authority-transition evidence      §5.2a option B: independent evidence that
                                    an authority transition occurred, so that
@@ -1867,7 +1973,7 @@ The canonical design authority for `[hook-install-provenance]` remains
           completeness and freshness make three; §10 Q1 still said "one locator
           record on main" one round after §3 was corrected to DOCUMENT.
 
-this      design review 6: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
+4f17747   design review 6: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
           fixed here. Round 5's repairs held. This round is boundary cleanup
           rather than new mechanism: who owns the state, who authorizes the
           transition, and which question a verdict actually answers.
@@ -1924,4 +2030,66 @@ this      design review 6: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
           the branch has advanced", while §6.1 check 5 IS the divergence test,
           so not every check passes. Both RESOLVED and LOCATOR_STALE now say
           checks 1-4 pass and state what check 5 observed.
+
+this      design review 7: CHANGES_REQUIRED, 2 Important + 4 Minor. All six
+          fixed here. Round 6's repairs held. Both Importants sat on one
+          edge — TRANSITION authority to PUBLISHED state — which §3 had just
+          made visible enough to expose the last structural gap.
+
+          Important 1 — A NAMED FAILURE IS NOT A SCOPE RULING. §3 separates
+          who DECIDES a location change from who PUBLISHES it, and §8 lets a
+          ruling change the whole tuple. Together those permit:
+
+            the ruling legitimately establishes a NEW location
+            the locator PR has not landed
+            the resolver returns RESOLVED, rooted at the OLD location
+            the consumer is FORBIDDEN to consult the ruling
+
+          Earlier rounds named the two undetectable relocations and stopped
+          there. Naming leaves the transition INSIDE the supported set, so the
+          document was promising support for something it cannot observe going
+          wrong:
+
+            a known false-RESOLVED transition class
+            cannot simultaneously be a SUPPORTED v1 transition class
+
+          §5.2b takes option A: the supported set is defined by detectability
+          of its PUBLICATION FAILURE — same canonicalBranch, canonicalSha
+          advances, authorityEntry unchanged, so an unpublished update falls
+          behind the tip and is caught as LOCATOR_STALE. Branch relocation and
+          entry relocation stay valid AUTHORITY operations and become
+          unsupported v1 DISCOVERY transitions; the honest handling is no
+          record at all — UNRESOLVED, which a consumer can act on — rather
+          than a record whose failure mode is silent. It forbids no authority
+          operation; it stops claiming an observation the design does not
+          have. Bound into §8's tuple rule, and propagated to §2, §10 Q3, §11.
+          [hook-install-provenance] @ e5f74fe is unaffected: ae39cbe ->
+          e5f74fe on one branch with the entry unchanged is exactly the
+          supported class — which is also why that fixture proved nothing
+          about the other two.
+
+          Important 2 — §10 Q1 RE-COLLAPSED THE SPLIT. One round after §3
+          separated transition authority from published-state authority, Q1
+          still answered "who owns canonical-spec location" with the locator
+          alone. §10 is designed to be consumed on its own, so a reader of it
+          would carry away a model §3 and §8 had already replaced. Q1 is now
+          Q1a (who AUTHORIZES a transition — the adoption ruling) and Q1b (who
+          owns the PUBLISHED state consumers query — the locator document),
+          with the not-a-parallel-discovery-source clause and a pointer to
+          §5.2b. This is the fourth round in which the body text was corrected and a
+          summary section kept the old model; §10 and §11 are now checked
+          explicitly in every sweep.
+
+          Minors — §3 said "the published CURRENT location state", spending
+          gate 3 in the same sentence that defines the state authority;
+          "currently" now qualifies the publication, not the location's truth.
+          §5.2's "the window becomes detectable" claimed more than §5.2a and
+          §5.2b leave standing; it now names the same-declared-branch class it
+          actually covers and points at the relocation class it does not. §10
+          Q3 still carried "all checks pass but the branch advanced", the
+          exact wording §5.1 had been corrected away from one round earlier.
+          And §5.1's UNRESOLVED and CONFLICT still spoke of "this work item"
+          while RESOLVED had already been reworded to the SUPPLIED KEY — all
+          three verdicts are now symmetric, because the locator does not own
+          "the supplied key names the intended work item".
 ```
