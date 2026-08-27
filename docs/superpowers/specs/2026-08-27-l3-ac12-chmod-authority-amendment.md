@@ -243,35 +243,68 @@ unclassified reason    !=    WRITE_ISSUED
 A reason that has not been explicitly placed on one side has not been answered.
 It must be reported as unanswered.
 
-### 3.7 Consequence: the phase claim that survives a lexical rejection
+### 3.7 Consequence: the phase claim that survives an outcome/reason rejection
 
-The validator already enforces **lexical closure** — that `install.reason` is a
-member of the vocabulary permitted for its `install.outcome`. That check closes
-one leg and only one leg: an out-of-vocabulary reason. It says nothing about a
-known reason emitted from the wrong phase.
+The validator already enforces **outcome/reason coherence** — that
+`install.reason` is a member of the vocabulary permitted for its
+`install.outcome`. It also accumulates errors rather than failing fast, by
+design, because a caller wants every defect in one report. So a document
+rejected on that check still reaches the phase step, and the phase step still
+speaks.
 
-The validator also accumulates errors rather than failing fast, by design,
-because a caller wants every defect in one report. A consequence of that design
-is that after a reason is lexically rejected, the phase step still runs and still
-emits a phase claim about a reason that was never classified. No accepted
-provenance fact is affected — the document is rejected either way — but a reader
-is told something about a write that may never have been issued.
+Two different rejections reach it, and they must not be collapsed:
 
-> **Disposition: that stray claim is a contract violation, and it is eliminated
-> by enforcing `A`, not by short-circuiting the validator.**
+```
+CASE A   the reason has NO phase assignment
+         a token belonging to neither side of §3.3
+         -> the classifier answers `unclassified`
+         -> NO phase is claimed
+         -> a contract failure in its own right, closed by A
 
-Once the classifier is total and explicit, `member of PRE_WRITE === false` no
-longer *means* write-issued. The classifier is asked, and for an unclassified
-reason it answers `unclassified` — itself a contract failure. The stray phase
-claim disappears as a **consequence** of `A`. Error accumulation is preserved.
+CASE B   the reason IS assigned a phase, and is paired with an outcome that
+         does not permit it — outcome `realized` carrying `hooks-dir-missing`,
+         or an unrecognised `install.outcome` altogether
+         -> outcome/reason coherence rejects the DOCUMENT
+         -> the reason's phase assignment is untouched: `hooks-dir-missing`
+            is PRE_WRITE, and stays PRE_WRITE
+         -> the classifier may answer for it; that answer does not make the
+            document valid
+```
+
+```
+invalid outcome/reason pairing    !=    absent phase assignment
+```
+
+Two questions, two authorities. The design already keeps them apart: the
+vocabulary is grouped **by `outcome`**, while the phase mapping is a separate,
+orthogonal statement over the same members.
+
+> **Disposition. `A` eliminates the unauthorized default for reasons with no
+> phase assignment. It does not erase the valid phase assignment of a known
+> reason merely because that reason is paired with an invalid outcome.**
+
+For Case A that is the whole repair. Once the classification is total and
+explicit, `member of PRE_WRITE === false` no longer *means* write-issued: the
+classifier is asked, and for an unassigned reason it answers `unclassified`, so
+no phase is claimed about a reason nobody classified. Error accumulation is
+preserved and the validator is not short-circuited.
+
+For Case B there is nothing to repair. The document is rejected by the authority
+that owns outcome/reason coherence; the phase contract's answer about that reason
+remains true and simply does not bear on the document's validity.
+
+This amendment therefore introduces **no** rule forbidding a phase claim after a
+rejection. Such a rule would be broader than anything the design requires, and it
+would be wrong for Case B.
 
 Three constraints of different kinds are now distinguishable, and none is
 sufficient alone:
 
 ```
-lexical closure          reason ∈ INSTALL_REASONS[outcome]
-                         already enforced
-                         closes: an out-of-vocabulary reason
+outcome/reason           reason ∈ INSTALL_REASONS[outcome]
+coherence                already enforced
+                         closes: a reason not permitted for its outcome
+                         says nothing about phase assignment either way
 
 vocabulary partition     a known reason has exactly one phase
                          §3.4 A — contract, not yet mechanically enforced
@@ -340,8 +373,13 @@ item. It does **not** gate the closure in §5, and it authorizes nothing.
 design unresolved    !=    approved design not yet mechanically enforced
 ```
 
-No mechanical enforcement exists today for either invariant. Both are, as of this
-amendment, forbidden by contract and by nothing else.
+No current mechanical enforcement establishes either `A` or `B` as a complete
+invariant. The controlled reason vocabulary, the outcome/reason coherence check,
+the existing pre-write list, the `chmod` phase checks, the producer's actual
+phase structure and the accepted evidence all constrain the cases that exist
+today. None of them mechanically establishes the total properties defined here,
+and that gap — not an absence of any check at all — is what the obligation below
+addresses.
 
 > **5.** Future mechanical enforcement MUST establish **both** invariants:
 >
@@ -367,8 +405,9 @@ deliberate:
 - **A guard that closes `A` alone does not discharge it.** `A` catches a reason
   added without classification. It cannot catch either counterexample in §3.5,
   where the reason is already classified. An enforcement that stops at `A` leaves
-  `B` forbidden by prose only, and should not be reported as having enforced this
-  amendment.
+  `B` with no mechanical statement of its general property — the existing tests
+  pin the emission behaviour of particular cases, not the invariant — and should
+  not be reported as having enforced this amendment.
 - **A fixed manifest of files is not coverage.** `B` is quantified over *every*
   admissible emission site. Any enumeration of today's files is **evidence of the
   current emission graph, not the authority for it**; a guard checking a fixed
@@ -441,9 +480,50 @@ asking *"what does `ac12` require"* is answered by `ae39cbe` alone.
 ## 9. Revision history
 
 ```
-this   first draft of the amendment.
-       Derived from the approved L3/ac12 pre-audit @ c17a113, which reached
-       APPROVED (0 Important, 1 Minor closed) on its fifth independent review.
-       Normative content restated here in full so that no future reader needs
-       the pre-audit to know what the contract says.
+e858694   first draft of the amendment.
+          Derived from the approved L3/ac12 pre-audit @ c17a113, which reached
+          APPROVED (0 Important, 1 Minor closed) on its fifth independent
+          review. Normative content restated here in full so that no future
+          reader needs the pre-audit to know what the contract says.
+
+this      amendment-level review 1: CHANGES_REQUIRED, 1 Important + 1 Minor.
+          §3.3's nine-member assignment was reviewed and explicitly upheld as
+          normative and in scope.
+
+          Important — §3.7 collapsed two different rejections into one. The
+          check is (outcome, reason) coherence, not global vocabulary
+          membership, so a rejected document may carry a reason that IS
+          assigned a phase. The old text asserted the reason "was never
+          classified" and had A erasing the stray claim in all cases; that is
+          false for outcome `realized` paired with `hooks-dir-missing`.
+          §3.7 now separates CASE A from CASE B, narrows the disposition to
+          reasons without a phase assignment, and states outright that this
+          amendment adds no rule forbidding a phase claim after a rejection.
+          The constraints block's first row is renamed accordingly.
+
+          The three superseded sentences, verbatim, so that the finding stays
+          readable against the artifact it attacked:
+
+            "That check closes one leg and only one leg: an out-of-vocabulary
+            reason."
+
+            "... the phase step still runs and still emits a phase claim about
+            a reason that was never classified."
+
+            "Disposition: that stray claim is a contract violation, and it is
+            eliminated by enforcing A, not by short-circuiting the validator."
+
+          They are kept HERE, in the revision history, and not inside §3 —
+          §3 is the normative text a future reader consults, and a superseded
+          rule sitting beside a live one is exactly the ambiguity this
+          amendment exists to remove.
+
+          Minor — §6 said both invariants were "forbidden by contract and by
+          nothing else". Overstated: the vocabulary, the coherence check, the
+          pre-write list, the chmod phase checks and the accepted evidence all
+          constrain today's cases. Restated as "no current mechanical
+          enforcement establishes either as a COMPLETE invariant". The same
+          overstatement two paragraphs later ("B forbidden by prose only") is
+          corrected with it — a rule stated correctly and then broken a few
+          lines down is the failure this document family keeps repeating.
 ```
