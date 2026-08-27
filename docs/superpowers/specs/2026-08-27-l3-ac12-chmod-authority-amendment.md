@@ -237,11 +237,17 @@ NOT                "wait until someone adds an unclassified reason"
 
 ### 3.6 No semantic default branch
 
-> There is no semantic default branch. Each of the following is a **contract
-> failure**, mechanically, and never a phase-2/3 reason by default:
+> There is no semantic default branch. Each of the following MUST be treated as
+> a **contract failure**, and MUST NEVER acquire `WRITE_ISSUED` meaning by
+> default:
 >
 > - a reason with no phase assignment;
 > - a reason reachable from a path in a phase other than its assigned one.
+
+This section owns **what is invalid**. Whether, and by what means, that
+invalidity is established mechanically is §6's obligation, and is separate from
+adoption of this design. Stating the rule here does not assert that a check for
+it exists.
 
 ```
 unclassified reason    !=    WRITE_ISSUED
@@ -420,7 +426,10 @@ addresses.
 
 > **5.** Future mechanical enforcement MUST establish **both** invariants:
 >
-> - **A** — a reason added without a phase assignment is a failure;
+> - **A** — every member of `INSTALL_REASONS` must carry exactly one explicit
+>   phase assignment; adding a member without one is a failure. A token that is
+>   not a member is outside `A`'s domain (§3.4), and detecting it is not what
+>   this obligation asks for.
 > - **B** — a reason reachable from a path in a phase other than its assigned one
 >   is a failure.
 >
@@ -564,7 +573,7 @@ e858694   first draft of the amendment.
           corrected with it — a rule stated correctly and then broken a few
           lines down is the failure this document family keeps repeating.
 
-this      amendment-level review 2: CHANGES_REQUIRED, 2 Important + 1 Minor.
+131b3c3   amendment-level review 2: CHANGES_REQUIRED, 2 Important + 1 Minor.
           Review 1's two findings confirmed closed; §3.3 upheld again; moving
           the superseded text to §9 approved.
 
@@ -603,4 +612,39 @@ this      amendment-level review 2: CHANGES_REQUIRED, 2 Important + 1 Minor.
           stale: "PERFORMED — latest disposition recorded in §9". Same
           principle as the pre-audit's review-count fix: do not hand-maintain
           a second copy of a fact that changes every round.
+
+this      amendment-level review 3: CHANGES_REQUIRED, 2 Important + 0 Minor.
+          Both are the same shape as review 2's: the abstract rule was fixed,
+          a concrete clause elsewhere stayed on the old model. No new
+          authority or model gap was found.
+
+          Important 1 — §6's obligation still widened A's domain back to
+          "reason". §3.4, §3.7 and §5 had all been narrowed to vocabulary
+          MEMBERS, but §6 still read:
+
+            "A — a reason added without a phase assignment is a failure"
+
+          which literally re-includes the foreign token §3.7 CASE C had just
+          placed outside A. Restated by reusing the invariant itself rather
+          than a shorthand, and the domain boundary is named where a future
+          implementer reads their mandate — a guard that reports foreign
+          tokens as A violations would be enforcing something this amendment
+          does not ask for.
+
+          B's bullet is left as written. "Its assigned phase" already does not
+          apply to a token that has none, so B carries no comparable widening;
+          changing it would be a rewrite with no defect behind it.
+
+          Important 2 — §3.6 read "Each of the following is a contract
+          failure, mechanically", which asserts mechanical enforcement inside
+          normative text while §6 states that no such enforcement exists and
+          §5 states that adoption does not assert any. Same adoption-state
+          conflict as review 2's "only if both layers hold", one section over.
+          §3.6 now says these MUST be treated as contract failures and MUST
+          NEVER acquire WRITE_ISSUED meaning by default, and adds in as many
+          words that stating the rule does not assert a check for it exists.
+
+            §3.6   owns WHAT is invalid
+            §6     owns whether and how that invalidity is mechanically
+                   established
 ```
