@@ -552,8 +552,9 @@ LOCATOR_INVALID
 
 LOCATOR_SOURCE_INVALID
     the locator itself could not be obtained or validated: the main ref, the
-    file at main:<path>, its parse, or its whole-document schema. Nothing
-    about any work item can be concluded, including absence.        §6.1a
+    data at main:<locator path>, its parse, the schema at main:<schema path>,
+    or whole-document validation against it. Nothing about any work item can
+    be concluded, including absence.                          §6.1a §6.2
 
 LOCATOR_UNRESOLVED
     the locator document was read and validated, and it holds no record for
@@ -655,7 +656,8 @@ implementer's choice:
 1  resolve the observed main SHA                        §6.2, §6.3
 2  read the locator document at main:<path>
 3  parse it completely
-4  validate the COMPLETE document against the schema
+4  validate the COMPLETE document against the schema read at the SAME
+       observed main SHA (§6.2) — never an ambient copy
        including §9's vocabulary containment — an unknown field is a
        document defect, not a field to ignore
 5  ONLY THEN look up the work item under §4.1a's folded identity
@@ -710,6 +712,40 @@ The same rule that just governed the amendment applies here, one layer over:
 a document is not the authority on whether it is the authority, and a branch is
 not authorized to redefine `main`'s locator by containing a different copy of it.
 
+**The schema is bound with it.** Added after the third review. `§6.1a` makes
+whole-document schema validation a step of authoritative resolution, so the
+schema is an *input* to that resolution — and binding the data while leaving the
+validator ambient reproduces the same defect one move over:
+
+```
+locator data     read from the observed main SHA      bound
+locator schema   read from the ambient working tree   UNBOUND
+
+a feature branch carrying a PROPOSAL schema — allow unknown fields, relax a
+required field, widen a grammar — would participate in validating main's
+adopted locator, before that schema is itself adopted
+
+    authoritative data + proposal-time validator
+        ->  an authoritative-LOOKING resolution
+```
+
+So one observation owns both halves:
+
+```
+observedLocatorSha owns BOTH
+    the locator data   at main:<locator path>
+    the locator schema at main:<schema path>
+read from the same ref, at the same observed SHA
+
+schema missing, unreadable, or itself invalid  ->  LOCATOR_SOURCE_INVALID
+    resolution STOPS; no lookup is attempted
+```
+
+If a future implementation freezes the schema as code rather than as a file, its
+authority and source must be named just as explicitly. What is forbidden is
+leaving it an ambient implementation detail: **the validator's provenance is part
+of the resolution's provenance.**
+
 ### 6.3 What `SHA == tip` actually proves — evidence boundary
 
 **Added after independent review.** `§5.2` says a resolver can never establish
@@ -759,8 +795,11 @@ verification proves LOCATOR INTEGRITY
       !=
 verification proves SPEC CORRECTNESS
 
-and, after the two corrections above:
+and, after the corrections across three reviews:
 
+a resolved KEY
+      !=
+the intended WORK ITEM                          §4.1b
 declared references are VALID
       !=
 the declared authority set is COMPLETE          §4.2b
@@ -768,6 +807,10 @@ no divergence among OBSERVED refs
       !=
 the pointer is CURRENT                          §6.3
 ```
+
+The first line is the one a reader is most likely to skip, and it is the one
+that invalidates all the others when it fails: everything below it is a true
+statement about whatever work item the key actually named.
 
 A green resolution says: *this work item's authority is rooted at that document,
 at that commit, on that branch, as observed at those two ref SHAs.* It says
@@ -799,24 +842,47 @@ LOCATOR RESOLVED
 ```
 
 A consumer that needs the **current complete contract** — a spec-compliance
-reviewer, an implementation planner, an amendment drafter — passes three gates,
-each owned by a different layer:
+reviewer, an implementation planner, an amendment drafter — passes **four**
+gates, each owned by a different layer:
 
 ```
-1  LOCATION            locator      RESOLVED per §5.1
-2  AUTHORITY-SET        authority    the complete document set for that root
-   COMPLETENESS         layer        §4.2b — UNRESOLVED today
-3  REF FRESHNESS        that          whatever currency evidence this consumer
-   the consumer needs   consumer's    actually requires
-                        owner        §6.3 — UNRESOLVED as a policy question
+0  WORK-ITEM           work-item     does this handle name the work item the
+   IDENTITY            identity      consumer intends, and no other, ever
+                       authority     §4.1b — UNRESOLVED today
+1  LOCATION            locator       RESOLVED per §5.1
+2  AUTHORITY-SET       authority     the complete document set for that root
+   COMPLETENESS        layer         §4.2b — UNRESOLVED today
+3  REF FRESHNESS       that          whatever currency evidence this consumer
+   the consumer needs  consumer's    actually requires
+                       owner         §6.3 — UNRESOLVED as a policy question
 
-Spec judgement may proceed only when all three hold.
+Spec judgement may proceed only when all four hold.
 ```
+
+**Gate `0` was missing from the previous revision, and its absence was the
+sharpest hole in it.** `§4.1b` had already established that a reused id resolves
+to the retired item's authority undetectably, and `§2` had already listed
+`IDENTITY` as its own layer — but `§7` still authorised judgement on three
+gates. That let the whole chain succeed against the wrong work item:
+
+```
+[3d78] retires; [3d78] is later reused for a different work item
+
+identity authority   absent
+locator              finds the OLD record          -> RESOLVED
+completeness         established for the OLD authority
+freshness            established
+                     -> spec judgement proceeds against the WRONG WORK ITEM
+```
+
+Gates `1`–`3` can each be perfect and the answer still be about something else.
+Gate `0` is first for that reason, not by numbering convenience.
 
 Every non-`RESOLVED` verdict — `SOURCE_INVALID`, `UNRESOLVED`, `STALE`,
 `INVALID`, `CONFLICT` — stops gate `1`: the consumer reports the verdict and
 produces **no** spec judgement. But passing gate `1` is not the end, and the
-honest current state is that **gates `2` and `3` have no mechanism at all**.
+honest current state is that **gates `0`, `2` and `3` have no mechanism at
+all**.
 
 So the conclusion this design reaches about its own sufficiency, stated rather
 than avoided:
@@ -952,11 +1018,16 @@ Q1  who owns canonical-spec location
       one locator record on main
       docs/authority/canonical-spec-authority.json
       schema docs/contracts/canonical-spec-authority.schema.md
+      BOTH read from the same observed main SHA — the schema is an
+      input to authoritative resolution, so it is bound too      §3 §6.2
       NOT the spec frontmatter, backlog, planning IR, or PR text        §3
 
 Q2  how a work item resolves uniquely
       exact-key lookup on the backlog work-item id, compared ASCII
-      case-folded, under a project-lifetime non-reuse rule this design ADDS
+      case-folded — a comparison rule the LOCATOR owns
+      project-lifetime identity / non-reuse is an EXTERNAL UNRESOLVED
+      dependency (§4.1b), NOT a rule this design adds, so locator
+      uniqueness is mechanical only relative to the SUPPLIED identity
       -> canonicalBranch + canonicalSha + authorityEntry
       0 -> UNRESOLVED   1 -> verify   >1 -> CONFLICT, never a tiebreak
                                                             §4.1a §4.2 §4.3
@@ -971,10 +1042,11 @@ Q3  what makes a locator stale / invalid / conflicting
 Q4  what a consumer must do on failure
       STOP, report the verdict, produce NO spec judgement
       every fallback enumerated and forbidden                        §5.3 §7
-      and on SUCCESS: RESOLVED clears gate 1 of 3. Gates 2
-      (authority-set completeness) and 3 (ref freshness) are
-      UNRESOLVED, so a fresh reviewer still cannot mechanically
-      establish the current complete contract                          §7
+      and on SUCCESS: RESOLVED clears gate 1 of 4. Gates 0
+      (work-item identity), 2 (authority-set completeness) and 3
+      (ref freshness) are all UNRESOLVED, so a fresh reviewer still
+      cannot mechanically establish the current complete contract
+      — nor that the handle names the work item they intend         §7
 
 Q5  how the pointer advances after an amendment
       adoption advances canonicalSha, and that is the entire delta
@@ -983,8 +1055,9 @@ Q5  how the pointer advances after an amendment
 Q6  how the locator is proved to be navigation, not spec, authority
       A vocabulary containment — location fields only
       B falsifiability — must answer INVALID when its entry is absent
-      C source binding — read from main:<path>, never the ambient tree,
-        so a proposed locator cannot impersonate an adopted one       §6.2
+      C source binding — DATA AND SCHEMA both read from the observed main
+        SHA, never the ambient tree, so neither a proposed locator nor a
+        proposed validator can impersonate an adopted one             §6.2
       verification proves locator INTEGRITY, and nothing beyond it:
         valid references != a complete authority set               §4.2b
         no divergence among observed refs != current               §6.3
@@ -996,6 +1069,23 @@ Q6  how the locator is proved to be navigation, not spec, authority
 ```
 the resolver's implementation      Phase 2, separately authorized. Phase 1
                                    owes the model, not the mechanism.
+
+work-item identity lifetime        §4.1b. NOT owned here, and deliberately
+                                   not repaired here. Its absence is a named,
+                                   undetectable failure mode of this design,
+                                   and gate 0 of §7.
+
+authority-set completeness         §4.2b. NOT owned here. Gate 2 of §7.
+
+required ref freshness             §6.3. Whether a resolver must fetch, and
+                                   how much currency evidence a given
+                                   consumer needs, belong to that consumer's
+                                   gate owner. Gate 3 of §7.
+
+the schema's form                  §6.2 binds WHERE the schema is read from.
+                                   Whether it is a file or frozen as code is
+                                   open; either way its source must be named,
+                                   never left ambient.
 
 who writes the record, and when    ordinary reviewed PR to main at adoption
                                    time. No CLI in v1: automating a file
@@ -1041,13 +1131,19 @@ that is no longer true:
 ```
 §6 A+B mechanical-enforcement design remains BLOCKED until
 
-  a  the canonical locator ROOT is resolvable                    this design
-  b  authority-set COMPLETENESS is established           §4.2b — UNRESOLVED
-  c  the REF FRESHNESS evidence its reviewers require
+  a  WORK-ITEM IDENTITY is established                   §4.1b — UNRESOLVED
+  b  the canonical locator ROOT is resolvable                    this design
+  c  authority-set COMPLETENESS is established           §4.2b — UNRESOLVED
+  d  the REF FRESHNESS evidence its reviewers require
      is established                                      §6.3 — UNRESOLVED
 ```
 
-`c` may turn out to be cheap: a ruling that `§6`'s reviewers need only observed
+`a` is listed first and was absent from the previous revision. Without it, §12
+would license starting a §6 review on the strength of a locator that resolved a
+SHA correctly **for a handle that may no longer name the intended work item** —
+gate `0` of §7, skipped at the dependency layer instead of the consumer layer.
+
+`d` may turn out to be cheap: a ruling that `§6`'s reviewers need only observed
 local refs would discharge it immediately. **That ruling is not made here.** It
 belongs to whoever owns `§6`'s gate, and letting a consumer decide for itself how
 much currency evidence it needs is the same delegation this document spent `§7`
@@ -1124,7 +1220,7 @@ The canonical design authority for `[hook-install-provenance]` remains
           answer taken instead was to shrink the claim to what can be
           verified and name the missing authority.
 
-this      design review 2: CHANGES_REQUIRED, 3 Important + 0 Minor. All three
+5c54b51   design review 2: CHANGES_REQUIRED, 3 Important + 0 Minor. All three
           fixed here. The review confirmed round 1's repairs held in
           direction, and found three places where the NARROWED model had not
           propagated to the bottom. Its framing is now recorded in §2: what
@@ -1186,4 +1282,69 @@ this      design review 2: CHANGES_REQUIRED, 3 Important + 0 Minor. All three
           reviewers need only observed local refs, is explicitly NOT taken
           here: it belongs to §6's gate owner, and letting a consumer decide
           its own currency requirement is the delegation §7 just removed.
+
+this      design review 3: CHANGES_REQUIRED, 3 Important + 0 Minor. All three
+          fixed here. The review confirmed round 2's three repairs held, and
+          found that none of them had been carried all the way to the
+          consumption points. Its own summary of the remaining shape:
+
+            upstream already demoted, downstream quietly upgraded it back.
+
+          Important 1 — IDENTITY WAS NOT A GATE. §2 listed IDENTITY as its own
+          layer and §4.1b had already stated that a reused id resolves to the
+          retired item's authority undetectably — yet §7 still authorised spec
+          judgement on three gates, none of them identity, and §12 listed
+          three unblocking conditions for §6 A+B with identity absent. So
+          gates 1-3 could each be perfect and the whole chain still answer
+          about a different work item. §7 is now FOUR gates, with WORK-ITEM
+          IDENTITY as gate 0 and the [3d78]-reuse chain written out; §12's
+          conditions become a-d with identity first; §10's Q4 says "gate 1 of
+          4"; §6.4 gains the boundary line "a resolved KEY != the intended
+          WORK ITEM", noted as the one that invalidates every line below it
+          when it fails.
+
+          Important 2 — THE SCHEMA WAS AN UNBOUND INPUT. §6.1a had made
+          whole-document schema validation a step of authoritative resolution,
+          which makes the schema an INPUT to that resolution; §6.2 bound only
+          the data. A feature branch carrying a proposal schema — allow
+          unknown fields, relax a required field, widen a grammar — would have
+          participated in validating main's adopted locator before that schema
+          was itself adopted:
+
+            authoritative data + proposal-time validator
+                -> an authoritative-LOOKING resolution
+
+          the same defect §6.2 had just eliminated, moved from the data to the
+          validator. observedLocatorSha now owns BOTH main:<locator path> and
+          main:<schema path>, read at the same observed SHA; a missing,
+          unreadable or invalid schema is LOCATOR_SOURCE_INVALID and stops
+          resolution before any lookup. If a future implementation freezes the
+          schema as code, its authority and source must be named just as
+          explicitly — the validator's provenance is part of the resolution's
+          provenance.
+
+          Important 3 — THE CLOSURE SUMMARY RESURRECTED A WITHDRAWN RULE. §10
+          Q2 still read:
+
+            "under a project-lifetime non-reuse rule this design ADDS"
+
+          which is exactly the authority claim round 2 removed from §4.1b. §10
+          is "the six closure questions, answered" and is the section a future
+          reader is most likely to read alone, so this was not harmless
+          leftover prose: the document carried two contradictory normative
+          answers about who owns identity lifetime. Q2 now states that
+          case-folding is the locator's own comparison rule, that
+          project-lifetime identity is an external UNRESOLVED dependency, and
+          that locator uniqueness is therefore mechanical only relative to the
+          SUPPLIED identity.
+
+          Method note, since this is the third round in a row where the
+          finding was propagation rather than direction: this revision was
+          made by first sweeping for every enumeration of gates, verdicts,
+          dependencies and "this design owns/adds" claims, then editing — not
+          by editing the three named spots. §6.4's identity line and §10's Q1
+          and Q6-C schema-binding lines came from that sweep rather than from
+          the review, as did §11's now-explicit list of the three unresolved
+          dependencies — §11, like §10, is a section a reader may consult
+          alone, and it had been silent about all three.
 ```
