@@ -302,7 +302,7 @@ DESIGN CLOSURE
     the reason-phase CONTRACT owns the derivation
         a classifier IMPLEMENTS the vocabulary partition
         producer emissions CONFORM to the assigned phase
-    closure conditions: exactly the five in §4.8, no separate list
+    closure conditions: §4.8's DESIGN CLOSURE layer, 1-4, no separate list
     -> L3 design question CLOSED BY SPEC AMENDMENT, once that amendment is
        independently reviewed and frozen
 
@@ -341,7 +341,58 @@ classification surfaces   templates/cli/hook-provenance/schema.js
 emission surfaces         templates/cli/hooks.js
                           .evo-lite/cli/hooks.js
                           sha256 1730e8c6eb52…   blob 76ff7acd71b1 (both)
+
+                          templates/cli/hook-provenance/observe.js
+                          .evo-lite/cli/hook-provenance/observe.js
+                          sha256 bf69b2e48e2d…
 ```
+
+**The observe.js pair was omitted from the previous revision** and is added after
+the third review. It is not incidental: `observeHooksDir` emits three of the nine
+reasons directly — `hooks-dir-missing`, `hooks-dir-unobservable`,
+`hooks-dir-not-directory` — and `hooks.js:238` writes `dir.reason` straight into
+`draft.install.reason` without transformation. It is squarely inside `B`'s
+emission graph.
+
+### 4.7a A file list is a measurement, not the authority
+
+`B` is quantified over *every* emission site:
+
+```
+for every emission site e that can emit reason r:  phase(e) == assignedPhase(r)
+```
+
+so the authority has to be **all admissible emission sites**, not the files this
+pre-audit happened to enumerate. That the list was already wrong once — twice, if
+`hooks.js` counts, since the first revision named neither pair — is the argument,
+not an anecdote.
+
+Two measurements show a token-grep manifest is unsound in **both** directions:
+
+```
+false positive   code-perception/cache.js:348 returns { reason: 'write-failed' }
+                 — the same token, an unrelated subsystem, not an install.reason
+
+false positive   post-commit-code-perception.js:164 diag('post-commit-blob-write-failed')
+                 — a substring, not the token
+
+false negative   symmetric and unmeasured: an emission site that computes a
+                 reason into a variable emits no literal to match
+```
+
+```
+The surfaces listed above are EVIDENCE of the current emission graph.
+They are NOT the authority for it.
+
+Future enforcement MUST cover every producer path capable of contributing
+install.reason, including emission sites introduced later. A guard that
+checks a fixed manifest establishes only that the manifest passed.
+```
+
+The mechanism stays deferred; this is not a request to design a static analyser
+today. It is a refusal to let an incomplete current list stand in for contract
+coverage — the same lesson `[hook-install-provenance]`'s Task 8 paid for, where a
+hardcoded mirror manifest reported `OK` while two modified pairs went unexamined.
 
 Naming only the schema mirrors would permit exactly this:
 
@@ -405,21 +456,47 @@ validator's diagnostic path, and it still requires **no production-schema change
 
 ### 4.8 What L3's closure now requires
 
-Five conditions, not one. `install.reason` earns the right to remain the sole
-recorded fact — with no second `writeIssued` field — only if all five hold:
+**Corrected after the third review.** The previous revision listed five
+conditions as one flat set. Four of them are things an amendment can freeze; the
+fifth is mechanical enforcement, which by §4.7's own rule must **not** hold the
+design question open. A single flat list therefore made the document say both
+*"enforcement is not a reason to keep L3 open"* and *"L3 needs enforcement"*.
+Deleting the rival list fixed the authority model but left the two closure
+**layers** compressed. They are now separate.
+
+`install.reason` earns the right to remain the sole recorded fact — with no
+second `writeIssued` field — only if all of this holds, in both layers:
 
 ```
-1  the reason vocabulary is closed              schema.js:177-180, enforced today
-2  every reason has exactly one semantic phase  §4.4 A, not yet enforced
-3  every emission site conforms to that phase   §4.4 B, not yet enforced
+DESIGN CLOSURE REQUIREMENTS          frozen by the amendment
+1  reason remains the canonical recorded fact
+2  the contract assigns every reason exactly one phase          §4.4 A
+3  the contract requires every emission site to conform         §4.4 B
 4  missing OR conflicting classification is a contract failure
-5  enforcement covers both CLASSIFICATION mirrors
-   AND both EMISSION mirrors                    §4.7
+
+IMPLEMENTATION / EVIDENCE OBLIGATION  recorded, does NOT gate design closure
+5  mechanical enforcement establishes A and B across the COMPLETE maintained
+   surface — both classification mirrors, and every emission path, not a fixed
+   manifest of them                                             §4.7, §4.7a
 ```
 
-This is the document's **only** closure list. §4.7's `DESIGN CLOSURE` block
-points here rather than maintaining a second one — an earlier revision carried
-two, and they disagreed about whether `emission consistency` was required.
+```
+L3 DESIGN closes when the amendment freezes 1–4.
+5 remains an implementation obligation and does not keep the design
+question open.
+```
+
+This is the document's only closure list, and the layer split is what makes it
+consistent with the rule it inherited:
+
+```
+design unresolved   !=   approved design not yet mechanically enforced
+```
+
+Condition 1 is also worth stating plainly: nothing measured across three reviews
+has shown `reason` unable to serve as the canonical fact. That remains an absence
+of refutation — which is exactly why `2`–`4` exist, and why `5` is written down
+rather than assumed.
 
 The first pre-audit found that **absence of classification must not become a
 default answer**. The review found its dual, and it belongs beside it:
@@ -468,7 +545,12 @@ point: a forecast that quietly omits the expensive half is worse than no forecas
 because it under-prices the direction being approved.
 
 **Not authorized by this document.** The amendment is written and reviewed first;
-only an approved amendment can authorize even that small a change.
+only an approved amendment can authorize that future implementation.
+
+The earlier wording here said *"even that small a change"*. It contradicted the
+paragraph directly above it — a cost that has not been estimated may not be
+called small — and it did so in the one section whose purpose is to stop the
+forecast from under-pricing what it forecasts.
 
 ---
 
@@ -532,4 +614,28 @@ revision        deleted in favour of a pointer to §4.8; obligation now covers
           §4.8  marked as the document's only closure list
           §5    forecast corrected to both invariants, and its unestimated half
                 said out loud
+
+3ba2a95   third review, again cross-checked against source:
+          CHANGES REQUIRED, 2 Important + 1 Minor. R2 and R3 PASS. No measured
+          fact false.
+
+          I1  the emission surface was still incomplete — observe.js x2 emits
+              three reasons directly and was omitted — and, more importantly, a
+              fixed file list cannot be the authority for a quantifier over
+              every emission site
+          I2  design closure and enforcement closure were re-conflated: 4.8's
+              flat five-item list made the document require enforcement for
+              closure while 4.7 said enforcement must not gate it
+          m   "even that small a change" contradicted "its cost is not yet
+              estimated", in the section written to prevent under-pricing
+
+this      §4.7  observe.js pair added, measured
+revision  §4.7a a file list is a measurement, not the authority — with two
+                measured false positives showing a token grep is unsound in both
+                directions
+          §4.8  split into DESIGN CLOSURE (1-4, frozen by the amendment) and
+                IMPLEMENTATION / EVIDENCE OBLIGATION (5, does not gate closure)
+          §4.7  DESIGN CLOSURE now points at the 1-4 layer specifically
+          §5    "small" removed, with the contradiction recorded rather than
+                silently edited
 ```
