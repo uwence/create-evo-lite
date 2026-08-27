@@ -110,12 +110,26 @@ authority set completeness
     a WHAT question, owned by the authority layer, NOT by the locator
 
 failure to resolve
-    LOCATOR_UNRESOLVED / STALE / INVALID / CONFLICT
+    LOCATOR_SOURCE_INVALID / UNRESOLVED / STALE / INVALID / CONFLICT
     never falls back to
         a copy on main
         the newest-looking document
         a branch tip guess
         historical PR text
+```
+
+**Discoverability turned out to be three layers, not one.** The reviews found
+this by finding it broken twice; it is recorded here so the next reader starts
+from it rather than rediscovering it:
+
+```
+IDENTITY      which work item does this handle name, ever          §4.1a §4.1b
+LOCATION      where is that work item's authority rooted            this design
+COMPLETE      which documents constitute the contract, as of when   §4.2b §6.3
++ CURRENT
+
+only LOCATION is frozen here. Compressing the other two back into it would
+manufacture the false certainty this work item exists to remove.
 ```
 
 The governing invariant:
@@ -193,7 +207,7 @@ hardest work item unaddressable.
 Where a spec slug does exist it is recorded as a **property of the located
 artifact**, never as the lookup key.
 
-### 4.1a The key contract this design must ADD
+### 4.1a What the existing identity authority does, and does not, establish
 
 **Corrected after independent review.** The first version said the work-item id
 is *"the handle every ruling, backlog entry and PR already uses"* and stopped
@@ -235,32 +249,86 @@ Both failures share the shape this whole document exists to eliminate: a
 **successful-looking resolution of the wrong thing**. Neither is caught by any
 check in §6.
 
-So the key contract is stated here, as an **addition this design owns** rather
-than a property borrowed from the backlog contract:
+The two halves have **different owners**, and the second correction below is
+about exactly that.
 
 ```
-IDENTITY
+IDENTITY — owned here
     comparison identity = the ASCII case-folded work-item id
     the record MAY store the original spelling; comparison NEVER uses it
     two records whose folded ids are equal are ONE key -> LOCATOR_CONFLICT
-
-LIFETIME
-    a work-item id is a PROJECT-LIFETIME identity. Once used, it is never
-    reused for a different work item, whether or not the original item is
-    still in BACKLOG.
 ```
 
-The lifetime clause is a **new constraint on the project**, not a restatement.
-It is recorded as such, and it is the reason this design cannot simply defer to
-the backlog contract: that contract answers *"which BACKLOG line does this id
-name right now"*, and the locator asks *"which work item does this id name,
-ever"*. Two different questions.
+This half is the locator's own comparison semantics over its own input, it
+aligns with the measured backlog behaviour rather than contradicting it, and it
+is settled here.
 
 `ASCII case-folded` is chosen over `canonical lowercase at write time` because
 folding at comparison time cannot be bypassed by a hand-written record, whereas a
 write-time convention is enforced only by whoever edits the file. Every measured
 id is ASCII today; a non-ASCII id would need its own folding ruling, and this
 design does not grant one — a record whose id is not ASCII is a record defect.
+
+### 4.1b The lifetime half is NOT the locator's to freeze
+
+**Corrected after the second review.** The previous revision froze this as a
+rule *"this design ADDS"*:
+
+> *"`LIFETIME` — a work-item id is a PROJECT-LIFETIME identity. Once used, it is
+> never reused for a different work item, whether or not the original item is
+> still in BACKLOG."*
+
+The reasoning behind it was right; the placement was not. That rule governs
+backlog creation, `context insert`, id allocation after archive or resolve, and
+every other consumer that addresses anything by work-item id. A locator design
+does not get to annex the project's identity lifecycle because it happens to
+need it.
+
+```
+needing an authority    !=    being allowed to impersonate it
+```
+
+which is the rule this document already applied to completeness in §4.2b, and
+the rule the whole `[hook-install-provenance]` amendment was written to enforce
+one layer down. Applying it to completeness and violating it for identity, four
+sections apart, is the failure shape this project keeps paying for.
+
+So it is demoted to a named dependency:
+
+```
+WORK_ITEM_IDENTITY_AUTHORITY        UNRESOLVED / NOT INSTANTIATED
+
+KNOWN, measured
+    within the active BACKLOG section, ids resolve case-insensitively and
+    must be unique                        memory.service.js:1879-1893, :1574-1575
+
+MISSING
+    no authority establishes that a work-item id is never reused for a
+    different work item once its entry leaves BACKLOG
+```
+
+**The consequence is stated rather than hidden.** Until that authority exists, a
+reused id resolves to the retired item's authority, every §6 check passes, and
+
+```
+the locator CANNOT DETECT IT
+```
+
+That is a real, named, undetectable failure mode of this design as frozen. It is
+recorded here because the alternative — freezing a project-wide rule inside a
+navigation spec so the gap stops showing — is precisely the false certainty this
+work item exists to remove.
+
+Two repair paths, neither chosen here:
+
+```
+A   a separate, very narrow work-item identity amendment freezes
+    project-lifetime non-reuse. Probably minimal; still its own gate.
+
+B   the locator keys on some other already-durable identity whose
+    uniqueness and non-reuse contract is already established.
+    None is known today; naming one is part of that work, not this one.
+```
 
 ### 4.2 The record
 
@@ -482,8 +550,14 @@ LOCATOR_INVALID
     is not an ancestor of the declared branch, or the declared authorityEntry
     is absent at that SHA
 
+LOCATOR_SOURCE_INVALID
+    the locator itself could not be obtained or validated: the main ref, the
+    file at main:<path>, its parse, or its whole-document schema. Nothing
+    about any work item can be concluded, including absence.        §6.1a
+
 LOCATOR_UNRESOLVED
-    no record for this work item
+    the locator document was read and validated, and it holds no record for
+    this work item
 
 LOCATOR_CONFLICT
     more than one record whose folded id (§4.1a) equals this work item's
@@ -549,9 +623,62 @@ At resolution time, against the declared record:
 than decorative: without it a record could name any reachable commit in the
 repository and pass.
 
+### 6.1a Evaluation order, and the verdict for a locator that cannot be read
+
+**Added after the second review.** Every check in `§6.1` starts from *"we already
+have a record"*. Nothing said what happens when the locator itself cannot be
+obtained — the `main` ref missing, the file absent at `main:<path>`, unparseable
+JSON, a malformed top-level shape, a record failing schema, an unknown field.
+
+Left unspecified, the most natural implementation reaches the worst answer:
+
+```
+locator source unreadable
+    -> records = []
+    -> 0 matching keys
+    -> LOCATOR_UNRESOLVED
+```
+
+which asserts *"this work item has no locator"* on the strength of never having
+looked. This project has a name for that shape and has now met it at four
+different layers:
+
+```
+unreadable locator    !=    empty locator
+failure to OBSERVE    !=    proof of ABSENCE
+```
+
+So the order is frozen, and it is part of the contract rather than an
+implementer's choice:
+
+```
+1  resolve the observed main SHA                        §6.2, §6.3
+2  read the locator document at main:<path>
+3  parse it completely
+4  validate the COMPLETE document against the schema
+       including §9's vocabulary containment — an unknown field is a
+       document defect, not a field to ignore
+5  ONLY THEN look up the work item under §4.1a's folded identity
+
+any failure in 1-4        ->  LOCATOR_SOURCE_INVALID
+a valid document, 0 keys  ->  LOCATOR_UNRESOLVED
+```
+
+`LOCATOR_SOURCE_INVALID` is named separately rather than folded into
+`LOCATOR_INVALID` because the two answer different questions: *"the locator is
+unusable"* versus *"this record is broken"*. A consumer told the second may
+reasonably ask whether one record needs fixing; a consumer told the first knows
+that **no** work item can be resolved right now, and that nothing it reads about
+any other work item is trustworthy either.
+
+Validation is over the **complete document**, before the lookup, deliberately. A
+resolver that validated only the matched record would happily answer from a file
+whose other records are malformed — and the fact that the file is corrupt is
+exactly the fact a consumer needs before believing any part of it.
+
 ### 6.2 Where the locator is READ FROM — source binding
 
-**Added after independent review.** The first version said the locator *"lives on
+**Added after the first review.** The first version said the locator *"lives on
 `main`"* and stopped. That is a statement about where the file is written, and it
 does not constrain where a resolver reads it. The natural implementation —
 
@@ -658,18 +785,54 @@ so the reversal has a stated trigger rather than a mood.
 
 ## 7. Q4 — the consumer rule
 
-```
-Any consumer about to perform
-    spec compliance review
-    implementation planning against a spec
-    amendment drafting
-    any other judgement that presupposes knowing what the contract says
+**Rewritten after the second review.** The previous version said a consumer
+`MUST first obtain a RESOLVED resolution` and stopped there — a single gate,
+written while `RESOLVED` still meant "the complete, current authority". It no
+longer means that: `§4.2c` narrowed it to *rooted at*, and `§6.3` made it
+relative to observed refs. A one-gate rule over a narrowed verdict hands the
+consumer a licence the verdict cannot back.
 
-MUST first obtain a RESOLVED resolution for the work item.
-
-On any of UNRESOLVED / STALE / INVALID / CONFLICT the consumer STOPS,
-reports the verdict, and produces NO spec judgement.
 ```
+LOCATOR RESOLVED
+    proves the LOCATION ROOT, relative to the observed refs
+    NECESSARY for spec judgement, and NOT SUFFICIENT
+```
+
+A consumer that needs the **current complete contract** — a spec-compliance
+reviewer, an implementation planner, an amendment drafter — passes three gates,
+each owned by a different layer:
+
+```
+1  LOCATION            locator      RESOLVED per §5.1
+2  AUTHORITY-SET        authority    the complete document set for that root
+   COMPLETENESS         layer        §4.2b — UNRESOLVED today
+3  REF FRESHNESS        that          whatever currency evidence this consumer
+   the consumer needs   consumer's    actually requires
+                        owner        §6.3 — UNRESOLVED as a policy question
+
+Spec judgement may proceed only when all three hold.
+```
+
+Every non-`RESOLVED` verdict — `SOURCE_INVALID`, `UNRESOLVED`, `STALE`,
+`INVALID`, `CONFLICT` — stops gate `1`: the consumer reports the verdict and
+produces **no** spec judgement. But passing gate `1` is not the end, and the
+honest current state is that **gates `2` and `3` have no mechanism at all**.
+
+So the conclusion this design reaches about its own sufficiency, stated rather
+than avoided:
+
+```
+Phase 1 lets a consumer resolve a LOCATION ROOT relative to observed refs.
+
+A fresh spec-compliance reviewer still CANNOT mechanically establish the
+current complete contract.
+```
+
+That is not a failure of the locator. It is the locator doing its job and
+uncovering two dependencies that were previously invisible because nothing had
+ever tried to resolve authority mechanically. Compressing all three back into one
+`RESOLVED` would manufacture exactly the false certainty this work item exists to
+remove.
 
 The failure mode this rule exists to prevent has already occurred here. During
 PR #49, a reviewer could not find the design file on the implementation branch
@@ -731,15 +894,24 @@ registry owns WHERE
 authority owns WHAT
 ```
 
-The amendment chain itself needs no representation. A consumer that resolves
-`[hook-install-provenance]` gets `spec/hook-install-provenance @ e5f74fe` and
-both documents. It does not need to understand that `e5f74fe` amended `ae39cbe`
-which amended `a8c8986` in order to know what the contract says — that history is
-evidence, reachable in Git and recorded in the amendment's own revision history.
+The amendment chain itself needs no representation **in the record**. A consumer
+that resolves `[hook-install-provenance]` gets `spec/hook-install-provenance @
+e5f74fe` and the design root; it does not have to reconstruct that `e5f74fe`
+amended `ae39cbe` which amended `a8c8986` in order to know where the contract
+lives. That history is evidence, reachable in Git and recorded in the
+amendment's own revision history.
+
+**Corrected after the second review.** This paragraph previously said the
+consumer *"gets `…@ e5f74fe` and both documents"*. Under the model as now frozen
+that is false: the record holds one `authorityEntry`, and `§4.2b` establishes
+that nothing today can tell the resolver the amendment belongs to the set. The
+amendment is *reachable* at that SHA; it is not *delivered* by the resolution.
+Which documents constitute the contract is gate `2` in `§7`, and it is
+`UNRESOLVED`.
 
 ```
 the chain          EVIDENCE
-the resolver output  CURRENT POINTER
+the resolver output  CURRENT LOCATION ROOT
 ```
 
 ## 9. Q6 — proving the locator is navigation authority, not spec authority
@@ -799,6 +971,10 @@ Q3  what makes a locator stale / invalid / conflicting
 Q4  what a consumer must do on failure
       STOP, report the verdict, produce NO spec judgement
       every fallback enumerated and forbidden                        §5.3 §7
+      and on SUCCESS: RESOLVED clears gate 1 of 3. Gates 2
+      (authority-set completeness) and 3 (ref freshness) are
+      UNRESOLVED, so a fresh reviewer still cannot mechanically
+      establish the current complete contract                          §7
 
 Q5  how the pointer advances after an amendment
       adoption advances canonicalSha, and that is the entire delta
@@ -854,9 +1030,28 @@ design review             disposition recorded in §13
 implementation            NOT AUTHORIZED
 main mutation             NOT AUTHORIZED — no record is created by this design
 authority relocation      NOT AUTHORIZED and not proposed
-§6 A+B enforcement        blocked behind this work item
 [0ce0] Phase 2            NOT AUTHORIZED
 ```
+
+**The dependency this work item was supposed to unblock is not unblocked by
+closing it.** `§12` previously said `§6 A+B enforcement — blocked behind this
+work item`, which reads as *this closes, that opens*. Under the model as frozen,
+that is no longer true:
+
+```
+§6 A+B mechanical-enforcement design remains BLOCKED until
+
+  a  the canonical locator ROOT is resolvable                    this design
+  b  authority-set COMPLETENESS is established           §4.2b — UNRESOLVED
+  c  the REF FRESHNESS evidence its reviewers require
+     is established                                      §6.3 — UNRESOLVED
+```
+
+`c` may turn out to be cheap: a ruling that `§6`'s reviewers need only observed
+local refs would discharge it immediately. **That ruling is not made here.** It
+belongs to whoever owns `§6`'s gate, and letting a consumer decide for itself how
+much currency evidence it needs is the same delegation this document spent `§7`
+removing.
 
 The canonical design authority for `[hook-install-provenance]` remains
 `spec/hook-install-provenance @ e5f74fe`, and this design moves nothing.
@@ -866,7 +1061,7 @@ The canonical design authority for `[hook-install-provenance]` remains
 ```
 87e72af   first Phase 1 design.
 
-this      design review 1: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
+4a7c7ad   design review 1: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
           fixed here. The reviewer named the shared pattern, and it is worth
           keeping in front of the next round:
 
@@ -928,4 +1123,67 @@ this      design review 1: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
           knowledge graph. Important 2 in particular invites one, and the
           answer taken instead was to shrink the claim to what can be
           verified and name the missing authority.
+
+this      design review 2: CHANGES_REQUIRED, 3 Important + 0 Minor. All three
+          fixed here. The review confirmed round 1's repairs held in
+          direction, and found three places where the NARROWED model had not
+          propagated to the bottom. Its framing is now recorded in §2: what
+          looked like one problem is three layers — IDENTITY, LOCATION,
+          COMPLETE+CURRENT — and only LOCATION is frozen here.
+
+          Important 1 — IDENTITY AUTHORITY BOUNDARY. Round 1's repair froze
+          project-lifetime id non-reuse as a rule "this design ADDS". The
+          reasoning was right and the placement was not: that rule governs
+          backlog creation, context insert, id allocation after resolve, and
+          every consumer addressing anything by work-item id. A navigation
+          spec does not get to annex the project's identity lifecycle because
+          it needs it. The superseded clause read:
+
+            "LIFETIME — a work-item id is a PROJECT-LIFETIME identity. Once
+            used, it is never reused for a different work item, whether or
+            not the original item is still in BACKLOG."
+
+          §4.1a keeps the case-fold half — the locator's own comparison
+          semantics over its own input, aligned with measured backlog
+          behaviour. §4.1b demotes the lifetime half to
+          WORK_ITEM_IDENTITY_AUTHORITY / UNRESOLVED, records two repair paths
+          without choosing, and states the consequence rather than hiding it:
+          until that authority exists, a reused id resolves to the retired
+          item's authority and THE LOCATOR CANNOT DETECT IT. Isomorphic to
+          §4.2b's handling of completeness:
+
+            needing an authority != being allowed to impersonate it
+
+          Applying that rule to completeness and violating it for identity,
+          four sections apart, is the same failure shape round 1 caught.
+
+          Important 2 — SOURCE FAILURE HAD NO VERDICT. §6.2 bound the source
+          to main:<path>, but every check in §5.1/§6.1 began from "we already
+          have a record". A missing ref, an absent file, unparseable JSON or a
+          bad schema had no verdict, so the natural implementation reaches
+          records = [] -> 0 keys -> LOCATOR_UNRESOLVED, asserting "this work
+          item has no locator" on the strength of never having looked. §6.1a
+          freezes the evaluation order — resolve ref, read, parse, validate
+          the WHOLE document including §9's vocabulary containment, and ONLY
+          THEN look up — and names LOCATOR_SOURCE_INVALID separately from
+          LOCATOR_INVALID, because "the locator is unusable" and "this record
+          is broken" are different facts for a consumer.
+
+            unreadable locator != empty locator
+
+          Important 3 — CONSUMER GATE. §4.2c narrowed RESOLVED to "rooted at"
+          and §6.3 made it observed-ref-relative, but §7 still granted spec
+          judgement on a single RESOLVED, and §8 still claimed a consumer
+          "gets … and both documents" — false under the frozen model, since
+          the record holds one authorityEntry and §4.2b establishes that
+          nothing can tell the resolver the amendment belongs to the set. §7
+          is now three gates with three owners: LOCATION (here, RESOLVED),
+          AUTHORITY-SET COMPLETENESS (§4.2b, UNRESOLVED), REF FRESHNESS
+          (§6.3, UNRESOLVED). §8's claim is corrected with its supersession
+          recorded in place. §12 no longer says §6 A+B is "blocked behind this
+          work item" — closing this one does not open that one — and lists the
+          three conditions instead. The tempting shortcut, ruling that §6's
+          reviewers need only observed local refs, is explicitly NOT taken
+          here: it belongs to §6's gate owner, and letting a consumer decide
+          its own currency requirement is the delegation §7 just removed.
 ```
