@@ -6,16 +6,25 @@ created: 2026-08-27
 
 # Canonical spec authority discovery — Phase 1 design
 
-**Nature: `PHASE 1 DESIGN`.** Not an implementation authorization. It answers one
-question and freezes the model needed to answer it. No resolver is built here, no
-file is created on `main` here, and no authority moves anywhere.
+**Nature: `PHASE 1 DESIGN`.** Not an implementation authorization. It answers
+**one layer** of one question and freezes the model needed to answer it. No
+resolver is built here, no file is created on `main` here, and no authority moves
+anywhere.
 
 | | |
 |---|---|
 | work item | `canonical spec amendment discoverability` |
 | baseline | `main` @ `85f0c25` |
 | authorized | Phase 1 design only |
-| the question | **From `main`, how does a reader resolve a work item to its current canonical spec authority, mechanically and uniquely?** |
+| the original question | From `main`, how does a reader resolve a work item to its **current canonical spec authority**, mechanically and uniquely? |
+| what Phase 1 answers | From `main`, how does a reader mechanically and uniquely resolve the canonical authority **LOCATION ROOT**, relative to explicitly observed refs? |
+
+**The gap between those two rows is the finding, not a shortfall.** The original
+question turned out to decompose into four layers (§2), three of which are
+unresolved dependencies with owners outside this design. Writing the original
+question at the top and answering the narrower one below it would be the same
+false certainty this document spends its length removing — so the title layer
+carries the decomposition too.
 
 Out of scope by ruling, and not smuggled back in below: merging any spec branch
 into `main`, copying canonical design material into `main`, editing frozen design
@@ -118,17 +127,19 @@ failure to resolve
         historical PR text
 ```
 
-**Discoverability turned out to be three layers, not one.** The reviews found
+**Discoverability turned out to be four layers, not one.** The reviews found
 this by finding it broken twice; it is recorded here so the next reader starts
-from it rather than rediscovering it:
+from it rather than rediscovering it. The four map one-to-one onto §7's four
+consumer gates:
 
 ```
-IDENTITY      which work item does this handle name, ever          §4.1a §4.1b
-LOCATION      where is that work item's authority rooted            this design
-COMPLETE      which documents constitute the contract, as of when   §4.2b §6.3
-+ CURRENT
+IDENTITY      which work item does this handle name, ever      gate 0  §4.1b
+LOCATION      where is that work item's authority rooted       gate 1  this design
+COMPLETE      which documents constitute the contract          gate 2  §4.2b
+CURRENT       as observed when, and against what evidence      gate 3  §6.3
 
-only LOCATION is frozen here. Compressing the other two back into it would
+only LOCATION is frozen here. The other three are named dependencies with
+owners outside this design. Compressing them back into LOCATION would
 manufacture the false certainty this work item exists to remove.
 ```
 
@@ -147,7 +158,8 @@ missing classification            !=   negative answer
 
 ## 3. Q1 — who owns canonical-spec location
 
-**A single locator record on `main`, and nothing else.** Proposed:
+**A single locator DOCUMENT on `main`, holding one record per work item, and
+nothing else.** Proposed:
 
 ```
 data      docs/authority/canonical-spec-authority.json
@@ -466,8 +478,8 @@ schemaVersion       rejected. A version field is only worth its cost once a
 amendmentChain      rejected, and this one is load-bearing. The chain
                     a8c8986 -> ae39cbe -> e5f74fe is EVIDENCE and it already
                     lives in Git and in §9 of the amendment. A resolver's job
-                    is to hand back the CURRENT pointer, not to make consumers
-                    reconstruct it. Recording the chain would put a second,
+                    is to hand back the location POINTER as recorded, not to
+                    make consumers reconstruct it from history. Recording the chain would put a second,
                     hand-maintained copy of Git history in a file that cannot
                     detect its own drift.
 
@@ -488,6 +500,44 @@ At one resolution point, for one work item:
 1 matching record     ->  proceed to verification
 >1 matching records   ->  LOCATOR_CONFLICT
 ```
+
+**The representation must let the conflict survive long enough to be seen.**
+Added after the fourth review. `§4.3`'s rule is stated over records, but nothing
+had frozen how the document represents them, and the most natural JSON shape
+destroys the evidence before any rule can inspect it:
+
+```
+{ "0ce0": {...}, "0CE0": {...} }
+    two records under a folded identity — visible only if the implementation
+    re-enumerates keys and folds them itself
+
+{ "0ce0": {...}, "0ce0": {...} }
+    many JSON parsers apply last-one-wins BEFORE the validator ever runs
+    -> two conflicting declarations enter, one comes out
+    -> LOCATOR_CONFLICT becomes UNREACHABLE
+```
+
+That is not a serialization detail. It is
+
+```
+the representation destroying the FACT
+before the authority rule could adjudicate it
+```
+
+which is the same shape as every other finding in this document, moved down to
+the encoding layer. So one property is frozen, and the concrete shape is left
+open:
+
+```
+The locator document representation MUST preserve every authored record as a
+distinct element through parsing and whole-document validation.
+
+Duplicate workItem declarations MUST remain observable until folded-identity
+conflict validation has run.
+```
+
+A top-level array of records satisfies it; an object keyed by `workItem` does
+not. Whether the array is bare or wrapped in a named field is not frozen here.
 
 **There is no "pick the newest", no "pick the last one in the file", and no
 merge of competing records.** A duplicate key is a defect in the record, and a
@@ -566,9 +616,15 @@ LOCATOR_CONFLICT
 
 ### 5.2 Why `LOCATOR_STALE` is a success of the design, not a wart
 
-Adoption happens on the spec branch; the locator lives on `main`. Between the
-canonicalization merge and the locator PR there is a window in which the record
-names a superseded SHA. That window is real and it will happen.
+Where the canonicalization and the locator update are separate commits — the
+shape of every adoption measured so far, since the authority sits on its own
+branch and the locator sits on `main` — there is a window between them in which
+the record names a superseded SHA. That window is real and it will happen.
+
+(Stated as a condition rather than as a law: a work item whose authority is
+already rooted on `main`, as `[0ce0]`'s matrix is, could in principle be
+canonicalized and re-pointed in one commit and have no window at all. The
+verdicts below do not depend on which case applies.)
 
 The design's claim is not that the window is eliminated. It is that the window
 becomes **detectable**:
@@ -916,9 +972,55 @@ from where this project keeps meeting it.
 
 ## 8. Q5 — advancing the pointer after an amendment
 
-**The adoption event advances `canonicalSha`, and changes nothing else.**
+**Corrected after the fourth review.** This section previously froze *"the
+adoption event advances `canonicalSha`, and changes nothing else"* — true of the
+one adoption that has actually happened, and wrong as a general rule. A future
+adoption may establish a new canonical root:
 
-For `[hook-install-provenance]`, the whole update is:
+```
+before   old-design.md @ SHA_A
+after    the adopted authority is rooted at new-design.md @ SHA_B,
+         and old-design.md still exists at SHA_B
+
+under the old rule: canonicalSha SHA_A -> SHA_B, authorityEntry forced unchanged
+
+branch exists            PASS
+SHA_B exists             PASS
+ancestry                 PASS
+old-design.md @ SHA_B    PASS      <- it is still there
+SHA_B == tip             PASS
+                         -> RESOLVED, rooted at a HISTORICAL artifact
+```
+
+A successful-looking resolution of the wrong root, produced by a rule this
+document wrote. The ownership was inverted: the locator does not get to decree
+which parts of a location may change during an adoption.
+
+```
+the authority layer / the adoption ruling   decides the adopted WHERE tuple
+the locator                                 RECORDS that tuple
+```
+
+So the rule is:
+
+```
+After an adoption, the locator record MUST be updated to the ADOPTED canonical
+location tuple:
+
+    canonicalBranch
+    canonicalSha
+    authorityEntry
+
+Only fields whose adopted location changed are changed. No field is inferred
+to be immutable merely because the event is called an amendment.
+```
+
+Q5 stays small, and no `WHAT` is pulled back into the locator: the record still
+holds only location fields, and the adoption ruling still owns what the contract
+says.
+
+**The measured fixture, kept as a fixture and not as the rule.** For PR #52 /
+`e5f74fe` specifically, only `canonicalSha` changed:
 
 ```
 canonicalBranch     spec/hook-install-provenance      unchanged
@@ -977,21 +1079,33 @@ Which documents constitute the contract is gate `2` in `§7`, and it is
 
 ```
 the chain          EVIDENCE
-the resolver output  CURRENT LOCATION ROOT
+the resolver output  the RECORDED LOCATION ROOT, as observed
 ```
 
 ## 9. Q6 — proving the locator is navigation authority, not spec authority
 
 Two structural properties, both checkable rather than asserted.
 
-**A. Vocabulary containment.** The record schema admits location fields only:
-`workItem`, `canonicalBranch`, `canonicalSha`, `authorityEntry`. Any field
-whose value could also be read out of an authority document is out of vocabulary
-and rejected. An unrecognised field is a record defect, not a field to ignore —
-the same rule the `ac12` amendment just froze one layer down:
+**A. Vocabulary containment.** The record schema admits exactly the frozen
+`WHERE` fields: `workItem`, `canonicalBranch`, `canonicalSha`, `authorityEntry`.
+Every other field is rejected. An unrecognised field is a record defect, not a
+field to ignore — the same rule the `ac12` amendment just froze one layer down:
 
 ```
 unclassified field    !=    harmless extra
+```
+
+**Corrected after the fourth review.** The test was previously written as *"any
+field whose value could also be read out of an authority document"*, which does
+not hold: an authority document may perfectly well mention a branch, a SHA or a
+document path — this project's own amendment and merge records do. The criterion
+is about the field's question, not about where its value may also appear:
+
+```
+does this FIELD answer WHERE, or WHAT?
+
+a value being repeated inside an authority document
+    does NOT change the field's ownership
 ```
 
 **B. Falsifiability.** If the locator had quietly become the authority, deleting
@@ -1107,9 +1221,12 @@ content digests                    §6. Rejected for v1 with a stated trigger
 
 main's own stale statements        not rewritten. main@85f0c25's merge
                                    message and ae39cbe's "Still OPEN" were
-                                   true when written. The locator answers
-                                   "what is authoritative NOW"; history is
-                                   not required to stay current.
+                                   true when written, and history is not
+                                   required to stay current. The locator is
+                                   the place to ASK the question — it is not
+                                   yet the place that can answer "what is
+                                   authoritative NOW", because CURRENT is
+                                   gate 3 and gate 3 is unresolved (§6.3).
 ```
 
 ## 12. Status
@@ -1283,7 +1400,7 @@ The canonical design authority for `[hook-install-provenance]` remains
           here: it belongs to §6's gate owner, and letting a consumer decide
           its own currency requirement is the delegation §7 just removed.
 
-this      design review 3: CHANGES_REQUIRED, 3 Important + 0 Minor. All three
+52ea2ea   design review 3: CHANGES_REQUIRED, 3 Important + 0 Minor. All three
           fixed here. The review confirmed round 2's three repairs held, and
           found that none of them had been carried all the way to the
           consumption points. Its own summary of the remaining shape:
@@ -1347,4 +1464,72 @@ this      design review 3: CHANGES_REQUIRED, 3 Important + 0 Minor. All three
           the review, as did §11's now-explicit list of the three unresolved
           dependencies — §11, like §10, is a section a reader may consult
           alone, and it had been silent about all three.
+
+this      design review 4: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
+          fixed here. Round 3's repairs held, including the three the sweep
+          found rather than the review. The reviewer gave the criterion for
+          the next scan, and it is the right one:
+
+            a fact TRUE OF THE CURRENT CASE written as a general rule, or
+            a layer already marked UNRESOLVED used in a summary as settled.
+
+          Important 1 — REPRESENTATION COULD DESTROY THE CONFLICT. §4.3 froze
+          0/1/>1 -> UNRESOLVED/verify/CONFLICT over folded identities, but
+          nothing froze how the document represents records. The natural JSON
+          shape — an object keyed by workItem — makes { "0ce0", "0CE0" }
+          visible only if the implementation re-folds keys itself, and makes
+          { "0ce0", "0ce0" } disappear entirely, because many parsers apply
+          last-one-wins BEFORE any validator runs. Two conflicting
+          declarations go in and one comes out, so LOCATOR_CONFLICT becomes
+          unreachable: the representation destroying the fact before the
+          authority rule could adjudicate it. §4.3 now freezes one property —
+          every authored record survives as a distinct element through parsing
+          and whole-document validation, and duplicate workItem declarations
+          remain observable until folded-identity conflict validation has run
+          — and leaves the concrete shape open. §3 says locator DOCUMENT, not
+          record, since the model plainly holds one record per work item.
+
+          Important 2 — CURRENT WAS DEMOTED, THEN RE-CLAIMED FOUR TIMES. §6.3
+          had made currentness an unresolved gate, and four higher-level
+          places still asserted it: the title-row question ("its current
+          canonical spec authority"), §4.2's "hand back the CURRENT pointer",
+          §8's "the resolver output — CURRENT LOCATION ROOT", and §11's "the
+          locator answers what is authoritative NOW". The header now carries
+          both rows — the ORIGINAL question and the narrower one Phase 1
+          actually answers — and says in as many words that the gap between
+          them is the finding, not a shortfall. The other three are restated
+          as recorded/observed rather than current. §2's decomposition also
+          goes from three layers to FOUR, mapping one-to-one onto §7's four
+          gates; three-layers-versus-four-gates was itself a leftover of the
+          revision that introduced gate 0.
+
+          Important 3 — A FIXTURE FROZEN AS A LAW. §8 said "the adoption event
+          advances canonicalSha, and changes nothing else". True of PR #52,
+          which is the only adoption that has happened, and wrong as a rule: a
+          future adoption may root the authority at a NEW document, and under
+          the old rule the locator would keep pointing at the old one, which
+          still exists at the new SHA. Every check passes and the resolution
+          is rooted at a historical artifact. The ownership was inverted —
+          the locator does not decree which parts of a location may change.
+          §8 now says the record MUST be updated to the ADOPTED location
+          tuple, that only fields whose adopted location changed are changed,
+          and that no field is immutable merely because the event is called an
+          amendment. The measured PR #52 delta is kept, explicitly as a
+          fixture rather than as the rule.
+
+          Minor — §9's containment test read "any field whose value could also
+          be read out of an authority document", which is false on its face:
+          authority documents mention branches, SHAs and paths all the time —
+          this project's own amendment and merge records do. The criterion is
+          the field's question, not where its value may also appear: does this
+          FIELD answer WHERE or WHAT. The admitted set was already exactly the
+          four WHERE fields, so nothing changed but the justification.
+
+          Found by the pre-edit sweep rather than by the review, under the
+          same second criterion: §5.2 opened "Adoption happens on the spec
+          branch; the locator lives on main", generalising the current
+          topology. A work item already rooted on main — [0ce0]'s matrix — could
+          be canonicalized and re-pointed in one commit and have no window at
+          all. Restated as a condition, with a note that the verdicts do not
+          depend on which case applies.
 ```
