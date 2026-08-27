@@ -520,10 +520,15 @@ consistent with the rule it inherited:
 design unresolved   !=   approved design not yet mechanically enforced
 ```
 
-Condition 1 is also worth stating plainly: nothing measured across three reviews
-has shown `reason` unable to serve as the canonical fact. That remains an absence
-of refutation — which is exactly why `2`–`4` exist, and why `5` is written down
-rather than assumed.
+Condition 1 is also worth stating plainly: nothing measured **across the reviews
+to date** has shown `reason` unable to serve as the canonical fact. That remains
+an absence of refutation — which is exactly why `2`–`4` exist, and why `5` is
+written down rather than assumed.
+
+*(That sentence first said "across three reviews" and was already stale by the
+fourth. A count that must be maintained by hand in a document about stale
+constants is the thing this document keeps finding elsewhere; the phrasing is now
+one that cannot age.)*
 
 The first pre-audit found that **absence of classification must not become a
 default answer**. The review found its dual, and it belongs beside it:
@@ -686,4 +691,15 @@ revision                wording: the whole classification surface, every
                         positives, STRUCTURAL-not-measured false negatives, with
                         a note on why fabricating a fixture would be the wrong
                         purchase in this document in particular
+
+e4235a7   fifth review: APPROVED, 0 Important, 1 non-blocking Minor.
+          The complete-surface authority and the measurement-strength split both
+          confirmed closed. Core model closed; no further design review of this
+          pre-audit required.
+
+          m   "across three reviews" was already stale by the fourth
+
+this      §4.8  reworded to "across the reviews to date" — a phrasing that
+revision        cannot age, rather than a hand-maintained count, in a document
+                whose recurring finding is exactly that
 ```
