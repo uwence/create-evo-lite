@@ -104,7 +104,10 @@ resolution
     work item
       -> exactly one canonical branch
       -> exactly one canonical SHA
-      -> expected authority artifact(s)
+      -> exactly one authority ENTRY POINT
+
+authority set completeness
+    a WHAT question, owned by the authority layer, NOT by the locator
 
 failure to resolve
     LOCATOR_UNRESOLVED / STALE / INVALID / CONFLICT
@@ -175,7 +178,8 @@ where the reader starts, and must not live inside the thing being located.**
 ### 4.1 The key is the work-item id
 
 ```
-key    the backlog work-item id, verbatim and without brackets
+key    the backlog work-item id, without brackets, compared under the
+       identity contract of §4.1a
        hook-install-provenance · 0ce0 · 3d78 · attp-lw-memory-identity
 ```
 
@@ -189,16 +193,85 @@ hardest work item unaddressable.
 Where a spec slug does exist it is recorded as a **property of the located
 artifact**, never as the lookup key.
 
+### 4.1a The key contract this design must ADD
+
+**Corrected after independent review.** The first version said the work-item id
+is *"the handle every ruling, backlog entry and PR already uses"* and stopped
+there. That is a popularity argument, not an identity contract, and it left two
+holes — one of which contradicted an existing authority outright.
+
+Measured in `templates/cli/memory.service.js`:
+
+```
+resolveBacklog                    :1879-1893
+    target  = String(resolveHash).toLowerCase()
+    matches = lines where extractBacklogId(line).toLowerCase() === target
+    matches.length > 1  ->  "无法确定 resolve 目标"  (ambiguous)
+
+backlog insert duplicate check    :1574-1575
+    existingIds.map(id => id.toLowerCase()).includes(rawLabel.toLowerCase())
+
+scope of both                     readSection(markdown, 'BACKLOG')
+```
+
+Two consequences, both fatal to `verbatim` as written:
+
+```
+CASE
+    backlog authority already resolves ids CASE-INSENSITIVELY, and treats
+    [abc] + [ABC] as ONE ambiguous identity — not two identities.
+    A verbatim exact-key locator would accept "0ce0" and "0CE0" as two
+    records, answer one question twice, and never raise LOCATOR_CONFLICT.
+
+LIFETIME
+    the uniqueness rule is scoped to the CURRENT BACKLOG section. Nothing
+    establishes that an id, once its item leaves BACKLOG, may never be
+    reused. A locator outlives the backlog line by design: a reused [3d78]
+    years later would silently resolve to the retired item's authority.
+    That is not a duplicate record, so it never raises CONFLICT either.
+```
+
+Both failures share the shape this whole document exists to eliminate: a
+**successful-looking resolution of the wrong thing**. Neither is caught by any
+check in §6.
+
+So the key contract is stated here, as an **addition this design owns** rather
+than a property borrowed from the backlog contract:
+
+```
+IDENTITY
+    comparison identity = the ASCII case-folded work-item id
+    the record MAY store the original spelling; comparison NEVER uses it
+    two records whose folded ids are equal are ONE key -> LOCATOR_CONFLICT
+
+LIFETIME
+    a work-item id is a PROJECT-LIFETIME identity. Once used, it is never
+    reused for a different work item, whether or not the original item is
+    still in BACKLOG.
+```
+
+The lifetime clause is a **new constraint on the project**, not a restatement.
+It is recorded as such, and it is the reason this design cannot simply defer to
+the backlog contract: that contract answers *"which BACKLOG line does this id
+name right now"*, and the locator asks *"which work item does this id name,
+ever"*. Two different questions.
+
+`ASCII case-folded` is chosen over `canonical lowercase at write time` because
+folding at comparison time cannot be bypassed by a hand-written record, whereas a
+write-time convention is enforced only by whoever edits the file. Every measured
+id is ASCII today; a non-ASCII id would need its own folding ruling, and this
+design does not grant one — a record whose id is not ASCII is a record defect.
+
 ### 4.2 The record
 
 Minimum shape, and it is minimum by argument:
 
 ```
-workItem            string, unique across the file
+workItem            string, unique under §4.1a's folded identity
 canonicalBranch     string, a full branch name
 canonicalSha        string, 40-hex
-authorityArtifacts  non-empty list of repo-relative paths, expected to exist
-                    at canonicalSha
+authorityEntry      exactly ONE repo-relative path, expected to exist at
+                    canonicalSha
 ```
 
 Four fields, each earning its place:
@@ -209,11 +282,108 @@ canonicalBranch     Q3 cannot detect divergence without a declared branch to
                     compare the SHA against.
 canonicalSha        the whole point. A branch name alone is a moving target,
                     and resolving to a tip is explicitly forbidden.
-authorityArtifacts  without it, "the SHA verified" says nothing about whether
-                    the documents a consumer needs are actually there.
-                    Measured need: [hook-install-provenance]'s authority is
-                    TWO documents — the design and the adopted amendment.
+authorityEntry      where the authority is ROOTED. Without it, "the SHA
+                    verified" says nothing about whether the document a
+                    consumer needs is actually there.
 ```
+
+### 4.2a Why `authorityEntry` is ONE path and not a list
+
+**Corrected after independent review.** The first version declared
+`authorityArtifacts` as a list, on the measured ground that
+`[hook-install-provenance]`'s authority is two documents — the design and the
+adopted amendment. The list was the wrong repair, and the review found the hole
+it left:
+
+```
+a new amendment is adopted; canonical branch advances to NEW_SHA
+the locator PR updates canonicalSha = NEW_SHA
+and FORGETS to append the new amendment to authorityArtifacts
+
+branch exists            PASS
+NEW_SHA exists           PASS
+ancestor                 PASS
+every LISTED path exists PASS
+NEW_SHA == branch tip    PASS
+                         -> RESOLVED
+```
+
+The consumer receives a **silently incomplete contract**, and every check passes.
+The list verifies *referential validity* of what was declared; nothing whatsoever
+verifies that what was declared is *all of it*.
+
+The decisive question is the review's own: **what independent fact would tell the
+resolver that the list is missing an entry?** There is none. And a hand-written
+manifest whose completeness nothing can check is precisely the defect the `ac12`
+amendment froze one layer down, four weeks of review ago:
+
+```
+a fixed manifest is not coverage
+a guard checking a fixed manifest establishes only that the manifest passed
+```
+
+Adding *"remember to update the list at adoption"* would restore the exact
+failure this document exists to remove: a manual obligation, quietly forgotten,
+still green.
+
+**So the list is removed rather than kept and hoped for.** The locator declares
+one entry, and its claim is narrowed to match what it can actually verify.
+
+### 4.2b The completeness authority: NAMED, NOT INSTANTIATED
+
+Enumerating the complete authority set is a **`WHAT` question, not a `WHERE`
+question**. Which documents constitute the contract is part of the contract. A
+locator that answered it would be doing exactly what `§9` forbids.
+
+Stating the gap plainly rather than papering over it:
+
+```
+COMPLETENESS AUTHORITY   UNRESOLVED
+    No mechanism today establishes the complete authority document set for a
+    work item, and the locator does not become one.
+```
+
+That is not a hypothetical. Measured on the one case that has an amendment:
+
+```
+ae39cbe's design body   CANNOT point forward at its own amendment. It is
+                        frozen, and the amendment was explicitly forbidden
+                        from editing it.
+e5f74fe's amendment     points BACKWARD: its header declares
+                        "amends …-design.md @ ae39cbe".
+```
+
+So the only structure that exists at `canonicalSha` runs amendment → design, and
+nothing runs design → amendments. **The leading candidate**, recorded so the next
+gate starts from a position rather than a blank page:
+
+```
+authority set  =  { entry }  ∪  { d at canonicalSha : d declares it amends entry }
+```
+
+derived, not listed — no hand-maintained array anywhere. It would require every
+amendment to declare what it amends, which `e5f74fe` already does and which is
+therefore an existing precedent rather than a new invention. That is a
+**normative rule about authority documents**, so it belongs to the authority
+layer and needs its own ruling. This design does not grant it.
+
+### 4.2c What `RESOLVED` may therefore claim
+
+```
+RESOLVED MEANS
+    this work item's authority is ROOTED at <authorityEntry>, at
+    <canonicalSha>, on <canonicalBranch>
+
+RESOLVED DOES NOT MEAN
+    that entry is the complete contract
+```
+
+A consumer that needs the complete set — an amendment drafter, a
+spec-compliance reviewer — obtains it from the authority layer, and today that
+layer has no mechanism. Until it does, the honest resolution output says where
+the authority is rooted and stops. This is the same move `[0ce0]` Phase 1 made
+when it found `D2` had no live installation observer: name the authority, mark it
+`NAMED_NOT_INSTANTIATED`, and refuse to let a lower layer fake the answer.
 
 Fields considered and **rejected for v1**, with the reason each was rejected
 rather than deferred out of vagueness:
@@ -256,8 +426,8 @@ merge of competing records.** A duplicate key is a defect in the record, and a
 resolver that silently picks one has answered a question nobody adjudicated —
 the same shape as the `else` branch that `ac12`'s amendment just removed.
 
-Resolution is a **lookup by exact key**. Not a glob, not a prefix match, not a
-substring search over titles. This project has already paid for substring
+Resolution is a **lookup by exact key under §4.1a's folded identity**. Not a
+glob, not a prefix match, not a substring search over titles. This project has already paid for substring
 matching over work-item names twice, in `advanceFocusFromCommit` and in R012's
 phantom-focus finding, both registered under
 `[focus-auto-advance-manual-intent-overwrite]`:
@@ -291,10 +461,14 @@ is detect **divergence** and refuse to adjudicate it.
 
 ### 5.1 Verdicts
 
+Every verdict below is **relative to the refs actually observed** (§6.2), and the
+observed SHAs travel with it as evidence.
+
 ```
 RESOLVED
     exactly one record; every §6 check passes; and the declared SHA is the
-    tip of the declared branch — no divergence detected
+    tip of the declared branch — no divergence detected AMONG THE OBSERVED
+    REFS. Scoped by §4.2c: rooted at, not complete.
 
 LOCATOR_STALE
     exactly one record; every §6 check passes; but the declared branch has
@@ -305,14 +479,14 @@ LOCATOR_STALE
 
 LOCATOR_INVALID
     the declared branch does not exist, or the SHA does not exist, or the SHA
-    is not an ancestor of the declared branch, or a declared artifact is
-    absent at that SHA
+    is not an ancestor of the declared branch, or the declared authorityEntry
+    is absent at that SHA
 
 LOCATOR_UNRESOLVED
     no record for this work item
 
 LOCATOR_CONFLICT
-    more than one record claims this work item
+    more than one record whose folded id (§4.1a) equals this work item's
 ```
 
 ### 5.2 Why `LOCATOR_STALE` is a success of the design, not a wart
@@ -358,13 +532,15 @@ history.
 
 ## 6. Q6 (part) — verification boundary
 
+### 6.1 The checks
+
 At resolution time, against the declared record:
 
 ```
 1  the declared branch exists
 2  the declared SHA exists as a commit
 3  the declared SHA is an ancestor of the declared branch
-4  every declared artifact exists at that SHA
+4  the declared authorityEntry exists at that SHA
 5  divergence: declared SHA == branch tip, or not
 ```
 
@@ -373,18 +549,104 @@ At resolution time, against the declared record:
 than decorative: without it a record could name any reachable commit in the
 repository and pass.
 
-**The boundary, stated as a rule:**
+### 6.2 Where the locator is READ FROM — source binding
+
+**Added after independent review.** The first version said the locator *"lives on
+`main`"* and stopped. That is a statement about where the file is written, and it
+does not constrain where a resolver reads it. The natural implementation —
+
+```
+read docs/authority/canonical-spec-authority.json
+```
+
+— reads the **ambient working tree**, which reproduces §1 fact 2 exactly, in the
+new file:
+
+```
+on a PR branch that PROPOSES  canonicalSha = <candidate>
+the resolver would read that proposal and treat it as the adopted locator
+    -> a proposed locator impersonates an adopted one, before merge
+```
+
+So the binding is frozen:
+
+```
+LOCATOR AUTHORITY SOURCE
+    main:<locator path>, read from the ref — never from the ambient
+    working tree, the checked-out branch, or the index
+
+A working-tree copy is a PROPOSAL. It is never authoritative, on any branch,
+including main's own working tree with uncommitted edits.
+```
+
+The same rule that just governed the amendment applies here, one layer over:
+a document is not the authority on whether it is the authority, and a branch is
+not authorized to redefine `main`'s locator by containing a different copy of it.
+
+### 6.3 What `SHA == tip` actually proves — evidence boundary
+
+**Added after independent review.** `§5.2` says a resolver can never establish
+currency by itself, and then check `5` names `SHA == tip` as `RESOLVED`. The
+missing layer is what that equality is evidence *of*.
+
+It is evidence of **no divergence among the refs the resolver observed**. It is
+not evidence of global currentness, because both observed refs can be stale
+together:
+
+```
+local main locator      -> old SHA
+local canonical tip     -> the same old SHA
+remote reality          -> both already advanced
+
+check 5  ->  equal  ->  RESOLVED, wrongly
+```
+
+Co-staleness is invisible to every check in §6.1, and no amount of local
+inspection fixes that: the missing fact is on a remote.
+
+So the boundary is frozen, and `RESOLVED` carries its evidence rather than
+claiming more than it has:
+
+```
+A resolution MUST report the two SHAs it observed:
+    observedLocatorSha       the main ref the locator was read from
+    observedCanonicalTipSha  the tip of the declared canonical branch
+
+RESOLVED is relative to exactly those two observations.
+
+    local-ref freshness NOT ESTABLISHED
+          !=
+    global currentness ESTABLISHED
+```
+
+Establishing ref freshness — whether a resolver must fetch, how it reports a
+failed fetch, and whether a stale-but-offline resolution is usable — is a
+**separate question with its own owner**, and this design does not answer it. It
+is named here so that no consumer reads `RESOLVED` as more than it says. Phase 1
+deliberately does not introduce a network dependency into a navigation primitive.
+
+### 6.4 The boundary, stated as a rule
 
 ```
 verification proves LOCATOR INTEGRITY
       !=
 verification proves SPEC CORRECTNESS
+
+and, after the two corrections above:
+
+declared references are VALID
+      !=
+the declared authority set is COMPLETE          §4.2b
+no divergence among OBSERVED refs
+      !=
+the pointer is CURRENT                          §6.3
 ```
 
-A green resolution says: *this work item's authority is that document set, at
-that commit, on that branch.* It says nothing about whether the spec is right,
-complete, current in substance, or adopted. Those questions belong to the
-authority documents and to the human gates that ratify them.
+A green resolution says: *this work item's authority is rooted at that document,
+at that commit, on that branch, as observed at those two ref SHAs.* It says
+nothing about whether the spec is right, complete in substance, or adopted, and
+nothing about documents beyond the entry. Those questions belong to the authority
+documents and to the human gates that ratify them.
 
 **Content digests are deliberately not verified in v1.** Existence is sufficient
 for navigation integrity. A digest would begin asserting something about
@@ -432,8 +694,14 @@ For `[hook-install-provenance]`, the whole update is:
 ```
 canonicalBranch     spec/hook-install-provenance      unchanged
 canonicalSha        ae39cbe  ->  e5f74fe
-authorityArtifacts  + 2026-08-27-l3-ac12-chmod-authority-amendment.md
+authorityEntry      2026-08-18-hook-install-provenance-design.md   unchanged
 ```
+
+The adopted amendment is deliberately NOT named in the record. It is reachable at
+the new SHA, and under §4.2b enumerating the authority set is the authority
+layer's question, not the locator's. The whole locator delta for an adoption is
+therefore **one field**, which is also the smallest thing that can be forgotten
+— and forgetting it produces LOCATOR_STALE, not a silent wrong answer.
 
 What must **not** appear anywhere in the record as a result of that adoption:
 
@@ -479,7 +747,7 @@ the resolver output  CURRENT POINTER
 Two structural properties, both checkable rather than asserted.
 
 **A. Vocabulary containment.** The record schema admits location fields only:
-`workItem`, `canonicalBranch`, `canonicalSha`, `authorityArtifacts`. Any field
+`workItem`, `canonicalBranch`, `canonicalSha`, `authorityEntry`. Any field
 whose value could also be read out of an authority document is out of vocabulary
 and rejected. An unrecognised field is a record defect, not a field to ignore —
 the same rule the `ac12` amendment just froze one layer down:
@@ -492,7 +760,7 @@ unclassified field    !=    harmless extra
 the authority would leave the answer intact. So the required negative control is:
 
 ```
-at a SHA where a declared artifact is ABSENT
+at a SHA where the declared authorityEntry is ABSENT
     the resolver must answer LOCATOR_INVALID
     and must NOT answer the design question
 
@@ -515,28 +783,36 @@ Q1  who owns canonical-spec location
       NOT the spec frontmatter, backlog, planning IR, or PR text        §3
 
 Q2  how a work item resolves uniquely
-      exact-key lookup on the backlog work-item id
-      -> canonicalBranch + canonicalSha + authorityArtifacts
-      0 -> UNRESOLVED   1 -> verify   >1 -> CONFLICT, never a tiebreak  §4
+      exact-key lookup on the backlog work-item id, compared ASCII
+      case-folded, under a project-lifetime non-reuse rule this design ADDS
+      -> canonicalBranch + canonicalSha + authorityEntry
+      0 -> UNRESOLVED   1 -> verify   >1 -> CONFLICT, never a tiebreak
+                                                            §4.1a §4.2 §4.3
 
 Q3  what makes a locator stale / invalid / conflicting
-      INVALID   branch/SHA/ancestry/artifact check fails
+      INVALID   branch/SHA/ancestry/authorityEntry check fails
       STALE     all checks pass but the branch advanced past the SHA
-      CONFLICT  duplicate key
-      reachable != current; the tip is never the answer                 §5
+      CONFLICT  duplicate key under the folded identity            §4.1a §5
+      reachable != current; the tip is never the answer
+      and SHA==tip only means the OBSERVED refs do not diverge         §6.3
 
 Q4  what a consumer must do on failure
       STOP, report the verdict, produce NO spec judgement
       every fallback enumerated and forbidden                        §5.3 §7
 
 Q5  how the pointer advances after an amendment
-      adoption advances canonicalSha and extends authorityArtifacts
+      adoption advances canonicalSha, and that is the entire delta
       it copies no normative content; the chain stays evidence           §8
 
 Q6  how the locator is proved to be navigation, not spec, authority
       A vocabulary containment — location fields only
-      B falsifiability — must answer INVALID when its target is absent
-      verification proves locator integrity, not spec correctness     §6 §9
+      B falsifiability — must answer INVALID when its entry is absent
+      C source binding — read from main:<path>, never the ambient tree,
+        so a proposed locator cannot impersonate an adopted one       §6.2
+      verification proves locator INTEGRITY, and nothing beyond it:
+        valid references != a complete authority set               §4.2b
+        no divergence among observed refs != current               §6.3
+        locator integrity != spec correctness                     §6.4 §9
 ```
 
 ## 11. Not decided here, and why
@@ -574,7 +850,7 @@ main's own stale statements        not rewritten. main@85f0c25's merge
 
 ```
 nature                    PHASE 1 DESIGN
-design review             NOT YET PERFORMED
+design review             disposition recorded in §13
 implementation            NOT AUTHORIZED
 main mutation             NOT AUTHORIZED — no record is created by this design
 authority relocation      NOT AUTHORIZED and not proposed
@@ -584,3 +860,72 @@ authority relocation      NOT AUTHORIZED and not proposed
 
 The canonical design authority for `[hook-install-provenance]` remains
 `spec/hook-install-provenance @ e5f74fe`, and this design moves nothing.
+
+## 13. Revision history
+
+```
+87e72af   first Phase 1 design.
+
+this      design review 1: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
+          fixed here. The reviewer named the shared pattern, and it is worth
+          keeping in front of the next round:
+
+            the design could already detect that a DECLARED thing is broken.
+            It had not yet shown that the declared thing is ALL of it, is
+            THAT identity, and came from the RIGHT source.
+
+          Important 1 — KEY IDENTITY. §4.1 said "verbatim" and "exact-key"
+          while offering only a popularity argument for the key. Measured in
+          memory.service.js: resolveBacklog (:1879-1893) folds case and treats
+          [abc]+[ABC] as ONE ambiguous identity, and the insert-time duplicate
+          check (:1574-1575) does the same — so a verbatim locator would hold
+          "0ce0" and "0CE0" as two records, answer one question twice, and
+          never raise CONFLICT. Second hole: both rules are scoped to the
+          CURRENT BACKLOG section, so nothing forbids reusing an id after its
+          item leaves. A locator outlives the backlog line. §4.1a now states
+          the contract this design ADDS rather than borrows: ASCII case-folded
+          comparison identity, and project-lifetime non-reuse. Folding at
+          comparison time is chosen over a write-time lowercase convention
+          because a hand-written record cannot bypass it.
+
+          Important 2 — COMPLETENESS. authorityArtifacts was a list, verified
+          only for the existence of what it listed. An adoption that advances
+          canonicalSha and forgets to append the new amendment passes every
+          check and returns RESOLVED with a silently incomplete contract. The
+          decisive question was the review's own — what independent fact tells
+          the resolver an entry is missing? None. So the list is REMOVED, not
+          supplemented with "remember to update it", which is the manual
+          obligation this document exists to eliminate. It is also the same
+          defect ac12's §6 froze one layer down: a fixed manifest is not
+          coverage. §4.2 now declares one authorityEntry; §4.2b names the
+          completeness authority UNRESOLVED, with the measured reason it
+          cannot be faked (ae39cbe's frozen body cannot point forward at its
+          own amendment; e5f74fe's amendment points backward via "amends"),
+          and records the derived-set candidate WITHOUT granting the normative
+          rule it would need. §4.2c narrows what RESOLVED may claim to
+          "rooted at", not "complete".
+
+          Important 3 — SOURCE AND FRESHNESS. "The locator lives on main"
+          constrains where the file is written, not where a resolver reads.
+          The natural implementation reads the ambient working tree, so a PR
+          branch PROPOSING a new canonicalSha would impersonate the adopted
+          locator before merge — §1 fact 2 reproduced in the new file. §6.2
+          binds the source to main:<path> read from the ref, and declares any
+          working-tree copy a proposal. §6.3 adds the evidence qualification
+          the document was missing: SHA == tip proves only that the OBSERVED
+          refs do not diverge, and both can be co-stale, so a resolution must
+          report observedLocatorSha and observedCanonicalTipSha, and
+          "local-ref freshness not established" is not "global currentness
+          established". Whether a resolver must fetch is named as a separate
+          question with its own owner and is not answered.
+
+          Minor — §12 said "design review NOT YET PERFORMED", which stopped
+          being true during the review that read it. Replaced with an
+          indirection to this section, the same fix the ac12 amendment applied
+          to its own §8.
+
+          Scope held: no registry framework, no generic manifest system, no
+          knowledge graph. Important 2 in particular invites one, and the
+          answer taken instead was to shrink the claim to what can be
+          verified and name the missing authority.
+```
