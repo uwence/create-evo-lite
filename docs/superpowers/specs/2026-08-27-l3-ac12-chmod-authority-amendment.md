@@ -9,7 +9,7 @@
 | ledger item | `L3` — *"AC12 chmod semantics — may `chmod` be ABSENT on a phase-2/3 outcome?"* |
 | evidence basis | `L3` / `ac12` pre-audit @ `c17a113` — **informational / evidentiary, NOT normative authority** |
 | `schemaVersion` | unchanged — `1` |
-| status | **DRAFT.** Written under authorization to draft. Adoption NOT authorized. |
+| status | design review **APPROVED** — disposition history in §9. This document becomes canonical authority only through an explicitly authorized merge into `spec/hook-install-provenance`; see §8. |
 
 **This document carries its own complete normative rule.** A future reader
 settles what the contract says from the text below alone. The pre-audit explains
@@ -500,30 +500,38 @@ sits beside them.
 ## 8. Status
 
 ```
-nature                    SPEC AMENDMENT — DRAFT
-authorized                drafting only
-amendment adoption        NOT AUTHORIZED
-independent review        PERFORMED — latest disposition recorded in §9
-L3                        OPEN until this amendment is reviewed and frozen
+nature                    SPEC AMENDMENT
+design review             APPROVED — disposition history in §9
+canonicalization event    an explicitly authorized merge into
+                          spec/hook-install-provenance
+canonical target          spec/hook-install-provenance
+L3 disposition            closes on that canonical integration, per §5
 ac12                      UNCHANGED
-implementation            NOT AUTHORIZED
-tests / validator         UNTOUCHED, deliberately
-producer                  UNTOUCHED, deliberately
-spec/hook-install-provenance   NOT ADVANCED — still at ae39cbe
+implementation            NOT AUTHORIZED BY THIS AMENDMENT
+tests / validator         not changed by this amendment
+producer                  not changed by this amendment
 ```
 
-Adoption path, for the record:
+Every line above is written to hold **on both sides of that merge**. An
+authority artifact that states its own lifecycle as a present-tense boolean goes
+false at the very moment it acquires authority — and then has to be edited after
+it was supposedly frozen.
+
+Canonicalization path, for the record:
 
 ```
-draft (this document)
-  -> independent amendment-level review
+this document, on its own branch
+  -> independent amendment-level review           §9
   -> explicit amendment-adoption authorization
-  -> advance spec/hook-install-provenance
-  -> that new SHA becomes the canonical design authority
+  -> merge into spec/hook-install-provenance      the canonicalization event
+  -> that merge SHA is the canonical design authority
 ```
 
-Until the last step, `ae39cbe` remains the canonical frozen design, and a reader
-asking *"what does `ac12` require"* is answered by `ae39cbe` alone.
+Before that merge, `ae39cbe` answers *"what does `ac12` require"* alone; after
+it, the merge SHA does and this document is part of the answer. **Which side a
+reader is on is settled against `spec/hook-install-provenance` itself, not by a
+line of prose inside this file** — a document is not the authority on whether it
+has become the authority.
 
 ## 9. Revision history
 
@@ -650,7 +658,7 @@ fd6b260   amendment-level review 3: CHANGES_REQUIRED, 2 Important + 0 Minor.
             §6     owns whether and how that invalidity is mechanically
                    established
 
-this      amendment-level review 4: APPROVED, 0 Important + 2 Minor, both
+8df6273   amendment-level review 4: APPROVED, 0 Important + 2 Minor, both
           non-blocking and both fixed here. The reviewer traced the two rules
           corrected in review 3 — A's domain, and the normative/enforcement
           split — from §3 through §9 and found no downstream section still on
@@ -679,4 +687,41 @@ this      amendment-level review 4: APPROVED, 0 Important + 2 Minor, both
           claim was checked before this revision was committed and corrected
           rather than shipped; a fabricated justification in a revision
           history is the same defect class this amendment exists to remove.)
+
+this      adoption-transition commit. NOT a design change: §1-§7 are frozen
+          for this gate and are byte-identical to 8df6273. Only the header
+          status row, §8 and this history are touched.
+
+          Adoption review of PR #52 raised one Important: the document's
+          lifecycle was written as present-tense booleans — "DRAFT",
+          "adoption NOT AUTHORIZED", "L3 OPEN", "spec/hook-install-provenance
+          NOT ADVANCED — still at ae39cbe" — while the same PR correctly
+          defines merging it AS the adoption. Merging would therefore have
+          made a canonical authority artifact state, in the very event that
+          gave it authority, that it had none. §5 already says L3 CLOSES on
+          adoption, so §8 could not be waved through as incidental metadata.
+
+          The fix is not to pre-declare adoption before it happens. Every
+          §8 line is now written to hold on BOTH sides of the merge:
+          lifecycle facts became event-relative ("canonicalization event",
+          "closes on that canonical integration"), and scope facts became
+          amendment-relative ("NOT AUTHORIZED BY THIS AMENDMENT", "not
+          changed by this amendment") instead of claims about the repository
+          at one instant.
+
+          §8 also stops asserting which side of the event a reader is on.
+          That is checkable against spec/hook-install-provenance and is not
+          this file's to declare:
+
+            a document is not the authority on whether it has become the
+            authority
+
+          Two PR #52 findings are recorded as NOT changed here. Copilot read
+          §6's item "5." as a continuation of §5's 1-4; the numbering is
+          deliberate — 1-4 close the design, 5 is the separately numbered
+          non-gating implementation obligation — and was ruled non-blocking.
+          And PR #52's head carries no workflow run and no commit status, so
+          the correct statement is NO CI EVIDENCE ON THIS HEAD, never "CI
+          green"; a documentation-only amendment with no required checks on
+          the target branch was ruled non-blocking on that ground.
 ```
