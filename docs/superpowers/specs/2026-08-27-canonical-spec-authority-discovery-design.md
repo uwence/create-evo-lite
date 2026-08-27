@@ -108,10 +108,10 @@ locator
 
 canonical spec authority
     remains on its declared spec branch + SHA
-    that branch is DECLARED authority-exclusive — advanced only by adopted
-    authority transitions — which the locator relies on and cannot verify,
-    so authority hosted on a shared branch such as main is UNSUPPORTED in
-    v1                                                              §5.2a
+    each record DECLARES that its branch advances only for adopted
+    authority transitions OF THAT RECORD'S WORK ITEM — a precondition the
+    locator relies on and cannot verify — so a branch shared with other
+    work items, main included, is UNSUPPORTED in v1                 §5.2a
 
 resolution
     work item
@@ -163,7 +163,41 @@ missing classification            !=   negative answer
 ## 3. Q1 — who owns canonical-spec location
 
 **A single locator DOCUMENT on `main`, holding one record per work item, and
-nothing else.** Proposed:
+nothing else.**
+
+**Two different ownerships, and they must not be collapsed.** Added after the
+sixth review, because `§3`'s *"and nothing else"* and `§8`'s *"the adoption
+ruling decides the adopted WHERE tuple"* read as two competing `WHERE`
+authorities unless the split is stated:
+
+```
+TRANSITION AUTHORITY   the adoption ruling
+    authorizes the NEXT location state. It decides what the tuple becomes.
+
+STATE AUTHORITY        the locator document on main
+    is the published current location state. It is what consumers query.
+```
+
+Between the ruling and the locator PR the two disagree, and the disagreement has
+a single licensed reading:
+
+```
+the ruling says WHERE = the new tuple
+the locator still says WHERE = the old tuple
+
+-> the published state is the old tuple, and it is STALE or wrong
+-> a consumer has NO licensed fallback to the ruling, the adoption PR, or
+   the merge commit
+```
+
+> **The adoption ruling is NOT a parallel discovery source.** It authorizes the
+> next locator state; consumers still resolve through the locator document only.
+
+Otherwise the project would have two answers to *"where is the authority"* and a
+consumer would choose between them — which is the failure `§5.3` already forbids
+for PR text, arriving through the front door instead.
+
+Proposed:
 
 ```
 data      docs/authority/canonical-spec-authority.json
@@ -456,13 +490,24 @@ layer and needs its own ruling. This design does not grant it.
 
 ### 4.2c What `RESOLVED` may therefore claim
 
+**Corrected after the sixth review.** This block previously read *"RESOLVED
+MEANS this work item's authority is ROOTED at …"*, which quietly spends gate `0`.
+Calling it *this work item's* authority asserts that the supplied key names the
+work item the caller intends — the exact fact `§4.1b` marks `UNRESOLVED`, and the
+exact substitution `§6.4`'s first boundary line forbids. `RESOLVED` is a
+**record-resolution** verdict; it does not get to be an identity verdict.
+
 ```
 RESOLVED MEANS
-    this work item's authority is ROOTED at <authorityEntry>, at
-    <canonicalSha>, on <canonicalBranch>
+    for the SUPPLIED KEY, exactly one locator record matched under the
+    locator's folded-key semantics, and that record declares the LOCATION
+    ROOT — canonicalBranch, canonicalSha, authorityEntry — relative to the
+    observed refs
 
-RESOLVED DOES NOT MEAN
-    that entry is the complete contract
+RESOLVED DOES NOT ESTABLISH
+    that the supplied key names the intended work item     gate 0  §4.1b
+    that the authority set is complete                     gate 2  §4.2b
+    that the location is current                           gate 3  §6.3
 ```
 
 A consumer that needs the complete set — an amendment drafter, a
@@ -591,13 +636,14 @@ observed SHAs travel with it as evidence.
 
 ```
 RESOLVED
-    exactly one record; every §6 check passes; and the declared SHA is the
-    tip of the declared branch — no divergence detected AMONG THE OBSERVED
-    REFS. Scoped by §4.2c: rooted at, not complete.
+    exactly one record; §6.1 checks 1-4 pass; and check 5 finds the declared
+    SHA IS the tip of the declared branch — no divergence AMONG THE OBSERVED
+    REFS. Scoped by §4.2c: one record matched for the supplied key, rooted
+    at, not complete, and not an identity verdict.
 
 LOCATOR_STALE
-    exactly one record; every §6 check passes; but the declared branch has
-    advanced beyond the declared SHA.
+    exactly one record; §6.1 checks 1-4 pass; check 5 OBSERVES DIVERGENCE —
+    the declared branch has advanced beyond the declared SHA.
     MEANING: a canonicalization event may have occurred without the locator
     being updated.
     NOT MEANING: use the tip.
@@ -693,10 +739,9 @@ observation            !=    fact
 **The contract this design freezes, and the scope limit that follows.**
 
 ```
-DECLARED PRECONDITION
-    canonicalBranch MUST be an AUTHORITY-EXCLUSIVE ref: a branch that
-    advances only when an authority transition for its work items is
-    adopted.
+DECLARED PRECONDITION — PER RECORD, not per branch
+    for a locator record R, R.canonicalBranch MUST advance ONLY for an
+    adopted authority-location transition of R.workItem.
 
 CONSEQUENCE — v1 SCOPE
     a shared branch is not authority-exclusive, so authority hosted on
@@ -708,6 +753,36 @@ WHAT THE RESOLVER MAY THEREFORE CLAIM
     the tip check detects divergence ON THE DECLARED BRANCH, under a
     precondition the locator itself CANNOT VERIFY.
 ```
+
+**Corrected after the sixth review: "authority-only" is not enough.** The
+previous wording said the branch advances only when *"an authority transition for
+its work items"* is adopted, which permits one branch to carry several work
+items. Then every commit on it can be a genuine adoption and the detector still
+lies:
+
+```
+spec/shared holds authority for A and for B
+A's record declares canonicalSha = T1
+
+B receives a legitimate adoption; spec/shared advances T1 -> T2
+A's authority is untouched
+
+A resolves: T1 != tip T2  ->  LOCATOR_STALE
+```
+
+So the biconditional the tip check depends on is not per branch, it is **per
+record**:
+
+```
+authority-only branch    !=    work-item-authority-only branch
+```
+
+The precondition above is therefore quantified over `R.workItem`. It does not
+forbid one branch from physically hosting several documents; it requires that a
+record only ever declare a branch whose advances are all adoptions **of that
+record's work item**. A branch shared between work items simply cannot satisfy
+that for more than one of them, which is the same reason `main` cannot satisfy it
+for any.
 
 Two things are named rather than smoothed over:
 
@@ -1001,10 +1076,11 @@ The first line is the one a reader is most likely to skip, and it is the one
 that invalidates all the others when it fails: everything below it is a true
 statement about whatever work item the key actually named.
 
-A green resolution says: *this work item's authority is rooted at that document,
-at that commit, on that branch, as observed at those two ref SHAs.* It says
-nothing about whether the spec is right, complete in substance, or adopted, and
-nothing about documents beyond the entry. Those questions belong to the authority
+A green resolution says: *for the key you supplied, one record matched, and it
+declares that root — that document, at that commit, on that branch — as observed
+at those two ref SHAs.* It does not say the key names the work item you meant; it
+says nothing about whether the spec is right, complete in substance, or adopted,
+and nothing about documents beyond the entry. Those questions belong to the authority
 documents and to the human gates that ratify them.
 
 **Content digests are deliberately not verified in v1.** Existence is sufficient
@@ -1133,6 +1209,10 @@ which parts of a location may change during an adoption.
 the authority layer / the adoption ruling   decides the adopted WHERE tuple
 the locator                                 RECORDS that tuple
 ```
+
+That is the TRANSITION half of §3's split. The ruling authorizes the next
+location state; the locator document remains the only **published** state a
+consumer may query, and the ruling is never a parallel discovery source.
 
 So the rule is:
 
@@ -1311,9 +1391,10 @@ Q3  what makes a locator stale / invalid / conflicting
       reachable != current; the tip is never the answer
       SHA==tip only means the OBSERVED refs do not diverge              §6.3
       and the tip check is evidence about the declared BRANCH, under a
-      declared authority-exclusivity precondition the locator cannot
-      verify. A cross-branch authority migration stays undetectable,
-      so main-hosted authority is UNSUPPORTED in v1                    §5.2a
+      precondition the locator cannot verify: that branch advances only
+      for adopted transitions OF THIS RECORD'S work item. A cross-branch
+      migration stays undetectable, and a branch shared with other work
+      items — main included — is UNSUPPORTED in v1                    §5.2a
 
 Q4  what a consumer must do on failure
       STOP, report the verdict, produce NO spec judgement
@@ -1711,7 +1792,7 @@ The canonical design authority for `[hook-install-provenance]` remains
           all. Restated as a condition, with a note that the verdicts do not
           depend on which case applies.
 
-this      design review 5: CHANGES_REQUIRED, 3 Important + 3 Minor. All six
+7d01e15   design review 5: CHANGES_REQUIRED, 3 Important + 3 Minor. All six
           fixed here. Round 4's repairs held. Important 1 is the first
           finding since round 1 that is a MODEL boundary rather than
           propagation residue, and it is the deepest one in the document.
@@ -1785,4 +1866,62 @@ this      design review 5: CHANGES_REQUIRED, 3 Important + 3 Minor. All six
           §7 still said the design uncovered "two dependencies" when identity,
           completeness and freshness make three; §10 Q1 still said "one locator
           record on main" one round after §3 was corrected to DOCUMENT.
+
+this      design review 6: CHANGES_REQUIRED, 3 Important + 1 Minor. All four
+          fixed here. Round 5's repairs held. This round is boundary cleanup
+          rather than new mechanism: who owns the state, who authorizes the
+          transition, and which question a verdict actually answers.
+
+          Important 1 — EXCLUSIVE TO WHAT. §5.2a required canonicalBranch to
+          be authority-exclusive, worded as advancing only for adoptions "for
+          its work items" — which lets one branch carry several. Then every
+          commit on it can be a genuine adoption and the detector still lies:
+
+            spec/shared holds authority for A and B; A declares T1
+            B receives a legitimate adoption, spec/shared T1 -> T2
+            A's authority untouched
+            A resolves: T1 != tip T2 -> LOCATOR_STALE
+
+            authority-only branch != work-item-authority-only branch
+
+          The precondition is now quantified PER RECORD: R.canonicalBranch
+          MUST advance only for an adopted authority-location transition of
+          R.workItem. It does not forbid one branch from physically hosting
+          several documents; it means a branch shared between work items
+          cannot satisfy the precondition for more than one of them — the same
+          reason main satisfies it for none. Propagated to §2 and §10 Q3.
+
+          Important 2 — RESOLVED WAS SPENDING GATE 0. §4.2c and §6.4 still
+          said "this work item's authority is ROOTED at …", which asserts that
+          the supplied key names the work item the caller intends — the exact
+          fact §4.1b marks UNRESOLVED, and the exact substitution §6.4's own
+          first boundary line forbids. RESOLVED is a RECORD-RESOLUTION
+          verdict and does not get to become an identity verdict. It now says:
+          for the SUPPLIED KEY, exactly one record matched under the locator's
+          folded-key semantics, and that record declares the location root
+          relative to the observed refs — and it lists what it does NOT
+          establish, gate by gate. §6.4's green-resolution sentence follows.
+
+          Important 3 — STATE AUTHORITY vs TRANSITION AUTHORITY. §3's "and
+          nothing else" and §8's "the adoption ruling decides the adopted
+          WHERE tuple" are each correct and, read together, look like two
+          competing WHERE authorities. The split is now explicit in §3: the
+          adoption ruling is the TRANSITION authority — it authorizes the next
+          location state; the locator document on main is the STATE authority
+          — it is the published state consumers query. Between the ruling and
+          the locator PR they disagree, and the licensed reading is that the
+          published state is the old tuple and is stale or wrong, with NO
+          fallback to the ruling, the adoption PR, or the merge commit:
+
+            the adoption ruling is NOT a parallel discovery source
+
+          Without that, the project would hold two answers to "where is the
+          authority" and a consumer would pick — the failure §5.3 already
+          forbids for PR text, arriving through the front door instead. §8
+          carries a pointer back, since it is readable alone.
+
+          Minor — §5.1 defined LOCATOR_STALE as "every §6 check passes, but
+          the branch has advanced", while §6.1 check 5 IS the divergence test,
+          so not every check passes. Both RESOLVED and LOCATOR_STALE now say
+          checks 1-4 pass and state what check 5 observed.
 ```
