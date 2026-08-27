@@ -864,9 +864,28 @@ NOT V1-SUPPORTED
     canonicalBranch relocation      cross-branch migration
     authorityEntry relocation       a new root at the same branch
 
-    an unpublished update returns RESOLVED, rooted at the old location,
-    with no verdict that distinguishes it                     §5.2a, §8
+    a failure to publish the adopted tuple COMPLETELY AND CORRECTLY —
+    including a PARTIAL publication — returns RESOLVED, rooted at the old
+    location, with no verdict that distinguishes it           §5.2a, §8
 ```
+
+**Corrected after the eighth review: "unpublished" was too narrow.** For a
+branch relocation, a wholly unpublished update is enough to produce the false
+`RESOLVED`. For an entry relocation it is not the only route, and often not the
+one that happens:
+
+```
+entry relocation, NOTHING published, same branch advanced
+    old SHA < tip  ->  LOCATOR_STALE          detected
+
+entry relocation, canonicalSha published but authorityEntry OMITTED
+    the old entry still exists at the new SHA
+    SHA == tip  ->  RESOLVED, rooted at a historical artifact   NOT detected
+```
+
+So the disqualifying property is **partial or incorrect publication of the
+tuple**, not merely its absence — which is the counterexample §8 already carried
+and which this clause had failed to match.
 
 **This forbids no authority operation.** Relocating a root or migrating a branch
 remains a perfectly valid thing for the project to decide; what v1 cannot do is
@@ -876,6 +895,58 @@ transition-publication evidence accompanies it — option `B`, which does not
 exist. Until it does, the honest handling of a relocation is to leave the work
 item **without** a v1 record: `LOCATOR_UNRESOLVED` is an answer a consumer can
 act on, and a silently wrong `RESOLVED` is not.
+
+**The end state is not enough: the ORDER is part of the rule.** Added after the
+eighth review. "No record afterwards" is the right destination, and reaching it
+in the obvious order manufactures precisely the window this section exists to
+close:
+
+```
+1  the relocation canonicalizes: authority is now spec/B @ SHA_B
+2  the old record is removed from main, later
+
+between 1 and 2
+    the record still says spec/A @ SHA_A
+    spec/A never moved, so SHA_A IS still its tip
+    -> RESOLVED, rooted at an abandoned location
+    and §3 forbids the consumer from consulting the ruling that would
+       have told it otherwise
+```
+
+The consumer has no way to know, and the design would have created that state by
+following its own protocol. So the ordering is frozen:
+
+```
+UNSUPPORTED-TRANSITION PROTOCOL
+
+1  WITHDRAW the existing v1 locator record on main
+2  ESTABLISH that resolution now returns LOCATOR_UNRESOLVED
+3  ONLY THEN may the unsupported relocation canonicalize
+4  the work item REMAINS without a v1 record until independent
+   transition-publication evidence exists (option B)
+```
+
+```
+withdraw first, then move
+      NOT
+move first, then clean up
+```
+
+The project has paid for the other order before: you do not enter a state your
+detector cannot recognise and rely on a later step to erase the window.
+
+**When v1 support ends** — bound to a Git event rather than to an intention, so
+there is nothing to interpret:
+
+```
+v1 support ends at step 1's merge: when the withdrawal is canonically
+published on main.
+
+NOT when the ruling authorizes the relocation — the ruling is not a
+discovery source (§3).
+NOT when the relocation canonicalizes — by then the record must already
+be gone.
+```
 
 `[hook-install-provenance] @ e5f74fe` is unaffected: `ae39cbe -> e5f74fe` on one
 branch with the entry unchanged is exactly the supported class, which is also why
@@ -1304,12 +1375,34 @@ Only fields whose adopted location changed are changed. No field is inferred
 to be immutable merely because the event is called an amendment.
 ```
 
-**Bound by §5.2b.** This rule says what a correct update looks like; it does not
-promise that an *incorrect* one is caught. Only the same-branch SHA advance has
-a verdict for its own omission. A ruling that relocates `canonicalBranch` or
-`authorityEntry` is a valid authority operation and an **unsupported v1
-discovery transition**, so the work item leaves v1 support rather than acquiring
-a record whose failure mode is silent.
+**Bound by §5.2b, and the two classes have different protocols.** The rule above
+says what a correct update looks like; it does not promise that an *incorrect*
+one is caught. Only the same-branch SHA advance has a verdict for its own
+omission, so only that class may canonicalize first:
+
+```
+SUPPORTED v1 transition
+    1  canonicalize the adoption
+    2  the old record is now behind the tip  ->  LOCATOR_STALE
+    3  publish the updated tuple
+    the window between 1 and 3 is fail-closed and detected
+
+UNSUPPORTED v1 transition — branch or entry relocation
+    1  WITHDRAW the locator record on main
+    2  establish that resolution returns LOCATOR_UNRESOLVED
+    3  ONLY THEN canonicalize the relocation
+    4  remain without a record until option B exists
+    the reverse order would leave a RESOLVED pointing at an abandoned
+    location, with no verdict against it                            §5.2b
+```
+
+**Corrected after the eighth review.** This paragraph previously ended at *"the
+work item leaves v1 support rather than acquiring a record whose failure mode is
+silent"* — a true statement about the destination that said nothing about the
+route, while the general rule directly above it ("after an adoption, the locator
+record MUST be updated") reads as *canonicalize first* for every class. Taken
+together they prescribed the unsafe order for exactly the class that cannot
+survive it.
 
 Q5 stays small, and no `WHAT` is pulled back into the locator: the record still
 holds only location fields, and the adoption ruling still owns what the contract
@@ -1509,6 +1602,13 @@ Q5  how the pointer advances after an amendment
       PR #52 fixture: canonicalSha only — a fixture, not the rule
       it copies no normative content; the chain stays evidence           §8
 
+      TWO CLASSES, TWO ORDERS                                    §5.2b §8
+      supported    canonicalize -> old record goes STALE -> publish tuple
+      unsupported  WITHDRAW the record -> verify UNRESOLVED -> only then
+                   canonicalize the relocation -> remain without a record
+      v1 support ends when the withdrawal is published on main, not when
+      the ruling is made and not when the relocation canonicalizes
+
 Q6  how the locator is proved to be navigation, not spec, authority
       A vocabulary containment — location fields only
       B falsifiability — must answer INVALID when its entry is absent
@@ -1561,11 +1661,15 @@ work items with no canonical spec  most backlog items have none, and that is
 relocation transitions             §5.2b. Migrating canonicalBranch or
                                    changing authorityEntry stays a valid
                                    authority operation and is UNSUPPORTED by
-                                   v1 discovery, because an unpublished
-                                   update to either returns RESOLVED with no
-                                   verdict against it. The honest v1 handling
-                                   is no record — UNRESOLVED — rather than a
-                                   record whose failure mode is silent.
+                                   v1 discovery, because a partial or
+                                   incorrect publication of the tuple returns
+                                   RESOLVED with no verdict against it. The
+                                   honest v1 handling is no record —
+                                   UNRESOLVED — rather than a record whose
+                                   failure mode is silent, and the WITHDRAWAL
+                                   MUST BE PUBLISHED BEFORE the relocation
+                                   canonicalizes. v1 support ends at that
+                                   withdrawal's merge on main.
 
 authority-transition evidence      §5.2a option B: independent evidence that
                                    an authority transition occurred, so that
@@ -2031,7 +2135,7 @@ The canonical design authority for `[hook-install-provenance]` remains
           so not every check passes. Both RESOLVED and LOCATOR_STALE now say
           checks 1-4 pass and state what check 5 observed.
 
-this      design review 7: CHANGES_REQUIRED, 2 Important + 4 Minor. All six
+a973516   design review 7: CHANGES_REQUIRED, 2 Important + 4 Minor. All six
           fixed here. Round 6's repairs held. Both Importants sat on one
           edge — TRANSITION authority to PUBLISHED state — which §3 had just
           made visible enough to expose the last structural gap.
@@ -2092,4 +2196,52 @@ this      design review 7: CHANGES_REQUIRED, 2 Important + 4 Minor. All six
           while RESOLVED had already been reworded to the SUPPLIED KEY — all
           three verdicts are now symmetric, because the locator does not own
           "the supplied key names the intended work item".
+
+this      design review 8: CHANGES_REQUIRED, 1 Important + 2 Minor. All three
+          fixed here.
+
+          Important — THE RIGHT DESTINATION BY THE WRONG ROUTE. §5.2b said the
+          honest handling of an unsupported relocation is to leave the work
+          item without a record, which is the correct END STATE and says
+          nothing about how to reach it. Meanwhile §8's general rule reads
+          "after an adoption, the locator record MUST be updated", i.e.
+          canonicalize first. For a relocation those combine into the exact
+          window §5.2b exists to close:
+
+            1  the relocation canonicalizes; authority is now spec/B @ SHA_B
+            2  the old record is removed from main, later
+
+            between 1 and 2: the record still says spec/A @ SHA_A, spec/A
+            never moved so SHA_A IS still its tip -> RESOLVED, rooted at an
+            abandoned location — and §3 forbids the consumer from consulting
+            the ruling that would have told it otherwise
+
+          The design would have manufactured that state by following its own
+          protocol. §5.2b now freezes the order — WITHDRAW the record, verify
+          UNRESOLVED, only then canonicalize, remain without a record — and §8
+          forks explicitly, because only the same-branch SHA advance has a
+          verdict for its own omission and may therefore canonicalize first.
+          §10 Q5 carries the fork.
+
+            withdraw first, then move    NOT    move first, then clean up
+
+          The project has paid for the other order before: do not enter a
+          state the detector cannot recognise and rely on a later step to
+          erase the window.
+
+          Minor 1 — §5.2b disqualified relocations because "an unpublished
+          update returns RESOLVED". True for a branch relocation; too narrow
+          for an entry relocation, where publishing NOTHING while the branch
+          advances is actually detected as STALE, and the dangerous case is
+          publishing canonicalSha while OMITTING the new entry. The
+          disqualifying property is partial or incorrect publication of the
+          tuple, not merely its absence — the counterexample §8 already
+          carried and this clause had failed to match. §11 syncs.
+
+          Minor 2 — "the work item leaves v1 support" had no event attached.
+          Bound to a Git event so there is nothing to interpret: v1 support
+          ends when the WITHDRAWAL is published on main — not when the ruling
+          authorizes the relocation (the ruling is not a discovery source),
+          and not when the relocation canonicalizes (by then the record must
+          already be gone).
 ```
