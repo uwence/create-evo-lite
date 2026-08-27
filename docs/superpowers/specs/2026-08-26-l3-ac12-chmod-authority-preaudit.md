@@ -168,12 +168,85 @@ Answering, once and by name, the question §2 showed had no owner:
 > A classifier that performs a total partition of the frozen `INSTALL_REASONS`
 > vocabulary. Not the `chmod` field. Not a downstream `else`. Not a fixture.
 
-### 4.4 Required invariant
+> **PRE-REVIEW OVERSTATEMENT — SUPERSEDED by §4.4 and §4.6.**
+>
+> The paragraph above is kept verbatim because it is the assertion an independent
+> review attacked, and a `CHANGES REQUIRED` verdict is unreadable once the
+> sentence it pointed at has quietly disappeared. It is **not** current guidance.
+>
+> It was too strong. A named total classifier establishes `reason → phase`
+> classification only. It does **not** establish that every emission of an
+> already-classified reason occurs in that phase. The classifier does not become
+> the authority by being named; it *implements* a contract that the producer's
+> emission sites must also conform to.
+
+### 4.4 Required invariants — TWO, and the set equation alone is not one of them
+
+**Corrected after independent review.** The first draft of this section carried
+only the set equation. That is satisfied *tautologically* by
 
 ```
-PRE_WRITE  ∪  WRITE_ISSUED  =  INSTALL_REASONS
-PRE_WRITE  ∩  WRITE_ISSUED  =  ∅
+WRITE_ISSUED := INSTALL_REASONS \ PRE_WRITE
 ```
+
+which is today's `else` under a new name. The equation must never travel without
+§4.5 and §4.6; on its own it forbids nothing.
+
+```
+A. VOCABULARY PARTITION
+   every member of INSTALL_REASONS belongs to exactly one semantic phase
+
+       PRE_WRITE  ∪  WRITE_ISSUED  =  INSTALL_REASONS
+       PRE_WRITE  ∩  WRITE_ISSUED  =  ∅
+
+B. EMISSION CONSISTENCY
+   every producer path able to emit a reason is in that reason's assigned phase
+
+       for every emission site e that can emit reason r:
+           phase(e) == assignedPhase(r)
+```
+
+`B` is the one the review found missing, and it is the one that bites. A future
+idempotent-skip path recording `updated-managed-block`, or a pre-write
+feasibility check recording `write-failed` — a token that names an *outcome*, not
+a phase — makes an **already-classified** reason reachable with no write issued.
+The guard proposed in §4.5 fires on *unclassified*, so it would never fire; the
+classifier would return a confident wrong answer.
+
+Measured today: both `write-failed` emission sites live inside `observeInstalled`,
+the post-write observation, so `B` holds at `85f0c25`. Nothing enforces that it
+keeps holding — which is the whole point.
+
+```
+CONTRACT FAILURE   a known reason becomes reachable from a path in the other phase
+NOT                "wait until someone adds an unclassified reason"
+```
+
+### 4.4b Three constraints of different kinds, none sufficient alone
+
+The review also surfaced that this document had never cited a check that already
+exists:
+
+```
+lexical closure            reason ∈ INSTALL_REASONS[outcome]
+                           schema.js:177-180 — ALREADY ENFORCED today
+                           closes: an out-of-vocabulary reason
+
+total / disjoint           a known reason has exactly one phase
+classification             §4.4 A — NOT enforced today
+                           closes: an unclassified new reason
+
+emission consistency       every path emitting r is in phase(r)
+                           §4.4 B — NOT enforced today
+                           closes: a known reason emitted in the wrong phase
+```
+
+`schema.js:177-180` closes the first leg and **only** the first leg. It says
+nothing about a known reason emitted from the wrong phase. Note also that there
+is no early return before the `chmod` branch, so on a rejected out-of-vocabulary
+document the phase `else` still runs and still emits a phase claim about a reason
+that was never classified — harmless today, because the document is rejected
+anyway, but it is a second place the default speaks without authority.
 
 ### 4.5 Forbidden: a complement branch with meaning
 
@@ -190,12 +263,21 @@ Placed beside `ac12` rather than inside it, so the criterion's text is untouched
 while its previously implicit authority becomes explicit:
 
 ```
-For AC12, whether "the hook write was issued" is determined solely
-by the total install-reason phase classifier.
+For AC12, whether "the hook write was issued" is determined solely by the
+reason-phase contract.
 
-The classifier MUST explicitly classify every member of INSTALL_REASONS.
-There is no semantic default branch: an unclassified reason is a contract
-failure, not a phase-2/3 reason.
+The contract owns the semantic classification. A classifier IMPLEMENTS it, and
+every producer emission site MUST CONFORM to it. Being named does not make the
+classifier the authority.
+
+The contract MUST explicitly assign every member of INSTALL_REASONS to exactly
+one phase, and every producer path able to emit a reason MUST lie in that
+reason's assigned phase.
+
+There is no semantic default branch. Both of these are contract failures, not
+phase-2/3 reasons:
+  - a reason with no phase assignment;
+  - a reason reachable from a path in a phase other than its assigned one.
 ```
 
 The result is not a changed criterion. It is:
@@ -221,6 +303,51 @@ IMPLEMENTATION OBLIGATION, recorded separately
     -> registered as its own obligation
     -> NOT a reason to keep L3 open
 ```
+
+**Scope constraint on that obligation, added after review.** The hand-maintained
+partition lives in **two live copies**, measured byte-identical at `85f0c25`:
+
+```
+templates/cli/hook-provenance/schema.js     sha256 f31a9dcd5164…
+.evo-lite/cli/hook-provenance/schema.js     sha256 f31a9dcd5164…
+```
+
+Equal hashes prove `CURRENTLY IN SYNC`. They do not prove that a guard installed
+against one copy protects the other.
+
+```
+Any mechanical enforcement of the reason-phase contract must cover both
+maintained schema surfaces, or prove that one is mechanically derived from
+the other. Passing in only one mirror is insufficient evidence.
+```
+
+This is an evidence boundary on a future obligation. It authorizes nothing, and
+it is deliberately **not** an invitation to resolve *why* two copies exist — that
+is a different question with a different owner.
+
+### 4.8 What L3's closure now requires
+
+Five conditions, not one. `install.reason` earns the right to remain the sole
+recorded fact — with no second `writeIssued` field — only if all five hold:
+
+```
+1  the reason vocabulary is closed              schema.js:177-180, enforced today
+2  every reason has exactly one semantic phase  §4.4 A, not yet enforced
+3  every emission site conforms to that phase   §4.4 B, not yet enforced
+4  missing OR conflicting classification is a contract failure
+5  enforcement covers both maintained mirrors   §4.7
+```
+
+The first pre-audit found that **absence of classification must not become a
+default answer**. The review found its dual, and it belongs beside it:
+
+```
+absent classification    ->  must not fake a judgement
+present classification   ->  must not fake an established fact
+```
+
+A classification that exists but whose premise is unguaranteed is not a weaker
+version of the first problem. It is worse, because it never looks empty.
 
 Collapsing these two would recreate the confusion this project keeps paying for:
 
@@ -252,9 +379,33 @@ only an approved amendment can authorize even that small a change.
 ## 6. Status
 
 ```
+revision                  corrective, after an independent CHANGES REQUIRED
 L3 design question        OPEN — this pre-audit does not close it
 ac12                      UNCHANGED
 spec amendment            NOT YET WRITTEN
 implementation            NOT AUTHORIZED
 tests / validator         UNTOUCHED, deliberately
+producer                  UNTOUCHED, deliberately
 ```
+
+## 7. Revision history
+
+```
+6a38671   first pre-audit
+          verdict from an independent review: CHANGES REQUIRED, one additive
+          change. No measured fact in the document was found false.
+
+this      §4.3 overstatement PRESERVED and explicitly SUPERSEDED
+revision  §4.4 split into two invariants; the set equation alone shown to be
+               satisfiable tautologically
+          §4.4b three constraints of different kinds, and schema.js:177-180
+               cited for the first time — it closes one leg and only one
+          §4.6 normative clause rewritten: the CONTRACT owns the classification,
+               the classifier implements it, emission sites conform to it
+          §4.7 mirror obligation added as an evidence boundary
+          §4.8 L3's five closure conditions, and the dual of the original finding
+```
+
+The reviewer's two counterexamples are named in §4.4 rather than paraphrased, so
+a re-review can check whether they are now covered by a mechanical contract or
+merely by better wording.
