@@ -289,18 +289,31 @@ ac12 unchanged
 
 ### 4.7 Two closure points, kept apart
 
+**Corrected after the second review.** The first version of this block said *"a
+total classifier owns the phase derivation"* and listed four closure conditions.
+That reinstated the very authority model §4.3 had just superseded, and it left
+`emission consistency` out of closure entirely — so the document carried two
+different definitions of what closing `L3` requires. There is now one, and it is
+§4.8's.
+
 ```
 DESIGN CLOSURE
     reason is the recorded fact
-    a total classifier owns the phase derivation
-    the partition is exhaustive and disjoint
-    no fallback classification
+    the reason-phase CONTRACT owns the derivation
+        a classifier IMPLEMENTS the vocabulary partition
+        producer emissions CONFORM to the assigned phase
+    closure conditions: exactly the five in §4.8, no separate list
     -> L3 design question CLOSED BY SPEC AMENDMENT, once that amendment is
        independently reviewed and frozen
 
 IMPLEMENTATION OBLIGATION, recorded separately
-    a mechanical partition-completeness guard does not exist yet
-    -> registered as its own obligation
+    no mechanical enforcement exists yet for EITHER invariant
+    -> future enforcement MUST mechanically establish BOTH
+           A. vocabulary partition
+           B. emission consistency
+       The exact mechanism stays deferred; the coverage does not.
+    -> a guard that only catches "a new reason was added without being
+       classified" closes A alone and leaves B forbidden by prose only
     -> NOT a reason to keep L3 open
 ```
 
@@ -315,15 +328,80 @@ templates/cli/hook-provenance/schema.js     sha256 f31a9dcd5164…
 Equal hashes prove `CURRENTLY IN SYNC`. They do not prove that a guard installed
 against one copy protects the other.
 
+**Corrected after the second review: that was half the surface.** `A` lives in
+the schema, but `B`'s facts live in the **producer**, which is mirrored the same
+way. Measured at `85f0c25` — identical content and the same Git blob, so these
+are two maintained copies rather than one file seen twice:
+
+```
+classification surfaces   templates/cli/hook-provenance/schema.js
+                          .evo-lite/cli/hook-provenance/schema.js
+                          sha256 f31a9dcd5164…
+
+emission surfaces         templates/cli/hooks.js
+                          .evo-lite/cli/hooks.js
+                          sha256 1730e8c6eb52…   blob 76ff7acd71b1 (both)
+```
+
+Naming only the schema mirrors would permit exactly this:
+
+```
+schema guard      both mirrors PASS
+producer guard    only one hooks.js checked
+the other hooks.js   a wrong-phase emission is introduced, unnoticed
+```
+
 ```
 Any mechanical enforcement of the reason-phase contract must cover both
-maintained schema surfaces, or prove that one is mechanically derived from
-the other. Passing in only one mirror is insufficient evidence.
+CLASSIFICATION surfaces and both EMISSION surfaces, or prove that one member
+of a pair is mechanically derived from the other. Passing in only one mirror
+of either pair is insufficient evidence.
 ```
+
+Equal hashes prove `CURRENTLY IN SYNC`. They do not prove that a guard installed
+against one copy protects the other.
 
 This is an evidence boundary on a future obligation. It authorizes nothing, and
 it is deliberately **not** an invitation to resolve *why* two copies exist — that
 is a different question with a different owner.
+
+### 4.7b The phase claim that survives a lexical rejection
+
+§4.4b recorded that the `chmod` branch still runs after `schema.js:177-180`
+rejects an out-of-vocabulary reason, and left it without a disposition. §4.6 says
+*"there is no semantic default branch"* while §5 forecasts *"no production-schema
+change"* — the two were not reconciled. They are now.
+
+**Disposition: it is a contract violation, and it is eliminated by enforcing
+§4.4 A rather than by short-circuiting the validator.**
+
+Measured: the validator has 37 `errors.push` sites and deliberately accumulates
+rather than failing fast, because a caller wants every defect at once.
+Short-circuiting the phase step to silence the stray claim would buy the rule at
+the cost of that design.
+
+It does not have to be bought. Once the classifier is total and explicit,
+`PRE_WRITE_REASONS.includes(r) === false` no longer *means* write-issued — the
+classifier is asked, and for an unclassified reason it answers `unclassified`,
+which is a contract failure in its own right. The stray phase claim disappears as
+a **consequence** of `A`, not as a separate fix.
+
+```
+today          lexical authority says INVALID
+               phase else nevertheless emits a write-issued claim
+               -> no accepted provenance fact is affected: the document is
+                  rejected either way
+               -> but a reader is told something about a write that may never
+                  have been issued
+
+after A        the classifier answers `unclassified`
+               no phase is claimed for a reason nobody classified
+               error accumulation is preserved
+```
+
+So `no semantic default branch` stands as written in §4.6, it covers the
+validator's diagnostic path, and it still requires **no production-schema change**
+— which is what §5 forecasts. The three sections now agree.
 
 ### 4.8 What L3's closure now requires
 
@@ -335,8 +413,13 @@ recorded fact — with no second `writeIssued` field — only if all five hold:
 2  every reason has exactly one semantic phase  §4.4 A, not yet enforced
 3  every emission site conforms to that phase   §4.4 B, not yet enforced
 4  missing OR conflicting classification is a contract failure
-5  enforcement covers both maintained mirrors   §4.7
+5  enforcement covers both CLASSIFICATION mirrors
+   AND both EMISSION mirrors                    §4.7
 ```
+
+This is the document's **only** closure list. §4.7's `DESIGN CLOSURE` block
+points here rather than maintaining a second one — an earlier revision carried
+two, and they disagreed about whether `emission consistency` was required.
 
 The first pre-audit found that **absence of classification must not become a
 default answer**. The review found its dual, and it belongs beside it:
@@ -362,14 +445,27 @@ design unresolved   !=   approved design not yet mechanically enforced
 Recorded so the amendment's reviewer can see the size of what it authorizes, and
 so nobody later mistakes this paragraph for the authorization itself:
 
+**Corrected after the second review.** The first version forecast a single guard
+for unclassified reasons. That is `A` only, and it would have left the review's
+two counterexamples forbidden by prose and by nothing else.
+
 ```
-expected      one guard that turns "a new reason was added without being
-              classified" from silence into a failure
+expected      mechanical enforcement of BOTH invariants:
+                A  a reason added without a phase assignment       -> failure
+                B  a reason reachable from a path in another phase -> failure
+              covering both classification mirrors AND both emission mirrors
+              exact mechanism deferred; coverage is not
+
 NOT expected  any production-schema change
               any change to ac12's text
-              any change to the producer
+              any change to the producer's behaviour
               any change to existing chmod behaviour
+              any short-circuit of the validator's error accumulation (§4.7b)
 ```
+
+`B` is the harder half and its cost is not yet estimated here. Saying so is the
+point: a forecast that quietly omits the expensive half is worse than no forecast,
+because it under-prices the direction being approved.
 
 **Not authorized by this document.** The amendment is written and reviewed first;
 only an approved amendment can authorize even that small a change.
@@ -409,3 +505,31 @@ revision  §4.4 split into two invariants; the set equation alone shown to be
 The reviewer's two counterexamples are named in §4.4 rather than paraphrased, so
 a re-review can check whether they are now covered by a mechanical contract or
 merely by better wording.
+
+```
+0ac76b5   second review, cross-checked against schema.js, hooks.js and the
+          observer rather than against this document's prose:
+          CHANGES REQUIRED, 3 Important, 0 Minor. Again no measured fact false.
+
+          R1  the contract was fixed; the OBLIGATION still covered A only, so
+              both counterexamples remained forbidden by prose alone
+          R1  mirror scope named the schema pair and missed the producer pair,
+              where B's facts actually live
+          R2  the phase claim surviving a lexical rejection had been spotted in
+              §4.4b and left without a disposition, while §4.6 and §5 pulled in
+              opposite directions
+          R3  §4.3's supersession passed, but §4.7 reinstated the superseded
+              authority model and carried a second, shorter closure list
+
+this      §4.7  authority wording aligned with §4.6; the rival closure list
+revision        deleted in favour of a pointer to §4.8; obligation now covers
+                A and B
+          §4.7  mirror scope split into classification and emission surfaces,
+                both pairs measured
+          §4.7b disposition for the surviving phase claim: a contract violation,
+                eliminated BY enforcing A, not by short-circuiting a validator
+                that deliberately accumulates 37 error sites
+          §4.8  marked as the document's only closure list
+          §5    forecast corrected to both invariants, and its unestimated half
+                said out loud
+```
