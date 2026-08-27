@@ -174,10 +174,12 @@ whole point:
   was seen. A reader must not infer from its name that it may be emitted by a
   pre-write feasibility check.
 
-The vocabulary is frozen by the design document, not by this amendment. If a
-future `schemaVersion` adds, removes, or renames a member, invariant **A** below
-requires the assignment to be extended with it, in the contract, before that
-member may be emitted.
+The vocabulary is frozen by the design document, not by this amendment. Any
+future `schemaVersion` that changes `INSTALL_REASONS` membership MUST update the
+contract's phase assignment so that every member of the **resulting** vocabulary
+carries exactly one explicit phase, before any such member may be emitted.
+Invariant **A** below is quantified over the resulting set, not over the
+migration verb that produced it.
 
 ### 3.4 Invariant A — VOCABULARY PARTITION
 
@@ -392,7 +394,7 @@ DESIGN CLOSURE REQUIREMENTS               frozen here
 1  reason remains the canonical recorded fact                       §3.1
 2  every vocabulary member gets exactly one phase, explicitly       §3.3 §3.4
 3  the contract requires every emission site to conform             §3.5
-4  missing OR conflicting classification is a contract failure      §3.6
+4  missing OR conflicting classification is a contract failure      §3.4 §3.6
 ```
 
 All four are stated above. On adoption of this amendment:
@@ -613,7 +615,7 @@ e858694   first draft of the amendment.
           principle as the pre-audit's review-count fix: do not hand-maintain
           a second copy of a fact that changes every round.
 
-this      amendment-level review 3: CHANGES_REQUIRED, 2 Important + 0 Minor.
+fd6b260   amendment-level review 3: CHANGES_REQUIRED, 2 Important + 0 Minor.
           Both are the same shape as review 2's: the abstract rule was fixed,
           a concrete clause elsewhere stayed on the old model. No new
           authority or model gap was found.
@@ -647,4 +649,34 @@ this      amendment-level review 3: CHANGES_REQUIRED, 2 Important + 0 Minor.
             §3.6   owns WHAT is invalid
             §6     owns whether and how that invalidity is mechanically
                    established
+
+this      amendment-level review 4: APPROVED, 0 Important + 2 Minor, both
+          non-blocking and both fixed here. The reviewer traced the two rules
+          corrected in review 3 — A's domain, and the normative/enforcement
+          split — from §3 through §9 and found no downstream section still on
+          the old model. The draft is APPROVED and READY FOR ADOPTION REVIEW;
+          adoption itself is a separate gate and is not authorized by it.
+
+          Minor 1 — §3.3's future-migration sentence read "adds, removes, or
+          renames a member ... requires the assignment to be extended with
+          it". True for an addition, false for a removal: a deleted member is
+          not extended into the assignment. A is quantified over the RESULTING
+          set, not over the operation that produced it, so the sentence is now
+          set-shaped: any schemaVersion changing INSTALL_REASONS membership
+          must leave every member of the resulting vocabulary carrying exactly
+          one explicit phase before any such member may be emitted.
+
+          Minor 2 — §5's condition 4 cited §3.6 alone. §3.6 covers a missing
+          assignment, but a member assigned to BOTH phases is excluded by
+          §3.4's "exactly one" and its disjointness equation. Now cited to
+          both. The four conditions are kept as four rather than folded into
+          two: §5 closes the design decision on the range 1-4 by name, and
+          four review rounds have adjudicated them under these numbers.
+          Renumbering would silently invalidate that record for no gain.
+
+          (A first draft of this entry justified keeping four by claiming §6
+          and §8 also reference the range. They do not — only §5 does. The
+          claim was checked before this revision was committed and corrected
+          rather than shipped; a fabricated justification in a revision
+          history is the same defect class this amendment exists to remove.)
 ```
