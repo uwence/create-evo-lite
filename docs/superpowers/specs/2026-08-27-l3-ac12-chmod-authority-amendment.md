@@ -200,6 +200,13 @@ is binding only together with **B** (§3.5) and the prohibition of a semantic
 default (§3.6). The word *explicit* is load-bearing — the assignment must be
 stated, member by member, not produced by complementation.
 
+**`A`'s domain is the membership of `INSTALL_REASONS`, and nothing wider.** A
+token that is not a member is outside `A` entirely: it is rejected by
+outcome/reason coherence, `§3.6` still forbids classifying it as `WRITE_ISSUED`,
+and its unanswerability is **not** evidence that `A`'s partition is incomplete.
+Conflating the two would make every malformed document look like a hole in the
+contract.
+
 ### 3.5 Invariant B — EMISSION CONSISTENCY
 
 > Every producer path able to emit a reason must lie in that reason's assigned
@@ -241,7 +248,9 @@ unclassified reason    !=    WRITE_ISSUED
 ```
 
 A reason that has not been explicitly placed on one side has not been answered.
-It must be reported as unanswered.
+It must be reported as unanswered — whether it is a vocabulary member that `A`
+failed to assign, or a token that never belonged to the vocabulary at all. This
+rule governs the **answer**; which authority was violated is settled in §3.7.
 
 ### 3.7 Consequence: the phase claim that survives an outcome/reason rejection
 
@@ -252,46 +261,69 @@ design, because a caller wants every defect in one report. So a document
 rejected on that check still reaches the phase step, and the phase step still
 speaks.
 
-Two different rejections reach it, and they must not be collapsed:
+Three different rejections reach it, and they must not be collapsed:
 
 ```
-CASE A   the reason has NO phase assignment
-         a token belonging to neither side of §3.3
+CASE A   the reason IS a member of INSTALL_REASONS, but §3.3 assigns it no
+         phase
+         -> an A violation: the partition is incomplete
          -> the classifier answers `unclassified`
          -> NO phase is claimed
          -> a contract failure in its own right, closed by A
 
-CASE B   the reason IS assigned a phase, and is paired with an outcome that
-         does not permit it — outcome `realized` carrying `hooks-dir-missing`,
-         or an unrecognised `install.outcome` altogether
+CASE B   the reason IS a member AND IS assigned a phase, but is paired with an
+         outcome that does not permit it — outcome `realized` carrying
+         `hooks-dir-missing`, or an unrecognised `install.outcome` altogether
          -> outcome/reason coherence rejects the DOCUMENT
          -> the reason's phase assignment is untouched: `hooks-dir-missing`
             is PRE_WRITE, and stays PRE_WRITE
          -> the classifier may answer for it; that answer does not make the
             document valid
+         -> NOT an A violation
+
+CASE C   the reason is NOT a member of INSTALL_REASONS at all
+         -> outcome/reason coherence rejects the DOCUMENT
+         -> no valid phase assignment exists, and none is owed: the token is
+            outside A's domain (§3.4)
+         -> §3.6 still forbids answering WRITE_ISSUED by default
+         -> NOT evidence that A's partition is incomplete
 ```
 
 ```
 invalid outcome/reason pairing    !=    absent phase assignment
+out-of-vocabulary token           !=    incomplete partition
 ```
 
-Two questions, two authorities. The design already keeps them apart: the
-vocabulary is grouped **by `outcome`**, while the phase mapping is a separate,
-orthogonal statement over the same members.
+Three questions, three authorities, and they are orthogonal:
 
-> **Disposition. `A` eliminates the unauthorized default for reasons with no
-> phase assignment. It does not erase the valid phase assignment of a known
-> reason merely because that reason is paired with an invalid outcome.**
+```
+vocabulary / outcome legality      -> outcome/reason coherence   CASE B, CASE C
+vocabulary-member phase totality   -> A                          CASE A
+emission-path conformity           -> B                          §3.5
+```
+
+The design already keeps the first two apart: the vocabulary is grouped **by
+`outcome`**, while the phase mapping is a separate, orthogonal statement over the
+same members.
+
+> **Disposition. `A` eliminates the unauthorized default for vocabulary members
+> it left unassigned. It does not erase the valid phase assignment of a member
+> merely because that member is paired with an invalid outcome, and it is not
+> answerable for a token that was never in the vocabulary.**
 
 For Case A that is the whole repair. Once the classification is total and
 explicit, `member of PRE_WRITE === false` no longer *means* write-issued: the
-classifier is asked, and for an unassigned reason it answers `unclassified`, so
+classifier is asked, and for an unassigned member it answers `unclassified`, so
 no phase is claimed about a reason nobody classified. Error accumulation is
 preserved and the validator is not short-circuited.
 
 For Case B there is nothing to repair. The document is rejected by the authority
 that owns outcome/reason coherence; the phase contract's answer about that reason
 remains true and simply does not bear on the document's validity.
+
+For Case C the repair is `§3.6` alone, and it is a repair of the **answer**, not
+of the partition. The token is unanswerable and must be reported unanswered; no
+phase assignment was ever owed for it, so `A` is neither violated nor invoked.
 
 This amendment therefore introduces **no** rule forbidding a phase claim after a
 rejection. Such a rule would be broader than anything the design requires, and it
@@ -303,12 +335,14 @@ sufficient alone:
 ```
 outcome/reason           reason ∈ INSTALL_REASONS[outcome]
 coherence                already enforced
-                         closes: a reason not permitted for its outcome
+                         closes: a reason not permitted for its outcome,
+                                 and a token outside the vocabulary
                          says nothing about phase assignment either way
 
-vocabulary partition     a known reason has exactly one phase
+vocabulary partition     every VOCABULARY MEMBER has exactly one phase
                          §3.4 A — contract, not yet mechanically enforced
-                         closes: an unclassified new reason
+                         closes: a member added without a phase assignment
+                         domain: members only — never a foreign token
 
 emission consistency     every path emitting r lies in phase(r)
                          §3.5 B — contract, not yet mechanically enforced
@@ -336,18 +370,21 @@ This amendment makes a premise explicit; it does not restate a requirement.
 
 ## 5. Design closure
 
-`install.reason` earns the right to remain the sole recorded fact — with no
-second `writeIssued` field — only if **both layers** hold: the four design
-closure requirements frozen here, and the implementation obligation recorded in
-§6.
+The **design decision** to retain `install.reason` as the sole recorded fact —
+with no second `writeIssued` field — is closed by requirements `1`–`4` below.
 
-The design question `L3` closes on the first layer alone. §6 does not gate it,
-and must not be cited as a reason to keep `L3` open.
+§6 records the separate implementation and evidence obligation required before
+that decision may be called **mechanically enforced**. It does not gate adoption
+of the design decision, and must not be cited as a reason to keep `L3` open.
+
+Adoption semantics have exactly one reading, and this is it: adopting this
+amendment adopts the design decision. It does not assert that the decision is
+mechanically enforced, and §3.1 is not conditioned on §6.
 
 ```
 DESIGN CLOSURE REQUIREMENTS               frozen here
 1  reason remains the canonical recorded fact                       §3.1
-2  the contract assigns every reason exactly one phase, explicitly  §3.3 §3.4
+2  every vocabulary member gets exactly one phase, explicitly       §3.3 §3.4
 3  the contract requires every emission site to conform             §3.5
 4  missing OR conflicting classification is a contract failure      §3.6
 ```
@@ -455,7 +492,7 @@ sits beside them.
 nature                    SPEC AMENDMENT — DRAFT
 authorized                drafting only
 amendment adoption        NOT AUTHORIZED
-independent review        NOT YET PERFORMED
+independent review        PERFORMED — latest disposition recorded in §9
 L3                        OPEN until this amendment is reviewed and frozen
 ac12                      UNCHANGED
 implementation            NOT AUTHORIZED
@@ -486,7 +523,7 @@ e858694   first draft of the amendment.
           review. Normative content restated here in full so that no future
           reader needs the pre-audit to know what the contract says.
 
-this      amendment-level review 1: CHANGES_REQUIRED, 1 Important + 1 Minor.
+7503436   amendment-level review 1: CHANGES_REQUIRED, 1 Important + 1 Minor.
           §3.3's nine-member assignment was reviewed and explicitly upheld as
           normative and in scope.
 
@@ -526,4 +563,44 @@ this      amendment-level review 1: CHANGES_REQUIRED, 1 Important + 1 Minor.
           overstatement two paragraphs later ("B forbidden by prose only") is
           corrected with it — a rule stated correctly and then broken a few
           lines down is the failure this document family keeps repeating.
+
+this      amendment-level review 2: CHANGES_REQUIRED, 2 Important + 1 Minor.
+          Review 1's two findings confirmed closed; §3.3 upheld again; moving
+          the superseded text to §9 approved.
+
+          Important 1 — A's DOMAIN. §3.7's Case A still covered two different
+          things. A is quantified over the MEMBERS of INSTALL_REASONS, so it
+          can only close "a member with no phase assignment". A token that is
+          not a member at all is outside A's domain: outcome/reason coherence
+          rejects it, §3.6 still forbids answering WRITE_ISSUED for it, and
+          its unanswerability is NOT evidence that A's partition is
+          incomplete. §3.7 now carries three cases, not two; §3.4 states A's
+          domain where the invariant lives; §3.6 separates the ANSWER it
+          governs from the AUTHORITY that was violated; and the constraints
+          block names A's domain explicitly. The superseded Case A read:
+
+            "CASE A   the reason has NO phase assignment / a token belonging
+            to neither side of §3.3 ... a contract failure in its own right,
+            closed by A"
+
+          Important 2 — ADOPTION SEMANTICS. §5 opened with "install.reason
+          earns the right to remain the sole recorded fact ... only if BOTH
+          layers hold", while §3.1 states flatly that it IS the sole recorded
+          fact and §6 states that neither invariant is mechanically enforced
+          today. Adopting the amendment would therefore have asserted both
+          that the decision holds and that it holds only under a condition
+          known not to hold. §5 now closes the DESIGN decision on 1-4 alone
+          and says in one line that adoption adopts the design decision, does
+          not assert mechanical enforcement, and does not condition §3.1 on
+          §6. The rule this document already carried —
+
+            design unresolved != approved design not yet mechanically enforced
+
+          — was stated in §6 and contradicted in §5. One reading now.
+
+          Minor — §8 said "independent review NOT YET PERFORMED" while §9
+          already recorded review 1. Replaced with a status that cannot go
+          stale: "PERFORMED — latest disposition recorded in §9". Same
+          principle as the pre-audit's review-count fix: do not hand-maintain
+          a second copy of a fact that changes every round.
 ```
