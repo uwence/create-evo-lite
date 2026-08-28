@@ -1,3 +1,9 @@
+---
+id: plan:hook-install-provenance
+status: done
+created: 2026-08-18
+---
+
 # Hook Install Provenance Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -2577,3 +2583,39 @@ Task 8      depends on everything
 - `[hook-runtime-runnability]` — the shebang-inheritance and `core.hooksPath` installer gaps. This plan **observes and records** both; it repairs neither. The debt is not yet registered and must be registered separately before it can be worked.
 - `dashboard-data.js:15` `hasManagedPostCommitHook()` — the second weaker authority. Untouched.
 - Refusing to install on a nested target. `NESTED-TARGET` leaves legacy installer behaviour unchanged; changing it would be a behaviour change requiring its own ruling.
+
+---
+
+## Retrospective closure — 2026-08-28
+
+**`status: done` is set on TASK-level evidence, and the step checkboxes below
+are deliberately left unticked.**
+
+All eight tasks were implemented, independently reviewed, accepted by a human
+ruling, and merged. The per-task record, with the commit each was accepted at:
+
+```
+Task 1  fe13346      Task 5  2d8f3a5
+Task 2  (schema, frozen vocabularies, shared validator)
+Task 3  e6fbc80      Task 6  35c91cc
+Task 4  7c80e9b      Task 7  3163696
+                     Task 8  1f9c44b
+```
+
+Merged to `main` as `d7daf47` (PR #49, two-parent merge, CI 6/6). The design
+question `L3` / `ac12` that these tasks deliberately reserved was later closed
+by spec amendment on `spec/hook-install-provenance @ e5f74fe` (PR #52).
+Acceptance-criterion coverage is recorded in
+`docs/validation/hook-install-provenance-ac-matrix.md`.
+
+**Why the checkboxes stay empty.** They were never used during execution — the
+SDD ledger tracked completion per TASK, not per step, and it contains zero
+step-level ticks. Ticking 49 boxes now would assert 49 individual verifications
+that nobody performed and no artifact records. That is precisely the "bulk mark
+done" the registered `[plan-closure-manual-gap]` debt forbids, and this closure
+is scoped to what the evidence actually supports.
+
+So a planning view that still reports `0/8 tasks done` for this plan is
+reporting a **true** fact about the checkboxes, not a stale status. The gap
+between "the plan is done" and "the checkboxes say 0/8" belongs to
+`[plan-closure-manual-gap]`, which is untouched here.
