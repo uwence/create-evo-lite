@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 6e399ba9ff17dcb7cdb6f55d3f3a57d0b39c2e82
-> upstreamSha: 6e399ba9ff17dcb7cdb6f55d3f3a57d0b39c2e82
-> ahead: 0
+> headSha: 125b9d6689d3ddb78a557c1c99893e10341e6065
+> upstreamSha: 85f0c25419b979c40c5cccbb6f901ae1f999c9be
+> ahead: 1
 > behind: 0
-> focusUpdatedAt: 2026-08-18T02:32:39.304Z
+> focusUpdatedAt: 2026-08-28T09:10:32.529Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -22,12 +22,12 @@
 - [ ] [3d78] [attp-hive-rollout] Distribute the already-accepted ATTP runtime and invoke the idempotent takeover installer in selected child repositories through hive nurture. 独立 rollout 议题,不是 ATTP MVP 的一部分 —— MVP 已 ACCEPTED & CLOSED(spec:agent-takeover-trigger-protocol)。需要自己的范围/试点子仓/失败回滚策略/验收门。前置提醒:子仓装上守卫后项目外 Edit/Write 会被 deny;root-launch-only 限制同样适用。新增前置依赖(spec:zvec-win-unicode-containment §12,Task 9C 登记):Windows 目标子仓必须在分发前调用 [zvec-win-unicode-containment] 的 containment decision 接口;判定非 SAFE 时拒绝分发并给出结构化原因,不得静默跳过。该依赖未满足前不得执行对应的 Windows rollout。
 - [ ] [attp-lw-memory-identity] [attp-lw-memory-identity] RESIDUAL / blocked-upstream — waiting-host-contract。承载 spec:attp-linked-worktree-memory-identity(status: parked)。缺口:git linked worktree 中宿主对 transcript 用当前 worktree 身份、对 memory 用【主工作树】身份,两者不同源,且该映射在路径大小写维度上失稳(小写拼写启动时重定向消失,而 git 仍返回规范大小写)。PreToolUse 完整键集无任何 memory root 字段;Git identity 到 memory root 差一层未文档化且有损的 slug 编码(非 ASCII 塌成 '-',NTFS 上非单射);~/.claude.json 用户可编辑、无 slug 字段、同项目五种非规范拼写。证据 docs/validation/attp-guard-allowlist-step0c-worktree-memory-identity.md(终止分支 B ∧ C)。已正式排除:slug 重实现 / 目录扫描 / target 自证 / 注册表推断 / git common-dir 猜 slug / settings 或 receipt 配置额外根。当前守卫在该拓扑下 fail-closed 是正确行为,【不需要生产改动】。重新开启需宿主提供权威 memory identity(见 residual spec 的四条条件)。本条同时是 [attp-hive-rollout] 的解阻依据:A 目标子仓全为独立单工作树 / B rollout 增加 topology preflight / C 宿主提供权威 memory identity;「多数子仓可能不是 worktree」不构成解阻证据。
 - [ ] [0ce0] [verify-hook-runtime-health] P1-B / design-needed: 评估 `mem verify` 是否应把 stale/missing installed hook 纳入总体治理健康状态。实现前必须先冻结 contract：无 `.git/hooks` 环境、npm pack/scaffold、CI checkout、child project 各自是否要求 hook installed/current；不得搭在 hook-status-freshness 小修上顺手实现。
-- [ ] [hook-install-provenance] PREREQUISITE / governance-observability / design-needed — 为 [0ce0] 提供 local-only 的 hook participation provenance。DD#1 已冻结（2026-08-18）：`--no-git` 保持窄义，仅禁止 repository initialization；hook participation 使用独立的 `--no-hooks` 表达。因此当前行为的正确表述是：**scaffold 的 hook 安装是一个未文档化的、独立的 Git side effect，且没有专属 opt-out**；`--no-git` 只管仓库初始化，不是 hook participation 的权威，所以「hook 无视 --no-git」不是不一致、不是兼容性 bug，在既有 repo 里 `--no-git` 仍安装 hook 继续合法。真正的产品缺口是：没有任何 scaffold 级 flag 能提供「用户明确拒绝 hook」的正面证据。provenance taxonomy 冻结为四类：known successful participation / known attempted-but-not-realized participation / known explicit non-participation / legacy-unknown。第三类的生产者至少包括 `scaffold --no-hooks`；**不得**由以下任何一项冒充：`--no-git`、缺 `.git/hooks`、缺 provenance 文件、CI 环境猜测、`templates/cli` 缺失。生命周期规则同时冻结：explicit non-participation **不是永久豁免** —— 之后显式执行 `mem hook install` 必须能 supersede 早先的 `--no-hooks` 意图，否则该 flag 会变成不可逆标签（保存事件历史还是只保存当前 authoritative decision，留给下一层设计）。默认 scaffold 与显式 `mem hook install` 的实际安装尝试必须产生结构化 outcome；`installPostCommitHook` 在 `.git/hooks` 缺失时的静默 `return` 必须变成可观察事实——今天「没有 hook」无法区分「尝试过但 topology 不允许」「装过后被删」「旧项目从未记录」。provenance 属于 host / check-out 的 local runtime state，**不得随 Git clone 传播**（否则 machine A 的安装历史会被 clone 继承到从未安装过的 machine B，制造比现状更危险的假事实）；legacy absence = UNKNOWN，绝不可推导成 not-required；也不得用「当前 hook 存在」反向伪造「历史上安装成功过」。本 prerequisite 只建立事实层，不改变 `mem verify`、dashboard 或任何 hook-health policy。
 <!-- END_BACKLOG -->
 
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [125b9d6] 2026-08-28 HookInstallProvenanceClosure: [hook-install-provenance] CLOSED — removed from the active backlog as stale runtime state. The fact 
 - [6e399ba] 2026-08-18 A8a8DisprovedSpike: [a8a8] DISPROVED / CLOSED — controlled spike on main proved the first two links but falsified the re
 - [f6c1300] 2026-08-18 R011Closure: PR #48 merged f6c1300 (two-parent 84d25f3+f129312, expected-head lock on f129312). R011 stopped bein
 - [94e28d0] 2026-08-15 BacklogResolve: [235a] hook-status-freshness RESOLVED: shipped via PR #47 (merge 3e09455, reviewed head 975a67a, CI
@@ -37,7 +37,6 @@
 - [d7ab3b6] 2026-08-09 SpecPortfolioAgingDispositionRound2: Spec Portfolio 老化处置第二轮 + 治理缺陷登记。PR #41 经普通两父 merge 合入 main@d7ab3b6，PR CI 6/6 全绿（含 containment + rele
 - [186a269] 2026-08-09 CodePLCChildFeedbackDurableClosure: Closed the complete CodePLC child-hive feedback chain. All 8 requested outbox feedback items are che
 - [efe393e] 2026-08-09 PrStateSyncDurableClosure: [pr-state-sync] and [pr-state-sync-postmerge-correction] DURABLE CLOSED. PR #33 merged at 23b6b095c8
-- [364505a] 2026-08-08 BacklogEditCliGapClosure: PR #31 merged by ordinary two-parent merge at main@364505aafcd44747b70d7a228d5edf99a9d71906 with rev
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
