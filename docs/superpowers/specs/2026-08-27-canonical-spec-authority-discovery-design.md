@@ -1702,7 +1702,9 @@ main's own stale statements        not rewritten. main@85f0c25's merge
 
 ```
 nature                    PHASE 1 DESIGN
-design review             disposition recorded in §13
+design review             APPROVED / CLOSED — history in §13
+design content            FROZEN @ 53ffd93
+disposition               PARKED
 implementation            NOT AUTHORIZED
 main mutation             NOT AUTHORIZED — no record is created by this design
 authority relocation      NOT AUTHORIZED and not proposed
@@ -2244,4 +2246,21 @@ this      design review 8: CHANGES_REQUIRED, 1 Important + 2 Minor. All three
           authorizes the relocation (the ruling is not a discovery source),
           and not when the relocation canonicalizes (by then the record must
           already be gone).
+
+terminal  terminal disposition only.
+
+          Independent closure review accepted the Review 8 repairs.
+          Design semantics remain frozen at 53ffd93; this entry changes no
+          model, boundary, protocol or rationale.
+
+          PHASE 1 DESIGN     APPROVED / FROZEN
+          work item          PARKED
+          implementation     NOT AUTHORIZED
+
+          No design reopening and no additional findings review is authorized
+          by this disposition.
+
+          (Marked "terminal" rather than by SHA: an entry cannot carry the
+          hash of the commit that introduces it. §12 carries the design-content
+          freeze SHA, which is the one that matters.)
 ```
