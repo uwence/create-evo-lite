@@ -1745,15 +1745,50 @@ function autoRefreshContext() {
     };
 }
 
-// Extract an explicit plan:<slug> / spec:<slug> reference from a commit message.
-// Matches Conventional-Commit scopes (feat(plan:slug): …), bare tokens, and
-// trailers. Conservative: a message with no such token returns null so a bare
-// snapshot or meta commit never moves focus.
-function extractPlanRefFromMessage(message) {
-    if (!message) return null;
-    const m = String(message).match(/\b(plan|spec):([a-z0-9][a-z0-9-]*)/i);
-    if (!m) return null;
-    return { kind: m[1].toLowerCase(), slug: m[2].toLowerCase(), token: `${m[1].toLowerCase()}:${m[2].toLowerCase()}` };
+// A commit message that NAMES a plan is documentation — explaining a rollback,
+// recording why something is closed, quoting a review. A commit TRAILER is a
+// deliberate act by the author, on its own line, meaning "the current work is
+// now this". Only the trailer is authority.
+//
+//     reference   !=   focus-transfer authorization
+//
+// The old form matched `plan:x` anywhere in the message, so
+// "chore(context): retire the hook-install-provenance backlog entry" silently
+// replaced a hand-written focus that carried a standing ruling. That is the
+// write-side half of [focus-auto-advance-manual-intent-overwrite].
+// Authority has a POSITION, not just a spelling. Matching the token on any line
+// fails the same way matching it anywhere in the message did: the authorization
+// syntax itself becomes impersonatable, and a commit DOCUMENTING the syntax
+// transfers focus. So this reads git's footer, not the message.
+const TRAILER_LINE_RE = /^[A-Za-z][A-Za-z0-9-]*:\s*\S/;
+const FOCUS_TRAILER_RE = /^Evo-Focus:\s*((?:plan|spec):[a-z0-9][a-z0-9-]*)$/i;
+
+// The footer is the LAST blank-line-separated block, and every line in it must be
+// trailer-shaped. A block with prose in it is a paragraph, not a footer — which is
+// what makes "here is an example of the syntax, do not use it" inert. A message
+// with no blank line at all is a bare subject and has no footer.
+function commitFooterLines(message) {
+    const lines = String(message || '').split(/\r?\n/).map(line => line.trimEnd());
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    let start = lines.length;
+    while (start > 0 && lines[start - 1].trim()) start -= 1;
+    if (start === 0) return [];
+    const block = lines.slice(start).map(line => line.trim());
+    return block.every(line => TRAILER_LINE_RE.test(line)) ? block : [];
+}
+
+// Two footers is one question with two answers. Fail closed rather than take the
+// first: this project's own rule is one question, one authority.
+function extractFocusTransferFromMessage(message) {
+    const candidates = commitFooterLines(message)
+        .map(line => line.match(FOCUS_TRAILER_RE))
+        .filter(Boolean);
+    if (candidates.length === 0) return null;
+    if (candidates.length > 1) return { ambiguous: true, count: candidates.length };
+    const token = candidates[0][1].toLowerCase();
+    const kind = token.slice(0, token.indexOf(':'));
+    const slug = token.slice(token.indexOf(':') + 1);
+    return { kind, slug, token };
 }
 
 function readLatestCommitMessage() {
@@ -1766,10 +1801,10 @@ function readLatestCommitMessage() {
     }
 }
 
-// Conservative, commit-evidence-driven focus advance. Only moves BEGIN_FOCUS
-// when the latest commit message explicitly references a known plan/spec, so
-// snapshots and meta commits never disturb focus. Opt out with
-// EVO_LITE_NO_FOCUS_AUTOADVANCE=1.
+// Focus transfer, driven by an explicit authority-bearing act. Moves BEGIN_FOCUS
+// only when the commit carries an "Evo-Focus: plan:<slug>" trailer, and records
+// the resulting owner in the focus itself. A commit that merely names a plan
+// changes nothing. Opt out entirely with EVO_LITE_NO_FOCUS_AUTOADVANCE=1.
 function advanceFocusFromCommit(options = {}) {
     if (process.env.EVO_LITE_NO_FOCUS_AUTOADVANCE === '1') {
         return { status: 'disabled', focusChanged: false };
@@ -1781,8 +1816,9 @@ function advanceFocusFromCommit(options = {}) {
     }
 
     const message = options.commitMessage != null ? options.commitMessage : readLatestCommitMessage();
-    const ref = extractPlanRefFromMessage(message);
-    if (!ref) return { status: 'no-reference', focusChanged: false };
+    const ref = extractFocusTransferFromMessage(message);
+    if (!ref) return { status: 'no-authority', focusChanged: false };
+    if (ref.ambiguous) return { status: 'ambiguous-authority', focusChanged: false, count: ref.count };
 
     const planIR = JSON.parse(fs.readFileSync(planIRPath, 'utf8'));
     let plan = null;
@@ -1806,7 +1842,12 @@ function advanceFocusFromCommit(options = {}) {
     const todoTask = (planIR.tasks || [])
         .filter(t => t.linkedPlan === plan.id && t.status === 'todo')[0];
     const fragment = todoTask ? todoTask.title : 'all tasks implemented';
-    const focusAfter = `${plan.title}: ${fragment}`;
+    // The transfer records WHO owns the focus, so no reader ever has to infer it
+    // back out of the prose. The body keeps its "<plan title>: <task title>"
+    // shape — code-perception resolves focus by exact task title, and the marker
+    // is additive rather than a replacement.
+    const { formatFocusOwner } = require('./planning/gaps');
+    const focusAfter = `${formatFocusOwner(plan.id)}\n${plan.title}: ${fragment}`;
 
     const markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');
     const focusBefore = (readSection(markdown, 'FOCUS') || '').trim();

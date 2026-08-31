@@ -756,10 +756,51 @@ function checkR011(projectRoot, planIR, options = {}, observation = null) {
 
 // --- R012 ---
 
-// Squash to alphanumerics so "Phase 1" (prose) matches "phase1" (slug) and
-// punctuation/spacing differences never break the focus → plan resolution.
-function squashForMatch(value) {
-    return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+// Focus ownership.
+//
+// [focus-auto-advance-manual-intent-overwrite]. Focus ownership is DECLARED,
+// never inferred from prose. A focus legitimately names plans it does not own:
+// history, standing rulings, work deliberately closed. None of that is a claim
+// to be the current work.
+//
+//     reference   !=   focus-transfer authorization
+//     reference   !=   focus ownership
+//
+// The writer (advanceFocusFromCommit) and the reader (R012) both resolve
+// ownership through this one function on purpose. Two independent heuristics
+// is how this defect appeared twice: fixing the writer would otherwise leave
+// the reader free to re-derive ownership its own way tomorrow.
+// Authority has a POSITION, not just a spelling. The declaration is the first
+// non-blank line of the focus and that entire line must be the marker. Searching
+// the whole body would let a focus that quotes the generated syntax as an
+// example be read as claiming it — the same "a reference impersonates authority"
+// defect, this time wearing this contract's own syntax.
+const FOCUS_OWNER_LINE_RE = /^<!--\s*focus-owner:\s*((?:plan|spec):[a-z0-9][a-z0-9-]*)\s*-->$/i;
+const FOCUS_OWNER_ID_RE = /^(?:plan|spec):[a-z0-9][a-z0-9-]*$/;
+
+// The declared owner of a focus, or null when the focus declares none. `null`
+// means "this focus owns no plan", NOT "look harder" — no caller may fall back
+// to scanning the prose. The first non-blank line decides and the scan stops
+// there: a later matching line is body text, not a second chance.
+function parseFocusOwner(focusText) {
+    for (const raw of String(focusText || '').split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        const match = line.match(FOCUS_OWNER_LINE_RE);
+        return match ? match[1].toLowerCase() : null;
+    }
+    return null;
+}
+
+// The only way to mint an ownership declaration. Throws rather than emitting a
+// malformed marker: a marker that cannot be parsed back would silently become
+// an unowned focus, which is the failure this contract exists to prevent.
+function formatFocusOwner(id) {
+    const owner = String(id || '').trim().toLowerCase();
+    if (!FOCUS_OWNER_ID_RE.test(owner)) {
+        throw new Error(`focus owner must be plan:<slug> or spec:<slug>, got: ${id}`);
+    }
+    return `<!-- focus-owner: ${owner} -->`;
 }
 
 function readFocusText(projectRoot) {
@@ -770,26 +811,30 @@ function readFocusText(projectRoot) {
     return m ? m[1].trim() : '';
 }
 
-// R012 — phantom focus: the current focus points at a plan that has not really
-// started (status: draft, or 0 tasks done). The >24h staleness alert only
-// caught this indirectly; this names the plan and its task count directly.
+// R012 — phantom focus: the focus OWNS a plan that has not really started
+// (status: draft, or 0 tasks done). The >24h staleness alert only caught this
+// indirectly; this names the plan and its task count directly.
+//
+// Ownership comes from the declaration, never from prose. The previous version
+// matched the plan id, the squashed slug, or the squashed title anywhere in the
+// focus text, so a focus that merely recorded "plan X is CLOSED, do not reopen"
+// was reported as pointing at plan X. That is the read-side half of
+// [focus-auto-advance-manual-intent-overwrite], and it fired on this repository's
+// own active_context for weeks.
+//
+// A spec: owner matches no plan and yields nothing. The writer always declares
+// the resolved plan, so a spec: owner only arises from a hand-written marker,
+// and inferring a plan from it would be the same guess this rule just removed.
 function checkR012(projectRoot, planIR, options = {}) {
     if (!planIR) return [];
     const focusText = options.focusText != null ? options.focusText : readFocusText(projectRoot);
     if (!focusText) return [];
-    const squashedFocus = squashForMatch(focusText);
-    if (!squashedFocus) return [];
+    const owner = parseFocusOwner(focusText);
+    if (!owner) return [];
 
     const findings = [];
     for (const plan of (planIR.plans || [])) {
-        const slug = String(plan.id || '').replace(/^plan:/, '');
-        const squashedSlug = squashForMatch(slug);
-        const squashedTitle = squashForMatch(plan.title);
-        const referenced =
-            (plan.id && focusText.includes(plan.id)) ||                       // literal plan:<slug>
-            (squashedSlug && squashedFocus.includes(squashedSlug)) ||         // slug words in prose
-            (squashedTitle && squashedFocus.includes(squashedTitle));         // plan title in prose
-        if (!referenced) continue;
+        if (plan.id !== owner) continue;
 
         const planTasks = (planIR.tasks || []).filter(t => t.linkedPlan === plan.id);
         const total = planTasks.length;
@@ -978,6 +1023,10 @@ module.exports = {
     r011ClosureState,
     checkR012,
     checkR013,
+    // Focus ownership. The single resolver shared by the writer and the reader —
+    // see the contract note above before adding a second way to answer this.
+    parseFocusOwner,
+    formatFocusOwner,
     getChangedFiles,
     observeChangedFiles,
     // The ONE git-failure classifier. spec-portfolio imports it rather than
