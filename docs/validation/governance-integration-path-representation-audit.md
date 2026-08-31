@@ -77,13 +77,17 @@ in §6:
 ```text
 718  negative judgements in the two files
 180  keyed on a path or a path collection
- 22  whose evidence is a COMPARISON — the only form in which a
-     representation miss can pass silently
+ 22  whose evidence is a DIRECT comparison
      all 22 inspected individually
 ```
 
-The remaining 158 draw their evidence from a filesystem listing or a call
-counter, where a spelling mismatch cannot manufacture the asserted value.
+The other 158 draw their evidence from a filesystem listing or a call counter.
+Pass 3 did **not** clear them as a class, and they must not be read as cleared:
+a counter can itself be gated by a representation-sensitive comparison, which
+makes it an indirect carrier of exactly the same failure. §7 of this document
+is that case — `fs.markerWrite === 0` is counter evidence, and the counter only
+increments when a `norm()`-ed path comparison matches. It is classified B on a
+site-specific same-origin proof, not because counters are safe.
 
 ## 3. Classification contract
 
@@ -101,17 +105,22 @@ Only **C** would have qualified to request repair authorization.
 ```text
 A   majority
 B   minority
-C   0     across 322 classified sites in passes 1 and 2,
-          and across all 22 comparison-keyed negative judgements in pass 3
+C   0     in the measured domain:
+              322 classified sites (passes 1 and 2)
+            + all 22 directly comparison-keyed negative judgements (pass 3)
 ```
 
 **No C candidates. No repair requested, none justified.**
 
-The quantifier is scoped on purpose. This is not "C = 0 among all conceivable
-path decisions" — no exhaustive AST proof was attempted, and two independent
-misses of this audit's own selection heuristics were found and are recorded
-above. It is: C = 0 across the classified domain, plus C = 0 across the one
-family that can fail *silently*, enumerated without heuristics.
+This is bounded evidence, not a proof. No exhaustive proof was attempted over
+every possible indirect observer or counter dependency, and no AST scan was
+built. Two independent misses of this audit's own selection heuristics were
+found during the work and are recorded above rather than papered over.
+
+The bound is enough for the decision it supports. **No C observed** is what
+makes repair unjustified today; proving that no unknown C exists anywhere in
+the repository was never the standard, and adopting it would be the runaway
+governance this project has already ruled against.
 
 ## 5. Family summary
 
@@ -180,9 +189,9 @@ The assertion is falsifiable and the reparse branch is what carries it.
 nor the filesystem — so the spellings it probes are a deterministic function of
 the test's own input, and host-OS independent.
 
-### Why the domain closes without an exhaustive AST scan
+### Why the directly comparison-keyed negative judgements are covered
 
-The first two controls generalise into the argument that makes pass 3 possible:
+The first two controls generalise into one sound step:
 
 ```text
 a representation miss is SILENT only when the assertion is
@@ -193,13 +202,22 @@ A positive assertion that depends on the match turns red when the key misses.
 An injector that misses lets production succeed, so the awaited error never
 arrives — red. An observer whose array is asserted non-empty — red. The miss
 survives only where the asserted value is the one a miss produces: **empty,
-zero, absent, false**.
+zero, absent, false**. That is why pass 3 enumerates negative judgements rather
+than comparisons, and it is why those 22 were each inspected.
 
-So the C-capable set is not "all path comparisons" but "negative judgements
-whose evidence is a comparison". That set is enumerable without any candidate
-heuristic, it numbers 22 across both files, and all 22 were inspected. This is
-what the scoped quantifier in §4 rests on — the heuristic passes classify, and
-this pass bounds what they could have missed.
+**The step this does NOT license** is concluding that a direct comparison is
+the only thing that can carry a silent miss. It is not. A comparison can gate
+an observer or a counter, and the negative assertion can then read that
+counter — one level of indirection, same failure:
+
+```text
+representation-sensitive comparison
+    → observer / counter never increments
+        → assert counter === 0 passes
+```
+
+Pass 3 clears the direct form only. Anything reached through an intermediate
+observer stands or falls on its own site-specific proof, the way §7 does.
 
 ## 7. Residual observations
 
@@ -239,9 +257,10 @@ proof that the guarded behaviour does not occur
 ## 8. Closure
 
 ```text
-MEASUREMENT COMPLETE
+MEASUREMENT COMPLETE            in the bounded domain of §4, not as a proof
 no path.resolve → realpathSync.native sweep performed or warranted
-no code repair justified
+no code repair justified        because no C was observed, not because
+                                none could exist
 repair NOT AUTHORIZED
 ```
 
