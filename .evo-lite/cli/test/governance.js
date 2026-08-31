@@ -12688,7 +12688,9 @@ Evo-Focus: plan:demo`,
                 focus: 'FOCUS-LINE', focusHash: 'h',
                 activePlan: { id: 'plan:x', status: 'draft', progress: '1/3' }, activeSpec: { id: 'spec:x', status: 'draft' },
                 rules: { dir: '.agents/rules/', required: ['evo-lite'] }, risks: ['r1'], nextAction: 'do x',
-                freshness: { ahead: 0, behind: 0, headSha: 'abc' },
+                contextSnapshot: { headSha: 'abc', ahead: 0, behind: 0 },
+                git: { headSha: 'abc', ahead: 0, behind: 0 },
+                freshness: { inSync: true, headRelation: 'same', countDrift: false },
                 health: { takeover: 'ready', contextStatus: 'configured', architectureStatus: 'configured', activeTaskCount: 3 },
                 verify: { hasAlerts: false, git: 'clean' }, recall: { status: 'hit', hits: [] }, degraded: [],
             };
@@ -12698,14 +12700,16 @@ Evo-Focus: plan:demo`,
             assert.strictEqual(payload.focus.text, 'FOCUS-LINE');
             assert.strictEqual(payload.active.plan.id, 'plan:x');
             assert.strictEqual(payload.active.spec.id, 'spec:x');
-            assert.strictEqual(payload.freshness.headSha, 'abc');
+            assert.strictEqual(payload.contextSnapshot.headSha, 'abc');
+            assert.strictEqual(payload.git.headSha, 'abc');
+            assert.strictEqual(payload.freshness.headRelation, 'same');
             assert.strictEqual(payload.health.takeover, 'ready');
             assert.strictEqual(payload.verify.git, 'clean');
             assert.strictEqual(payload.recall.status, 'hit');
             assert.strictEqual(tp.validateSessionPayload(payload).ok, true, 'full payload passes');
 
             // 完整 schema:缺字段必失败
-            for (const drop of ['active', 'verify', 'health', 'freshness', 'recall', 'degraded']) {
+            for (const drop of ['active', 'verify', 'health', 'contextSnapshot', 'git', 'freshness', 'recall', 'degraded']) {
                 const bad = JSON.parse(JSON.stringify(payload)); delete bad[drop];
                 assert.strictEqual(tp.validateSessionPayload(bad).ok, false, `missing ${drop} must fail`);
             }
@@ -12716,11 +12720,25 @@ Evo-Focus: plan:demo`,
             assert.strictEqual(mutate(p => { p.project = { name: 'x' }; }).ok, false, 'project.root required');
             assert.strictEqual(mutate(p => { p.active = { plan: 'broken', spec: [] }; }).ok, false, 'active.plan/spec must be null or object with id');
             assert.strictEqual(mutate(p => { p.active.plan = { status: 'draft' }; }).ok, false, 'active.plan.id required');
+            // 计数校验属于两个【来源】,不属于关系字段
+            for (const source of ['contextSnapshot', 'git']) {
+                assert.strictEqual(mutate(p => { p[source] = {}; }).ok, false, `${source} keys required`);
+                assert.strictEqual(mutate(p => { p[source].ahead = NaN; }).ok, false, `NaN must not pass ${source}`);
+                assert.strictEqual(mutate(p => { p[source].ahead = -1; }).ok, false, `${source} counts cannot be negative`);
+                assert.strictEqual(mutate(p => { p[source].behind = 1.5; }).ok, false, `${source} counts must be integers`);
+                assert.strictEqual(mutate(p => { p[source].ahead = null; p[source].behind = null; }).ok, true,
+                    `null counts are legal in ${source}`);
+            }
+            // freshness 只描述关系。携带 sha 就是快照又能冒充当前状态 —— 必须被拒。
             assert.strictEqual(mutate(p => { p.freshness = {}; }).ok, false, 'freshness keys required');
-            assert.strictEqual(mutate(p => { p.freshness.ahead = NaN; }).ok, false, 'NaN must not pass freshness');
-            assert.strictEqual(mutate(p => { p.freshness.ahead = -1; }).ok, false, 'commit counts cannot be negative');
-            assert.strictEqual(mutate(p => { p.freshness.behind = 1.5; }).ok, false, 'commit counts must be integers');
-            assert.strictEqual(mutate(p => { p.freshness.ahead = null; p.freshness.behind = null; }).ok, true, 'null counts are legal');
+            assert.strictEqual(mutate(p => { p.freshness.headSha = 'abc'; }).ok, false,
+                'freshness must not carry a sha — that is the misrepresentation this shape removed');
+            assert.strictEqual(mutate(p => { p.freshness.headRelation = 'maybe'; }).ok, false, 'headRelation is an enum');
+            assert.strictEqual(mutate(p => { p.freshness.inSync = 'yes'; }).ok, false, 'inSync is true/false/unknown');
+            assert.strictEqual(mutate(p => { p.freshness.countDrift = 1; }).ok, false, 'countDrift is true/false/unknown');
+            assert.strictEqual(mutate(p => {
+                p.freshness.inSync = 'unknown'; p.freshness.headRelation = 'unknown'; p.freshness.countDrift = 'unknown';
+            }).ok, true, "'unknown' is a legal answer, not a validation failure");
             assert.strictEqual(mutate(p => { p.health.takeover = 'anything'; }).ok, false, 'health.takeover is an enum');
             assert.strictEqual(mutate(p => { p.verify = {}; }).ok, false, 'verify.hasAlerts required');
             assert.strictEqual(mutate(p => { p.recall = {}; }).ok, false, 'recall.status required');
@@ -13011,14 +13029,79 @@ Evo-Focus: plan:demo`,
             const degradedCtx = ts.assembleSessionContext(
                 { host: 'claude-code', sessionId: 's', projectRoot: '/p', sourceEvent: 'x', focus: 'F', focusHash: 'h' },
                 { summary: {}, sessionstart: {}, verify: null, recall: null, planSpec: { plan: null, spec: null },
-                  freshness: { headSha: null, ahead: NaN, behind: null },
+                  contextSnapshot: { headSha: null, ahead: NaN, behind: null },
                   degraded: [{ part: 'verify', reason: 'boom' }, { part: 'recall', reason: 'boom' }] });
             assert.strictEqual(degradedCtx.verify.hasAlerts, true, 'missing verify → conservative hasAlerts=true');
             assert.strictEqual(degradedCtx.recall.status, 'unavailable', 'missing recall → status=unavailable');
-            assert.strictEqual(degradedCtx.freshness.ahead, null, 'NaN normalized to null');
+            assert.strictEqual(degradedCtx.contextSnapshot.ahead, null, 'NaN normalized to null');
+            // No live git supplied at all: the honest answer is unknown, not a
+            // cheerful in-sync.
+            assert.strictEqual(degradedCtx.freshness.inSync, 'unknown',
+                'with no live git to compare against, freshness is unknown — never in-sync by default');
             assert.strictEqual(degradedCtx.health.takeover, 'attention-needed');
             assert.strictEqual(tp.validateSessionPayload(tp.buildTakeoverPayload(degradedCtx)).ok, true,
                 'recoverable degradation still yields a schema-valid payload');
+
+            // [takeover-freshness-snapshot-misrepresentation]
+            //
+            //     snapshot != live state
+            //
+            // BEGIN_META is a snapshot of the last context operation. The payload used
+            // to copy it into a field named `freshness` with no live comparison, so a
+            // takeover agent read a historical headSha as "where the repo is now".
+            // The fixture below is the exact shape main carried: meta at 125b9d6 while
+            // HEAD was 2645fb0, the snapshot an ancestor of live, and the counts stale.
+            const OLD = '125b9d6689d3ddb78a557c1c99893e10341e6065';
+            const NEW = '2645fb02eab9c56828c65b296b9e2a38c8fec6f3';
+            const baseArgs = { host: 'claude-code', sessionId: 's', projectRoot: '/p', sourceEvent: 'x', focus: 'F', focusHash: 'h' };
+            const common = { summary: {}, sessionstart: {}, verify: { hasAlerts: false }, recall: { status: 'hit' },
+                planSpec: { plan: null, spec: null }, degraded: [] };
+
+            const stale = ts.assembleSessionContext(baseArgs, { ...common,
+                contextSnapshot: { headSha: OLD, ahead: 1, behind: 0 },
+                git: { headSha: NEW, ahead: 0, behind: 0 },
+                probeAncestry: () => 'ancestor' });
+            assert.strictEqual(stale.contextSnapshot.headSha, OLD, 'the snapshot is preserved, not refreshed away');
+            assert.strictEqual(stale.git.headSha, NEW, 'live git is carried separately');
+            assert.strictEqual(stale.freshness.headRelation, 'ancestor');
+            assert.strictEqual(stale.freshness.countDrift, true, 'stale ahead/behind is observable');
+            assert.strictEqual(stale.freshness.inSync, false);
+            // The load-bearing one: `freshness` must no longer BE the snapshot. If a
+            // headSha reappears here, the rename game is back and the payload is again
+            // presenting recorded state as current state.
+            assert.ok(!('headSha' in stale.freshness),
+                'freshness must describe the relation, never carry the snapshot sha as if it were live');
+            assert.strictEqual(tp.validateSessionPayload(tp.buildTakeoverPayload(stale)).ok, true,
+                'the stale-but-honest payload is schema-valid');
+
+            // Positive control: without it, "inSync false" could be a constant.
+            const synced = ts.assembleSessionContext(baseArgs, { ...common,
+                contextSnapshot: { headSha: NEW, ahead: 0, behind: 0 },
+                git: { headSha: NEW, ahead: 0, behind: 0 },
+                probeAncestry: () => 'ancestor' });
+            assert.strictEqual(synced.freshness.headRelation, 'same');
+            assert.strictEqual(synced.freshness.countDrift, false);
+            assert.strictEqual(synced.freshness.inSync, true, 'positive control: an in-sync context reports in-sync');
+
+            // A failed probe is NOT evidence of divergence. "在没有 authority 的地方,
+            // 不产生 judgement" — the same rule the [0ce0] contract states.
+            const unprobeable = ts.assembleSessionContext(baseArgs, { ...common,
+                contextSnapshot: { headSha: OLD, ahead: 1, behind: 0 },
+                git: { headSha: NEW, ahead: null, behind: null },
+                probeAncestry: () => 'unknown' });
+            assert.strictEqual(unprobeable.freshness.headRelation, 'unknown',
+                'an unprobeable ancestry is unknown, never diverged');
+            assert.strictEqual(unprobeable.freshness.countDrift, 'unknown',
+                'counts that cannot be compared are unknown, not false');
+            assert.strictEqual(unprobeable.freshness.inSync, 'unknown');
+
+            // And a genuine divergence still reports as divergence.
+            const diverged = ts.assembleSessionContext(baseArgs, { ...common,
+                contextSnapshot: { headSha: OLD, ahead: 1, behind: 0 },
+                git: { headSha: NEW, ahead: 0, behind: 0 },
+                probeAncestry: () => 'not-ancestor' });
+            assert.strictEqual(diverged.freshness.headRelation, 'diverged');
+            assert.strictEqual(diverged.freshness.inSync, false);
 
             // 真实 collector(全新进程内自 initDB,得到真实 verify/recall,不依赖预跑 mem bootstrap)
             const probeScript = `

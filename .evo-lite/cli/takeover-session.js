@@ -35,6 +35,55 @@ function derivePlanSpec(planIr, focusText) {
     return { plan, spec };
 }
 
+// [takeover-freshness-snapshot-misrepresentation]
+//
+//     snapshot != live state
+//
+// BEGIN_META records where the repository stood at the last context operation.
+// It is snapshot authority and is NOT required to self-refresh. What is
+// forbidden is handing that snapshot to a takeover agent under the name
+// `freshness`, with no live comparison — the agent then reads a historical
+// headSha as "where the repo is now". governance-observer already models this
+// correctly (meta and live git are two sources, and it emits
+// CONTEXT_HEAD_NOT_ANCESTOR / CONTEXT_SYNC_COUNT_DRIFT); the takeover payload
+// did not. So the payload now carries both sources separately, and `freshness`
+// describes only the RELATION between them.
+function normalizeGitTriple(raw) {
+    const o = raw && typeof raw === 'object' ? raw : {};
+    return {
+        headSha: typeof o.headSha === 'string' && o.headSha ? o.headSha : null,
+        ahead: Number.isFinite(o.ahead) ? o.ahead : null,
+        behind: Number.isFinite(o.behind) ? o.behind : null,
+    };
+}
+
+// `unknown` is a first-class answer, not a fallback to the pessimistic one. A
+// probe that could not run is not evidence of divergence — "在没有 authority 的
+// 地方,不产生 judgement", the same rule the [0ce0] contract states.
+function compareSnapshotToLive(snapshot, live, probeAncestry) {
+    let headRelation = 'unknown';
+    if (snapshot.headSha && live.headSha) {
+        if (snapshot.headSha === live.headSha) {
+            headRelation = 'same';
+        } else {
+            const probe = typeof probeAncestry === 'function'
+                ? probeAncestry(snapshot.headSha, live.headSha)
+                : 'unknown';
+            if (probe === 'ancestor') headRelation = 'ancestor';
+            else if (probe === 'not-ancestor') headRelation = 'diverged';
+        }
+    }
+    const comparable = snapshot.ahead !== null && snapshot.behind !== null
+        && live.ahead !== null && live.behind !== null;
+    const countDrift = comparable
+        ? (snapshot.ahead !== live.ahead || snapshot.behind !== live.behind)
+        : 'unknown';
+    const inSync = (headRelation === 'unknown' || countDrift === 'unknown')
+        ? 'unknown'
+        : (headRelation === 'same' && countDrift === false);
+    return { inSync, headRelation, countDrift };
+}
+
 // 纯装配:把已取得的部件装配成 SessionTakeoverContext。
 function assembleSessionContext(base, parts) {
     const summary = parts.summary || {};
@@ -46,12 +95,9 @@ function assembleSessionContext(base, parts) {
     const verify = { ...verifyRaw, hasAlerts: typeof verifyRaw.hasAlerts === 'boolean' ? verifyRaw.hasAlerts : true };
     const recallRaw = parts.recall && typeof parts.recall === 'object' ? parts.recall : {};
     const recall = { ...recallRaw, status: typeof recallRaw.status === 'string' ? recallRaw.status : 'unavailable' };
-    const freshnessRaw = parts.freshness && typeof parts.freshness === 'object' ? parts.freshness : {};
-    const freshness = {
-        headSha: typeof freshnessRaw.headSha === 'string' ? freshnessRaw.headSha : null,
-        ahead: Number.isFinite(freshnessRaw.ahead) ? freshnessRaw.ahead : null,
-        behind: Number.isFinite(freshnessRaw.behind) ? freshnessRaw.behind : null,
-    };
+    const contextSnapshot = normalizeGitTriple(parts.contextSnapshot);
+    const git = normalizeGitTriple(parts.git);
+    const freshness = compareSnapshotToLive(contextSnapshot, git, parts.probeAncestry);
     const risks = [...new Set([
         ...((summary.validation && summary.validation.warnings) || []),
         ...(ss.warnings || []),
@@ -70,7 +116,8 @@ function assembleSessionContext(base, parts) {
         projectName: path.basename(base.projectRoot),
         generatedAt: base.generatedAt || null,
         activePlan: planSpec.plan, activeSpec: planSpec.spec,
-        rules: RULES, risks, nextAction, freshness,
+        rules: RULES, risks, nextAction,
+        contextSnapshot, git, freshness,
         health: { takeover, contextStatus: ss.contextStatus || 'unknown',
             architectureStatus: ss.architectureStatus || 'unknown', activeTaskCount: ss.activeTaskCount || 0 },
         verify, recall, degraded,
@@ -112,9 +159,25 @@ async function collectSessionTakeoverContextFull(base) {
     const metaResult = rc.readMetaAnchor(base.projectRoot);
     if (!metaResult.ok) degraded.push({ part: 'meta', reason: metaResult.reason });
 
+    // Live git, read through governance-observer's reader so the takeover payload
+    // and the observer cannot disagree about what the repository state is. An
+    // unreadable git is a degraded fact, not a licence to present the snapshot as
+    // current.
+    let git = { headSha: null, ahead: null, behind: null };
+    let probeAncestry = () => 'unknown';
+    try {
+        const observer = require('./governance-observer');
+        const live = observer.readGitState(base.projectRoot);
+        git = { headSha: live.head || null, ahead: live.ahead, behind: live.behind };
+        probeAncestry = (ancestor, head) => observer.probeAncestry(base.projectRoot, ancestor, head);
+    } catch (e) {
+        degraded.push({ part: 'git', reason: e.message });
+    }
+
     return assembleSessionContext(base, {
         summary, sessionstart, verify, recall, planSpec,
-        freshness: metaResult.meta || { headSha: null, ahead: null, behind: null }, degraded,
+        contextSnapshot: metaResult.meta || { headSha: null, ahead: null, behind: null },
+        git, probeAncestry, degraded,
     });
 }
 

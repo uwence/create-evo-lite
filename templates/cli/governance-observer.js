@@ -146,14 +146,27 @@ function readGitState(projectRoot, options = {}) {
     };
 }
 
-function defaultIsAncestor(projectRoot, ancestor, head) {
-    if (!ancestor || !head) return false;
+// `git merge-base --is-ancestor` exits 0 (yes), 1 (no), and anything else means
+// it could not answer. Collapsing that third case into "no" reports a failed
+// probe as a divergence, so it is returned distinctly and each caller decides
+// what to do with not knowing.
+function probeAncestry(projectRoot, ancestor, head) {
+    if (!ancestor || !head) return 'unknown';
     const result = childProcess.spawnSync('git', ['merge-base', '--is-ancestor', ancestor, head], {
         cwd: projectRoot,
         encoding: 'utf8',
         stdio: 'ignore',
     });
-    return result.status === 0;
+    if (result.error) return 'unknown';
+    if (result.status === 0) return 'ancestor';
+    if (result.status === 1) return 'not-ancestor';
+    return 'unknown';
+}
+
+// Behaviour unchanged for the observer, which has always treated "cannot tell"
+// the same as "not an ancestor" when raising CONTEXT_HEAD_NOT_ANCESTOR.
+function defaultIsAncestor(projectRoot, ancestor, head) {
+    return probeAncestry(projectRoot, ancestor, head) === 'ancestor';
 }
 
 function readActiveContext(projectRoot, options = {}) {
@@ -484,4 +497,9 @@ module.exports = {
     recordGovernanceSnapshot,
     loadGovernanceBudgetConfig,
     buildGovernanceBudget,
+    // The ONE live-git reader and the ONE ancestry probe. The takeover collector
+    // imports these rather than growing a second implementation that could
+    // disagree with the observer about what "in sync" means.
+    readGitState,
+    probeAncestry,
 };
