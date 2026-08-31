@@ -770,15 +770,26 @@ function checkR011(projectRoot, planIR, options = {}, observation = null) {
 // ownership through this one function on purpose. Two independent heuristics
 // is how this defect appeared twice: fixing the writer would otherwise leave
 // the reader free to re-derive ownership its own way tomorrow.
-const FOCUS_OWNER_RE = /<!--\s*focus-owner:\s*((?:plan|spec):[a-z0-9][a-z0-9-]*)\s*-->/i;
+// Authority has a POSITION, not just a spelling. The declaration is the first
+// non-blank line of the focus and that entire line must be the marker. Searching
+// the whole body would let a focus that quotes the generated syntax as an
+// example be read as claiming it — the same "a reference impersonates authority"
+// defect, this time wearing this contract's own syntax.
+const FOCUS_OWNER_LINE_RE = /^<!--\s*focus-owner:\s*((?:plan|spec):[a-z0-9][a-z0-9-]*)\s*-->$/i;
 const FOCUS_OWNER_ID_RE = /^(?:plan|spec):[a-z0-9][a-z0-9-]*$/;
 
 // The declared owner of a focus, or null when the focus declares none. `null`
 // means "this focus owns no plan", NOT "look harder" — no caller may fall back
-// to scanning the prose.
+// to scanning the prose. The first non-blank line decides and the scan stops
+// there: a later matching line is body text, not a second chance.
 function parseFocusOwner(focusText) {
-    const match = String(focusText || '').match(FOCUS_OWNER_RE);
-    return match ? match[1].toLowerCase() : null;
+    for (const raw of String(focusText || '').split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        const match = line.match(FOCUS_OWNER_LINE_RE);
+        return match ? match[1].toLowerCase() : null;
+    }
+    return null;
 }
 
 // The only way to mint an ownership declaration. Throws rather than emitting a

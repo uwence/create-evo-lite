@@ -3409,7 +3409,8 @@ async function runGovernanceTests() {
             };
 
             const { formatFocusOwner } = require(gapsPath);
-            const ownedBy = (id, prose) => `${formatFocusOwner(id)} ${prose}`;
+            // The declaration is a line of its own — the shape the writer emits.
+            const ownedBy = (id, prose) => `${formatFocusOwner(id)}\n${prose}`;
 
             // focus DECLARES the draft/0-done plan as its owner → must warn
             const phantom = checkR012(WORKSPACE_ROOT, planIR, {
@@ -3991,7 +3992,7 @@ async function runGovernanceTests() {
 
             // READ SIDE positive control — an explicit declaration still fires, so the
             // empty result above is a real answer rather than a dead code path.
-            const owned = formatFocusOwner('plan:demo-feature') + ' still working on it';
+            const owned = formatFocusOwner('plan:demo-feature') + '\nstill working on it';
             assert.strictEqual(parseFocusOwner(owned), 'plan:demo-feature',
                 'an explicit declaration is the owner');
             assert.ok(
@@ -3999,6 +4000,23 @@ async function runGovernanceTests() {
                     .some(f => f.rule === 'R012' && f.id === 'R012:plan:demo-feature'),
                 'positive control: R012 must still flag a declared owner that has not started',
             );
+
+            // READ SIDE — the marker must BE the declaration, not a quotation of one.
+            // Ownership is the first non-blank line of the focus; a focus that shows the
+            // generated syntax as an example is describing it, not claiming it. Without
+            // the positional anchor this is the same defect wearing the fix's own syntax.
+            const quotedMarker = [
+                '[0ce0] current work, unrelated to demo',
+                '',
+                'Historical example of the generated marker:',
+                formatFocusOwner('plan:demo-feature'),
+                '',
+                'Do not reopen demo.',
+            ].join('\n');
+            assert.strictEqual(parseFocusOwner(quotedMarker), null,
+                'a marker quoted inside the focus body is a reference, not a declaration');
+            assert.deepStrictEqual(checkR012(WORKSPACE_ROOT, ownershipIR, { focusText: quotedMarker }), [],
+                'R012 must not read a quoted marker as ownership');
 
             // WRITE SIDE — a commit that merely mentions a plan must leave focus alone.
             const ownRuntime = createTempRuntimeRoot('focus-ownership');
@@ -4042,7 +4060,43 @@ ${handWritten}
             assert.strictEqual(focusNow(), handWritten,
                 'the hand-written focus must survive a commit that merely references a plan');
 
-            // WRITE SIDE positive control — an explicit trailer transfers, and records the
+            // WRITE SIDE — quoting the transfer syntax in the body is not a transfer.
+            // Authority lives in the footer, not in any line that happens to match. A
+            // token-anywhere rule and a token-on-any-line rule fail the same way: the
+            // authorization syntax itself becomes impersonatable.
+            const quotedSyntax = ownLoaded.service.advanceFocusFromCommit({
+                commitMessage: [
+                    'docs: explain focus ownership syntax',
+                    '',
+                    'Example:',
+                    '',
+                    'Evo-Focus: plan:demo',
+                    '',
+                    'Do not use this unless you intend to transfer focus.',
+                ].join('\n'),
+            });
+            assert.strictEqual(quotedSyntax.status, 'no-authority',
+                'the exact syntax quoted mid-body is a reference, not authority');
+            assert.strictEqual(quotedSyntax.focusChanged, false, 'quoted syntax must not move focus');
+            assert.strictEqual(focusNow(), handWritten,
+                'the hand-written focus must survive a commit that quotes the transfer syntax');
+
+            // WRITE SIDE — two candidate footers is one question with two answers.
+            // Fail closed; never silently take the first.
+            const ambiguous = ownLoaded.service.advanceFocusFromCommit({
+                commitMessage: [
+                    'feat: two candidates',
+                    '',
+                    'Evo-Focus: plan:demo',
+                    'Evo-Focus: plan:other',
+                ].join('\n'),
+            });
+            assert.strictEqual(ambiguous.status, 'ambiguous-authority',
+                'two transfer footers must fail closed rather than resolve to the first');
+            assert.strictEqual(ambiguous.focusChanged, false, 'an ambiguous transfer must not move focus');
+            assert.strictEqual(focusNow(), handWritten, 'and the focus is left exactly as it was');
+
+            // WRITE SIDE positive control — a real footer transfers, and records the
             // owner so the read side never has to re-infer ownership from prose.
             const transferred = ownLoaded.service.advanceFocusFromCommit({
                 commitMessage: `feat: land the first task

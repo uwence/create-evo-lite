@@ -477,7 +477,8 @@ function formatAdvanceFocusResult(result) {
     switch (result.status) {
         case 'disabled': return 'focus auto-advance disabled (EVO_LITE_NO_FOCUS_AUTOADVANCE=1)';
         case 'no-plan-ir': return 'no plan-ir.json; run `mem plan scan` first';
-        case 'no-authority': return 'commit carries no Evo-Focus trailer; focus unchanged';
+        case 'no-authority': return 'commit footer carries no Evo-Focus trailer; focus unchanged';
+        case 'ambiguous-authority': return `commit footer carries ${result.count} Evo-Focus trailers; refusing to pick one, focus unchanged`;
         case 'no-match': return `Evo-Focus names ${result.ref} but no matching plan is in the IR; focus unchanged`;
         case 'unchanged': return `focus already current for ${result.plan} ("${result.focusAfter}")`;
         case 'ok': return `focus advanced from "${result.focusBefore || '<empty>'}" → "${result.focusAfter}" (${result.plan})`;
@@ -854,7 +855,7 @@ function buildProgram() {
             await runContextCommand('auto-refresh', '', options);
         });
     contextCommand.command('advance-focus')
-        .description('Transfer focus to the plan named by an "Evo-Focus: plan:<slug>" trailer in the latest commit. A commit that merely mentions a plan is documentation, not authority, and is a no-op. Opt out with EVO_LITE_NO_FOCUS_AUTOADVANCE=1.')
+        .description('Transfer focus to the plan named by an "Evo-Focus: plan:<slug>" trailer in the latest commit FOOTER. A commit that mentions a plan — or that quotes this syntax in its body — is documentation, not authority, and is a no-op. Opt out with EVO_LITE_NO_FOCUS_AUTOADVANCE=1.')
         .option('--message <text>', 'Override the commit message to inspect (defaults to HEAD).')
         .option('--json', 'Print JSON output')
         .action(async options => {

@@ -1745,10 +1745,6 @@ function autoRefreshContext() {
     };
 }
 
-// Extract an explicit plan:<slug> / spec:<slug> reference from a commit message.
-// Matches Conventional-Commit scopes (feat(plan:slug): …), bare tokens, and
-// trailers. Conservative: a message with no such token returns null so a bare
-// snapshot or meta commit never moves focus.
 // A commit message that NAMES a plan is documentation — explaining a rollback,
 // recording why something is closed, quoting a review. A commit TRAILER is a
 // deliberate act by the author, on its own line, meaning "the current work is
@@ -1760,13 +1756,36 @@ function autoRefreshContext() {
 // "chore(context): retire the hook-install-provenance backlog entry" silently
 // replaced a hand-written focus that carried a standing ruling. That is the
 // write-side half of [focus-auto-advance-manual-intent-overwrite].
-const FOCUS_TRAILER_RE = /^[ \t]*Evo-Focus:[ \t]*((?:plan|spec):[a-z0-9][a-z0-9-]*)[ \t]*$/im;
+// Authority has a POSITION, not just a spelling. Matching the token on any line
+// fails the same way matching it anywhere in the message did: the authorization
+// syntax itself becomes impersonatable, and a commit DOCUMENTING the syntax
+// transfers focus. So this reads git's footer, not the message.
+const TRAILER_LINE_RE = /^[A-Za-z][A-Za-z0-9-]*:\s*\S/;
+const FOCUS_TRAILER_RE = /^Evo-Focus:\s*((?:plan|spec):[a-z0-9][a-z0-9-]*)$/i;
 
+// The footer is the LAST blank-line-separated block, and every line in it must be
+// trailer-shaped. A block with prose in it is a paragraph, not a footer — which is
+// what makes "here is an example of the syntax, do not use it" inert. A message
+// with no blank line at all is a bare subject and has no footer.
+function commitFooterLines(message) {
+    const lines = String(message || '').split(/\r?\n/).map(line => line.trimEnd());
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    let start = lines.length;
+    while (start > 0 && lines[start - 1].trim()) start -= 1;
+    if (start === 0) return [];
+    const block = lines.slice(start).map(line => line.trim());
+    return block.every(line => TRAILER_LINE_RE.test(line)) ? block : [];
+}
+
+// Two footers is one question with two answers. Fail closed rather than take the
+// first: this project's own rule is one question, one authority.
 function extractFocusTransferFromMessage(message) {
-    if (!message) return null;
-    const match = String(message).match(FOCUS_TRAILER_RE);
-    if (!match) return null;
-    const token = match[1].toLowerCase();
+    const candidates = commitFooterLines(message)
+        .map(line => line.match(FOCUS_TRAILER_RE))
+        .filter(Boolean);
+    if (candidates.length === 0) return null;
+    if (candidates.length > 1) return { ambiguous: true, count: candidates.length };
+    const token = candidates[0][1].toLowerCase();
     const kind = token.slice(0, token.indexOf(':'));
     const slug = token.slice(token.indexOf(':') + 1);
     return { kind, slug, token };
@@ -1799,6 +1818,7 @@ function advanceFocusFromCommit(options = {}) {
     const message = options.commitMessage != null ? options.commitMessage : readLatestCommitMessage();
     const ref = extractFocusTransferFromMessage(message);
     if (!ref) return { status: 'no-authority', focusChanged: false };
+    if (ref.ambiguous) return { status: 'ambiguous-authority', focusChanged: false, count: ref.count };
 
     const planIR = JSON.parse(fs.readFileSync(planIRPath, 'utf8'));
     let plan = null;
