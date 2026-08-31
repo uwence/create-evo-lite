@@ -29,19 +29,61 @@ templates/cli/test/integration.js     4373 lines
 .evo-lite/cli/test/integration.js    hash-identical to its template
 ```
 
-Mirror identity was measured, not assumed:
+Mirror identity was measured, not assumed (`git hash-object`):
 
 ```text
 governance.js    bea4162d9bdcb30795fd0c9b0862e16006451e40   templates == mirror
 integration.js   9b50008929e4b1286a787ba0ad43a9266ea9ece3   templates == mirror
 ```
 
-so one analysis covers all four files.
+so one analysis covers all four files. Helpers were read only to explain an
+identified decision point (`zvec-path-containment.js`, `memory-index.js`,
+`verification/close-apply.js`).
 
-Candidate set: every line matching `require.cache|realpathSync|path.resolve|path.relative`
-— **142 lines, 87 deduplicated shapes**, all classified. Helpers were read only
-to explain an identified decision point (`zvec-path-containment.js`,
-`memory-index.js`).
+### The candidate domain, in three passes
+
+**Pass 1 — keyword seed.** Every line matching
+`require.cache|realpathSync|path.resolve|path.relative`: **142 lines,
+87 deduplicated shapes.** This is an *initial mechanical seed*, **not** a
+complete enumeration of path decisions, and must not be described as one. It
+misses, for example, `if (String(p) === markerPath)` — an unambiguous
+interception key containing none of the four keywords
+(`governance.js:18634`, `19076`, `integration.js:4273`).
+
+**Pass 2 — construct sweep.** Selected by *risk-bearing construct* rather than
+by keyword, over the same four files, excluding every pass-1 line:
+
+```text
+144  path-ish .includes(          40  path-ish equality
+ 44  path-ish .startsWith/.endsWith
+ 31  fsOps injection objects      30  fs monkeypatching
+ 11  Module._load / new Proxy      4  String(x) === comparisons
+---
+304  raw construct hits
+-61  dropped: receiver is output/stdout/message text, not a path
+243  reviewed
+180  actual path decisions  /  149 deduplicated shapes
+```
+
+**Combined classified domain: 322 lines, 236 deduplicated shapes.**
+
+**Pass 3 — negative-judgement backstop.** Passes 1 and 2 both select by
+heuristic, so neither can prove exhaustiveness — and pass 2 was itself caught
+missing `governance.js:2979`, whose path variable is named `planRel` and so
+matches no path-ish token. Pass 3 therefore drops candidate selection entirely
+and enumerates **every** negative judgement in both files, on the argument
+in §6:
+
+```text
+718  negative judgements in the two files
+180  keyed on a path or a path collection
+ 22  whose evidence is a COMPARISON — the only form in which a
+     representation miss can pass silently
+     all 22 inspected individually
+```
+
+The remaining 158 draw their evidence from a filesystem listing or a call
+counter, where a spelling mismatch cannot manufacture the asserted value.
 
 ## 3. Classification contract
 
@@ -59,10 +101,17 @@ Only **C** would have qualified to request repair authorization.
 ```text
 A   majority
 B   minority
-C   0
+C   0     across 322 classified sites in passes 1 and 2,
+          and across all 22 comparison-keyed negative judgements in pass 3
 ```
 
 **No C candidates. No repair requested, none justified.**
+
+The quantifier is scoped on purpose. This is not "C = 0 among all conceivable
+path decisions" — no exhaustive AST proof was attempted, and two independent
+misses of this audit's own selection heuristics were found and are recorded
+above. It is: C = 0 across the classified domain, plus C = 0 across the one
+family that can fail *silently*, enumerated without heuristics.
 
 ## 5. Family summary
 
@@ -76,6 +125,20 @@ C   0
 | same-origin expectations | gov `13237` / `13826` / `14355`-`14361` / `14581` / `14602` | guard's root-containment decision | both sides use `fs.realpathSync.native` | NO by construction | — | A |
 | interception counters | gov `20196` / `20224` / `20225` | "a forbidden write happened 0 times" | both sides pass through the same `norm()` | NO | NO | B |
 | traversal containment | gov `9669` / `9673` / `9762` / `12649` | is a path escape blocked | `startsWith(resolve(dir) + path.sep)` | UNESTABLISHED | NO — a miss turns red | A/B |
+| **pass 2** — fs monkeypatch keys | gov `18634` / `19076`, int `4273`, +10 | inject EBUSY / a false `existsSync` on one path | `String(p) === somePath` | UNESTABLISHED | NO — a miss un-injects the fault and the awaited error never arrives | B |
+| **pass 2** — path equality outside the seed | 30 sites | branch on "is this the file we mean" | `xPath === yPath` | UNESTABLISHED | NO — same-origin operands, misses turn red | A/B |
+| **pass 2** — collection membership | 79 `.includes` / 37 prefix sites | was this file staged, copied, registered | `list.includes('a/b.js')`, `n.startsWith(basename)` | **NO** | NO | A |
+
+The membership family deserves its own note, because a forward-slash literal
+compared against producer output is exactly the shape that *should* be
+representation-fragile on Windows. It is not, and the reason is upstream:
+`verification/close-apply.js:184` normalises at the boundary —
+`path.relative(root, p).replace(/\\/g, '/')` — so the producer emits one
+spelling on every OS. The manifest families are static source constants for the
+same reason. Where the collection is producer-emitted, each negative membership
+assertion additionally sits beside a positive one on the same collection in the
+same run (`gov 16436` guards `16438`, `gov 16629` guards `16631`,
+`int 2187` guards `2189`, `gov 2506` guards `2508`).
 
 Two rows carry the general answer. `realpath stub keys` shows the class is
 already understood in-tree — the divergence was *hit and accommodated*
@@ -116,6 +179,27 @@ The assertion is falsifiable and the reparse branch is what carries it.
 `ancestorChain()` is pure string arithmetic — touching neither the `path` module
 nor the filesystem — so the spellings it probes are a deterministic function of
 the test's own input, and host-OS independent.
+
+### Why the domain closes without an exhaustive AST scan
+
+The first two controls generalise into the argument that makes pass 3 possible:
+
+```text
+a representation miss is SILENT only when the assertion is
+satisfied by the non-matching branch
+```
+
+A positive assertion that depends on the match turns red when the key misses.
+An injector that misses lets production succeed, so the awaited error never
+arrives — red. An observer whose array is asserted non-empty — red. The miss
+survives only where the asserted value is the one a miss produces: **empty,
+zero, absent, false**.
+
+So the C-capable set is not "all path comparisons" but "negative judgements
+whose evidence is a comparison". That set is enumerable without any candidate
+heuristic, it numbers 22 across both files, and all 22 were inspected. This is
+what the scoped quantifier in §4 rests on — the heuristic passes classify, and
+this pass bounds what they could have missed.
 
 ## 7. Residual observations
 
