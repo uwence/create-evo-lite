@@ -3408,20 +3408,27 @@ async function runGovernanceTests() {
                 ],
             };
 
-            // focus references the draft/0-done plan by prose title → must warn
-            const phantom = checkR012(WORKSPACE_ROOT, planIR, { focusText: 'Demo Feature: build the thing' });
+            const { formatFocusOwner } = require(gapsPath);
+            const ownedBy = (id, prose) => `${formatFocusOwner(id)} ${prose}`;
+
+            // focus DECLARES the draft/0-done plan as its owner → must warn
+            const phantom = checkR012(WORKSPACE_ROOT, planIR, {
+                focusText: ownedBy('plan:demo-feature', 'Demo Feature: build the thing'),
+            });
             assert.ok(
                 phantom.some(f => f.rule === 'R012' && f.id === 'R012:plan:demo-feature' && f.level === 'warning'),
                 'R012 must flag focus on a draft/0-done plan',
             );
 
             // focus on a started/done plan → no warning
-            const healthy = checkR012(WORKSPACE_ROOT, planIR, { focusText: 'Shipped Feature: done and verified' });
+            const healthy = checkR012(WORKSPACE_ROOT, planIR, {
+                focusText: ownedBy('plan:shipped-feature', 'Shipped Feature: done and verified'),
+            });
             assert.strictEqual(healthy.length, 0, 'R012 must not flag focus on a started/done plan');
 
-            // focus with no plan reference → no warning
+            // focus that declares no owner → no warning, however much prose it carries
             const idle = checkR012(WORKSPACE_ROOT, planIR, { focusText: 'idle pending next initiative' });
-            assert.strictEqual(idle.length, 0, 'R012 must not fire when focus references no plan');
+            assert.strictEqual(idle.length, 0, 'R012 must not fire when focus declares no owner');
             console.log('✅ T26 R012 focus-health passed');
         }
 
@@ -3904,21 +3911,26 @@ async function runGovernanceTests() {
 
             const loaded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
 
-            // 1) commit referencing a known plan advances focus
-            const advanced = loaded.service.advanceFocusFromCommit({ commitMessage: 'feat(plan:demo): land first task' });
-            assert.strictEqual(advanced.status, 'ok', 'plan-referencing commit should advance focus');
+            // 1) an explicit transfer trailer advances focus
+            const advanced = loaded.service.advanceFocusFromCommit({
+                commitMessage: 'feat: land first task\n\nEvo-Focus: plan:demo',
+            });
+            assert.strictEqual(advanced.status, 'ok', 'an explicit Evo-Focus trailer should advance focus');
             assert.strictEqual(advanced.focusChanged, true, 'focus should change');
-            assert.ok(advanced.focusAfter.startsWith('Demo Plan:'), 'focus should derive from the referenced plan title (saw: ' + advanced.focusAfter + ')');
+            assert.ok(advanced.focusAfter.includes('Demo Plan:'),
+                'focus body should derive from the transferred plan title (saw: ' + advanced.focusAfter + ')');
 
             // 2) bare snapshot/meta commit leaves focus untouched
             const bare = loaded.service.advanceFocusFromCommit({ commitMessage: 'chore(meta): snapshot runtime state' });
-            assert.strictEqual(bare.status, 'no-reference', 'a commit with no plan/spec reference must not move focus');
+            assert.strictEqual(bare.status, 'no-authority', 'a commit carrying no transfer trailer must not move focus');
             assert.strictEqual(bare.focusChanged, false, 'bare commit must not change focus');
 
-            // 3) opt-out env disables it entirely
+            // 3) opt-out env disables it entirely, trailer or not
             process.env.EVO_LITE_NO_FOCUS_AUTOADVANCE = '1';
             try {
-                const off = loaded.service.advanceFocusFromCommit({ commitMessage: 'feat(plan:demo): land first task' });
+                const off = loaded.service.advanceFocusFromCommit({
+                    commitMessage: 'feat: land first task\n\nEvo-Focus: plan:demo',
+                });
                 assert.strictEqual(off.status, 'disabled', 'opt-out env must disable auto-advance');
                 assert.strictEqual(off.focusChanged, false, 'disabled auto-advance must not change focus');
             } finally {
@@ -3929,16 +3941,120 @@ async function runGovernanceTests() {
             const { buildHookBody } = require(path.join(TEMPLATE_CLI_DIR, 'hooks'));
             assert.ok(buildHookBody().includes('context advance-focus'), 'post-commit hook must invoke context advance-focus');
 
-            // 5) a commit message that merely NAMES a parked plan (e.g. explaining a bug
-            // or a rollback in prose) must not auto-advance focus onto it. A parked plan
-            // is explicitly shelved; fabricating a "current work" focus there is a false
-            // signal and immediately trips R012 phantom-focus (regression: a doc/commit
-            // discussing plan:shelved was silently adopted as the new focus).
-            const parked = loaded.service.advanceFocusFromCommit({ commitMessage: 'chore(context): explain why plan:shelved stays parked' });
-            assert.strictEqual(parked.status, 'plan-not-startable', 'a parked-plan reference must not be treated as a focus signal');
-            assert.strictEqual(parked.focusChanged, false, 'a parked-plan reference must not change focus');
+            // 5) even an explicit transfer cannot land on a parked plan. A parked plan is
+            // shelved by decision; fabricating a "current work" focus there is a false
+            // signal and immediately trips R012 phantom-focus. Authority to transfer is
+            // not authority to un-park.
+            const parked = loaded.service.advanceFocusFromCommit({
+                commitMessage: 'chore: park follow-up\n\nEvo-Focus: plan:shelved',
+            });
+            assert.strictEqual(parked.status, 'plan-not-startable', 'a parked plan must not become the focus');
+            assert.strictEqual(parked.focusChanged, false, 'a parked plan must not change focus');
+
+            // 5b) prose naming a plan is documentation, not a transfer — the shape that
+            // actually overwrote a hand-written focus on this repository.
+            const proseOnly = loaded.service.advanceFocusFromCommit({
+                commitMessage: 'chore(context): explain why plan:demo was closed early',
+            });
+            assert.strictEqual(proseOnly.status, 'no-authority', 'a passing mention is not transfer authority');
+            assert.strictEqual(proseOnly.focusChanged, false, 'a passing mention must not change focus');
 
             console.log('✅ T27 commit-evidence focus auto-advance passed');
+        }
+
+        console.log('T-focus-ownership. Testing focus ownership is declared, never inferred from prose ...');
+        {
+            // Both halves of [focus-auto-advance-manual-intent-overwrite]. Neither
+            // scenario is invented. Write side: a commit whose message merely MENTIONED
+            // another plan replaced a hand-written focus that carried a standing ruling.
+            // Read side: R012 reported "focus points at plan:r011-closure-router" while
+            // the focus was [0ce0] and named R011 only in its closed-work history.
+            const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            delete require.cache[gapsPath];
+            const { checkR012, parseFocusOwner, formatFocusOwner } = require(gapsPath);
+
+            const ownershipIR = {
+                specs: [],
+                plans: [
+                    { id: 'plan:demo-feature', title: 'Demo Feature', status: 'draft', sourcePath: 'docs/plans/demo.md' },
+                ],
+                tasks: [{ id: 'plan:demo-feature/task-1', linkedPlan: 'plan:demo-feature', status: 'todo' }],
+            };
+
+            // READ SIDE — naming a plan by id, slug or title is a reference, not ownership.
+            const prose = 'hand-written focus about something else. History: plan:demo-feature '
+                + 'and the Demo Feature work are CLOSED, do not reopen.';
+            assert.strictEqual(parseFocusOwner(prose), null,
+                'prose naming a plan by id, slug or title declares no owner');
+            assert.deepStrictEqual(checkR012(WORKSPACE_ROOT, ownershipIR, { focusText: prose }), [],
+                'R012 must not read a prose reference as focus ownership');
+
+            // READ SIDE positive control — an explicit declaration still fires, so the
+            // empty result above is a real answer rather than a dead code path.
+            const owned = formatFocusOwner('plan:demo-feature') + ' still working on it';
+            assert.strictEqual(parseFocusOwner(owned), 'plan:demo-feature',
+                'an explicit declaration is the owner');
+            assert.ok(
+                checkR012(WORKSPACE_ROOT, ownershipIR, { focusText: owned })
+                    .some(f => f.rule === 'R012' && f.id === 'R012:plan:demo-feature'),
+                'positive control: R012 must still flag a declared owner that has not started',
+            );
+
+            // WRITE SIDE — a commit that merely mentions a plan must leave focus alone.
+            const ownRuntime = createTempRuntimeRoot('focus-ownership');
+            const ownPlanning = path.join(ownRuntime.runtimeRoot, 'generated', 'planning');
+            fs.mkdirSync(ownPlanning, { recursive: true });
+            writeText(path.join(ownPlanning, 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], warnings: [],
+                plans: [{ id: 'plan:demo', title: 'Demo Plan', status: 'draft', taskIds: ['task:demo-1'] }],
+                tasks: [{ id: 'task:demo-1', title: 'First task', status: 'todo', linkedPlan: 'plan:demo' }],
+            }, null, 2));
+            const handWritten = '[0ce0] hand-written focus carrying a standing ruling that must survive';
+            writeText(path.join(ownRuntime.runtimeRoot, 'active_context.md'), `# Active Context
+<!-- BEGIN_META -->
+<!-- END_META -->
+## Focus
+<!-- BEGIN_FOCUS -->
+${handWritten}
+<!-- END_FOCUS -->
+## Backlog
+<!-- BEGIN_BACKLOG -->
+<!-- END_BACKLOG -->
+## Trajectory
+<!-- BEGIN_TRAJECTORY -->
+<!-- END_TRAJECTORY -->
+`);
+            const ownLoaded = await bootstrapRuntime(ownRuntime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+            // Exact-anchor, non-greedy read. Deliberately NOT the sed range shape that
+            // once matched a prose mention of the marker and ran to end of file.
+            const focusNow = () => {
+                const md = fs.readFileSync(path.join(ownRuntime.runtimeRoot, 'active_context.md'), 'utf8');
+                const m = md.match(/<!--\s*BEGIN_FOCUS\s*-->([\s\S]*?)<!--\s*END_FOCUS\s*-->/);
+                return m ? m[1].trim() : '';
+            };
+
+            const mentioned = ownLoaded.service.advanceFocusFromCommit({
+                commitMessage: 'chore(context): explain why plan:demo was closed early',
+            });
+            assert.strictEqual(mentioned.status, 'no-authority',
+                'a passing mention is not focus-transfer authority');
+            assert.strictEqual(mentioned.focusChanged, false, 'a passing mention must not move focus');
+            assert.strictEqual(focusNow(), handWritten,
+                'the hand-written focus must survive a commit that merely references a plan');
+
+            // WRITE SIDE positive control — an explicit trailer transfers, and records the
+            // owner so the read side never has to re-infer ownership from prose.
+            const transferred = ownLoaded.service.advanceFocusFromCommit({
+                commitMessage: `feat: land the first task
+
+Evo-Focus: plan:demo`,
+            });
+            assert.strictEqual(transferred.status, 'ok',
+                'positive control: an explicit trailer transfers focus');
+            assert.strictEqual(transferred.focusChanged, true, 'the trailer must move focus');
+            assert.strictEqual(parseFocusOwner(focusNow()), 'plan:demo',
+                'a transferred focus declares its owner, so ownership is never re-inferred');
+            console.log('✅ T-focus-ownership passed');
         }
 
         console.log('T-precision. Testing per-suite dependsOn breaks the STALE cascade ...');
