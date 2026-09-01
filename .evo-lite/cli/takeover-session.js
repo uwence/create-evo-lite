@@ -57,6 +57,16 @@ function normalizeGitTriple(raw) {
     };
 }
 
+// A meta that FAILED validation carries no snapshot authority. readMetaAnchor
+// deliberately still returns its partial `meta` so a caller can inspect what was
+// wrong — but reading that while ignoring `.ok` lets a rejected meta's leftovers
+// through as recorded facts. That is the "0 authority → unknown" half of the rule,
+// broken at the boundary rather than in the comparison.
+function projectContextSnapshot(metaResult) {
+    const r = metaResult && typeof metaResult === 'object' ? metaResult : {};
+    return r.ok ? normalizeGitTriple(r.meta) : { headSha: null, ahead: null, behind: null };
+}
+
 // readGitState() reports ahead/behind as 0/0 when there is no upstream, or when
 // the upstream probe failed — inside the observer that is an internal default,
 // but projected into the payload as an OBSERVED live fact it is a fabricated
@@ -205,9 +215,9 @@ async function collectSessionTakeoverContextFull(base) {
 
     return assembleSessionContext(base, {
         summary, sessionstart, verify, recall, planSpec,
-        contextSnapshot: metaResult.meta || { headSha: null, ahead: null, behind: null },
+        contextSnapshot: projectContextSnapshot(metaResult),
         git, probeAncestry, degraded,
     });
 }
 
-module.exports = { derivePlanSpec, projectLiveGit, assembleSessionContext, collectSessionTakeoverContextFull };
+module.exports = { derivePlanSpec, projectContextSnapshot, projectLiveGit, assembleSessionContext, collectSessionTakeoverContextFull };
