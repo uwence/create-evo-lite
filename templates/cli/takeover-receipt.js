@@ -151,11 +151,27 @@ function readMetaAnchor(projectRoot) {
     const m = md.match(/<!--\s*BEGIN_META\s*-->([\s\S]*?)<!--\s*END_META\s*-->/);
     if (!m) return { ok: false, reason: 'meta-anchor-malformed', meta: null };
     const block = m[1];
-    // `[ \t]*`, never `\s*`: \s spans newlines, so an EMPTY field ran past the line
-    // break and captured the next line's `> ` quote marker as its value. A freshly
-    // scaffolded active_context has every META field empty, so a brand-new child
-    // project reported its recorded head as ">". An absent value must read as absent.
-    const pick = (key) => { const r = block.match(new RegExp(`${key}:[ \\t]*([^\\s]+)`)); return r ? r[1] : null; };
+    // A META field is a LINE, not a substring. Authority has a structural position:
+    // the canonical field line, `[> ]<name>: <value>`, anchored at both ends. Any
+    // other text that spells the name — prose, a migration note, a historical
+    // example — is a reference, and a reference cannot lend an empty field a value.
+    //
+    //     0 canonical lines   → absent
+    //     1                   → that line's value
+    //     >1                  → conflicting authority, fail closed
+    //
+    // Two earlier attempts stopped short of this: matching the name anywhere in the
+    // block, then merely forbidding the newline crossing. Both still let a reference
+    // impersonate the field. The quote prefix is optional so a hand-written block
+    // without `> ` still parses, but the field must begin its own line either way.
+    const metaLines = block.split(/\r?\n/);
+    const conflicting = new Set();
+    const pick = (key) => {
+        const re = new RegExp(`^[ \\t]*>?[ \\t]*${key}:[ \\t]*(\\S*)[ \\t]*$`);
+        const hits = metaLines.map(line => line.match(re)).filter(Boolean).map(m => m[1]);
+        if (hits.length > 1) { conflicting.add(key); return null; }
+        return hits.length === 1 && hits[0] ? hits[0] : null;
+    };
     const rawAhead = pick('ahead'), rawBehind = pick('behind');
     const toInt = (raw) => {                       // 提交计数:必须是非负整数,否则归一为 null
         if (raw === null) return { ok: false, value: null };
@@ -165,6 +181,12 @@ function readMetaAnchor(projectRoot) {
     const ahead = toInt(rawAhead), behind = toInt(rawBehind);
     const headSha = pick('headSha');
     const meta = { headSha, upstreamSha: pick('upstreamSha'), ahead: ahead.value, behind: behind.value };
+    // One question, one authority. Two canonical lines for the same field is not a
+    // value to choose between; it is a block that cannot be trusted to say what it
+    // records, and it is named rather than folded into the generic invalid reason.
+    if (conflicting.size) {
+        return { ok: false, reason: `meta-fields-conflicting:${[...conflicting].sort().join(',')}`, meta };
+    }
     if (!headSha || !ahead.ok || !behind.ok) {
         return { ok: false, reason: 'meta-fields-invalid', meta }; // meta 仍返回(键齐全、数值为 null)
     }

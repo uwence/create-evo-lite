@@ -12919,6 +12919,38 @@ Evo-Focus: plan:demo`,
             assert.strictEqual(emptyMeta.meta.upstreamSha, null, 'and the same for every other field');
             assert.strictEqual(emptyMeta.meta.ahead, null);
             assert.strictEqual(emptyMeta.meta.behind, null);
+            // A field's value must come from ITS canonical line, not from anywhere in
+            // the block that happens to spell the name. Forbidding only the newline
+            // crossing left the search running forward through the rest of the META,
+            // so prose could still lend an empty field a value — the same
+            // "reference impersonates authority" shape frozen in PR #55, third
+            // occurrence. Authority is a structural position:
+            //
+            //     ^> <field>: <value>$
+            //
+            const decoyEmpty = '<!-- BEGIN_META -->\n> **项目状态**: migrated from an old repo, historical headSha: deadbeef\n> headSha:\n> upstreamSha:\n> ahead: 0\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n';
+            fs.writeFileSync(acFile, decoyEmpty, 'utf8');
+            const decoyed = rc.readMetaAnchor(root);
+            assert.strictEqual(decoyed.meta.headSha, null,
+                'prose naming the field is a reference — an empty canonical field must stay empty');
+            assert.strictEqual(decoyed.ok, false, 'and the meta therefore establishes no authority');
+            assert.strictEqual(decoyed.reason, 'meta-fields-invalid');
+
+            // The canonical line wins over prose that mentions the same field.
+            fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> **项目状态**: old note, headSha: deadbeef\n> headSha: abc123\n> ahead: 0\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const decoyedButSet = rc.readMetaAnchor(root);
+            assert.strictEqual(decoyedButSet.ok, true, 'a real canonical field still establishes authority');
+            assert.strictEqual(decoyedButSet.meta.headSha, 'abc123', 'the canonical line wins, never the prose');
+
+            // Two canonical lines is one question with two answers — fail closed
+            // rather than silently taking the first.
+            fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha: aaa111\n> headSha: bbb222\n> ahead: 0\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const conflicting = rc.readMetaAnchor(root);
+            assert.strictEqual(conflicting.ok, false, 'duplicated canonical field → no authority');
+            assert.ok(/conflicting/.test(conflicting.reason),
+                `duplication must be named, not folded into "invalid" (saw: ${conflicting.reason})`);
+            assert.strictEqual(conflicting.meta.headSha, null, 'and it must not resolve to the first one');
+
             // Positive control: a populated field on the same parser still reads.
             fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha: abc123\n> upstreamSha: def456\n> ahead: 2\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
             const fullMeta = rc.readMetaAnchor(root);
