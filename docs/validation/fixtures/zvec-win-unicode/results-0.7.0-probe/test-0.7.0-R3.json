@@ -1,0 +1,718 @@
+{
+  "binding": "D:\\Data\\ProjectAgent\\create-evo-lite\\.evo-lite\\generated\\zvec070-probe\\node_modules\\@zvec\\zvec\\src\\index.js",
+  "repeats": 3,
+  "round": "R3",
+  "results": [
+    {
+      "round": "R3",
+      "id": "han-dash-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dash-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-dash-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-uscore-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-uscore-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-uscore-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dot-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dot-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-dot-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-plus-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-plus-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-plus-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-tilde-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-tilde-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-tilde-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-space-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-space-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-space-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-none-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-none-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-none-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-paren-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-paren-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-paren-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-bracket-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-bracket-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-bracket-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-amp-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-amp-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-amp-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-hash-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-hash-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-hash-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-at-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-at-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-at-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-bang-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-bang-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-bang-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-comma-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-comma-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-comma-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-semi-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-semi-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-semi-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-eq-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-eq-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-eq-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-pct-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-pct-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-pct-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dollar-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-dollar-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-dollar-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-caret-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-caret-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-caret-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-digit-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-digit-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-digit-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-fw-paren",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-cjk-comma",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-cjk-dot",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-dash-em",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-fw-colon",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-quote",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-fw-digit",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "punct-fw-latin",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-trad",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-rare",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-ext-b",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-radical",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-compat",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "han-long-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-plain",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-dots",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-spaces",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-upper",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R3",
+      "id": "ascii-mixedpunct",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    }
+  ]
+}

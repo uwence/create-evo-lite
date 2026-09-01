@@ -1,0 +1,385 @@
+{
+  "binding": "D:\\Data\\ProjectAgent\\create-evo-lite\\node_modules\\@zvec\\zvec\\src\\index.js",
+  "repeats": 3,
+  "round": "R2",
+  "results": [
+    {
+      "round": "R2",
+      "id": "o1-han-kana-hangul-dash",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": "MATCH"
+    },
+    {
+      "round": "R2",
+      "id": "o2-kana-hangul-dash",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": "MATCH"
+    },
+    {
+      "round": "R2",
+      "id": "o3-hankana-pair-dash",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": "MATCH"
+    },
+    {
+      "round": "R2",
+      "id": "o4-kana-hangul-space",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": "MATCH"
+    },
+    {
+      "round": "R2",
+      "id": "o5-kana-hangul-dot",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": "MATCH"
+    },
+    {
+      "round": "R2",
+      "id": "o6-kana-hangul-uscore",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": "MATCH"
+    },
+    {
+      "round": "R2",
+      "id": "o7-han-pair-dash",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": "MATCH"
+    },
+    {
+      "round": "R2",
+      "id": "o8-han-plain",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": "MATCH"
+    },
+    {
+      "round": "R2",
+      "id": "o9-ascii-plain",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": "MATCH"
+    },
+    {
+      "round": "R2",
+      "id": "s-dash",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "s-uscore",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "s-space",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "s-dot",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "s-plus",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "s-tilde",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "s-none",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "s-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-kana",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-hangul",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-han-cyr",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-han",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-kana",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-hangul",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-ascii",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-kana-cyr",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-han",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-kana",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-hangul",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-ascii",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-hangul-cyr",
+      "verdict": "FAIL_FAST_REPRODUCED",
+      "observed": [
+        "FAIL_FAST_REPRODUCED"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-kana",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-hangul",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-ascii-cyr",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-han",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-kana",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-hangul",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-ascii",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    },
+    {
+      "round": "R2",
+      "id": "p-cyr-cyr",
+      "verdict": "COMPLETED_NO_FAILFAST",
+      "observed": [
+        "COMPLETED_NO_FAILFAST"
+      ],
+      "agreement": null
+    }
+  ]
+}
