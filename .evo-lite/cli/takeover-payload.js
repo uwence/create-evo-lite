@@ -23,6 +23,11 @@ function buildSessionPayload(ctx) {
         rules: ctx.rules,
         risks: ctx.risks,
         nextAction: ctx.nextAction,
+        // Two sources, then the relation between them. `freshness` deliberately
+        // carries no sha: it describes how the recorded snapshot stands against
+        // live git, and never stands in for either.
+        contextSnapshot: ctx.contextSnapshot,
+        git: ctx.git,
         freshness: ctx.freshness,
         health: ctx.health,
         verify: ctx.verify,
@@ -34,6 +39,11 @@ function buildSessionPayload(ctx) {
 const TAKEOVER_HEALTH = new Set(['ready', 'bootstrap-pending', 'attention-needed']);
 // ahead/behind 是提交计数:null 或非负整数(NaN / 负数 / 小数一律非法)
 const countOrNull = (v) => v === null || (Number.isInteger(v) && v >= 0);
+// 三态:true / false / 'unknown'。'unknown' 是一个答案(探测不到),
+// 不是 false 的委婉说法。
+const TRISTATE = new Set([true, false, 'unknown']);
+const HEAD_RELATIONS = new Set(['same', 'ancestor', 'diverged', 'unknown']);
+const FRESHNESS_KEYS = new Set(['inSync', 'headRelation', 'countDrift']);
 
 // active.plan / active.spec:只能是 null 或约定对象(id 必须是非空字符串)
 function badActiveEntry(entry, extraKeys) {
@@ -64,12 +74,29 @@ function validateSessionPayload(payload) {
     if (!isObj(payload.rules) || typeof payload.rules.dir !== 'string' || !Array.isArray(payload.rules.required)
         || payload.rules.required.some(r => typeof r !== 'string')) errors.push('bad-rules');
     if (!Array.isArray(payload.risks) || payload.risks.some(r => typeof r !== 'string')) errors.push('bad-risks');
-    // freshness:规定键齐全,计数必须是非负整数或 null(NaN / 负数 / 小数不得穿过)
+    // contextSnapshot / git:两个来源,同一形状。计数必须是非负整数或 null
+    // (NaN / 负数 / 小数不得穿过)。
+    for (const source of ['contextSnapshot', 'git']) {
+        const value = payload[source];
+        if (!isObj(value)) { errors.push(`bad-${source}`); continue; }
+        for (const k of ['headSha', 'ahead', 'behind']) if (!(k in value)) errors.push(`bad-${source}-${k}`);
+        if (!(value.headSha === null || typeof value.headSha === 'string')) errors.push(`bad-${source}-headSha`);
+        if (!countOrNull(value.ahead) || !countOrNull(value.behind)) errors.push(`bad-${source}-counts`);
+    }
+    // freshness:只描述【关系】。它不得携带 sha —— 一旦携带,快照就又能冒充当前状态,
+    // 而这正是本字段被重新定义的原因。
     if (!isObj(payload.freshness)) errors.push('bad-freshness');
     else {
-        for (const k of ['headSha', 'ahead', 'behind']) if (!(k in payload.freshness)) errors.push(`bad-freshness-${k}`);
-        if (!(payload.freshness.headSha === null || typeof payload.freshness.headSha === 'string')) errors.push('bad-freshness-headSha');
-        if (!countOrNull(payload.freshness.ahead) || !countOrNull(payload.freshness.behind)) errors.push('bad-freshness-counts');
+        // 精确形状,不只是「没有 headSha」。合同是 relationship only ——
+        // 任何搭便车的事实(sha / counts / 别的字段名)都是同一场改名游戏。
+        const extra = Object.keys(payload.freshness).filter(k => !FRESHNESS_KEYS.has(k));
+        if (extra.length) errors.push(`bad-freshness-extra:${extra.sort().join(',')}`);
+        for (const k of FRESHNESS_KEYS) {
+            if (!(k in payload.freshness)) errors.push(`bad-freshness-${k}`);
+        }
+        if (!TRISTATE.has(payload.freshness.inSync)) errors.push('bad-freshness-inSync');
+        if (!HEAD_RELATIONS.has(payload.freshness.headRelation)) errors.push('bad-freshness-headRelation');
+        if (!TRISTATE.has(payload.freshness.countDrift)) errors.push('bad-freshness-countDrift');
     }
     // health.takeover:枚举
     if (!isObj(payload.health) || !TAKEOVER_HEALTH.has(payload.health.takeover)) errors.push('bad-health');

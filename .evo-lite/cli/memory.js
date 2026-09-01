@@ -369,7 +369,9 @@ function formatBootstrapReport(payload) {
         `template_sync: ${verify.templateSync || 'unknown'}`,
         `local_engine: ${verify.localEngine || 'unknown'}`,
         `entity_store: ${verify.entityStore || 'unknown'}`,
-        `freshness: head=${payload.freshness.headSha || 'unknown'} ahead=${payload.freshness.ahead} behind=${payload.freshness.behind}`,
+        `context snapshot: head=${payload.contextSnapshot.headSha || 'unknown'} ahead=${payload.contextSnapshot.ahead} behind=${payload.contextSnapshot.behind}`,
+        `live git: head=${payload.git.headSha || 'unknown'} ahead=${payload.git.ahead} behind=${payload.git.behind}`,
+        `freshness: inSync=${payload.freshness.inSync} head=${payload.freshness.headRelation} countDrift=${payload.freshness.countDrift}`,
         `rules: ${payload.rules.dir} (${payload.rules.required.join(', ')})`,
         `memory_status: ${recall.status || 'no-match'}`,
     ];
