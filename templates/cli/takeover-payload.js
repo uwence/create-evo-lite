@@ -43,6 +43,7 @@ const countOrNull = (v) => v === null || (Number.isInteger(v) && v >= 0);
 // 不是 false 的委婉说法。
 const TRISTATE = new Set([true, false, 'unknown']);
 const HEAD_RELATIONS = new Set(['same', 'ancestor', 'diverged', 'unknown']);
+const FRESHNESS_KEYS = new Set(['inSync', 'headRelation', 'countDrift']);
 
 // active.plan / active.spec:只能是 null 或约定对象(id 必须是非空字符串)
 function badActiveEntry(entry, extraKeys) {
@@ -86,8 +87,11 @@ function validateSessionPayload(payload) {
     // 而这正是本字段被重新定义的原因。
     if (!isObj(payload.freshness)) errors.push('bad-freshness');
     else {
-        if ('headSha' in payload.freshness) errors.push('bad-freshness-carries-sha');
-        for (const k of ['inSync', 'headRelation', 'countDrift']) {
+        // 精确形状,不只是「没有 headSha」。合同是 relationship only ——
+        // 任何搭便车的事实(sha / counts / 别的字段名)都是同一场改名游戏。
+        const extra = Object.keys(payload.freshness).filter(k => !FRESHNESS_KEYS.has(k));
+        if (extra.length) errors.push(`bad-freshness-extra:${extra.sort().join(',')}`);
+        for (const k of FRESHNESS_KEYS) {
             if (!(k in payload.freshness)) errors.push(`bad-freshness-${k}`);
         }
         if (!TRISTATE.has(payload.freshness.inSync)) errors.push('bad-freshness-inSync');

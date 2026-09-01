@@ -57,6 +57,22 @@ function normalizeGitTriple(raw) {
     };
 }
 
+// readGitState() reports ahead/behind as 0/0 when there is no upstream, or when
+// the upstream probe failed — inside the observer that is an internal default,
+// but projected into the payload as an OBSERVED live fact it is a fabricated
+// zero. Counts are facts only when there is an upstream to count against;
+// otherwise they are unobserved, and "probe failure is not evidence of no
+// divergence" is this contract's own rule.
+function projectLiveGit(live) {
+    const o = live && typeof live === 'object' ? live : {};
+    const counted = Boolean(o.upstream);
+    return {
+        headSha: o.head || null,
+        ahead: counted ? o.ahead : null,
+        behind: counted ? o.behind : null,
+    };
+}
+
 // `unknown` is a first-class answer, not a fallback to the pessimistic one. A
 // probe that could not run is not evidence of divergence — "在没有 authority 的
 // 地方,不产生 judgement", the same rule the [0ce0] contract states.
@@ -78,9 +94,23 @@ function compareSnapshotToLive(snapshot, live, probeAncestry) {
     const countDrift = comparable
         ? (snapshot.ahead !== live.ahead || snapshot.behind !== live.behind)
         : 'unknown';
-    const inSync = (headRelation === 'unknown' || countDrift === 'unknown')
-        ? 'unknown'
-        : (headRelation === 'same' && countDrift === false);
+    // FALSE-DOMINANT. The two halves of the rule are symmetric:
+    //
+    //     no authority        → do not invent a judgement
+    //     half the authority  → do not erase the half you have
+    //
+    // `ancestor` / `diverged` only arise once both shas are known AND different,
+    // so either already proves "not the same state"; an unobservable count cannot
+    // walk that back into `unknown`. A real count mismatch settles it the same way
+    // even when ancestry could not be probed.
+    let inSync;
+    if (headRelation === 'ancestor' || headRelation === 'diverged' || countDrift === true) {
+        inSync = false;
+    } else if (headRelation === 'same' && countDrift === false) {
+        inSync = true;
+    } else {
+        inSync = 'unknown';
+    }
     return { inSync, headRelation, countDrift };
 }
 
@@ -167,8 +197,7 @@ async function collectSessionTakeoverContextFull(base) {
     let probeAncestry = () => 'unknown';
     try {
         const observer = require('./governance-observer');
-        const live = observer.readGitState(base.projectRoot);
-        git = { headSha: live.head || null, ahead: live.ahead, behind: live.behind };
+        git = projectLiveGit(observer.readGitState(base.projectRoot));
         probeAncestry = (ancestor, head) => observer.probeAncestry(base.projectRoot, ancestor, head);
     } catch (e) {
         degraded.push({ part: 'git', reason: e.message });
@@ -181,4 +210,4 @@ async function collectSessionTakeoverContextFull(base) {
     });
 }
 
-module.exports = { derivePlanSpec, assembleSessionContext, collectSessionTakeoverContextFull };
+module.exports = { derivePlanSpec, projectLiveGit, assembleSessionContext, collectSessionTakeoverContextFull };

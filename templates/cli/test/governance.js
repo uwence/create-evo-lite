@@ -12733,6 +12733,14 @@ Evo-Focus: plan:demo`,
             assert.strictEqual(mutate(p => { p.freshness = {}; }).ok, false, 'freshness keys required');
             assert.strictEqual(mutate(p => { p.freshness.headSha = 'abc'; }).ok, false,
                 'freshness must not carry a sha — that is the misrepresentation this shape removed');
+            // The contract is "relationship only", not "no headSha". Anything else
+            // smuggled in here is the same rename game with a different field.
+            assert.strictEqual(mutate(p => { p.freshness.ahead = 0; }).ok, false,
+                'freshness must not carry counts either');
+            assert.strictEqual(mutate(p => { p.freshness.behind = 0; }).ok, false,
+                'freshness must not carry counts either');
+            assert.strictEqual(mutate(p => { p.freshness.foo = 1; }).ok, false,
+                'freshness is an exact shape: no extra facts may ride along');
             assert.strictEqual(mutate(p => { p.freshness.headRelation = 'maybe'; }).ok, false, 'headRelation is an enum');
             assert.strictEqual(mutate(p => { p.freshness.inSync = 'yes'; }).ok, false, 'inSync is true/false/unknown');
             assert.strictEqual(mutate(p => { p.freshness.countDrift = 1; }).ok, false, 'countDrift is true/false/unknown');
@@ -13102,6 +13110,68 @@ Evo-Focus: plan:demo`,
                 probeAncestry: () => 'not-ancestor' });
             assert.strictEqual(diverged.freshness.headRelation, 'diverged');
             assert.strictEqual(diverged.freshness.inSync, false);
+
+            // inSync is FALSE-DOMINANT. Losing one half of the authority must not
+            // erase a contradiction the other half already established:
+            //
+            //     no authority        → do not invent a judgement
+            //     half the authority  → do not erase the half you have
+            //
+            // `ancestor` only arises when the two shas are known and different, so it
+            // is already proof of "not the same state"; an unobservable count cannot
+            // walk that back. Symmetrically a real count mismatch settles it even when
+            // ancestry is unknown.
+            const relate = (headRelation, snapshotCounts, liveCounts) => ts.assembleSessionContext(baseArgs, { ...common,
+                contextSnapshot: { headSha: OLD, ...snapshotCounts },
+                git: { headSha: headRelation === 'same' ? OLD : NEW, ...liveCounts },
+                probeAncestry: () => ({ ancestor: 'ancestor', diverged: 'not-ancestor', unknown: 'unknown' })[headRelation],
+            }).freshness;
+            const KNOWN = { ahead: 1, behind: 0 };
+            const DRIFTED = { ahead: 0, behind: 0 };
+            const BLIND = { ahead: null, behind: null };
+            for (const [label, rel, snap, live, expected] of [
+                ['same + false',      'same',     KNOWN, KNOWN,   true],
+                ['same + true',       'same',     KNOWN, DRIFTED, false],
+                ['ancestor + unknown','ancestor', KNOWN, BLIND,   false],
+                ['diverged + unknown','diverged', KNOWN, BLIND,   false],
+                ['unknown + true',    'unknown',  KNOWN, DRIFTED, false],
+                ['same + unknown',    'same',     KNOWN, BLIND,   'unknown'],
+                ['unknown + false',   'unknown',  KNOWN, KNOWN,   'unknown'],
+                ['unknown + unknown', 'unknown',  BLIND, BLIND,   'unknown'],
+            ]) {
+                assert.strictEqual(relate(rel, snap, live).inSync, expected, `inSync truth table: ${label}`);
+            }
+
+            // Live counts are only facts when there is an upstream to count against.
+            // readGitState() reports 0/0 when the upstream probe fails — inside the
+            // observer that is an internal default, but projected into the payload as
+            // an OBSERVED live fact it is a fabricated zero, and "probe failure is not
+            // evidence of no divergence" is this contract's own rule.
+            assert.deepStrictEqual(
+                ts.projectLiveGit({ head: 'abc', upstream: 'origin/main', ahead: 2, behind: 1 }),
+                { headSha: 'abc', ahead: 2, behind: 1 },
+                'with an upstream, counts are observed facts');
+            assert.deepStrictEqual(
+                ts.projectLiveGit({ head: 'abc', upstream: null, ahead: 0, behind: 0 }),
+                { headSha: 'abc', ahead: null, behind: null },
+                'without an upstream, 0/0 is not an observation and must not be projected as one');
+
+            // The two blockers meet here: no upstream must not manufacture in-sync,
+            // and must not erase an ancestry that is already known.
+            const noUpstreamSame = ts.assembleSessionContext(baseArgs, { ...common,
+                contextSnapshot: { headSha: OLD, ahead: 0, behind: 0 },
+                git: ts.projectLiveGit({ head: OLD, upstream: null, ahead: 0, behind: 0 }),
+                probeAncestry: () => 'ancestor' }).freshness;
+            assert.strictEqual(noUpstreamSame.countDrift, 'unknown', 'no upstream → counts unknown, not equal');
+            assert.strictEqual(noUpstreamSame.inSync, 'unknown', 'no upstream must not manufacture in-sync');
+
+            const noUpstreamAncestor = ts.assembleSessionContext(baseArgs, { ...common,
+                contextSnapshot: { headSha: OLD, ahead: 1, behind: 0 },
+                git: ts.projectLiveGit({ head: NEW, upstream: null, ahead: 0, behind: 0 }),
+                probeAncestry: () => 'ancestor' }).freshness;
+            assert.strictEqual(noUpstreamAncestor.countDrift, 'unknown');
+            assert.strictEqual(noUpstreamAncestor.inSync, false,
+                'an established ancestry survives losing the count authority');
 
             // 真实 collector(全新进程内自 initDB,得到真实 verify/recall,不依赖预跑 mem bootstrap)
             const probeScript = `
