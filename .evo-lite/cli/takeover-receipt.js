@@ -151,7 +151,11 @@ function readMetaAnchor(projectRoot) {
     const m = md.match(/<!--\s*BEGIN_META\s*-->([\s\S]*?)<!--\s*END_META\s*-->/);
     if (!m) return { ok: false, reason: 'meta-anchor-malformed', meta: null };
     const block = m[1];
-    const pick = (key) => { const r = block.match(new RegExp(`${key}:\\s*([^\\s]+)`)); return r ? r[1] : null; };
+    // `[ \t]*`, never `\s*`: \s spans newlines, so an EMPTY field ran past the line
+    // break and captured the next line's `> ` quote marker as its value. A freshly
+    // scaffolded active_context has every META field empty, so a brand-new child
+    // project reported its recorded head as ">". An absent value must read as absent.
+    const pick = (key) => { const r = block.match(new RegExp(`${key}:[ \\t]*([^\\s]+)`)); return r ? r[1] : null; };
     const rawAhead = pick('ahead'), rawBehind = pick('behind');
     const toInt = (raw) => {                       // 提交计数:必须是非负整数,否则归一为 null
         if (raw === null) return { ok: false, value: null };

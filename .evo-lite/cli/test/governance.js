@@ -12903,6 +12903,29 @@ Evo-Focus: plan:demo`,
             fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha: abc\n> ahead: -3\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
             assert.strictEqual(rc.readMetaAnchor(root).ok, false, 'negative commit count → not ok');
             assert.strictEqual(rc.readMetaAnchor(root).meta.ahead, null, 'negative count normalized to null');
+
+            // The freshly scaffolded shape, verbatim from templates/active_context.md:
+            // every META field present but EMPTY. The field matcher used `\s*`, which
+            // spans newlines, so an empty `headSha:` swallowed the next line's `>`
+            // quote marker and reported the sha as ">". A takeover of a brand-new child
+            // project printed `context snapshot: head=>` — observed on a real
+            // deployment, never in this repo, whose META fields are populated.
+            fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha:\n> upstreamSha:\n> ahead:\n> behind:\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const emptyMeta = rc.readMetaAnchor(root);
+            assert.strictEqual(emptyMeta.ok, false, 'empty META fields → not ok');
+            assert.strictEqual(emptyMeta.reason, 'meta-fields-invalid');
+            assert.strictEqual(emptyMeta.meta.headSha, null,
+                'an empty field is empty — it must never swallow the next line to invent a value');
+            assert.strictEqual(emptyMeta.meta.upstreamSha, null, 'and the same for every other field');
+            assert.strictEqual(emptyMeta.meta.ahead, null);
+            assert.strictEqual(emptyMeta.meta.behind, null);
+            // Positive control: a populated field on the same parser still reads.
+            fs.writeFileSync(acFile, '<!-- BEGIN_META -->\n> headSha: abc123\n> upstreamSha: def456\n> ahead: 2\n> behind: 0\n<!-- END_META -->\n<!-- BEGIN_FOCUS -->\nF\n<!-- END_FOCUS -->\n', 'utf8');
+            const fullMeta = rc.readMetaAnchor(root);
+            assert.strictEqual(fullMeta.ok, true, 'positive control: a populated META is still read');
+            assert.strictEqual(fullMeta.meta.headSha, 'abc123');
+            assert.strictEqual(fullMeta.meta.upstreamSha, 'def456');
+
             fs.writeFileSync(acFile, saved, 'utf8');
 
             rc.publishReceipt(root, { schemaVersion: 1, host: 'claude-code', sessionId: 's', projectRoot: canon, state: 'committed', focusHash: rc.readFocusAnchor(root).hash, sourceEvent: 'x' });
@@ -13155,6 +13178,37 @@ Evo-Focus: plan:demo`,
                 ts.projectLiveGit({ head: 'abc', upstream: null, ahead: 0, behind: 0 }),
                 { headSha: 'abc', ahead: null, behind: null },
                 'without an upstream, 0/0 is not an observation and must not be projected as one');
+
+            // A meta that FAILED validation carries no snapshot authority. Reading
+            // `metaResult.meta` while ignoring `metaResult.ok` let a rejected meta's
+            // leftovers through as recorded facts — the "0 authority → unknown" half of
+            // the rule, broken at the collector boundary rather than in the comparison.
+            assert.deepStrictEqual(
+                ts.projectContextSnapshot({ ok: false, reason: 'meta-fields-invalid',
+                    meta: { headSha: '>', upstreamSha: null, ahead: null, behind: null } }),
+                { headSha: null, ahead: null, behind: null },
+                'a meta that failed validation contributes no snapshot, not its leftovers');
+            assert.deepStrictEqual(
+                ts.projectContextSnapshot({ ok: true, meta: { headSha: 'abc', ahead: 1, behind: 0 } }),
+                { headSha: 'abc', ahead: 1, behind: 0 },
+                'positive control: an established meta is the snapshot');
+            assert.deepStrictEqual(
+                ts.projectContextSnapshot(null),
+                { headSha: null, ahead: null, behind: null },
+                'no meta result at all is also no authority');
+
+            // End to end, in the shape a freshly scaffolded child project produces:
+            // invalid meta, live git readable → nothing is claimed about the snapshot.
+            const freshChild = ts.assembleSessionContext(baseArgs, { ...common,
+                contextSnapshot: ts.projectContextSnapshot({ ok: false, reason: 'meta-fields-invalid',
+                    meta: { headSha: '>', ahead: null, behind: null } }),
+                git: ts.projectLiveGit({ head: NEW, upstream: null, ahead: 0, behind: 0 }),
+                probeAncestry: () => 'unknown' });
+            assert.strictEqual(freshChild.contextSnapshot.headSha, null,
+                'a brand-new child must not report ">" as its recorded head');
+            assert.strictEqual(freshChild.git.headSha, NEW, 'live git is still observed');
+            assert.strictEqual(freshChild.freshness.headRelation, 'unknown');
+            assert.strictEqual(freshChild.freshness.inSync, 'unknown');
 
             // The two blockers meet here: no upstream must not manufacture in-sync,
             // and must not erase an ancestry that is already known.
