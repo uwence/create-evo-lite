@@ -136,7 +136,8 @@ tree/runtime delta:  package.json 一行 + package-lock.json 的 @zvec/zvec 条�
                      (version / resolved / integrity)。
                      运行时可观测面:本仓 node_modules/@zvec/zvec/package.json 的 version。
 
-required authority:  A0 product-support scope(给出 S_PRODUCT)
+required authority:  A0 product-support scope
+                        (给出 S_PRODUCT · V_PRODUCT · coverage justification)
                      A1 install / load compatibility(母体安装形态)
                      A3 real-adapter contract conformance
                      A7 upgrade-benefit
@@ -219,7 +220,8 @@ tree/runtime delta:  三处必须同步,否则 T18e 变红:
                        templates/runtime/package-lock.json
                      运行时可观测面:新建项目的 .evo-lite/package.json 与其 node_modules。
 
-required authority:  A0 product-support scope(给出 S_PRODUCT)
+required authority:  A0 product-support scope
+                        (给出 S_PRODUCT · V_PRODUCT · coverage justification)
                      A2 scaffolded-runtime install compatibility
                      A3 real-adapter contract conformance
                      A8 scaffold-runtime zvec-availability policy
@@ -308,7 +310,8 @@ tree/runtime delta:  package.json 中该条目所属的键名,以及 package-loc
                      (dependency packaging / runtime availability / engine fallback
                      semantics)粘在一起,并会与 D5 直接相撞。冻结后的 D3 与 D5 正交。
 
-required authority:  A0 product-support scope(给出 S_PRODUCT)
+required authority:  A0 product-support scope
+                        (给出 S_PRODUCT · V_PRODUCT · coverage justification)
                      A4 published-package installability under required semantics
                      A5 product install-policy(与本节点 manifest-only 主语等宽)
                      定义见 §5。
@@ -853,7 +856,10 @@ S_PRODUCT  = 产品承诺支持的环境范围。
 
 `engines.node >= 20` 在本 UDR 中只承担 **Node floor contract**;两个作用域都不由它给出。
 
-A1 / A2 / A4 与 D1 / D2 / D3 的 GREEN 一律引用 **S_PRODUCT**,并受 A0 的三条规则约束。
+A1 / A2 / A4 与 D1 / D2 / D3 的 GREEN 一律引用 **V_PRODUCT**;
+**V_PRODUCT 对 S_PRODUCT 的代表性只由 A0 的 coverage justification 建立。**
+(RED 是例外,且是刻意的:它绑定 S_PRODUCT —— 全称证明需要有限分区,
+存在反例不需要,见 D1 的 RED 前言。)
 
 ```text
 A0  product-support scope authority
