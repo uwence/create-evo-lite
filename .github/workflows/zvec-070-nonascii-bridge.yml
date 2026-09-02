@@ -1,0 +1,83 @@
+name: zvec-0.7.0 non-ASCII adapter bridge (measurement)
+
+# Step 2C. The narrow bridge between two pieces of evidence that already exist
+# but have never been joined:
+#
+#   non-ASCII path : 0.6.0 crashes; 0.7.0 did not reproduce the trigger set
+#   ASCII path     : 0.7.0 satisfies the real adapter contract, 19/19
+#
+# Question: does the REAL adapter contract still hold on a non-ASCII collection
+# path under 0.7.0?
+#
+# Windows only, on purpose. The fault class is a Windows non-ASCII path fault;
+# adding Linux cells would widen the matrix without addressing the gap.
+#
+# NOT release-gate, gates nothing. A satisfied bridge authorizes no pin change,
+# no RUNTIME_DEPENDENCIES change, no optional -> mandatory move, no default
+# flip, no containment relaxation and no release decision.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [measure/zvec-070-nonascii-bridge]
+
+jobs:
+  cell:
+    name: non-ASCII adapter bridge on ${{ matrix.os }} / node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Root deps
+        run: npm ci
+
+      - name: Runtime deps (better-sqlite3 for the adapter's ./db)
+        shell: bash
+        run: |
+          cp templates/runtime/package.json templates/runtime/package-lock.json .evo-lite/
+          npm ci --prefix .evo-lite
+
+      # Both versions, in separate trees. 0.6.0 is the control: it must die on
+      # this path, or the path is not a trigger and the bridge proves nothing.
+      - name: Install 0.7.0 (subject) and 0.6.0 (control)
+        shell: bash
+        run: |
+          mkdir -p probe7 probe6
+          cd probe7
+          printf '{"name":"zvec070-subject","private":true,"version":"1.0.0"}\n' > package.json
+          npm install @zvec/zvec@0.7.0 --no-audit --no-fund
+          cd ../probe6
+          printf '{"name":"zvec060-control","private":true,"version":"1.0.0"}\n' > package.json
+          npm install @zvec/zvec@0.6.0 --no-audit --no-fund
+
+      - name: Bridge — 0.6.0 control must die, then 0.7.0 must satisfy the contract
+        shell: bash
+        run: |
+          mkdir -p bridge-root
+          node docs/validation/fixtures/zvec-070-adapter-contract/bridge-runner.js \
+            --cell "${{ matrix.os }}/node${{ matrix.node }}" \
+            --root-base "$PWD/bridge-root" \
+            --zvec-entry "$PWD/probe7/node_modules/@zvec/zvec/src/index.js" \
+            --control-entry "$PWD/probe6/node_modules/@zvec/zvec/src/index.js" \
+            --adapter "$PWD/.evo-lite/cli/memory-index-zvec.js" \
+            --expect-blob d3ffe05d3609879f414d1621fdf8fe81434e3c4c \
+            --out "$PWD/bridge-cell.json"
+
+      # A missing record is itself a measurement failure, not a warning.
+      - name: upload cell record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zvec070-bridge-${{ matrix.os }}-node${{ matrix.node }}
+          path: bridge-cell.json
+          if-no-files-found: error

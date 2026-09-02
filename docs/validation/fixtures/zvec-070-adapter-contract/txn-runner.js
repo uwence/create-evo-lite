@@ -45,38 +45,10 @@ if (!EXPECT_BLOB || !/^[0-9a-f]{40}$/.test(EXPECT_BLOB)) {
     process.exit(2);
 }
 
-// The exact contract this apparatus claims to check. Frozen as a SET, not a
-// count: a count still passes if one check is duplicated and another deleted.
-// "every existing check is green" is not "every check that should exist ran" —
-// the same evidence-completeness hole as `every()` over an empty array.
-const EXPECTED_CHECKS = {
-    A: [
-        'upsert returns numeric id',
-        'ids are distinct and ascending',
-    ],
-    B: [
-        'write survives close + reopen in a new process',
-        'list is ordered by numeric id',
-        'list carries content/namespace/timestamp',
-        'fts query returns the expected row',
-        'fts match_source is zvec-fts',
-        'fts row has score and snippet',
-        'colon query returns the expected row',
-        'colon query falls back to zvec-match',
-        'scope filter excludes the out-of-scope row',
-        'scope filter keeps the in-scope row (positive control)',
-        'stats counts both docs',
-        'stats first/last timestamps',
-        'stats namespaces reports per-namespace chunks',
-        'delete reports changes = 1',
-    ],
-    C: [
-        'deletion survives reopen',
-        'survivor still present',
-        'survivor still queryable after reopen',
-    ],
-};
-
+// The frozen check set now lives in expected-checks.js, shared with the
+// non-ASCII bridge runner. Two copies of a frozen set are two sets that can
+// drift, and both files would still report their own contents as complete.
+const { EXPECTED_CHECKS } = require('./expected-checks');
 // Windows records paths with whatever casing the caller used, and a symlinked
 // checkout resolves differently again; compare physical identity, not spelling.
 const canon = (p) => {
