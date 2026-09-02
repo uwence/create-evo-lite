@@ -1,5 +1,5 @@
 {
-  "binding": "D:\\Data\\ProjectAgent\\create-evo-lite\\.evo-lite\\generated\\zvec070-probe\\node_modules\\@zvec\\zvec\\src\\index.js",
+  "binding": "D:\\Data\\ProjectAgent\\create-evo-lite\\node_modules\\@zvec\\zvec\\src\\index.js",
   "repeats": 3,
   "round": "R3",
   "positionsExercised": [
@@ -5118,9 +5118,9 @@
     {
       "round": "R3",
       "id": "han-rare",
-      "verdict": "COMPLETED_NO_FAILFAST",
+      "verdict": "FAIL_FAST_REPRODUCED",
       "observed": [
-        "COMPLETED_NO_FAILFAST"
+        "FAIL_FAST_REPRODUCED"
       ],
       "agreement": null,
       "runs": [
@@ -5128,73 +5128,58 @@
           "position": "root",
           "attempt": 1,
           "colPathLen": 137,
-          "status": 0,
+          "status": 3221226505,
           "signal": null,
           "timedOut": false,
-          "lastStage": "child_done",
+          "lastStage": "create_or_open",
           "stages": [
             "child_start",
             "binding_loaded",
             "schema_built",
-            "create_or_open",
-            "insert",
-            "optimize",
-            "query",
-            "close",
-            "child_done"
+            "create_or_open"
           ],
-          "verdict": "COMPLETED_NO_FAILFAST"
+          "verdict": "FAIL_FAST_REPRODUCED"
         },
         {
           "position": "root",
           "attempt": 2,
           "colPathLen": 137,
-          "status": 0,
+          "status": 3221226505,
           "signal": null,
           "timedOut": false,
-          "lastStage": "child_done",
+          "lastStage": "create_or_open",
           "stages": [
             "child_start",
             "binding_loaded",
             "schema_built",
-            "create_or_open",
-            "insert",
-            "optimize",
-            "query",
-            "close",
-            "child_done"
+            "create_or_open"
           ],
-          "verdict": "COMPLETED_NO_FAILFAST"
+          "verdict": "FAIL_FAST_REPRODUCED"
         },
         {
           "position": "root",
           "attempt": 3,
           "colPathLen": 137,
-          "status": 0,
+          "status": 3221226505,
           "signal": null,
           "timedOut": false,
-          "lastStage": "child_done",
+          "lastStage": "create_or_open",
           "stages": [
             "child_start",
             "binding_loaded",
             "schema_built",
-            "create_or_open",
-            "insert",
-            "optimize",
-            "query",
-            "close",
-            "child_done"
+            "create_or_open"
           ],
-          "verdict": "COMPLETED_NO_FAILFAST"
+          "verdict": "FAIL_FAST_REPRODUCED"
         }
       ]
     },
     {
       "round": "R3",
       "id": "han-ext-b",
-      "verdict": "COMPLETED_NO_FAILFAST",
+      "verdict": "FAIL_FAST_REPRODUCED",
       "observed": [
-        "COMPLETED_NO_FAILFAST"
+        "FAIL_FAST_REPRODUCED"
       ],
       "agreement": null,
       "runs": [
@@ -5202,64 +5187,49 @@
           "position": "root",
           "attempt": 1,
           "colPathLen": 139,
-          "status": 0,
+          "status": 3221226505,
           "signal": null,
           "timedOut": false,
-          "lastStage": "child_done",
+          "lastStage": "create_or_open",
           "stages": [
             "child_start",
             "binding_loaded",
             "schema_built",
-            "create_or_open",
-            "insert",
-            "optimize",
-            "query",
-            "close",
-            "child_done"
+            "create_or_open"
           ],
-          "verdict": "COMPLETED_NO_FAILFAST"
+          "verdict": "FAIL_FAST_REPRODUCED"
         },
         {
           "position": "root",
           "attempt": 2,
           "colPathLen": 139,
-          "status": 0,
+          "status": 3221226505,
           "signal": null,
           "timedOut": false,
-          "lastStage": "child_done",
+          "lastStage": "create_or_open",
           "stages": [
             "child_start",
             "binding_loaded",
             "schema_built",
-            "create_or_open",
-            "insert",
-            "optimize",
-            "query",
-            "close",
-            "child_done"
+            "create_or_open"
           ],
-          "verdict": "COMPLETED_NO_FAILFAST"
+          "verdict": "FAIL_FAST_REPRODUCED"
         },
         {
           "position": "root",
           "attempt": 3,
           "colPathLen": 139,
-          "status": 0,
+          "status": 3221226505,
           "signal": null,
           "timedOut": false,
-          "lastStage": "child_done",
+          "lastStage": "create_or_open",
           "stages": [
             "child_start",
             "binding_loaded",
             "schema_built",
-            "create_or_open",
-            "insert",
-            "optimize",
-            "query",
-            "close",
-            "child_done"
+            "create_or_open"
           ],
-          "verdict": "COMPLETED_NO_FAILFAST"
+          "verdict": "FAIL_FAST_REPRODUCED"
         }
       ]
     },
@@ -5340,9 +5310,9 @@
     {
       "round": "R3",
       "id": "han-compat",
-      "verdict": "COMPLETED_NO_FAILFAST",
+      "verdict": "FAIL_FAST_REPRODUCED",
       "observed": [
-        "COMPLETED_NO_FAILFAST"
+        "FAIL_FAST_REPRODUCED"
       ],
       "agreement": null,
       "runs": [
@@ -5350,64 +5320,49 @@
           "position": "root",
           "attempt": 1,
           "colPathLen": 139,
-          "status": 0,
+          "status": 3221226505,
           "signal": null,
           "timedOut": false,
-          "lastStage": "child_done",
+          "lastStage": "create_or_open",
           "stages": [
             "child_start",
             "binding_loaded",
             "schema_built",
-            "create_or_open",
-            "insert",
-            "optimize",
-            "query",
-            "close",
-            "child_done"
+            "create_or_open"
           ],
-          "verdict": "COMPLETED_NO_FAILFAST"
+          "verdict": "FAIL_FAST_REPRODUCED"
         },
         {
           "position": "root",
           "attempt": 2,
           "colPathLen": 139,
-          "status": 0,
+          "status": 3221226505,
           "signal": null,
           "timedOut": false,
-          "lastStage": "child_done",
+          "lastStage": "create_or_open",
           "stages": [
             "child_start",
             "binding_loaded",
             "schema_built",
-            "create_or_open",
-            "insert",
-            "optimize",
-            "query",
-            "close",
-            "child_done"
+            "create_or_open"
           ],
-          "verdict": "COMPLETED_NO_FAILFAST"
+          "verdict": "FAIL_FAST_REPRODUCED"
         },
         {
           "position": "root",
           "attempt": 3,
           "colPathLen": 139,
-          "status": 0,
+          "status": 3221226505,
           "signal": null,
           "timedOut": false,
-          "lastStage": "child_done",
+          "lastStage": "create_or_open",
           "stages": [
             "child_start",
             "binding_loaded",
             "schema_built",
-            "create_or_open",
-            "insert",
-            "optimize",
-            "query",
-            "close",
-            "child_done"
+            "create_or_open"
           ],
-          "verdict": "COMPLETED_NO_FAILFAST"
+          "verdict": "FAIL_FAST_REPRODUCED"
         }
       ]
     },

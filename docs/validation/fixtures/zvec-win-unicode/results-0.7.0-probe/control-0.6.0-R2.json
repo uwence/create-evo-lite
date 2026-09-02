@@ -2,6 +2,12 @@
   "binding": "D:\\Data\\ProjectAgent\\create-evo-lite\\node_modules\\@zvec\\zvec\\src\\index.js",
   "repeats": 3,
   "round": "R2",
+  "positionsExercised": [
+    "root"
+  ],
+  "base": "D:\\Data\\ProjectAgent\\create-evo-lite\\docs\\validation\\fixtures\\zvec-win-unicode\\.runs",
+  "node": "v22.22.2",
+  "platform": "win32",
   "results": [
     {
       "round": "R2",
@@ -10,7 +16,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": "MATCH"
+      "agreement": "MATCH",
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 156,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 156,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 156,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -19,7 +72,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": "MATCH"
+      "agreement": "MATCH",
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 149,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 149,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 149,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -28,7 +128,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": "MATCH"
+      "agreement": "MATCH",
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 150,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 150,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 150,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -37,7 +184,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": "MATCH"
+      "agreement": "MATCH",
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 150,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 150,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 150,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -46,7 +240,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": "MATCH"
+      "agreement": "MATCH",
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 148,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 148,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 148,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -55,7 +296,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": "MATCH"
+      "agreement": "MATCH",
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 151,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 151,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 151,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -64,7 +370,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": "MATCH"
+      "agreement": "MATCH",
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 148,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 148,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 148,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -73,7 +444,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": "MATCH"
+      "agreement": "MATCH",
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 139,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 139,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 139,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -82,7 +518,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": "MATCH"
+      "agreement": "MATCH",
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 150,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 150,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 150,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -91,7 +592,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 136,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 136,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 136,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -100,7 +648,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 138,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 138,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 138,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -109,7 +722,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 137,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 137,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 137,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -118,7 +778,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 135,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 135,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 135,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -127,7 +834,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 136,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 136,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 136,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -136,7 +890,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 137,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 137,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 137,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -145,7 +964,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 135,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 135,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 135,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -154,7 +1038,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 135,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 135,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 135,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -163,7 +1112,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 137,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 137,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 137,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -172,7 +1186,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 139,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 139,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 139,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -181,7 +1260,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 141,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 141,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 141,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -190,7 +1334,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 140,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 140,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 140,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -199,7 +1408,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 141,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 141,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 141,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -208,7 +1482,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 139,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 139,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 139,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -217,7 +1538,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 141,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 141,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 141,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -226,7 +1594,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 143,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 143,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 143,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -235,7 +1650,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 142,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 142,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 142,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -244,7 +1706,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 143,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 143,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 143,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -253,7 +1762,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 141,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 141,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 141,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -262,7 +1818,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 143,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 143,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 143,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -271,7 +1874,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 145,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 145,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 145,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -280,7 +1930,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 144,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 144,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 144,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -289,7 +1986,54 @@
       "observed": [
         "FAIL_FAST_REPRODUCED"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 145,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 145,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 145,
+          "status": 3221226505,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "schema_built",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built"
+          ],
+          "verdict": "FAIL_FAST_REPRODUCED"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -298,7 +2042,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 140,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 140,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 140,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -307,7 +2116,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 142,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 142,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 142,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -316,7 +2190,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 144,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 144,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 144,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -325,7 +2264,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 143,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 143,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 143,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -334,7 +2338,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 144,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 144,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 144,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -343,7 +2412,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 141,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 141,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 141,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -352,7 +2486,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 143,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 143,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 143,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -361,7 +2560,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 145,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 145,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 145,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -370,7 +2634,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 144,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 144,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 144,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     },
     {
       "round": "R2",
@@ -379,7 +2708,72 @@
       "observed": [
         "COMPLETED_NO_FAILFAST"
       ],
-      "agreement": null
+      "agreement": null,
+      "runs": [
+        {
+          "position": "root",
+          "attempt": 1,
+          "colPathLen": 145,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 2,
+          "colPathLen": 145,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        },
+        {
+          "position": "root",
+          "attempt": 3,
+          "colPathLen": 145,
+          "status": 0,
+          "signal": null,
+          "timedOut": false,
+          "lastStage": "child_done",
+          "stages": [
+            "child_start",
+            "binding_loaded",
+            "schema_built",
+            "create_or_open",
+            "insert",
+            "optimize",
+            "query",
+            "close",
+            "child_done"
+          ],
+          "verdict": "COMPLETED_NO_FAILFAST"
+        }
+      ]
     }
   ]
 }
