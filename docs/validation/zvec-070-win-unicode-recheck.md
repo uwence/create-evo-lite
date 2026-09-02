@@ -62,6 +62,11 @@ node docs/validation/fixtures/zvec-win-unicode/probe-runner.js \
      --round R2 --repeats 3 --binding <abs path to 0.6.0 | 0.7.0>
 ```
 
+**绝对路径是 fail-closed 的约束,不是文档里的礼貌要求。** 传相对值 runner 直接
+`exit 2` 并拒绝启动 —— 而**不是** `path.resolve()` 把它「修好」后继续跑。后者会悄悄放行
+一个已经违反测量契约的调用方,并让 binding 身份重新依赖 cwd 与文件位置,那正是绝对注入
+要消除的东西。
+
 对照与实验的 `colPathLen` 区间因此**逐档相同**（R2 135..156，R3 137..160），这是混淆已被
 消除的直接证据，写在工件里可核。
 

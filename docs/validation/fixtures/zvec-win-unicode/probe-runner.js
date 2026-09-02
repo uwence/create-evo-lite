@@ -52,7 +52,16 @@ const TIMEOUT_MS = 90000;
 // path-sensitive native fail-fast that is a confound, not a detail: the two
 // variables become inseparable and no difference can be attributed to the
 // binding alone. Point this flag at another install instead of moving the file.
-const BINDING = argOf('--binding', null) || require.resolve('@zvec/zvec');
+// Fail closed on a relative override rather than path.resolve()-ing it. Resolving
+// it would silently repair a caller that violated the measurement contract and
+// let the run continue; the whole point of absolute injection is that the
+// binding's identity must not depend on anyone's cwd or file location.
+const bindingOverride = argOf('--binding', null);
+if (bindingOverride !== null && !path.isAbsolute(bindingOverride)) {
+    console.error(`--binding must be an absolute path (got: ${bindingOverride})`);
+    process.exit(2);
+}
+const BINDING = bindingOverride || require.resolve('@zvec/zvec');
 
 function classify(run) {
     if (run.timedOut) return 'INCONCLUSIVE';

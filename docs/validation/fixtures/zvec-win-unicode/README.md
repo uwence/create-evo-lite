@@ -37,6 +37,11 @@ ZVEC_UNICODE_PROBE=1 node .../probe-runner.js --round R2 --repeats 3
 ## 两条方法学约束（不得放宽）
 
 **1. binding 必须由父进程绝对注入。**
+
+> `--binding <abs path>` 可覆盖默认解析，用于**版本对照**：搬动本文件会连带改变
+> `BASE`（`__dirname`）与其下每一条 collection path，对 path-sensitive 的故障而言那是
+> 混淆，不是细节。传相对值直接 `exit 2` —— 这条约束由装置强制，不靠说明。
+
 `probe-runner.js` 执行一次 `require.resolve('@zvec/zvec')`，把绝对路径经 `argv`
 下传；`probe-child.js` **从不**裸 `require('@zvec/zvec')`。
 
