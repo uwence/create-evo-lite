@@ -67,11 +67,13 @@ jobs:
             --out "$PWD/cell-result.json"
 
       # always(), so a NOT_SATISFIED cell still uploads the evidence that says
-      # which phase it died in.
+      # which phase it died in. if-no-files-found: error because a missing record
+      # is itself a failure of the measurement — a cell that produced nothing must
+      # not be quietly indistinguishable from one that was never scheduled.
       - name: upload cell record
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zvec070-cell-${{ matrix.os }}-node${{ matrix.node }}
           path: cell-result.json
-          if-no-files-found: warn
+          if-no-files-found: error

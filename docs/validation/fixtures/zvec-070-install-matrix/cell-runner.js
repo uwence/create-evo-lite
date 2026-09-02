@@ -67,34 +67,37 @@ const record = {
     verdict: 'NOT_SATISFIED',
 };
 
-// ---- B. LOAD -------------------------------------------------------------
+// ---- resolve + declared version (no native load in THIS process) ---------
 // Resolved from the probe directory, never from this file's location: the
 // package under test lives there, and resolving from here could walk up into an
 // unrelated node_modules and silently measure a different install.
+// require.resolve and reading package.json touch no native code.
 let bindingPath = null;
+let declaredVersion = null;
+let resolveError = null;
 if (record.install.status === 'ok') {
     try {
         const req = require('module').createRequire(path.join(PROBE_DIR, 'noop.js'));
         bindingPath = req.resolve('@zvec/zvec');
-        const pkg = JSON.parse(fs.readFileSync(
-            path.join(path.dirname(bindingPath), '..', 'package.json'), 'utf8'));
-        // require() in-process, so a load-time failure is attributed to LOAD and
-        // not blamed on the smoke. A native crash at require time would kill this
-        // process; the workflow still has the step's exit status.
-        require(bindingPath);
-        record.load = {
-            status: 'ok',
-            resolvedBinding: bindingPath,
-            installedVersion: pkg.version,
-            versionMatchesRequested: pkg.version === REQUESTED,
-        };
+        declaredVersion = JSON.parse(fs.readFileSync(
+            path.join(path.dirname(bindingPath), '..', 'package.json'), 'utf8')).version;
     } catch (e) {
-        record.load = { status: 'failed', resolvedBinding: bindingPath, error: String(e && e.message) };
+        resolveError = String(e && e.message);
     }
 }
 
-// ---- C. MINIMAL NATIVE SMOKE --------------------------------------------
-if (record.load.status === 'ok') {
+// ---- B. LOAD and C. SMOKE, both observed from the child ------------------
+// This process NEVER require()s the binding. An earlier version did, with a
+// comment admitting a native crash at require time would kill it — which would
+// have destroyed the record before it was written, and load-time death is
+// exactly the boundary this matrix exists to distinguish. The recorder must
+// outlive every phase it records.
+//
+// One child covers both phases; the stage markers separate them:
+//
+//     reached binding_loaded ? LOAD ok : LOAD failed/dead
+//     reached child_done     ? SMOKE completed : SMOKE failed/dead
+if (record.install.status === 'ok' && bindingPath) {
     const colPath = path.join(PROBE_DIR, 'smoke', 'collection');
     fs.mkdirSync(path.dirname(colPath), { recursive: true });
     const child = path.join(__dirname, 'smoke-child.js');
@@ -104,34 +107,46 @@ if (record.load.status === 'ok') {
     const stages = String(res.stdout || '').split('\n').filter(Boolean)
         .map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
     const stageNames = stages.map(s => s.stage);
-    const jsError = String(res.stderr || '').includes('"jsError":true');
+    const stderr = String(res.stderr || '');
+    const jsError = stderr.includes('"jsError":true');
     const timedOut = Boolean(res.error && res.error.code === 'ETIMEDOUT');
-
-    let status;
-    if (timedOut) status = 'timeout';
-    else if (res.status === 0 && stageNames.includes('child_done')) status = 'completed';
-    else if (jsError) status = 'js-error';
+    const loaded = stageNames.includes('binding_loaded');
+    const done = stageNames.includes('child_done');
     // No JS error and an abnormal teardown means JavaScript never regained
     // control: the uncatchable class this whole investigation is about.
-    else status = 'process-death';
+    const deathKind = timedOut ? 'timeout' : (jsError ? 'js-error' : 'process-death');
 
-    record.smoke = {
-        status,
-        exitCode: res.status,
-        signal: res.signal,
-        stages: stageNames,
+    const shared = {
+        exitCode: res.status, signal: res.signal, stages: stageNames,
         lastStage: stageNames[stageNames.length - 1] || null,
         loadedBinding: (stages.find(s => s.stage === 'child_start') || {}).binding || null,
-        collectionPathLen: colPath.length,
-        stderr: String(res.stderr || '').slice(0, 500) || null,
+        stderr: stderr.slice(0, 500) || null,
     };
+
+    record.load = loaded
+        ? { status: 'ok', resolvedBinding: bindingPath, installedVersion: declaredVersion,
+            versionMatchesRequested: declaredVersion === REQUESTED }
+        : { status: deathKind, resolvedBinding: bindingPath, installedVersion: declaredVersion,
+            versionMatchesRequested: declaredVersion === REQUESTED, ...shared };
+
+    record.smoke = loaded
+        ? { status: done ? 'completed' : deathKind, collectionPathLen: colPath.length, ...shared }
+        : { status: 'skipped', reason: 'binding never loaded' };
+} else if (record.install.status === 'ok') {
+    record.load = { status: 'failed', resolvedBinding: null, error: resolveError || 'resolve failed' };
 }
 
 // ---- verdict -------------------------------------------------------------
 // Fail closed: every phase must have actually succeeded. A skipped phase is not
 // a pass, and no cell is excluded to make the matrix green.
+//
+// versionMatchesRequested is verdict-bearing, not merely recorded. Writing an
+// identity into the artifact does not make it a premise of the judgement — a
+// cell that installed some other version could otherwise load, smoke and report
+// SATISFIED for a version nobody asked about.
 record.verdict = (record.install.status === 'ok'
     && record.load.status === 'ok'
+    && record.load.versionMatchesRequested === true
     && record.smoke.status === 'completed') ? 'SATISFIED' : 'NOT_SATISFIED';
 
 fs.writeFileSync(OUT, JSON.stringify(record, null, 2), 'utf8');
