@@ -30,8 +30,8 @@
   },
   "apparatus": {
     "bridge-runner.js": {
-      "blob": "1b094132d15bade6c8ab52dbf3a6af1807e3202a",
-      "expected": "1b094132d15bade6c8ab52dbf3a6af1807e3202a",
+      "blob": "207aff345fedf76b018722aa963c311c879cb087",
+      "expected": "207aff345fedf76b018722aa963c311c879cb087",
       "matches": true
     },
     "adapter-txn.js": {
@@ -56,8 +56,16 @@
     "versionIs060": true,
     "collectionPathLen": 149,
     "outcome": "FAIL_FAST_REPRODUCED",
+    "classifierInput": {
+      "timedOut": false,
+      "jsError": false,
+      "status": 3221226505,
+      "signal": null,
+      "completed": false
+    },
     "exitCode": 3221226505,
     "signal": null,
+    "error": null,
     "stages": [],
     "triggerReproduced": true
   },
@@ -282,7 +290,7 @@
         "ok": true
       },
       "error": null,
-      "stderr": "[ERROR 2026-09-02 17:48:58 63540 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n[ERROR 2026-09-02 17:48:58 63540 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
+      "stderr": "[ERROR 2026-09-02 19:14:22 45236 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n[ERROR 2026-09-02 19:14:22 45236 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
     },
     {
       "phase": "C",
@@ -343,7 +351,7 @@
         "ok": true
       },
       "error": null,
-      "stderr": "[ERROR 2026-09-02 17:48:59 50576 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
+      "stderr": "[ERROR 2026-09-02 19:14:24 41456 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
     }
   ],
   "verdict": "SATISFIED",

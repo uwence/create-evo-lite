@@ -104,7 +104,7 @@ base 长到够不着目标就在测量开始前 `exit 2`,而不是带着区间�
 padding 因此改为**由构造推导**:用一个字符的 pad 量出实际长度,再补差额,
 每多一个字符恰好加一。不再手数分隔符。
 
-### 4.2 `timeout` 不再算作「触发已复现」
+### 4.2 对照的结论来自共享词汇表 —— 但输入必须由 caller 自己映射
 
 桥的第一版自己发明了 verdict:
 
@@ -132,6 +132,46 @@ subject 随后开跑,并可能在一个从未证明过会崩的格子上拿到 `
 
 (726 条来自 `results-0.7.0-probe/` 四份工件的全部 `runs`。)
 
+**但共享词汇表不等于共享子进程传输协议 —— 上一轮修完 §4.2 后,复审在这里发现了第二个缺陷。**
+
+分类器共享之后,桥仍然按 Step 1 的方式去**读** `jsError`:
+
+```js
+const jsError = String(res.stderr || '').includes('"jsError":true');   // 作废
+```
+
+那是 `probe-child.js` 的协议。桥的子进程是 `adapter-txn.js`,它的 JS-error 通道是
+**证据文件里的 `error` 字段**,写完再 exit 1,从不往 stderr 写那个标记。于是每一个
+**可捕获**的 0.6.0 失败(锁错误、缺原生绑定、0.6.0 没有的 API 形状)都会以
+「status 1、无 jsError」的形状到达分类器 —— 而分类器对这个形状的正确答案正是
+`FAIL_FAST_REPRODUCED`。
+
+```
+0.6.0 抛普通异常 → ev.error,exit 1 → jsError=false → 触发「已复现」→ subject 获准运行
+```
+
+修法是让 caller 负起映射自己观察的责任,而不是再动分类器(分类器是对的):
+
+```js
+const jsError = Boolean(ev && ev.error);
+```
+
+并把**分类器的输入对象本身**写进 record(`control.classifierInput` / `control.error`)。
+旧 record 只有结论、没有输入,所以这个错误映射在**读结果**时不可见 ——
+它是靠读装置发现的,而不是靠读证据。两份权威 record 现在都能自证输入形状:
+
+```json
+"classifierInput": { "timedOut": false, "jsError": false,
+                     "status": 3221226505, "signal": null, "completed": false }
+```
+
+`adapter-txn.js` 有三个终止态,上述映射覆盖两个。第三个 ——「跑到结尾但 `allPassed:false`,
+同样 exit 1」—— 对**对照**不可达,因为对照只跑 phase A,而 phase A 的两项检查断言的是
+`upsert` 返回的 id,该 id 来自 adapter 自己的文件计数器 `_nextId()`,不来自 zvec。
+这条边界写进了 `bridge-runner.js` 的注释:**给对照加相,这条映射就必须重看。**
+共享的是分类词汇表,不共享的是传输协议 —— 每个 caller 都要自己把观察映射成
+`timedOut / jsError / status / signal / completed`。
+
 ### 4.3 `apparatusOk` —— 产生证据的装置是谁
 
 2B 的权威来自 CI:`run 33609869877 @ 785e429`,「哪一版 harness 产生了这个结果」
@@ -143,7 +183,7 @@ subject 随后开跑,并可能在一个从未证明过会崩的格子上拿到 `
 
 ```json
 "apparatus": {
-  "bridge-runner.js":                  { "blob": "1b094132…", "matches": true },
+  "bridge-runner.js":                  { "blob": "207aff34…", "matches": true },
   "adapter-txn.js":                    { "blob": "2a7f6e37…", "matches": true },
   "expected-checks.js":                { "blob": "e14c4f95…", "matches": true },
   "../shared/fail-fast-classifier.js": { "blob": "1ed11be7…", "matches": true }
@@ -157,7 +197,7 @@ subject 随后开跑,并可能在一个从未证明过会崩的格子上拿到 `
 **runner 哈希的是自己(`__filename`),不是固定文件名。** 按名取哈希会让一个
 改名后的修改副本去哈希原版而蒙混过关 —— 这个洞是被下面的负控 3 当场暴露的。
 
-### 4.4 四个负控,红点都落在该守护的断言上
+### 4.4 五个负控,红点都落在该守护的断言上
 
 ```
 省略 --expect-classifier            测量开始前 exit 2
@@ -167,9 +207,27 @@ runner 副本 timeout=1ms             control INCONCLUSIVE → triggerReproduced
                                     → subject 一相未跑 → NOT_SATISFIED
 改名副本 + 原版 blob                 phases 3、checks 19 全绿
                                     → apparatusOk=false → NOT_SATISFIED
+对照抛普通可捕获异常                  control NORMAL_JS_ERROR → triggerReproduced=false
+(stub control entry)                → subject 一相未跑 → NOT_SATISFIED,apparatusOk=true
 ```
 
 第二与第四条是「X 能单独让 SATISFIED 不可能」的直接演示:除该项外全部为真,判定仍是红。
+
+第五条是 §4.2 后半那个缺陷的负控,注入在**集成层**而不是分类器上 —— 只 unit-test
+`classifyNativeOutcome()` 证明不了任何东西,因为分类器本来就是对的,错的是喂给它的映射。
+注入点是一个 require 即抛的 stub `--control-entry`,其余参数与权威运行完全相同。
+它带**突变对照**:同一个注入打在修复前的装置上(`51e0843` 的逐字副本、四个 blob 因此
+仍然 4/4 MATCH),得到
+
+```
+control FAIL_FAST_REPRODUCED → 三相全跑 → 19/19 → SATISFIED,runner exit 0
+```
+
+也就是说,一个**只是抛了普通异常、从未崩溃**的对照,在修复前足以产出 Step 2C 的正向结论。
+两份 record 都入库在 `results-negative-control/`,并各自记了 `apparatusOk: true`:
+红不是被身份门顺手打红的。存根打中与否也有独立证据 —— `fixed` 一侧
+`control.error.message` 就是注入的标记串,`pre-fix` 一侧该字段还不存在(这正是缺陷不可见的
+原因之一),因此改从子进程自己的 `phase-A.json` 核对同一条 message。
 
 ## 5. 桥实际证明了什么
 
@@ -242,15 +300,19 @@ workflow 保留但改为只手动触发:只能一直红的 job 是噪音,而删�
 ```
 workflow   .github/workflows/zvec-070-nonascii-bridge.yml   (workflow_dispatch only)
 apparatus  docs/validation/fixtures/zvec-070-adapter-contract/
-             bridge-runner.js       1b094132d15bade6c8ab52dbf3a6af1807e3202a
+             bridge-runner.js       207aff345fedf76b018722aa963c311c879cb087
              adapter-txn.js         2a7f6e373c94cc5f2430e6f26cf0425892c0c2f1
              expected-checks.js     e14c4f95e747589a50bb0654e6e9b3c45ec8e0c6
            docs/validation/fixtures/shared/
              fail-fast-classifier.js 1ed11be7a532900babe4478701b5a706875f8617
 
 results-bridge/                       SHA-256                    ← 本轮权威
-  local-win11-node22.json   1422ef2ca81279a2525a90549ec9d43755e04006b27fb3c284740b3c722ab9ed
-  local-win11-node24.json   21be03af1b25752a24b6d8ddd77508f293242d7998e2fa301f13b88e31425c36
+  local-win11-node22.json   699a07fb43112680b275c5d364b9b9589dfdd2436d354262e9ec44fc863b1143
+  local-win11-node24.json   2e6c4385c57e89c99a67d64abb9a1a3b44ee5931e4a5dfb2338a8feff7454854
+
+results-negative-control/             §4.2 后半那个缺陷的负控 + 突变对照(§4.4 第五条)
+  ordinary-js-error-fixed.json    NORMAL_JS_ERROR · 0 相 · NOT_SATISFIED
+  ordinary-js-error-pre-fix.json  ⚠️ SATISFIED —— 缺陷演示,不是正向证据
 
 results-out-of-regime/    run 33611916358 @ 3db5c3b   区间外测量,非权威(§3)
 results-ci-image/         run 33612887037 @ 75a68aa   区间内、该镜像不复现(§6)

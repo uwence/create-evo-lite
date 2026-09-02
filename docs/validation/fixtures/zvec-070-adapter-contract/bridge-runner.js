@@ -189,17 +189,44 @@ function runPhase(phase, root, entry) {
     // rerun existed to remove. The binding must be the only difference.
     const root = path.join(ROOT_BASE, PAD, SEGMENT, 'ctl');
     const { res, ev, timedOut } = runPhase('A', root, CONTROL_ENTRY);
-    const jsError = String(res.stderr || '').includes('"jsError":true');
+    // What is SHARED with Step 1 is the classification vocabulary. The child
+    // TRANSPORT is not shared, and mapping this child's observations into that
+    // vocabulary is this caller's job.
+    //
+    // `"jsError":true` on stderr is probe-child.js's protocol. adapter-txn.js
+    // never writes it: its JS-error channel is `error` in the evidence file,
+    // written before it exits 1. Reading stderr here made every catchable 0.6.0
+    // failure - a lock error, a missing native binding, an API shape 0.6.0 does
+    // not have - arrive as "status 1, no jsError", which the classifier then
+    // correctly reads as a native fail-fast. An ordinary exception would have
+    // been counted as the trigger reproducing.
+    //
+    // adapter-txn.js has three terminal states; this maps two of them. The third
+    // - reaching the end and reporting allPassed:false, which also exits 1 - is
+    // not reachable for the control, which runs only phase A, whose two checks
+    // assert over ids from the adapter's OWN file counter (_nextId) rather than
+    // anything zvec returns. If the control is ever given another phase, that
+    // state becomes reachable and this mapping must be revisited.
+    const jsError = Boolean(ev && ev.error);
     record.control.collectionPathLen = path.join(root, 'zvec', 'collection').length;
     // Step 1 froze this vocabulary; the bridge inherits it rather than writing
     // its own. See ../shared/fail-fast-classifier.js for what the first version
     // of this line got wrong.
-    record.control.outcome = classifyNativeOutcome({
-        timedOut, jsError, status: res.status, signal: res.signal,
+    //
+    // Built once, fed once, recorded once: the record carries the exact object
+    // that was classified, not a re-derivation of it. The old record carried only
+    // the outcome, so a wrong mapping was invisible to anyone reading the
+    // evidence - which is how the stderr-marker bug survived a review OF THE
+    // RESULTS and had to be found by reading the apparatus.
+    const classifierInput = {
+        timedOut, jsError, status: res.status, signal: res.signal || null,
         completed: Boolean(ev && !ev.error && ev.allPassed),
-    });
+    };
+    record.control.outcome = classifyNativeOutcome(classifierInput);
+    record.control.classifierInput = classifierInput;
     record.control.exitCode = res.status;
     record.control.signal = res.signal;
+    record.control.error = (ev && ev.error) || null;
     record.control.stages = ev ? (ev.checks || []).map(c => c.name) : [];
     // The trigger must actually reproduce. A control that survives means the path
     // is not a trigger path and this cell proves nothing about the bridge. A
