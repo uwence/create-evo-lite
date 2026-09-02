@@ -1,0 +1,307 @@
+{
+  "cell": "windows-latest/node22",
+  "env": {
+    "node": "v22.23.2",
+    "platform": "win32",
+    "arch": "x64",
+    "osRelease": "10.0.26100"
+  },
+  "subject": {
+    "adapter": "D:/a/create-evo-lite/create-evo-lite/.evo-lite/cli/memory-index-zvec.js",
+    "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+    "expectedBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+    "blobMatchesExpected": true
+  },
+  "zvec": {
+    "entry": "D:/a/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js",
+    "installedVersion": "0.7.0",
+    "versionMatchesRequested": true
+  },
+  "phases": [
+    {
+      "phase": "A",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+      "seam": [
+        {
+          "request": "@zvec/zvec",
+          "requestedBy": "D:\\a\\create-evo-lite\\create-evo-lite\\.evo-lite\\cli\\memory-index-zvec.js",
+          "redirectedTo": "D:/a/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js"
+        }
+      ],
+      "checks": [
+        {
+          "name": "upsert returns numeric id",
+          "pass": true,
+          "detail": {
+            "a": 1,
+            "b": 2
+          }
+        },
+        {
+          "name": "ids are distinct and ascending",
+          "pass": true,
+          "detail": {
+            "a": 1,
+            "b": 2
+          }
+        }
+      ],
+      "checkSet": {
+        "expected": 2,
+        "seen": 2,
+        "missing": [],
+        "unexpected": [],
+        "duplicated": [],
+        "ok": true
+      },
+      "error": null,
+      "stderr": null
+    },
+    {
+      "phase": "B",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+      "seam": [
+        {
+          "request": "@zvec/zvec",
+          "requestedBy": "D:\\a\\create-evo-lite\\create-evo-lite\\.evo-lite\\cli\\memory-index-zvec.js",
+          "redirectedTo": "D:/a/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js"
+        }
+      ],
+      "checks": [
+        {
+          "name": "write survives close + reopen in a new process",
+          "pass": true,
+          "detail": {
+            "got": [
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "name": "list is ordered by numeric id",
+          "pass": true,
+          "detail": {
+            "ids": [
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "name": "list carries content/namespace/timestamp",
+          "pass": true,
+          "detail": {
+            "sample": {
+              "id": 1,
+              "content": "evo lite adapter contract probe 遏制合同探针 alpha",
+              "namespace": "prose",
+              "timestamp": "2026-09-02T00:00:00.000Z"
+            }
+          }
+        },
+        {
+          "name": "fts query returns the expected row",
+          "pass": true,
+          "detail": {
+            "top": {
+              "id": 1,
+              "content": "evo lite adapter contract probe 遏制合同探针 alpha",
+              "namespace": "prose",
+              "timestamp": "2026-09-02T00:00:00.000Z",
+              "score": 2.1340041160583496,
+              "snippet": "evo lite adapter contract probe 遏制合同探针 alpha",
+              "match_source": "zvec-fts"
+            }
+          }
+        },
+        {
+          "name": "fts match_source is zvec-fts",
+          "pass": true,
+          "detail": {
+            "source": "zvec-fts"
+          }
+        },
+        {
+          "name": "fts row has score and snippet",
+          "pass": true,
+          "detail": {
+            "score": 2.1340041160583496
+          }
+        },
+        {
+          "name": "colon query returns the expected row",
+          "pass": true,
+          "detail": {
+            "top": {
+              "id": 2,
+              "content": "follow up on task:alpha-beta before the release",
+              "namespace": "code",
+              "timestamp": "2026-09-02T01:00:00.000Z",
+              "score": 2.881242513656616,
+              "snippet": "follow up on task:alpha-beta before the release",
+              "match_source": "zvec-match"
+            }
+          }
+        },
+        {
+          "name": "colon query falls back to zvec-match",
+          "pass": true,
+          "detail": {
+            "source": "zvec-match"
+          }
+        },
+        {
+          "name": "scope filter excludes the out-of-scope row",
+          "pass": true,
+          "detail": {
+            "got": []
+          }
+        },
+        {
+          "name": "scope filter keeps the in-scope row (positive control)",
+          "pass": true,
+          "detail": {
+            "got": [
+              {
+                "id": 2,
+                "ns": "code"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stats counts both docs",
+          "pass": true,
+          "detail": {
+            "chunks": 2,
+            "count": 2
+          }
+        },
+        {
+          "name": "stats first/last timestamps",
+          "pass": true,
+          "detail": {
+            "first": "2026-09-02T00:00:00.000Z",
+            "last": "2026-09-02T01:00:00.000Z"
+          }
+        },
+        {
+          "name": "stats namespaces reports per-namespace chunks",
+          "pass": true,
+          "detail": {
+            "prose": {
+              "chunks": 1,
+              "present": true,
+              "model": "zvec-jieba-fts",
+              "dims": "1"
+            },
+            "code": {
+              "chunks": 1,
+              "present": true,
+              "model": "zvec-jieba-fts",
+              "dims": "1"
+            }
+          }
+        },
+        {
+          "name": "delete reports changes = 1",
+          "pass": true,
+          "detail": {
+            "got": {
+              "changes": 1
+            }
+          }
+        }
+      ],
+      "checkSet": {
+        "expected": 14,
+        "seen": 14,
+        "missing": [],
+        "unexpected": [],
+        "duplicated": [],
+        "ok": true
+      },
+      "error": null,
+      "stderr": "[ERROR 2026-09-02 08:39:59 5680 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n[ERROR 2026-09-02 08:39:59 5680 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
+    },
+    {
+      "phase": "C",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+      "seam": [
+        {
+          "request": "@zvec/zvec",
+          "requestedBy": "D:\\a\\create-evo-lite\\create-evo-lite\\.evo-lite\\cli\\memory-index-zvec.js",
+          "redirectedTo": "D:/a/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js"
+        }
+      ],
+      "checks": [
+        {
+          "name": "deletion survives reopen",
+          "pass": true,
+          "detail": {
+            "ids": [
+              2
+            ]
+          }
+        },
+        {
+          "name": "survivor still present",
+          "pass": true,
+          "detail": {
+            "ids": [
+              2
+            ]
+          }
+        },
+        {
+          "name": "survivor still queryable after reopen",
+          "pass": true,
+          "detail": {
+            "top": {
+              "id": 2,
+              "content": "follow up on task:alpha-beta before the release",
+              "namespace": "code",
+              "timestamp": "2026-09-02T01:00:00.000Z",
+              "score": 1.4384105205535889,
+              "snippet": "follow up on task:alpha-beta before the release",
+              "match_source": "zvec-match"
+            }
+          }
+        }
+      ],
+      "checkSet": {
+        "expected": 3,
+        "seen": 3,
+        "missing": [],
+        "unexpected": [],
+        "duplicated": [],
+        "ok": true
+      },
+      "error": null,
+      "stderr": "[ERROR 2026-09-02 08:40:00 1296 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
+    }
+  ],
+  "verdict": "SATISFIED",
+  "summary": {
+    "phasesPassed": 3,
+    "checksExpected": 19,
+    "checksTotal": 19,
+    "checksFailed": 0,
+    "seamProven": true,
+    "blobOk": true,
+    "checkSetOk": true
+  }
+}
