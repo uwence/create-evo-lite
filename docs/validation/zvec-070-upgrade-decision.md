@@ -1202,6 +1202,14 @@ Step 1  zvec-070-win-unicode-recheck.md        全文(221 行)
   上游 https://github.com/alibaba/zvec/pull/666 —— 树内只有 v0.7.0 release note 一句
                                                (Step 1 §0 已判它是「声明,不是证据」),
                                                PR 原文本轮直接取回核对
+
+第三轮补做的上游核实(全部由本文档作者独立执行,非采信转述):
+  gh api repos/alibaba/zvec/git/ref/tags/v0.7.0 → annotated tag → commit 8321c13
+  gh api repos/alibaba/zvec/compare/4026042...8321c13
+      status=ahead · ahead_by=26 · behind_by=0 · merge_base=4026042
+  gh api repos/alibaba/zvec/pulls/666  merged=true,  merge_commit 4026042
+  gh api repos/alibaba/zvec/pulls/669  merged=false  ← 推翻了上一版的一条论据
+  gh api repos/alibaba/zvec/pulls/666/files          ← 逐行改动与新增测试
 ```
 
 ### 6.2 A0–A9 判定
@@ -1279,29 +1287,60 @@ A6  version-bounded fault attribution                       NOT INSTANTIATED(仅
         转换)、**指名覆盖面**(WAL / vector buffer / Parquet metadata)、并**指名
         本仓上报的 issue #665** 的修复。#665 正是本工作线 Task 9B 报上去的那一条。
 
-        **本轮未核实的部分(如实登记):** 未打开 PR 的 files diff,因此
-        `_open → Utf8ToWide + _wopen` 这一层的逐行改动是**未经本文档作者亲验**的;
-        上面引用的是 PR body、commit 标题与合并事实。
+        **files diff 已亲验(第二轮补做)。** 上一版只引了 PR body 与 commit 标题,
+        并如实标注「逐行改动未经本文档作者亲验」;本轮取回了 changed files:
 
-    (2) 版本改变 —— **强支撑。** #666 于 2026-08-11 合入 main,v0.7.0 发布于
-        2026-08-24(Step 1 §0),故该修复在时间上先于该发布;Step 1 的 0.6.0 对照
-        与 0.7.0 实验在同一装置上得到 22/22 的翻转与零回归。
-        严格说,「合入 main 且早于发布日」不等同于「已核实随 v0.7.0 发出」——
-        此处按证据强度记为强支撑,不记为已核实。
+            src/ailego/buffer/vector_page_table.cc
+              - fd_ = _open(filename.c_str(), flags, 0644);
+              + const std::wstring wide_filename = FileHelper::Utf8ToWide(filename);
+              + fd_ = wide_filename.empty() ? -1 : _wopen(wide_filename.c_str(), ...);
+            CMakeLists.txt                       + add_compile_options(/utf-8)
+            src/db/index/storage/parquet_buffer_pool.cc / .h
+            src/db/index/segment/segment.cc
+            tests/db/utf8_collection_test.cc     新增
+            tests/db/utf8_acp/                   新增(含 ACP manifest 与用例)
 
-    (3) 可观测性区分 —— 有支撑,且受 admissibility 约束:2C §6 提供了一个对照
-        未复现的环境;按 A6 的准入规则,该 cell 为 **observability-only**,
-        不得计入 0.7.0 的 safety evidence。
+        机制因此不再只由 PR 散文承担,而是可以在 diff 里指到行。
 
-    (4) 边界声明 —— **仍不成立,这是 A6 未实例化的唯一剩余原因。**
+    (2) 版本改变 —— **SATISFIED,由 git ancestry 核实。**
+        上一版只敢记「强支撑」,理由是「合入 main 且早于发布日」不等同于
+        「随 v0.7.0 发出」。本轮把 ancestry 查完了:
+
+            v0.7.0   annotated tag ae32539… → commit 8321c1314a559fd5f909e92498f43e5194bf9b99
+            compare  4026042(#666 merge)→ 8321c13(v0.7.0)
+                     status = ahead · ahead_by = 26 · behind_by = 0
+                     merge_base = 4026042
+            即 v0.7.0 的 tag commit **确实包含** #666 的 merge commit。
+
+        与 Step 1 在同一装置上取得的 0.6.0 / 0.7.0 对照(22/22 翻转、零回归)合起来,
+        「所选判据确实把 0.6.0 与 0.7.0 分到两侧」现在是核实过的事实,不是推测。
+
+    (3) 可观测性区分 —— **SATISFIED,受 admissibility 约束。** 2C §6 提供了一个
+        对照未复现的环境;按 A6 的准入规则,该 cell 为 **observability-only**,
+        可用于界定 observability dependence,不得计入 0.7.0 的 safety evidence。
+
+    小结:A6(1) PASS · A6(2) PASS · A6(3) PASS · A6(4) NOT YET ESTABLISHED
+         → **A6 overall NOT INSTANTIATED,仅卡在 (4)。**
+
+    (4) 边界声明 —— **NOT YET ESTABLISHED,这是 A6 未实例化的唯一剩余原因。**
         Step 1 §3 给出的准确表述是「在本轮 runner 实际覆盖的 path layout
         (位置 root、colPathLen 135..160)下,R2+R3 共 121 个 corpus 样本均未复现」——
         **该边界正是「已被测过的路径集合」**,而 (4) 明确排除这种界定。
-        #666 给出的覆盖面(WAL / vector buffer / Parquet metadata)是**机制侧**的
-        描述,但它没有主张这三处就是全部路径入口;紧随其后的
-        #669「fix: compile MSVC sources as UTF-8」反而说明该区域不止一处需要修。
-        因此「能否由上游机制导出一个不等于已测语料的可执行 gate 边界」——
-        本轮**未完成论证**,不据此宣布成立。
+
+        #666 确实给出了一个 general 的上游**缺陷 / 修复域**:
+        Windows + 非 ASCII collection path 下的 UTF-8 原生文件系统处理。
+        但缺的一步是**从这个上游域映射到本产品的可执行 gate 边界**,尤其要说清:
+
+            哪些现有的 UNKNOWN 可以因 0.7.0 被提升为放行
+            哪些既有的 topology / marker / alias / profile 限制仍必须保持
+
+        **上游修复域 ≠ 本产品的 SAFE gate 边界。** 这一步论证本轮未做,故 (4) 不成立。
+
+        (上一版这里写的是「#669 说明该区域不止一处需要修」—— **该论据是错的,已删除**。
+         核实结果:#669「fix: compile MSVC sources as UTF-8」state=closed、
+         **merged=false**,而它唯一的实质改动 `add_compile_options(/utf-8)`
+         本来就在 #666 的 CMakeLists.txt 里。它是被 #666 吸收的并行 PR,
+         不是后续发现的第二处独立修复。)
 
 A7  upgrade-benefit                                         INSTANTIATED,有界(附异议,见 §6.4-B)
     已登记的产品相关问题:Windows 非 ASCII collection path 上的不可捕获 native
@@ -1328,12 +1367,18 @@ A9  containment-change benefit / product policy             NOT INSTANTIATED
 
 ```text
 D1  pin 0.6.0 → 0.7.0
-    RED 条件逐条核对,均未命中:
-      R1  2A 五格 0.7.0 全部装得上、load ok —— 不存在「0.6.0 行而 0.7.0 不行」的格子。
-      R2  2B 五格 19/19、0 失败 —— 未观察到合同回归。
-      R3  未观察到 0.7.0 在当前判为 SAFE 的路径上出现不可捕获失败
+    **RED audit:在本轮消费的 authority 中,没有任何一条 RED predicate 被建立。**
+    这**不是**对「S_PRODUCT 上不存在 RED 反例」的证明 —— A0 未实例化,
+    意味着 S_GATE 之外的作用域仍然未知(上一版写成「不存在……的格子」,越界了):
+
+      R1  2A 在 **S_GATE 五格内**未观察到 0.7.0 的 install / load 失败。
+          该结果**不得外推**为 S_PRODUCT 内不存在 R1 反例;
+          且 2A 的 authority question 是 0.7.0 的 install / load / smoke,
+          本身并不是一份完整的 0.6.0↔0.7.0 comparative matrix。
+      R2  2B 五格 19/19、0 失败 —— **未观察到**合同回归(同样限于该五格、ASCII 路径)。
+      R3  **未观察到** 0.7.0 在当前判为 SAFE 的路径上出现不可捕获失败
           (2B 五格 ASCII 路径三相 clean)。
-      R4  未检索到明确认定「0.7.0 对该问题无实质改善」的权威评估。
+      R4  **未检索到**明确认定「0.7.0 对该问题无实质改善」的权威评估。
     GREEN:G2 与 G4 有 authority 支撑(A3 的 ASCII 面 / A7);
           **G1 与 G3 无法交付** —— 它们要求覆盖 V_PRODUCT,而 A0 未实例化,
           V_PRODUCT 不存在。A1 的作用域是 S_GATE 五格,按 §5.1 与 A0,
