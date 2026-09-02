@@ -466,10 +466,14 @@ GREEN iff:           每条后面标注它的来源,以便复审检查有无从�
                           「需要一个稳定可泛化的版本判据」,不必然只能是内部 root-cause;
                           写死成机制会先验排除「机制未知但上游给出明确版本修复合同」
                           这一类有效 authority。]
-                     G2  A6 能把「0.7.0 上未观察到该失败」与「该失败在那个环境下
-                         本就不可观察」区分开。
+                     G2  A6 能识别并隔离 observability-limited / control-not-reproduced
+                         的 cell,使它们不被用作 0.7.0 的 safety 或 version-effect
+                         证据(准入规则见 §5 A6)。
                          [通用方法论:缺席的观察不是缺席的证明。
-                          与任何一次具体测量的结果无关。]
+                          与任何一次具体测量的结果无关。
+                          第三轮复审收紧:原文写的是「与『该失败在那个环境下本就
+                          不可观察』区分开」,那要求的是一个结构性不可观察的断言 ——
+                          比这里需要的强,而且与 A6 的准入规则相冲突。]
                      G3  版本门开启的 SAFE 区域有一个**声明的边界**,且该边界不是
                          「已被测过的路径集合」。
                          [主语推导:门必须在未测路径上也给出答案,
@@ -880,13 +884,16 @@ A0  product-support scope authority
     其中哪一份(若有)真正承担 S_PRODUCT,属 Stage 3 判定;本阶段不作断言。
 
 A1  install / load compatibility(母体安装形态)
-    必须证明:在 **S_PRODUCT(§5.0)的每一格**上,0.7.0 可安装,
-    且其原生绑定可被 require 解析。
+    必须证明:在 A0 给出的 **V_PRODUCT 的每一个 verification cell / equivalence
+    class** 上,0.7.0 可安装,且其原生绑定可被 require 解析。
+    **外推权只属于 A0** —— 「为什么这个有限 partition 能代表 S_PRODUCT」由 A0 的
+    coverage justification 承担,A1 不得自行主张覆盖了整个 S_PRODUCT。
     candidate source:2A
-    需要它证明的具体事实:上述每一格的安装结果与加载结果,逐格可辨。
+    需要它证明的具体事实:上述每一项的安装结果与加载结果,逐项可辨。
 
 A2  scaffolded-runtime install compatibility
-    必须证明:同样的结论在**子项目安装形态**下成立 —— templates/runtime 清单被复制到
+    必须证明:同样的结论 —— 同样在 **V_PRODUCT 的每一项**上、同样把外推权留给 A0 ——
+    在**子项目安装形态**下成立:templates/runtime 清单被复制到
     .evo-lite/ 之后执行 `npm ci --prefix .evo-lite`。
     A1 不蕴含 A2:两者的清单、锁文件与执行目录都不同。
     candidate source:2A
@@ -900,8 +907,9 @@ A3  real-adapter contract conformance
     合并使用时必须分别说明边界,不得相加成一个更大的作用域。
 
 A4  published-package installability under required semantics
-    必须证明:把 @zvec/zvec 移入 dependencies 之后,在 **S_PRODUCT 的每一格**上
-    `npm i create-evo-lite` 仍然成功。
+    必须证明:在 mandatory 语义下 —— 即 @zvec/zvec 已移入 dependencies ——
+    在 **V_PRODUCT 的每一项**上 `npm i create-evo-lite` 仍然成功。
+    其对 S_PRODUCT 的代表性同样由 A0 的 coverage justification 承担,A4 不自行外推。
     它与 A1 的差别是承重的:A1 问「zvec 装得上吗」,
     A4 问「zvec 装不上时,会不会连本包一起装不上」。
     candidate source:§3 的 inventory 中是否有来源覆盖它,属 Stage 3 判定。
@@ -927,7 +935,14 @@ A6  version-bounded fault attribution
           机制归因(指名机制并证明 0.7.0 改变了它),**或**一份强度相当的
           上游版本有界合同 / 修复保证;
       (2) 版本改变:所选判据确实把 0.6.0 与 0.7.0 分到两侧;
-      (3) 可观测性区分:能把「未发生」与「在该环境下本就不可观察」分开;
+      (3) 可观测性区分:能把
+          「fault absence 的有效证据」
+          与
+          「当前 apparatus / 环境下 trigger 未被建立,因此观察的缺席不能解释为
+            fault 的缺席」
+          这两者区分开。
+          注意它**不要求**证明某环境「结构性不可观察」—— 那是更强的断言,
+          需要独立 authority,不是本项的门槛(见下方 admissibility);
       (4) 边界声明:版本门开启的区域有一个界定,且该界定不是「已被测过的路径集合」。
     candidate source:Step 1 · 2C
     需要它们证明的具体事实:各自覆盖 (1)–(4) 的哪一部分、覆盖到什么范围;
@@ -947,24 +962,21 @@ A6  version-bounded fault attribution
                   · 支持 (3) 对「观察的缺席不能直接解释成 fault 的缺席」的区分
 
         额外不得用于:· 声称该 trigger 在该环境「不可能被观察到」。
+                      **not reproduced ≠ impossible** —— 一次未复现只能证明
+                      「在这套装置 / 这一格下未被复现」;要断言某环境**结构性地**
+                      不可观察,那是一个独立且更强的 authority,不能从「没复现」推出来。
 
-      **not reproduced ≠ impossible。** 一次未复现只能证明「在这套装置 / 这一格下
-      未被复现」;要断言某个环境**结构性地**不可观察,那是一个独立的 authority,
-      不能从「没复现」推出来。第一版把「证明该 trigger 在某些环境下不可观察」写进
-      可用清单,越过了这条线。
+        无论用于哪一类,该 cell 必须显式标记为 **observability-only**,
+        且**不得**在后续汇总中被重新计入 0.7.0 的 safety evidence。
 
-        但必须显式标记为 **observability-only**,且**不得**在后续汇总中被重新
-        计入 0.7.0 的 safety evidence。
-
-      [第二轮复审两次修正。先是从 D5 的 RED 移到这里 —— 原写法把坏证据与坏决策
-       混为一谈,只要历史上提交过一份方法有误的实验,即使之后存在完整有效的
-       authority,D5 也会被永久 RED。移入后第一版写成「整 cell 剔除」,又过头了:
-       它与本 authority 自己的 (3) 相冲突 —— 一个对照不复现的环境虽然证明不了
-       0.7.0 安全,却正是「环境影响可观测性」的信息来源,整块丢掉等于把负控信息
-       一起扔了。**本规则不指向任何具体环境**,哪些 cell 属于此类是 Stage 3 判定。]
-      [第二轮复审移入:原先写在 D5 的 RED 里,那会把坏证据与坏决策混为一谈 ——
+      [演进史。第一版把这条写成 D5 的 RED —— 那会把坏证据与坏决策混为一谈:
        只要历史上提交过一份方法有误的实验,即使之后存在完整有效的 authority,
-       D5 也会被永久 RED。**本规则不指向任何具体环境**,哪些 cell 属于此类是 Stage 3 判定。]
+       D5 也会被永久 RED。移入本 authority 后,第二版写成「整 cell 剔除」,又过头了,
+       且与本 authority 自己的 (3) 相冲突 —— 对照不复现的环境证明不了 0.7.0 安全,
+       却正是「环境影响可观测性」的信息来源,整块丢掉等于把负控信息一起扔掉。
+       第三版则把「可以用于证明该环境不可观察」写进了可用清单,那是同一个
+       not-proven/impossible 倒置换了个方向,已按上文收回。
+       **本规则不指向任何具体环境**,哪些 cell 属于此类是 Stage 3 判定。]
 
 A7  upgrade-benefit authority(D1)
     必须证明:X = 0.6.0 上存在一个**已登记的、产品相关的**缺陷 / 降级 / 限制,
@@ -1069,7 +1081,7 @@ D2-G3  拿掉 → 三处清单漂移,脚手架产出不可复现
 D3-G1  拿掉 → 把「引擎降级」升级成「本包装不上」而无人发现
 D3-G2  拿掉 → 没有产品要求也能把依赖改成必装
 D5-G1  拿掉 → 「几个样本没崩」被当成「按版本有界」
-D5-G2  拿掉 → 在故障本就不可观察的环境里收集到的绿被当作证据
+D5-G2  拿掉 → 对照 trigger 未被建立的 cell 也会被汇总成 0.7.0 的 safety evidence
 D5-G3  拿掉 → 门变成查表:测过的放行,没测过的无答案
 D5-G4  拿掉 → 门读的是清单字符串,与实际加载的 binding 可以不一致
 D5-G5  拿掉 → 门开启后既有 containment marker 语义未定义
