@@ -44,7 +44,24 @@ const TIMEOUT_MS = 90000;
 
 // Resolved ONCE here and injected as an absolute path. See probe-child.js for
 // why a bare require in the child would invalidate the measurement.
-const BINDING = require.resolve('@zvec/zvec');
+//
+// `--binding <abs path>` exists so a VERSION comparison can hold the runner
+// location fixed. BASE — and therefore every collection path under test — is
+// derived from __dirname, so running a copy of this file from another directory
+// changes the absolute path prefix as well as the binding. Against a
+// path-sensitive native fail-fast that is a confound, not a detail: the two
+// variables become inseparable and no difference can be attributed to the
+// binding alone. Point this flag at another install instead of moving the file.
+// Fail closed on a relative override rather than path.resolve()-ing it. Resolving
+// it would silently repair a caller that violated the measurement contract and
+// let the run continue; the whole point of absolute injection is that the
+// binding's identity must not depend on anyone's cwd or file location.
+const bindingOverride = argOf('--binding', null);
+if (bindingOverride !== null && !path.isAbsolute(bindingOverride)) {
+    console.error(`--binding must be an absolute path (got: ${bindingOverride})`);
+    process.exit(2);
+}
+const BINDING = bindingOverride || require.resolve('@zvec/zvec');
 
 function classify(run) {
     if (run.timedOut) return 'INCONCLUSIVE';
@@ -102,12 +119,32 @@ for (const sample of samples) {
     if (sample.expected === 'OK') agreement = verdict === 'COMPLETED_NO_FAILFAST' ? 'MATCH' : 'MISMATCH';
     if (agreement === 'MISMATCH') mismatches++;
 
-    results.push({ round: sample.round, id: sample.id, verdict, observed: verdicts, agreement });
+    // Per-run detail is persisted, not just the aggregate verdict. Without
+    // status / stages / colPathLen on disk, a report that says "0.6.0 died at
+    // create_or_open while 0.7.0 reached child_done at the same path length"
+    // cannot be rebuilt from the committed artifact — it would rest on the
+    // author's transcript rather than on evidence.
+    results.push({
+        round: sample.round, id: sample.id, verdict, observed: verdicts, agreement,
+        runs: runs.map(r => ({
+            position: r.position, attempt: r.attempt, colPathLen: r.colPathLen,
+            status: r.status, signal: r.signal, timedOut: r.timedOut || false,
+            lastStage: r.lastStage, stages: r.stages, verdict: r.verdict,
+        })),
+    });
     const flag = agreement === 'MISMATCH' ? '  <<< MISMATCH vs original evidence' : '';
     console.log(`${verdict.padEnd(24)} ${sample.round} ${sample.id}${flag}`);
 }
 
 console.log(`\nmismatches vs original evidence: ${mismatches}`);
 fs.writeFileSync(path.join(HERE, 'last-run.json'),
-    JSON.stringify({ binding: BINDING, repeats: REPEATS, round: ROUND, results }, null, 2), 'utf8');
+    JSON.stringify({
+        binding: BINDING, repeats: REPEATS, round: ROUND,
+        // The apparatus calls runOnce(..., 'root') only; the 'leaf' branch in
+        // runOnce has never been invoked. Recorded so a reader takes the layout
+        // from the artifact rather than from any prose.
+        positionsExercised: ['root'],
+        base: BASE, node: process.version, platform: process.platform,
+        results,
+    }, null, 2), 'utf8');
 console.log('wrote last-run.json (untracked scratch output)');
