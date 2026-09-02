@@ -1,0 +1,97 @@
+{
+  "cell": "nc-ordinary-js-error/fixed",
+  "env": {
+    "node": "v22.22.2",
+    "platform": "win32",
+    "arch": "x64",
+    "osRelease": "10.0.26200"
+  },
+  "pathUnderTest": {
+    "segmentId": "o2-kana-hangul-dash",
+    "segmentCodePoints": [
+      "U+65E5",
+      "U+672C",
+      "U+8A9E",
+      "U+2D",
+      "U+D55C",
+      "U+AD6D",
+      "U+C5B4"
+    ],
+    "segmentByteLength": 19,
+    "targetCollectionPathLen": 149,
+    "targetProvenance": "results-0.7.0-probe/control-0.6.0-R2.json :: o2-kana-hangul-dash :: colPathLen 149 :: FAIL_FAST 3/3",
+    "prefixPadLength": 115
+  },
+  "subject": {
+    "adapter": "D:/Data/ProjectAgent/create-evo-lite/.evo-lite/cli/memory-index-zvec.js",
+    "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+    "expectedBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+    "blobMatchesExpected": true
+  },
+  "apparatus": {
+    "bridge-runner.js": {
+      "blob": "207aff345fedf76b018722aa963c311c879cb087",
+      "expected": "207aff345fedf76b018722aa963c311c879cb087",
+      "matches": true
+    },
+    "adapter-txn.js": {
+      "blob": "2a7f6e373c94cc5f2430e6f26cf0425892c0c2f1",
+      "expected": "2a7f6e373c94cc5f2430e6f26cf0425892c0c2f1",
+      "matches": true
+    },
+    "expected-checks.js": {
+      "blob": "e14c4f95e747589a50bb0654e6e9b3c45ec8e0c6",
+      "expected": "e14c4f95e747589a50bb0654e6e9b3c45ec8e0c6",
+      "matches": true
+    },
+    "../shared/fail-fast-classifier.js": {
+      "blob": "1ed11be7a532900babe4478701b5a706875f8617",
+      "expected": "1ed11be7a532900babe4478701b5a706875f8617",
+      "matches": true
+    }
+  },
+  "control": {
+    "entry": "D:\\Data\\ProjectAgent\\create-evo-lite\\.evo-lite\\generated\\nc-step2c\\fake060\\src\\index.js",
+    "version": "0.6.0",
+    "versionIs060": true,
+    "collectionPathLen": 149,
+    "outcome": "NORMAL_JS_ERROR",
+    "classifierInput": {
+      "timedOut": false,
+      "jsError": true,
+      "status": 1,
+      "signal": null,
+      "completed": false
+    },
+    "exitCode": 1,
+    "signal": null,
+    "error": {
+      "name": "Error",
+      "message": "NEGATIVE-CONTROL-ORDINARY-JS-ERROR",
+      "stack": "Error: NEGATIVE-CONTROL-ORDINARY-JS-ERROR\n    at Object.<anonymous> (D:\\Data\\ProjectAgent\\create-evo-lite\\.evo-lite\\generated\\nc-step2c\\fake060\\src\\index.js:2:7)\n    at Module._compile (node:internal/modules/cjs/loader:1705:14)\n    at Object..js (node:internal/modules/cjs/loader:1838:10)\n    at Module.load (node:internal/modules/cjs/loader:1441:32)\n    at Function.<anonymous> (node:internal/modules/cjs/loader:1263:12)\n    at Module._load (D:\\Data\\ProjectAgent\\create-evo-lite\\docs\\validation\\fixtures\\zvec-070-adapter-contract\\adapter-txn.js:60:25)\n    at TracingChannel.traceSync (node:diagnostics_channel:328:14)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)\n    at Module.require (node:internal/modules/cjs/loader:1463:12)\n    at require (node:internal/modules/helpers:147:16"
+    },
+    "stages": [],
+    "triggerReproduced": false
+  },
+  "zvec": {
+    "entry": "D:/Data/ProjectAgent/create-evo-lite/.evo-lite/generated/zvec070-probe/node_modules/@zvec/zvec/src/index.js",
+    "installedVersion": "0.7.0",
+    "versionMatchesRequested": true
+  },
+  "phases": [],
+  "verdict": "NOT_SATISFIED",
+  "apparatusRunnerFile": "bridge-runner.js",
+  "summary": {
+    "triggerReproduced": false,
+    "phasesPassed": 0,
+    "checksExpected": 19,
+    "checksTotal": 0,
+    "checksFailed": 0,
+    "seamProven": false,
+    "blobOk": false,
+    "checkSetOk": false,
+    "lengthOnTarget": false,
+    "apparatusOk": true,
+    "collectionPathLen": 149
+  }
+}

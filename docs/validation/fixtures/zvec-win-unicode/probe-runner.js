@@ -62,17 +62,19 @@ if (bindingOverride !== null && !path.isAbsolute(bindingOverride)) {
     process.exit(2);
 }
 const BINDING = bindingOverride || require.resolve('@zvec/zvec');
+const { classifyNativeOutcome } = require('../shared/fail-fast-classifier');
 
+// The classification vocabulary moved to ../shared/fail-fast-classifier.js so
+// that later layers inherit it instead of reinventing it. Behaviour here is
+// unchanged - `completed` is this runner's own `child_done` stage test.
 function classify(run) {
-    if (run.timedOut) return 'INCONCLUSIVE';
-    if (run.jsError) return 'NORMAL_JS_ERROR';
-    if (run.status === 0 && run.stages.includes('child_done')) return 'COMPLETED_NO_FAILFAST';
-    // 0xC0000409 == 3221226505 unsigned. Any abnormal teardown with no JS-level
-    // error means JavaScript never regained control: a native fail-fast.
-    if (run.status === 3221226505 || run.status === -1073740791) return 'FAIL_FAST_REPRODUCED';
-    if (run.signal) return 'FAIL_FAST_REPRODUCED';
-    if (run.status !== 0 && !run.jsError) return 'FAIL_FAST_REPRODUCED';
-    return 'INCONCLUSIVE';
+    return classifyNativeOutcome({
+        timedOut: run.timedOut,
+        jsError: run.jsError,
+        status: run.status,
+        signal: run.signal,
+        completed: run.stages.includes('child_done'),
+    });
 }
 
 function runOnce(sample, attempt, position) {
