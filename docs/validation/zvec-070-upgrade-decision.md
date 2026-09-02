@@ -81,9 +81,9 @@ verdict:          UNSET  (Stage 3 之前不允许出现任何最终 disposition)
 ```text
 historical label:    pin
 decision subject:    create-evo-lite 自身 published package manifest 里声明的
-                     @zvec/zvec 版本常量。它随发布的 tarball 到达每一个安装者,
-                     决定「装 create-evo-lite 时带来哪个 zvec」。
-                     不决定它是 optional 还是 required(D3),
+                     @zvec/zvec 版本常量:该 manifest **请求 / 钉定**哪个版本。
+                     **是否必须成功安装由 D3 决定** —— 当前该条目在
+                     optionalDependencies 下,因此 D1 本身不保证依赖最终存在。
                      也不决定被脚手架出的子项目装什么(D2)。
 subject_status:      INSTANTIATED
 
@@ -107,7 +107,8 @@ RED iff:             NOT WRITTEN (Stage 2)
 missing authority
 disposition:         NOT WRITTEN (Stage 2)
 
-depends on:          E1 (EVIDENCE_PREREQUISITE) · E4 · E6 (IMPLEMENTATION_COUPLING)
+depends on:          E4 · E6 (IMPLEMENTATION_COUPLING)
+                     evidence edge:Stage 1 不实例化(§2.2)
 
 does NOT authorize:  不改变 dependency class(D3)· 不把 zvec 送进子项目 runtime(D2)
                      · 不改 containment 的任何不变量(D5)· 不构成发布决定(D6)
@@ -150,7 +151,8 @@ RED iff:             NOT WRITTEN (Stage 2)
 missing authority
 disposition:         NOT WRITTEN (Stage 2)
 
-depends on:          E2 (EVIDENCE_PREREQUISITE) · E4 · E5 (IMPLEMENTATION_COUPLING)
+depends on:          E4 (IMPLEMENTATION_COUPLING)
+                     evidence edge:Stage 1 不实例化(§2.2)
 
 does NOT authorize:  不改母体自身的版本(D1)· 不改 published package 的依赖语义(D3)
                      · 不改 containment(D5)
@@ -202,7 +204,7 @@ RED iff:             NOT WRITTEN (Stage 2)
 missing authority
 disposition:         NOT WRITTEN (Stage 2)
 
-depends on:          E5 · E6 (IMPLEMENTATION_COUPLING)
+depends on:          E6 (IMPLEMENTATION_COUPLING)
 
 does NOT authorize:  不决定版本(D1)· 不决定子项目装什么(D2)· 不放松 containment(D5)
 
@@ -281,9 +283,11 @@ current state X:     containment decision is **version-blind**。
                      并明确不打开、不修改既有 collection。
                      上层 decision snapshot 采集 choice / platform / classifier / fs /
                      path / marker 等输入,**其中没有 binding version**。
-                     全树与版本有关的只有一条注释(zvec-path-containment.js:8
-                     「@zvec/zvec 0.6.0 terminates the process with 0xC0000409」),
-                     它不是输入。
+                     **containment decision chain 上没有任何 installed-zvec-version 输入。**
+                     `zvec-path-containment.js` 自身唯一的版本引用是第 8 行的注释
+                     (「@zvec/zvec 0.6.0 terminates the process with 0xC0000409」),
+                     它不参与判定。(版本值在树里当然还有很多处 —— package.json、
+                     lockfile、validation 文档 —— 但它们都不是这条决策链的输入。)
 
 candidate state Y:   containment decision becomes **version-aware**,
                      并可据此区分已证明的 0.7.0 与 0.6.0 / 未知版本。
@@ -315,7 +319,7 @@ RED iff:             NOT WRITTEN (Stage 2)
 missing authority
 disposition:         NOT WRITTEN (Stage 2)
 
-depends on:          E3 (EVIDENCE_PREREQUISITE)
+depends on:          evidence edge:Stage 1 不实例化(§2.2)
 
 does NOT authorize:  不改版本(D1)· 不改依赖分类(D2 / D3)· 不构成发布决定(D6)
 
@@ -400,34 +404,38 @@ SUBJECT_INSTANTIATION                                    (2026-09-02 APPROVED)
 
 ### 2.2 边
 
+**Stage 1 不实例化任何 `EVIDENCE_PREREQUISITE` 边。** 类型定义(§2.1)保留,
+但具体的 evidence edge —— 连同它所命名的 authority、以及该 authority 是否存在 ——
+属于 Stage 2。在 Stage 1 写出「edge E 的 authority 是 X」「X 当前不存在」,
+等于把 `required authority` 与 `missing-authority` 这两个 Stage 2 字段从节点
+搬进图里,换个位置提前完成 Stage 2。
+
 ```text
-E1  D1 ← EVIDENCE_PREREQUISITE
-        authority E = 「0.7.0 在受支持矩阵上可安装、可加载、原生 smoke 通过」
-        (必要条件,非充分)
+已撤回的边 id(Stage 1 不成立,且 id 不再复用):
 
-E2  D2 ← EVIDENCE_PREREQUISITE
-        authority E = 同 E1,且对**被脚手架出的子项目安装形态**成立。
-        子项目的安装面与母体不同,E1 的证据是否覆盖它属 Stage 2 判定,此处不预判。
+  E1  D1 ← EVIDENCE_PREREQUISITE   撤回 —— 具体 authority 属 Stage 2
+  E2  D2 ← EVIDENCE_PREREQUISITE   撤回 —— 同上
+  E3  D5 ← EVIDENCE_PREREQUISITE   撤回 —— 同上;原文还写了「该 authority 当前不存在」,
+                                   那是 missing-authority fact,更不属于 Stage 1
+  E5  D2 ↔ D3 IMPLEMENTATION_COUPLING
+                                   删除 —— 理由见 §2.3
 
-E3  D5 ← EVIDENCE_PREREQUISITE
-        authority E = 「该 native 故障的机制,及其环境依赖维度,已被隔离」
-        当前状态:该 authority 不存在。Step 2C §7 把 native mechanism 明确排除在授权外,
-        §6 记录了故障的**可观测性**依赖尚未隔离的环境维度(同一 colPathLen 149 上
-        GitHub windows-latest 镜像根本不复现 control)。
-        按定义,E 不存在**不导致 D5=NO**;具体 disposition 属 Stage 2,此处不写。
+Stage 2 若创建 evidence edge,使用新的 id;E1 / E2 / E3 / E5 不复用,
+以免两轮复审之间同一个 id 指向不同的边。
+```
 
+```text
 E4  D1 ↔ D2  IMPLEMENTATION_COUPLING
         两者同时为 YES 时版本取值需协同。
         无逻辑冲突:母体与子项目是两个独立安装,版本不同不构成矛盾。
 
-E5  D2 ↔ D3  IMPLEMENTATION_COUPLING
-        两者都改变「zvec 以什么方式到达一个安装点」。同时为 YES 时需要同批发布,
-        否则会出现 published package 要求必装、而被脚手架出的项目仍然拿不到它的
-        中间状态。这是实施协同,**不是逻辑蕴含** —— 见 §2.3。
-
 E6  D1 ↔ D3  IMPLEMENTATION_COUPLING
-        两者编辑 package.json 中**同一个条目**:D1 改版本值,D3 改它所属的键。
-        同时为 YES 时必须一并落笔。仅此而已 ——
+        两者操作 published manifest 中**同一个条目**:
+            D1 改 value   0.6.0 → 0.7.0
+            D3 改 bucket  optionalDependencies → dependencies
+        若二者同时实施,最终的 manifest / lockfile edit 必须组合这两项独立 delta。
+        **允许顺序提交,不要求原子 commit,也不要求同一批次发布。**
+        该边仅记录 shared-entry composition,不表达任一 verdict 对另一项的约束 ——
         §2.3 中「D1 → D3 LOGICAL 不成立」仍然完全有效。
 
 E7  D6 ← SUBJECT_INSTANTIATION
@@ -464,10 +472,18 @@ D1 → D3   LOGICAL
         「0.6.0 是否从 optional 改为 mandatory」仍然是一个可讨论的独立问题。
         版本裁定不得结构性吞掉 dependency-class 裁定。
 
-D3 → D2   LOGICAL
-        不成立。D3=YES / D2=NO 可能是一个奇怪甚至不可取的组合,
+D3 ↔ D2   任意类型
+        LOGICAL 不成立:D3=YES / D2=NO 可能是一个奇怪甚至不可取的组合,
         但它不是逻辑矛盾。该组合该由 Stage 2 的 criteria 判红,
         **不得在 Stage 1 的图里提前禁止** —— 图不替裁定。
+
+        IMPLEMENTATION_COUPLING 同样不成立(原 E5,已删除)。它当时的理由是
+        「否则会出现 published package 要求必装、而脚手架项目拿不到的中间状态,
+        所以必须同批发布」—— 那是对**该组合是否可接受**的评价,属 Stage 2,
+        不是结构约束。而且这个中间状态并不破坏任何现存不变量:
+        defaultLoadZvecIndex()(memory-index.js:194-198)在 require 失败时返回 null,
+        运行点本来就允许 zvec 不可用并回落 SqliteFtsIndex。
+        把一句评价包装成 IMPLEMENTATION_COUPLING,等于在 Stage 1 提前施压。
 
 D3 ↔ D5   任意类型
         不成立(**冻结后**)。D3 曾有一个候选主语「完全必装 / 移除 SqliteFtsIndex
@@ -477,16 +493,17 @@ D3 ↔ D5   任意类型
         而不知道它会重新引入一条 LOGICAL 边。
 ```
 
-## 3. Authority 清单(已登记,尚未被任何节点消费)
+## 3. Candidate source inventory
 
-登记在此是为了 Stage 2 写 GREEN 时**必须点名消费哪一个事实**,而不是笼统引用
-「测量阶段全绿」。
+**这只是文件清单。** 它不把任何一份文档绑定为任何一种 authority,也不声明任何一份
+文档证明了什么 —— 「这份文件是哪一类 authority」是 Stage 2 的工作。
+列在此处只是为了指明 Stage 2 将从哪里取材。
 
 ```text
-Step 1  zvec-070-win-unicode-recheck.md   → failure-class / containment uncertainty authority
-2A      zvec-070-install-matrix.md        → install / load / native-smoke compatibility authority
-2B      zvec-070-adapter-contract.md      → ASCII real-adapter contract authority
-2C      zvec-070-nonascii-bridge.md       → bounded non-ASCII real-adapter contract authority
+Step 1  docs/validation/zvec-070-win-unicode-recheck.md
+2A      docs/validation/zvec-070-install-matrix.md
+2B      docs/validation/zvec-070-adapter-contract.md
+2C      docs/validation/zvec-070-nonascii-bridge.md
 ```
 
 **禁止的推理形状**(明确写下,因为它正是本工作线一路在防的那个跳跃):
@@ -497,7 +514,7 @@ Step 1/2A/2B/2C 全绿          →  某节点 GREEN         ✗
 ```
 
 「全绿」不是任何节点的总括 GREEN 条件。每个节点在 Stage 2 必须写明:
-**它从上述哪一份 authority 里,消费哪一个具体事实**。
+**它从上述哪一份文件里,消费哪一个具体事实**。
 
 ## 4. Stage 2 之前不得做的事
 
@@ -507,4 +524,10 @@ Step 1/2A/2B/2C 全绿          →  某节点 GREEN         ✗
 不裁定任何一项                        不写实施计划
 不修改 D1-D6 涉及的任何生产文件
 不为 subject_status = NOT_INSTANTIATED 的节点(D4 / D6)编写判据
+不实例化任何 EVIDENCE_PREREQUISITE 边   不把任何文件绑定为某一类 authority
+不声明某个 authority「存在」或「不存在」
 ```
+
+最后三条是 2026-09-02 第一次 Stage 1 复审的裁决:原 §2.2 曾实例化 E1 / E2 / E3
+并写明 E3 的 authority「当前不存在」。那是 `required authority` 与
+`missing-authority` 两个 Stage 2 字段被从节点搬进了图里 —— 位置换了,越界没变。
