@@ -7,10 +7,13 @@
   · 2B `zvec-070-adapter-contract.md` · 2C `zvec-070-nonascii-bridge.md`
 
 ```text
-STAGE 1 — DECISION SUBJECT CONTRACT
-本次提交冻结的是「到底在裁什么」,不是「按什么条件裁」。
-所有 verdict = UNSET;GREEN / RED / required authority /
-missing-authority disposition 一律 NOT WRITTEN;不读取任何证据。
+STAGE 2 — CRITERIA CONTRACT
+Stage 1(subject contract)已于 d235e99 冻结,本阶段不得改动它。
+本阶段写的是「按什么条件裁」:required authority · GREEN iff · RED iff ·
+missing-authority disposition · evidence edges。
+
+所有 verdict 仍为 UNSET。仍然不读取任何证据的结果,不判断任何 authority
+当前是否存在,不判断现有证据是否满足 GREEN 或命中 RED —— 那些都是 Stage 3。
 ```
 
 ## 0. 三阶段顺序(冻结)
@@ -18,10 +21,10 @@ missing-authority disposition 一律 NOT WRITTEN;不读取任何证据。
 ```text
 Stage 1   decision subjects · X → Y · subject_status · typed dependency graph
           · deliberately absent edges · verdict = UNSET · GREEN/RED = NOT WRITTEN
-              ↓ COMMIT + REVIEW
+              ↓ COMMIT + REVIEW        ✔ FROZEN @ d235e99(2026-09-02 复审 APPROVED)
 Stage 2   GREEN iff · RED iff · required authority · missing-authority disposition
-          · 仍然不填 verdict
-              ↓ COMMIT + REVIEW
+          · evidence edges · 仍然不填 verdict
+              ↓ COMMIT + REVIEW        ← 当前阶段
 Stage 3   consume frozen evidence · fill dispositions / verdicts
 ```
 
@@ -58,6 +61,35 @@ verdicts                       ALL UNSET
 implementation planning        FORBIDDEN
 ```
 
+### 0.3 Stage 1 冻结与 Stage 2 授权(2026-09-02,独立复审)
+
+Stage 1 经四轮复审后 **APPROVED / FROZEN @ d235e99**。四轮里被拦下的三处越界
+全部是同一种错误 —— 把 Stage 2 的字段换个位置提前写掉:
+
+```text
+第 2 轮   E1/E2/E3 在 graph 里命名了 authority,E3 还宣告它「当前不存在」
+第 3 轮   §2.3 写了「该组合该由 Stage 2 判红」,提前冻结了一个 RED 方向
+第 4 轮   EVIDENCE_PREREQUISITE 的**类型定义**替所有未来实例规定了缺失时算什么
+```
+
+Stage 2 授权范围(严格限定为 criteria freeze):
+
+```text
+允许:为 D1 / D2 / D3 / D5 写 required authority · GREEN iff · RED iff ·
+      missing-authority disposition;实例化新的 EVIDENCE_PREREQUISITE 边
+      (新 ID,不复用 E1/E2/E3/E5);把 candidate source 绑定到
+      「需要它证明哪个具体事实」。
+
+禁止:填任何最终 verdict;判断某个 authority 当前是否真的存在;
+      判断现有证据是否满足 GREEN 或命中 RED;用 Step 1/2A/2B/2C 的**实际结果**
+      反推 criteria;实例化 D6;为 D4 写 criteria;写实施计划或改生产文件。
+```
+
+**本阶段作者纪律(自陈,供复审核对):** 撰写本阶段判据期间未读取 2A / 2B / Step 1
+的正文;这三份在本工作线的当前会话中只有标题与 2C 对它们的转述。2C 的结果作者已知,
+因此 D5 的每一条 GREEN 都标注了它的来源是 **[主语推导]** 还是 **[通用方法论]**,
+以便复审检查是否有从结果倒推的痕迹。
+
 ## 1. 六个 decision node
 
 ### 1.0 两条状态轴(冻结)
@@ -72,7 +104,10 @@ verdict:          UNSET  (Stage 3 之前不允许出现任何最终 disposition)
 因此**不得**出现 `D4 verdict = NOT_INSTANTIATED` 这样的写法 —— 那会让 Stage 1
 偷偷变成一次裁定。主语不存在时,`subject_status` 说明它,`verdict` 仍然是 `UNSET`。
 
-字段中的 `NOT WRITTEN (Stage 2)` 是**故意留空**,不是遗漏。
+Stage 2 已填入 D1 / D2 / D3 / D5 的 `required authority` · `GREEN iff` · `RED iff`
+· `missing authority disposition`。D4 与 D6 的这四个字段是 `N/A`,理由写在字段里:
+它们的 `subject_status` 是 `NOT_INSTANTIATED`,**为不存在的主语写判据本身就是越界**。
+六个 `verdict` 仍然全部是 `UNSET`。
 
 ---
 
@@ -101,14 +136,32 @@ tree/runtime delta:  package.json 一行 + package-lock.json 的 @zvec/zvec 条�
                      (version / resolved / integrity)。
                      运行时可观测面:本仓 node_modules/@zvec/zvec/package.json 的 version。
 
-required authority:  NOT WRITTEN (Stage 2)
-GREEN iff:           NOT WRITTEN (Stage 2)
-RED iff:             NOT WRITTEN (Stage 2)
+required authority:  A1 install / load compatibility(母体安装形态)
+                     A3 real-adapter contract conformance
+                     定义见 §5。
+
+GREEN iff:           以下全部成立:
+                     G1  A1 覆盖本包 engines 字段声明的**全部**平台 × Node 组合,
+                         且每一格上 0.7.0 都能安装、其原生绑定都能被 require 解析。
+                     G2  A3 证明本仓生产 adapter **实际消费的**那一组 API、返回值形状
+                         与跨进程持久化行为在 0.7.0 上成立。
+                     G3  作用域规则:G1 / G2 的作用域必须覆盖本节点的作用域。
+                         authority 作用域较小时,GREEN 只能在**相同的有界范围内**成立,
+                         且该边界必须写进裁定本身(disposition BOUNDED,§5.1)。
+
+RED iff:             任一成立即为 RED:
+                     R1  存在一格:0.6.0 可安装 / 可加载,而 0.7.0 不能。
+                     R2  合同回归 —— 存在一项:0.6.0 满足而 0.7.0 不满足。
+                     R3  0.7.0 在**当前被 containment 判为 SAFE** 的路径上出现
+                         不可捕获的进程级失败。那意味着现有 containment 不再足够,
+                         而 D1 本身不携带任何 containment 变更(见 does NOT authorize)。
+
 missing authority
-disposition:         NOT WRITTEN (Stage 2)
+disposition:         A1 或 A3 未实例化 → DEFERRED(§5.1)。
+                     不得因 authority 缺失而记为 NO。
 
 depends on:          E4 · E6 (IMPLEMENTATION_COUPLING)
-                     evidence edge:Stage 1 不实例化(§2.2)
+                     E8 · E9 (EVIDENCE_PREREQUISITE)
 
 does NOT authorize:  不改变 dependency class(D3)· 不把 zvec 送进子项目 runtime(D2)
                      · 不改 containment 的任何不变量(D5)· 不构成发布决定(D6)
@@ -145,14 +198,34 @@ tree/runtime delta:  三处必须同步,否则 T18e 变红:
                        templates/runtime/package-lock.json
                      运行时可观测面:新建项目的 .evo-lite/package.json 与其 node_modules。
 
-required authority:  NOT WRITTEN (Stage 2)
-GREEN iff:           NOT WRITTEN (Stage 2)
-RED iff:             NOT WRITTEN (Stage 2)
+required authority:  A2 scaffolded-runtime install compatibility
+                     A3 real-adapter contract conformance
+                     定义见 §5。
+
+GREEN iff:           G1  A2 覆盖被脚手架出的项目**实际使用的安装形态**
+                         (templates/runtime 清单复制进 .evo-lite/ 后
+                         `npm ci --prefix .evo-lite`),而不是母体的开发安装形态,
+                         并在本产品声明支持的每一格上成立。
+                     G2  同 D1-G2(A3)。
+                     G3  加入该条目后 index.js 的 RUNTIME_DEPENDENCIES、
+                         templates/runtime/package.json 与其 package-lock.json
+                         三者仍逐字一致(T18e 绿),且锁文件可复现。
+                     G4  作用域规则同 D1-G3。
+
+RED iff:             R1  存在一格在本产品声明的支持范围内、而 zvec 在**子项目安装形态**下
+                         无法安装或构建。RUNTIME_DEPENDENCIES 是必需依赖集合,
+                         没有 optional 桶,因此这一格的失败会使**脚手架本身失败**,
+                         而不只是记忆引擎降级。
+                     R2  合同回归(同 D1-R2)。
+                     R3  加入后锁文件不可复现,或三者无法同时保持一致(T18e 不可能同时绿)。
+
 missing authority
-disposition:         NOT WRITTEN (Stage 2)
+disposition:         A2 或 A3 未实例化 → DEFERRED。
+                     特别地:**只覆盖母体安装形态的 authority 不自动成为 A2** ——
+                     两者的清单、锁文件与执行目录都不同(见本节点主语)。
 
 depends on:          E4 (IMPLEMENTATION_COUPLING)
-                     evidence edge:Stage 1 不实例化(§2.2)
+                     E10 · E11 (EVIDENCE_PREREQUISITE)
 
 does NOT authorize:  不改母体自身的版本(D1)· 不改 published package 的依赖语义(D3)
                      · 不改 containment(D5)
@@ -198,13 +271,34 @@ tree/runtime delta:  package.json 中该条目所属的键名,以及 package-loc
                      (dependency packaging / runtime availability / engine fallback
                      semantics)粘在一起,并会与 D5 直接相撞。冻结后的 D3 与 D5 正交。
 
-required authority:  NOT WRITTEN (Stage 2)
-GREEN iff:           NOT WRITTEN (Stage 2)
-RED iff:             NOT WRITTEN (Stage 2)
+required authority:  A4 published-package installability under required semantics
+                     A5 product-intent:zvec-backed memory 是要求而非偏好
+                     定义见 §5。
+
+GREEN iff:           G1  A4 证明:该条目移入 dependencies 后,在本包 engines 声明的
+                         每一格平台 × Node 上 `npm i create-evo-lite` 仍然成功。
+                     G2  A5 证明:zvec 缺席时的降级形态(SqliteFtsIndex)**不是**
+                         本产品可接受的长期状态 —— 即「必装」是一条产品要求,
+                         而不是「装上更好」。
+                     G3  作用域规则同 D1-G3。
+
+RED iff:             R1  存在一格在声明支持范围内、而 zvec 在其上无法安装或构建 ——
+                         mandatory 会把「记忆引擎降级」升级为「本包装不上」。
+                     R2  存在一条**相反**的产品要求,明确要求 zvec 可以缺席
+                         (例如对离线或受限环境的安装保证)。
+
+                     注意:A5 仅仅「未实例化」**不是** RED,见 disposition。
+                     「没有要求它必装」与「要求它可以不装」是两回事。
+
 missing authority
-disposition:         NOT WRITTEN (Stage 2)
+disposition:         A4 未实例化 → DEFERRED。
+                     A5 未实例化 → DEFERRED,且裁定必须点明一件事:
+                     §3 的 candidate source inventory 全部是**测量**类文件,
+                     而 A5 是**产品意图**类 authority。它是否由 inventory 之外的
+                     来源提供,属 Stage 3 判定;Stage 2 对此不作断言。
 
 depends on:          E6 (IMPLEMENTATION_COUPLING)
+                     E12 · E13 (EVIDENCE_PREREQUISITE)
 
 does NOT authorize:  不决定版本(D1)· 不决定子项目装什么(D2)· 不放松 containment(D5)
 
@@ -313,13 +407,52 @@ tree/runtime delta:  containment decision 的输入集合(是否含 version);
                      memory-index.js 的 reason 取值分布;
                      `mem verify` 的 containment 段落输出。
 
-required authority:  NOT WRITTEN (Stage 2)
-GREEN iff:           NOT WRITTEN (Stage 2)
-RED iff:             NOT WRITTEN (Stage 2)
-missing authority
-disposition:         NOT WRITTEN (Stage 2)
+required authority:  A6 version-bounded fault attribution
+                     定义见 §5。
 
-depends on:          evidence edge:Stage 1 不实例化(§2.2)
+GREEN iff:           每条后面标注它的来源,以便复审检查有无从测量结果倒推:
+
+                     G1  A6 把该 native 失败类归因到一个**机制**,并证明 0.7.0 改变了
+                         该机制 —— 而不是仅仅「在若干样本上 0.7.0 没有崩」。
+                         [主语推导:版本感知门断言的是「按版本有界」;
+                          样本本身界定不出版本这条边界。]
+                     G2  A6 能把「0.7.0 上未观察到该失败」与「该失败在那个环境下
+                         本就不可观察」区分开。
+                         [通用方法论:缺席的观察不是缺席的证明。
+                          与任何一次具体测量的结果无关。]
+                     G3  版本门开启的 SAFE 区域有一个**声明的边界**,且该边界不是
+                         「已被测过的路径集合」。
+                         [主语推导:门必须在未测路径上也给出答案,
+                          否则它不是判定而是查表。]
+                     G4  版本输入标识的是**实际被加载的 binding**,而不是某个清单里的
+                         版本字符串。
+                         [主语推导:D5 的结构事实指出 Y 的组成部分是新增
+                          version identity input;身份必须来自被加载物本身。]
+                     G5  containment marker 与 recovery 状态机在门开启时的行为已定义。
+                         [来自现有 containment 合同的存在,不来自任何测量结果。]
+                     G6  作用域规则同 D1-G3。
+
+RED iff:             RED 条件同样标注来源:
+
+                     R1  存在任一路径:0.7.0 表现出同一不可捕获的失败类。
+                         [主语推导:门断言的正是「这一类在 0.7.0 上不再发生」。]
+                     R2  用**对照未复现**的环境去支持 0.7.0 的安全性 ——
+                         在那种环境里 0.6.0 与 0.7.0 的结果不可区分,
+                         因此它不携带关于 0.7.0 的任何信息。
+                         [通用方法论:这是 G2 的对偶,写成 RED 是为了让「用错环境的绿」
+                          本身可判,而不是只在 G2 处不计分。**不指向任何具体环境**;
+                          哪些环境属于此类,属 Stage 3 判定。]
+                     R3  版本输入可被伪造或过期:读到的不是实际加载的 binding。
+                         [主语推导:G4 的对偶。]
+                     R4  门开启后,既有 containment marker 的语义变为未定义。
+                         [来自现有 containment 合同的存在。]
+
+missing authority
+disposition:         A6 未实例化 → DEFERRED。
+                     A6 已实例化但作用域小于本节点作用域 → BOUNDED(§5.1):
+                     GREEN 只能在该有界范围内成立,**且版本门的开启范围不得超过它**。
+
+depends on:          E14 (EVIDENCE_PREREQUISITE)
 
 does NOT authorize:  不改版本(D1)· 不改依赖分类(D2 / D3)· 不构成发布决定(D6)
 
@@ -404,11 +537,13 @@ SUBJECT_INSTANTIATION                                    (2026-09-02 APPROVED)
 
 ### 2.2 边
 
-**Stage 1 不实例化任何 `EVIDENCE_PREREQUISITE` 边。** 类型定义(§2.1)保留,
-但具体的 evidence edge —— 连同它所命名的 authority、以及该 authority 是否存在 ——
-属于 Stage 2。在 Stage 1 写出「edge E 的 authority 是 X」「X 当前不存在」,
-等于把 `required authority` 与 `missing-authority` 这两个 Stage 2 字段从节点
-搬进图里,换个位置提前完成 Stage 2。
+Stage 1 不实例化任何 `EVIDENCE_PREREQUISITE` 边;**Stage 2 实例化它们**,
+见下方 E8–E14。当时的理由仍然有效并记录在此:在 Stage 1 写出「edge E 的
+authority 是 X」「X 当前不存在」,等于把 `required authority` 与
+`missing-authority` 这两个 Stage 2 字段从节点搬进图里,换个位置提前完成 Stage 2。
+
+Stage 2 的边**只命名 authority 必须证明什么**,仍然不声明该 authority 是否存在 ——
+那是 Stage 3。
 
 ```text
 已撤回的边 id(Stage 1 不成立,且 id 不再复用):
@@ -437,6 +572,19 @@ E6  D1 ↔ D3  IMPLEMENTATION_COUPLING
         **允许顺序提交,不要求原子 commit,也不要求同一批次发布。**
         该边仅记录 shared-entry composition,不表达任一 verdict 对另一项的约束 ——
         §2.3 中「D1 → D3 LOGICAL 不成立」仍然完全有效。
+
+E8   D1 ← EVIDENCE_PREREQUISITE   authority A1
+E9   D1 ← EVIDENCE_PREREQUISITE   authority A3
+E10  D2 ← EVIDENCE_PREREQUISITE   authority A2
+E11  D2 ← EVIDENCE_PREREQUISITE   authority A3
+E12  D3 ← EVIDENCE_PREREQUISITE   authority A4
+E13  D3 ← EVIDENCE_PREREQUISITE   authority A5
+E14  D5 ← EVIDENCE_PREREQUISITE   authority A6
+
+        A1–A6 的定义见 §5。每条边只声明「该 authority 是必要条件」;
+        充分性写在节点的 GREEN,缺失时的处置写在节点的 disposition。
+        一个节点可以有多条 evidence 边:A1 与 A3 是两件不同的事,
+        任一缺失都足以让该节点无法 GREEN。
 
 E7  D6 ← SUBJECT_INSTANTIATION
         instantiator 是「一个具体的、携带升级的 candidate change set 存在」,
@@ -516,18 +664,122 @@ Step 1/2A/2B/2C 全绿          →  某节点 GREEN         ✗
 「全绿」不是任何节点的总括 GREEN 条件。每个节点在 Stage 2 必须写明:
 **它从上述哪一份文件里,消费哪一个具体事实**。
 
-## 4. Stage 2 之前不得做的事
+## 4. Stage 3 之前不得做的事(当前阶段的边界)
 
 ```text
-不写 GREEN / RED                     不写 required authority
-不写 missing authority disposition    不读取证据
-不裁定任何一项                        不写实施计划
-不修改 D1-D6 涉及的任何生产文件
-不为 subject_status = NOT_INSTANTIATED 的节点(D4 / D6)编写判据
-不实例化任何 EVIDENCE_PREREQUISITE 边   不把任何文件绑定为某一类 authority
-不声明某个 authority「存在」或「不存在」
+不填任何最终 verdict
+不判断某个 authority 当前是否真的存在
+不判断现有证据是否满足某条 GREEN 或命中某条 RED
+不用 Step 1 / 2A / 2B / 2C 的**实际结果**反推 criteria
+不实例化 D6(除非此时确已存在 concrete upgrade-bearing change set)
+不为 D4 写 criteria
+不写实施计划                        不修改 D1-D6 涉及的任何生产文件
 ```
 
-最后三条是 2026-09-02 第一次 Stage 1 复审的裁决:原 §2.2 曾实例化 E1 / E2 / E3
-并写明 E3 的 authority「当前不存在」。那是 `required authority` 与
-`missing-authority` 两个 Stage 2 字段被从节点搬进了图里 —— 位置换了,越界没变。
+### 4.1 Stage 1 的边界(已冻结,记录在此以免回退)
+
+Stage 1 的禁止范围比现在更严,四轮复审拦下的三处越界全部是同一种错误 ——
+把 Stage 2 的字段换个位置提前写掉。清单保留:
+
+```text
+不写 GREEN / RED · 不写 required authority · 不写 missing-authority disposition
+不实例化任何 EVIDENCE_PREREQUISITE 边 · 不把任何文件绑定为某一类 authority
+不声明某个 authority「存在」或「不存在」
+不在边的**类型定义**里规定 authority 缺失时算什么
+```
+
+其中最后一条来自第四轮:撤回了 E1/E2/E3 三个实例之后,越界仍留在
+`EVIDENCE_PREREQUISITE` 的类型定义里 —— 实例撤了,规则还在,口子只是更难看见。
+
+## 5. Authority 定义(Stage 2)
+
+每个 authority 只定义**它必须证明什么**。这里不声明任何 authority 是否存在,
+也不声明 §3 里的任何文件是否已经证明了它 —— 那是 Stage 3。
+
+`candidate source` 的含义同样受限:它指出 Stage 3 **应当去哪里找**,
+不表示那里一定找得到,也不表示找到的东西一定够。
+
+```text
+A1  install / load compatibility(母体安装形态)
+    必须证明:在本包 engines 字段声明的每一格平台 × Node 上,0.7.0 可安装,
+    且其原生绑定可被 require 解析。
+    candidate source:2A
+    需要它证明的具体事实:上述每一格的安装结果与加载结果,逐格可辨。
+
+A2  scaffolded-runtime install compatibility
+    必须证明:同样的结论在**子项目安装形态**下成立 —— templates/runtime 清单被复制到
+    .evo-lite/ 之后执行 `npm ci --prefix .evo-lite`。
+    A1 不蕴含 A2:两者的清单、锁文件与执行目录都不同。
+    candidate source:2A
+    需要它证明的具体事实:它测的究竟是哪一种安装形态,以及该形态是否就是子项目形态。
+
+A3  real-adapter contract conformance
+    必须证明:memory-index-zvec.js **实际消费的**那一组 API、返回值形状与跨进程
+    持久化合同在 0.7.0 上成立,且被测对象是树内的生产 adapter 本身而不是复现脚本。
+    candidate source:2B(ASCII 路径)· 2C(非 ASCII 路径,有界)
+    需要它们证明的具体事实:各自覆盖到哪一段路径形态;
+    合并使用时必须分别说明边界,不得相加成一个更大的作用域。
+
+A4  published-package installability under required semantics
+    必须证明:把 @zvec/zvec 移入 dependencies 之后,在 engines 声明的每一格上
+    `npm i create-evo-lite` 仍然成功。
+    它与 A1 的差别是承重的:A1 问「zvec 装得上吗」,
+    A4 问「zvec 装不上时,会不会连本包一起装不上」。
+    candidate source:§3 的 inventory 中是否有来源覆盖它,属 Stage 3 判定。
+
+A5  product-intent:zvec-backed memory 是要求而非偏好
+    必须证明:存在一条**产品要求**,规定 zvec 缺席时的 SqliteFtsIndex 形态
+    不是可接受的长期状态。这是产品意图类 authority,不是测量类 ——
+    没有任何一次测量能证明「我们要求它必装」。
+    candidate source:§3 的 inventory 全部为测量类文件;A5 的来源属 Stage 3 判定。
+
+A6  version-bounded fault attribution
+    必须同时证明四件事,缺一不可:
+      (1) 机制归因:该 native 失败类由某个可指名的机制导致;
+      (2) 版本改变:0.7.0 改变了该机制;
+      (3) 可观测性区分:能把「未发生」与「在该环境下本就不可观察」分开;
+      (4) 边界声明:版本门开启的区域有一个界定,且该界定不是「已被测过的路径集合」。
+    candidate source:Step 1 · 2C
+    需要它们证明的具体事实:各自覆盖 (1)–(4) 的哪一部分、覆盖到什么范围;
+    四项的覆盖必须分别说明,不得由「整体看起来充分」代替。
+```
+
+### 5.1 missing-authority disposition 词汇表
+
+```text
+DEFERRED
+    被点名的 authority 未实例化。该节点**不得**因此被记为 NO,也不得记为 YES;
+    它在 Stage 3 的结果是「不裁定,待 authority 出现」。
+
+BOUNDED
+    authority 已实例化,但作用域小于节点的作用域。
+    此时 GREEN 只能在该有界范围内成立,且边界必须写进裁定结论本身,
+    不得只写在脚注里。
+```
+
+这两个词是 **Stage 3 应用的规则**,不是 Stage 2 对任何节点作出的判断:
+Stage 2 不判断任何 authority 当前是否存在,因此本阶段没有任何节点被置于
+DEFERRED 或 BOUNDED。
+
+### 5.2 判据自检(本阶段作者自陈)
+
+写完后对每条 GREEN 反问一次:「如果把这条拿掉,哪一种坏情况会被放过?」
+逐条可答,则判据是在守某个性质;答不上来,则它只是描述了现有证据的形状。
+
+```text
+D1-G1  拿掉 → 某些声明支持的格子上装不上也能过
+D1-G2  拿掉 → 装得上就算数,不问 adapter 实际用到的合同
+D1-G3  拿掉 → 有界证据被当成无界结论
+D2-G1  拿掉 → 用母体安装形态的结论替子项目背书
+D2-G3  拿掉 → 三处清单漂移,脚手架产出不可复现
+D3-G1  拿掉 → 把「引擎降级」升级成「本包装不上」而无人发现
+D3-G2  拿掉 → 没有产品要求也能把依赖改成必装
+D5-G1  拿掉 → 「几个样本没崩」被当成「按版本有界」
+D5-G2  拿掉 → 在故障本就不可观察的环境里收集到的绿被当作证据
+D5-G3  拿掉 → 门变成查表:测过的放行,没测过的无答案
+D5-G4  拿掉 → 门读的是清单字符串,与实际加载的 binding 可以不一致
+D5-G5  拿掉 → 门开启后既有 containment marker 语义未定义
+```
+
+D5 的每条 GREEN 在正文里都标注了来源是 [主语推导] 还是 [通用方法论];
+作者在撰写本阶段期间未读取 2A / 2B / Step 1 的正文(§0.3)。
