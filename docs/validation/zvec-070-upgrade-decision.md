@@ -7,13 +7,13 @@
   · 2B `zvec-070-adapter-contract.md` · 2C `zvec-070-nonascii-bridge.md`
 
 ```text
-STAGE 2 — CRITERIA CONTRACT
-Stage 1(subject contract)已于 d235e99 冻结,本阶段不得改动它。
-本阶段写的是「按什么条件裁」:required authority · GREEN iff · RED iff ·
-missing-authority disposition · evidence edges。
+STAGE 3 — EVIDENCE CONSUMPTION & ADJUDICATION
+Stage 1(subject contract)冻结于 d235e99;Stage 2(criteria contract)冻结于 7875634。
+两者本阶段均不得改动 —— 为迎合证据去改主语或判据,正是三阶段拆分要防的事。
 
-所有 verdict 仍为 UNSET。仍然不读取任何证据的结果,不判断任何 authority
-当前是否存在,不判断现有证据是否满足 GREEN 或命中 RED —— 那些都是 Stage 3。
+本阶段读取测量正文与政策来源,判定 A0–A9,再按冻结判据裁决 D1 / D2 / D3 / D5。
+结果见 §6:D1 / D2 / D5 = DEFERRED,D3 = UNRESOLVED(冻结合同缺一条先后规则),
+D4 / D6 主语仍未实例化。**没有一个节点变为 YES。**
 ```
 
 ## 0. 三阶段顺序(冻结)
@@ -24,8 +24,9 @@ Stage 1   decision subjects · X → Y · subject_status · typed dependency gra
               ↓ COMMIT + REVIEW        ✔ FROZEN @ d235e99(2026-09-02 复审 APPROVED)
 Stage 2   GREEN iff · RED iff · required authority · missing-authority disposition
           · evidence edges · 仍然不填 verdict
-              ↓ COMMIT + REVIEW        ← 当前阶段
+              ↓ COMMIT + REVIEW        ✔ FROZEN @ 7875634(2026-09-02 复审 APPROVED)
 Stage 3   consume frozen evidence · fill dispositions / verdicts
+              ↓ COMMIT + REVIEW        ← 当前阶段(§6)
 ```
 
 拆成三段的理由是本轮的实际发现,不是仪式:六项的历史标签里有三项的**主语**站不住。
@@ -85,10 +86,13 @@ Stage 2 授权范围(严格限定为 criteria freeze):
       反推 criteria;实例化 D6;为 D4 写 criteria;写实施计划或改生产文件。
 ```
 
-**本阶段作者纪律(自陈,供复审核对):** 撰写本阶段判据期间未读取 2A / 2B / Step 1
-的正文;这三份在本工作线的当前会话中只有标题与 2C 对它们的转述。2C 的结果作者已知,
-因此 D5 的每一条 GREEN 都标注了它的来源是 **[主语推导]** 还是 **[通用方法论]**,
-以便复审检查是否有从结果倒推的痕迹。
+**Stage 2 期间的作者纪律(自陈,供复审核对):** 撰写 **Stage 2 判据**期间未读取
+2A / 2B / Step 1 的正文;当时这三份在本工作线的会话中只有标题与 2C 对它们的转述。
+2C 的结果作者当时已知,因此 D5 的每一条 GREEN 都标注了来源是 **[主语推导]**
+还是 **[通用方法论]**,以便复审检查是否有从结果倒推的痕迹。
+
+Stage 3 才第一次读取那三份正文(§6.1),此时判据已经冻结在 `7875634`,
+因此「先看结果再定判据」在时间上已被 git 历史排除,不必再靠自陈。
 
 ## 1. 六个 decision node
 
@@ -98,7 +102,8 @@ Stage 2 授权范围(严格限定为 criteria freeze):
 
 ```text
 subject_status:   INSTANTIATED | UNRESOLVED | NOT_INSTANTIATED
-verdict:          UNSET  (Stage 3 之前不允许出现任何最终 disposition)
+verdict:          UNSET | DEFERRED | BOUNDED | RED | GREEN
+                  Stage 3 之前只允许 UNSET;其余取值只能由 Stage 3 按冻结判据填入。
 ```
 
 因此**不得**出现 `D4 verdict = NOT_INSTANTIATED` 这样的写法 —— 那会让 Stage 1
@@ -107,7 +112,12 @@ verdict:          UNSET  (Stage 3 之前不允许出现任何最终 disposition)
 Stage 2 已填入 D1 / D2 / D3 / D5 的 `required authority` · `GREEN iff` · `RED iff`
 · `missing authority disposition`。D4 与 D6 的这四个字段是 `N/A`,理由写在字段里:
 它们的 `subject_status` 是 `NOT_INSTANTIATED`,**为不存在的主语写判据本身就是越界**。
-六个 `verdict` 仍然全部是 `UNSET`。
+
+Stage 3 已填入 D1 / D2 / D5 的 `verdict`(均为 `DEFERRED`),D3 记为
+`UNRESOLVED — PRECEDENCE GAP`。**D4 / D6 的 `verdict` 仍是 `UNSET`** ——
+主语未实例化的节点不会因为「裁决阶段到了」就获得一个 verdict,那仍然是把
+`subject_status` 写进 `verdict` 轴。每个节点的 verdict 字段与 §6.3 是同一个结论,
+理由只写在 §6.3 一处。
 
 ---
 
@@ -188,7 +198,7 @@ depends on:          E4 · E6 (IMPLEMENTATION_COUPLING)
 does NOT authorize:  不改变 dependency class(D3)· 不把 zvec 送进子项目 runtime(D2)
                      · 不改 containment 的任何不变量(D5)· 不构成发布决定(D6)
 
-verdict:             UNSET
+verdict:             DEFERRED  (Stage 3 · §6.3;缺 A0)
 ```
 
 ---
@@ -269,7 +279,7 @@ depends on:          E4 (IMPLEMENTATION_COUPLING)
 does NOT authorize:  不改母体自身的版本(D1)· 不改 published package 的依赖语义(D3)
                      · 不改 containment(D5)
 
-verdict:             UNSET
+verdict:             DEFERRED  (Stage 3 · §6.3;缺 A0 · A2 · A8)
 ```
 
 ---
@@ -349,7 +359,7 @@ depends on:          E6 (IMPLEMENTATION_COUPLING)
 
 does NOT authorize:  不决定版本(D1)· 不决定子项目装什么(D2)· 不放松 containment(D5)
 
-verdict:             UNSET
+verdict:             UNRESOLVED —— PRECEDENCE GAP(§6.4-A)
 ```
 
 ---
@@ -552,7 +562,7 @@ depends on:          E14 · E17 (EVIDENCE_PREREQUISITE)
 
 does NOT authorize:  不改版本(D1)· 不改依赖分类(D2 / D3)· 不构成发布决定(D6)
 
-verdict:             UNSET
+verdict:             DEFERRED  (Stage 3 · §6.3;缺 A6(1)(4) · A9)
 ```
 
 ---
@@ -788,7 +798,24 @@ A7(升级收益)介于两者之间:「0.6.0 上存在已登记的产品相关问
     「该改善是否构成升级理由」不行。Stage 3 必须分别说明这两半各自的来源。
 ```
 
-## 4. Stage 3 之前不得做的事(当前阶段的边界)
+## 4. 各阶段的边界
+
+### 4.0 Stage 3 的边界(当前阶段)
+
+```text
+不改动 Stage 1 的主语              不为迎合证据改动 Stage 2 的判据
+不把测量阶段的 SATISFIED 变成某个节点的 YES
+不在没有 authority 的情况下合并不同证据的作用域
+不实例化 D4
+不因某个上游节点变成 YES 就实例化 D6(E7 的 instantiator 是 candidate change set)
+不写实施计划                        不修改任何生产文件
+```
+
+**最后两条在本轮尤其承重:** §6 的结论是四个节点全部无法变绿,而受阻原因几乎都是
+authority 缺位而非测量不足。这种局面最容易诱发的动作,就是「顺手把缺的那条
+authority 写出来」—— 那等于裁决者给自己发授权。缺口一律登记(§6.4),不自行补。
+
+### 4.1 Stage 2 的边界(已冻结,记录在此以免回退)
 
 ```text
 不填任何最终 verdict
@@ -800,9 +827,9 @@ A7(升级收益)介于两者之间:「0.6.0 上存在已登记的产品相关问
 不写实施计划                        不修改 D1-D6 涉及的任何生产文件
 ```
 
-### 4.1 Stage 1 的边界(已冻结,记录在此以免回退)
+### 4.2 Stage 1 的边界(已冻结,记录在此以免回退)
 
-Stage 1 的禁止范围比现在更严,四轮复审拦下的三处越界全部是同一种错误 ——
+Stage 1 的禁止范围最严,四轮复审拦下的三处越界全部是同一种错误 ——
 把 Stage 2 的字段换个位置提前写掉。清单保留:
 
 ```text
@@ -1110,3 +1137,242 @@ D5-G6  ← D1-G3 的作用域规则,但处置相反(D5 允许 BOUNDED,§5.1)
 
 D5 的每条 GREEN 在正文里都标注了来源是 [主语推导] 还是 [通用方法论];
 作者在撰写本阶段期间未读取 2A / 2B / Step 1 的正文(§0.3)。
+
+## 6. Stage 3 —— 证据消费与裁决
+
+```text
+STAGE 3
+Stage 1(d235e99)与 Stage 2(7875634)均已冻结,本阶段不得改动其中任何一条。
+本阶段第一次读取测量正文与政策来源,判定 A0–A9 是否实例化、作用域是否足够、
+是否命中 admissibility 规则,再按冻结判据裁决 D1 / D2 / D3 / D5。
+```
+
+### 6.1 本阶段实际读取了什么
+
+```text
+Step 1  zvec-070-win-unicode-recheck.md        全文(221 行)
+2A      zvec-070-install-matrix.md             全文(150 行)
+2B      zvec-070-adapter-contract.md           全文(163 行)
+2C      zvec-070-nonascii-bridge.md            本工作线内已读
+
+非测量来源(为 A0 / A5 / A8 / A9 检索):
+  package.json 的 engines / os / cpu 字段
+  .github/workflows/release-gate.yml
+  docs/superpowers/specs/2026-06-23-release-hardening-phase1.md
+  docs/superpowers/specs/2026-07-07-zvec-memory-index.md          (status: done)
+  docs/superpowers/specs/2026-07-07-memory-engine-default-flip.md (status: done)
+  docs/specs/zvec-win-unicode-containment.md
+  2A / 2B workflow 的实际安装形态
+```
+
+### 6.2 A0–A9 判定
+
+```text
+A0  product-support scope                                   NOT INSTANTIATED
+    package.json  engines = { node: ">=20.0.0" };无 os / cpu 字段。
+                  只有 Node floor,没有平台轴,不是有限集,无 coverage justification。
+    release-hardening-phase1(done)第 91 行:
+                  「CI MUST run on Linux and Windows across the supported Node range」
+                  —— 这是对 CI 的要求,且「supported Node range」仍只由 floor 界定。
+                  它给出的最多是 S_PRODUCT 的一半,**没有给出 V_PRODUCT,也没有给出
+                  coverage justification**。
+    release-gate.yml 给出的是 S_GATE;§5.0 已冻结:workflow 不得自行缩小产品支持面。
+    → 三样缺两样。按 A0 自身规则:「S_PRODUCT 已知但拿不到有权威依据的 V_PRODUCT
+      → DEFERRED」。
+
+A1  install / load compatibility                            INSTANTIATED,作用域 = S_GATE
+    2A authority run 33602950366 @ f437cd7,五格 5/5 SATISFIED:
+    install ok · installedVersion 0.7.0 · identity MATCH · load ok · smoke completed;
+    五份 cell-result.json 已入库并附 SHA-256,逐格可独立重建。
+    作用域正是 S_GATE 五格。**不得外推** —— 外推权只属于 A0(§5 A1),而 A0 未实例化。
+
+A2  scaffolded-runtime install compatibility                NOT INSTANTIATED
+    2A 的安装形态是 `mkdir -p probe && npm install @zvec/zvec@0.7.0`
+    (zvec-070-install-matrix.yml:54-57)。
+    2B 同样另起 probe 目录装 zvec(zvec-070-adapter-contract.yml:62-65),
+    其 `npm ci --prefix .evo-lite`(第 55 行)装的是**当前**的 runtime 清单 ——
+    而当前清单里没有 zvec。
+    因此**没有任何一次测量**覆盖 A2 所要求的形态:「含 zvec 的 templates/runtime 清单
+    复制进 .evo-lite/ 后 npm ci --prefix .evo-lite」。
+    A2 的定义已写明 A1 不蕴含 A2,此处正是该条生效的地方。
+
+A3  real-adapter contract conformance                       INSTANTIATED,有界
+    2B authority run 33609869877 @ 785e429:五格 × 3/3 相 × 19/19 检查,0 失败,
+    合同面自 adapter 源码枚举(2B §2),seam 承重项是 requestedBy。**路径为 ASCII。**
+    2C:本机两格(node 22.22.2 / 24.18.0),预登记的非 ASCII path shape @ colPathLen 149。
+    按 A3 定义,两者作用域不同,**分别陈述、不得相加**:
+      ASCII        S_GATE 五格
+      非 ASCII     本机两格 · 单一 path shape · 单一长度
+
+A4  published-package installability under required semantics  NOT INSTANTIATED
+    没有任何一次测量执行过「zvec 位于 dependencies 时的 npm i create-evo-lite」。
+    A1 回答的是「zvec 装得上吗」,A4 问的是「zvec 装不上时会不会连本包一起拖垮」——
+    该定义已写明二者的差别,而本轮检索未发现前者以外的证据。
+
+A5  product install-policy                                  NOT INSTANTIATED
+    并且检索到**反向**候选,见 §6.3 D3。
+
+A6  version-bounded fault attribution                       NOT INSTANTIATED
+    四项要求中 (1) 与 (4) 当面不成立:
+
+    (1) 版本 discriminant —— 两条路都没有:
+        机制归因:Step 1 §2.4 记录 0.6.0 的 66 次崩溃中 57 次死在 create/open 之内、
+                 9 次死在 insert 之内,**推翻**了前序文档「崩溃恒在 insertSync」的机制
+                 断言,并明写「不要把『崩溃发生在 insertSync』当成已确立的机制事实」。
+        上游合同:Step 1 §3 明写「上游仍无路径安全合同」。
+    (4) 边界声明 —— Step 1 §3 给出的准确表述是「在本轮 runner 实际覆盖的 path layout
+        (位置 root、colPathLen 135..160)下,R2+R3 共 121 个 corpus 样本均未复现」。
+        **该边界正是「已被测过的路径集合」**,而 (4) 明确排除这种界定。
+    (3) 部分可服务:2C §6 提供了一个对照未复现的环境;按 A6 的 admissibility,
+        该 cell 为 observability-only,不得计入 0.7.0 的 safety evidence。
+    (2) 因 (1) 不成立而无从判断。
+
+A7  upgrade-benefit                                         INSTANTIATED,有界(附异议,见 §6.4-B)
+    已登记的产品相关问题:Windows 非 ASCII collection path 上的不可捕获 native
+    fail-fast —— 由 docs/specs/zvec-win-unicode-containment.md 登记,并是现有
+    containment 降级的直接原因;Step 1 的对照在今天仍复现(121 样本中 22 次崩溃)。
+    实质改善:Step 1 §2 —— 22 个崩溃样本 22/22 翻转为完成,零回归,零 UNSTABLE。
+    显式有界:Step 1 §3 的限定(位置 root · colPathLen 135..160 · R2+R3 语料 ·
+    未覆盖 R1 / R4 / leaf 位置 / 其他 Windows 版本与 locale)。
+
+A8  scaffold-runtime zvec-availability policy               NOT INSTANTIATED
+    并且检索到**反向候选**,见 §6.4-C。
+
+A9  containment-change benefit / product policy             NOT INSTANTIATED
+    检索范围内没有任何来源主张「当前 version-blind containment 造成了需要解决的
+    产品相关降级」。相反,containment spec 与 Step 1 §4、2A §5、2B §7 反复陈述的是
+    另一侧:机制未被理解到可以据此放松防护。
+    注意这**不是** A9 的反向 authority(见 §6.3 D5),它只是没有正向来源。
+```
+
+### 6.3 D1 / D2 / D3 / D5 裁决
+
+```text
+D1  pin 0.6.0 → 0.7.0
+    RED 条件逐条核对,均未命中:
+      R1  2A 五格 0.7.0 全部装得上、load ok —— 不存在「0.6.0 行而 0.7.0 不行」的格子。
+      R2  2B 五格 19/19、0 失败 —— 未观察到合同回归。
+      R3  未观察到 0.7.0 在当前判为 SAFE 的路径上出现不可捕获失败
+          (2B 五格 ASCII 路径三相 clean)。
+      R4  未检索到明确认定「0.7.0 对该问题无实质改善」的权威评估。
+    GREEN:G2 与 G4 有 authority 支撑(A3 的 ASCII 面 / A7);
+          **G1 与 G3 无法交付** —— 它们要求覆盖 V_PRODUCT,而 A0 未实例化,
+          V_PRODUCT 不存在。A1 的作用域是 S_GATE 五格,按 §5.1 与 A0,
+          D1 的 Y 是全局变更,作用域不足**只能 DEFERRED,不得 bounded GREEN**。
+
+    verdict:  DEFERRED
+    缺口:     A0(整体)· A1 的作用域外推权
+    要解阻:   一个给出 S_PRODUCT + V_PRODUCT + coverage justification 的 authority。
+              **不是**再跑一次测量。
+
+D2  zvec 进入 RUNTIME_DEPENDENCIES
+    A0 未实例化 · A2 未实例化 · A8 未实例化 —— 三条各自足以 DEFERRED。
+    A2 尤其不是「证据不够多」,而是**从未测过那个形态**。
+    RED:R1 / R2 / R3 未命中(无子项目形态的测量,也就没有失败观察);
+        R4 见 §6.4-C,**未判定命中**。
+
+    verdict:  DEFERRED
+    缺口:     A0 · A2 · A8
+    要解阻:   A2 需要一次针对子项目安装形态的测量(现有三份都不是);
+              A8 需要一条产品政策,测量无法承担。
+
+D5  containment version-blind → version-aware
+    A6 未实例化((1) 与 (4) 当面不成立,见 §6.2)· A9 未实例化。
+    RED 未命中:R1 要求在「门新放行的范围内」观察到同类失败,而门尚不存在,
+    该范围未定义;R3 / R4 针对的是尚不存在的实现;
+    R5 需要一条明确政策,未检索到 —— 「反复陈述不宜放松」与「明确规定必须保持」
+    不是同一件事,§5.1a 已冻结:仅仅没有正向 authority 不构成 RED。
+
+    verdict:  DEFERRED
+    缺口:     A6 的 (1) 与 (4) · A9
+    要解阻:   (1) 需要机制归因或强度相当的上游版本有界合同;
+              (4) 需要一个不以「已测样本集」为界的边界声明。
+              这两项都属于 Step 2C §7 明确排除在授权外的 native mechanism 工作。
+
+D3  optionalDependencies → dependencies
+    **本节点无法在冻结合同内产出 verdict,原因见 §6.4-A。**
+    已确定的事实两条,方向相反:
+      (a) A0 / A4 / A5 均未实例化 → 按 missing-authority disposition 指向 DEFERRED。
+      (b) D3-R2 的候选命中 —— spec:zvec-memory-index(status: done)
+          第 111-116 行「@zvec/zvec as an optional dependency」:
+              「Added to package.json optionalDependencies ("^0.5.0"),
+                **never `dependencies`**。npm install on a platform without a
+                prebuild **skips it without failing the install**」
+          并由该 spec 的验收标准 ac-zvec-optional-not-gene-config 固定为
+              「@zvec/zvec is an optionalDependency (not dependencies)」。
+          该文本**点名了 D3 的 Y 本身**并禁止它,同时陈述了 R2 所要求的那个结果性质:
+          在没有 prebuild 的平台上,安装必须不失败。
+
+    verdict:  UNRESOLVED —— PRECEDENCE GAP(§6.4-A),不在本阶段自行裁定
+```
+
+### 6.4 Stage 3 期间发现的冻结合同缺口(不在本阶段自行修补)
+
+```text
+A  RED 与 DEFERRED 的先后关系未定义                        —— 阻断 D3
+   §5.1a 规定「authority 缺失 → DEFERRED」与「存在明确反向 authority → RED」,
+   但**没有规定两者同时成立时哪一个优先**。D3 正好同时踩中:
+   A4 缺失(→DEFERRED)与 A5 的反向候选(→RED)。
+   两者语义差别是实质的:DEFERRED 是「还判不了」,RED 是「按现有权威不该做」。
+   本阶段不自行发明先后规则 —— 那等于在 Stage 3 修改 Stage 2 的判据。
+
+   一并需要裁定的是第二个问题:**一份 shipped spec 的设计决定,是否构成约束后续
+   决策的产品要求?** 若「是」,D3 命中 R2;若「否」(即后续决策可以推翻它,
+   而 UDR 正是这样一次决策),则该文本只是历史选择,D3 回到 DEFERRED。
+   这一条不能由本文件的作者单方面决定,因为它决定 D3 的方向。
+
+B  A7 的两半在 §3 与 §5 之间不一致                          —— 已按 operative 文本裁决
+   §3 写「『0.6.0 上存在已登记的产品相关问题』可由测量承担,
+   『该改善是否构成升级理由』不行」,但 A7 的 operative 定义与 D1-G4 都只要求
+   「已登记的问题 + 实质且有界的改善」,并未包含后半句。
+   本阶段按 **operative 文本**裁决(A7 INSTANTIATED),并在此登记该不一致,
+   由复审决定是否收紧 A7。若收紧,D1 仍为 DEFERRED(A0 缺口独立成立),
+   因此该不一致**不改变本轮任何 verdict**。
+
+C  D2-R4 的反向候选,判定为「未达『明确』门槛」            —— 记录,未据以判 RED
+   spec:memory-engine-default-flip(status: done)§A3:
+       「No child is *broken* by lacking the optional dep, so the
+         "children-not-forced" guarantee holds」
+   D2 的 Y 会使新脚手架在无 prebuild 的平台上 npm ci --prefix .evo-lite 失败,
+   从而使「缺少该可选依赖的 child」不再可能存在。这与上述保证的**意图**冲突,
+   但它并未逐字规定「child runtime 必须允许在没有 zvec 的情况下作为正常完成态」——
+   要得出冲突需要一步推理(必需 runtime 依赖 ⇒ 强制 child)。
+   §5.1a 要求的是**明确**否定,因此本阶段不据此判 RED,而是登记为待裁定。
+   与 D3 的差别在于:D3 那份文本点名了「never `dependencies`」这一变更本身。
+```
+
+### 6.5 D4 / D6 状态未变
+
+```text
+D4  subject_status = NOT_INSTANTIATED     verdict = UNSET
+D6  subject_status = NOT_INSTANTIATED     verdict = UNSET
+
+D1 / D2 / D3 / D5 本轮**没有任何一个**成为 YES,因此 E7 的 instantiator
+(存在具体的、携带升级的 candidate change set)依然不成立 —— 但即便有 YES,
+按 E7 的定义它也不会实例化 D6。
+```
+
+### 6.6 本轮小结
+
+```text
+D1  DEFERRED     缺 A0(V_PRODUCT 与 coverage justification)
+D2  DEFERRED     缺 A0 · A2(从未测过该安装形态)· A8(产品政策)
+D3  UNRESOLVED   冻结合同缺 RED/DEFERRED 先后规则;且需裁定 shipped spec 的约束力
+D5  DEFERRED     缺 A6 的 (1)(4) · A9
+D4  UNSET / 主语未实例化
+D6  UNSET / 主语未实例化
+```
+
+**没有一个节点因为「测量不够绿」而受阻。** 三份测量在它们各自的作用域内都成立:
+2A 五格全绿、2B 五格 19/19、Step 1 的 22/22 翻转与零回归。受阻的全部是另外两类东西:
+
+```text
+作用域权威    S_PRODUCT / V_PRODUCT 无人给出(A0)
+产品政策      「必须必装」「child 必须带 zvec」「值得改 containment」都无人主张
+              (A5 / A8 / A9),而其中两处检索到的是**反向**文本
+从未测过      子项目安装形态(A2)· mandatory 语义下的 npm i create-evo-lite(A4)
+机制理解      失败类的机制与不以样本为界的边界(A6 的 (1)(4))
+```
+
+这正是把「测量阶段 SATISFIED」与「升级 YES」分开的意义:四步测量全部成立,
+而六个决策没有一个因此变绿。
