@@ -1,0 +1,278 @@
+{
+  "cell": "ubuntu-latest/node24",
+  "env": {
+    "node": "v24.19.0",
+    "platform": "linux",
+    "arch": "x64",
+    "osRelease": "6.17.0-1022-azure"
+  },
+  "subject": {
+    "adapter": "/home/runner/work/create-evo-lite/create-evo-lite/.evo-lite/cli/memory-index-zvec.js",
+    "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+    "expectedBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+    "blobMatchesExpected": true
+  },
+  "zvec": {
+    "entry": "/home/runner/work/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js",
+    "installedVersion": "0.7.0",
+    "versionMatchesRequested": true
+  },
+  "phases": [
+    {
+      "phase": "A",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+      "seam": [
+        {
+          "request": "@zvec/zvec",
+          "requestedBy": "/home/runner/work/create-evo-lite/create-evo-lite/.evo-lite/cli/memory-index-zvec.js",
+          "redirectedTo": "/home/runner/work/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js"
+        }
+      ],
+      "checks": [
+        {
+          "name": "upsert returns numeric id",
+          "pass": true,
+          "detail": {
+            "a": 1,
+            "b": 2
+          }
+        },
+        {
+          "name": "ids are distinct and ascending",
+          "pass": true,
+          "detail": {
+            "a": 1,
+            "b": 2
+          }
+        }
+      ],
+      "error": null,
+      "stderr": null
+    },
+    {
+      "phase": "B",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+      "seam": [
+        {
+          "request": "@zvec/zvec",
+          "requestedBy": "/home/runner/work/create-evo-lite/create-evo-lite/.evo-lite/cli/memory-index-zvec.js",
+          "redirectedTo": "/home/runner/work/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js"
+        }
+      ],
+      "checks": [
+        {
+          "name": "write survives close + reopen in a new process",
+          "pass": true,
+          "detail": {
+            "got": [
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "name": "list is ordered by numeric id",
+          "pass": true,
+          "detail": {
+            "ids": [
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "name": "list carries content/namespace/timestamp",
+          "pass": true,
+          "detail": {
+            "sample": {
+              "id": 1,
+              "content": "evo lite adapter contract probe 遏制合同探针 alpha",
+              "namespace": "prose",
+              "timestamp": "2026-09-02T00:00:00.000Z"
+            }
+          }
+        },
+        {
+          "name": "fts query returns the expected row",
+          "pass": true,
+          "detail": {
+            "top": {
+              "id": 1,
+              "content": "evo lite adapter contract probe 遏制合同探针 alpha",
+              "namespace": "prose",
+              "timestamp": "2026-09-02T00:00:00.000Z",
+              "score": 2.1340041160583496,
+              "snippet": "evo lite adapter contract probe 遏制合同探针 alpha",
+              "match_source": "zvec-fts"
+            }
+          }
+        },
+        {
+          "name": "fts match_source is zvec-fts",
+          "pass": true,
+          "detail": {
+            "source": "zvec-fts"
+          }
+        },
+        {
+          "name": "fts row has score and snippet",
+          "pass": true,
+          "detail": {
+            "score": 2.1340041160583496
+          }
+        },
+        {
+          "name": "colon query returns the expected row",
+          "pass": true,
+          "detail": {
+            "top": {
+              "id": 2,
+              "content": "follow up on task:alpha-beta before the release",
+              "namespace": "code",
+              "timestamp": "2026-09-02T01:00:00.000Z",
+              "score": 2.881242513656616,
+              "snippet": "follow up on task:alpha-beta before the release",
+              "match_source": "zvec-match"
+            }
+          }
+        },
+        {
+          "name": "colon query falls back to zvec-match",
+          "pass": true,
+          "detail": {
+            "source": "zvec-match"
+          }
+        },
+        {
+          "name": "scope filter excludes the out-of-scope row",
+          "pass": true,
+          "detail": {
+            "got": []
+          }
+        },
+        {
+          "name": "scope filter keeps the in-scope row (positive control)",
+          "pass": true,
+          "detail": {
+            "got": [
+              {
+                "id": 2,
+                "ns": "code"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stats counts both docs",
+          "pass": true,
+          "detail": {
+            "chunks": 2,
+            "count": 2
+          }
+        },
+        {
+          "name": "stats first/last timestamps",
+          "pass": true,
+          "detail": {
+            "first": "2026-09-02T00:00:00.000Z",
+            "last": "2026-09-02T01:00:00.000Z"
+          }
+        },
+        {
+          "name": "stats namespaces reports per-namespace chunks",
+          "pass": true,
+          "detail": {
+            "prose": {
+              "chunks": 1,
+              "present": true,
+              "model": "zvec-jieba-fts",
+              "dims": "1"
+            },
+            "code": {
+              "chunks": 1,
+              "present": true,
+              "model": "zvec-jieba-fts",
+              "dims": "1"
+            }
+          }
+        },
+        {
+          "name": "delete reports changes = 1",
+          "pass": true,
+          "detail": {
+            "got": {
+              "changes": 1
+            }
+          }
+        }
+      ],
+      "error": null,
+      "stderr": "[ERROR 2026-09-02 08:21:46 140238492527936 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\n[ERROR 2026-09-02 08:21:46 140238492527936 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\n"
+    },
+    {
+      "phase": "C",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+      "seam": [
+        {
+          "request": "@zvec/zvec",
+          "requestedBy": "/home/runner/work/create-evo-lite/create-evo-lite/.evo-lite/cli/memory-index-zvec.js",
+          "redirectedTo": "/home/runner/work/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js"
+        }
+      ],
+      "checks": [
+        {
+          "name": "deletion survives reopen",
+          "pass": true,
+          "detail": {
+            "ids": [
+              2
+            ]
+          }
+        },
+        {
+          "name": "survivor still present",
+          "pass": true,
+          "detail": {
+            "ids": [
+              2
+            ]
+          }
+        },
+        {
+          "name": "survivor still queryable after reopen",
+          "pass": true,
+          "detail": {
+            "top": {
+              "id": 2,
+              "content": "follow up on task:alpha-beta before the release",
+              "namespace": "code",
+              "timestamp": "2026-09-02T01:00:00.000Z",
+              "score": 1.4384105205535889,
+              "snippet": "follow up on task:alpha-beta before the release",
+              "match_source": "zvec-match"
+            }
+          }
+        }
+      ],
+      "error": null,
+      "stderr": "[ERROR 2026-09-02 08:21:46 140520807038272 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\n"
+    }
+  ],
+  "verdict": "SATISFIED",
+  "summary": {
+    "phasesPassed": 3,
+    "checksTotal": 19,
+    "checksFailed": 0,
+    "seamProven": true,
+    "blobOk": true
+  }
+}
