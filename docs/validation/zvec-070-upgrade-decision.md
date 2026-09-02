@@ -136,34 +136,45 @@ tree/runtime delta:  package.json 一行 + package-lock.json 的 @zvec/zvec 条�
                      (version / resolved / integrity)。
                      运行时可观测面:本仓 node_modules/@zvec/zvec/package.json 的 version。
 
-required authority:  A1 install / load compatibility(母体安装形态)
+required authority:  A0 product-support scope(给出 S_PRODUCT)
+                     A1 install / load compatibility(母体安装形态)
                      A3 real-adapter contract conformance
+                     A7 upgrade-benefit
                      定义见 §5。
 
 GREEN iff:           以下全部成立:
-                     G1  A1 覆盖 **S_RELEASE(§5.0)的全部格子**,且每一格上 0.7.0
+                     G1  A1 覆盖 **S_PRODUCT(§5.0)的全部格子**,且每一格上 0.7.0
                          都能安装、其原生绑定都能被 require 解析。
                      G2  A3 证明本仓生产 adapter **实际消费的**那一组 API、返回值形状
                          与跨进程持久化行为在 0.7.0 上成立。
-                     G3  作用域规则:G1 / G2 必须覆盖 S_RELEASE 全部格子。
+                     G3  作用域规则:G1 / G2 必须覆盖 S_PRODUCT 全部格子。
                          **作用域不足时的处置是 DEFERRED,不是 bounded GREEN** ——
                          D1 的 Y 是全局变更(唯一的 published pin),
                          树里没有机制做到「某些格子用 0.7.0、其余继续 0.6.0」,
                          因此不满足 BOUNDED 的可执行边界条件(§5.1)。
+                     G4  A7 证明 0.6.0 上存在一个已登记、产品相关的问题,且 0.7.0
+                         对它有实质、范围显式有界的改善。
+                         **G1–G3 只能推出「0.7.0 兼容到可以使用」,推不出「该升」;**
+                         没有 G4,两个在产品意义上完全等价的版本也会让本节点变绿。
 
-RED iff:             任一成立即为 RED:
-                     R1  存在一格:0.6.0 可安装 / 可加载,而 0.7.0 不能。
-                     R2  合同回归 —— 存在一项:0.6.0 满足而 0.7.0 不满足。
+RED iff:             任一成立即为 RED。**三条都绑定在 S_PRODUCT(经 A0 确定)之内** ——
+                     决策作用域之外的某个环境出现问题,本身不使本节点变红,
+                     那属于 A0 该不该把该环境纳入 S_PRODUCT 的问题。
+
+                     R1  S_PRODUCT 内存在一格:0.6.0 可安装 / 可加载,而 0.7.0 不能。
+                     R2  合同回归 —— 在 S_PRODUCT 内存在一项:
+                         0.6.0 满足而 0.7.0 不满足。
                      R3  0.7.0 在**当前被 containment 判为 SAFE** 的路径上出现
                          不可捕获的进程级失败。那意味着现有 containment 不再足够,
                          而 D1 本身不携带任何 containment 变更(见 does NOT authorize)。
 
 missing authority
-disposition:         A1 或 A3 未实例化 → DEFERRED(§5.1)。
+disposition:         A0 / A1 / A3 / A7 任一未实例化 → DEFERRED(§5.1)。
                      不得因 authority 缺失而记为 NO。
+                     A0 缺失时尤其不得退而用 S_GATE 代替 S_PRODUCT 继续裁 —— 见 A0。
 
 depends on:          E4 · E6 (IMPLEMENTATION_COUPLING)
-                     E8 · E9 (EVIDENCE_PREREQUISITE)
+                     E8 · E9 · E15 · E18 (EVIDENCE_PREREQUISITE)
 
 does NOT authorize:  不改变 dependency class(D3)· 不把 zvec 送进子项目 runtime(D2)
                      · 不改 containment 的任何不变量(D5)· 不构成发布决定(D6)
@@ -200,23 +211,31 @@ tree/runtime delta:  三处必须同步,否则 T18e 变红:
                        templates/runtime/package-lock.json
                      运行时可观测面:新建项目的 .evo-lite/package.json 与其 node_modules。
 
-required authority:  A2 scaffolded-runtime install compatibility
+required authority:  A0 product-support scope(给出 S_PRODUCT)
+                     A2 scaffolded-runtime install compatibility
                      A3 real-adapter contract conformance
+                     A8 scaffold-runtime zvec-availability policy
                      定义见 §5。
 
 GREEN iff:           G1  A2 覆盖被脚手架出的项目**实际使用的安装形态**
                          (templates/runtime 清单复制进 .evo-lite/ 后
                          `npm ci --prefix .evo-lite`),而不是母体的开发安装形态,
-                         并在 **S_RELEASE(§5.0)的每一格**上成立。
+                         并在 **S_PRODUCT(§5.0)的每一格**上成立。
                      G2  同 D1-G2(A3)。
                      G3  加入该条目后 index.js 的 RUNTIME_DEPENDENCIES、
                          templates/runtime/package.json 与其 package-lock.json
                          三者仍逐字一致(T18e 绿),且锁文件可复现。
-                     G4  作用域规则同 D1-G3(S_RELEASE 全覆盖;不足则 DEFERRED,
+                     G4  作用域规则同 D1-G3(S_PRODUCT 全覆盖;不足则 DEFERRED,
                          不得 bounded GREEN —— D2 的 Y 是所有 scaffold 共用的
                          runtime 清单,同样无法执行按格边界)。
+                     G5  A8 证明:脚手架成功之后,child runtime **被产品要求**具备
+                         zvec 依赖,而不是允许缺席后降级。
+                         **G1–G4 只能推出「我们可以把 zvec 塞进每一个 scaffold
+                         runtime」,推不出「每个 scaffold runtime 都应该必须有它」;**
+                         而现有设计明确允许 require 失败时返回 null 并回落 Sqlite,
+                         所以「zvec 是默认引擎」也不能替代这条。
 
-RED iff:             R1  存在一格在 S_RELEASE 内、而 zvec 在**子项目安装形态**下
+RED iff:             R1  存在一格在 S_PRODUCT 内、而 zvec 在**子项目安装形态**下
                          无法安装或构建。RUNTIME_DEPENDENCIES 是必需依赖集合,
                          没有 optional 桶,因此这一格的失败会使**脚手架本身失败**,
                          而不只是记忆引擎降级。
@@ -224,12 +243,14 @@ RED iff:             R1  存在一格在 S_RELEASE 内、而 zvec 在**子项目
                      R3  加入后锁文件不可复现,或三者无法同时保持一致(T18e 不可能同时绿)。
 
 missing authority
-disposition:         A2 或 A3 未实例化 → DEFERRED。
+disposition:         A0 / A2 / A3 / A8 任一未实例化 → DEFERRED。
                      特别地:**只覆盖母体安装形态的 authority 不自动成为 A2** ——
                      两者的清单、锁文件与执行目录都不同(见本节点主语)。
+                     同样地,**A5 不能顶替 A8**:一个是 published package 的安装结果,
+                     一个是 child runtime 的依赖集合,Stage 1 已把它们冻结为独立主语。
 
 depends on:          E4 (IMPLEMENTATION_COUPLING)
-                     E10 · E11 (EVIDENCE_PREREQUISITE)
+                     E10 · E11 · E16 · E19 (EVIDENCE_PREREQUISITE)
 
 does NOT authorize:  不改母体自身的版本(D1)· 不改 published package 的依赖语义(D3)
                      · 不改 containment(D5)
@@ -275,22 +296,23 @@ tree/runtime delta:  package.json 中该条目所属的键名,以及 package-loc
                      (dependency packaging / runtime availability / engine fallback
                      semantics)粘在一起,并会与 D5 直接相撞。冻结后的 D3 与 D5 正交。
 
-required authority:  A4 published-package installability under required semantics
-                     A5 product-intent:zvec-backed memory 是要求而非偏好
+required authority:  A0 product-support scope(给出 S_PRODUCT)
+                     A4 published-package installability under required semantics
+                     A5 product install-policy(与本节点 manifest-only 主语等宽)
                      定义见 §5。
 
-GREEN iff:           G1  A4 证明:该条目移入 dependencies 后,在 **S_RELEASE(§5.0)
+GREEN iff:           G1  A4 证明:该条目移入 dependencies 后,在 **S_PRODUCT(§5.0)
                          的每一格**上 `npm i create-evo-lite` 仍然成功。
                      G2  A5 证明:在 published-package 作用域内,
                          「create-evo-lite 安装成功、但 @zvec/zvec 缺席」
                          **不是产品允许的安装结果**。
                          它**不裁定**安装完成之后的 runtime fallback 是否仍可存在 ——
                          那不在 D3 的主语内(见「明确不属于 D3」)。
-                     G3  作用域规则同 D1-G3(S_RELEASE 全覆盖;不足则 DEFERRED,
+                     G3  作用域规则同 D1-G3(S_PRODUCT 全覆盖;不足则 DEFERRED,
                          不得 bounded GREEN —— D3 的 Y 是 published manifest 的
                          bucket,无法做到「证据覆盖的格子 mandatory、其余仍 optional」)。
 
-RED iff:             R1  存在一格在 S_RELEASE 内、而 zvec 在其上无法安装或构建 ——
+RED iff:             R1  存在一格在 S_PRODUCT 内、而 zvec 在其上无法安装或构建 ——
                          mandatory 会把「记忆引擎降级」升级为「本包装不上」。
                      R2  存在一条**相反**的产品要求:明确要求「安装成功但 zvec 缺席」
                          必须是被允许的**安装结果**(例如对离线或受限环境的安装保证)。
@@ -301,14 +323,14 @@ RED iff:             R1  存在一格在 S_RELEASE 内、而 zvec 在其上无�
                      「没有要求它必装」与「要求它可以不装」是两回事。
 
 missing authority
-disposition:         A4 未实例化 → DEFERRED。
+disposition:         A0 或 A4 未实例化 → DEFERRED。
                      A5 未实例化 → DEFERRED,且裁定必须点明一件事:
                      §3 的 candidate source inventory 全部是**测量**类文件,
                      而 A5 是**产品意图**类 authority。它是否由 inventory 之外的
                      来源提供,属 Stage 3 判定;Stage 2 对此不作断言。
 
 depends on:          E6 (IMPLEMENTATION_COUPLING)
-                     E12 · E13 (EVIDENCE_PREREQUISITE)
+                     E12 · E13 · E20 (EVIDENCE_PREREQUISITE)
 
 does NOT authorize:  不决定版本(D1)· 不决定子项目装什么(D2)· 不放松 containment(D5)
 
@@ -417,7 +439,8 @@ tree/runtime delta:  containment decision 的输入集合(是否含 version);
                      memory-index.js 的 reason 取值分布;
                      `mem verify` 的 containment 段落输出。
 
-required authority:  A6 version-bounded fault attribution
+required authority:  A6 version-bounded fault attribution(能不能安全地做)
+                     A9 containment-change benefit / product policy(有没有理由做)
                      定义见 §5。
 
 GREEN iff:           每条后面标注它的来源,以便复审检查有无从测量结果倒推:
@@ -439,15 +462,42 @@ GREEN iff:           每条后面标注它的来源,以便复审检查有无从�
                          「已被测过的路径集合」。
                          [主语推导:门必须在未测路径上也给出答案,
                           否则它不是判定而是查表。]
-                     G4  版本输入标识的是**实际被加载的 binding**,而不是某个清单里的
-                         版本字符串。
-                         [主语推导:D5 的结构事实指出 Y 的组成部分是新增
-                          version identity input;身份必须来自被加载物本身。]
+                     G4  **pre-load provenance binding。** 版本身份必须绑定到
+                         「若本次 decision 放行,loader 将实际解析并加载的那个
+                         package / native target」,且该绑定必须在**执行 native
+                         binding 之前**建立。
+
+                         允许:对 exact module resolution target 做 package
+                               identity / provenance 校验;读取**不会执行 native
+                               addon** 的 metadata;证明其后 loader 使用的是同一个
+                               resolved target。
+                         禁止:为了知道版本而先 require / 执行 native binding;
+                               只相信与实际 resolve target 没有绑定关系的 root
+                               manifest 字符串。
+
+                         [第二轮复审修正。原文写的是「必须标识**实际被加载的**
+                          binding」,那与现有 zero-load 不变量**循环**:
+                            memory-index.js:16-17  这两个模块 zvec-free by construction,
+                                                   否则 containment decision 会发生在
+                                                   hazard 之后
+                            memory-index.js:212-214 decision 先于 loadZvecIndex,
+                                                   zero-load 是最重要的性质
+                            zvec-path-containment.js:12  唯一可用的 containment 就是
+                                                   在 require('@zvec/zvec') 之前决定(I1)
+                          「先确认实际加载的 binding → 再决定能否安全加载」不可实现。
+                          改写后同时守住两条性质:身份不可过期 / 不可伪造,
+                          **且** containment decision 仍然发生在 native load 之前。]
                      G5  containment marker 与 recovery 状态机在门开启时的行为已定义。
                          [来自现有 containment 合同的存在,不来自任何测量结果。]
                      G6  作用域规则:与 D1-G3 **不同** —— D5 允许 BOUNDED。
                          version-aware gate 本身能把开启范围限制在 A6 的覆盖范围内,
                          满足 §5.1 对 BOUNDED 的可执行边界要求。
+                     G7  A9 证明:当前 version-blind 的 X 对某个产品相关范围造成了
+                         需要解决的降级,而 version-aware 的 Y 能恢复所需能力,
+                         且收益值得引入新的 version-identity 输入与随之增加的复杂度。
+                         **G1–G6 全部只回答「能不能安全地建立这道门」,不回答
+                         「为什么值得改变现在的 version-blind containment」。**
+                         A9 不参与安全边界的判定 —— 安全仍完全由 A6 决定。
 
 RED iff:             RED 条件同样标注来源。编号保留空档:R2 已移出本节点。
 
@@ -469,11 +519,13 @@ RED iff:             RED 条件同样标注来源。编号保留空档:R2 已移
                          [来自现有 containment 合同的存在。]
 
 missing authority
-disposition:         A6 未实例化 → DEFERRED。
+disposition:         A6 或 A9 未实例化 → DEFERRED。
                      A6 已实例化但作用域小于本节点作用域 → BOUNDED(§5.1):
                      GREEN 只能在该有界范围内成立,**且版本门的开启范围不得超过它**。
+                     A9 的作用域不足**不产生 BOUNDED** —— A9 不划安全边界,
+                     它要么给出改变现状的理由,要么没有(→ DEFERRED)。
 
-depends on:          E14 (EVIDENCE_PREREQUISITE)
+depends on:          E14 · E17 (EVIDENCE_PREREQUISITE)
 
 does NOT authorize:  不改版本(D1)· 不改依赖分类(D2 / D3)· 不构成发布决定(D6)
 
@@ -602,10 +654,25 @@ E12  D3 ← EVIDENCE_PREREQUISITE   authority A4
 E13  D3 ← EVIDENCE_PREREQUISITE   authority A5
 E14  D5 ← EVIDENCE_PREREQUISITE   authority A6
 
-        A1–A6 的定义见 §5。每条边只声明「该 authority 是必要条件」;
+E15  D1 ← EVIDENCE_PREREQUISITE   authority A7
+E16  D2 ← EVIDENCE_PREREQUISITE   authority A8
+E17  D5 ← EVIDENCE_PREREQUISITE   authority A9
+E18  D1 ← EVIDENCE_PREREQUISITE   authority A0
+E19  D2 ← EVIDENCE_PREREQUISITE   authority A0
+E20  D3 ← EVIDENCE_PREREQUISITE   authority A0
+
+        A0–A9 的定义见 §5。每条边只声明「该 authority 是必要条件」;
         充分性写在节点的 GREEN,缺失时的处置写在节点的 disposition。
         一个节点可以有多条 evidence 边:A1 与 A3 是两件不同的事,
         任一缺失都足以让该节点无法 GREEN。
+
+        E15 / E16 / E17 是第二轮复审补上的一整类:此前 D1 / D2 / D5 只有
+        **技术可行性** authority,没有任何一条回答「即使安全、兼容、可实现,
+        为什么应该做它」。D3 早就有 A4(可行)+ A5(意图)这一对,
+        另外三个节点缺的正是后一半。
+
+        E18 / E19 / E20 把 A0 接进三个**全局 Y** 的节点:它们的 GREEN 都需要一个
+        作用域,而作用域不能由 CI 覆盖面自行给出(§5.0)。
 
 E7  D6 ← SUBJECT_INSTANTIATION
         instantiator 是「一个具体的、携带升级的 candidate change set 存在」,
@@ -720,37 +787,58 @@ Stage 1 的禁止范围比现在更严,四轮复审拦下的三处越界全部�
 `candidate source` 的含义同样受限:它指出 Stage 3 **应当去哪里找**,
 不表示那里一定找得到,也不表示找到的东西一定够。
 
-### 5.0 S_RELEASE —— 本 UDR 使用的支持作用域(冻结)
+### 5.0 两个作用域:S_GATE 与 S_PRODUCT(冻结定义)
 
-多处 GREEN 需要一个「哪些格子必须成立」的作用域。**它不能取自 `engines`**:
+第一轮修掉了「拿 `engines` 当有限矩阵」,但随即走进了一个近似的错误:
+把 release-gate 的 **CI 覆盖面**直接当成**产品支持面**。这一步同样没有 authority。
+
+逐条可核的事实:
 
 ```text
-package.json   "engines": { "node": ">=20.0.0" }
+package.json            "engines": { "node": ">=20.0.0" }
+                        只有 Node floor,没有平台轴,也没有把支持范围限定成有限格子。
+
+release-gate.yml:24-32  ubuntu-latest × [20,22,24] + windows-latest × [22,24]
+                        windows × node20 的 exclude 理由是:better-sqlite3 在 GitHub
+                        runner 上没有 win-x64 的 node-20 prebuild,且没有 node-gyp
+                        可检测的 MSVC。
 ```
 
-该字段**没有平台这条轴**,而 `>=20` 也不是有限集合 —— 以它为作用域的 GREEN 既无法
-枚举,也永远无法证明完成。在本 UDR 中,`engines.node >= 20` 只承担
-**Node floor contract**,不作为有限 matrix 的来源。
-
-本 UDR 冻结的作用域取自 baseline 的 release-gate consume matrix
-(`.github/workflows/release-gate.yml:24-32`):
+**「CI 无法以 build-tool-free 的方式验证某一格」不等于「产品已把该格移出支持范围」。**
+那条 exclude 描述的是**证据环境**的能力边界,不是产品承诺。第一版把它升级成产品支持面,
+等于让一份 workflow 自行缩小产品的支持范围。因此两个作用域必须分开:
 
 ```text
-S_RELEASE = { ubuntu-latest × node 20, 22, 24 }
-          ∪ { windows-latest × node 22, 24 }
-            (windows-latest × node 20 被显式 exclude)
+S_GATE     = baseline release-gate 实际覆盖的有限 CI cells
+           = { ubuntu-latest × node 20, 22, 24 } ∪ { windows-latest × node 22, 24 }
+             (.github/workflows/release-gate.yml:24-32)
+           它是**证据环境**的范围,不是产品承诺。
+
+S_PRODUCT  = 产品承诺支持的环境范围。
+           本 UDR **不自行认定**它等于什么 —— 由 A0 承担,见下。
 ```
 
-该 exclude 的既有理由与本 UDR 直接相关:better-sqlite3 没有 node-20 的 win-x64
-prebuild,且 runner 上没有 node-gyp 可检测的 MSVC。**这条边界是被一个原生依赖的
-prebuild 覆盖面划出来的** —— zvec 同样是原生依赖,A1 与 A4 各自都要面对同一个问题。
+`engines.node >= 20` 在本 UDR 中只承担 **Node floor contract**;两个作用域都不由它给出。
 
-若将来认定支持范围不是 release-gate matrix,**必须在本文件里另行指名 canonical
-source**;在那之前,A1 / A2 / A4 与 D1 / D2 / D3 的 GREEN 一律引用 S_RELEASE。
+A1 / A2 / A4 与 D1 / D2 / D3 的 GREEN 一律引用 **S_PRODUCT**,并受 A0 的三条规则约束。
 
 ```text
+A0  product-support scope authority
+    必须证明:D1 / D2 / D3 这类**全局 Y** 实际需要承诺的环境范围(S_PRODUCT)是什么。
+
+      A0 规定 S_PRODUCT == S_GATE   →  D1 / D2 / D3 可按 S_GATE 裁。
+      A0 规定 S_PRODUCT ⊋ S_GATE    →  A1 / A2 / A4 必须覆盖 S_PRODUCT;
+                                       覆盖不足 → DEFERRED,**不得 bounded GREEN**
+                                       (理由同 §5.1:全局 Y 执行不了按格边界)。
+      A0 未实例化                    →  DEFERRED。
+                                       **不得由一份 workflow 自行缩小产品支持面。**
+
+    candidate source:package.json 的 `engines` · `.github/workflows/release-gate.yml`
+    · docs/superpowers/specs/ 下的 release hardening / release closure 系列。
+    其中哪一份(若有)真正承担 S_PRODUCT,属 Stage 3 判定;本阶段不作断言。
+
 A1  install / load compatibility(母体安装形态)
-    必须证明:在 **S_RELEASE(§5.0)的每一格**上,0.7.0 可安装,
+    必须证明:在 **S_PRODUCT(§5.0)的每一格**上,0.7.0 可安装,
     且其原生绑定可被 require 解析。
     candidate source:2A
     需要它证明的具体事实:上述每一格的安装结果与加载结果,逐格可辨。
@@ -770,7 +858,7 @@ A3  real-adapter contract conformance
     合并使用时必须分别说明边界,不得相加成一个更大的作用域。
 
 A4  published-package installability under required semantics
-    必须证明:把 @zvec/zvec 移入 dependencies 之后,在 **S_RELEASE 的每一格**上
+    必须证明:把 @zvec/zvec 移入 dependencies 之后,在 **S_PRODUCT 的每一格**上
     `npm i create-evo-lite` 仍然成功。
     它与 A1 的差别是承重的:A1 问「zvec 装得上吗」,
     A4 问「zvec 装不上时,会不会连本包一起装不上」。
@@ -803,15 +891,64 @@ A6  version-bounded fault attribution
     需要它们证明的具体事实:各自覆盖 (1)–(4) 的哪一部分、覆盖到什么范围;
     四项的覆盖必须分别说明,不得由「整体看起来充分」代替。
 
-    **A6 的 evidence admissibility 规则(这是 authority 的准入规则,不是 D5 的 RED):**
-      一个 evidence cell,若其中 0.6.0 对照**未复现**该失败类,则该 cell 对 A6
-      **不可采信** —— 在那种环境里 0.6.0 与 0.7.0 的结果不可区分,它不携带关于
-      0.7.0 的任何信息。
-      不可采信的后果是**该 cell 被剔除**,不是 D5 被判 RED:
-      剔除后若仍有满足 (1)–(4) 的 A6,则 A6 成立;若没有,则 A6 未实例化 → DEFERRED。
+    **A6 的 evidence admissibility 规则(authority 的准入规则,不是 D5 的 RED):**
+      准入按 **claim 分类**,不是整个 cell 的二元取舍。
+      若某个 evidence cell 中 0.6.0 对照**未复现**该失败类:
+
+        不得用于:· 证明 0.7.0 相对 0.6.0 的 version effect
+                  · 证明 newly-admitted domain 对 0.7.0 安全
+                  · 支持 (1) / (2) 的任何 positive discriminant 主张
+                  在那种环境里 0.6.0 与 0.7.0 的结果不可区分,它不携带这类信息。
+
+        可以用于:· 证明「该 trigger 在某些环境下不可观察」
+                  · 描述并界定 observability dependence
+                  · 支持 (3) 的环境区分
+                  这恰恰是 (3) 需要的那种信息。
+
+        但必须显式标记为 **observability-only**,且**不得**在后续汇总中被重新
+        计入 0.7.0 的 safety evidence。
+
+      [第二轮复审两次修正。先是从 D5 的 RED 移到这里 —— 原写法把坏证据与坏决策
+       混为一谈,只要历史上提交过一份方法有误的实验,即使之后存在完整有效的
+       authority,D5 也会被永久 RED。移入后第一版写成「整 cell 剔除」,又过头了:
+       它与本 authority 自己的 (3) 相冲突 —— 一个对照不复现的环境虽然证明不了
+       0.7.0 安全,却正是「环境影响可观测性」的信息来源,整块丢掉等于把负控信息
+       一起扔了。**本规则不指向任何具体环境**,哪些 cell 属于此类是 Stage 3 判定。]
       [第二轮复审移入:原先写在 D5 的 RED 里,那会把坏证据与坏决策混为一谈 ——
        只要历史上提交过一份方法有误的实验,即使之后存在完整有效的 authority,
        D5 也会被永久 RED。**本规则不指向任何具体环境**,哪些 cell 属于此类是 Stage 3 判定。]
+
+A7  upgrade-benefit authority(D1)
+    必须证明:X = 0.6.0 上存在一个**已登记的、产品相关的**缺陷 / 降级 / 限制,
+    且 Y = 0.7.0 对该问题产生**实质改善**;改善的范围必须显式有界,
+    不得只证明「新版本也能跑」。
+
+    为什么必须有它:A1 + A3 合起来只能推出「0.7.0 兼容到可以使用」,
+    推不出「0.6 → 0.7 是有理由的」。极端反例:若两个版本在所有产品相关问题上完全等价,
+    仅仅因为 0.7.0 也通过了兼容性测试,当前判据就会让 D1 变绿。
+    candidate source:Step 1 · 2A · 2B · 2C 中是否有来源承担它,属 Stage 3 判定。
+
+A8  scaffold-runtime zvec-availability policy(D2)
+    必须证明:create-evo-lite 脚手架成功完成之后,child 的 .evo-lite runtime
+    **被产品要求具备 zvec 依赖**,而不是允许依赖缺席后降级到 SqliteFtsIndex。
+
+    **不得复用 A5。** A5 管的是 published package 的安装结果;A8 管的是被脚手架出的
+    child runtime 依赖集合 —— 这两个安装面是 Stage 1 已冻结的独立主语。
+    同理,「zvec 是默认引擎」也不能自动推出「zvec 必须被安装」:现有设计明确允许
+    `defaultLoadZvecIndex()` 在 require 失败时返回 null 并回落 SqliteFtsIndex。
+    这是产品政策类 authority,不是测量类。
+    candidate source:属 Stage 3 判定。
+
+A9  containment-change benefit / product-policy authority(D5)
+    必须证明:当前 version-blind 的 X 对某个**产品相关范围**造成了需要解决的降级,
+    而 version-aware 的 Y 能恢复所需能力;且这份收益值得引入新的 version-identity
+    输入与随之增加的 containment 复杂度。
+
+    A9 **不决定安全边界** —— 安全仍然完全由 A6 决定。两者的分工是:
+        A6 = can we safely do it
+        A9 = is there a reason to do it
+    这与 D3 已有的 A4(技术可行)+ A5(产品意图)是同一种结构。
+    candidate source:属 Stage 3 判定。
 ```
 
 ### 5.1 missing-authority disposition 词汇表
@@ -838,7 +975,7 @@ D1 / D2 / D3   scope shortfall → DEFERRED
                runtime 清单、published manifest 的 bucket。树里没有任何机制做到
                「ubuntu/node22 用 0.7.0,其余格子继续 0.6.0」,
                也没有机制做到「证据覆盖的格子 mandatory,其余格子仍 optional」。
-               证据作用域小于 S_RELEASE 时,只能 DEFERRED。
+               证据作用域小于 S_PRODUCT 时,只能 DEFERRED。
 
 D5             scope shortfall → BOUNDED 合法
                version-aware gate 本身就能把开启范围限制在 authority 的覆盖范围内,
@@ -868,9 +1005,12 @@ D5-G2  拿掉 → 在故障本就不可观察的环境里收集到的绿被当�
 D5-G3  拿掉 → 门变成查表:测过的放行,没测过的无答案
 D5-G4  拿掉 → 门读的是清单字符串,与实际加载的 binding 可以不一致
 D5-G5  拿掉 → 门开启后既有 containment marker 语义未定义
+D1-G4  拿掉 → 「0.7.0 也能跑」就足以升级;两个产品意义上等价的版本也会变绿
+D2-G5  拿掉 → 「我们能把 zvec 塞进每个 scaffold」被当成「每个 scaffold 都必须有它」
+D5-G7  拿掉 → 只证明了门可以安全地建,没人问过为什么要改现在的 version-blind 状态
 ```
 
-GREEN 共 16 条(D1 3 · D2 4 · D3 3 · D5 6),上表列了 12 条。
+GREEN 共 19 条(D1 4 · D2 5 · D3 3 · D5 7),上表列了 15 条。
 其余 4 条是交叉引用,自检**继承**被引用条,不另作解释:
 
 ```text
