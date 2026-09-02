@@ -1,0 +1,40 @@
+{
+  "cell": "ubuntu-latest/node24",
+  "requestedVersion": "0.7.0",
+  "env": {
+    "node": "v24.19.0",
+    "platform": "linux",
+    "arch": "x64",
+    "osRelease": "6.17.0-1022-azure",
+    "cwd": "/home/runner/work/create-evo-lite/create-evo-lite",
+    "probeDir": "/home/runner/work/create-evo-lite/create-evo-lite/probe"
+  },
+  "install": {
+    "status": "ok",
+    "reported": "success"
+  },
+  "load": {
+    "status": "ok",
+    "resolvedBinding": "/home/runner/work/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js",
+    "installedVersion": "0.7.0",
+    "versionMatchesRequested": true
+  },
+  "smoke": {
+    "status": "completed",
+    "collectionPathLen": 72,
+    "exitCode": 0,
+    "signal": null,
+    "stages": [
+      "child_start",
+      "binding_loaded",
+      "schema_built",
+      "create_or_open",
+      "close",
+      "child_done"
+    ],
+    "lastStage": "child_done",
+    "loadedBinding": "/home/runner/work/create-evo-lite/create-evo-lite/probe/node_modules/@zvec/zvec/src/index.js",
+    "stderr": null
+  },
+  "verdict": "SATISFIED"
+}
