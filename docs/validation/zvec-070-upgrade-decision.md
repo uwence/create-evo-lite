@@ -389,8 +389,8 @@ LOGICAL
 
 EVIDENCE_PREREQUISITE
     B 要得到 YES,必须先存在 authority E。
-    E 不存在时**不是** B=NO,而是 NAMED_NOT_INSTANTIATED / DEFERRED。
     该边只声明「E 是必要条件」,**不声明 E 是充分条件** —— 充分性属于 GREEN,Stage 2 才写。
+    **E 的身份,以及 E 缺失时如何 disposition,均由 Stage 2 定义。**
 
 IMPLEMENTATION_COUPLING
     A 与 B 同时为 YES 会要求协同实施,但并不决定任一项本身的 verdict。
