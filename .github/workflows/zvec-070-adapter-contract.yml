@@ -1,0 +1,86 @@
+name: zvec-0.7.0 adapter contract (measurement)
+
+# Step 2B. Answers exactly one question:
+#
+#   does @zvec/zvec@0.7.0 satisfy the Node API, return-shape and persistence
+#   contract that memory-index-zvec.js ACTUALLY consumes, on every runtime cell
+#   this project claims to support?
+#
+# It executes the production adapter itself. A hand-written workload that calls
+# the same functions would only prove that the workload works.
+#
+# NOT release-gate, gates nothing. A satisfied matrix authorizes no pin change,
+# no RUNTIME_DEPENDENCIES change, no optional -> mandatory move, no default
+# flip, no containment relaxation and no release decision.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [measure/zvec-070-adapter-contract]
+
+jobs:
+  cell:
+    name: adapter contract on ${{ matrix.os }} / node ${{ matrix.node }}
+    strategy:
+      # Every cell must report; stopping at the first failure would hide the
+      # boundary this measurement exists to find.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+        exclude:
+          # Same exclusion release-gate carries: no better-sqlite3 win-x64
+          # node-20 prebuild and no node-gyp-detectable MSVC on the runner.
+          - os: windows-latest
+            node: 20
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Root deps
+        run: npm ci
+
+      # The adapter requires ./db, which requires better-sqlite3, resolved from
+      # .evo-lite/node_modules by the adapter's own location. Restored the same
+      # deterministic way release-gate does.
+      - name: Runtime deps (better-sqlite3 for the adapter's ./db)
+        shell: bash
+        run: |
+          cp templates/runtime/package.json templates/runtime/package-lock.json .evo-lite/
+          npm ci --prefix .evo-lite
+
+      - name: Install @zvec/zvec@0.7.0 into an isolated dir
+        id: install
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p probe
+          cd probe
+          printf '{"name":"zvec070-adapter-cell","private":true,"version":"1.0.0"}\n' > package.json
+          npm install @zvec/zvec@0.7.0 --no-audit --no-fund
+
+      - name: Run the real-adapter transaction (3 processes)
+        shell: bash
+        run: |
+          mkdir -p txn-root
+          node docs/validation/fixtures/zvec-070-adapter-contract/txn-runner.js \
+            --cell "${{ matrix.os }}/node${{ matrix.node }}" \
+            --runtime-root "$PWD/txn-root" \
+            --zvec-entry "$PWD/probe/node_modules/@zvec/zvec/src/index.js" \
+            --adapter "$PWD/.evo-lite/cli/memory-index-zvec.js" \
+            --expect-blob d3ffe05d3609879f414d1621fdf8fe81434e3c4c \
+            --out "$PWD/adapter-cell.json"
+
+      # A missing record is itself a measurement failure, not a warning.
+      - name: upload cell record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zvec070-adapter-${{ matrix.os }}-node${{ matrix.node }}
+          path: adapter-cell.json
+          if-no-files-found: error
