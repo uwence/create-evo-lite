@@ -60,6 +60,43 @@ if (!EXPECT_BLOB || !/^[0-9a-f]{40}$/.test(EXPECT_BLOB)) {
 const SEGMENT_ID = 'o2-kana-hangul-dash';
 const SEGMENT = String.fromCodePoint(0x65E5, 0x672C, 0x8A9E, 0x2D, 0xD55C, 0xAD6D, 0xC5B4);
 
+// The trigger is NOT a property of the segment alone. The merged evidence
+// records it as this segment AT A MEASURED PATH LENGTH, and the same document
+// (zvec-070-win-unicode-recheck.md 1.1) measured the crash point MOVING when
+// only the path prefix changed. A first CI run of this bridge landed at
+// colPathLen 76 - outside the 135..160 band the whole corpus was ever collected
+// in - and 0.6.0 completed there. That is the apparatus inheriting its length
+// from wherever the host happened to put the root, not a fact about zvec.
+//
+// So the length is now targeted, and the number is READ OFF the merged
+// artifact rather than tuned after seeing a result:
+//
+//   results-0.7.0-probe/control-0.6.0-R2.json
+//     o2-kana-hangul-dash, position root, attempts 1-3
+//     colPathLen 149 -> FAIL_FAST, lastStage schema_built, 3/3
+//
+// Length is reached by padding the PREFIX, which is the same variable 1.1
+// identified, applied to control and subject identically.
+const TARGET_COLLECTION_PATH_LEN = 149;
+const TARGET_PROVENANCE = 'results-0.7.0-probe/control-0.6.0-R2.json :: o2-kana-hangul-dash :: colPathLen 149 :: FAIL_FAST 3/3';
+// Derived by construction, not by hand-counting separators: measure the path
+// with a one-character pad, then add the shortfall. Each extra pad character
+// adds exactly one. Hand arithmetic got this off by one on the first attempt -
+// and the gate below caught it, which is the whole reason the gate exists.
+const LEN_WITH_ONE_PAD = path.join(ROOT_BASE, 'p', SEGMENT, 'ctl', 'zvec', 'collection').length;
+const PAD_LEN = 1 + (TARGET_COLLECTION_PATH_LEN - LEN_WITH_ONE_PAD);
+
+// Fail closed. A base too long to reach the pre-registered length cannot be
+// silently run anyway - that is exactly how the first run produced an
+// out-of-regime measurement and called it a control.
+if (PAD_LEN < 1) {
+    console.error(`--root-base is too long to reach the pre-registered collection path length `
+        + `${TARGET_COLLECTION_PATH_LEN}: with a single pad character the path is already `
+        + `${LEN_WITH_ONE_PAD} chars. Pass a shorter --root-base.`);
+    process.exit(2);
+}
+const PAD = 'p'.repeat(PAD_LEN);
+
 const blobOf = (file) => {
     const b = fs.readFileSync(file);
     return crypto.createHash('sha1')
@@ -86,6 +123,9 @@ const record = {
         segmentId: SEGMENT_ID,
         segmentCodePoints: [...SEGMENT].map(c => 'U+' + c.codePointAt(0).toString(16).toUpperCase()),
         segmentByteLength: Buffer.byteLength(SEGMENT, 'utf8'),
+        targetCollectionPathLen: TARGET_COLLECTION_PATH_LEN,
+        targetProvenance: TARGET_PROVENANCE,
+        prefixPadLength: PAD_LEN,
     },
     subject: { adapter: ADAPTER, adapterBlob: blobOf(ADAPTER), expectedBlob: EXPECT_BLOB },
     control: { entry: CONTROL_ENTRY, version: versionOf(CONTROL_ENTRY) },
@@ -115,7 +155,7 @@ function runPhase(phase, root, entry) {
     // already measured the crash point moving with path length, so letting the
     // two roots differ in size would reintroduce the very confound Step 2A's
     // rerun existed to remove. The binding must be the only difference.
-    const root = path.join(ROOT_BASE, SEGMENT, 'ctl');
+    const root = path.join(ROOT_BASE, PAD, SEGMENT, 'ctl');
     const { res, ev, timedOut } = runPhase('A', root, CONTROL_ENTRY);
     const jsError = String(res.stderr || '').includes('"jsError":true');
     const completed = Boolean(ev && !ev.error && ev.allPassed && res.status === 0);
@@ -134,7 +174,7 @@ function runPhase(phase, root, entry) {
 
 // ---- test: 0.7.0, the full A/B/C contract, on the same shape --------------
 if (record.control.triggerReproduced) {
-    const root = path.join(ROOT_BASE, SEGMENT, 'tst');
+    const root = path.join(ROOT_BASE, PAD, SEGMENT, 'tst');
     for (const phase of ['A', 'B', 'C']) {
         const { res, ev, timedOut } = runPhase(phase, root, ZVEC_ENTRY);
         const names = (ev && ev.checks || []).map(c => c.name);
@@ -170,18 +210,26 @@ const blobOk = record.subject.blobMatchesExpected === true
     && record.phases.length === 3 && record.phases.every(p => p.adapterBlob === record.subject.adapterBlob);
 const checkSetOk = record.phases.length === 3 && record.phases.every(p => p.checkSet && p.checkSet.ok);
 
+// The targeted length is only worth targeting if reaching it is a gate. Recorded
+// but unjudged is the failure shape this work line has already hit three times:
+// a fact written into JSON is not yet a premise of the verdict.
+const lengthOnTarget = record.control.collectionPathLen === TARGET_COLLECTION_PATH_LEN
+    && record.phases.length === 3
+    && record.phases.every(p => p.collectionPathLen === TARGET_COLLECTION_PATH_LEN);
+
 record.summary = {
     triggerReproduced: record.control.triggerReproduced,
     phasesPassed: record.phases.filter(p => p.status === 'passed').length,
     checksExpected: Object.values(EXPECTED_CHECKS).reduce((n, a) => n + a.length, 0),
     checksTotal: record.phases.reduce((n, p) => n + ((p.checks || []).length), 0),
     checksFailed: record.phases.reduce((n, p) => n + ((p.checks || []).filter(c => !c.pass).length), 0),
-    seamProven, blobOk, checkSetOk,
+    seamProven, blobOk, checkSetOk, lengthOnTarget,
+    collectionPathLen: record.control.collectionPathLen,
 };
 
 record.verdict = (record.control.triggerReproduced === true
     && record.control.versionIs060 === true
-    && allPhases && seamProven && blobOk && checkSetOk
+    && allPhases && seamProven && blobOk && checkSetOk && lengthOnTarget
     && record.zvec.versionMatchesRequested === true) ? 'SATISFIED' : 'NOT_SATISFIED';
 
 fs.writeFileSync(OUT, JSON.stringify(record, null, 2), 'utf8');

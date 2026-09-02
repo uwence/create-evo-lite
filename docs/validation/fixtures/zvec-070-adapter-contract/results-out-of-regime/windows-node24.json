@@ -1,0 +1,59 @@
+{
+  "cell": "windows-latest/node24",
+  "env": {
+    "node": "v24.19.0",
+    "platform": "win32",
+    "arch": "x64",
+    "osRelease": "10.0.26100"
+  },
+  "pathUnderTest": {
+    "segmentId": "o2-kana-hangul-dash",
+    "segmentCodePoints": [
+      "U+65E5",
+      "U+672C",
+      "U+8A9E",
+      "U+2D",
+      "U+D55C",
+      "U+AD6D",
+      "U+C5B4"
+    ],
+    "segmentByteLength": 19
+  },
+  "subject": {
+    "adapter": "D:/a/create-evo-lite/create-evo-lite/.evo-lite/cli/memory-index-zvec.js",
+    "adapterBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+    "expectedBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
+    "blobMatchesExpected": true
+  },
+  "control": {
+    "entry": "D:/a/create-evo-lite/create-evo-lite/probe6/node_modules/@zvec/zvec/src/index.js",
+    "version": "0.6.0",
+    "versionIs060": true,
+    "collectionPathLen": 76,
+    "outcome": "completed",
+    "exitCode": 0,
+    "signal": null,
+    "stages": [
+      "upsert returns numeric id",
+      "ids are distinct and ascending"
+    ],
+    "triggerReproduced": false
+  },
+  "zvec": {
+    "entry": "D:/a/create-evo-lite/create-evo-lite/probe7/node_modules/@zvec/zvec/src/index.js",
+    "installedVersion": "0.7.0",
+    "versionMatchesRequested": true
+  },
+  "phases": [],
+  "verdict": "NOT_SATISFIED",
+  "summary": {
+    "triggerReproduced": false,
+    "phasesPassed": 0,
+    "checksExpected": 19,
+    "checksTotal": 0,
+    "checksFailed": 0,
+    "seamProven": false,
+    "blobOk": false,
+    "checkSetOk": false
+  }
+}
