@@ -143,11 +143,11 @@ required authority:  A0 product-support scope(给出 S_PRODUCT)
                      定义见 §5。
 
 GREEN iff:           以下全部成立:
-                     G1  A1 覆盖 **S_PRODUCT(§5.0)的全部格子**,且每一格上 0.7.0
+                     G1  A1 覆盖 **V_PRODUCT(§5 A0)的全部格子**,且每一格上 0.7.0
                          都能安装、其原生绑定都能被 require 解析。
                      G2  A3 证明本仓生产 adapter **实际消费的**那一组 API、返回值形状
                          与跨进程持久化行为在 0.7.0 上成立。
-                     G3  作用域规则:G1 / G2 必须覆盖 S_PRODUCT 全部格子。
+                     G3  作用域规则:G1 / G2 必须覆盖 V_PRODUCT 全部格子。
                          **作用域不足时的处置是 DEFERRED,不是 bounded GREEN** ——
                          D1 的 Y 是全局变更(唯一的 published pin),
                          树里没有机制做到「某些格子用 0.7.0、其余继续 0.6.0」,
@@ -157,8 +157,12 @@ GREEN iff:           以下全部成立:
                          **G1–G3 只能推出「0.7.0 兼容到可以使用」,推不出「该升」;**
                          没有 G4,两个在产品意义上完全等价的版本也会让本节点变绿。
 
-RED iff:             任一成立即为 RED。**三条都绑定在 S_PRODUCT(经 A0 确定)之内** ——
-                     决策作用域之外的某个环境出现问题,本身不使本节点变红,
+RED iff:             任一成立即为 RED。**RED 绑定 S_PRODUCT,GREEN 绑定 V_PRODUCT** ——
+                     这个不对称是刻意的:GREEN 是全称命题(必须覆盖每一格),
+                     所以需要一个有限可枚举的 verification partition;
+                     RED 是存在命题(一个反例即成立),反例落在**承诺范围内**的任何
+                     位置都算数,不需要分区。
+                     决策作用域之外的环境出现问题,本身不使本节点变红 ——
                      那属于 A0 该不该把该环境纳入 S_PRODUCT 的问题。
 
                      R1  S_PRODUCT 内存在一格:0.6.0 可安装 / 可加载,而 0.7.0 不能。
@@ -167,6 +171,10 @@ RED iff:             任一成立即为 RED。**三条都绑定在 S_PRODUCT(经
                      R3  0.7.0 在**当前被 containment 判为 SAFE** 的路径上出现
                          不可捕获的进程级失败。那意味着现有 containment 不再足够,
                          而 D1 本身不携带任何 containment 变更(见 does NOT authorize)。
+                     R4  A7 的反向(§5.1a):存在**权威评估明确认定** 0.7.0 对已登记
+                         的那个问题没有实质改善,或候选收益不足以成立 A7 的
+                         upgrade premise。
+                         **仅仅「找不到 A7」不是 R4**,那是 DEFERRED。
 
 missing authority
 disposition:         A0 / A1 / A3 / A7 任一未实例化 → DEFERRED(§5.1)。
@@ -220,12 +228,12 @@ required authority:  A0 product-support scope(给出 S_PRODUCT)
 GREEN iff:           G1  A2 覆盖被脚手架出的项目**实际使用的安装形态**
                          (templates/runtime 清单复制进 .evo-lite/ 后
                          `npm ci --prefix .evo-lite`),而不是母体的开发安装形态,
-                         并在 **S_PRODUCT(§5.0)的每一格**上成立。
+                         并在 **V_PRODUCT(§5 A0)的每一格**上成立。
                      G2  同 D1-G2(A3)。
                      G3  加入该条目后 index.js 的 RUNTIME_DEPENDENCIES、
                          templates/runtime/package.json 与其 package-lock.json
                          三者仍逐字一致(T18e 绿),且锁文件可复现。
-                     G4  作用域规则同 D1-G3(S_PRODUCT 全覆盖;不足则 DEFERRED,
+                     G4  作用域规则同 D1-G3(V_PRODUCT 全覆盖;不足则 DEFERRED,
                          不得 bounded GREEN —— D2 的 Y 是所有 scaffold 共用的
                          runtime 清单,同样无法执行按格边界)。
                      G5  A8 证明:脚手架成功之后,child runtime **被产品要求**具备
@@ -241,6 +249,10 @@ RED iff:             R1  存在一格在 S_PRODUCT 内、而 zvec 在**子项目
                          而不只是记忆引擎降级。
                      R2  合同回归(同 D1-R2)。
                      R3  加入后锁文件不可复现,或三者无法同时保持一致(T18e 不可能同时绿)。
+                     R4  A8 的反向(§5.1a):存在**明确的产品政策**规定
+                         child runtime 必须允许在没有 zvec 的情况下作为**正常完成态**。
+                         **仅仅「没有政策说明 child 必须具备 zvec」不是 R4**,
+                         那是 DEFERRED。
 
 missing authority
 disposition:         A0 / A2 / A3 / A8 任一未实例化 → DEFERRED。
@@ -301,14 +313,14 @@ required authority:  A0 product-support scope(给出 S_PRODUCT)
                      A5 product install-policy(与本节点 manifest-only 主语等宽)
                      定义见 §5。
 
-GREEN iff:           G1  A4 证明:该条目移入 dependencies 后,在 **S_PRODUCT(§5.0)
+GREEN iff:           G1  A4 证明:该条目移入 dependencies 后,在 **V_PRODUCT(§5 A0)
                          的每一格**上 `npm i create-evo-lite` 仍然成功。
                      G2  A5 证明:在 published-package 作用域内,
                          「create-evo-lite 安装成功、但 @zvec/zvec 缺席」
                          **不是产品允许的安装结果**。
                          它**不裁定**安装完成之后的 runtime fallback 是否仍可存在 ——
                          那不在 D3 的主语内(见「明确不属于 D3」)。
-                     G3  作用域规则同 D1-G3(S_PRODUCT 全覆盖;不足则 DEFERRED,
+                     G3  作用域规则同 D1-G3(V_PRODUCT 全覆盖;不足则 DEFERRED,
                          不得 bounded GREEN —— D3 的 Y 是 published manifest 的
                          bucket,无法做到「证据覆盖的格子 mandatory、其余仍 optional」)。
 
@@ -517,6 +529,10 @@ RED iff:             RED 条件同样标注来源。编号保留空档:R2 已移
                          [主语推导:G4 的对偶。]
                      R4  门开启后,既有 containment marker 的语义变为未定义。
                          [来自现有 containment 合同的存在。]
+                     R5  A9 的反向(§5.1a):存在**明确政策**规定当前 containment 的
+                         保守性必须保持,或该收益不足以抵偿引入 version-aware
+                         复杂度的代价。
+                         **仅仅「没有 authority 说明值得改」不是 R5**,那是 DEFERRED。
 
 missing authority
 disposition:         A6 或 A9 未实例化 → DEFERRED。
@@ -611,7 +627,8 @@ SUBJECT_INSTANTIATION                                    (2026-09-02 APPROVED)
 ### 2.2 边
 
 Stage 1 不实例化任何 `EVIDENCE_PREREQUISITE` 边;**Stage 2 实例化它们**,
-见下方 E8–E14。当时的理由仍然有效并记录在此:在 Stage 1 写出「edge E 的
+见下方 **E8–E20**(E1 / E2 / E3 / E5 保持 retired,不复用)。
+当时的理由仍然有效并记录在此:在 Stage 1 写出「edge E 的
 authority 是 X」「X 当前不存在」,等于把 `required authority` 与
 `missing-authority` 这两个 Stage 2 字段从节点搬进图里,换个位置提前完成 Stage 2。
 
@@ -749,8 +766,20 @@ measurement phase SATISFIED  →  upgrade YES          ✗
 Step 1/2A/2B/2C 全绿          →  某节点 GREEN         ✗
 ```
 
-「全绿」不是任何节点的总括 GREEN 条件。每个节点在 Stage 2 必须写明:
-**它从上述哪一份文件里,消费哪一个具体事实**。
+「全绿」不是任何节点的总括 GREEN 条件。消费规则按 authority 的**类型**分开:
+
+```text
+measurement 类 authority(A1 / A2 / A3 / A4 / A6)
+    若引用本节 inventory,必须逐项写明消费的是哪一份文件里的哪一个具体事实。
+
+product-policy / support-scope 类 authority(A0 / A5 / A8 / A9)
+    **不被限定在本节 inventory 之内** —— 本节四份全是测量文件,
+    而没有任何一次测量能证明一条产品要求或一个支持范围承诺。
+    它们的来源属 Stage 3 判定。
+
+A7(升级收益)介于两者之间:「0.6.0 上存在已登记的产品相关问题」可由测量承担,
+    「该改善是否构成升级理由」不行。Stage 3 必须分别说明这两半各自的来源。
+```
 
 ## 4. Stage 3 之前不得做的事(当前阶段的边界)
 
@@ -824,14 +853,27 @@ A1 / A2 / A4 与 D1 / D2 / D3 的 GREEN 一律引用 **S_PRODUCT**,并受 A0 的
 
 ```text
 A0  product-support scope authority
-    必须证明:D1 / D2 / D3 这类**全局 Y** 实际需要承诺的环境范围(S_PRODUCT)是什么。
+    必须给出**三样**,缺一不可:
 
-      A0 规定 S_PRODUCT == S_GATE   →  D1 / D2 / D3 可按 S_GATE 裁。
-      A0 规定 S_PRODUCT ⊋ S_GATE    →  A1 / A2 / A4 必须覆盖 S_PRODUCT;
+      1. S_PRODUCT   D1 / D2 / D3 这类全局 Y 实际需要承诺的环境范围。
+      2. V_PRODUCT   本 UDR 用来证明 S_PRODUCT 的**有限、可枚举的 verification
+                     partition**,或一组有权威依据的 equivalence class。
+      3. coverage justification —— 为什么 V_PRODUCT 足以代表 S_PRODUCT。
+
+    只给 (1) 不够。S_PRODUCT 完全可能是「Windows + Linux / Node >= 20 / x64」
+    这样的**连续开放范围**,那时「S_PRODUCT 的每一格」依然无法穷尽证明,
+    第一版的问题只是从 `engines` 搬到了 A0 上。
+    **本 UDR 尤其不得自行假定**「Node >= 20 只测 20 / 22 / 24 就代表全部」——
+    这类 equivalence 必须由 A0 或另一个 authority 明确给出,不能由判据自己发明。
+
+      A0 规定 S_PRODUCT == S_GATE   →  D1 / D2 / D3 可按 S_GATE 裁,V_PRODUCT = S_GATE。
+      A0 规定 S_PRODUCT ⊋ S_GATE    →  A1 / A2 / A4 必须覆盖 **V_PRODUCT**;
                                        覆盖不足 → DEFERRED,**不得 bounded GREEN**
                                        (理由同 §5.1:全局 Y 执行不了按格边界)。
       A0 未实例化                    →  DEFERRED。
                                        **不得由一份 workflow 自行缩小产品支持面。**
+      S_PRODUCT 已知,但拿不到有权威依据的 V_PRODUCT
+                                     →  DEFERRED。**「范围已知」不等于「可裁决」。**
 
     candidate source:package.json 的 `engines` · `.github/workflows/release-gate.yml`
     · docs/superpowers/specs/ 下的 release hardening / release closure 系列。
@@ -900,10 +942,16 @@ A6  version-bounded fault attribution
                   · 支持 (1) / (2) 的任何 positive discriminant 主张
                   在那种环境里 0.6.0 与 0.7.0 的结果不可区分,它不携带这类信息。
 
-        可以用于:· 证明「该 trigger 在某些环境下不可观察」
-                  · 描述并界定 observability dependence
-                  · 支持 (3) 的环境区分
-                  这恰恰是 (3) 需要的那种信息。
+        可以用于:· 记录「在该 cell / 该装置下,对照未复现」这一事实本身
+                  · 与**能够复现**的 cell 形成受控对比,支持 observability dependence
+                  · 支持 (3) 对「观察的缺席不能直接解释成 fault 的缺席」的区分
+
+        额外不得用于:· 声称该 trigger 在该环境「不可能被观察到」。
+
+      **not reproduced ≠ impossible。** 一次未复现只能证明「在这套装置 / 这一格下
+      未被复现」;要断言某个环境**结构性地**不可观察,那是一个独立的 authority,
+      不能从「没复现」推出来。第一版把「证明该 trigger 在某些环境下不可观察」写进
+      可用清单,越过了这条线。
 
         但必须显式标记为 **observability-only**,且**不得**在后续汇总中被重新
         计入 0.7.0 的 safety evidence。
@@ -975,7 +1023,7 @@ D1 / D2 / D3   scope shortfall → DEFERRED
                runtime 清单、published manifest 的 bucket。树里没有任何机制做到
                「ubuntu/node22 用 0.7.0,其余格子继续 0.6.0」,
                也没有机制做到「证据覆盖的格子 mandatory,其余格子仍 optional」。
-               证据作用域小于 S_PRODUCT 时,只能 DEFERRED。
+               证据作用域小于 V_PRODUCT 时,只能 DEFERRED。
 
 D5             scope shortfall → BOUNDED 合法
                version-aware gate 本身就能把开启范围限制在 authority 的覆盖范围内,
@@ -986,6 +1034,26 @@ D5             scope shortfall → BOUNDED 合法
 这两个词是 **Stage 3 应用的规则**,不是 Stage 2 对任何节点作出的判断:
 Stage 2 不判断任何 authority 当前是否存在,因此本阶段没有任何节点被置于
 DEFERRED 或 BOUNDED。
+
+### 5.1a normative / benefit authority 的三态规则(A5 · A7 · A8 · A9)
+
+```text
+authority 缺失或未决
+    → DEFERRED
+
+存在**权威性证据明确否定**该 authority 本应确立的那个命题
+    → RED
+
+仅仅是「找不到支持性 authority」
+    → 不是 RED,仍然是 DEFERRED
+```
+
+**absence of positive evidence != negative evidence。**
+
+只写「未实例化 → DEFERRED」是不够的:它把两种状态混成一种,于是 Stage 3 遇到一条
+**明确反向**的政策时,会被迫把一个本该 RED 的节点记成 DEFERRED。D3 早就按正确形状
+写过(A5 未实例化 → DEFERRED;存在相反产品要求 → RED),本规则把它一般化到
+A7 / A8 / A9;各节点在自己的 RED 里补出「明确相反」在该节点意味着什么。
 
 ### 5.2 判据自检(本阶段作者自陈)
 
