@@ -1,0 +1,77 @@
+name: zvec-0.7.0 install matrix (measurement)
+
+# Step 2A. Answers exactly one question:
+#
+#   can @zvec/zvec@0.7.0 install, load, and complete a minimal native
+#   create/open/close on each runtime cell this project claims to support?
+#
+# It is NOT release-gate and does not gate anything. Satisfying it authorizes no
+# pin change, no RUNTIME_DEPENDENCIES change, no optional -> mandatory move, no
+# default flip, no containment relaxation and no release decision.
+#
+# Temporary measurement workflow. It runs on its own measurement branch and on
+# manual dispatch only, so it never attaches itself to ordinary development.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [measure/zvec-070-install-matrix]
+
+jobs:
+  cell:
+    name: install+load+smoke on ${{ matrix.os }} / node ${{ matrix.node }}
+    strategy:
+      # Every cell must report. Stopping the matrix at the first failure would
+      # hide exactly the boundary this measurement exists to find.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+        exclude:
+          # Same exclusion release-gate already carries: better-sqlite3 ships no
+          # node-20 win-x64 prebuild and the runner has no node-gyp-detectable
+          # MSVC. Windows starts at Node 22 there, so the supported-cell set this
+          # measurement mirrors is five, not six.
+          - os: windows-latest
+            node: 20
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # continue-on-error so a cell that CANNOT install still produces a record.
+      # A missing artifact would be indistinguishable from a cell that was never
+      # run; the failure boundary has to be written down, not inferred.
+      - name: A. install @zvec/zvec@0.7.0 into an isolated dir
+        id: install
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p probe
+          cd probe
+          printf '{"name":"zvec070-cell","private":true,"version":"1.0.0"}\n' > package.json
+          npm install @zvec/zvec@0.7.0 --no-audit --no-fund
+
+      - name: B+C. load the binding and run the minimal native smoke
+        shell: bash
+        run: |
+          node docs/validation/fixtures/zvec-070-install-matrix/cell-runner.js \
+            --probe-dir "$PWD/probe" \
+            --install-status "${{ steps.install.outcome }}" \
+            --cell "${{ matrix.os }}/node${{ matrix.node }}" \
+            --version 0.7.0 \
+            --out "$PWD/cell-result.json"
+
+      # always(), so a NOT_SATISFIED cell still uploads the evidence that says
+      # which phase it died in.
+      - name: upload cell record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zvec070-cell-${{ matrix.os }}-node${{ matrix.node }}
+          path: cell-result.json
+          if-no-files-found: warn
