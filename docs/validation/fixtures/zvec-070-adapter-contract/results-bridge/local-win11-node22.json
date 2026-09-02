@@ -28,12 +28,34 @@
     "expectedBlob": "d3ffe05d3609879f414d1621fdf8fe81434e3c4c",
     "blobMatchesExpected": true
   },
+  "apparatus": {
+    "bridge-runner.js": {
+      "blob": "1b094132d15bade6c8ab52dbf3a6af1807e3202a",
+      "expected": "1b094132d15bade6c8ab52dbf3a6af1807e3202a",
+      "matches": true
+    },
+    "adapter-txn.js": {
+      "blob": "2a7f6e373c94cc5f2430e6f26cf0425892c0c2f1",
+      "expected": "2a7f6e373c94cc5f2430e6f26cf0425892c0c2f1",
+      "matches": true
+    },
+    "expected-checks.js": {
+      "blob": "e14c4f95e747589a50bb0654e6e9b3c45ec8e0c6",
+      "expected": "e14c4f95e747589a50bb0654e6e9b3c45ec8e0c6",
+      "matches": true
+    },
+    "../shared/fail-fast-classifier.js": {
+      "blob": "1ed11be7a532900babe4478701b5a706875f8617",
+      "expected": "1ed11be7a532900babe4478701b5a706875f8617",
+      "matches": true
+    }
+  },
   "control": {
     "entry": "D:/Data/ProjectAgent/create-evo-lite/node_modules/@zvec/zvec/src/index.js",
     "version": "0.6.0",
     "versionIs060": true,
     "collectionPathLen": 149,
-    "outcome": "process-death",
+    "outcome": "FAIL_FAST_REPRODUCED",
     "exitCode": 3221226505,
     "signal": null,
     "stages": [],
@@ -260,7 +282,7 @@
         "ok": true
       },
       "error": null,
-      "stderr": "[ERROR 2026-09-02 17:16:26 59440 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n[ERROR 2026-09-02 17:16:26 59440 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
+      "stderr": "[ERROR 2026-09-02 17:48:58 63540 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n[ERROR 2026-09-02 17:48:58 63540 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
     },
     {
       "phase": "C",
@@ -321,10 +343,11 @@
         "ok": true
       },
       "error": null,
-      "stderr": "[ERROR 2026-09-02 17:16:27 66328 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
+      "stderr": "[ERROR 2026-09-02 17:48:59 50576 sqlengine_impl.cc:229] FTS query parse failed: field-prefixed queries are not supported\r\n"
     }
   ],
   "verdict": "SATISFIED",
+  "apparatusRunnerFile": "bridge-runner.js",
   "summary": {
     "triggerReproduced": true,
     "phasesPassed": 3,
@@ -335,6 +358,7 @@
     "blobOk": true,
     "checkSetOk": true,
     "lengthOnTarget": true,
+    "apparatusOk": true,
     "collectionPathLen": 149
   }
 }

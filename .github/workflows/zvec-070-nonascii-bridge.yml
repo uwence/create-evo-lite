@@ -75,6 +75,10 @@ jobs:
             --control-entry "$PWD/probe6/node_modules/@zvec/zvec/src/index.js" \
             --adapter "$PWD/.evo-lite/cli/memory-index-zvec.js" \
             --expect-blob d3ffe05d3609879f414d1621fdf8fe81434e3c4c \
+            --expect-bridge-runner   1b094132d15bade6c8ab52dbf3a6af1807e3202a \
+            --expect-adapter-txn     2a7f6e373c94cc5f2430e6f26cf0425892c0c2f1 \
+            --expect-expected-checks e14c4f95e747589a50bb0654e6e9b3c45ec8e0c6 \
+            --expect-classifier      1ed11be7a532900babe4478701b5a706875f8617 \
             --out "$PWD/bridge-cell.json"
 
       # A missing record is itself a measurement failure, not a warning.

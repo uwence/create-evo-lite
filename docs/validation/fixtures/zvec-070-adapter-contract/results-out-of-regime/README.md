@@ -24,3 +24,4 @@ colPathLen 76        0.6.0 completed(2/2 checks,exit 0)
 由前缀 padding 达成,对照与被测**同样**处理,且达成值本身是 verdict gate
 (`lengthOnTarget`)——记录而不判定,正是本工作线已经踩过三次的形状。
 
+本目录的 record 同样产生于共享分类器之前,`control.outcome` 用的是旧词 `completed`。

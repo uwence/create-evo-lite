@@ -30,6 +30,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { EXPECTED_CHECKS } = require('./expected-checks');
+const { classifyNativeOutcome, REPRODUCED } = require('../shared/fail-fast-classifier');
 
 const argv = process.argv.slice(2);
 const argOf = (n, d) => { const i = argv.indexOf(n); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -41,6 +42,17 @@ const CONTROL_ENTRY = argOf('--control-entry', null);
 const ADAPTER = argOf('--adapter', null);
 const EXPECT_BLOB = argOf('--expect-blob', null);
 const OUT = argOf('--out', null);
+// Which apparatus produced this record. On CI the Actions run binds result to
+// harness commit; a record produced on a developer host has no such chain, and
+// this work line has already run THREE different bridge apparatus versions
+// (colPathLen 76, the hand-counted 150, the final 149). Without this, the last
+// link is the author's say-so.
+const EXPECT_APPARATUS = {
+    'bridge-runner.js': argOf('--expect-bridge-runner', null),
+    'adapter-txn.js': argOf('--expect-adapter-txn', null),
+    'expected-checks.js': argOf('--expect-expected-checks', null),
+    '../shared/fail-fast-classifier.js': argOf('--expect-classifier', null),
+};
 const PHASE_TIMEOUT_MS = 180000;
 
 for (const [flag, v] of [['--root-base', ROOT_BASE], ['--zvec-entry', ZVEC_ENTRY],
@@ -51,6 +63,17 @@ for (const [flag, v] of [['--root-base', ROOT_BASE], ['--zvec-entry', ZVEC_ENTRY
 if (!EXPECT_BLOB || !/^[0-9a-f]{40}$/.test(EXPECT_BLOB)) {
     console.error(`--expect-blob is required and must be a 40-hex git blob sha1 (got: ${EXPECT_BLOB})`);
     process.exit(2);
+}
+// Same fail-closed rule as --expect-blob, for the same reason: an optional
+// identity is not an identity. Absent, the gate would degrade from "this
+// apparatus produced this record" to "no apparatus was shown to differ".
+for (const [file, want] of Object.entries(EXPECT_APPARATUS)) {
+    if (!want || !/^[0-9a-f]{40}$/.test(want)) {
+        console.error(`apparatus expectation for ${file} is required and must be a 40-hex git blob `
+            + `sha1 (got: ${want}). Flags: --expect-bridge-runner --expect-adapter-txn `
+            + `--expect-expected-checks --expect-classifier`);
+        process.exit(2);
+    }
 }
 
 // Built from code points so no shell, YAML or file-encoding layer can mangle it
@@ -128,12 +151,21 @@ const record = {
         prefixPadLength: PAD_LEN,
     },
     subject: { adapter: ADAPTER, adapterBlob: blobOf(ADAPTER), expectedBlob: EXPECT_BLOB },
+    apparatus: {},
     control: { entry: CONTROL_ENTRY, version: versionOf(CONTROL_ENTRY) },
     zvec: { entry: ZVEC_ENTRY, installedVersion: versionOf(ZVEC_ENTRY) },
     phases: [],
     verdict: 'NOT_SATISFIED',
 };
 record.subject.blobMatchesExpected = record.subject.adapterBlob === EXPECT_BLOB;
+record.apparatusRunnerFile = path.basename(__filename);
+for (const [file, want] of Object.entries(EXPECT_APPARATUS)) {
+    // The runner hashes ITSELF, not the fixed name: hashing 'bridge-runner.js'
+    // by name would let a renamed, modified copy hash the pristine original and
+    // pass. Found by the timeout negative control, which is a renamed copy.
+    const actual = blobOf(file === 'bridge-runner.js' ? __filename : path.join(__dirname, file));
+    record.apparatus[file] = { blob: actual, expected: want, matches: actual === want };
+}
 record.zvec.versionMatchesRequested = record.zvec.installedVersion === '0.7.0';
 record.control.versionIs060 = record.control.version === '0.6.0';
 
@@ -158,18 +190,22 @@ function runPhase(phase, root, entry) {
     const root = path.join(ROOT_BASE, PAD, SEGMENT, 'ctl');
     const { res, ev, timedOut } = runPhase('A', root, CONTROL_ENTRY);
     const jsError = String(res.stderr || '').includes('"jsError":true');
-    const completed = Boolean(ev && !ev.error && ev.allPassed && res.status === 0);
     record.control.collectionPathLen = path.join(root, 'zvec', 'collection').length;
-    record.control.outcome = timedOut ? 'timeout'
-        : (completed ? 'completed'
-            : (!ev && !jsError ? 'process-death' : (jsError ? 'js-error' : 'failed')));
+    // Step 1 froze this vocabulary; the bridge inherits it rather than writing
+    // its own. See ../shared/fail-fast-classifier.js for what the first version
+    // of this line got wrong.
+    record.control.outcome = classifyNativeOutcome({
+        timedOut, jsError, status: res.status, signal: res.signal,
+        completed: Boolean(ev && !ev.error && ev.allPassed),
+    });
     record.control.exitCode = res.status;
     record.control.signal = res.signal;
     record.control.stages = ev ? (ev.checks || []).map(c => c.name) : [];
     // The trigger must actually reproduce. A control that survives means the path
-    // is not a trigger path and this cell proves nothing about the bridge.
-    record.control.triggerReproduced = record.control.outcome === 'process-death'
-        || record.control.outcome === 'timeout';
+    // is not a trigger path and this cell proves nothing about the bridge. A
+    // TIMEOUT IS NOT A REPRODUCTION: it is the absence of an observation, and
+    // Step 1 classifies it INCONCLUSIVE.
+    record.control.triggerReproduced = record.control.outcome === REPRODUCED;
 }
 
 // ---- test: 0.7.0, the full A/B/C contract, on the same shape --------------
@@ -210,6 +246,12 @@ const blobOk = record.subject.blobMatchesExpected === true
     && record.phases.length === 3 && record.phases.every(p => p.adapterBlob === record.subject.adapterBlob);
 const checkSetOk = record.phases.length === 3 && record.phases.every(p => p.checkSet && p.checkSet.ok);
 
+// Which apparatus produced this record. Strict === true, like every other
+// identity gate here: an unstated expectation must not pass.
+const apparatusValues = Object.values(record.apparatus);
+const apparatusOk = apparatusValues.length === Object.keys(EXPECT_APPARATUS).length
+    && apparatusValues.every(a => a.matches === true);
+
 // The targeted length is only worth targeting if reaching it is a gate. Recorded
 // but unjudged is the failure shape this work line has already hit three times:
 // a fact written into JSON is not yet a premise of the verdict.
@@ -223,13 +265,13 @@ record.summary = {
     checksExpected: Object.values(EXPECTED_CHECKS).reduce((n, a) => n + a.length, 0),
     checksTotal: record.phases.reduce((n, p) => n + ((p.checks || []).length), 0),
     checksFailed: record.phases.reduce((n, p) => n + ((p.checks || []).filter(c => !c.pass).length), 0),
-    seamProven, blobOk, checkSetOk, lengthOnTarget,
+    seamProven, blobOk, checkSetOk, lengthOnTarget, apparatusOk,
     collectionPathLen: record.control.collectionPathLen,
 };
 
 record.verdict = (record.control.triggerReproduced === true
     && record.control.versionIs060 === true
-    && allPhases && seamProven && blobOk && checkSetOk && lengthOnTarget
+    && allPhases && seamProven && blobOk && checkSetOk && lengthOnTarget && apparatusOk
     && record.zvec.versionMatchesRequested === true) ? 'SATISFIED' : 'NOT_SATISFIED';
 
 fs.writeFileSync(OUT, JSON.stringify(record, null, 2), 'utf8');
