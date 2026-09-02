@@ -16,10 +16,14 @@ name: zvec-0.7.0 non-ASCII adapter bridge (measurement)
 # no RUNTIME_DEPENDENCIES change, no optional -> mandatory move, no default
 # flip, no containment relaxation and no release decision.
 
+# MEASURED: on the GitHub windows-latest image (10.0.26100) the 0.6.0 control
+# does NOT reproduce the trigger, even at the pre-registered colPathLen 149 where
+# it dies 3/3 on the developer host. That image cannot host this experiment, so
+# this workflow is dispatch-only rather than push-triggered - a job that can only
+# ever go red is noise, and deleting it would discard a reproducible probe worth
+# re-running when the runner image changes. See results-ci-image/README.md.
 on:
   workflow_dispatch:
-  push:
-    branches: [measure/zvec-070-nonascii-bridge]
 
 jobs:
   cell:
