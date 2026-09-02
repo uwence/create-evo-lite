@@ -473,9 +473,9 @@ D1 → D3   LOGICAL
         版本裁定不得结构性吞掉 dependency-class 裁定。
 
 D3 ↔ D2   任意类型
-        LOGICAL 不成立:D3=YES / D2=NO 可能是一个奇怪甚至不可取的组合,
-        但它不是逻辑矛盾。该组合该由 Stage 2 的 criteria 判红,
-        **不得在 Stage 1 的图里提前禁止** —— 图不替裁定。
+        LOGICAL 不成立:D3=YES / D2=NO 不是逻辑矛盾。
+        该组合是否可接受、以及它是否构成任何 RED 条件,属于 Stage 2 criteria;
+        **Stage 1 不预判**,也不得在图里提前禁止 —— 图不替裁定。
 
         IMPLEMENTATION_COUPLING 同样不成立(原 E5,已删除)。它当时的理由是
         「否则会出现 published package 要求必装、而脚手架项目拿不到的中间状态,
