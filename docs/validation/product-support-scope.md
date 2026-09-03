@@ -386,13 +386,30 @@ UDR 需要图,是因为那里存在两类**真正不同**的关系:节点之间�
 ### 5.1 disposition 词汇表与先后规则(与 UDR 对齐,非新发明)
 
 ```text
-DEFERRED   被点名的 authority 未实例化,且没有独立成立的 RED。
-           不得因 authority 缺失而记为 NO。
+DEFERRED   候选或 authority 尚不足以完成这次决策。
+           **不得**因为找不到正向证据就记为 NO。
 BOUNDED    authority 已实例化但作用域小于节点作用域,**且候选 Y 本身能够强制执行
            同一条边界**。Y 执行不了该边界时 → DEFERRED,不得 bounded GREEN。
 
-先后规则:  `RED iff` 是**充分条件**。一条独立成立的 RED **不会**被其他 authority
+先后规则   `RED iff` 是**充分条件**。一条独立成立的 RED **不会**被其他 authority
            的缺失擦掉;missing-authority 的 DEFERRED 只在**没有**独立 RED 时生效。
+
+求值顺序(冻结)—— 判定函数必须是**全函数**:
+
+    1  该节点任一 RED predicate 成立             → RED
+    2  该节点**定义了** BOUNDED 条件且全部成立     → BOUNDED
+    3  该节点全部 GREEN 条件成立                  → GREEN
+    4  其余一切                                   → DEFERRED
+
+第 4 条是**兜底**,不是例外。上一版没有它,于是存在一整类无法裁定的输入:
+候选存在、authority 也不缺,只是漏写了某条 GREEN 要求的内容(例如 P4 的
+DECLARATION_ONLY segment 没给产品理由,或 P2 没说明为何不是默认继承 CI 矩阵)
+—— 既不 RED,也不缺 authority,Stage 3 会无 verdict 可填。因此:
+
+    **missing authority 只是 DEFERRED 的一种来源,不是唯一来源。**
+
+本 gate 中**只有 P3 定义了 BOUNDED 条件**;P1 / P2 / P4 没有,
+因此它们取不到 BOUNDED —— 第 2 条对它们是空的。
 
 normative authority 的三态(P1 / P4 的 B1 尤其适用):
            authority 缺失或未决              → DEFERRED
@@ -590,6 +607,9 @@ BOUNDED iff —— 以下全部成立:
     BD4 **bounded conclusion 写进结论本身**,不是脚注;
         且**不得把 exception 表述成 equivalence** ——
         「我们接受这块没覆盖」与「这块被代表了」必须在文字上可区分。
+    BD5 **输入完整:P1 与 P2 均已 GREEN。**
+        没有这条,BOUNDED 与 DF3 会同时成立(P1 未定时仍可写出 BD1–BD4),
+        而本节自称三集互斥。补上后:P1 / P2 未 GREEN → 只能 DF3。
 
 DEFERRED iff —— 以下任一成立:
     DF1 有缺口,但**没有可执行的边界**(BD2 不成立):
@@ -637,6 +657,33 @@ Node 有 runtime hard gate(index.js),OS / arch 一个都没有。
 
 「全强制」「部分强制」「完全不强制」都是同一模型的自然取值,不需要三套分支。
 
+**segment / attribution / composition 的定义(冻结)** —— 不定义清楚,
+逐 segment 模型在交叉轴上就无法机械归因:
+
+    segment
+        P1 声明中一个**具名、独立**的 unsupported predicate,例如
+            OS == darwin        arch == arm64        Node major < 20
+        segment 由 **P1 的声明**给出,不由 P4 自行切分。
+
+    enforcement attribution —— 一个 gate 属于哪个 segment
+        绑定到**它实际执行的 predicate**,按 provenance 判,**不按拒绝集合的交集判**。
+            on segment  =  该 gate 实现的正是这个 segment
+            NOT         =  该 gate 的拒绝集合恰好与这个 segment 有交集
+        例:`index.js` 的 `assertNodeVersion()` 执行的是 `Node major < 20`,
+        因此它属于 **Node segment**。它在 darwin 上同样会拒绝 Node 18,
+        但那**不**使它成为 darwin segment 上的 gate。
+        M6 判断「该 segment 上是否存在真实 gate」时,按本条归因,不按交集。
+
+    composition —— 一个环境同时命中多个 segment
+        允许,且不需要为组合再造一层 mode。任一被命中的 segment 若选择了有效强制,
+        该环境即可被拒绝;但裁定必须保留 **provenance**:是哪一个 segment 拒绝了它。
+        多个被强制的 segment 在不同阶段拒绝时:
+            install-time 先发生 → runtime 不可达
+        合同必须能说明该环境**实际可观测**的后果是哪一个(M2 由此对组合也可求值)。
+        例:`darwin + arm64 + Node18` 同时命中三个 segment,
+        若 arm64 取 INSTALL_TIME 而 Node<20 取 RUNTIME,则用户实际看到的是
+        安装被拒;合同不得同时声称两种后果都是该环境的可观测结果。
+
 GREEN iff —— 以下全部成立:
 
     M0  P1 声明中的**每一个** unsupported segment 都被指定了一个 mode。
@@ -659,13 +706,20 @@ GREEN iff —— 以下全部成立:
     对每个 mode = DECLARATION_ONLY 的 segment:
     M5  给出明确的**产品理由**:为什么该 segment 只声明、不强制
         (例如失败模式已足够清晰、或收窄的用户代价高于收益)。
-    M6  **处置该 segment 上任何既有的强制或疑似强制**,两类都要处置,理由不同:
-            **真实存在的 hard gate**   —— 若树里已对该 segment 有真正的强制
-                (index.js 的 assertNodeVersion 是真实 gate 的样子),
-                则「只声明不强制」与现状矛盾,必须显式说明:保留、移除、还是改判 mode。
-            **看起来像强制的机制**     —— 例如 package.json 的 `engineStrict`,
-                其效果未证实(§1 第二层)。留着会让下一个读者把它当成一次强制,
-                必须说明处置:保留并标注、移除、还是先钉死其效果。
+    M6  **处置该 segment 上既有的强制或疑似强制**,两类的可选处置**不同**
+        (按上文 attribution 判定「是否在该 segment 上」,不按交集):
+
+            **真实存在、且仍在生效的 hard gate**
+                合法处置只有两条:**移除 / 停用该 gate**,
+                或**把该 segment 改判为 INSTALL_TIME / RUNTIME**。
+                **「保留 + 只声明」不是合法结局** —— 那是合同自相矛盾:
+                一边说本段不强制,一边真的在拦人。见 R4。
+
+            **看起来像强制、但效果未证实的机制**
+                例如 package.json 的 `engineStrict`(§1 第二层)。
+                可以**保留**,但仅当已经证明它**不产生 enforcement**并明确标注其语义;
+                否则应移除,或先钉死其效果再据此改判 mode。
+
         只检查后者、漏掉前者是不够的 —— 一个**真的**在拦人的 gate 被记成
         「本 segment 不强制」,比一个疑似 gate 危害更大。
     M7  规定**重评触发条件**:P1 对该 segment 的声明变化时,
@@ -679,6 +733,10 @@ RED iff:
         例如仅凭 package.json 里存在 `engineStrict` 就宣称安装期已被强制。
     R3  强制的边界**不是**从 P1 派生,而是从现有字段或现有 CI 矩阵反推出来的。
         方向只能是 `policy → enforcement`。
+    R4  某个 `DECLARATION_ONLY` 的 segment 上,**仍存在实际生效、且按 attribution
+        归属于该 segment 的 hard gate**。
+        这是合同自相矛盾,不能靠「已显式说明保留」通过 —— 上一版只要求说明,
+        于是「本段不强制;现有 gate 暂时保留」在字面上可以过关。
 
 missing authority disposition:
     B1 未实例化 → DEFERRED。没有声明就没有 segment,也就没有可取 mode 的对象;
@@ -709,6 +767,7 @@ P3-G5  拿掉 → 有 uncovered remainder 也能直接 GREEN,BOUNDED 这条路�
 P3-BD2 拿掉 → 「缺口」被写下来了,但结论仍按全范围读 —— 有界只在脚注里
 P3-BD3 拿掉 → 缺口无人承担也能 BOUNDED,B5/B7 形同虚设
 P3-BD4 拿掉 → **风险接受被写成等价** ——「我们接受这块没覆盖」变成「这块被代表了」
+P3-BD5 拿掉 → P1/P2 未定时也能走 BOUNDED,与 DF3 同时成立,三集互斥的声称落空
 P3-R4  拿掉 → 验证集里混入承诺范围之外的格子,却无人问它为何在里面
 P4-M0  拿掉 → 某个 unsupported segment 没被指定 mode,沉默又一次变成取值
 P4-M1  拿掉 → 强制与该 segment 的声明各走各的,用户被一条没人声明过的边界拦住
@@ -718,6 +777,7 @@ P4-M5  拿掉 → 「只声明不强制」变成默认现状而不是被裁定�
 P4-M6  拿掉 → 两类都会漏:`engineStrict` 这种**看起来像强制**的字段继续误导读者;
               更糟的是某个 segment 上**真的**存在 hard gate,却被记成「本段不强制」
 P4-M7  拿掉 → 声明后来收窄了,而「当初决定只声明」无人重评
+P4-R4  拿掉 → 「本段不强制」与一个**真的在拦人**的 gate 并存,靠一句「暂时保留」过关
 ```
 
 三条交叉引用继承被引用条,不另作解释:P2-G4 ← B4 的定义;
