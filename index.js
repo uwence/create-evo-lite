@@ -35,6 +35,23 @@ const RUNTIME_DEPENDENCIES = {
     '@modelcontextprotocol/sdk': '1.29.0',
 };
 
+// Optional runtime dependencies: attempted on every scaffold, but a child that
+// cannot build or fetch one still ends up runtime-ready. `npm ci` skips an
+// optional dependency whose platform bindings are absent or whose install fails,
+// and exits 0 — so the engine's existing absence path (defaultLoadZvecIndex ->
+// null -> SqliteFtsIndex) stays the fallback rather than the norm.
+//
+// @zvec/zvec ships per-platform binding packages as its OWN optionalDependencies,
+// so each platform pulls only its binding and skips the rest.
+//
+// Owner decision 2026-09-03 supersedes the "Forcing Zvec on hive children"
+// Non-Goal in docs/superpowers/specs/2026-07-07-zvec-memory-index.md: children
+// now install Zvec by default and fall back to SQLite only when the install
+// fails. It stays an OPTIONAL dependency — never a hard one.
+const RUNTIME_OPTIONAL_DEPENDENCIES = {
+    '@zvec/zvec': '0.7.0',
+};
+
 function writeRuntimeManifest(evoLiteDir) {
     const runtimeTemplateDir = path.join(__dirname, 'templates', 'runtime');
     fs.copyFileSync(
@@ -83,6 +100,34 @@ function installRuntimeDependencies(evoLiteDir, options = {}) {
             message: 'npm 在线安装或外挂 C++ 编译失败！(可能是网络受限或未安装构建工具)',
         };
     }
+}
+
+// The old line here printed "运行时引擎已锁定为: sqlite-fts5-trigram" unconditionally.
+// It was already false before this change: nothing writes memory-engine.json at
+// scaffold time, and the runtime default flipped to zvec long ago — so the
+// scaffold asserted an engine it never checked and never set.
+//
+// Report what is actually on disk instead. RESOLVE ONLY, never require(): on a
+// non-ASCII Windows collection path the native side can terminate the process,
+// which is why the runtime classifies the path before any load. A scaffolder that
+// loaded the engine just to print a line would be the one thing that guard exists
+// to prevent.
+function reportMemoryEngine(evoLiteDir, resolver = require.resolve) {
+    let installed = false;
+    try {
+        resolver('@zvec/zvec', { paths: [evoLiteDir] });
+        installed = true;
+    } catch (_) {
+        installed = false;
+    }
+    if (installed) {
+        console.log('📡 记忆引擎: zvec (默认) —— @zvec/zvec 已随可选依赖装入。');
+        console.log('   若该项目路径不被包容或原生加载失败，运行时会自动回落到 SQLite FTS。');
+    } else {
+        console.log('📡 记忆引擎: SQLite FTS —— @zvec/zvec 未安装。');
+        console.log('   这是受支持的回落路径（可选依赖装不上时的正常结果），功能不受影响。');
+    }
+    return installed;
 }
 
 function buildProgram() {
@@ -493,6 +538,7 @@ async function runInit(targetDirArg, options = {}) {
 
     // 5. 安装依赖 (移至前面，以保证后续洗盘脚本可以正常调用模块)
     console.log('📦 正在从 npm 抓取并编译本地记忆引擎依赖 (better-sqlite3, tar, commander, @modelcontextprotocol/sdk)...');
+    console.log('   另尝试可选依赖 @zvec/zvec；装不上不影响成功，运行时回落 SQLite FTS。');
     const installResult = installRuntimeDependencies(evoLiteDir, {
         skipInstall: !!(options.skipInstall || options.offline),
     });
@@ -502,7 +548,7 @@ async function runInit(targetDirArg, options = {}) {
         console.warn(`\n⚠️ 警告: ${installResult.message}`);
         console.warn(`👉 请稍后手动在 .evo-lite 目录运行:\nnpm ci`);
     }
-    console.log('📡 运行时引擎已锁定为: sqlite-fts5-trigram');
+    reportMemoryEngine(evoLiteDir);
 
     // --- 阶段 D: 旧记忆重建洗盘 ---
     if (shouldWash) {
@@ -599,6 +645,7 @@ module.exports = {
     installRuntimeDependencies,
     writeRuntimeManifest,
     RUNTIME_DEPENDENCIES,
+    RUNTIME_OPTIONAL_DEPENDENCIES,
     SELF_VERSION,
     buildProgram,
     handleCliError,

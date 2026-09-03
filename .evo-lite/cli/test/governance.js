@@ -840,11 +840,35 @@ async function runGovernanceTests() {
                 'index must export RUNTIME_DEPENDENCIES');
             assert.deepStrictEqual(shipped.dependencies, initializer.RUNTIME_DEPENDENCIES,
                 'templates/runtime/package.json dependencies must equal RUNTIME_DEPENDENCIES');
+            assert.ok(typeof initializer.RUNTIME_OPTIONAL_DEPENDENCIES === 'object',
+                'index must export RUNTIME_OPTIONAL_DEPENDENCIES');
+            assert.deepStrictEqual(shipped.optionalDependencies || {}, initializer.RUNTIME_OPTIONAL_DEPENDENCIES,
+                'templates/runtime/package.json optionalDependencies must equal RUNTIME_OPTIONAL_DEPENDENCIES');
+            // The child's Zvec pin and the product's own pin are two separate
+            // manifests. Unpinned from each other they drift, and mother and
+            // children then run different engine versions — which is exactly the
+            // asymmetry that made the mother's Zvec work by topology accident.
+            const productPkg = JSON.parse(fs.readFileSync(
+                path.join(WORKSPACE_ROOT, 'package.json'), 'utf8'));
+            assert.strictEqual(
+                (productPkg.optionalDependencies || {})['@zvec/zvec'],
+                initializer.RUNTIME_OPTIONAL_DEPENDENCIES['@zvec/zvec'],
+                'product optionalDependencies @zvec/zvec must equal the pin shipped to children');
             // The shipped lockfile must exist and agree on the root version.
             const lock = JSON.parse(fs.readFileSync(
                 path.join(WORKSPACE_ROOT, 'templates', 'runtime', 'package-lock.json'), 'utf8'));
             assert.strictEqual(lock.packages[''].version, shipped.version,
                 'lockfile root version must match shipped manifest version');
+            // npm ci refuses to run when the lockfile does not carry the manifest's
+            // deps, and that failure lands in scaffold as runtime-not-ready for
+            // EVERY new child. Assert the optional dep actually reached the lock.
+            assert.ok(lock.packages['node_modules/@zvec/zvec'],
+                'shipped lockfile must contain @zvec/zvec or npm ci will reject the manifest');
+            assert.strictEqual(lock.packages['node_modules/@zvec/zvec'].version,
+                initializer.RUNTIME_OPTIONAL_DEPENDENCIES['@zvec/zvec'],
+                'shipped lockfile @zvec/zvec version must equal the declared pin');
+            assert.strictEqual(lock.packages['node_modules/@zvec/zvec'].optional, true,
+                '@zvec/zvec must stay OPTIONAL in the shipped lockfile — a hard dep would fail scaffold where it cannot build');
             console.log('✅ T18e shipped runtime manifest matches RUNTIME_DEPENDENCIES');
         }
 
