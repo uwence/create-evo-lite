@@ -136,7 +136,8 @@ Step D
 ## 5. Status ledger
 
 ```text
-Step A  Cell Verification Contract          OPEN     Stage 1 进行中
+Step A  Cell Verification Contract          OPEN     Stage 1 FROZEN @ a4e747da
+                                                     Stage 2 进行中
 Step B  Evidence Acceptance & Delegation    BLOCKED  待 Step A 冻结
 Step C  V_PRODUCT candidate                 BLOCKED  待 Step B 冻结
 Step D  adjudication                        BLOCKED  待 Step C 冻结
