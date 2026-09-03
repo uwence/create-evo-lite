@@ -1243,6 +1243,24 @@ Q-A1 CellIdentity = { os, arch, nodeMajor }        frozen input(§2)
 分辨方法是 Stage 标记:§3 顶着 `FROZEN @ a4e747da`。若复审认为这仍会误导读者,
 正确的修法是在 §3 之外加指针,而**不是**去改已冻结的字节。
 
+**本 Step 建立了什么**:一份具名、可重复适用于任意 cell 的 cell-verification
+contract —— A0 的 B3 所要求的那份东西。
+
+**本 Step 没有建立什么**(逐条,防止被读大):
+
+```text
+!= 任何 cell 的验证结果 —— 本轮未观察任何 cell,六条 predicate 一个结果都没填
+!= 谁可以承担哪条 predicate、需要几次观察          → Step B
+!= V_PRODUCT 选哪些 cell / 任何 equivalence class   → Step C
+!= win32 × Node20 是否必须进入 V_PRODUCT 或必须由 runner 实证
+!= 代表性 —— A0 的 P3 完全未被触及
+!= A0 的 P2 就此变成 GREEN。P2 = DEFERRED 是不可变历史(`gate.md` §1);
+   本 gate 产出的是**新 authority**,将来由一份新的 consumption record 重新消费。
+```
+
+> ⬆ **以上为历史块结束(§7.5 – §7.12,已被推翻)。** 那句「本 Step 建立了什么」属于
+> `3ace08f2` 的旧裁决,**不是**当前结论 —— 当前结论是 §7.13 的 DEFERRED 与 §8 的 PARKED。
+
 ---
 
 ## 7.13 第一次裁决被推翻 —— 更正后的 consumption 与 re-adjudication
@@ -1546,9 +1564,13 @@ V3  verdict = DEFERRED    deferral_reason = MISSING_AUTHORITY
 ### 8.3 本 gate 交付了什么(不是零)
 
 ```text
-· 一份**已冻结的判据**(c39f5919):23 条 GREEN/RED、总裁决函数、
+· 一份**已冻结的判据**(c39f5919):**25 条** active GREEN/RED、总裁决函数、
   deferral_reason 优先级函数、authority 实例化门槛、逐条突变自检。
   它与本轮有没有取得声明**无关**,将来直接可用。
+
+      G-V2  7  (G1–G5, G7, G8)      R-V2  7  (R1–R7)
+      G-V3  6  (G1–G6)              R-V3  5  (R1–R5)
+      另有两个**墓碑编号不计入**:G-V2-6(已删除)· A-V2-3(已并入 A-V2-1)
 · 「到底缺哪一项授权」的精确答案 —— 不是「材料不够」这种含糊说法,
   而是 A-V2-1 / A-V3-1 各自缺哪一部分(§7.13.1 / §7.13.2)。
 · 一份已提名但未获授权的 candidate(§7.6 / §7.7),含一处已知需按声明修正的 scope
@@ -1573,22 +1595,27 @@ V3  verdict = DEFERRED    deferral_reason = MISSING_AUTHORITY
    若 owner 选择委派,必须是**显式**委派,并逐字记录 issuer。
 ```
 
+### 8.4b 两处更正(2026-09-03,merge 前复审)
+
+```text
+一、结构归属
+    §8 closure 曾被插进旧 §7.12 的中间,把「本 Step 建立了什么 —— 一份 A0-B3 所要求的
+    cell-verification contract」甩到了 §8.5 之后。按 Markdown 结构,那句已被推翻的
+    GREEN 结论会被读成**当前 closure 的继续**。
+    成因:§7.12 中途插入 verdict-home 说明后,§7.13 被锚在那段说明的末尾,
+    而不是 §7.12 的真正结尾。
+    已修:历史块 §7.5 – §7.12 完整结束(末尾加了 overturned marker),再接 §7.13 / §8。
+    **未删任何历史文字。**
+
+二、条款计数
+    §8.3、本文件的 closure commit message 与 PR #65 正文此前均写「23 条 GREEN/RED」。
+    c39f5919 冻结的 active clause 实为 **25** 条(拆分见 §8.3)。
+    旧 commit history **不做 amend** —— 更正写在这里与 PR 正文,与本工作线一贯做法一致。
+```
+
 ### 8.5 Step B / C / D
 
 保持 BLOCKED。它们等的是 Step A **冻结**,而 Step A 现在是 **PARKED at DEFERRED** ——
 不是冻结,也不是失败,是一个「已裁决、但结论为待定」的静止状态。
 
-**本 Step 建立了什么**:一份具名、可重复适用于任意 cell 的 cell-verification
-contract —— A0 的 B3 所要求的那份东西。
-
-**本 Step 没有建立什么**(逐条,防止被读大):
-
-```text
-!= 任何 cell 的验证结果 —— 本轮未观察任何 cell,六条 predicate 一个结果都没填
-!= 谁可以承担哪条 predicate、需要几次观察          → Step B
-!= V_PRODUCT 选哪些 cell / 任何 equivalence class   → Step C
-!= win32 × Node20 是否必须进入 V_PRODUCT 或必须由 runner 实证
-!= 代表性 —— A0 的 P3 完全未被触及
-!= A0 的 P2 就此变成 GREEN。P2 = DEFERRED 是不可变历史(`gate.md` §1);
-   本 gate 产出的是**新 authority**,将来由一份新的 consumption record 重新消费。
-```
+**§8 是本文件的最终 current closure,后面不再有任何结论性文字。**
