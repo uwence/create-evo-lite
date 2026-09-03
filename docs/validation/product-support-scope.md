@@ -436,7 +436,11 @@ B4  non-runner evidence delegation authority              (条件性;仅当发�
             = 承担 dependency-installability 这一条
             ≠ 该 cell 已 verified
 
-B5  equivalence-class authority                                      (P3)
+B5  equivalence-class authority               (P3;**条件性:仅当存在外推**)
+    仅当 V_PRODUCT 需要代表**未被直接验证**的 S_PRODUCT cell 时才需要。
+    若 V_PRODUCT 对 S_PRODUCT 是逐 cell 完整覆盖(零外推),
+    **B5 = NOT APPLICABLE**,不得因它未实例化而使 P3 无法 GREEN ——
+    否则一份「全枚举、零外推」的合同反而通不过,而那本该是最强的一种。
     必须给出:每一处从 V_PRODUCT 外推到 S_PRODUCT 的**等价类**由什么建立 ——
     即凭什么说「已测的 cell A ≈ 未测的 cell B」。
     可能的承担者(本阶段只列举,不预判哪一种成立):
@@ -549,21 +553,50 @@ verdict:  见 §2 的节点块 —— verdict 只有一个家,本节不留副本
 ### 5.5 P3 —— coverage justification
 
 ```text
-required authority:  B5(必需)· B1 与 P2 的产出(作为被消费的输入)
+required authority:  B5(**条件性:仅当存在外推**;零外推时 NOT APPLICABLE)
+                     B7(条件性:仅当存在无 B5 承担的缺口)
+                     P1 与 P2 的产出(作为被消费的输入)
 
-GREEN iff:
+本节写成**三个互斥的判定集**,而不是把一切塞进 GREEN。上一版把
+「shortfall 如何限制结论」放在 `GREEN iff` 里、又注明它只能得到 BOUNDED,
+于是 Stage 3 会问「这条到底算不算 GREEN 条件」;B7 的处置也在两处写得不一致
+(authority 定义说「只能 BOUNDED」,disposition 说「DEFERRED 或 bounded exception」)。
+现在三条路径各有唯一入口。
+
+GREEN iff —— 以下全部成立:
     G1  **逐维映射:** S_PRODUCT 的每一轴(OS / arch / Node)都有一条说明,
         讲清 V_PRODUCT 的哪一部分代表它、代表到什么程度。
         任何一轴缺映射即不满足 —— 不允许「整体看起来充分」。
     G2  每一处外推都有 B5 指名的等价类承担者,且该承担者**不是**
-        「我们测了这些」本身。
+        「我们测了这些」本身。**零外推时本条 vacuously true。**
     G3  **移动定义的重评触发条件**:若 S_PRODUCT 任一轴使用滚动定义,
         合同必须写明什么事件触发重评(新 Node major 进入/退出维护、
         prebuild 覆盖面变化、runner 镜像变化等),否则冻结的 V_PRODUCT 会在
         无人改动的情况下悄悄过期。
-    G4  **coverage shortfall 的处置写在合同里**:当某一轴的等价类只覆盖一部分时,
-        合同必须说明该轴的结论如何被限制(而不是让下游自行外推)。
-        **满足 G4 只能得到 BOUNDED,得不到 GREEN** —— 见 disposition。
+    G4  **已移出 GREEN** —— 原文是「coverage shortfall 的处置写在合同里」。
+        它本质上是 bounded-condition,不是 green-condition;
+        已移到下方 BOUNDED 的 BD2 / BD3。编号保留为墓碑,不复用。
+    G5  **没有 uncovered remainder:** S_PRODUCT 的每一个 cell 要么被 V_PRODUCT
+        直接覆盖,要么由 G2 的等价类覆盖。有剩余即不满足 GREEN(走 BOUNDED 或 DEFERRED)。
+    G6  输入完整:P1 与 P2 均已 GREEN。
+
+BOUNDED iff —— 以下全部成立:
+    BD1 存在 coverage shortfall(即 G5 不成立)。
+    BD2 该缺口的边界**可由合同自身明确限制** —— 合同能把结论收在已覆盖的部分内。
+        这正是 §5.1 对 BOUNDED 的可执行边界要求:限制结论是合同自己能执行的动作。
+    BD3 缺口由以下之一承担,并被写明:
+            部分 B5   —— 等价类只覆盖一部分
+            B7        —— 所有者显式接受 uncovered remainder
+    BD4 **bounded conclusion 写进结论本身**,不是脚注;
+        且**不得把 exception 表述成 equivalence** ——
+        「我们接受这块没覆盖」与「这块被代表了」必须在文字上可区分。
+
+DEFERRED iff —— 以下任一成立:
+    DF1 有缺口,但**没有可执行的边界**(BD2 不成立):
+        合同限制不住结论,下游仍会照全范围读。
+    DF2 缺少所需的 authority:存在外推却无 B5,或存在无人承担的缺口而无 B7。
+    DF3 输入不完整:P1 或 P2 未 GREEN。
+        **这不是 RED** —— 「上游还没定」与「这个 justification 不成立」是两件事。
 
 RED iff:
     R1  **循环论证:** justification 的实质内容是「我们验证了 V_PRODUCT 中的这些,
@@ -574,19 +607,12 @@ RED iff:
         且未说明它为何在验证集内。本节同时消费 P1 与 P2,因此能够求值;
         P2 单独求不了它,那正是它被移过来的原因。
 
-missing authority disposition:
-    B5 未实例化                       → DEFERRED
-    B5 覆盖全部外推(full equivalence) → 可 GREEN(其余 G 条件同时满足时)
-    B5 只覆盖一部分,**且合同能把结论限制在该部分内**
-                                      → BOUNDED(§5.1 的可执行边界条件在此成立:
-                                        限制结论正是合同自己能执行的动作)
-    缺口仅由 B7 的**风险接受**承担    → **不是等价** → DEFERRED,
-                                        或写成显式的 bounded exception;
-                                        **无论如何都不得记为 GREEN**。
-                                        把 B7 当 B5 用,就是把「知道没覆盖但愿意
-                                        承担」伪装成「足以代表」。
-    P1 或 P2 未 GREEN 时,P3 的输入不完整 → DEFERRED,**不是 RED**:
-    「上游还没定」与「这个 justification 不成立」是两件事。
+**risk acceptance 的唯一路径(承重):**
+    B7 + 可执行边界 + 写进结论   →  BOUNDED
+    B7 但边界执行不了            →  DEFERRED(DF1)
+    把 B7 当成 B5 用             →  R1 / BD4 的否定 —— 那是把「知道没覆盖但愿意
+                                    承担」伪装成「足以代表」
+    **B7 在任何情况下都不能通向 GREEN。**
 
 verdict:  见 §2 的节点块 —— verdict 只有一个家,本节不留副本
 ```
@@ -595,55 +621,72 @@ verdict:  见 §2 的节点块 —— verdict 只有一个家,本节不留副本
 
 ```text
 required authority:  B1(必需:强制必须从声明派生)
-                     B6(条件性:仅当候选机制的效果尚未确立)
+                     B6(条件性:仅当某个 segment 选用的机制效果尚未确立)
 
-**候选方案分两支,判据不同。** 第一版把两支压在一套判据里,结果 G5 宣称
-「不强制是合法取值」,却又要求它通过「强制边界必须与声明一致」——
-只要 P1 的 UNSUPPORTED 集非空,不强制的边界就是空集,必然不一致。
-那是一个**字面合法、实际永远走不通**的取值。
+**模型:逐 segment 决策,不是全局二选一。**
 
-GREEN iff — 分支 ENFORCE(选择施加强制)
+上一版把候选压成 ENFORCE / NO_ENFORCEMENT 两支,并要求 ENFORCE 的边界等于
+P1 的**整个**声明边界。那**收窄了 Stage 1 已冻结的主语** —— Stage 1 冻的是
+「是否**以及在哪些位置**强制」,并明写 install-time 与 runtime 是不同强制点,
+从未冻结「要么全强制、要么全不强制」。被砍掉的那个形状恰恰接近本仓今天的实际状态:
+Node 有 runtime hard gate(index.js),OS / arch 一个都没有。
 
-    E1  **严格从 P1 派生:** 强制的边界与 B1 声明的边界一致。
-        强制比声明**更宽**(拦住了被声明支持的环境)或**更窄**(放行了被声明
-        不支持的环境),都不满足。
-    E2  选定的强制点及其**用户后果**被写明。至少区分两类,因为后果不同:
-            install-time   npm 在不匹配环境上拒绝安装
-            runtime        装得上,但入口拒绝启动,并给出可读理由
-        (index.js 现有的 assertNodeVersion 是后者的既成例子。)
-    E3  若候选机制的效果尚未确立,则 B6 存在。
-        若选择 runtime preflight 这类效果已由现有代码确立的机制,B6 不适用。
-    E4  **drift 检测**:合同写明「P1 的声明」与「强制面的实际取值」如何保持一致、
-        由什么发现不一致。本仓已有同型先例可参照 —— 治理测试 T18e 断言
+因此模型改为:**对 P1 声明中的每一个 unsupported segment,各自取一个 mode。**
+
+    enforcement_mode ∈ { INSTALL_TIME, RUNTIME, DECLARATION_ONLY }
+
+「全强制」「部分强制」「完全不强制」都是同一模型的自然取值,不需要三套分支。
+
+GREEN iff —— 以下全部成立:
+
+    M0  P1 声明中的**每一个** unsupported segment 都被指定了一个 mode。
+        漏掉一个 segment 即不满足 —— 沉默在 P4 同样不是取值。
+
+    对每个 mode ∈ { INSTALL_TIME, RUNTIME } 的 segment:
+    M1  **该 segment 的强制从该 segment 派生**:强制拦住的范围与该 segment 一致,
+        既不更宽(拦住被声明支持的环境)也不更窄(放行该 segment 内的环境)。
+        **逐 segment 判定,不要求强制覆盖 P1 的全部 unsupported 集合。**
+    M2  该 segment 的**用户后果**写明。两种 mode 后果不同,不得混写:
+            INSTALL_TIME   npm 在不匹配环境上拒绝安装
+            RUNTIME        装得上,但入口拒绝启动,并给出可读理由
+        (index.js 现有的 assertNodeVersion 是 RUNTIME 的既成例子。)
+    M3  若该 segment 选用的机制**效果尚未确立**,则 B6 存在。
+        选用效果已由现有代码确立的机制(如 runtime preflight)时,B6 不适用。
+    M4  **drift 检测**:合同写明该 segment 的声明与其强制面如何保持一致、
+        由什么发现不一致。本仓已有同型先例 —— 治理测试 T18e 断言
         `index.js` 的常量与 `templates/runtime/package.json` 逐字相等。
 
-GREEN iff — 分支 NO_ENFORCEMENT(选择不施加强制)
-
-    N1  **不要求存在 enforcement boundary** —— E1 / R1 在本分支不适用。
-    N2  给出明确的**产品理由**:为什么仅有声明就足够
-        (例如不支持的环境上失败模式已经足够清晰、或收窄的用户代价高于收益)。
-    N3  **确保没有任何现有机制冒充或漂移成 enforcement。**
-        这一条在本仓有现成的靶子:package.json 里的 `engineStrict` 字段
-        读起来像强制,而其效果**未经证实**(Stage 1 §1 第二层)。
-        选择不强制,就必须说明这类字段的处置 —— 留着、删掉、还是标注,
-        不能让它继续以「看起来像强制」的形态存在。
-    N4  规定**重评触发条件**:P1 的声明变化时,「不强制」这个决定如何被重新评估。
-        否则它会从一次裁定退化成默认现状。
+    对每个 mode = DECLARATION_ONLY 的 segment:
+    M5  给出明确的**产品理由**:为什么该 segment 只声明、不强制
+        (例如失败模式已足够清晰、或收窄的用户代价高于收益)。
+    M6  **处置该 segment 上任何既有的强制或疑似强制**,两类都要处置,理由不同:
+            **真实存在的 hard gate**   —— 若树里已对该 segment 有真正的强制
+                (index.js 的 assertNodeVersion 是真实 gate 的样子),
+                则「只声明不强制」与现状矛盾,必须显式说明:保留、移除、还是改判 mode。
+            **看起来像强制的机制**     —— 例如 package.json 的 `engineStrict`,
+                其效果未证实(§1 第二层)。留着会让下一个读者把它当成一次强制,
+                必须说明处置:保留并标注、移除、还是先钉死其效果。
+        只检查后者、漏掉前者是不够的 —— 一个**真的**在拦人的 gate 被记成
+        「本 segment 不强制」,比一个疑似 gate 危害更大。
+    M7  规定**重评触发条件**:P1 对该 segment 的声明变化时,
+        「只声明不强制」这个决定如何被重新评估。否则它会从一次裁定退化成默认现状。
 
 RED iff:
-    R1  (**仅 ENFORCE 分支**)强制边界与 B1 的声明不一致(E1 的否定)。
-    R2  (两支皆适用)把一个**效果未经确立**的机制**当作已生效的强制**交付或陈述 ——
-        例如仅凭 package.json 里存在 `engineStrict` 字段就宣称安装期已被强制。
-    R3  (两支皆适用)强制的边界**不是**从 P1 派生,而是从现有字段或现有 CI 矩阵
-        反推出来的。方向只能是 `policy → enforcement`。
+    R1  某个 mode ∈ { INSTALL_TIME, RUNTIME } 的 segment,其强制与该 segment
+        的声明不一致(M1 的否定)。**逐 segment 求值** ——
+        另一个 segment 选择 DECLARATION_ONLY 不构成本条。
+    R2  把一个**效果未经确立**的机制**当作已生效的强制**交付或陈述 ——
+        例如仅凭 package.json 里存在 `engineStrict` 就宣称安装期已被强制。
+    R3  强制的边界**不是**从 P1 派生,而是从现有字段或现有 CI 矩阵反推出来的。
+        方向只能是 `policy → enforcement`。
 
 missing authority disposition:
-    B1 未实例化 → DEFERRED,**两支皆然**。
-    ENFORCE 分支没有声明就没有可派生的边界;NO_ENFORCEMENT 分支的 N2 / N4
-    同样要引用声明才能成立 —— 「为什么仅有声明就够」和「声明变化时怎么重评」,
-    在没有声明时都是空话。
+    B1 未实例化 → DEFERRED。没有声明就没有 segment,也就没有可取 mode 的对象;
+    DECLARATION_ONLY 的 M5 / M7 同样要引用声明才能成立 ——
+    「为什么只声明就够」和「声明变化时怎么重评」,在没有声明时都是空话。
     (Stage 1 已冻结:P1 未定之前 P4 的 Y 取不了值。)
-    B6 在候选机制效果已确立、或在 NO_ENFORCEMENT 分支下不适用,不产生 DEFERRED。
+    B6 在所有 segment 选用的机制效果均已确立、或全部为 DECLARATION_ONLY 时不适用,
+    不产生 DEFERRED。
 
 verdict:  见 §2 的节点块 —— verdict 只有一个家,本节不留副本
 ```
@@ -662,19 +705,29 @@ P2-G3  拿掉 → CI 配置直接升格成产品验证集,workflow 又一次自�
 P3-G1  拿掉 → 某一轴无人映射却被当作已覆盖
 P3-G2  拿掉 → 等价类由「我们测了」自我证成,循环论证成立
 P3-G3  拿掉 → 冻结的 V_PRODUCT 在无人改动的情况下过期
-P3-G4  拿掉 → 部分覆盖被下游读成完全覆盖
+P3-G5  拿掉 → 有 uncovered remainder 也能直接 GREEN,BOUNDED 这条路就没人走了
+P3-BD2 拿掉 → 「缺口」被写下来了,但结论仍按全范围读 —— 有界只在脚注里
+P3-BD3 拿掉 → 缺口无人承担也能 BOUNDED,B5/B7 形同虚设
+P3-BD4 拿掉 → **风险接受被写成等价** ——「我们接受这块没覆盖」变成「这块被代表了」
 P3-R4  拿掉 → 验证集里混入承诺范围之外的格子,却无人问它为何在里面
-P4-E1  拿掉 → 强制与声明各走各的,用户被一条没人声明过的边界拦住
-P4-E2  拿掉 → 用户后果不明:装不上与跑不起来被当成同一件事
-P4-E4  拿掉 → 声明改了而强制面没改,漂移无人发现
-P4-N2  拿掉 → 「不强制」变成默认现状而不是被裁定的选择
-P4-N3  拿掉 → `engineStrict` 这类**读起来像强制**的字段继续留在清单里,
-              下一个读者又会把它当成一次强制(这正是 Stage 1 抓到的第三个变种)
-P4-N4  拿掉 → 声明后来收窄了,而「当初决定不强制」无人重评
+P4-M0  拿掉 → 某个 unsupported segment 没被指定 mode,沉默又一次变成取值
+P4-M1  拿掉 → 强制与该 segment 的声明各走各的,用户被一条没人声明过的边界拦住
+P4-M2  拿掉 → 用户后果不明:装不上与跑不起来被当成同一件事
+P4-M4  拿掉 → 声明改了而强制面没改,漂移无人发现
+P4-M5  拿掉 → 「只声明不强制」变成默认现状而不是被裁定的选择
+P4-M6  拿掉 → 两类都会漏:`engineStrict` 这种**看起来像强制**的字段继续误导读者;
+              更糟的是某个 segment 上**真的**存在 hard gate,却被记成「本段不强制」
+P4-M7  拿掉 → 声明后来收窄了,而「当初决定只声明」无人重评
 ```
 
 三条交叉引用继承被引用条,不另作解释:P2-G4 ← B4 的定义;
-P3 的输入完整性 ← P1-G1/G2 与 P2-G1;P4-E3 ← B6 的条件性。
+P3-G6(输入完整性)← P1-G1/G2 与 P2-G1;P4-M3 ← B6 的条件性。
+
+`P3-G4` 与 `P3-BD1` / `P3-DF1..DF3` 不在表内,理由不同:
+G4 已移出 GREEN(墓碑);
+BD1 与 DF1–DF3 是**路径入口 / 兜底出口**,不是需要被守住的性质 ——
+拿掉它们的后果不是「坏情况被放过」,而是「没有入口或没有出口」,
+那属于判定函数不完整,由 §5.5 三集互斥的结构本身保证。
 
 ### 5.8 Stage 3 之前不得做的事
 
