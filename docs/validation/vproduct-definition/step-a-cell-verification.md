@@ -21,7 +21,9 @@ Stage 2  required authority · GREEN iff · RED iff · missing-authority disposi
              FROZEN @ c39f5919        —— §6 不再改动
              ↓ COMMIT + REVIEW
 Stage 3  消费 authority · 填 verdict
-             ← 当前,见 §7
+             见 §7 —— 已裁决,结论 DEFERRED
+             ↓
+Step A   **PARKED at DEFERRED**(2026-09-03,见 §8)
 ```
 
 ## 1. current X —— 严格限定在已建立的范围内
@@ -1492,6 +1494,89 @@ D-2 · Verification-state policy(草稿)
 因此若 owner 的声明与本草稿高度相近,读者有权自行衡量「独立判断」的成色 ——
 本记录只负责把次序摆清楚,不替任何一方声称它是独立的。
 ```
+
+---
+
+## 8. Step A 收口 —— PARKED at DEFERRED(2026-09-03)
+
+### 8.1 owner 的决定
+
+```text
+issuer   项目所有者(uwence)
+date     2026-09-03
+决定     本轮**不作** A-V2-1 / A-V3-1 声明,Step A 停在当前 verdict。
+```
+
+这条决定**不是** A-V2-1 的实例,也不试图充当 —— 它不提供任何 required property、
+任何 surface、任何理由。它是一条关于**要不要现在作声明**的决定,而那是 owner 无条件
+有权作的。因此 authority 状态一个字不动:
+
+```text
+A-V2-1   NOT INSTANTIATED        A-V3-1   NOT INSTANTIATED
+A-V2-2   NOT APPLICABLE          A-V2-4   NOT APPLICABLE
+
+V2  verdict = DEFERRED    deferral_reason = MISSING_AUTHORITY
+V3  verdict = DEFERRED    deferral_reason = MISSING_AUTHORITY
+```
+
+### 8.2 停下的两条理由,照实写
+
+**一、装置越过了它该有的重量。**
+
+```text
+九个 commit、约一千五百行,为的是定义「什么叫一台机器验过了」。
+每一轮复审的 finding 都成立,每一处修复也都对 ——
+但累积效果是把一个产品判断做成了**它主人回答不了的形状**。
+```
+
+这是本 gate 一路加码的结果。剥掉词汇之后,D-1 / D-2 问的其实是「你要看到哪几件事成了,
+才敢说这台机器你支持」和「坏了 / 没测,分别算什么」—— 这两问 owner 答得了;
+答不了的是它们被包装成的样子。
+
+**二、V_PRODUCT 当前不卡任何东西。**
+
+```text
+依赖链:  UDR 的 D1  →  A0 的 P2  →  本 gate
+但 UDR 真正卡住 zvec 0.7 升级的是 **D2 / D3 = RED**,
+被**现行产品政策**挡住(spec 的 Non-Goals),不是被测量挡住。
+```
+
+即使 V_PRODUCT 今天定完,那个升级依然不动。所以停在这里的实际代价接近于零。
+
+### 8.3 本 gate 交付了什么(不是零)
+
+```text
+· 一份**已冻结的判据**(c39f5919):23 条 GREEN/RED、总裁决函数、
+  deferral_reason 优先级函数、authority 实例化门槛、逐条突变自检。
+  它与本轮有没有取得声明**无关**,将来直接可用。
+· 「到底缺哪一项授权」的精确答案 —— 不是「材料不够」这种含糊说法,
+  而是 A-V2-1 / A-V3-1 各自缺哪一部分(§7.13.1 / §7.13.2)。
+· 一份已提名但未获授权的 candidate(§7.6 / §7.7),含一处已知需按声明修正的 scope
+  (§7.13.3 的 P-PATH)。
+· 一次被独立复审驳回的裁决记录(§7.5–§7.12 保留不擦)。
+```
+
+### 8.4 将来怎么解冻 —— 门槛很低,不要再造一个 gate
+
+```text
+只需要一件事:owner 的一份声明,满足 A-V2-1 / A-V3-1 的内容要求(见 §7.13.8 的 D-1/D-2)。
+拿到之后:逐字转录 → 按 §7.13.3 修正 candidate 的 P-PATH scope → 重跑 §6.2 → 填 verdict。
+
+**不需要**重做 Stage 1 / Stage 2,**不需要**新 gate,**不需要**重新论证任何已冻结内容。
+```
+
+一条永久约束,给将来任何接手者:
+
+```text
+⛔ 不得由 decision author 代写那份声明,无论隔了多久、看起来多显然。
+   那是 R-V2-6 / R-V3-5,与时间无关。
+   若 owner 选择委派,必须是**显式**委派,并逐字记录 issuer。
+```
+
+### 8.5 Step B / C / D
+
+保持 BLOCKED。它们等的是 Step A **冻结**,而 Step A 现在是 **PARKED at DEFERRED** ——
+不是冻结,也不是失败,是一个「已裁决、但结论为待定」的静止状态。
 
 **本 Step 建立了什么**:一份具名、可重复适用于任意 cell 的 cell-verification
 contract —— A0 的 B3 所要求的那份东西。

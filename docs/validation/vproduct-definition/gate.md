@@ -136,12 +136,17 @@ Step D
 ## 5. Status ledger
 
 ```text
-Step A  Cell Verification Contract          OPEN     Stage 1 FROZEN @ a4e747da
+Step A  Cell Verification Contract          PARKED   Stage 1 FROZEN @ a4e747da
                                                      Stage 2 FROZEN @ c39f5919
-                                                     Stage 3 进行中
-Step B  Evidence Acceptance & Delegation    BLOCKED  待 Step A 冻结
+                                                     Stage 3 已裁决:V2 / V3 均为
+                                                       DEFERRED / MISSING_AUTHORITY
+Step B  Evidence Acceptance & Delegation    BLOCKED  待 Step A **冻结**(现为 PARKED)
 Step C  V_PRODUCT candidate                 BLOCKED  待 Step B 冻结
 Step D  adjudication                        BLOCKED  待 Step C 冻结
 ```
 
 各 Step 的 decision node 与 verdict **不在此登记** —— 见该 Step 自己的文件。
+
+`PARKED` 不是失败,也不是冻结:Step A 已经走完三个 Stage 并得出裁决,结论是 DEFERRED
+(缺 owner 的产品意图声明)。解冻门槛只有一件事 —— owner 的一份声明;不需要重做任何
+Stage,也不需要新 gate。详见 `step-a-cell-verification.md` §8。
