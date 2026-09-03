@@ -509,9 +509,27 @@ A-V2-3  —— 已并入 A-V2-1。编号留空,不再复用。
         结构要求移入 G-V2-8,授权问题归 A-V2-1。
 
 A-V2-4  scope-derivation authority                        CONDITIONAL
-        触发条件:某条 predicate 的**适用范围**由一个需要枚举才能确定的集合定义
-        (形如「产品中所有具备某类特征的路径」)。
-        若 schema 改为逐条具名该范围,本项 NOT APPLICABLE。
+
+        触发条件由 scope 的**语义**决定,不由它最后写成集合表达式还是逐项列举决定:
+
+            TRIGGERED —— applicability scope 的语义是
+                「所有满足某特征 F 的对象」「某类对象的完整集合」,
+                或其他**需要 derivation 才能证明完备性**的集合。
+                **即使 candidate 把当前成员逐条列出,仍然 TRIGGERED** ——
+                逐条列举是 derivation 的**输出**,不是 derivation 本身。
+
+            NOT APPLICABLE —— 当且仅当 predicate 的规范性 scope 本身就是一个
+                固定、显式具名的有限集合,**且 candidate 不声称**该列表是某个更大的
+                特征定义域的完整枚举。
+
+        两者的差别只在有没有那句完备性主张:
+
+            「本 predicate 只覆盖 A、B、C,其余明确属于 residual」   → NOT APPLICABLE
+            「本 predicate 覆盖所有具备特征 F 的路径;它们是 A、B、C」 → TRIGGERED
+                                                                     必须回答为什么没有 D
+
+        这与 G-V2-3 的 residual 设计是同一条:**野心小可以,但必须承认野心小**;
+        不能把 derivation 的结果手抄成列表,来伪装成不需要 derivation。
 
         实例化条件(最低成立门槛):
             该实例必须给出**可追溯的集合来源**,或一条**可重复执行的推导规则**,
@@ -552,8 +570,13 @@ G-V2-4  schema **参数化于 CellIdentity**:它规定「给定一个 cell,requi
         允许某条 predicate 的 required 与否取决于坐标(例如只在某 OS 上要求),
         但该条件必须写在 schema 里,且**只依赖 CellIdentity**。
 
-G-V2-5  每条 predicate 的 assertion **可证伪**:schema 写明什么观察会使它为假。
-        不要求写明由谁观察、观察几次 —— 那是 Step B。
+G-V2-5  每条 predicate 的 assertion **可判定**:schema 写明什么事实构成它**成立**,
+        以及什么事实构成它**不成立**。
+        不规定由谁观察、观察几次、何种 evidence 足够 —— 那是 Step B。
+        第一版只要求写出 falsifier(什么使它为假),不要求写出成立条件;
+        而 V3 的 outcome domain 已被 G-V3-2 要求语义区分「成立 / 不成立 / 不可得」,
+        只给一半的 assertion 无法被求值到那个取值域上。
+        本条不规定这两类事实各自叫什么 —— outcome taxonomy 归 V3(§6.10)。
 
 G-V2-6  —— 已删除。编号留空,不再复用。
         它原为「若 schema 自行规定了单条 predicate 的结果取值域,须与 V3 的一致」。
@@ -767,8 +790,12 @@ G-V2-3 拿掉  →  运行时行为 predicate 可以不写残余,
                 「验了运行时行为」与「验了其中一小块」在工件上无法区分。
 G-V2-4 拿掉  →  schema 退化成逐 cell 手工列举:V_PRODUCT 加一格就要重写契约,
                 且「这一格为什么少要求一条」无从追问。
-G-V2-5 拿掉  →  predicate 可以写成不可证伪的断言,
+G-V2-5 拿掉  →  predicate 可以写成不可判定的断言,
                 「它成立」与「它不成立」在观察上无差别,V3 的输入随之失去意义。
+G-V2-5 只要求 falsifier、不要求成立条件(第一版的写法)
+             →  assertion 只有一半可判:什么使它为假写了,什么使它为真没写。
+                G-V3-2 要求 outcome domain 语义区分「成立 / 不成立 / 不可得」,
+                这种半条 assertion 求值不到「成立」那一类上。
 G-V2-7 拿掉  →  已触发但未实例化的 authority 不再阻挡 GREEN,
                 一份没有 owner 声明支撑的 schema 可以直接 GREEN。
 G-V2-8 拿掉  →  surface 名字可以只出现在 predicate 行里而从不定义,
@@ -824,6 +851,10 @@ A-V2-2 的实例化条件拿掉
 A-V2-4 的实例化条件拿掉
              →  「candidate 列了这几项」即算 derivation authority;
                 「有没有漏」这个问题永远不会被问出来。
+A-V2-4 的触发条件按**书写形式**判(第一版:逐条具名即 NOT APPLICABLE)
+             →  绕过路径:声称「覆盖所有具备特征 F 的路径」,再把它们逐条抄出来,
+                于是同一个完备性主张不必再回答「为什么没有 D」——
+                实例化条件写得再对,也在触发这一步就被跳过了。
 ```
 
 ### 6.12 Stage 3 之前不得做的事
