@@ -1408,6 +1408,91 @@ D-3  source pointer  本轮要求 declaration 以 **owner 自己撰写的文本*
 本节写入时 D-1 / D-2 / D-3 **均无答案**,与 `db8d92b9` 的做法一致:先登记,后作答,
 让 git 顺序而不是作者自陈来承担「问题早于答案」。
 
+### 7.13.9 非授权咨询输入 —— 独立复审方的候选稿(**不是** declaration)
+
+先补一条本记录此前没写下的身份事实:
+
+```text
+本工作线的**独立复审方不是项目 owner**。
+```
+
+这条追认了 §7.13 的判定,而且比那里说得更强:**复审链上的任何一条意见都不可能
+实例化 A-V2-1 / A-V3-1** —— 无论它写得多完整。复审的职能是驳回与核验,不是产品意图。
+此前那些「PASS / APPROVED / FROZEN」全部是**复审结论**,从来不是产品授权,两者不换算。
+
+复审方在收到 D-1 / D-2 之后,**拒绝**以 owner 身份作答,并明确说明理由:若由它写完再被
+本 gate 当作 owner declaration 消费,就正是 `R-V2-6` / `R-V3-5` 要防的 provenance
+laundering。它转而提供了一份自我标注为**非授权**的候选稿,供 owner 独立判断。
+
+```text
+status      NON-AUTHORITATIVE CONSULTATIVE INPUT
+issuer      独立复审方(**非** 项目 owner)
+date        2026-09-03
+效力        **不能**把 V2 / V3 从 DEFERRED 翻成 GREEN。
+            它既不是 A-V2-1 也不是 A-V3-1 的实例,不进入 §7.8 的 authority ledger。
+用途        owner 独立判断时的参考材料;登记于此,是为了让
+            「草稿 → owner 判断」这条边界可被后来者审计。
+```
+
+以下逐字转录该候选稿的实质内容(**转录对象是复审方的文本,不是 owner 的文本**):
+
+```text
+D-1 · Cell verification policy(草稿)
+  一、依赖安装与加载必须成立。母体安装形态与 scaffold 子项目安装形态都应能完成其
+      required / native / optional dependency 的安装,且产品实际会加载的模块能成功加载。
+      只证明某依赖存在 prebuild、或只证明安装命令成功,都不能单独代表整个 cell 已 verified。
+  二、产品核心 memory-index runtime 链路必须成立。母体实例与 scaffold 子项目实例都应
+      至少完成一次完整的「打开 → 写入 → 查询 → 关闭」;查询必须返回刚写入的内容,
+      关闭后不得残留由这次生命周期打开而未释放的文件句柄。
+      理由:这条链路直接验证产品最核心的持久化 / 检索能力,而不是只验证依赖能装上。
+  三、非 ASCII 路径包容性是 **win32 cell 的 required property**,不是所有 supported OS
+      的统一 required property。对 os = win32 的 cell,当实例根路径含非 ASCII 字符时,
+      memory-index 产生的文件必须保持在其声明的 collection / root 边界内,且不得因路径
+      编码导致该链路失败。对 Linux,目前不作为独立 required predicate;若日后有证据或
+      产品需求表明 Linux 也需要同等级的非 ASCII path contract,应重新修改 verification
+      contract,而**不是**从 Windows 的要求自动外推。
+  surface:母体安装 · scaffold 子项目安装 · 安装完成后的产品 runtime。
+      理由:三者验证不同的失败面 —— 母体能工作推不出 scaffold 出的消费者环境能工作;
+      依赖能安装推不出产品 runtime 行为正确。
+  形态:有意定义为**具名有限集 + 显式 residual**,不声称覆盖产品全部 platform-sensitive
+      behaviour。当前不列入 required 的有:hooks 安装 / 执行 · takeover receipt ·
+      wiki 打开命令的平台分支 · 锁并发 · 崩溃恢复 · published-package 安装形态。
+      原因不是这些不重要,而是本 gate 的目标是先建立一个稳定、可重复、不会随项目扩张
+      失控的**最低** cell-verification contract。日后若某项 residual 被提升为产品支持
+      承诺,应通过新的 authority 修改 contract,而不是把「当前没列入」解释成永久不需验证。
+
+D-2 · Verification-state policy(草稿)
+  VERIFIED       required 集合非空,且每一条 required predicate 都已得到可判定结果
+                 且均为 satisfied。
+  NOT_VERIFIED   至少一条 required predicate 已得到可判定结果并明确失败。即使同时还有
+                 其他 predicate 结果不可得,只要已存在一个明确失败,整个 cell 即归此格。
+  INDETERMINATE  没有任何 required predicate 明确失败,但至少一条结果不可得,
+                 因此当前证据不足以确认该 cell 已 verified。
+  优先关系       FAILED 优先于 UNOBTAINABLE。理由:FAILED 表示已观察到 contract 被违反,
+                 UNOBTAINABLE 只表示证据尚未取得;不能因为同时存在一个「没看见」的项目,
+                 就把一个已确认的失败降级成信息不足。
+  空集           required 集合为空时判 INDETERMINATE 而非 VERIFIED。理由:空集上的
+                 「全部 satisfied」在形式逻辑上可视为真,但此处 VERIFIED 是产品验证结论;
+                 没有任何 required property 被验证时,不应通过真空真值产生产品通过结论。
+                 若未来某 cell 合法地拥有空 required 集合,应先重新审视 verification
+                 contract 本身是否合理,而不是让空集自动获得 VERIFIED。
+  边界           本草稿不修改已冻结的上游约束:承载 VERIFIED 的 state 必须要求所有
+                 required predicates satisfied(G-V3-4,来自 A0-B3)。
+```
+
+**本 gate 对这份草稿目前不作任何采纳**:§7.6 的六条 predicate **未改动**,`P-PATH-*`
+仍是无 os 条件的形态,`A-V2-1` / `A-V3-1` 仍为 `NOT INSTANTIATED`,两个 verdict 仍为
+`DEFERRED / MISSING_AUTHORITY`。草稿里那条 win32-only 的立场若被 owner 采纳,
+将触发 §7.13.3 的出路 A(改 candidate),但**在 owner 声明之前不动一个字**。
+
+一处供后来者自行判断的事实,写在这里而不是替人下结论:
+
+```text
+本草稿**早于** owner declaration 存在,且 owner 在作答前可以看到它。
+因此若 owner 的声明与本草稿高度相近,读者有权自行衡量「独立判断」的成色 ——
+本记录只负责把次序摆清楚,不替任何一方声称它是独立的。
+```
+
 **本 Step 建立了什么**:一份具名、可重复适用于任意 cell 的 cell-verification
 contract —— A0 的 B3 所要求的那份东西。
 
