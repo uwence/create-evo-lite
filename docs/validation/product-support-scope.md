@@ -7,10 +7,10 @@
   但本 gate **不是** zvec gate —— 见 §0.1。
 
 ```text
-STAGE 2 — CRITERIA CONTRACT
-Stage 1(subject contract)已于 e1084f01 冻结,本阶段不得改动它。
-本阶段写「按什么条件裁」,见 §5。四个 verdict 仍为 UNSET;
-**Q1 / Q2 仍然不答** —— 理由见 §5 开头。
+STAGE 3 — 消费 authority 与裁决
+Stage 1 冻结于 e1084f01;Stage 2 冻结于 3dd343cb。两者本阶段均不得改动。
+结果见 §6:P1 = **GREEN**,P2 / P3 / P4 = DEFERRED。
+判据在 owner declaration 给出之前已冻结四个 commit。
 ```
 
 ## 0. 阶段顺序(沿用 UDR 已验证的结构)
@@ -19,8 +19,9 @@ Stage 1(subject contract)已于 e1084f01 冻结,本阶段不得改动它。
 Stage 1  decision subjects · X→Y · subject_status · authority boundary
              ↓ COMMIT + REVIEW        ✔ FROZEN @ e1084f01(2026-09-03 复审 APPROVED)
 Stage 2  required authority · GREEN iff · RED iff · missing-authority disposition
-             ↓ COMMIT + REVIEW        ← 当前阶段(§5)
+             ↓ COMMIT + REVIEW        ✔ FROZEN @ 3dd343cb(2026-09-03 复审 APPROVED)
 Stage 3  消费证据与来源 · 填 verdict
+             ↓ COMMIT + REVIEW        ← 当前阶段(§6)
 ```
 
 UDR 用这个结构跑完了三阶段、九次独立复审,被拦下的越界几乎全是同一形状:
@@ -136,7 +137,9 @@ native 依赖(prebuild 覆盖面决定装不装得上):
 
 本节冻结的是**主语**(Stage 1)。判据由 Stage 2 写在 §5.3–5.6,
 不回填到本节 —— 主语与判据分处两节,是为了让「主语已冻结」这件事
-在 diff 上一直可见。四个 verdict 仍全部是 `UNSET`。
+在 diff 上一直可见。
+
+Stage 3 已填入四个 verdict(理由只写在 §6 一处,本节不留副本)。
 
 ---
 
@@ -171,7 +174,7 @@ required authority / GREEN iff / RED iff / missing-authority disposition:
 does NOT authorize:  不改 package.json 的 os / cpu(P4)· 不定义验证集合(P2)
                      · 不承诺 CI 覆盖任何格子(P3)
 
-verdict:             UNSET
+verdict:             GREEN  (Stage 3 · §6.3)
 ```
 
 ---
@@ -200,7 +203,7 @@ required authority / GREEN iff / RED iff / missing-authority disposition:
 
 does NOT authorize:  不定义承诺范围(P1)· 不解释代表性(P3)
 
-verdict:             UNSET
+verdict:             DEFERRED  (Stage 3 · §6.4;缺候选 + B3)
 ```
 
 ---
@@ -235,7 +238,7 @@ required authority / GREEN iff / RED iff / missing-authority disposition:
 
 does NOT authorize:  不改变 P1 / P2 的取值
 
-verdict:             UNSET
+verdict:             DEFERRED  (Stage 3 · §6.5;DF3 输入不完整)
 ```
 
 ---
@@ -285,10 +288,10 @@ required authority / GREEN iff / RED iff / missing-authority disposition:
 
 does NOT authorize:  不定义支持范围(P1)· 不定义验证集合(P2)
 
-verdict:             UNSET
+verdict:             DEFERRED  (Stage 3 · §6.6;缺逐 segment 的 mode 候选)
 ```
 
-## 3. 三个问题:Q1 / Q2 仍未裁定,Q3 已答
+## 3. 三个问题 —— Q1 / Q2 已由 Stage 3 的 B1 答掉,Q3 早前已答
 
 ```text
 Q1  Windows × Node 20 属于哪一类?
@@ -353,7 +356,8 @@ missing-authority disposition」已随 Stage 2 授权而解除;**当前阶段的
 ```text
 不写 GREEN / RED                 不写 required authority
 不写 missing-authority disposition
-不回答 §3 的 Q1 / Q2(Q3 已由 Stage 1 复审裁决)
+不回答 §3 的 Q1 / Q2(Q3 已由 Stage 1 复审裁决)—— 该禁令止于 Stage 2;
+Q1 / Q2 已由 Stage 3 的 B1 owner declaration 答掉(§6.1)
 不裁定任何一项                    不修改 package.json / workflow / 任何生产文件
 不由本文件作者宣布 S_PRODUCT ——   那是 §0.3 明确保留给项目所有者的动作
 ```
@@ -366,11 +370,17 @@ Stage 1(subject contract)已于 e1084f01 冻结,本阶段不得改动它。
 本阶段写「按什么条件裁」:required authority · GREEN iff · RED iff ·
 missing-authority disposition。
 
+(以下两句是**写作 Stage 2 当时**的状态陈述,保留原样:)
 四个 verdict 仍为 UNSET。**仍然不回答 Q1 / Q2** —— 即便它们的 authority 就是
 项目所有者本人的声明,在判据冻结之前给出,等于让作者带着已知的期望答案去写判据,
 又回到「先看结果、再写判据」。压着不给,是为了让那个产品决定以后还能当干净的
 authority 用。
 ```
+
+**该纪律事后被证明是有效的,而不只是仪式:** 判据冻结于 `3dd343cb`,
+owner declaration 在其后才给出(§6.1),中间隔着四个 commit。
+因此「判据被已知答案塑形」不是靠作者自陈排除的,而是由 git 历史排除的。
+本节其余内容为 Stage 2 冻结原文,Stage 3 未作改动。
 
 ### 5.0 本 gate 不另建 typed edge graph
 
@@ -805,7 +815,10 @@ BD1 与 DF1–DF3 是**路径入口 / 兜底出口**,不是需要被守住的性
 拿掉它们的后果不是「坏情况被放过」,而是「没有入口或没有出口」,
 那属于判定函数不完整,由 §5.5 三集互斥的结构本身保证。
 
-### 5.8 Stage 3 之前不得做的事
+### 5.8 Stage 2 的边界(已冻结,记录在此以免回退)
+
+以下是 **Stage 2 当时**的禁止范围,现已随 Stage 3 授权而解除其中的裁决类条款。
+**当前阶段的边界见 §6.9。**
 
 ```text
 不填任何最终 verdict
@@ -817,3 +830,223 @@ BD1 与 DF1–DF3 是**路径入口 / 兜底出口**,不是需要被守住的性
     不是本 gate 的作者可以代写的东西(§0.3)
 不修改 package.json / index.js / workflow / 任何生产文件
 ```
+
+## 6. Stage 3 —— 消费 authority 与裁决
+
+```text
+STAGE 3
+Stage 1(e1084f01)与 Stage 2(3dd343cb)均已冻结,本阶段不得改动其中任何一条。
+本阶段消费 B1 owner declaration,判定 B1–B7,再按冻结判据裁决 P1–P4。
+判据在 owner declaration 给出之前就已冻结 —— 因此「先看答案再定规则」
+由 git 历史排除,不依赖作者自陈。
+```
+
+### 6.1 B1 —— owner declaration(2026-09-03,逐字记录)
+
+```text
+OS
+    SUPPORTED     win32 · linux
+    UNSUPPORTED   darwin
+    reason        先不想拓展其他平台,加快项目开发进度
+
+CPU arch
+    SUPPORTED     x64
+    UNSUPPORTED   arm64
+    reason        同上 —— 先不拓展平台,加快开发进度
+
+Node
+    definition    静态枚举(**不是**范围)
+    SUPPORTED     20 · 22 · 24
+    UNSUPPORTED   其余全部 major(含 21 / 23,以及 25 及以后)
+    reason        不同 agent 宿主钉定的 Node 版本不一致,因此三个都要支持
+```
+
+**Node 这条理由只能由所有者给。** 没有任何测量能得出「不同 agent 宿主的 Node
+版本不一致」—— 它也正好解释了为什么把 floor 抬到 22(消除 Node 20 的编译器缺口)
+对**这个**产品是错的:那会砍掉一部分 agent 宿主。
+
+### 6.2 B1–B7 判定
+
+```text
+B1  support-scope declaration          INSTANTIATED
+    三轴均有取值与理由,见 §6.1。
+
+B2  Node lifecycle                     NOT APPLICABLE
+    B1 采用**静态枚举**而非滚动定义,按 B2 自身的条件性,本 authority 不适用,
+    不产生 DEFERRED。
+
+B3  cell verification predicates       NOT INSTANTIATED
+    没有任何来源规定「一个 cell 要算 verified 需要满足哪组 predicate」。
+    release-gate 的矩阵是 CI 配置,不是 predicate 集合。
+
+B4  non-runner evidence delegation     NOT APPLICABLE(当前无委托)
+    尚不存在 V_PRODUCT 候选,也就不存在委托。
+
+B5  equivalence-class authority        NOT APPLICABLE(当前无外推)
+    同上 —— 没有 V_PRODUCT 就没有外推。**注意这不是「已满足」**,
+    它只是在没有候选时无从适用;一旦出现 V_PRODUCT 候选,本条会重新可判。
+
+B6  enforcement effectiveness          NOT APPLICABLE(当前无候选机制)
+    尚不存在 P4 候选,没有任何机制被选用。
+    (§1 第二层登记的 `engineStrict` 效果未证实,仍是待钉观察;
+     只有当某个 P4 候选依赖它时,B6 才成为必需。)
+
+B7  coverage-exception / risk          NOT APPLICABLE(当前无缺口可谈)
+```
+
+### 6.3 P1 —— 声明 S_PRODUCT
+
+```text
+GREEN 逐条:
+    G1  三轴 OS / arch / Node 各自给出取值            ✓
+    G2  每轴仅用 SUPPORTED / UNSUPPORTED 完整分类,
+        无任何轴级 unresolved                        ✓
+    G3  每轴附理由,且理由独立于「我们测过什么」        ✓
+        (OS 与 arch 共用一条产品节奏理由;Node 有自己的宿主异构理由)
+    G4  静态枚举 → B2 不适用,本条无需满足              ✓(N/A)
+
+RED 逐条:
+    R1  无任何一轴沉默                                未命中
+    R2  声明内部无自相矛盾                            未命中
+    R3  未检索到明确否定该声明的权威证据                未命中
+        (「包今天在 macOS / arm64 上装得上」是**机制事实**,
+         不是否定该声明的 authority —— §1 已冻结这条区分)
+
+verdict:  **GREEN**
+```
+
+这是本 gate 与 UDR 加起来的**第一个 GREEN**。它成立的原因值得说清:
+P1 是纯声明类主语,它需要的 authority 恰好是所有者能够单独给出的那一种;
+其余三个节点卡住,不是因为声明不够好,而是因为它们还需要别的东西。
+
+### 6.4 P2 —— 声明 V_PRODUCT
+
+```text
+候选状态:  **不存在。** 无人提出过 V_PRODUCT 候选。
+           release-gate 的五格是 CI 配置;按 P2-G3 与 UDR §5.0 的既有冻结,
+           它不得被默认继承为验证集合。
+
+GREEN:     G1 / G2 / G3 / G4 均无从满足 —— 没有候选可评。
+RED:       R1(evidence laundering)· R2(不可枚举)均未命中 —— 没有候选可命中。
+authority: B3 NOT INSTANTIATED。
+
+按 §5.1 求值顺序:无 RED → 本节点未定义 BOUNDED 条件 → GREEN 不成立 → 兜底
+
+verdict:  **DEFERRED**
+解阻需要: 一个 V_PRODUCT 候选,**以及** B3(什么算 verified)。
+          两者都不是测量能产出的 —— 再跑一次 CI 不会解阻本节点。
+```
+
+### 6.5 P3 —— coverage justification
+
+```text
+DF3 直接命中:P2 未 GREEN,输入不完整。
+按 §5.5,这**不是** RED —— 「上游还没定」与「这个 justification 不成立」是两件事。
+
+verdict:  **DEFERRED**
+解阻需要: P2 先 GREEN。在那之前 P3 无从求值。
+```
+
+### 6.6 P4 —— 是否落实为强制
+
+```text
+候选状态:  **不存在。** 无人提出过 enforcement_mode 的取值。
+
+但 B1 已经实例化,因此 **segment 现在是确定的**。按 §5.6 冻结的定义
+(segment 由 P1 的声明给出,P4 不得自行切分),unsupported segment 恰好三个:
+
+    S-OS     OS == darwin
+    S-ARCH   arch == arm64
+    S-NODE   Node major ∉ { 20, 22, 24 }
+
+GREEN:     M0 未满足 —— 三个 segment 一个都没有被指定 mode。
+RED:       R1 / R2 / R3 / R4 均未命中 —— **R4 的求值对象是 candidate 的处置**,
+           而 candidate 不存在(§5.6 已把求值对象从「当前树」改成「candidate Y」)。
+authority: B1 已实例化;B6 当前不适用。
+
+按 §5.1 兜底 → verdict:  **DEFERRED**
+
+解阻需要: 一个逐 segment 的 mode 候选。以下两点是 B1 直接推出的、
+          供后续候选使用的事实,**不是本轮的裁定**:
+
+    (a) 现有 `assertNodeVersion()` 只实现 S-NODE 的**一部分**。
+        它执行的 predicate 是 `Node major < 20`,而 S-NODE 是
+        `Node major ∉ {20,22,24}` —— Node 21 / 23 / 25 落在声明之外,
+        却能通过现有 gate。将来若 S-NODE 取 RUNTIME,M1(强制与 segment 一致)
+        必须处理这个差额。
+    (b) S-OS 与 S-ARCH 上,树里**没有任何强制**,连疑似的都没有
+        (`os` / `cpu` 字段均不存在)。因此这两个 segment 若取 DECLARATION_ONLY,
+        M6 的「真实 gate」一支为空;若取 INSTALL_TIME,才需要新增字段。
+```
+
+### 6.7 本轮登记的三条后果(不是裁定,供所有者按需修订声明)
+
+```text
+一、静态枚举意味着合同需要**手工**跟进
+    S_PRODUCT 的 Node 轴是 { 20, 22, 24 }。因此:
+        Node 21 / 23 —— 不在承诺内(奇数 major 非 LTS,实践中少见)
+        Node 26 及以后 —— **在有人修改本合同之前,一律不在承诺内**
+    这正是静态枚举与滚动定义的差别,也是 B2 只对后者适用的原因。
+    若希望合同自动跟随 Node 维护周期,需要改用滚动定义 —— 那会触发 B2,
+    并要求 P3-G3 写明重评触发条件。取舍由所有者决定,本轮不代为选择。
+
+二、win32 × Node 20 现在**在 S_PRODUCT 之内、在 S_GATE 之外**
+    B1 已经把它答成「支持」。release-gate 显式 exclude 了这一格。
+    因此 V_PRODUCT 不可能既等于那五个 CI 格子、又完整覆盖 S_PRODUCT ——
+    P2 / P3 必须正面处理这个缺口(BOUNDED、新增验证路径、或 B7 的显式例外)。
+    Q1 的「算不算支持」已由 B1 答完;剩下的是「怎么验证」。
+
+三、Node 20 在承诺内,而它处处需要编译器
+    better-sqlite3 12.11.1 的 node prebuild ABI 集合为 {127, 137, 141, 147};
+    本机核准 Node 22 = 127、Node 24 = 137,而 Node 20 = 115 **不在其中**。
+    因此承诺 Node 20 = 承诺一个「必须本地编译原生依赖」的环境。
+    这不是矛盾,是一个可以明说的立场;但 P3 必须处置它,不能让它沉默。
+```
+
+### 6.8 本轮结论
+
+```text
+P1  S_PRODUCT declaration      **GREEN**
+P2  V_PRODUCT                  DEFERRED   缺候选 + B3
+P3  coverage justification     DEFERRED   输入不完整(DF3)
+P4  enforcement                DEFERRED   缺逐 segment 的 mode 候选
+```
+
+**四个节点里唯一变绿的,恰好是唯一只需要所有者一句话的那个。** 其余三个卡住的
+原因各不相同,但没有一个是「测量不够」:
+
+```text
+P2  需要有人提出验证集合,并规定什么算 verified —— 两者都不是测量的产物
+P3  需要 P2 先成立
+P4  需要有人提出逐 segment 的强制取值
+```
+
+**下一步不是再跑 CI。** 与 UDR 的结论同型:受阻的从来不是测量。
+
+### 6.9 当前边界(Stage 3 之后)
+
+```text
+不改动 Stage 1 的主语,也不改动 Stage 2 的判据 —— 两者均已冻结
+不代所有者提出 V_PRODUCT / B3 / P4 mode 候选 ——
+    提出候选是一次独立的授权动作,不是裁决阶段可以顺手做的事;
+    B3(什么算 verified)尤其是判断,不得由本文件作者充当 authority
+不修改 package.json / index.js / workflow / 任何生产文件
+不开 implementation gate —— 当前没有任何节点授权代码变更
+```
+
+**一个到期的禁令与它留下的问题。** §5.8 曾禁止创建 `docs/specs/` 下的 canonical
+contract,理由是「那是 P1 GREEN 之后的产物」。P1 现在正是 GREEN,该禁令的**前提**
+已不成立;但那份合同按 Q3 的冻结定义由四部分组成:
+
+```text
+S_PRODUCT              已有(P1 GREEN)
+V_PRODUCT              DEFERRED
+coverage justification DEFERRED
+reevaluation triggers  依附于上两者
+```
+
+因此现在的问题不再是「能不能写」,而是 **「只带 S_PRODUCT 的合同该不该先落地」**:
+先落地能让 UDR 的 A0 拿到它需要的那一半(S_PRODUCT),
+但一份缺 V_PRODUCT 与 coverage justification 的 canonical contract,
+本身也可能被下游误读成完整合同 —— 这正是本 gate 一路在防的形状。
+**该取舍属于所有者裁定,本文件不代为决定,也不自行创建该文件。**
