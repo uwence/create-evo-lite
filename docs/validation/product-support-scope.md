@@ -65,26 +65,37 @@ S_PRODUCT 是**产品意图**类命题。没有任何一次测量能证明「我
 全部为本轮实测,逐条可核。
 
 ```text
-被强制执行、且用户可见的边界 —— 只有一条:
-    index.js:12      const MIN_NODE_MAJOR = 20;
-    index.js:17-22   assertNodeVersion() 在入口即检查 process.versions.node,
-                     不满足则非零退出,文案 "Evo-Lite requires Node.js >= 20 (found …)"
-    package.json     "engines": { "node": ">=20.0.0" }
-    —— 只有**下限**。没有上限,没有平台,没有架构。
+现状必须拆成**三层**,不能压成一句。前两次复审各拦下一次压缩:
 
-published manifest 的**安装资格**限制:
-    package.json     os  = 字段不存在
-                     cpu = 字段不存在
-    按 npm 语义,二者缺席即对 OS / CPU **不施加安装资格限制** ——
-    今天这个包在 macOS、在 arm64 上都会照常安装。
+  第一层  产品支持声明
+      未定义。树里没有任何一处说「我们承诺支持哪些环境」。
 
-    **这不构成产品对这些 OS / CPU 的支持承诺。**
-        installation eligibility  ≠  support commitment
-    与 UDR 里拦下的 `CI coverage ≠ product support scope` 是同一类错误换了一层:
-    一个可观测的机制事实(npm 装不装得上)被读成一句产品承诺。
-    正确的现状是两句话:
-        产品支持声明            未定义
-        manifest 安装资格限制    Node >= 20;OS 未限制;CPU 未限制
+  第二层  package metadata(**声明**,不等于强制)
+      package.json:16-18   "engines": { "node": ">=20.0.0" }   兼容性**声明**
+      package.json:19      "engineStrict": true
+      package.json         os  字段不存在  → npm 不按 OS 阻止安装
+                           cpu 字段不存在  → npm 不按 CPU 阻止安装
+      仓库内**没有任何 `.npmrc`**(`git ls-files` 无匹配)。
+
+      **`engines` 是否会真的阻止安装,取决于消费者侧的 `engine-strict` 配置,
+      而该配置默认为 false。** package.json 里的 `engineStrict` 字段是 npm 早期
+      的形式,**它当前是否仍有效果,本文件未予证实** —— 登记为待钉的观察,
+      而不是当作既成的强制。若 P4 打算依赖 install-time 强制,
+      这一条必须先在 Stage 2/3 钉死。
+
+  第三层  runtime hard enforcement(**真正被强制的只有这一条**)
+      index.js:12      const MIN_NODE_MAJOR = 20;
+      index.js:17-22   assertNodeVersion() 在入口检查 process.versions.node,
+                       不满足即非零退出,文案
+                       "Evo-Lite requires Node.js >= 20 (found …)"
+      —— 只有**下限**。没有上限,没有平台,没有架构。
+
+  三层之间不得互相顶替:
+      installation eligibility  ≠  support commitment
+      metadata declaration      ≠  enforcement
+  第一条是 UDR 里 `CI coverage ≠ product support scope` 的同型;
+  第二条是它的第三个变种 —— **一个读起来像强制的字段,不等于一次强制**。
+  今天这个包在 macOS、在 arm64 上都会照常安装,那是机制事实,不是承诺。
 
 CI 覆盖(S_GATE,证据环境):
     release-gate.yml:24-32   ubuntu-latest × node 20/22/24
@@ -237,8 +248,11 @@ subject_status:      INSTANTIATED
 current state X:     manifest 当前对 OS / CPU **不施加安装资格限制**
                      (package.json 无 `os`、无 `cpu`),
                      而**产品支持范围本身尚未声明**(见 P1)。
-                     唯一已被强制的维度是 Node 下限:
-                     index.js:12-22 的入口检查 + `engines.node >= 20`。
+
+                     唯一由仓库自身明确 **hard-enforce** 的维度是 Node 下限,
+                     强制点是 **index.js:17-22 的入口 `assertNodeVersion()`**。
+                     `engines.node >= 20` 是兼容性 **metadata**;在默认 npm 配置下
+                     不能与该 runtime hard gate 等同(§1 第二层)。
 
 candidate state Y:   依据 P1 的最终声明,决定是否以及在哪些位置强制。
                      取值不是二元 —— 强制点至少有两个,后果不同:
@@ -301,28 +315,28 @@ Q2  macOS 与 arm64 属于哪一类?
     「沉默」既可以读成「支持但没测」,也可以读成「从未想过」——
     这个歧义必须由 P1 消除,而不是继续沉默。
 
-Q3  这份合同最终应当落在哪里?  —— **已答**(2026-09-03 Stage 1 复审裁决;
-    项目所有者的最终接受尚未给出,此处不假装 docs/specs/ 里那份 authority 已经存在)
+Q3  这份合同最终应当落在哪里?
+    ANSWERED —— 2026-09-03 Stage 1 复审裁决,**项目所有者同日接受**。
+    落点固定为三层,各自的角色不得互换:
 
-```text
-canonical authority     docs/specs/<product-support-contract>.md
-                        = S_PRODUCT · V_PRODUCT · coverage justification
-                        · reevaluation triggers
-                        它会被 zvec、better-sqlite3、release gate 以及未来的
-                        native 依赖长期反复消费 —— 那是**设计合同**,
-                        不是一次验证报告。
+      canonical authority   docs/specs/<product-support-contract>.md
+                            = S_PRODUCT · V_PRODUCT · coverage justification
+                              · reevaluation triggers
+                            它会被 zvec、better-sqlite3、release gate 以及未来的
+                            native 依赖长期反复消费 —— 那是**设计合同**,
+                            不是一次验证报告。
+                            (该文件目前**尚不存在**;本条只固定落点,不假装它已有。)
 
-decision record         docs/validation/product-support-scope.md(本文件)
-                        = 三阶段的裁决记录,回答「为什么形成这个合同」。
-                        **不作为长期 canonical policy 的唯一载体。**
+      decision record       docs/validation/product-support-scope.md(本文件)
+                            = 三阶段的裁决记录,回答「为什么形成这个合同」。
+                            **不作为长期 canonical policy 的唯一载体。**
 
-enforcement surfaces    package.json · index.js · workflows
-                        = 消费 canonical contract 的强制 / 验证面。
-                        它们**不因为自己有字段或有矩阵就成为产品政策 authority**。
-```
+      enforcement /         package.json · index.js · workflows
+      verification surfaces = 消费 canonical contract 的强制 / 验证面。
+                            它们**不因为自己有字段或有矩阵就成为产品政策 authority**。
 
-    方向只能是 `policy → enforcement`。反向推理(`package.json 有什么字段` 或
-    `workflow 跑了哪几格` → 因此产品政策是什么)正是本 gate 要修的病;
+    方向固定为 `policy → enforcement`。反向推理(`package.json 有什么字段`
+    或 `workflow 跑了哪几格` → 因此产品政策是什么)正是本 gate 要修的病;
     若不写死这条,几年后会再长出同一个问题。
 ```
 
