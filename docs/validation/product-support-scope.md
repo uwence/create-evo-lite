@@ -876,8 +876,12 @@ B2  Node lifecycle                     NOT APPLICABLE
     不产生 DEFERRED。
 
 B3  cell verification predicates       NOT INSTANTIATED
-    没有任何来源规定「一个 cell 要算 verified 需要满足哪组 predicate」。
-    release-gate 的矩阵是 CI 配置,不是 predicate 集合。
+    **本轮没有任何 source 被提名、验证并消费为 B3,因此 B3 当前未实例化。**
+    **不由此推出**仓库中不存在任何相关材料 —— 判据绑定的是 authority provenance,
+    不是全文检索的质量。
+    (第一版写的是「没有任何来源规定……」,那是一个证据负担过大、
+     且判据根本不需要的命题。)
+    另记:release-gate 的矩阵是 CI 配置,即便被提名也不构成 predicate 集合。
 
 B4  non-runner evidence delegation     NOT APPLICABLE(当前无委托)
     尚不存在 V_PRODUCT 候选,也就不存在委托。
@@ -908,9 +912,14 @@ GREEN 逐条:
 RED 逐条:
     R1  无任何一轴沉默                                未命中
     R2  声明内部无自相矛盾                            未命中
-    R3  未检索到明确否定该声明的权威证据                未命中
+    R3  **在本轮实际消费、并列入 §6.1 / §6.2 的 authority 中,没有一项建立 R3。**
+                                                      未命中
         (「包今天在 macOS / arm64 上装得上」是**机制事实**,
          不是否定该声明的 authority —— §1 已冻结这条区分)
+
+        **本结论不声称**仓库、历史文档或外部世界不存在尚未被本轮消费的
+        contrary authority。第一版写的是「未检索到明确否定的权威证据」——
+        那是把检索结果当成世界状态,与 UDR 最后一轮修掉的 D1 audit 同型。
 
 verdict:  **GREEN**
 ```
@@ -974,9 +983,20 @@ authority: B1 已实例化;B6 当前不适用。
         `Node major ∉ {20,22,24}` —— Node 21 / 23 / 25 落在声明之外,
         却能通过现有 gate。将来若 S-NODE 取 RUNTIME,M1(强制与 segment 一致)
         必须处理这个差额。
-    (b) S-OS 与 S-ARCH 上,树里**没有任何强制**,连疑似的都没有
-        (`os` / `cpu` 字段均不存在)。因此这两个 segment 若取 DECLARATION_ONLY,
-        M6 的「真实 gate」一支为空;若取 INSTALL_TIME,才需要新增字段。
+    (b) S-OS 与 S-ARCH:**本轮已消费的 enforcement evidence 中**,
+        `package.json` 无 `os` / `cpu` install filter;
+        **本轮尚未建立**一个按 attribution 归属于 S-OS 或 S-ARCH 的 runtime hard gate。
+
+        **这不是「树里绝对不存在此类 gate」的证明。** 第一版写成「连疑似的都没有
+        (`os`/`cpu` 字段均不存在)」——那是从**清单**缺字段推出**整个产品**无强制,
+        推不出来。反例就在树里:`wiki/cli.js:28` 有
+        `p === 'darwin' ? ['open', [indexPath]]` —— 它不是 rejection gate,
+        但恰好说明**平台相关行为并不限于 manifest**。
+        (`process.arch` 在生产代码中本轮检索无命中,但同样:检索未命中
+         不得升格为普遍不存在。)
+
+        因此未来的 P4 candidate **仍须按 §5.6 冻结的 attribution 规则**
+        重新盘点实际 enforcement surfaces,不得把本轮的侦察结果当成既成前提。
 ```
 
 ### 6.7 本轮登记的三条后果(不是裁定,供所有者按需修订声明)
@@ -996,10 +1016,25 @@ authority: B1 已实例化;B6 当前不适用。
     P2 / P3 必须正面处理这个缺口(BOUNDED、新增验证路径、或 B7 的显式例外)。
     Q1 的「算不算支持」已由 B1 答完;剩下的是「怎么验证」。
 
-三、Node 20 在承诺内,而它处处需要编译器
-    better-sqlite3 12.11.1 的 node prebuild ABI 集合为 {127, 137, 141, 147};
-    本机核准 Node 22 = 127、Node 24 = 137,而 Node 20 = 115 **不在其中**。
-    因此承诺 Node 20 = 承诺一个「必须本地编译原生依赖」的环境。
+三、Node 20 在承诺内,而在**当前这组具体条件下**它需要本地构建工具链
+
+    承重对象必须写全,否则会被读成 Node 20 的一般性质:
+
+        在当前 S_PRODUCT 的 Node 20 × { win32, linux } × x64 这几个 cell 上,
+        **better-sqlite3@12.11.1** 没有对应的 `node-v115` prebuild
+        (该版本的 node prebuild ABI 集合为 {127, 137, 141, 147};
+         本机核准 Node 22 = ABI 127、Node 24 = ABI 137,Node 20 = 115 不在其中);
+        按**该包自身的 install script**
+            install: prebuild-install || node-gyp rebuild --release
+        找不到 prebuild 即回落到本地 native build,
+        因此这些 cell 的 **dependency-installability predicate**
+        需要一个可用的 native build toolchain。
+
+    第一版写成「Node 20 处处需要编译器」,把结论扩张成了 Node 20 本身的性质。
+    实际承重的是四样:**当前 S_PRODUCT · better-sqlite3@12.11.1 ·
+    dependency-installability 这一条 predicate · 该包当前的 release assets**。
+    其中任何一样变化(例如上游补发 node-v115 prebuild),结论即需重算。
+
     这不是矛盾,是一个可以明说的立场;但 P3 必须处置它,不能让它沉默。
 ```
 
@@ -1034,19 +1069,61 @@ P4  需要有人提出逐 segment 的强制取值
 不开 implementation gate —— 当前没有任何节点授权代码变更
 ```
 
-**一个到期的禁令与它留下的问题。** §5.8 曾禁止创建 `docs/specs/` 下的 canonical
-contract,理由是「那是 P1 GREEN 之后的产物」。P1 现在正是 GREEN,该禁令的**前提**
-已不成立;但那份合同按 Q3 的冻结定义由四部分组成:
+**一个到期的禁令,以及它留下的问题的裁定(2026-09-03,复审)。**
+
+§5.8 曾禁止创建 `docs/specs/` 下的 canonical contract,理由是「那是 P1 GREEN 之后
+的产物」。P1 现在正是 GREEN —— 但该句应被读作**必要条件,不是充分条件**。裁定:
 
 ```text
-S_PRODUCT              已有(P1 GREEN)
-V_PRODUCT              DEFERRED
-coverage justification DEFERRED
-reevaluation triggers  依附于上两者
+docs/specs/<product-support-contract>.md   NOT YET
+S_PRODUCT declaration                      VALID(P1 GREEN)
+canonical composite contract               DEFERRED
 ```
 
-因此现在的问题不再是「能不能写」,而是 **「只带 S_PRODUCT 的合同该不该先落地」**:
-先落地能让 UDR 的 A0 拿到它需要的那一半(S_PRODUCT),
-但一份缺 V_PRODUCT 与 coverage justification 的 canonical contract,
-本身也可能被下游误读成完整合同 —— 这正是本 gate 一路在防的形状。
-**该取舍属于所有者裁定,本文件不代为决定,也不自行创建该文件。**
+理由不是「P1 不够权威」。P1 已 GREEN,它**现在就是**有效的产品意图 authority。
+问题在于 Q3 冻结的 canonical artifact 主语**不是单独的 S_PRODUCT**,而是四部分,
+而当前:
+
+```text
+S_PRODUCT              GREEN
+V_PRODUCT              DEFERRED
+coverage justification DEFERRED
+reevaluation semantics 依附于上两者
+```
+
+此刻创建一个名为 `product-support-contract.md` 却只装第一部分的文件,会制造:
+
+```text
+artifact identity = canonical complete contract
+artifact contents = partial contract
+```
+
+几个月后的读者不会天然知道「这份 canonical spec 其实只完成了第一阶段」——
+**那正好是本 gate 想消除的问题:一个局部事实因为放在权威位置上而被读成完整政策。**
+
+**创建条件(冻结):**
+
+```text
+允许创建 canonical support contract
+iff  P1 = GREEN  AND  P2 = GREEN  AND  P3 ∈ { GREEN, BOUNDED }
+
+若 P3 = BOUNDED:bounded conclusion 必须**直接进入 canonical contract**,
+                不得只留在本 decision record 的脚注里。
+
+P4 **不**需要先 GREEN —— Q3 已把 enforcement surfaces 与 canonical support policy
+分层:P4 决定如何**消费**政策,不定义 S_PRODUCT / V_PRODUCT 本身。
+```
+
+**在此之前 S_PRODUCT 就留在本 decision record**,不再另造一份 interim spec:
+本文件已同时具备 B1 逐字声明、P1 的 GREEN 裁定,以及「判据早于声明」的 git 顺序,
+足以充当后续 P2 / P3 以及 UDR 重裁时的 S_PRODUCT authority 输入。
+
+**但要写清一条:**
+
+```text
+本轮结果只满足 UDR 的 A0 中的 S_PRODUCT 那一个 component
+≠ UDR 的 A0 已 satisfied
+```
+
+UDR 的 A0 还要求 V_PRODUCT 与 coverage justification,两者当前均 DEFERRED。
+因此**提前创建 canonical spec 对 UDR 的 D1 也没有任何解阻作用**。
