@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: e3a79bc12862adc8abd171e82e867b5a896b3508
-> upstreamSha: e3a79bc12862adc8abd171e82e867b5a896b3508
+> headSha: 46abcf96bac3832b305acd5867e8edaa41ecbc28
+> upstreamSha: 46abcf96bac3832b305acd5867e8edaa41ecbc28
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-09-03T01:06:28.275Z
+> focusUpdatedAt: 2026-09-03T03:29:52.741Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -27,6 +27,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [46abcf9] 2026-09-03 ProductSupportScopeGateClosed: [A0 product-support-scope] gate 三阶段全部冻结并合入 main@46abcf96(PR #64 两父 merge,复审 head aa59c36c,release-ga
 - [e3a79bc] 2026-09-03 ZvecUpgradeDecisionRecordClosed: [zvec-win-unicode-containment] 裁决阶段 CLOSED。0.6→0.7 的 Upgrade Decision Record 经三阶段独立复审后全部冻结,并以两父 merg
 - [19b66c5] 2026-09-02 Zvec070MeasurementPhaseClosed: [zvec-win-unicode-containment] 测量阶段 CLOSED。Step 2C(非 ASCII 桥)经复审 APPROVED,PR #62 以两父 merge 合入 main@1
 - [125b9d6] 2026-08-28 HookInstallProvenanceClosure: [hook-install-provenance] CLOSED — removed from the active backlog as stale runtime state. The fact
@@ -36,7 +37,6 @@
 - [3e09455] 2026-08-15 HookStatusFreshness: [235a] hook-status-freshness shipped and merged via PR #47 (merge 3e09455, reviewed head 975a67a, CI
 - [9c8be0a] 2026-08-14 DispositionLedger: Disposition ledger shipped and merged to main via PR #46 (merge 9c8be0a, reviewed head 6ade6c3). A g
 - [0965f6e] 2026-08-10 SpecStatusVocabularyLayer1: Spec 状态词汇表收敛（分层清洗第 1 层）+ 一处 park 误判更正。PR #43 合入 main@e7488aa，PR #44 合入 main@0965f6e，两个 PR CI 均 6/6 全
-- [d7ab3b6] 2026-08-09 SpecPortfolioAgingDispositionRound2: Spec Portfolio 老化处置第二轮 + 治理缺陷登记。PR #41 经普通两父 merge 合入 main@d7ab3b6，PR CI 6/6 全绿（含 containment + rele
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
