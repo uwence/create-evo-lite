@@ -18,9 +18,10 @@ Stage 1  decision subjects · X→Y · authority boundary · non-authorization
              FROZEN @ a4e747da        —— §1 – §5 不再改动
              ↓ COMMIT + REVIEW
 Stage 2  required authority · GREEN iff · RED iff · missing-authority disposition
-             ← 当前,见 §6
+             FROZEN @ c39f5919        —— §6 不再改动
              ↓ COMMIT + REVIEW
 Stage 3  消费 authority · 填 verdict
+             ← 当前,见 §7
 ```
 
 ## 1. current X —— 严格限定在已建立的范围内
@@ -330,7 +331,7 @@ Q-A3  `win32 × Node20` 是本 Step 的**压力测试 referent**,不是待答问
 ## 6. Stage 2 —— criteria(V2 / V3)
 
 ```text
-STAGE 2 — CRITERIA ONLY
+STAGE 2 — CRITERIA ONLY                    ·  FROZEN @ c39f5919
 写:   required authority · GREEN iff · RED iff · missing-authority disposition
       · V2 与 V3 之间的依赖与求值规则
 不写: 任何 verdict · 任何 predicate 的具体内容 · 任何 state 的名字
@@ -872,4 +873,82 @@ verdict 取值域是闭合三态。若认为不够用 → 退回 §6.3 修判据
 
 A-V2-1 / A-V3-1 的实例必须来自项目所有者或其显式委派者,逐字记录并注明日期与 issuer;
 本 gate 自己写下的判断不是它们的实例(R-V2-6 / R-V3-5)。
+```
+
+---
+
+## 7. Stage 3 —— 消费 authority · 填 verdict
+
+```text
+STAGE 3 — ADJUDICATION
+Stage 1 冻结于 a4e747da,Stage 2 冻结于 c39f5919,**两者都不再改动**。
+本 Stage:提名 V2 / V3 candidate · 消费 A-V2-* / A-V3-* · 按已冻结判据独立裁决 ·
+填 verdict 与(若 DEFERRED)deferral_reason。
+
+仍然禁止:改 Stage 1 / Stage 2 · 用 cell evidence 决定 predicate 内容 ·
+选 V_PRODUCT cell · 提名 equivalence class · 裁 win32×Node20 的 membership 或
+runner requirement · 创建 Step B 文件 · 改任何生产文件 · 重裁 A0 的历史 P2。
+```
+
+### 7.1 先决:两项声明类 authority 只能由 owner 实例化
+
+`A-V2-1` 与 `A-V3-1` 都是**产品意图**类 authority。按 `R-V2-6` / `R-V3-5`,本 gate
+作者代写一份产品判断再自我消费即判 RED —— 因此在 owner 或其显式委派者作出声明之前,
+两个节点都不可能取到 GREEN。
+
+本节先把**要问的问题逐字登记下来,不带任何答案**,提交后再请 owner 作答。这样 git 顺序
+证明的不只是「判据早于答案」,还包括**「问题早于答案」** —— 后者同样可能被答案塑形。
+
+```text
+c39f5919   判据冻结
+    ↓
+本 commit  问题登记,无答案
+    ↓
+后续       owner 声明,逐字记录 issuer / 日期 / provenance
+    ↓
+再后       candidate 提名 + 裁决
+```
+
+### 7.2 A-V2-1 待答两问(登记,未答)
+
+```text
+Q-S1  运行时行为那一侧,契约**主张覆盖到什么程度**?
+
+      这一问决定 A-V2-4 是否触发,而不只是决定野心大小:
+          主张「覆盖所有具备某特征的行为」   → A-V2-4 TRIGGERED,
+                                              须交出可重复的 derivation rule
+          主张「覆盖这几条,其余属 residual」 → A-V2-4 NOT APPLICABLE
+      两者都可以 GREEN(G-V2-3 只要求残余被写出来,不要求残余小)。
+
+Q-S2  哪些 **surface / scenario** 必须被这份契约覆盖?
+
+      备选来自 UDR 已区分过的几种安装形态与运行时行为。注意一处措辞差异:
+      UDR 的 A4 带 **mandatory 语义**,而 UDR 已裁定 D3 = RED(被现行产品政策挡住);
+      因此此处若选「published 包」,指的是**按当前 optional 语义发布的包**,
+      不是 mandatory —— 本 gate 无权改动那条政策。
+```
+
+### 7.3 A-V3-1 待答一问(登记,未答)
+
+```text
+Q-S3  verification state 的取值域怎么划?
+
+      判据已冻结的约束(不由本问处分):
+          G-V3-4  承载「该 cell 已 verified」的那个 state,必须要求每条 required
+                  predicate 均为 satisfied —— 来自 A0-B3,不在本声明的处分范围内。
+          R-V3-2  若把「结果不可得」并入「不成立」,必须写明这是有意为之并给理由。
+      本问处分的是:取值域有几个 state、各自的成立条件、「不可得」落在哪里。
+```
+
+### 7.4 此刻两个节点的状态
+
+```text
+V2  verdict = UNSET        V3  verdict = UNSET
+```
+
+```text
+UNSET **不是** DEFERRED。
+DEFERRED 是一个裁决结果,要走完 §6.2 的求值顺序才能得到;
+现在 candidate 尚未提名、authority 尚未实例化,裁决**还没有开始**。
+此刻写 DEFERRED,就是把「还没开工」记成「已裁定为待定」。
 ```
