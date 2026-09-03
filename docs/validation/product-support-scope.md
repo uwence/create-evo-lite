@@ -706,22 +706,29 @@ GREEN iff —— 以下全部成立:
     对每个 mode = DECLARATION_ONLY 的 segment:
     M5  给出明确的**产品理由**:为什么该 segment 只声明、不强制
         (例如失败模式已足够清晰、或收窄的用户代价高于收益)。
-    M6  **处置该 segment 上既有的强制或疑似强制**,两类的可选处置**不同**
+    M6  **candidate Y 必须对该 segment 上既有的强制 / 疑似强制给出处置**
         (按上文 attribution 判定「是否在该 segment 上」,不按交集):
 
-            **真实存在、且仍在生效的 hard gate**
-                合法处置只有两条:**移除 / 停用该 gate**,
+            **current X 中真实存在、且仍在生效的 hard gate**
+                candidate Y 的合法处置只有两条:声明 **REMOVE / DISABLE**,
                 或**把该 segment 改判为 INSTALL_TIME / RUNTIME**。
-                **「保留 + 只声明」不是合法结局** —— 那是合同自相矛盾:
+                「保留该 gate + 本段只声明」不是合法处置 —— 那是合同自相矛盾:
                 一边说本段不强制,一边真的在拦人。见 R4。
 
             **看起来像强制、但效果未证实的机制**
                 例如 package.json 的 `engineStrict`(§1 第二层)。
-                可以**保留**,但仅当已经证明它**不产生 enforcement**并明确标注其语义;
-                否则应移除,或先钉死其效果再据此改判 mode。
+                candidate Y **可以保留它**,但仅当已经证明它**不产生 enforcement**
+                并明确标注其语义;否则应声明移除,或先钉死其效果再据此改判 mode。
 
         只检查后者、漏掉前者是不够的 —— 一个**真的**在拦人的 gate 被记成
         「本 segment 不强制」,比一个疑似 gate 危害更大。
+
+        **求值对象是 candidate Y 的处置,不是当前树的状态。**
+        本 gate 只验证该处置是否**明确、自洽、且确实属于 candidate Y**;
+        **不要求生产树已经完成 removal / disable** —— 实际执行属于后续独立的
+        implementation gate。顺序必须是 `decision → implementation`,
+        若按当前树求值,就变成「先改生产代码才能通过裁决」,
+        既倒置了顺序,也与 §5.8 禁止改生产文件直接冲突。
     M7  规定**重评触发条件**:P1 对该 segment 的声明变化时,
         「只声明不强制」这个决定如何被重新评估。否则它会从一次裁定退化成默认现状。
 
@@ -733,10 +740,18 @@ RED iff:
         例如仅凭 package.json 里存在 `engineStrict` 就宣称安装期已被强制。
     R3  强制的边界**不是**从 P1 派生,而是从现有字段或现有 CI 矩阵反推出来的。
         方向只能是 `policy → enforcement`。
-    R4  某个 `DECLARATION_ONLY` 的 segment 上,**仍存在实际生效、且按 attribution
-        归属于该 segment 的 hard gate**。
-        这是合同自相矛盾,不能靠「已显式说明保留」通过 —— 上一版只要求说明,
-        于是「本段不强制;现有 gate 暂时保留」在字面上可以过关。
+    R4  candidate Y 把某个 segment 标为 `DECLARATION_ONLY`,却**同时保留**一个
+        按 attribution 归属于该 segment 的 active hard gate。
+        关键词是 **candidate retains**,不是 **current tree contains** ——
+        求值对象是候选的处置,不是树的现状(见 M6 末段)。
+        这是合同自相矛盾,不能靠「已显式说明保留」通过:
+        第一版只要求说明,于是「本段不强制;现有 gate 暂时保留」在字面上能过关。
+
+        三种情形因此清楚可分:
+            X 有 gate,Y 声明 REMOVE / DISABLE      → 不命中 R4,可裁决;
+                                                     实际移除由后续 implementation gate 执行
+            X 有 gate,Y 保留它,mode 仍 DECLARATION_ONLY  → R4,RED
+            X 有 gate,Y 把该 segment 改判为 RUNTIME / INSTALL_TIME → 走 M1–M4
 
 missing authority disposition:
     B1 未实例化 → DEFERRED。没有声明就没有 segment,也就没有可取 mode 的对象;
@@ -777,7 +792,8 @@ P4-M5  拿掉 → 「只声明不强制」变成默认现状而不是被裁定�
 P4-M6  拿掉 → 两类都会漏:`engineStrict` 这种**看起来像强制**的字段继续误导读者;
               更糟的是某个 segment 上**真的**存在 hard gate,却被记成「本段不强制」
 P4-M7  拿掉 → 声明后来收窄了,而「当初决定只声明」无人重评
-P4-R4  拿掉 → 「本段不强制」与一个**真的在拦人**的 gate 并存,靠一句「暂时保留」过关
+P4-R4  拿掉 → candidate 一边把某段标为「只声明」,一边保留一个**真的在拦人**的 gate,
+              靠一句「暂时保留」过关(求值对象是候选的处置,不是树的现状)
 ```
 
 三条交叉引用继承被引用条,不另作解释:P2-G4 ← B4 的定义;
