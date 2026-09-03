@@ -34,13 +34,18 @@ separate later spec, gated on the A/B evidence this spec makes collectable.
 
 ## Non-Goals
 
-- **Flipping the default to Zvec** — rejected for this spec (user decision). SQLite
+- ~~**Flipping the default to Zvec** — rejected for this spec (user decision). SQLite
   remains the default for the mother and all children. A future spec flips it after
-  A/B data on a real archive justifies it.
-- **Forcing Zvec on hive children** — rejected (user decision). `@zvec/zvec` is an
+  A/B data on a real archive justifies it.~~
+  **SUPERSEDED by `spec:memory-engine-default-flip`** — that "future spec" shipped;
+  `DEFAULT_ENGINE_CHOICE = 'zvec'` (`memory-index.js`). Noted here so a reader does
+  not take this bullet as live policy. The 2026-09-03 amendment below is a
+  *different* decision (installation, not default selection).
+- ~~**Forcing Zvec on hive children** — rejected (user decision). `@zvec/zvec` is an
   **optionalDependency**, not a hard dependency. Children that lack it (or a
   platform prebuild) fall back to `SqliteFtsIndex`. Nurture does not push a native
-  dependency onto children.
+  dependency onto children.~~
+  **SUPERSEDED 2026-09-03 by owner decision** — see the amendment below.
 - **Embeddings / hybrid / vector recall** — out of scope. FTS-only, same as the
   seam. `searchVector` stays absent from the interface.
 - **Runtime dual-write** — rejected. Writing every memory to both engines on the hot
@@ -223,3 +228,80 @@ inline per the rule's Fallback clause, with the same review discipline.
 - `content_exact` second field / preprocessing if the A/B reveals code-symbol misses
   the jieba+matchString router doesn't cover.
 - Embeddings → hybrid recall once a local embedding model is chosen.
+
+---
+
+## Amendment — 2026-09-03: children install Zvec by default
+
+```text
+issuer   项目所有者(uwence)
+date     2026-09-03
+supersedes  本文件 Non-Goals 段的「Forcing Zvec on hive children」
+```
+
+**新政策(owner 原话的两条)**:
+
+```text
+一、新建的子巢默认都安装并启用 zvec;zvec 安装失败才切到 sqlite。
+二、将 zvec pin 到 v0.7.0。
+```
+
+### 它改了什么、没改什么
+
+```text
+改了   templates/runtime/package.json 增加 optionalDependencies: @zvec/zvec
+       → 子巢 scaffold 时 npm ci 会尝试安装它
+改了   pin 0.6.0 → 0.7.0(产品根 + 子巢清单,两处由 T18e 锁在一起)
+
+没改   它**仍然是 optionalDependency**,不是硬依赖。
+       装不上 → npm ci 仍 exit 0 → scaffold 仍报 runtime-ready
+       → 引擎走既有的缺失路径回落 SqliteFtsIndex。
+没改   `nurture` 依然不向**存量**子巢推送原生依赖 —— 只有新建子巢会自带。
+       存量子巢由 assessEngineReadiness 继续给出安装建议,不自动代劳。
+没改   非 ASCII 路径的包容判定:resolveEngineDecision() 仍在任何 load 之前分类路径,
+       非 SAFE 直接返回 sqlite 决定(零加载)。默认安装不削弱这条守卫。
+```
+
+### 与 UDR 的关系(不重开它)
+
+`docs/validation/zvec-070-upgrade-decision.md` 的裁决保持原样,**本修订不回改任何 verdict**:
+
+```text
+D2 = RED / D3 = RED  的理由是「现行产品政策拒绝把 native 依赖推给 children」。
+UDR 自己写明:要重开,需要一条**新的、经授权的产品政策**明确 supersede 2026-07-07。
+本修订就是那条政策 —— 但**是否据此重裁 D2 / D3,需要一份独立的 consumption record**,
+不由本修订代劳。
+
+D1(pin)的 verdict 是 **DEFERRED**,理由是缺 A0(V_PRODUCT 与 coverage justification)。
+owner 选择在该 authority 缺位的情况下推进 pin。这是**风险接受,不是 D1 已解决** ——
+V_PRODUCT gate 仍 PARKED,`A0` 仍未实例化。
+
+D3 未被本修订触碰:它问的是 optional → **mandatory**,而本政策仍是 optional。
+```
+
+### 本次同时产出的证据
+
+UDR 的 `A2 scaffolded-runtime install compatibility` 当时是 **NOT INSTANTIATED**,理由逐字是:
+「没有任何一次测量覆盖『含 zvec 的 templates/runtime 清单复制进 `.evo-lite/` 后
+`npm ci --prefix .evo-lite`』」。本次改动**造出了该形态**,并在本机跑了一次:
+
+```text
+cell      win32 · x64 · node 24.x(本机单格,**不得外推**)
+scaffold  node bin/cli.js <child> -y            exit 0,runtime-ready
+install   @zvec/zvec 0.7.0 落入 <child>/.evo-lite/node_modules,解析路径在子巢内
+bindings  仅 bindings-win32-x64 落盘,其余 5 个 os 不匹配的 optional 被静默跳过
+engine    mem stats → model = zvec-jieba-fts(无回落警告)
+闭环      archive → 索引 → recall 命中,chunks 0 → 1
+```
+
+这**一格**满足 A2 的形态要求,但 A2 的作用域问题(哪些 cell)仍受 `A0` 未实例化限制,
+与 A1 当年的处境相同。**是否据此把 A2 判为 INSTANTIATED,同样属于那份独立的
+consumption record,不在本修订范围内。**
+
+### 顺带修掉的一处假陈述
+
+scaffold 一直无条件打印「运行时引擎已锁定为: sqlite-fts5-trigram」。它在本次改动**之前**
+就已经是假的:没有任何代码在 scaffold 时写 `memory-engine.json`,而运行时默认早已 flip 到
+zvec —— 那行字断言了一个**从未被检查、也从未被设置**的状态。现改为按磁盘实际情况报告,
+且**只 resolve、不 require**:在非 ASCII 路径上 require 原生模块可能直接终止进程,
+而那正是包容守卫存在的理由,scaffolder 不能自己去踩。
