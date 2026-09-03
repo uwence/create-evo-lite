@@ -24,7 +24,8 @@ P2 = DEFERRED  是 aa59c36c 当时 authority 状态下的**正确历史裁决**,
 
 ```text
 Step A   Cell Verification Contract (B3)
-             一个 cell 是什么 · 必须验证哪些性质 · 怎样合成「verified」
+             frozen input:cell 是什么(Q-A1 已裁,见 step-a §2)
+             decision:必须验证哪些性质 · 怎样合成一个 verification state
              ↓ 冻结后
 Step B   Evidence Acceptance & Delegation Contract
              什么**形式**的 evidence 足以承担某条 predicate
@@ -79,16 +80,57 @@ Step B
 
 **git history 本身成为 dependency gate** —— 这比把顺序写在同一份文件里更强。
 
-## 4. 全局非授权(对每个 Step 都成立)
+## 4. 非授权 —— 分两层
+
+第一版把「V_PRODUCT membership / equivalence class」写进了**对每个 Step 都成立**的
+永久禁令,而本文件 §2 又把 Step C 定义为「选定有限 cell / equivalence class」——
+**Step C 会被本 gate 自己永久禁止执行**。两者是不同层级的东西:
 
 ```text
-!= V_PRODUCT membership          != equivalence class / 任何外推
-!= A0 的 P3 coverage justification
-!= 修改 S_PRODUCT                != 修改 CI matrix
-!= enforcement                   != canonical support spec
-!= UDR 的 A0 satisfied           != UDR 的 D1 重裁
+永久禁令        整个 V_PRODUCT gate 自始至终都不得做
+分 Step 禁令    某个 Step **当前**不得做,因为它是后续 Step 的主语
+```
+
+### 4.1 永久非授权(整个 gate,任何 Step 都不得做)
+
+```text
+!= A0 的 P3 coverage justification    != 任何从 V_PRODUCT 到 S_PRODUCT 的外推
+!= 修改 S_PRODUCT                     != 修改 CI matrix
+!= enforcement                        != canonical support spec
+!= UDR 的 A0 satisfied                != UDR 的 D1 重裁
 != 任何实施或生产变更
 != 回改 A0 gate 已冻结的任何内容 —— 包括那句 `P2 = DEFERRED`
+```
+
+其中要分清的一对:
+
+```text
+提名一个 equivalence-class candidate     ← A0 的 P2 主语本来就含它
+    A0 P2 decision subject 原文:
+    「用于 release / 依赖兼容性判定的**有限、可枚举**验证集合,
+      或**一组具名的 equivalence class**。」
+
+用等价类做外推、并主张代表性               ← A0 的 P3(B5 equivalence-class authority)
+                                          **本 gate 自始至终不得偷做**
+```
+
+前者是本 gate 存在的目的,后者不是。
+
+### 4.2 分 Step 非授权
+
+```text
+Step A / Step B
+    != V_PRODUCT membership       != 提名任何 equivalence-class candidate
+    (它们是 Step C 的主语;在 contract 与 evidence 规则冻结之前提名,
+     就是「先看见格子、再写定义」)
+
+Step C
+    MAY  提名 V_PRODUCT candidate:有限 cell 集合 / 具名 equivalence class
+    但提名本身**不**建立代表性(P3),也**不**回改 A0 的历史 P2
+
+Step D
+    按已冻结的 Step A + Step B 裁决该 candidate;
+    仍受 §4.1 约束 —— 不得就此进入 P3
 ```
 
 ## 5. Status ledger

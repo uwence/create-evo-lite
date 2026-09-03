@@ -5,9 +5,12 @@
 
 ```text
 STAGE 1 — DECISION SUBJECT CONTRACT
-本次只回答「到底在裁什么」。不写 GREEN / RED,不写 required authority,
-不裁定任何一项,**不选任何 V_PRODUCT cell**,**不写任何 predicate 的具体内容**,
-不改任何生产文件。
+本次只回答「到底在裁什么」。本 Step 的 decision node 是 **V2 与 V3 两个**。
+不写 GREEN / RED,不写 required authority,**不裁定 V2 / V3**,
+**不选任何 V_PRODUCT cell**,**不写任何 predicate 的具体内容**,不改任何生产文件。
+
+cell identity(Q-A1)**不是**本 Step 的 decision node —— 它已在本 Stage 之前
+被裁定,作为 frozen input 进入,见 §2。
 ```
 
 ```text
@@ -28,7 +31,7 @@ A0 Stage 3 建立的只有这一句:
 
 **不得**把它扩张成「仓库中不存在任何相关材料」。判据绑定的是 **authority
 provenance**,不是全文检索的质量 —— 这是 A0 Stage 3 复审逐条改掉过的三处措辞之一。
-本文件下面三个节点的 `current X` **全部按同一语义书写**。
+本文件的 `current X` **全部按同一语义书写**。
 
 **已经冻结、可以直接消费的上游事实**(来自 A0,不是本 gate 重新裁定的):
 
@@ -49,17 +52,45 @@ A0 的 P2-R1 已把 evidence laundering 定为 RED:
     把「某一条 predicate 成立」当作「该 cell 已 verified」。
 ```
 
-## 2. Q-A1 已裁(2026-09-03):install shape **不是**第四个坐标轴
+## 2. Frozen input —— Cell Identity(Q-A1)
+
+### 2.1 provenance:它为什么是 input,而不是本 Step 的 decision node
+
+Q-A1 是**交给复审裁的 architecture question**,并已于 2026-09-03 裁定 —— 时间上
+**早于本 Step 的任何 criteria**。这条时间关系决定了它的层级:
+
+```text
+如果继续把它挂成 decision node V1,那么本工作线一路依赖的那句话
+    「criteria 冻结于答案之前,所以判据不可能被答案塑形」
+对 V1 就是**假的** —— 它的答案已经先于 criteria 出现在 git history 里。
+```
+
+处理方式**不是**把答案删掉、假装它仍未知 —— 那才是重写 evidence history。
+正确的做法是承认真实 provenance,把它放到对应的层:
+
+```text
+Q-A1  =  external architecture disposition
+      =  frozen prerequisite to Step A
+
+V1    =  不再是 decision node
+         没有 subject_status,没有 verdict,不进入 Stage 2 criteria
+```
+
+**本 Step 此后只有 V2 与 V3 两个 decision node**,Stage 2 也只为这两个写判据。
+
+### 2.2 disposition(冻结)
 
 ```text
 cell coordinates  =  (OS, arch, Node major)
+
+    CellIdentity := { os, arch, nodeMajor }
 
 install shape     ≠  coordinate
 install shape     =  verification surface / scenario,
                      表达在 V2 的 predicate schema **之内**
 ```
 
-三层理由(复审给出,记录在此作为本 Step 的冻结输入):
+### 2.3 rationale —— 复审给出的三层理由
 
 ```text
 一、S_PRODUCT 冻结的支持空间就是 OS × arch × Node。
@@ -82,14 +113,55 @@ install shape     =  verification surface / scenario,
     policy 三类不同变量压成一维枚举。
 ```
 
-**这只是 architecture disposition。** 具体有哪些 surface / predicate,
-仍然要等 V2 走完自己的 Stage 3,本 Stage 一个都不写。
+理由二所引的那个歧义**是真的在证据里出现过的**,记录如下 —— 它现在是本 disposition
+的 rationale,不再是某个节点的 candidate state:
+
+```text
+A0 全篇使用「cell」而未定义它;S_GATE 的五格写作 (os, node) 二元组,arch 隐含。
+这些既有用法**不足以**消除 install-surface 歧义:
+
+  UDR 在**同一个 (os, node) 网格**上区分了三种安装形态,
+  并列为三条**互不蕴含**的 authority:
+      A1  install / load compatibility        母体安装形态
+      A2  scaffolded-runtime install          子项目安装形态
+      A4  published-package installability    mandatory 语义
+  UDR Stage 3 裁定:A1 INSTANTIATED,而 A2 NOT INSTANTIATED ——
+  **同一批格子上,一种安装形态被证实、另一种从未被测过。**
+
+在当前 governing authority 中,没有任何 source 被提名并消费为 cell-coordinate
+definition;**不由此推出**仓库或历史材料中不存在相关定义。
+```
+
+### 2.4 这条 disposition 不授权什么
+
+```text
+!= 选任何 cell(Step C)          != 规定验证什么(V2)
+!= 规定谁来验证、需要几次观察(Step B)
+!= 修改 S_PRODUCT
+```
+
+**它只是 architecture disposition。** 具体有哪些 surface / predicate,仍然要等 V2
+走完自己的 Stage 3,本 Stage 一个都不写。
+
+### 2.5 从第一版 V1 移出的一项(记录去向)
+
+第一版的 V1 还要求回答「同一 cell 的重复运行如何计(单次 / 多次 / 是否需要稳定性)」。
+那不是「一个 cell 是什么」,而是「**需要多少 evidence 才能接受某个 predicate
+result**」—— 即 evidence sufficiency,放在坐标系里会把 coordinate identity 与
+evidence acceptance 混成一层。合法去向有二:
+
+```text
+若「重复稳定」本身是产品要求的性质   → V2 定义一条 stability / repeatability predicate
+若只是「该 predicate 需要几次观察」  → **Step B**(Evidence Acceptance & Delegation)
+```
+
+复审倾向后者;本 Stage 只记录去向,不裁定。
 
 ## 3. Decision nodes
 
 沿用两条独立状态轴:`subject_status` 与 `verdict`,任何一条都不得写进另一条。
 
-### 3.0 主语被拆成三个,不是一个
+### 3.0 主语的实际经过(照实记录)
 
 复审最初的形状是单一主语「一套具名、可重复应用的 cell-verification contract」。
 核对之后,它至少含三个可独立取值、且互不蕴含的决定:
@@ -102,65 +174,14 @@ V3  怎样由逐 predicate 的结果合成一个 verification state
                                  而 A0-P2-R1 恰恰把「拿一条当全部」定成了 RED
 ```
 
-拆开的依据不是对称美感:V1 有一个**已在证据里出现过的**具体歧义 —— 见 V1 的 X。
-
----
-
-### Decision V1 —— cell 的坐标系
+拆分本身仍然成立:这三件事确实互不蕴含。**变化的只是 V1 的层级** —— Q-A1 在
+Stage 2 之前就把它裁完了,所以它按 §2.1 降为 frozen input,而不是继续留在这里
+装作一个待裁的节点。本 Step 实际进入 Stage 2 的 decision node 是:
 
 ```text
-decision subject:    「一个 product-support cell」由哪些维度构成。
-                     它是本 Step 其余两个节点的**主语前提**:
-                     不先说清 cell 是什么,「该 cell 是否 verified」就无从谈起。
-subject_status:      INSTANTIATED
-
-current state X:     **在当前 governing authority 中,尚无被提名并消费的
-                     cell-coordinate definition。**
-                     A0 全篇使用「cell」而未定义它;S_GATE 的五格写作 (os, node)
-                     二元组,arch 隐含 —— 这些既有用法**不足以消除 install-surface
-                     歧义**,而该歧义在证据里确实出现过:
-
-                       UDR 在**同一个 (os, node) 网格**上区分了三种安装形态,
-                       并列为三条**互不蕴含**的 authority:
-                         A1  install / load compatibility        母体安装形态
-                         A2  scaffolded-runtime install          子项目安装形态
-                         A4  published-package installability    mandatory 语义
-                       UDR Stage 3 裁定:A1 INSTANTIATED,而 A2 NOT INSTANTIATED ——
-                       **同一批格子上,一种安装形态被证实、另一种从未被测过。**
-
-                     **不由此推出**仓库或历史材料中不存在相关定义。
-
-candidate state Y:   一个具名的坐标系定义。按 §2 的 Q-A1 裁定,方向已定为
-
-                         CellIdentity := { os, arch, nodeMajor }
-
-                     Y 仍需给出:该定义的精确书写形式、取值域如何与 S_PRODUCT 的
-                     三轴对齐,以及为什么这三维**足以**标识一个 product-support cell。
-
-observable delta:    本文件中的一节定义;后续 Step C 的 V_PRODUCT 逐 cell 列举
-                     将按该坐标系书写。**本 Step 不产生任何生产文件变化。**
-
-authority boundary:  **产品 / 架构判断。** 没有任何测量能回答「cell 应该有几个维度」——
-                     测量只能告诉我们「不同安装形态确实会给出不同结果」(UDR 已给出),
-                     而「因此它是否该成为坐标轴」是判断(§2 已裁:不是)。
-
-does NOT authorize:  不选任何 cell(Step C)· 不规定验证什么(V2)
-                     · 不规定谁来验证、需要几次观察(Step B)· 不改 S_PRODUCT
-
-verdict:             UNSET
+V2   必须验证哪些性质
+V3   predicate 结果 → verification state
 ```
-
-**从 V1 移出的一项(记录去向):** 第一版曾要求 V1 回答「同一 cell 的重复运行如何计
-(单次 / 多次 / 是否需要稳定性)」。那不是「一个 cell 是什么」,而是
-「**需要多少 evidence 才能接受某个 predicate result**」—— 即 evidence sufficiency,
-放在 V1 会把 coordinate identity 与 evidence acceptance 混成一层。合法去向有二:
-
-```text
-若「重复稳定」本身是产品要求的性质   → V2 定义一条 stability / repeatability predicate
-若只是「该 predicate 需要几次观察」  → **Step B**(Evidence Acceptance & Delegation)
-```
-
-复审倾向后者;本 Stage 只记录去向,不裁定。
 
 ---
 
@@ -191,7 +212,7 @@ candidate state Y:   一份 verification predicate schema。每条至少含
                      而被覆盖。
                      **本节点只定义「验证什么」,不填任何 cell 的结果。**
 
-observable delta:    本文件中的一节 schema。
+observable delta:    本文件中的一节 schema。**本 Step 不产生任何生产文件变化。**
 
 authority boundary:  **混合。**
                        「哪些性质对本产品要紧」            产品 / 架构判断
@@ -201,6 +222,7 @@ authority boundary:  **混合。**
 
 does NOT authorize:  不规定谁可以承担哪条 predicate、需要几次观察(Step B)
                      · 不规定几条成立才算 verified(V3)· 不选 cell(Step C)
+                     · 不改 §2 的 CellIdentity
 
 verdict:             UNSET
 ```
@@ -223,26 +245,28 @@ current state X:     **当前没有 source 被提名、验证并消费为 predic
                      因此「5 条里成立 4 条」目前无解。
                      **不由此推出**仓库或历史材料中不存在相关规则。
 
-candidate state Y:   一条合成规则,至少要给出:
-                       · 一个**有限的 verification state 取值集合**。
-                         起点参考(是否需要更多状态留待 Stage 2/3 决定):
-                             VERIFIED · NOT_VERIFIED · UNRESOLVED
-                       · 每个 state 的成立条件
-                       · 某条 predicate 结果**不可得**(而非失败)时落在哪个 state ——
-                         「不可得」与「失败」是两回事
+candidate state Y:   一条合成规则。本 Stage 只冻结它**必须提供什么**,
+                     **不预先给出任何候选状态名** ——
+
+                       · 一个**有限的** verification-state 取值域
+                       · 每个 state 各自的成立条件
+                       · 「某条 predicate 的结果**不可得**」与「该 predicate
+                         **失败**」不得被静默合并成同一个 state
+
+                     取值域到底有几个状态、各叫什么,留给本节点自己的 Stage 2 / 3。
 
 observable delta:    本文件中的一节规则。
 
 authority boundary:  **产品 / 架构判断。** 它决定一个 cell 的语义强度,测量给不出门槛。
 
-does NOT authorize:  不改 V1 / V2 的取值 · 不选 cell
+does NOT authorize:  不改 §2 的 CellIdentity · 不改 V2 的取值 · 不选 cell
                      · **不裁定某个 state 能否进入 V_PRODUCT(Step C)**
                      · 不谈代表性(那是 A0 的 P3)
 
 verdict:             UNSET
 ```
 
-**两处第一版的越界,记录在此以免回退:**
+**三处第一版的越界,记录在此以免回退:**
 
 ```text
 一、V3 曾要求回答「若允许部分成立,该 cell 能否进入 V_PRODUCT」。
@@ -256,13 +280,19 @@ verdict:             UNSET
         V_PRODUCT → S_PRODUCT representativeness   (A0 的 P3)
     混成一件事。本 Step 一律改用中性说法:partial evidence · unresolved predicate ·
     non-verified with recorded predicate results。**不复用 P3 的 `BOUNDED`。**
+
+三、V3 的 candidate Y 曾列出三个「起点参考」状态名。它当时不构成逻辑冲突,
+    但在「criteria 先于取值」的结构里没有必要 —— Stage 2 会很自然地围着那三个名字
+    写判据,然后无法回答「是判据得出了三态模型,还是三态模型提前塑造了判据」。
+    已删,只留 finite domain + failure/unobtainable 区分这两条形状要求。
 ```
 
 ## 4. 登记但**不**回答的问题
 
 ```text
-Q-A1  install shape 是否第四坐标轴?     **已裁,见 §2** —— 不是;它是 V2 的
-                                        verification surface / scenario。
+Q-A1  install shape 是否第四坐标轴?     **已裁,且已降为 frozen input** —— 不是;
+                                        它是 V2 的 verification surface / scenario。
+                                        见 §2;它**不是**本 Step 的 decision node。
 Q-A2  文件是否按 Step 拆分?             **已裁** —— 拆,一个 Step 一份文件;
                                         见 `gate.md` §3。
 
@@ -285,8 +315,10 @@ Q-A3  `win32 × Node20` 是本 Step 的**压力测试 referent**,不是待答问
 不回答 Q-A3
 不选任何 V_PRODUCT cell              不写任何 predicate 的具体内容
 不裁定 win32 × Node20 的 membership 或 runner requirement
-不裁定任何一项                        不修改任何生产文件
+不裁定 V2 / V3(本 Step 仅有的两个 decision node)
+不修改任何生产文件
+不把 Q-A1 重新表述成「在 criteria 之后才裁的」—— 它先于 criteria,见 §2.1
 不回改 A0 gate 已冻结的任何内容 —— 包括那句 `P2 = DEFERRED`
 ```
 
-全局非授权见 `gate.md` §4。
+全局与分 Step 的非授权见 `gate.md` §4。
