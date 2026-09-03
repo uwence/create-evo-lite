@@ -479,7 +479,8 @@ A-V2-1  product-property & surface-taxonomy declaration authority   UNCONDITIONA
         issuer 是本项的一部分,不是形式要件。**「存在一份声明」不等于「声明者有
         authority」** —— 没有 issuer 约束时,Stage 3 可以自己写一句
         「我声明这些性质要紧」再把它消费成 A-V2-1,那是 self-authorization,
-        由 R-V2-6 判 RED。
+        由 R-V2-6 判 RED。判的是**来源**,不是这段文字最终誊写在哪个文件里
+        (见 §6.6 R-V2-6)。
 
         (a) 与 (b) 合为一项,不拆:两者是同一类问题(产品意图),同一个 issuer,
         且没有任何一方可以独立实例化 —— Stage 1 已冻结「每条 predicate 携带其
@@ -493,6 +494,13 @@ A-V2-2  mechanism authority                               CONDITIONAL
         触发条件:某条 predicate 的 assertion **描述某个机制的实际行为**。
         纯规范性断言(「必须成立」)不触发。
 
+        实例化条件(最低成立门槛):
+            该实例必须**独立于 candidate 的断言本身**,建立该断言所依赖的机制
+            实际如何行为,以及该行为在什么 scope / version 范围内成立。
+            **candidate 复述一遍同一事实不构成 authority** —— 那是断言,不是它的依据。
+        判据不规定该实例必须是代码、文档还是实测,也不规定要观察几次 ——
+        那属于 Step B,本 Step 不得侵入。
+
 A-V2-3  —— 已并入 A-V2-1。编号留空,不再复用。
         它原为「surface-definition authority(条件性:仅当 schema 使用 surface 区分)」。
         两个缺陷:其一,Stage 1 已冻结每条 predicate 都带 surface,**触发条件恒真**,
@@ -504,7 +512,19 @@ A-V2-4  scope-derivation authority                        CONDITIONAL
         触发条件:某条 predicate 的**适用范围**由一个需要枚举才能确定的集合定义
         (形如「产品中所有具备某类特征的路径」)。
         若 schema 改为逐条具名该范围,本项 NOT APPLICABLE。
+
+        实例化条件(最低成立门槛):
+            该实例必须给出**可追溯的集合来源**,或一条**可重复执行的推导规则**,
+            足以让第三方重新得到该 predicate 所声称的 applicability set。
+            **「candidate 列了这几项」本身不是 derivation authority** ——
+            那是结论,不是得到结论的方法;它无法回答「有没有漏」。
+        同样不规定来源形式,那属于 Step B。
 ```
+
+两项**条件性** authority 的实例化条件写在这里,是因为 G-V2-7 只说「已触发的必须
+INSTANTIATED」,却没说什么才算 INSTANTIATED。没有这两段,`INSTANTIATED` 就是一个
+**没有判据的标签**:candidate 写一句「机制就是这样」,Stage 3 把它命名为 mechanism
+authority,再标成已实例化。
 
 A-V2-1 的实例化必须沿用 A0 已经跑通的次序:
 
@@ -535,8 +555,13 @@ G-V2-4  schema **参数化于 CellIdentity**:它规定「给定一个 cell,requi
 G-V2-5  每条 predicate 的 assertion **可证伪**:schema 写明什么观察会使它为假。
         不要求写明由谁观察、观察几次 —— 那是 Step B。
 
-G-V2-6  若 schema 自行规定了单条 predicate 的结果取值域,该取值域必须与 V3 的一致
-        (§6.10)。若 schema 不规定(推荐形态),本项自动成立。
+G-V2-6  —— 已删除。编号留空,不再复用。
+        它原为「若 schema 自行规定了单条 predicate 的结果取值域,须与 V3 的一致」。
+        那句「若…则与 V3 比较」本身就是一条 **conditional LOGICAL edge**:V3 的
+        candidate 尚不存在时,该条根本无法求值 —— 而 §6.10 同时冻结着「V2 / V3 可
+        独立裁决、顺序任意」。嘴上说无边、判据里连一条,是不能同时成立的。
+        替代:outcome domain **唯一归 V3**(§6.10),V2 越界由 R-V2-7 判 RED ——
+        该项只看 V2 自己的文本,不引用 V3,因此不产生边。
 
 G-V2-7  §6.4 中所有**已触发**的 required authority 状态均为 INSTANTIATED。
 
@@ -568,9 +593,21 @@ R-V2-5  schema 的**成立**以修改某个生产文件为前提。
         注意区分:某条 predicate 在当前产品上会**失败**,不属本项 —— 那是 cell 的结果,
         属后续 Step;predicate 有权要求产品尚未具备的性质。
 
-R-V2-6  self-authorization:本 gate 自己写下的文字被消费为 A-V2-1 的实例。
-        A-V2-1 的实例必须可归属于**项目所有者或其显式委派者**,逐字记录并注明日期;
-        candidate 作者对「这些性质要紧」的判断,无论写得多有道理,都不是该 authority。
+R-V2-6  self-authorization —— 判的是 **provenance,不是文字写在哪个文件里**。
+
+            RED:  adjudicator / candidate 作者自己产生的产品判断,
+                  被当作 owner 或委派者的 authority 消费。
+            不是 RED:  在本文件中**逐字转录**一份独立作出的 owner / 委派者声明,
+                  并记明 issuer、日期与可追溯的来源,然后消费它。
+
+        A0 的 B1 走的正是后一条路径 —— 声明由所有者作出,逐字誊写进 decision record
+        再消费。若按「文字出现在 gate 文件里就算自证」来判,连合法记录 owner 声明这件事
+        都做不了。**file location ≠ authority provenance。**
+
+R-V2-7  boundary violation:schema 自行建立一套**单条 predicate 的结果取值域**。
+        该边界已由 §6.10 划归 V3。V2 的 assertion 只需写明「什么事实使它成立 / 不成立」
+        (G-V2-5),不拥有 outcome taxonomy 的定义权。
+        本项只检 V2 自己的文本,**不引用 V3 的 candidate**,因此不产生 verdict 边。
 ```
 
 ### 6.7 V3 —— required authority
@@ -599,8 +636,18 @@ authority 把它合法化。
 ```text
 G-V3-1  规则给出一个**有限**的 verification-state 取值域,并逐个给出成立条件。
 
-G-V3-2  规则显式给出**单条 predicate 的结果取值域**,其中「失败」与「结果不可得」
-        是**不同的取值**。—— Stage 1 已冻结的形状要求。
+G-V3-2  规则显式给出**单条 predicate 的结果取值域**,且该取值域至少在**语义上**区分
+        以下三类,三者互不合并:
+
+            1  assertion 成立        (G-V3-4 的 satisfied 所指)
+            2  assertion 不成立      (失败)
+            3  结果不可得            (没看,而非看了不过)
+
+        **三者叫什么名字由 candidate 决定,判据不给 token。**
+        第 2 / 3 类的分离是 Stage 1 已冻结的形状要求;第 1 类是本轮补上的 ——
+        没有一个可明确解释为「assertion 成立」的取值,G-V3-4 的「每条 required
+        predicate 均为 satisfied」就没有机械可判的语义载体,取值域写成
+        {失败, 不可得, 其它} 也能形式上满足本条。
 
 G-V3-3  规则是**全函数**:对该取值域上每一种可能的结果组合都有定义,没有落空组合。
 
@@ -654,8 +701,10 @@ R-V3-3  规则对某些结果组合无定义(非全函数),从而要靠 Stage 3 
 
 R-V3-4  规则复用 A0 P3 的 `BOUNDED` 作为 state 名(Stage 1 已冻结不复用)。
 
-R-V3-5  self-authorization:本 gate 自己写下的状态划分被消费为 A-V3-1 的实例。
-        —— 与 R-V2-6 同型。
+R-V3-5  self-authorization:adjudicator / candidate 作者自己作出的状态划分,
+        被当作 owner 或委派者的 authority 消费。
+        —— 与 R-V2-6 完全同型,包括那条区分:逐字转录一份独立作出的声明并注明
+        issuer / 日期 / 来源,**不是**本项;判的是 provenance,不是文字写在哪里。
 ```
 
 ### 6.10 V2 与 V3 的依赖:没有 verdict 传播边
@@ -684,12 +733,24 @@ Stage 3 **不得**制造「V2 = DEFERRED,所以 V3 也 DEFERRED」——
 Stage 1 没有裁定它。**本 Stage 做出分配**(这是 Stage 2 的行为,不是对 Stage 1 的
 转述,复审可据此驳回):
 
-    归 V3。
+    **唯一归 V3**,V2 不拥有这项定义权(不是「可以定义但要一致」)。
     理由:V3 的主语就是 outcome → state 的合成,而 Stage 1 已经要求它区分
     「不可得」与「失败」—— 那本身就是一条关于单条结果取值域的规定。
 
-    V2 相应地不得另立一个冲突的取值域;其 assertion 必须可被求值到 V3 的取值域上。
-    该约束落在 G-V2-5 与 G-V2-6,不产生 verdict 传播。
+    V2 那一侧只需 G-V2-5:写明什么事实使某条 assertion 成立 / 不成立。
+    越界(自建一套 outcome taxonomy)由 R-V2-7 判 RED。
+```
+
+**「唯一归属」与「可定义但须一致」的差别不是措辞,而是有没有一条边:**
+
+```text
+第一版写的是 G-V2-6「若 V2 定义了,须与 V3 一致」。
+    V3 的 candidate 尚不存在时,这一条无法求值
+    → 事实上就是一条 conditional LOGICAL edge:V2 的裁决要等 V3
+    → 与本节冻结的「可独立裁决、顺序任意」直接冲突。
+
+改成唯一归属后,R-V2-7 只问「V2 自己的文本里有没有一套 outcome taxonomy」,
+不引用 V3 的任何内容 → 两个节点的 verdict 仍然正交。
 ```
 
 ### 6.11 突变自检:逐条承重判据,拿掉它什么会通过
@@ -708,8 +769,6 @@ G-V2-4 拿掉  →  schema 退化成逐 cell 手工列举:V_PRODUCT 加一格就
                 且「这一格为什么少要求一条」无从追问。
 G-V2-5 拿掉  →  predicate 可以写成不可证伪的断言,
                 「它成立」与「它不成立」在观察上无差别,V3 的输入随之失去意义。
-G-V2-6 拿掉  →  V2 与 V3 各自定义结果取值域,合成函数的输入类型不确定,
-                而两个节点又互不传播 —— 冲突要到 Step D 才炸。
 G-V2-7 拿掉  →  已触发但未实例化的 authority 不再阻挡 GREEN,
                 一份没有 owner 声明支撑的 schema 可以直接 GREEN。
 G-V2-8 拿掉  →  surface 名字可以只出现在 predicate 行里而从不定义,
@@ -725,9 +784,19 @@ R-V2-5 拿掉  →  判据可以要求先改生产代码才成立,
                 implementation 反过来决定 decision。
 R-V2-6 拿掉  →  Stage 3 自己写一句「这些性质要紧」,再把它消费成 A-V2-1;
                 A-V2-1 的 issuer 约束形同虚设。
+R-V2-6 若按「文字写在 gate 文件里」来判(第一版的读法)
+             →  反向误杀:逐字转录 owner 声明再消费 —— A0 的 B1 用的正是这条路径 ——
+                会被判红,Stage 3 连合法记录声明都做不了。
+R-V2-7 拿掉  →  V2 自建一套 outcome taxonomy,与 V3 的取值域并存;
+                两者互不传播,冲突要到 Step D 才炸。
+                (若改回 G-V2-6 那种「若定义了须与 V3 一致」,则等于承认一条
+                 conditional LOGICAL edge,§6.10 的正交性当场失效。)
 G-V3-1 拿掉  →  state 取值域可以无限或开放,「该 cell 处于哪个 state」不可判定。
 G-V3-2 拿掉  →  单条结果的取值域没写,或把「不可得」并进「失败」,
                 G-V3-4 的「全部 satisfied」也就无从判断。
+G-V3-2 只保留「失败 ≠ 不可得」而不要求存在「成立」这一类(第一版的写法)
+             →  取值域可以是 {失败, 不可得, 其它},形式上满足本条,
+                但 G-V3-4 的 `satisfied` 没有语义载体,「全部 satisfied」不可机械判定。
 G-V3-3 拿掉  →  「5 条成立 4 条」在规则里无定义,靠 Stage 3 临场补,
                 而这正是 V3 存在的理由。
 G-V3-4 拿掉  →  被列为 required 的 predicate 失败,该 cell 仍可叫 verified,
@@ -749,6 +818,12 @@ R-V3-5 拿掉  →  同 R-V2-6,在合成层。
 §6.2 的 reason 优先级拿掉
              →  三个取值同时成立时 Stage 3 各记各的,
                 同一种阻塞在 ledger 里呈现成不同原因。
+A-V2-2 的实例化条件拿掉
+             →  candidate 写一句「机制就是这样」,Stage 3 命名它为 mechanism authority
+                并标 INSTANTIATED;断言自己给自己当依据。
+A-V2-4 的实例化条件拿掉
+             →  「candidate 列了这几项」即算 derivation authority;
+                「有没有漏」这个问题永远不会被问出来。
 ```
 
 ### 6.12 Stage 3 之前不得做的事
