@@ -402,19 +402,35 @@ authority 状态   写作 NOT INSTANTIATED   (带空格)    A0 §878 / UDR §121
 任何**已触发**的 required authority 为 `NOT INSTANTIATED` 时,依赖它的 GREEN 条件
 不成立;在没有 RED 的情况下 → DEFERRED。
 
-DEFERRED 必须同时记录 `deferral_reason`,恰好取一个:
+DEFERRED 必须同时记录 `deferral_reason`。三个取值会**同时成立**(没有 candidate 时
+authority 通常也没实例化),因此它不能是「挑一个」,必须是一个**确定的函数**:
 
 ```text
-MISSING_AUTHORITY        某项已触发的 required authority 未实例化
-CANDIDATE_ABSENT         本轮没有为该节点提出 candidate
-CANDIDATE_FAILS_CLAUSE   candidate 已提出、材料齐备,但某条 GREEN 不成立
-                         —— 这一条**不是**「还差材料」,是「这份 candidate 不够」
+若 verdict = DEFERRED,按顺序取第一个命中者:
+
+    1  该节点本轮没有 candidate
+           → CANDIDATE_ABSENT
+    2  否则,存在任一**已触发**的 required authority = NOT INSTANTIATED
+           → MISSING_AUTHORITY
+    3  否则
+           → CANDIDATE_FAILS_CLAUSE
+              candidate 已提出、材料齐备,但某条 GREEN 不成立
+              —— 这**不是**「还差材料」,是「这份 candidate 不够」
 ```
 
-不加这条区分,一份写坏的 candidate 会以「authority 未就绪」的面貌进入 ledger,读者据此
-以为补材料即可,而真正要做的是重写 candidate。
+顺序不是任选的:排在前面的是**更靠近源头的阻塞**。没有 candidate 时谈「哪条 GREEN
+不成立」没有对象;材料没齐时谈「candidate 不够」会冤枉一份可能本来合格的 candidate。
 
-### 6.3 为什么不设中间 verdict,以及什么会迫使引入
+```text
+记录一条**不蕴含**其余两条不成立。Stage 3 可以在散文里写明还同时缺什么,
+但 ledger 字段只取上面这个函数的输出 —— 否则 reason 自己就不确定,
+而它存在的全部目的正是让 ledger 不误导。
+```
+
+不加 `CANDIDATE_FAILS_CLAUSE` 这一格,一份写坏的 candidate 会以「authority 未就绪」的
+面貌进入 ledger,读者据此以为补材料即可,而真正要做的是重写 candidate。
+
+### 6.3 为什么不设中间 verdict —— 且不留无 verdict 的出口
 
 本 Step **不定义中间 verdict**,也不复用 A0 P3 的 `BOUNDED`(Stage 1 已冻结此项)。
 
@@ -425,37 +441,79 @@ V2 / V3 的主语都是「一份 contract 是否成立」,不是「它覆盖了�
 「野心小」不构成中间态。
 ```
 
-唯一会迫使引入中间态的情形:
+第一版在这里留了一个**无 verdict 的出口**:candidate 只在 CellIdentity 的真子集上
+成立时「停下上报,不发 verdict」。那与上一节自称的**总函数**直接冲突 —— 取值域要么是
+闭合的三态,要么不是,不能对某类合法 candidate 例外。已删。该情形的正确去向:
 
 ```text
-candidate 完整、自洽、满足下限,但其成立**只在 CellIdentity 的一个真子集上**,
-且该边界是可执行的。这时「成立」与「不成立」都是错误描述。
+candidate 只在 CellIdentity 的真子集上成立
+    → 它没有满足自己的 subject:V2 的 schema 本就要求对**给定任一 cell**
+      给出 required predicate 集合(G-V2-4 的参数化要求)
+    → G-V2-4 不成立
+    → 无 RED 时 → DEFERRED / CANDIDATE_FAILS_CLAUSE
+```
 
-Stage 3 若遇到此形,**必须停下上报**,不得就地发明一个 verdict。
+这不是把问题藏进 DEFERRED:`CANDIDATE_FAILS_CLAUSE` 恰好说明的就是「材料齐备,是这份
+candidate 不够」,并且 ledger 会指名是哪一条 GREEN 不成立。
+
+```text
+若 Stage 3 认为三态确实不够用,那是一次 **Stage 2 判据修订** ——
+退回本节、改判据、重新冻结、重新复审,
+**不得**在 Stage 3 就地扩张 verdict 取值域。
 ```
 
 ### 6.4 V2 —— required authority
 
+编号用 `A-V2` / `A-V3` 前缀。**与 A0 的 `B0–B7`、UDR 的 `A0–A9` 不共享,不得互相顶替**
+—— 沿用 A0 §5.2 立下的同一条纪律。
+
 ```text
-A-V2-1  product-property declaration authority            UNCONDITIONAL
-        谁有权说「这些性质对本产品要紧」。Stage 1 已把它归为产品 / 架构判断,
-        因此由**声明**建立(与 A0 的 P1 同型),不需要测量。
+A-V2-1  product-property & surface-taxonomy declaration authority   UNCONDITIONAL
+
+        必须给出:**项目所有者**(或所有者显式委派的 product / architecture
+        authority)的声明,内容为
+            (a) 哪些性质是「一个 cell 被称为 verified」必须验证的
+            (b) 这些性质要覆盖哪些 surface / scenario
+        并给出理由。
+
+        issuer 是本项的一部分,不是形式要件。**「存在一份声明」不等于「声明者有
+        authority」** —— 没有 issuer 约束时,Stage 3 可以自己写一句
+        「我声明这些性质要紧」再把它消费成 A-V2-1,那是 self-authorization,
+        由 R-V2-6 判 RED。
+
+        (a) 与 (b) 合为一项,不拆:两者是同一类问题(产品意图),同一个 issuer,
+        且没有任何一方可以独立实例化 —— Stage 1 已冻结「每条 predicate 携带其
+        surface」,所以一份只答 (a) 的声明无法产出一份可用的 schema。
+
+        与 A0 的 B1 同型(产品意图类,测量产生不了),但**不继承** A0 §5.1 给
+        normative authority 的三态(明确否定 → RED)。那三态适用于「声明一个命题」;
+        本项声明的是**内容**,其反面只是另一份内容不同的声明,不构成对命题的否定。
 
 A-V2-2  mechanism authority                               CONDITIONAL
         触发条件:某条 predicate 的 assertion **描述某个机制的实际行为**。
         纯规范性断言(「必须成立」)不触发。
 
-A-V2-3  surface-definition authority                      CONDITIONAL
-        触发条件:schema 使用 surface / scenario 作区分。
-        ⚠ UDR 的 A1 / A2 / A4 只能作为 **provenance 引用**,不得据以继承 authority ——
-        V2 的 current X 已冻结:它们是为那一次裁决命名的 authority,
-        不是可重复适用于任意 cell 的契约。surface 集合必须在 schema 内自行定义。
+A-V2-3  —— 已并入 A-V2-1。编号留空,不再复用。
+        它原为「surface-definition authority(条件性:仅当 schema 使用 surface 区分)」。
+        两个缺陷:其一,Stage 1 已冻结每条 predicate 都带 surface,**触发条件恒真**,
+        「条件性」是假的;其二,它写的是「surface 集合必须在 schema 内自行定义」——
+        那是 candidate 的**结构要求**,回答不了「谁授权这套 taxonomy 是产品需要覆盖的」。
+        结构要求移入 G-V2-8,授权问题归 A-V2-1。
 
 A-V2-4  scope-derivation authority                        CONDITIONAL
         触发条件:某条 predicate 的**适用范围**由一个需要枚举才能确定的集合定义
         (形如「产品中所有具备某类特征的路径」)。
         若 schema 改为逐条具名该范围,本项 NOT APPLICABLE。
 ```
+
+A-V2-1 的实例化必须沿用 A0 已经跑通的次序:
+
+```text
+判据先冻结  →  声明后给出  →  逐字记录并注明日期与 issuer
+```
+
+A0 的 B1 就是这样做的(判据早于 owner declaration 四个 commit),这条 git 次序本身
+就是「不是先看答案再定规则」的证据。
 
 ### 6.5 V2 —— GREEN iff(以下全部成立)
 
@@ -481,6 +539,12 @@ G-V2-6  若 schema 自行规定了单条 predicate 的结果取值域,该取值�
         (§6.10)。若 schema 不规定(推荐形态),本项自动成立。
 
 G-V2-7  §6.4 中所有**已触发**的 required authority 状态均为 INSTANTIATED。
+
+G-V2-8  schema 使用的 surface / scenario 集合在 schema **内部**给出定义,
+        每个 surface 说明它指的是哪一种产品表面。
+        允许引用 UDR 的 A1/A2/A4 作 provenance,**不得**据以继承 authority
+        (授权归 A-V2-1;继承由 R-V2-4 判 RED)。
+        —— 本项由已作废的 A-V2-3 移入:它是 candidate 的结构要求,不是一项 authority。
 ```
 
 ### 6.6 V2 —— RED iff(命中任一即 RED)
@@ -503,14 +567,27 @@ R-V2-4  schema 直接**继承** UDR 的 A1/A2/A4 或 release-gate 配置,作为�
 R-V2-5  schema 的**成立**以修改某个生产文件为前提。
         注意区分:某条 predicate 在当前产品上会**失败**,不属本项 —— 那是 cell 的结果,
         属后续 Step;predicate 有权要求产品尚未具备的性质。
+
+R-V2-6  self-authorization:本 gate 自己写下的文字被消费为 A-V2-1 的实例。
+        A-V2-1 的实例必须可归属于**项目所有者或其显式委派者**,逐字记录并注明日期;
+        candidate 作者对「这些性质要紧」的判断,无论写得多有道理,都不是该 authority。
 ```
 
 ### 6.7 V3 —— required authority
 
 ```text
 A-V3-1  composition-declaration authority                 UNCONDITIONAL
-        谁有权规定「什么样的结果组合算 verified」。Stage 1 已冻结:这是产品 / 架构判断,
-        测量给不出门槛,因此由声明建立。
+
+        必须给出:**项目所有者**(或所有者显式委派的同层级 architecture / product
+        authority)的声明,内容为 verification-state 取值域如何划分、每个 state 在
+        何种结果组合下成立,并给出理由。
+
+        Stage 1 已冻结:这是产品 / 架构判断,测量给不出门槛。
+        与 A-V2-1 同样,**issuer 是本项的一部分** —— 本 gate 自己写下的划分不是它的
+        实例,那是 self-authorization,由 R-V3-5 判 RED。
+
+        注意:A-V3-1 **不能**覆盖「verified state 必须要求全部 required predicate
+        satisfied」这一条(G-V3-4)。那条来自上游已冻结的 A0-B3,不在本声明的处分范围内。
 
 无技术 authority 需求。 若 Stage 3 发现某个 state 的成立条件需要技术事实才能判定,
 那说明 V3 的 candidate 越过了自己的主语 —— 应当修 candidate,**不得**顺势新增一项
@@ -528,9 +605,9 @@ G-V3-2  规则显式给出**单条 predicate 的结果取值域**,其中「失�
 G-V3-3  规则是**全函数**:对该取值域上每一种可能的结果组合都有定义,没有落空组合。
 
 G-V3-4  规则指明取值域中**哪一个 state 承载「该 cell 已 verified」这一主张**,
-        并写明它在何种结果下成立。
-        本判据**不规定**该条件是「全部成立」还是别的 —— Stage 1 明确把这一端留空,
-        那是 V3 自己的内容;判据只要求它被写明且可判定。
+        且**该 state 的成立条件要求每一条 required predicate 均为 satisfied**。
+        其余 state 怎么划分(失败 / 不可得 / 部分证据 / 多少条成立 …)是 V3 的自由,
+        判据不规定,也不限制状态个数。
 
 G-V3-5  规则**参数化于 required predicate 集合**:对任意条数、任意 predicateId 都成立,
         不依赖 V2 最终列出哪些 predicate(§6.10)。
@@ -538,12 +615,36 @@ G-V3-5  规则**参数化于 required predicate 集合**:对任意条数、任�
 G-V3-6  §6.7 中所有已触发的 required authority 状态均为 INSTANTIATED。
 ```
 
+**G-V3-4 关掉了 Stage 1 记为「空着」的那一端 —— 这一步必须说清楚。**
+
+```text
+Stage 1 的 V3 描述 current X 时写:A0-P2-R1 只钉住一端,
+「全部成立才算,还是允许部分成立并另记状态」空着。
+本 Stage 第一版据此写下 G-V3-4「判据不规定该条件」。
+
+那是**读漏了上游**。A0 的 B3 冻结的原文是:
+    「一个 cell 要算作 verified,**需要满足**哪一组 predicate」
+一组 predicate 被 V2 定为 required,而其中一条未 satisfied 时该 cell 仍叫 verified,
+`required` 这个词就没有语义了 —— 那不是 V3 的设计自由,是在削弱已冻结的 B3。
+```
+
+```text
+这不是 Stage 2 偷写 V3 的答案:
+    Stage 2 的职责就是**消费上游 authority 并把它变成判据**,而 B3 已经定了这一条。
+    真正留给 V3 的自由仍然完整 —— 有几个 state、其余 state 怎么划、
+    「不可得」落在哪里、部分证据如何表达,判据一律不管。
+    V2 那一侧的自由也不受影响:required 列得少、把 residual 写清楚,依然可以 GREEN。
+    收紧的只有一句:**被列为 required 的,失败了就不叫 verified。**
+```
+
 ### 6.9 V3 —— RED iff(命中任一即 RED)
 
 ```text
-R-V3-1  「verified」state 可以在**未记录哪些 predicate 未成立**的情况下成立。
-        —— 允许部分成立是 V3 的自由(Stage 1 留空的那一端);**静默的**部分成立不是。
-        这是 A0-P2-R1 在合成层的形态。
+R-V3-1  「verified」state 在**某条 required predicate 非 satisfied** 时仍可成立 ——
+        无论该结果是失败、不可得,还是根本没有结果。
+        这是 A0-P2-R1 在合成层的形态,也是 `required` 一词的语义底线。
+        (第一版这里写的是「未**记录**哪些未成立才 RED」,即允许「记录在案的部分成立」
+        仍叫 verified。那已被 G-V3-4 推翻,见上一节。)
 
 R-V3-2  「结果不可得」与「结果为失败」被映射到同一个 state,且规则未写明这是**有意为之
         并给出理由**。—— 两者不同:一个说产品坏了,一个说我们没看。
@@ -552,6 +653,9 @@ R-V3-3  规则对某些结果组合无定义(非全函数),从而要靠 Stage 3 
         而「5 条里成立 4 条无解」正是 V3 存在的理由。
 
 R-V3-4  规则复用 A0 P3 的 `BOUNDED` 作为 state 名(Stage 1 已冻结不复用)。
+
+R-V3-5  self-authorization:本 gate 自己写下的状态划分被消费为 A-V3-1 的实例。
+        —— 与 R-V2-6 同型。
 ```
 
 ### 6.10 V2 与 V3 的依赖:没有 verdict 传播边
@@ -588,28 +692,63 @@ Stage 1 没有裁定它。**本 Stage 做出分配**(这是 Stage 2 的行为,�
     该约束落在 G-V2-5 与 G-V2-6,不产生 verdict 传播。
 ```
 
-### 6.11 突变自检:拿掉每一条,什么会通过
+### 6.11 突变自检:逐条承重判据,拿掉它什么会通过
+
+一条判据说不出「拿掉它什么会通过」,就说明它没有承重,应当删掉而不是留着凑数。
+下面覆盖 §6.5 – §6.9 的**全部** GREEN / RED 条款,外加 §6.2 的一格。
 
 ```text
+G-V2-1 拿掉  →  predicate 可以只有散文描述,没有 id 与 surface,
+                V3 无法逐条引用它们,合成函数没有可寻址的输入。
+G-V2-2 拿掉  →  A0-B3 的下限失守:一份只验「依赖装得上」的 schema 即可 GREEN,
+                而 B3 恰恰写明第二类不因第一类成立而被覆盖。
 G-V2-3 拿掉  →  运行时行为 predicate 可以不写残余,
                 「验了运行时行为」与「验了其中一小块」在工件上无法区分。
 G-V2-4 拿掉  →  schema 退化成逐 cell 手工列举:V_PRODUCT 加一格就要重写契约,
                 且「这一格为什么少要求一条」无从追问。
+G-V2-5 拿掉  →  predicate 可以写成不可证伪的断言,
+                「它成立」与「它不成立」在观察上无差别,V3 的输入随之失去意义。
 G-V2-6 拿掉  →  V2 与 V3 各自定义结果取值域,合成函数的输入类型不确定,
                 而两个节点又互不传播 —— 冲突要到 Step D 才炸。
+G-V2-7 拿掉  →  已触发但未实例化的 authority 不再阻挡 GREEN,
+                一份没有 owner 声明支撑的 schema 可以直接 GREEN。
+G-V2-8 拿掉  →  surface 名字可以只出现在 predicate 行里而从不定义,
+                「子项目安装」到底指什么由读者各自脑补。
+R-V2-1 拿掉  →  evidence laundering 回来:一条 predicate 成立即可宣称整格 verified,
+                A0-P2-R1 在 schema 层被绕过。
 R-V2-2 拿掉  →  「测试通过」即可充当 product-runtime predicate,
                 该 cell 的 verified 主张变成不可证伪。
 R-V2-3 拿掉  →  可以先跑一遍,再把跑通的那些定为 required —— 本工作线的签名缺陷。
 R-V2-4 拿掉  →  UDR 的一次性 authority 被当作可重复契约继承,
                 V2 已冻结的 current X 被绕过。
+R-V2-5 拿掉  →  判据可以要求先改生产代码才成立,
+                implementation 反过来决定 decision。
+R-V2-6 拿掉  →  Stage 3 自己写一句「这些性质要紧」,再把它消费成 A-V2-1;
+                A-V2-1 的 issuer 约束形同虚设。
+G-V3-1 拿掉  →  state 取值域可以无限或开放,「该 cell 处于哪个 state」不可判定。
+G-V3-2 拿掉  →  单条结果的取值域没写,或把「不可得」并进「失败」,
+                G-V3-4 的「全部 satisfied」也就无从判断。
 G-V3-3 拿掉  →  「5 条成立 4 条」在规则里无定义,靠 Stage 3 临场补,
                 而这正是 V3 存在的理由。
-R-V3-1 拿掉  →  部分成立可静默通过,A0-P2-R1 在合成层被绕过。
+G-V3-4 拿掉  →  被列为 required 的 predicate 失败,该 cell 仍可叫 verified,
+                `required` 一词失去语义,A0-B3 被削弱。
+G-V3-5 拿掉  →  合成规则可以绑死在某个具体 predicate 列表上,
+                V2 一改就得重写 V3,两个节点之间凭空长出依赖。
+G-V3-6 拿掉  →  同 G-V2-7,在合成层。
+R-V3-1 拿掉  →  G-V3-4 只剩正面要求而没有对应的 RED:
+                一份把「verified」条件写松的规则不会被判红,只会 DEFERRED。
 R-V3-2 拿掉  →  「我们没看」被记成「它坏了」或反之 ——
                 两类完全不同的后续动作被合并成一个 state。
+R-V3-3 拿掉  →  同 G-V3-3 的反面:非全函数不再被判红,
+                缺口留到 Stage 3 临场填。
+R-V3-4 拿掉  →  `BOUNDED` 被借去当 state 名,cell 验证完整度与 P3 代表性混成一词。
+R-V3-5 拿掉  →  同 R-V2-6,在合成层。
 §6.2 的 CANDIDATE_FAILS_CLAUSE 拿掉
              →  写坏的 candidate 以「authority 未就绪」的面貌进入 ledger,
                 读者以为补材料即可。
+§6.2 的 reason 优先级拿掉
+             →  三个取值同时成立时 Stage 3 各记各的,
+                同一种阻塞在 ledger 里呈现成不同原因。
 ```
 
 ### 6.12 Stage 3 之前不得做的事
@@ -622,5 +761,9 @@ R-V3-2 拿掉  →  「我们没看」被记成「它坏了」或反之 ——
 不改 Stage 1 的任何主语             不创建 Step B 文件
 不修改任何生产文件                  不回改 A0 gate 已冻结的任何内容
 
-遇到 §6.3 所述的中间态情形 → **停下上报**,不得就地发明 verdict。
+verdict 取值域是闭合三态。若认为不够用 → 退回 §6.3 修判据、重新冻结、重新复审,
+**不得**在 Stage 3 就地扩张取值域,也不得对某类 candidate 不发 verdict。
+
+A-V2-1 / A-V3-1 的实例必须来自项目所有者或其显式委派者,逐字记录并注明日期与 issuer;
+本 gate 自己写下的判断不是它们的实例(R-V2-6 / R-V3-5)。
 ```
