@@ -954,6 +954,11 @@ DEFERRED 是一个裁决结果,要走完 §6.2 的求值顺序才能得到;
 ```
 
 > 以下 §7.5 起在 `db8d92b9`(问题登记)之后写入。
+>
+> ⚠ **§7.5 – §7.12 是第一次 Stage 3 裁决,已被独立复审推翻(2026-09-03)。**
+> 保留不擦除 —— 它是「一次裁决被外部复审驳回」的证据本身。
+> 更正后的 authority consumption 与 re-adjudication 见 **§7.13**;
+> 当前 live verdict 以 §7.13 为准,§7.9 / §7.10 的两个 GREEN 已作废。
 
 ### 7.5 owner declaration —— 逐字记录
 
@@ -1235,6 +1240,173 @@ Q-A1 CellIdentity = { os, arch, nodeMajor }        frozen input(§2)
 
 分辨方法是 Stage 标记:§3 顶着 `FROZEN @ a4e747da`。若复审认为这仍会误导读者,
 正确的修法是在 §3 之外加指针,而**不是**去改已冻结的字节。
+
+---
+
+## 7.13 第一次裁决被推翻 —— 更正后的 consumption 与 re-adjudication
+
+`3ace08f2` 的两个 GREEN 经独立复审驳回。判据(`c39f5919`)未变,变的是对 authority
+状态的判定 —— **四条 finding 全部成立**。
+
+### 7.13.1 A-V2-1 缺判据明确要求的「理由」
+
+冻结的 A-V2-1 原文要求的不止 (a)(b),还有**并给出理由**。§7.5 逐字记录的是三个
+**选择**,没有任何 owner 撰写的 rationale。
+
+```text
+gate 自己解释「为什么这样选是合理的」 ≠ owner 的理由
+```
+
+后者若被前者顶替,就又回到了 decision author 替产品意图补 authority ——
+正是 A-V2-1 的 issuer 约束要挡的东西。
+
+### 7.13.2 A-V3-1 只拿到了取值域的**大小**
+
+owner 逐字给的是「三态」。而真正决定语义的四项:
+
+```text
+NOT_VERIFIED 的成立条件
+INDETERMINATE 的成立条件
+FAILED 压过 UNOBTAINABLE 的优先关系
+空 required 集合的语义
+```
+
+全部是 §7.7 由本 gate 补出的。其中只有 `G-V3-4`(VERIFIED ⇒ 全部 SATISFIED)来自
+A0-B3、不需 owner 授权;**其余四项恰恰落在 A-V3-1 已冻结的处分范围内**。
+
+### 7.13.3 P-PATH 的 scope 被 candidate 悄悄扩大了
+
+```text
+owner 逐字授权    ③ **Windows** 非 ASCII 路径下的路径包容不越界
+candidate 写成    对 S_PRODUCT 任意 cell,六条恒为 required(P-PATH-* 无 os 条件)
+                  → win32 **与 linux** 都被要求
+```
+
+这不是 declaration 的等价展开,是扩大 required-property scope。而 `G-V2-4` 本来就
+**允许** required 与否依赖 CellIdentity —— 完全不需要靠常值函数去扩大 authority。
+§7.6 里那句「不做坐标条件化是有意的」在这里成了反效果:它为了少答一个问题,
+多主张了一份 authority。
+
+两条合法出路,择一:
+
+```text
+A  改 candidate:P-PATH-* 仅当 os == win32 时 required(其余四条不动)
+B  owner 新声明:该性质对 win32 与 linux 均属 required,并给理由
+```
+
+### 7.13.4 provenance 目前无法被独立核实
+
+§7.5 只写到 channel 一级,没有可追溯的 source pointer;复审查了可取的既往上下文,
+找不到那四个 owner 原始回答,因此**无法独立核实「逐字转录」这一 claim**。
+
+另有一处 git 次序的弱化 —— `db8d92b9` 写下的理想链路是:
+
+```text
+criteria → questions → declaration → candidate + adjudication
+```
+
+而 git 实际只能证明:
+
+```text
+c39f5919 criteria → db8d92b9 questions → 3ace08f2 {declaration + candidate + adjudication}
+```
+
+最后那一格是**一个 commit**,所以 `declaration → candidate` 的次序证明不出来。
+
+```text
+「缺来源」**不能**升级成「来源一定有问题」 —— 所以不是 RED。
+但它也不足以支持 §7.9 / §7.10 写下的「R-V2-6 = 否」「R-V3-5 = 否」。
+```
+
+### 7.13.5 更正后的 ledger 与 verdict
+
+```text
+A-V2-1  product-property & surface-taxonomy declaration    NOT INSTANTIATED
+        缺 owner rationale(§7.13.1);且已记录的内容与 candidate 的 scope 不一致(§7.13.3)
+A-V2-2  mechanism authority                                NOT APPLICABLE   (复审接受)
+A-V2-3  —— 已并入 A-V2-1,编号留空
+A-V2-4  scope-derivation authority                         NOT APPLICABLE   (复审接受)
+
+A-V3-1  composition-declaration authority                  NOT INSTANTIATED
+        只拿到取值域大小,四项 state 语义未获授权(§7.13.2)
+```
+
+按 §6.2 的求值顺序逐步走:
+
+```text
+1  RED?      两个节点均无 RED 命中 —— 尤其 R-V2-6 / R-V3-5:
+             缺来源不构成「已证实的自授权」,不判 RED。
+2  GREEN?    G-V2-7 不成立(A-V2-1 已触发且 NOT INSTANTIATED)
+             G-V3-6 不成立(A-V3-1 同)
+3  → DEFERRED
+
+deferral_reason(按 §6.2 的优先级函数):
+    candidate 存在        → 不取 CANDIDATE_ABSENT
+    有已触发的 authority 为 NOT INSTANTIATED → **MISSING_AUTHORITY**
+```
+
+```text
+V2   verdict = DEFERRED    deferral_reason = MISSING_AUTHORITY
+V3   verdict = DEFERRED    deferral_reason = MISSING_AUTHORITY
+```
+
+`MISSING_AUTHORITY` 而非 `CANDIDATE_FAILS_CLAUSE`:这正是 §6.2 那条优先级函数存在的
+理由 —— 两份 candidate 本身没有被判为不够(见下),欠的是 authority。
+
+### 7.13.6 复审明确通过、下一轮不得重开的四项
+
+```text
+A-V2-2 = NOT APPLICABLE   六条 assertion 定义的是 observable property,
+                          没有规定路径解析算法、句柄管理机制或任何实现手法。
+                          §7.11 列为「最接近翻转」的那一处,**不翻**。
+A-V2-4 = NOT APPLICABLE   具名有限集 + residual,无 completeness claim。
+G-V2-2 的语义分离           依赖装得上 ≠ 索引生命周期正确 ≠ 非 ASCII 路径包容正确,
+                          是命题间的非蕴含关系,不需要 cell observation 才成立,
+                          也不需要为它追加一条 Stage-2 authority。§7.11 第三项不翻。
+V3 合成逻辑本身            三 outcome × 三 state 的函数在非空集上互斥穷尽,
+                          空集有显式 override,不存在真空真值洗出 VERIFIED。
+                          问题不是规则写坏,而是它尚未取得 A-V3-1。
+```
+
+### 7.13.7 一处必须写下的次序事实
+
+```text
+六条 predicate 的提名(3ace08f2)**早于**本轮将要取得的 declaration。
+```
+
+candidate 不是 authority,提名在前本身不构成 self-authorization。但它意味着一件事:
+
+```text
+新的 declaration 必须**有能力否决这份 candidate**,而不只是追认它。
+```
+
+§7.13.3 恰好就是一次否决 —— P-PATH 的 scope 要按 declaration 改,不是反过来让
+declaration 去迁就已经写好的六条。
+
+### 7.13.8 登记待补的 declaration(无答案)
+
+```text
+D-1  A-V2-1  重新给出,需含:
+         · required 的性质(可沿用或修改「核心链路三条」)
+         · required 的 surface / scenario
+         · **理由** —— 判据明文要求,上一轮缺的就是这一项
+         · P-PATH 的 scope:仅 win32,还是全部 supported OS(§7.13.3 的 A / B)
+
+D-2  A-V3-1  重新给出,需含:
+         · state 取值域
+         · **每个 state 的成立条件** —— 含 FAILED 与 UNOBTAINABLE 的优先关系、
+           以及空 required 集合的语义
+         · 理由
+         注:G-V3-4(VERIFIED ⇒ 全部 required 为 satisfied)来自 A0-B3,
+         **不在本声明的处分范围内**,不必也不能被它推翻。
+
+D-3  source pointer  本轮要求 declaration 以 **owner 自己撰写的文本**给出,再逐字转录。
+         一段 owner 亲笔的文本本身就是可追溯来源,强于「在若干备选里选了一个」——
+         后者的措辞由本 gate 撰写,正是 §7.13.4 无法被独立核实的那一环。
+```
+
+本节写入时 D-1 / D-2 / D-3 **均无答案**,与 `db8d92b9` 的做法一致:先登记,后作答,
+让 git 顺序而不是作者自陈来承担「问题早于答案」。
 
 **本 Step 建立了什么**:一份具名、可重复适用于任意 cell 的 cell-verification
 contract —— A0 的 B3 所要求的那份东西。
