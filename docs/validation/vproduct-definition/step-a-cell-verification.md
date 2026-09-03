@@ -952,3 +952,301 @@ DEFERRED 是一个裁决结果,要走完 §6.2 的求值顺序才能得到;
 现在 candidate 尚未提名、authority 尚未实例化,裁决**还没有开始**。
 此刻写 DEFERRED,就是把「还没开工」记成「已裁定为待定」。
 ```
+
+> 以下 §7.5 起在 `db8d92b9`(问题登记)之后写入。
+
+### 7.5 owner declaration —— 逐字记录
+
+```text
+issuer      项目所有者(uwence)
+date        2026-09-03
+channel     本工作会话中的交互式提问
+provenance  问题登记于 db8d92b9,**先于任何答案存在**;
+            判据冻结于 c39f5919,更早。
+```
+
+**四问四答,逐字**:
+
+```text
+Q-S1  运行时行为那一侧,这份契约主张覆盖到什么程度?
+A-S1  「具名有限集 + 显式 residual」
+
+Q-S2  哪些 surface / scenario 必须被这份契约覆盖?
+A-S2  「母体安装 + 子项目 scaffold 安装 + 运行时」
+
+Q-S1b(A-V2-1(a) 待完成)运行时那一侧,哪些性质是 required?
+A-S1b 「核心链路三条」= ① 原生依赖在该 cell 上装得上并能被加载
+                        ② 内存索引完成一次 开→写→查→关 且不泄句柄
+                        ③ Windows 非 ASCII 路径下的路径包容不越界
+      其余(hooks 安装/执行 · takeover receipt · wiki 打开命令 · 锁并发)
+      明写为 residual。
+
+Q-S3  verification state 的取值域怎么划?
+A-S3  「三态:verified / not-verified / indeterminate」
+```
+
+**关于 provenance 的一处诚实交代**(供复审据以驳回):
+
+```text
+备选项的**措辞由本 gate 撰写**,owner 作出的是**选择**,并可在备选之外自由作答。
+A-V2-1 要求的是 owner 对「哪些性质要紧」的声明 —— 提出候选是提名,作出选择是声明,
+两者分属 candidate 与 authority,这正是 R-V2-6 划的那条线:
+判的是 authority 的来源,不是文字由谁敲进文件。
+
+若复审认为备选措辞已窄到使「选择」不再构成独立声明,那么 A-V2-1 应判 NOT
+INSTANTIATED,V2 随之 DEFERRED / MISSING_AUTHORITY。本节把判断材料摆出来,不代判。
+```
+
+`Q-S1b` 是本轮补问的:`A-S1`/`A-S2` 给的是**覆盖政策与表面**,而 `A-V2-1(a)` 要的是
+**性质本身**。少了这一问,A-V2-1 只被答了一半。候选取自本仓真实存在的平台敏感代码
+(`memory-index*.js` · `zvec-path-containment.js` · `hooks.js` · `takeover-*.js` ·
+`wiki/cli.js` 的 darwin 分支),不是凭空拟的清单。
+
+### 7.6 V2 candidate —— verification predicate schema
+
+**surface 定义(G-V2-8,在 schema 内自行给出)**:
+
+```text
+S-MOTHER   母体安装形态:本仓自身作为一个已完成依赖安装的工作副本。
+S-CHILD    子项目安装形态:由本产品 scaffold 出的子项目,在其内部完成依赖安装。
+S-RUNTIME  运行形态:在一个**已完成安装**的实例内执行产品自身的行为,而非执行安装动作。
+
+引用关系:UDR 的 A1 / A2 与上面前两者形态相近,此处**仅作 provenance 引用**,
+不从中继承任何 authority —— 授权来自 §7.5 的 owner declaration(A-V2-1)。
+```
+
+**required predicate 集合(G-V2-4)**:
+
+```text
+规则:  对 S_PRODUCT 中的**任意** cell (os, arch, nodeMajor),
+       required predicate 集合恒为下面六条,不随坐标变化。
+
+这是一个 CellIdentity 上的**常值函数**,仍然是 G-V2-4 要求的参数化形式 ——
+判据要求的是「给定任一 cell 能算出 required 集合」,不是「集合必须随坐标变化」。
+不做坐标条件化是有意的:条件化每多一条,就多一处「为什么这格少要求一条」要回答。
+```
+
+```text
+P-DEP-MOTHER   surface  S-MOTHER
+    成立:  在该 cell 上完成母体依赖安装后,产品实际加载的原生 / 可选依赖模块
+           均可被成功加载。
+    不成立:安装过程失败,或安装后其中任一模块加载失败。
+    覆盖:  依赖在该 cell 上「装得上并能加载」。
+    不覆盖:装上之后产品行为是否正确 —— 那是 P-IDX-* / P-PATH-*;
+           也不覆盖依赖的任何版本策略。
+
+P-DEP-CHILD    surface  S-CHILD
+    成立:  在该 cell 上 scaffold 出子项目并在其中完成依赖安装后,
+           子项目实际加载的原生 / 可选依赖模块均可被成功加载。
+    不成立:scaffold 失败、子项目依赖安装失败,或安装后任一模块加载失败。
+    覆盖:  子项目形态下的依赖可安装性与可加载性。
+    不覆盖:子项目的产品行为正确性;也不覆盖 published 包形态
+           —— 那一形态本轮**明确不主张**(residual)。
+
+P-IDX-MOTHER   surface  S-RUNTIME(母体实例)
+    成立:  内存索引在该实例上完成一次 开 → 写 → 查 → 关,查询返回写入的内容,
+           且关闭后不残留其打开的文件句柄。
+    不成立:上述任一步骤报错、查询取不到已写入的内容,或关闭后仍有残留句柄。
+    覆盖:  索引主链路的一次完整生命周期。
+    不覆盖:并发 / 锁行为、崩溃恢复、跨进程可见性 —— 明写为 residual。
+
+P-IDX-CHILD    surface  S-RUNTIME(子项目实例)
+    同 P-IDX-MOTHER,评估对象为 scaffold 出的子项目实例。
+    覆盖 / 不覆盖同上。它**不因** P-IDX-MOTHER 成立而被覆盖:
+    两者是不同实例上的不同观察。
+
+P-PATH-MOTHER  surface  S-RUNTIME(母体实例)
+    成立:  当实例根路径含非 ASCII 字符时,内存索引所写的文件全部落在其声明的
+           collection 根之内,且不因路径编码而失败。
+    不成立:出现落在声明根之外的写入,或因路径编码导致失败。
+    覆盖:  非 ASCII 路径下的写入位置与可用性。
+    不覆盖:任何具体的路径解析实现方式,也不覆盖 ASCII 路径下的行为
+           (后者不在本条主张范围内)。
+
+P-PATH-CHILD   surface  S-RUNTIME(子项目实例)
+    同 P-PATH-MOTHER,评估对象为子项目实例。
+```
+
+**residual 总述(G-V2-3 的汇总,不替代逐条 residual)**:
+
+```text
+本 schema **不主张**覆盖产品的全部平台敏感行为。明确列入 residual、本轮不要求的有:
+    hooks 的安装与执行 · takeover receipt · wiki 打开命令的平台分支 ·
+    索引锁的并发行为 · published 包形态的安装 · 崩溃恢复
+这是一份**具名有限集**,不是完备枚举 —— 因此不主张「这六条就是全部」。
+```
+
+### 7.7 V3 candidate —— 合成规则
+
+```text
+单条 predicate 的结果取值域(本域归 V3,§6.10):
+
+    SATISFIED       观察确立了该 assertion 的成立事实
+    FAILED          观察确立了该 assertion 的不成立事实
+    UNOBTAINABLE    未能取得可判定的观察 —— 「没看」,不是「看了不过」
+
+verification state 取值域(A-S3:三态):
+
+    VERIFIED        每一条 required predicate 均为 SATISFIED
+    NOT_VERIFIED    至少一条 required predicate 为 FAILED
+    INDETERMINATE   无 FAILED,但至少一条为 UNOBTAINABLE
+
+优先级:FAILED 压过 UNOBTAINABLE。
+       既有失败又有不可得时,该 cell 是 NOT_VERIFIED —— 我们确实看见了坏,
+       把它记成「没看」会把一个已知缺陷降级成信息不足。
+
+空集边界:若 required 集合为空,state = INDETERMINATE,**不是** VERIFIED。
+       空集上「全部 SATISFIED」在形式逻辑上恒真,但那时没有任何东西被验证过,
+       让它取到 VERIFIED 就是用真空真值洗出一个通过。
+       (本轮 V2 的 required 集合恒为六条,不会取到这一格;规则仍需对它有定义,
+        因为 G-V3-5 要求本规则对任意 predicate 集合成立。)
+```
+
+全函数性(G-V3-3):任给一组结果,「有无 FAILED」二分,无 FAILED 时再按「是否全
+SATISFIED」二分,三个 state 互斥且穷尽,无落空组合。
+
+### 7.8 authority ledger
+
+```text
+A-V2-1  product-property & surface-taxonomy declaration    INSTANTIATED
+        §7.5 的 owner declaration,issuer / date / provenance 齐备。
+
+A-V2-2  mechanism authority                                NOT APPLICABLE
+        触发条件是「某条 assertion **描述某个机制的实际行为**」。
+        §7.6 六条 assertion 全部写成**规范性**表述(「必须落在声明根之内」
+        「关闭后不残留句柄」),没有一条描述某机制如何实现该性质。
+        这是有意的写法选择,也正是把实现细节留在 Step B 之外的做法。
+        ⚠ 若复审认定 P-PATH-* 实质上已在描述路径解析机制,则本项 TRIGGERED
+        且当前 NOT INSTANTIATED → V2 转为 DEFERRED / MISSING_AUTHORITY。
+        这是本轮最接近翻转的一处,见 §7.11。
+
+A-V2-3  —— 已并入 A-V2-1(§6.4),编号留空。
+
+A-V2-4  scope-derivation authority                         NOT APPLICABLE
+        触发条件按语义判(§6.4):schema 是否作出完备性主张。
+        §7.6 的 residual 总述明写「不主张这六条就是全部」,scope 是一个固定、
+        显式具名的有限集合,没有「所有具备特征 F 的对象」这类主张。
+
+A-V3-1  composition-declaration authority                  INSTANTIATED
+        §7.5 的 A-S3,同一 issuer / date / provenance。
+        注意它**没有**处分 G-V3-4(那条来自 A0-B3),也不需要处分。
+```
+
+### 7.9 V2 裁决
+
+按 §6.2 的求值顺序:先 RED,再 GREEN,否则 DEFERRED。
+
+```text
+RED 逐条:
+R-V2-1  laundering?          否。§7.7 的 VERIFIED 要求全部六条 SATISFIED。
+R-V2-2  不可界定的 assertion? 否。六条都给出了成立与不成立的具体事实,
+                              且各自写明覆盖与不覆盖。
+R-V2-3  required 与否在 evidence 阶段才定? 否。集合是 CellIdentity 上的常值函数,
+                              本轮未观察任何 cell。
+R-V2-4  继承 UDR / CI 作 authority? 否。§7.6 显式声明 UDR 的 A1/A2 仅作 provenance
+                              引用,授权来自 A-V2-1。
+R-V2-5  以修改生产文件为成立前提? 否。某些 cell 今天可能过不了 P-PATH-*,
+                              那是 cell 的结果,不是 schema 的成立条件。
+R-V2-6  self-authorization?  否 —— 但这是本轮**唯一有争议**的一条,材料已摆在 §7.5,
+                              复审可据此驳回。
+R-V2-7  V2 自建 outcome taxonomy? 否。§7.6 只写「什么事实使 assertion 成立 /
+                              不成立」,没有给结果命名;取值域在 §7.7 由 V3 给出。
+                              (两者的区别:前者是断言的真值条件,后者是结果的取值集合。)
+
+GREEN 逐条:
+G-V2-1  ✓  六条均含 predicateId / surface / assertion。
+G-V2-2  ✓  P-DEP-* 属 dependency installability,P-IDX-* / P-PATH-* 属 product
+           runtime behaviour;后者**不因**前者成立而被覆盖 —— 依赖装得上不蕴含
+           索引生命周期正确,更不蕴含非 ASCII 路径下写入不越界。
+G-V2-3  ✓  六条各自写明覆盖 / 不覆盖,另有 residual 总述。
+G-V2-4  ✓  常值函数形式,规则写在 schema 内且只依赖 CellIdentity。
+G-V2-5  ✓  六条均给出成立事实与不成立事实两个方向。
+G-V2-7  ✓  已触发的 required authority 只有 A-V2-1,状态 INSTANTIATED。
+G-V2-8  ✓  S-MOTHER / S-CHILD / S-RUNTIME 在 schema 内定义。
+```
+
+```text
+verdict:  GREEN
+```
+
+### 7.10 V3 裁决
+
+```text
+RED 逐条:
+R-V3-1  verified 在某条 required 非 SATISFIED 时仍成立? 否。
+R-V3-2  UNOBTAINABLE 与 FAILED 并入同一 state? 否,分属 INDETERMINATE 与 NOT_VERIFIED。
+R-V3-3  非全函数? 否,见 §7.7 的二分论证。
+R-V3-4  复用 BOUNDED? 否。
+R-V3-5  self-authorization? 与 R-V2-6 同,材料在 §7.5。
+
+GREEN 逐条:
+G-V3-1  ✓  三个 state,逐个给出成立条件。
+G-V3-2  ✓  单条取值域语义区分「成立 / 不成立 / 不可得」三类。
+G-V3-3  ✓  全函数,含空集边界的显式定义。
+G-V3-4  ✓  VERIFIED 要求每条 required predicate 均为 SATISFIED。
+G-V3-5  ✓  规则只引用「required predicate 集合」这一抽象,不依赖 V2 列出哪六条;
+           把 V2 换成任意别的 schema,本规则一字不改仍可判定。
+G-V3-6  ✓  A-V3-1 INSTANTIATED。
+```
+
+```text
+verdict:  GREEN
+```
+
+### 7.11 两个 GREEN 的自检:哪里最可能翻
+
+判据由本 gate 撰写,candidate 也由本 gate 提名 —— 两个 GREEN 因此需要指出**它可能
+错在哪**,而不是只陈述它通过了。三处最接近翻转:
+
+```text
+一、A-V2-2 的触发判断(最接近)
+    P-PATH-* 写的是「文件必须落在声明的 collection 根之内」。这是规范性表述。
+    但若复审认为「collection 根」这个概念本身已在描述某个既有机制的行为,
+    则 A-V2-2 TRIGGERED,而它当前 NOT INSTANTIATED
+    → V2 变为 DEFERRED / MISSING_AUTHORITY。
+
+二、R-V2-6 的 provenance 判断
+    备选项措辞由本 gate 撰写。若复审认为选择空间已窄到使「选择」不构成独立声明,
+    A-V2-1 判 NOT INSTANTIATED → V2 DEFERRED / MISSING_AUTHORITY,
+    A-V3-1 同理 → V3 亦 DEFERRED。
+
+三、G-V2-2 的「后者不因前者覆盖」
+    本轮的论证是语义论证(装得上 ≠ 行为正确),没有引用任何观察。
+    若复审要求这条必须由 authority 而非论证支撑,那是一条新的 required authority,
+    属 Stage 2 判据修订,不能在本 Stage 就地补。
+```
+
+### 7.12 Step A 结论与边界
+
+```text
+V2  必须验证哪些性质                       verdict = GREEN
+V3  predicate 结果 → verification state    verdict = GREEN
+
+Q-A1 CellIdentity = { os, arch, nodeMajor }        frozen input(§2)
+```
+
+**关于 §3 里那两行 `verdict: UNSET`**:它们是 Stage 1 的冻结字节,记录的是 `a4e747da`
+当时的状态,**不回写**。verdict 的**当前**归属是 §7.9 / §7.10。
+
+```text
+一个 live home(§7.9 / §7.10) + 一个 historical record(§3,冻结)
+≠ 两个互相竞争的 verdict home
+```
+
+分辨方法是 Stage 标记:§3 顶着 `FROZEN @ a4e747da`。若复审认为这仍会误导读者,
+正确的修法是在 §3 之外加指针,而**不是**去改已冻结的字节。
+
+**本 Step 建立了什么**:一份具名、可重复适用于任意 cell 的 cell-verification
+contract —— A0 的 B3 所要求的那份东西。
+
+**本 Step 没有建立什么**(逐条,防止被读大):
+
+```text
+!= 任何 cell 的验证结果 —— 本轮未观察任何 cell,六条 predicate 一个结果都没填
+!= 谁可以承担哪条 predicate、需要几次观察          → Step B
+!= V_PRODUCT 选哪些 cell / 任何 equivalence class   → Step C
+!= win32 × Node20 是否必须进入 V_PRODUCT 或必须由 runner 实证
+!= 代表性 —— A0 的 P3 完全未被触及
+!= A0 的 P2 就此变成 GREEN。P2 = DEFERRED 是不可变历史(`gate.md` §1);
+   本 gate 产出的是**新 authority**,将来由一份新的 consumption record 重新消费。
+```
