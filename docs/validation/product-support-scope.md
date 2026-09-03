@@ -60,7 +60,7 @@ S_PRODUCT 是**产品意图**类命题。没有任何一次测量能证明「我
 这条写在最前面,是因为它最容易被违反:当一个节点卡在「缺 authority」时,
 最顺手的动作就是把缺的那条 authority 自己写出来 —— 那等于裁决者给自己发授权。
 
-## 1. 现状:今天的树实际承诺了什么
+## 1. 现状:今天的树里实际存在什么(以及没有什么)
 
 全部为本轮实测,逐条可核。
 
@@ -72,11 +72,19 @@ S_PRODUCT 是**产品意图**类命题。没有任何一次测量能证明「我
     package.json     "engines": { "node": ">=20.0.0" }
     —— 只有**下限**。没有上限,没有平台,没有架构。
 
-published manifest 的平台声明:
+published manifest 的**安装资格**限制:
     package.json     os  = 字段不存在
                      cpu = 字段不存在
-    按 npm 语义,二者缺席即**不加限制**。也就是说今天这个包在 macOS、
-    在 arm64 上都会照常安装 —— 当前的已发布承诺是「不限制」。
+    按 npm 语义,二者缺席即对 OS / CPU **不施加安装资格限制** ——
+    今天这个包在 macOS、在 arm64 上都会照常安装。
+
+    **这不构成产品对这些 OS / CPU 的支持承诺。**
+        installation eligibility  ≠  support commitment
+    与 UDR 里拦下的 `CI coverage ≠ product support scope` 是同一类错误换了一层:
+    一个可观测的机制事实(npm 装不装得上)被读成一句产品承诺。
+    正确的现状是两句话:
+        产品支持声明            未定义
+        manifest 安装资格限制    Node >= 20;OS 未限制;CPU 未限制
 
 CI 覆盖(S_GATE,证据环境):
     release-gate.yml:24-32   ubuntu-latest × node 20/22/24
@@ -103,8 +111,12 @@ native 依赖(prebuild 覆盖面决定装不装得上):
 ```
 
 **一句话概括这个 X:** 产品在运行时强制一条 Node 下限、在代码里按平台分叉、
-在 CI 里只测两个 OS,却在**已发布的清单里对平台与架构不作任何限制**,
-并在规范散文中引用了一个从未被定义的「supported Node range」。
+在 CI 里只测两个 OS、在已发布清单里对平台与架构不施加安装资格限制,
+并在规范散文中引用了一个从未被定义的「supported Node range」——
+而**「产品承诺支持哪些环境」这句话本身,树里一处都没有**。
+
+上面每一条都是**机制事实**,没有一条是承诺。把其中任何一条读成承诺,
+都是同一个错误:拿一个可观测的机制去替一句从未有人说过的话。
 
 ## 2. Decision nodes
 
@@ -124,7 +136,8 @@ current state X:     不存在这样的声明。最接近的三样都不是它:
                        · `engines.node >= 20` 与 index.js 的运行时检查 —— 只是**下限**
                        · release-gate 矩阵 —— 是**证据环境**(S_GATE)
                        · R4 的 "the supported Node range" —— 引用了一个未定义的东西
-                     平台与架构维度上,published manifest 当前**不作限制**。
+                     平台与架构维度上,published manifest 只是**不施加安装资格限制**,
+                     那是机制事实,不是支持承诺(§1)。
 
 candidate state Y:   一份**具名的**声明,至少覆盖三个维度并对每一维给出取值:
                        OS         (win32 / linux / darwin / …)
@@ -212,28 +225,39 @@ verdict:             UNSET
 
 ---
 
-### Decision P4 —— 是否把已发布的承诺**收窄**为可强制的形式
+### Decision P4 —— 是否把 P1 声明的支持边界**落实为安装 / 运行时强制**
 
 ```text
-decision subject:    published manifest 是否新增 `os` / `cpu` 字段(或其他强制手段),
-                     使 P1 的声明从「文档里的话」变成「安装时的行为」。
+decision subject:    是否、以及如何在 package.json(`os` / `cpu`)、
+                     runtime preflight(index.js 现有的 assertNodeVersion 一类)
+                     等位置,对 unsupported environment 施加强制,
+                     使 P1 的声明从「文档里的话」变成「安装或启动时的行为」。
 subject_status:      INSTANTIATED
 
-current state X:     package.json 无 `os`、无 `cpu` 字段 —— 当前**不加限制**,
-                     该包在 macOS / arm64 上都会照常安装。
-                     唯一被强制的维度是 Node 下限(index.js:12-22 + engines)。
+current state X:     manifest 当前对 OS / CPU **不施加安装资格限制**
+                     (package.json 无 `os`、无 `cpu`),
+                     而**产品支持范围本身尚未声明**(见 P1)。
+                     唯一已被强制的维度是 Node 下限:
+                     index.js:12-22 的入口检查 + `engines.node >= 20`。
 
-candidate state Y:   新增 `os` / `cpu` 声明,使 npm 在不匹配的平台上拒绝安装
-                     (或选择其他强制点)。
+candidate state Y:   依据 P1 的最终声明,决定是否以及在哪些位置强制。
+                     取值不是二元 —— 强制点至少有两个,后果不同:
+                       manifest os/cpu    npm 在不匹配平台上拒绝安装
+                       runtime preflight  装得上但启动时拒绝运行,可给出可读理由
+                     P1 未定之前,本节点的 Y 无法取值。
 
-observable delta:    package.json 的字段;运行时可观测面是**安装是否失败**。
+observable delta:    package.json 的字段 / preflight 的判定;
+                     可观测面是**安装是否失败**或**启动是否被拒**。
 
-**这是一个用户可见的收窄。** 今天装得上的环境,明天可能装不上。
+**若最终选择收窄,那是一个用户可见的变化:** 今天装得上的环境,明天可能装不上。
 因此 P4 与 P1 必须分开裁:
     P1  写下我们支持什么          —— 一句陈述
-    P4  让不支持的环境装不上      —— 一个有后果的强制
+    P4  让不支持的环境装不上/跑不起来 —— 一个有后果的强制
 UDR 里 D1(版本)与 D3(依赖类别)分开,正是同一个理由:
 **声明与强制是两个主语。**
+
+注意方向只能是 `policy → enforcement`。**不得**反过来从 package.json 现有字段
+或 workflow 现有矩阵**推出**产品政策 —— 那正是本 gate 要修的病。
 
 authority boundary:  产品意图 + 用户影响。测量只能回答「哪些环境实际能装」,
                      回答不了「是否应当拒绝其余环境」。
@@ -246,27 +270,60 @@ does NOT authorize:  不定义支持范围(P1)· 不定义验证集合(P2)
 verdict:             UNSET
 ```
 
-## 3. 三个尚未裁定的问题(Stage 1 只登记,不回答)
+## 3. 三个问题:Q1 / Q2 仍未裁定,Q3 已答
 
 ```text
 Q1  Windows × Node 20 属于哪一类?
       (a) 不支持
       (b) 支持,但当前 CI 环境验证不了
-      (c) 支持,且验证**委托给另一种机制** —— 「better-sqlite3 是否有 win-x64
-          node-20 prebuild」本身是可直接查证的事实,不必依赖 runner 有没有 MSVC
-    (b) 与 (c) 差别很大:(b) 留一个洞,(c) 换一条可执行的验证路径。
+      (c) 支持,且该格的**某些 verification predicate** 可以由 non-runner authority
+          承担 —— 例如「better-sqlite3 是否发布了 win-x64 node-20 prebuild」
+          是可直接查证的事实,不必依赖 runner 有没有可检测的 MSVC。
+
+    **(c) 的边界(第一轮复审收紧,承重):**
+        prebuild 存在  =  该格内**一项** admissible evidence,
+                          只能承担 dependency-installability 这一条 predicate
+        prebuild 存在  ≠  该 V_PRODUCT cell 的验证成立
+
+    产品自身还有大量 platform-sensitive 的运行路径(§1:九个已发布运行时文件按
+    process.platform 分支),它们不因某个依赖能装上而被覆盖。
+    若将来 P3 要主张「Windows × Node20 不需要 end-to-end CI」,必须**另行证明**
+    那些 Windows 专属行为已由某个 equivalence class 或其他 authority 覆盖。
+
+    这条边界写在 Stage 1,是因为 Stage 2 极易把「一项前置条件绿」洗成
+    「整格代表性成立」—— 与 UDR 里「测量阶段 SATISFIED → 升级 YES」同一形状。
+
+    (b) 与 (c) 的差别仍然成立:(b) 留一个洞,(c) 把该格**部分** predicate
+    换到一条可执行的验证路径上,但不豁免整格。
 
 Q2  macOS 与 arm64 属于哪一类?
     今天 published manifest **不限制**、CI **完全不测**、代码里却有 9 处平台分支。
     「沉默」既可以读成「支持但没测」,也可以读成「从未想过」——
     这个歧义必须由 P1 消除,而不是继续沉默。
 
-Q3  这份合同最终应当落在哪里?
-      docs/validation/     与本 gate 同族的决策记录(本文件现在的位置)
-      docs/specs/          本仓存放**设计合同**的地方;将来会被其他决策消费
-      package.json         若含 P4,则强制点必然在这里
-    Y 的落点会影响它能不能充当 authority,因此属于主语的一部分,
-    但本阶段不替项目决定。
+Q3  这份合同最终应当落在哪里?  —— **已答**(2026-09-03 Stage 1 复审裁决;
+    项目所有者的最终接受尚未给出,此处不假装 docs/specs/ 里那份 authority 已经存在)
+
+```text
+canonical authority     docs/specs/<product-support-contract>.md
+                        = S_PRODUCT · V_PRODUCT · coverage justification
+                        · reevaluation triggers
+                        它会被 zvec、better-sqlite3、release gate 以及未来的
+                        native 依赖长期反复消费 —— 那是**设计合同**,
+                        不是一次验证报告。
+
+decision record         docs/validation/product-support-scope.md(本文件)
+                        = 三阶段的裁决记录,回答「为什么形成这个合同」。
+                        **不作为长期 canonical policy 的唯一载体。**
+
+enforcement surfaces    package.json · index.js · workflows
+                        = 消费 canonical contract 的强制 / 验证面。
+                        它们**不因为自己有字段或有矩阵就成为产品政策 authority**。
+```
+
+    方向只能是 `policy → enforcement`。反向推理(`package.json 有什么字段` 或
+    `workflow 跑了哪几格` → 因此产品政策是什么)正是本 gate 要修的病;
+    若不写死这条,几年后会再长出同一个问题。
 ```
 
 ## 4. Stage 2 之前不得做的事
@@ -274,7 +331,7 @@ Q3  这份合同最终应当落在哪里?
 ```text
 不写 GREEN / RED                 不写 required authority
 不写 missing-authority disposition
-不回答 §3 的 Q1 / Q2 / Q3
+不回答 §3 的 Q1 / Q2(Q3 已由 Stage 1 复审裁决)
 不裁定任何一项                    不修改 package.json / workflow / 任何生产文件
 不由本文件作者宣布 S_PRODUCT ——   那是 §0.3 明确保留给项目所有者的动作
 ```
