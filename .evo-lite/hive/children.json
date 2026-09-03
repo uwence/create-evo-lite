@@ -21,6 +21,13 @@
       "registeredAt": "2026-09-03T11:01:56.091Z",
       "lastNurturedAt": "2026-09-03T11:02:11.618Z",
       "lastNurturedVersion": "2.3.0"
+    },
+    {
+      "id": "hungersnakegame8",
+      "path": "D:/Data/ProjectAgent/hungersnakegame8",
+      "registeredAt": "2026-09-03T12:17:13.262Z",
+      "lastNurturedAt": null,
+      "lastNurturedVersion": null
     }
   ]
 }
