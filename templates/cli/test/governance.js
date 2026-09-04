@@ -15790,6 +15790,179 @@ async function runChildRuntimeTests() {
         console.log('✅ T-hive-outbox-committable passed');
     }
 
+    console.log('T-gitignore-rule-sync. An existing block must still receive newly added rules ...');
+    {
+        // `hasEvoLiteGitignoreRules` tested for three strings and, finding them,
+        // returned 'existing' and wrote nothing. So every rule added to the
+        // template AFTER a project was scaffolded could never reach it. Measured:
+        // three of four registered children still excluded the hive outbox after
+        // the allowlist shipped, because each already had an older block.
+        //
+        // The fix must be ADDITIVE. A child's .gitignore is its own file — it may
+        // carry ignores that have nothing to do with Evo-Lite, and it may have
+        // deliberately added entries inside the managed block. Nothing may be
+        // removed or overwritten; only genuinely missing rules are appended.
+        const { ensureProjectGitignore } = require(INIT_ENTRY);
+        const template = fs.readFileSync(path.join(WORKSPACE_ROOT, 'templates', 'gitignore'), 'utf8');
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-gitignore-sync-'));
+        try {
+            // A child scaffolded before the hive allowlist existed, which has since
+            // added ignores of its own — both inside and outside the managed block.
+            const stale = [
+                'node_modules/',
+                'dist/',
+                '',
+                '# Evo-Lite runtime',
+                '.evo-lite/*',
+                '!.evo-lite/active_context.md',
+                '!.evo-lite/cli/',
+                '!.evo-lite/cli/**',
+                '!.evo-lite/raw_memory/',
+                '!.evo-lite/raw_memory/**/*.md',
+                '',
+                '# the child added this itself',
+                'coverage/',
+                '',
+            ].join('\n');
+            fs.writeFileSync(path.join(tmp, '.gitignore'), stale);
+
+            const res = ensureProjectGitignore(tmp, template);
+            const after = fs.readFileSync(path.join(tmp, '.gitignore'), 'utf8');
+
+            assert.notStrictEqual(res.status, 'existing',
+                'a block that is missing rules is not "existing" — it is incomplete');
+            assert.ok(after.includes('!.evo-lite/hive/'),
+                'the rule added after this child was scaffolded must reach it');
+            assert.ok(after.includes('!.evo-lite/hive/**/*.md'),
+                'every missing rule must be added, not just the first');
+
+            // Nothing the child owns may be lost.
+            assert.ok(after.includes('dist/'), "the child's own ignores survive");
+            assert.ok(after.includes('coverage/'), "the child's own ignores inside the block survive");
+            assert.ok(after.includes('# the child added this itself'), "the child's own comments survive");
+
+            // Idempotent: a second pass adds nothing.
+            const second = ensureProjectGitignore(tmp, template);
+            const afterTwice = fs.readFileSync(path.join(tmp, '.gitignore'), 'utf8');
+            assert.strictEqual(second.status, 'existing', 'a complete file reports existing');
+            assert.strictEqual(afterTwice, after, 'a second sync must not append a duplicate line');
+
+            // Control: a genuinely complete file is left alone from the start.
+            const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-gitignore-full-'));
+            try {
+                fs.writeFileSync(path.join(tmp2, '.gitignore'), template);
+                const full = ensureProjectGitignore(tmp2, template);
+                assert.strictEqual(full.status, 'existing', 'a complete file needs no work');
+            } finally {
+                fs.rmSync(tmp2, { recursive: true, force: true });
+            }
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+        console.log('✅ T-gitignore-rule-sync passed');
+    }
+
+    console.log('T-nurture-gitignore. Nurture must be able to deliver a gitignore rule ...');
+    {
+        // The scaffold-side fix above only reaches NEW projects. `templates/gitignore`
+        // is in no gene family, so nurture could never deliver a gitignore change to
+        // an existing child — measured: three of four registered children still
+        // excluded the hive outbox. Nurture therefore tops the child's file up with
+        // the same additive function the scaffold uses, so the two cannot drift into
+        // separate ideas of what a complete block is.
+        const { nurtureChild } = require(path.join(CLI_DIR, 'hive', 'nurture.js'));
+        const FAM = [{ key: 'core-cli', scope: 'sync-always', activeRoot: 'cli',
+                       templateRoot: 'cli', relativeDir: [], files: ['gene.js'] }];
+        const mother = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-gi-mother-'));
+        const child = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-gi-child-'));
+        try {
+            fs.writeFileSync(path.join(mother, 'package.json'), '{"version":"9.9.9"}');
+            fs.mkdirSync(path.join(mother, 'templates', 'cli'), { recursive: true });
+            fs.writeFileSync(path.join(mother, 'templates', 'cli', 'gene.js'), 'module.exports = 2;\n');
+            fs.writeFileSync(path.join(mother, 'templates', 'gitignore'),
+                ['node_modules/', '', '# Evo-Lite runtime', '.evo-lite/*',
+                 '!.evo-lite/cli/**', '!.evo-lite/hive/', ''].join('\n'));
+
+            fs.mkdirSync(path.join(child, '.evo-lite', 'cli'), { recursive: true });
+            fs.writeFileSync(path.join(child, '.evo-lite', 'cli', 'gene.js'), 'module.exports = 1;\n');
+            // A child scaffolded before the hive rule existed, with an ignore of its own.
+            fs.writeFileSync(path.join(child, '.gitignore'),
+                ['node_modules/', 'my-own-secret/', '', '# Evo-Lite runtime',
+                 '.evo-lite/*', '!.evo-lite/cli/**', ''].join('\n'));
+
+            const r = nurtureChild(mother, { id: 'gi', path: child },
+                { exec: () => '', familiesOverride: FAM });
+            assert.strictEqual(r.status, 'applied');
+
+            const after = fs.readFileSync(path.join(child, '.gitignore'), 'utf8');
+            assert.ok(after.includes('!.evo-lite/hive/'),
+                'nurture must be able to deliver a gitignore rule to an existing child');
+            assert.ok(after.includes('my-own-secret/'),
+                "the child's own ignores must survive a nurture");
+            assert.deepStrictEqual(r.gitignoreAdded, ['!.evo-lite/hive/'],
+                'the report must name what it added, so a silent write is impossible');
+
+            // Exactly-once: a second nurture adds nothing and says so.
+            const again = nurtureChild(mother, { id: 'gi', path: child },
+                { exec: () => '', force: true, familiesOverride: FAM });
+            assert.deepStrictEqual(again.gitignoreAdded, [],
+                'a child that already has every rule gets no second copy');
+            assert.strictEqual(fs.readFileSync(path.join(child, '.gitignore'), 'utf8'), after,
+                'the second nurture must leave the file byte-identical');
+        } finally {
+            fs.rmSync(mother, { recursive: true, force: true });
+            fs.rmSync(child, { recursive: true, force: true });
+        }
+        console.log('✅ T-nurture-gitignore passed');
+    }
+
+    console.log('T-finding-digest. A routine commit must not print 80 lines of drift ...');
+    {
+        const { digestFindings } = require(path.join(CLI_DIR, 'planning', 'digest.js'));
+        const many = [];
+        for (let i = 0; i < 72; i++) {
+            many.push({ level: 'warning', rule: 'R008', message: `Task task:x${i} has no archive evidence`,
+                        suggestedAction: `Run mem archive after completing task:x${i}` });
+        }
+        many.push({ level: 'warning', rule: 'R011', message: 'spec:a has no machine-readable contract',
+                    suggestedAction: 'Add an acceptance criteria block' });
+        many.push({ level: 'info', rule: 'R010', message: 'Backlog item not in Planning IR: "[x] thing"' });
+        many.push({ level: 'error', rule: 'R003', message: 'something genuinely broken',
+                    suggestedAction: 'fix it' });
+
+        const brief = digestFindings(many);
+
+        // The wall is the problem. 75 findings must not become 100+ lines.
+        assert.ok(brief.length < 20,
+            `default output must collapse: got ${brief.length} lines for ${many.length} findings`);
+
+        // Collapsing must not lose a rule. Every rule still has to be visible,
+        // otherwise this trades a scrolling problem for a blindness problem.
+        const text = brief.join('\n');
+        for (const rule of ['R008', 'R011', 'R010', 'R003']) {
+            assert.ok(text.includes(rule), `${rule} must survive the collapse`);
+        }
+        assert.ok(/R008.*72|72.*R008/.test(text), 'the collapsed line must carry the count');
+
+        // An error is the one level the producer already marks as most severe;
+        // it stays verbatim rather than being folded into a count.
+        assert.ok(text.includes('something genuinely broken'),
+            'error-level findings keep their message in the default view');
+
+        // The reader must be told how to see the rest, or the detail is simply gone.
+        assert.ok(/verbose/i.test(text), 'the default view must say how to get the full list');
+
+        // --verbose is the old behaviour, in full.
+        const full = digestFindings(many, { verbose: true });
+        assert.ok(full.length >= many.length, 'verbose prints at least one line per finding');
+        assert.ok(full.join('\n').includes('Run mem archive after completing task:x71'),
+            'verbose keeps every suggestedAction');
+
+        // Control: nothing in, nothing out — no summary noise on a clean report.
+        assert.deepStrictEqual(digestFindings([]), [], 'no findings → no output');
+        console.log('✅ T-finding-digest passed');
+    }
+
     console.log('T-command-policy. checkCommand / loadPolicy / matchesEntry ...');
     {
         const { checkCommand, matchesEntry, loadPolicy, BUILTIN_DEFAULT } =

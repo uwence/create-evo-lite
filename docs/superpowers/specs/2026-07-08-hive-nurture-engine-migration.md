@@ -67,31 +67,31 @@ engine-readiness preflight in `hive nurture`.
     {
       "id": "ac-active-impl-resolver",
       "description": "resolveActiveImpl() reports impl='sqlite' & degraded=true when choice='zvec' and the zvec index cannot load; impl='zvec' & degraded=false when it can.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/memory-index.js", ".evo-lite/cli/memory-index.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-no-duplication-on-rebuild",
       "description": "A rebuild whose actual impl is sqlite drops the sqlite store first, so a choice='zvec' + dep-absent rebuild over N archives yields exactly N records, never 2N.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "scope": "all" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000, "scope": "all" } },
       "dependsOn": ["templates/cli/memory.service.js", ".evo-lite/cli/memory.service.js", "templates/cli/test/integration.js"]
     },
     {
       "id": "ac-degradation-visible",
       "description": "verify and rebuild emit an explicit engine-degradation WARN (naming dep-install or sqlite-pin fixes) when choice='zvec' but impl fell back to sqlite; no WARN when impl matches choice.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/memory.service.js", ".evo-lite/cli/memory.service.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-nurture-engine-readiness-report",
       "description": "hive nurture reports engineReadiness {childChoice, depPresent, recommendation} for a child whose pushed engine resolves to an unrunnable choice, and writes NO file into the child beyond the copied genes.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/hive/nurture.js", ".evo-lite/cli/hive/nurture.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-codeplc-capstone-green",
       "description": "The CodePLC-shaped capstone (12 archives, dep absent, choice zvec) runs nurture-report -> rebuild -> verify with 12 records, a visible degradation WARN, depPresent=false, and the full test suite green.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "scope": "full" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "timeoutMs": 600000, "scope": "full" } },
       "dependsOn": ["templates/cli/test/integration.js", ".evo-lite/cli/test/integration.js"]
     }
   ]

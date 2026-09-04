@@ -7,6 +7,7 @@ const { childEntries, eolNormalizedSha256, sha256 } = require('./status');
 const feedback = require('./feedback');
 const registry = require('./registry');
 const { runTransaction } = require('../transaction');
+const gitignoreRules = require('../gitignore-rules');
 
 function defaultExec(args, cwd) {
     return childProcess.execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -134,6 +135,22 @@ function nurtureChild(motherRoot, entry, opts = {}) {
             }
         }
     }
+    // `templates/gitignore` is in no gene family, so a gitignore rule could never
+    // reach an existing child — three of four registered children still excluded
+    // the hive outbox after the allowlist shipped. Top the child's file up with
+    // the SAME additive function the scaffold uses: append only what is missing,
+    // never remove or overwrite, so the child's own ignores are untouched.
+    const childGitignorePath = path.join(childRoot, '.gitignore');
+    const motherGitignorePath = path.join(motherRoot, 'templates', 'gitignore');
+    let gitignoreMissing = [];
+    let childGitignoreText = null;
+    if (fs.existsSync(childGitignorePath) && fs.existsSync(motherGitignorePath)) {
+        childGitignoreText = fs.readFileSync(childGitignorePath, 'utf8');
+        gitignoreMissing = gitignoreRules.missingRules(
+            childGitignoreText, fs.readFileSync(motherGitignorePath, 'utf8'));
+    }
+    report.gitignoreAdded = gitignoreMissing;
+
     report.depGap = diffRuntimeDeps(motherRoot, childRoot);
     report.engineReadiness = assessEngineReadiness(childRoot);
     report.upToDate = report.copied.length === 0 && report.depGap.missing.length === 0;
@@ -202,6 +219,7 @@ function nurtureChild(motherRoot, entry, opts = {}) {
     const targets = [
         ...planned.map(p => p.entry.activeFile),
         lockPath, report.receiptPath, productVersionPath, outboxPath,
+        ...(gitignoreMissing.length ? [childGitignorePath] : []),
     ];
     const journalPath = path.join(childRoot, '.evo-lite', 'hive', `nurture-journal-${entry.id}.json`);
     const txn = runTransaction({
@@ -234,6 +252,11 @@ function nurtureChild(motherRoot, entry, opts = {}) {
             // runtime reads and hive/status compares. The runtime manifest package.json
             // is version-pinned by design (lockfile stability); nurture must NOT touch it.
             fs.writeFileSync(productVersionPath, JSON.stringify({ version: motherVersion }, null, 2) + '\n');
+            // Additive only, and inside the transaction like every other write.
+            if (gitignoreMissing.length) {
+                fs.writeFileSync(childGitignorePath,
+                    gitignoreRules.appendRules(childGitignoreText, gitignoreMissing));
+            }
         },
     });
     if (!txn.ok) {

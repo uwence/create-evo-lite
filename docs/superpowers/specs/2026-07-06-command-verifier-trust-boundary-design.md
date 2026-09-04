@@ -234,31 +234,31 @@ Governance suite (`test/governance.js`), new T-numbers, all driving the pure
   {
     "id": "ac-policy-default-deny",
     "description": "A command not in the allowlist yields UNVERIFIED and is never executed.",
-    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
     "dependsOn": ["templates/cli/verification/command-policy.js", "templates/cli/verification/run-verifiers.js", "templates/cli/test/governance.js"]
   },
   {
     "id": "ac-policy-allowlist",
     "description": "An allowlisted prefix command runs and can PASS.",
-    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
     "dependsOn": ["templates/cli/verification/command-policy.js", "templates/cli/test/governance.js"]
   },
   {
     "id": "ac-no-shell-injection",
     "description": "A command containing shell metacharacters is rejected regardless of allowlist match.",
-    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
     "dependsOn": ["templates/cli/verification/command-policy.js", "templates/cli/test/governance.js"]
   },
   {
     "id": "ac-policy-not-a-gene",
     "description": "command-policy.json is not in MANAGED_TEMPLATE_FAMILIES, so nurture never overwrites a child's curated allowlist.",
-    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
     "dependsOn": ["templates/cli/template-manifest.js", "templates/cli/test/governance.js"]
   },
   {
     "id": "ac-builtin-default",
     "description": "Absent policy file falls back to the built-in self-test allowlist; present-but-empty allow is pure default-deny.",
-    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+    "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
     "dependsOn": ["templates/cli/verification/command-policy.js", "templates/cli/test/governance.js"]
   }
   ]

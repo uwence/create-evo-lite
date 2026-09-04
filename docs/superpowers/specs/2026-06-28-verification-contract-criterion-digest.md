@@ -85,19 +85,19 @@ Upgrading STALEs existing evidence once; re-running `verify-contract run`
     { "id": "ac-digest-stable-semantic",
       "description": "criterionDigest is stable across params key reordering and ignores description; changes when verifier/params/dependsOn change.",
       "dependsOn": ["templates/cli/verification/validate-contract.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-machine-stale-on-redef",
       "description": "deriveVerdicts STALEs a machine PASS when the criterion digest changes or is absent, even if dependsOn files are unchanged.",
       "dependsOn": ["templates/cli/verification/derive-verdicts.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-manual-stale-on-redef",
       "description": "A manual PASS STALEs when its criterion digest changes/absent, but stays PASS when only dependsOn files or HEAD change.",
       "dependsOn": ["templates/cli/verification/derive-verdicts.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-writers-set-digest",
       "description": "runSpec and attestSpec write criterionDigest into evidence records.",
       "dependsOn": ["templates/cli/verification/engine.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } }
   ]
 }
 ```

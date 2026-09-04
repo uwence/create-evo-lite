@@ -170,31 +170,31 @@ Engine-selection tests (run always, no Zvec needed):
     {
       "id": "ac-zvec-index-contract",
       "description": "ZvecMemoryIndex implements the MemoryIndex contract (searchText/upsert/delete/stats/initialize/close/engine) and round-trips; the colon-query matchString fallback works. Skips cleanly when @zvec/zvec is absent.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/memory-index-zvec.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-engine-selection-fallback",
       "description": "getMemoryIndex() returns SqliteFtsIndex by default; when engine=zvec is configured but @zvec/zvec is unavailable, it falls back to SqliteFtsIndex with a warning (children-not-forced guarantee).",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/memory-index.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-memory-ab-command",
       "description": "mem memory-ab rebuilds a Zvec index from the archive and prints a SQLite-vs-Zvec recall divergence table; read-only; degrades cleanly when @zvec/zvec is absent.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "scope": "all" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000, "scope": "all" } },
       "dependsOn": ["templates/cli/memory.js", "templates/cli/memory-index-zvec.js"]
     },
     {
       "id": "ac-zvec-optional-not-gene-config",
       "description": "@zvec/zvec is an optionalDependency (not dependencies); memory-engine.json is project-state (absent from MANAGED_TEMPLATE_FAMILIES) so nurture never overwrites a child's engine choice; .evo-lite/zvec/ is git-ignored.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["package.json", "templates/cli/template-manifest.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-mirror-parity",
       "description": "templates/cli/** and .evo-lite/cli/** mirrors are byte-identical after adding the new modules; mem sync-runtime verifies parity.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/memory-index-zvec.js", ".evo-lite/cli/memory-index-zvec.js"]
     }
   ]

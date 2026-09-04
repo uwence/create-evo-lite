@@ -130,7 +130,7 @@ mem spec supersede <id> --by <new-id>   # Phase 2
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js governance",
+          "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000,
           "scope": "governance"
         }
       },
@@ -144,7 +144,7 @@ mem spec supersede <id> --by <new-id>   # Phase 2
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js governance",
+          "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000,
           "scope": "governance"
         }
       },
@@ -159,7 +159,7 @@ mem spec supersede <id> --by <new-id>   # Phase 2
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js governance",
+          "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000,
           "scope": "governance"
         }
       },
@@ -174,7 +174,7 @@ mem spec supersede <id> --by <new-id>   # Phase 2
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js governance",
+          "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000,
           "scope": "governance"
         }
       },
@@ -188,7 +188,7 @@ mem spec supersede <id> --by <new-id>   # Phase 2
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js governance",
+          "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000,
           "scope": "governance"
         }
       },

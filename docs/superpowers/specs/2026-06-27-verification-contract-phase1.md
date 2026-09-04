@@ -100,23 +100,23 @@ function.
     { "id": "ac-run-machine-verifiers",
       "description": "run executes command/file-exists/file-absent/json-path-equals and writes PASS/FAIL evidence records bound to HEAD.",
       "dependsOn": ["templates/cli/verification/run-verifiers.js", "templates/cli/verification/evidence-store.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-dirty-tree-fail-closed",
       "description": "run refuses to write evidence when the working tree is dirty.",
       "dependsOn": ["templates/cli/verification/commands.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-status-four-states",
       "description": "status derives PASS/FAIL/UNVERIFIED/STALE per criterion using per-record changedFiles; unreachable commit → STALE; --strict exits non-zero on any non-PASS.",
       "dependsOn": ["templates/cli/verification/commands.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-attest-manual",
       "description": "attest writes a manual PASS record with attestedBy; status then shows it PASS (STALE-exempt).",
       "dependsOn": ["templates/cli/verification/commands.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-json-path-array",
       "description": "json-path-equals navigates an array-of-keys path including empty-string keys (e.g. lock packages[''].version).",
       "dependsOn": ["templates/cli/verification/run-verifiers.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } }
   ]
 }
 ```

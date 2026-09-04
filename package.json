@@ -1,54 +1,54 @@
 {
-    "name": "create-evo-lite",
-    "version": "2.3.0",
-    "description": "Project-local governance runtime for AI agents with durable workflow state and local archive tooling.",
-    "main": "index.js",
-    "bin": {
-        "create-evo-lite": "bin/cli.js"
-    },
-    "dependencies": {
-        "commander": "^14.0.2",
-        "@modelcontextprotocol/sdk": "^1.29.0"
-    },
-    "optionalDependencies": {
-        "@zvec/zvec": "0.7.0"
-    },
-    "engines": {
-        "node": ">=20.0.0"
-    },
-    "engineStrict": true,
-    "files": [
-        "bin/",
-        "index.js",
-        "templates/",
-        "docs/",
-        "README.md",
-        "README_EN.md",
-        "LICENSE",
-        "package.json"
-    ],
-    "scripts": {
-        "start": "node ./bin/cli.js",
-        "test": "node ./.evo-lite/cli/test.js",
-        "test:governance": "node ./.evo-lite/cli/test.js governance",
-        "prepublishOnly": "node ./.evo-lite/cli/release-preflight.js"
-    },
-    "keywords": [
-        "evo-lite",
-        "ai-memory",
-        "agentic-workflow",
-        "rag",
-        "local-rag",
-        "cursor-ai",
-        "antigravity",
-        "context-persistence",
-        "llm-memory",
-        "coding-assistant"
-    ],
-    "author": "uwence",
-    "license": "MIT",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/uwence/create-evo-lite.git"
-    }
+  "name": "create-evo-lite",
+  "version": "2.4.0",
+  "description": "Project-local governance runtime for AI agents with durable workflow state and local archive tooling.",
+  "main": "index.js",
+  "bin": {
+    "create-evo-lite": "bin/cli.js"
+  },
+  "dependencies": {
+    "commander": "^14.0.2",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "optionalDependencies": {
+    "@zvec/zvec": "0.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "engineStrict": true,
+  "files": [
+    "bin/",
+    "index.js",
+    "templates/",
+    "docs/",
+    "README.md",
+    "README_EN.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "scripts": {
+    "start": "node ./bin/cli.js",
+    "test": "node ./.evo-lite/cli/test.js",
+    "test:governance": "node ./.evo-lite/cli/test.js governance",
+    "prepublishOnly": "node ./.evo-lite/cli/release-preflight.js"
+  },
+  "keywords": [
+    "evo-lite",
+    "ai-memory",
+    "agentic-workflow",
+    "rag",
+    "local-rag",
+    "cursor-ai",
+    "antigravity",
+    "context-persistence",
+    "llm-memory",
+    "coding-assistant"
+  ],
+  "author": "uwence",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uwence/create-evo-lite.git"
+  }
 }

@@ -126,23 +126,23 @@ the same property proven by the Phase 2 capstone, now relied on by `--apply`.
     { "id": "ac-apply-when-ready",
       "description": "applyClose performs all three closure mutations (flip checkboxes, spec status done, R008 backfill) when previewClose is READY.",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-refuse-when-not-ready",
       "description": "applyClose refuses and mutates nothing when previewClose is BLOCKED or NO-CONTRACT.",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-rollback-on-failure",
       "description": "When an apply step throws mid-closure, applyClose restores every journaled file to its prior bytes and marks the journal aborted.",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-dirty-tree-fail-closed",
       "description": "applyClose refuses when the working tree is dirty, before any mutation.",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-cli-apply-wiring",
       "description": "mem close --apply runs applyClose and prints actions/journal/staged; --json emits the result object; neither-flag errors.",
       "dependsOn": ["templates/cli/verification/close-commands.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } }
   ]
 }
 ```
