@@ -14,6 +14,10 @@ node_modules/
 !.evo-lite/verification/
 !.evo-lite/verification/**/*.json
 !.evo-lite/memory-engine.json
+# hive feedback outbox: .agents/rules/hive-feedback.md instructs a child to write
+# these entries and commit them normally, so the ignore rules must let them through
+!.evo-lite/hive/
+!.evo-lite/hive/**/*.md
 # close --apply rollback journals are transient operational records; keep evidence tracked, journals not
 .evo-lite/verification/close-journal-*.json
 .evo-lite/verification/close.lock

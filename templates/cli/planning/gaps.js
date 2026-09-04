@@ -537,7 +537,14 @@ function checkR010(projectRoot, planIR) {
 
     return backlogItems
         .filter(item => {
-            return !taskTitles.some(t => item.includes(t) || t.includes(item)) &&
+            // Forward containment only. The reverse arm — asking whether a task
+            // TITLE contains the backlog ITEM — answers yes for any item short
+            // enough to fall inside an unrelated longer title, and the item then
+            // reads as covered although nothing links the two. Measured on this
+            // repo it suppressed nothing, because every current item carries a
+            // `[label]` prefix no title would contain; it is reachable only on
+            // an unlabelled item, where it is simply wrong.
+            return !taskTitles.some(t => item.includes(t)) &&
                    !taskIds.some(id => item.includes(id));
         })
         .map(item => {

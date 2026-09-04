@@ -1434,7 +1434,16 @@ async function archive(content, type = 'task', options = {}) {
         ? `## 现象 (Symptom)\n${safeContent}\n\n## 原因 (Root Cause)\n未记录\n\n## 解决方案 (Solution)\n未记录\n`
         : `## 实现细节 (Implementation)\n${safeContent}\n\n## 架构决策 (Architecture)\n未记录\n`;
 
-    const fileContent = `---\nid: "${id}"\ntimestamp: "${timestamp}"\ntype: "${type}"\nnamespace: "${preflightCheck.namespace ?? DEFAULT_NAMESPACE}"\ntags: []\n---\n\n${markdownBody}`;
+    // Explicit task linkage. The evidence backfill has always honoured a
+    // `linkedTask` frontmatter key, but nothing could write one: the only way to
+    // link an archive to a task was to spell the full `task:<id>` token inside
+    // the prose, which fails SILENTLY when the sentence says "the core-tests
+    // task" instead. Emitted only when supplied, so an archive without it is
+    // byte-identical to what this function produced before.
+    const linkedTask = String(options.linkedTask || '').trim();
+    const linkedTaskLine = linkedTask ? `linkedTask: "${linkedTask}"\n` : '';
+
+    const fileContent = `---\nid: "${id}"\ntimestamp: "${timestamp}"\ntype: "${type}"\nnamespace: "${preflightCheck.namespace ?? DEFAULT_NAMESPACE}"\n${linkedTaskLine}tags: []\n---\n\n${markdownBody}`;
 
     // The source writer fence. All five mutating steps happen inside the lock:
     // both directory creations, the raw write, the ingestion and the global
@@ -1967,6 +1976,7 @@ async function track(mechanism, details, options = {}) {
         id: archiveId,
         silent: options.silent,
         timestamp: new Date().toISOString(),
+        linkedTask: options.task,
     });
 
     let markdown = fs.readFileSync(ACTIVE_CONTEXT_PATH, 'utf8');

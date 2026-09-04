@@ -3213,6 +3213,55 @@ async function runGovernanceTests() {
             console.log('✅ T21 R008 amnesty + archive backfill passed');
         }
 
+        console.log('T21b. Testing archive links a task by explicit id, not by text mining ...');
+        {
+            const { backfillArchiveEvidence } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'backfill-evidence'));
+
+            // T21 proves the READ side already honours a linkedTask frontmatter
+            // key. Nothing could write one: the only way to link evidence was to
+            // spell the full `task:<id>` token inside prose, which fails SILENTLY
+            // when you write "the core-tests task" instead. This repo's own memory
+            // records that costing a round, a child hive reported it independently,
+            // and all 72 open R008 findings have zero archive evidence between them.
+            const runtime = createTempRuntimeRoot('archive-explicit-task-link');
+            const seeded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+
+            // The body deliberately contains NO `task:` token anywhere.
+            await seeded.service.archive(
+                'finished the state machine and its tests; this sentence names no id token',
+                'task',
+                {
+                    id: 'explicit-link-1',
+                    timestamp: '2026-09-04T00:00:00Z',
+                    silent: true,
+                    linkedTask: 'task:core-gameplay',
+                });
+            try { require(path.join(CLI_DIR, 'memory-index.js')).getMemoryIndex().close(); } catch (_) { /* best effort */ }
+            try { require(path.join(CLI_DIR, 'db.js')).closeDb(); } catch (_) { /* best effort */ }
+
+            // createTempRuntimeRoot hands back the .evo-lite directory itself;
+            // backfill wants the project root that contains it.
+            const projectRoot = path.dirname(runtime.runtimeRoot);
+            const result = backfillArchiveEvidence(projectRoot);
+            assert.ok(result.taskIdToArchives['task:core-gameplay'],
+                'an explicitly linked task must gain evidence even when its id appears nowhere in the prose');
+
+            // Control: the linkage must come from the explicit id, not from the
+            // text. If the writer silently fell back to mining the body, this
+            // fixture would produce no link at all and the assertion above would
+            // be passing for the wrong reason — so prove the body is really bare.
+            const rawDir = path.join(runtime.runtimeRoot, 'raw_memory');
+            const written = fs.readFileSync(
+                path.join(rawDir, fs.readdirSync(rawDir).find(f => f.includes('explicit-link-1'))),
+                'utf8');
+            const body = written.split(/^---\s*$/m).slice(2).join('---');
+            assert.ok(!/task:[a-z0-9_-]+/i.test(body),
+                'fixture guard: the archive BODY must stay free of any task id token');
+            assert.ok(/^linkedTask:\s*"?task:core-gameplay"?\s*$/m.test(written),
+                'the explicit id must be recorded in the archive frontmatter');
+            console.log('✅ T21b explicit task linkage passed');
+        }
+
         console.log('T22. Testing hook diff detects drift + hook last parses report ...');
         {
             const { installPostCommitHook, diffInstalledHook } = require(INIT_ENTRY);
@@ -6915,6 +6964,54 @@ Evo-Focus: plan:demo`,
                 .findings.filter(f => f.ruleId === 'R010');
             assert.ok(r010Findings.some(f => f.id === 'R010:backlog:zzzz'),
                 'a titleless task must not suppress a genuinely untracked backlog item when a well-formed task is also present');
+
+            // R010 reverse-substring — the arm that asks whether a TASK TITLE
+            // contains the BACKLOG ITEM. It answers yes for any item short
+            // enough to fall inside an unrelated longer title, and the item
+            // then reads as covered although nothing links the two. Measured on
+            // this repo the arm suppresses nothing, because every current item
+            // carries a `[label]` prefix no title would ever contain — it is
+            // reachable only on an unlabelled item, which is exactly the
+            // fixture below.
+            const r010RevRoot = createTempRuntimeRoot('disposition-planning-r010-reverse').workspaceRoot;
+            writeText(path.join(r010RevRoot, '.evo-lite', 'active_context.md'), [
+                '# Active Context', '<!-- BEGIN_META -->', '<!-- END_META -->',
+                '## Focus', '<!-- BEGIN_FOCUS -->', 'focus', '<!-- END_FOCUS -->',
+                '## Backlog', '<!-- BEGIN_BACKLOG -->', '- [ ] cache', '<!-- END_BACKLOG -->',
+                '## Trajectory', '<!-- BEGIN_TRAJECTORY -->', '<!-- END_TRAJECTORY -->', '',
+            ].join('\n'));
+            const r010RevIR = { specs: [], plans: [], tasks: [
+                { id: 'task:unrelated', title: 'Implement the cache invalidation strategy',
+                  linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' },
+            ] };
+            const revFindings = gaps.runPlanningDriftCensus(r010RevRoot, r010RevIR, { changedFiles: [] })
+                .findings.filter(f => f.ruleId === 'R010');
+            assert.strictEqual(revFindings.length, 1,
+                'a backlog item must not be absorbed merely because an unrelated task title contains its text');
+
+            // Controls: removing the reverse arm must not remove real coverage.
+            // (a) forward containment — the item names the task title — still counts.
+            // (b) an explicit task id in the item still counts.
+            const r010KeepRoot = createTempRuntimeRoot('disposition-planning-r010-keep').workspaceRoot;
+            writeText(path.join(r010KeepRoot, '.evo-lite', 'active_context.md'), [
+                '# Active Context', '<!-- BEGIN_META -->', '<!-- END_META -->',
+                '## Focus', '<!-- BEGIN_FOCUS -->', 'focus', '<!-- END_FOCUS -->',
+                '## Backlog', '<!-- BEGIN_BACKLOG -->',
+                '- [ ] [fwd] we still owe the cache invalidation strategy work',
+                '- [ ] [byid] tracked as task:explicitly-referenced',
+                '<!-- END_BACKLOG -->',
+                '## Trajectory', '<!-- BEGIN_TRAJECTORY -->', '<!-- END_TRAJECTORY -->', '',
+            ].join('\n'));
+            const r010KeepIR = { specs: [], plans: [], tasks: [
+                { id: 'task:fwd', title: 'cache invalidation strategy',
+                  linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' },
+                { id: 'task:explicitly-referenced', title: 'Something else entirely',
+                  linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' },
+            ] };
+            const keepFindings = gaps.runPlanningDriftCensus(r010KeepRoot, r010KeepIR, { changedFiles: [] })
+                .findings.filter(f => f.ruleId === 'R010');
+            assert.deepStrictEqual(keepFindings.map(f => f.id), [],
+                'forward containment and explicit task-id references must keep suppressing R010');
 
             console.log('✅ T-disposition-planning-census passed');
         }
@@ -15572,6 +15669,59 @@ async function runChildRuntimeTests() {
         assert.ok(mutated.mutations.includes('memory.js'),
             'the first nurture of a scaffolded child must detect a gene the child edited');
         console.log('✅ T-hive-scaffold-lock passed');
+    }
+
+    console.log('T-hive-outbox-committable. Protocol and template must not contradict each other ...');
+    {
+        // `.agents/rules/hive-feedback.md` tells a child to write the outbox and
+        // then 「正常提交」. If the shipped .gitignore excludes that exact path the
+        // instruction is impossible to follow, and the child's only way out is to
+        // edit the template's own gitignore — which is what a child hive reported.
+        //
+        // git is the judge, not a substring search: an allowlist is order- and
+        // pattern-sensitive, so `includes('!.evo-lite/hive/')` could pass while
+        // the path stays ignored in practice.
+        const { FEEDBACK_REL } = require(path.join(CLI_DIR, 'hive', 'feedback.js'));
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-outbox-ignore-'));
+        try {
+            childProcess.execFileSync('git', ['init', '-q'], { cwd: tmp, stdio: 'ignore' });
+            fs.copyFileSync(path.join(WORKSPACE_ROOT, 'templates', 'gitignore'),
+                path.join(tmp, '.gitignore'));
+            const target = path.join(tmp, ...FEEDBACK_REL.split('/'));
+            fs.mkdirSync(path.dirname(target), { recursive: true });
+            fs.writeFileSync(target, '# outbox\n');
+
+            let ignored;
+            try {
+                // exit 0 => the path IS ignored, which is the failure we are hunting
+                childProcess.execFileSync('git', ['check-ignore', '-q', FEEDBACK_REL],
+                    { cwd: tmp, stdio: 'ignore' });
+                ignored = true;
+            } catch (_) {
+                ignored = false;
+            }
+            assert.strictEqual(ignored, false,
+                `the hive protocol tells a child to commit ${FEEDBACK_REL}, `
+                + 'so the shipped .gitignore must not exclude it');
+
+            // Control: the allowlist must stay an allowlist. Runtime state that
+            // nothing asks anyone to commit is still ignored, so a blanket
+            // `!.evo-lite/**` would redden here instead of passing silently.
+            let dbIgnored;
+            try {
+                fs.writeFileSync(path.join(tmp, '.evo-lite', 'memory.db'), 'x');
+                childProcess.execFileSync('git', ['check-ignore', '-q', '.evo-lite/memory.db'],
+                    { cwd: tmp, stdio: 'ignore' });
+                dbIgnored = true;
+            } catch (_) {
+                dbIgnored = false;
+            }
+            assert.strictEqual(dbIgnored, true,
+                'the exemption must stay scoped — runtime state like memory.db stays ignored');
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+        console.log('✅ T-hive-outbox-committable passed');
     }
 
     console.log('T-command-policy. checkCommand / loadPolicy / matchesEntry ...');
