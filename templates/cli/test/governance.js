@@ -1083,6 +1083,72 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T33b. Testing a killed verifier says why, and keeps the tail ...');
+        {
+            const { runVerifier } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'run-verifiers'));
+            const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-verify-killed-'));
+            try {
+                const cmdPolicy = { allow: [{ equals: 'x' }] };
+
+                // execSync on timeout throws with status === null, signal 'SIGTERM'
+                // and code 'ETIMEDOUT' — measured, not assumed. Rendering that as
+                // `exit=?` and keeping the FIRST 500 characters produced evidence
+                // that was unusable: on a test-suite command the head is all
+                // "✅ passed" and the reason sits past the cut. One such run
+                // overwrote four genuine PASS records in this repo.
+                const killed = () => {
+                    const e = new Error('spawnSync ETIMEDOUT');
+                    e.status = null; e.signal = 'SIGTERM'; e.code = 'ETIMEDOUT';
+                    e.stdout = `HEAD-NOISE ${'.'.repeat(2000)} TAIL-REASON`;
+                    throw e;
+                };
+                const r = runVerifier({ verifier: { type: 'command', params: { cmd: 'x' } } },
+                    { repoRoot: tmp, exec: killed, policy: cmdPolicy });
+
+                assert.strictEqual(r.verdict, 'FAIL', 'a killed command is still a FAIL');
+                assert.ok(!/exit=\?/.test(r.detail),
+                    'a process killed by a signal has no exit code — reporting `exit=?` hides the reason');
+                assert.ok(/SIGTERM/.test(r.detail), 'the terminating signal must appear in the detail');
+                assert.ok(/ETIMEDOUT/.test(r.detail), 'the failure code must appear in the detail');
+                assert.ok(/TAIL-REASON/.test(r.detail),
+                    'the reason lives at the END of a long output, so truncation must keep the tail');
+
+                // Control: an ordinary non-zero exit still reports its code, and a
+                // short output is not mangled by the tail-keeping truncation.
+                const plain = runVerifier({ verifier: { type: 'command', params: { cmd: 'x' } } },
+                    { repoRoot: tmp, exec: () => { const e = new Error('boom'); e.status = 2; e.stdout = 'short output'; throw e; },
+                      policy: cmdPolicy });
+                assert.ok(/exit=2/.test(plain.detail), 'a real exit code must still be reported as itself');
+                assert.ok(/short output/.test(plain.detail), 'short output must survive intact');
+
+                // Control: PASS output is unchanged in shape.
+                const ok = runVerifier({ verifier: { type: 'command', params: { cmd: 'x' } } },
+                    { repoRoot: tmp, exec: () => 'all good', policy: cmdPolicy });
+                assert.strictEqual(ok.verdict, 'PASS');
+                assert.ok(/exit=0/.test(ok.detail), 'a passing command still reports exit=0');
+
+                // A criterion whose command legitimately runs longer than the
+                // default budget must be able to SAY SO, rather than failing
+                // forever on a limit it cannot see. The four native-lite criteria
+                // in this repo each run the governance suite, which takes minutes
+                // against a 120s default — so they can never pass as written.
+                // Declaring the budget is the spec author's call; the default
+                // stays where it was.
+                let seenTimeout = null;
+                runVerifier({ verifier: { type: 'command', params: { cmd: 'x', timeoutMs: 600000 } } },
+                    { repoRoot: tmp, policy: cmdPolicy, exec: (cmd, o) => { seenTimeout = o.timeout; return 'ok'; } });
+                assert.strictEqual(seenTimeout, 600000, 'a declared timeoutMs must reach the executor');
+
+                let defaultTimeout = null;
+                runVerifier({ verifier: { type: 'command', params: { cmd: 'x' } } },
+                    { repoRoot: tmp, policy: cmdPolicy, exec: (cmd, o) => { defaultTimeout = o.timeout; return 'ok'; } });
+                assert.strictEqual(defaultTimeout, 120000, 'the default budget is unchanged when nothing is declared');
+                console.log('✅ T33b killed-verifier diagnosability passed');
+            } finally {
+                fs.rmSync(tmp, { recursive: true, force: true });
+            }
+        }
+
         console.log('T34. Testing evidence-store read/write (latest-per-criterion, validated) ...');
         {
             const store = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
