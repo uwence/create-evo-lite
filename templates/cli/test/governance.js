@@ -3213,6 +3213,55 @@ async function runGovernanceTests() {
             console.log('✅ T21 R008 amnesty + archive backfill passed');
         }
 
+        console.log('T21b. Testing archive links a task by explicit id, not by text mining ...');
+        {
+            const { backfillArchiveEvidence } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'backfill-evidence'));
+
+            // T21 proves the READ side already honours a linkedTask frontmatter
+            // key. Nothing could write one: the only way to link evidence was to
+            // spell the full `task:<id>` token inside prose, which fails SILENTLY
+            // when you write "the core-tests task" instead. This repo's own memory
+            // records that costing a round, a child hive reported it independently,
+            // and all 72 open R008 findings have zero archive evidence between them.
+            const runtime = createTempRuntimeRoot('archive-explicit-task-link');
+            const seeded = await bootstrapRuntime(runtime.runtimeRoot, { EVO_LITE_SKIP_GIT_STATUS: '1' });
+
+            // The body deliberately contains NO `task:` token anywhere.
+            await seeded.service.archive(
+                'finished the state machine and its tests; this sentence names no id token',
+                'task',
+                {
+                    id: 'explicit-link-1',
+                    timestamp: '2026-09-04T00:00:00Z',
+                    silent: true,
+                    linkedTask: 'task:core-gameplay',
+                });
+            try { require(path.join(CLI_DIR, 'memory-index.js')).getMemoryIndex().close(); } catch (_) { /* best effort */ }
+            try { require(path.join(CLI_DIR, 'db.js')).closeDb(); } catch (_) { /* best effort */ }
+
+            // createTempRuntimeRoot hands back the .evo-lite directory itself;
+            // backfill wants the project root that contains it.
+            const projectRoot = path.dirname(runtime.runtimeRoot);
+            const result = backfillArchiveEvidence(projectRoot);
+            assert.ok(result.taskIdToArchives['task:core-gameplay'],
+                'an explicitly linked task must gain evidence even when its id appears nowhere in the prose');
+
+            // Control: the linkage must come from the explicit id, not from the
+            // text. If the writer silently fell back to mining the body, this
+            // fixture would produce no link at all and the assertion above would
+            // be passing for the wrong reason — so prove the body is really bare.
+            const rawDir = path.join(runtime.runtimeRoot, 'raw_memory');
+            const written = fs.readFileSync(
+                path.join(rawDir, fs.readdirSync(rawDir).find(f => f.includes('explicit-link-1'))),
+                'utf8');
+            const body = written.split(/^---\s*$/m).slice(2).join('---');
+            assert.ok(!/task:[a-z0-9_-]+/i.test(body),
+                'fixture guard: the archive BODY must stay free of any task id token');
+            assert.ok(/^linkedTask:\s*"?task:core-gameplay"?\s*$/m.test(written),
+                'the explicit id must be recorded in the archive frontmatter');
+            console.log('✅ T21b explicit task linkage passed');
+        }
+
         console.log('T22. Testing hook diff detects drift + hook last parses report ...');
         {
             const { installPostCommitHook, diffInstalledHook } = require(INIT_ENTRY);

@@ -710,6 +710,7 @@ function buildProgram() {
         .requiredOption('--mechanism <mechanism>', 'Mechanism label for trajectory tracking')
         .option('--details <text>', 'Detailed archive text override')
         .option('--resolve <id>', 'Resolve a backlog item by its id (hash or label)')
+        .option('--task <id>', 'Link this archive to a task id (e.g. task:core-gameplay) instead of relying on the id appearing in the prose')
         .option('--type <type>', 'Archive type', 'task')
         .option('--stage <mode>', 'How to prepare the code snapshot: staged or all', 'staged')
         .option('--meta-message <message>', 'Commit message for the runtime state snapshot', 'chore(meta): snapshot evo-lite runtime state')
@@ -829,6 +830,7 @@ function buildProgram() {
         .requiredOption('--mechanism <mechanism>', 'Mechanism label for trajectory tracking')
         .option('--details <text>', 'Detailed archive text override')
         .option('--resolve <id>', 'Resolve a backlog item by its id (hash or label)')
+        .option('--task <id>', 'Link this archive to a task id (e.g. task:core-gameplay) instead of relying on the id appearing in the prose')
         .option('--type <type>', 'Archive type', 'task')
         .action(async (details, options) => {
             await runContextCommand('track', details, options);
@@ -878,6 +880,7 @@ function buildProgram() {
         .requiredOption('--mechanism <mechanism>', 'Mechanism label for trajectory tracking')
         .option('--details <text>', 'Detailed archive text override')
         .option('--resolve <id>', 'Resolve a backlog item by its id (hash or label)')
+        .option('--task <id>', 'Link this archive to a task id (e.g. task:core-gameplay) instead of relying on the id appearing in the prose')
         .option('--type <type>', 'Archive type', 'task')
         .action(async (details, options) => {
             await runContextCommand('track', details, options);
