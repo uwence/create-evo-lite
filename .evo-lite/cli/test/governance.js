@@ -3378,6 +3378,49 @@ async function runGovernanceTests() {
             console.log('✅ T24 R006 host-adapter/meta exemption passed');
         }
 
+        console.log('T24b. Testing R006 exempts governance artifacts under docs/ ...');
+        {
+            const gapsPath = require.resolve(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            delete require.cache[gapsPath];
+            const { checkR006 } = require(gapsPath);
+            const planIR = { tasks: [] };
+
+            // A spec, a plan, or the evidence attached to one cannot "link to a
+            // task in docs/plans/" — they ARE the governance record R006 would
+            // send you to. Measured on this repo: of the docs/ paths touched by
+            // the last 60 commits, 93 of 94 were docs/validation/ evidence, so
+            // this is where the rule actually lands, not a hypothetical.
+            const governanceArtifacts = [
+                'docs/specs/2026-08-25-some-spec.md',
+                'docs/plans/2026-08-25-some-plan.md',
+                'docs/superpowers/specs/2026-08-25-some-spec.md',
+                'docs/superpowers/plans/2026-08-25-some-plan.md',
+                'docs/validation/product-support-scope.md',
+                'docs/validation/fixtures/matrix/cell-01.json',
+                'docs/contracts/planning-ir.schema.md',
+            ];
+            const exemptDocs = checkR006(WORKSPACE_ROOT, planIR, { changedFiles: governanceArtifacts });
+            assert.deepStrictEqual(
+                exemptDocs.map(f => f.factInputs.path), [],
+                'R006 must exempt governance artifacts: specs, plans, validation evidence, contracts');
+
+            // Negative control: the exemption is scoped to the governance
+            // state machine, NOT a blanket pass for docs/. Product-facing
+            // documentation and product code stay traceable, which is also
+            // what keeps this test falsifiable — a wildcard on docs/ reddens here.
+            const stillTraceable = [
+                'docs/guides/getting-started.md',
+                'docs/architecture/overview.md',
+                'docs/deep-research-report.md',
+                'src/feature.js',
+            ];
+            const flagged = checkR006(WORKSPACE_ROOT, planIR, { changedFiles: stillTraceable });
+            assert.deepStrictEqual(
+                flagged.map(f => f.factInputs.path).sort(), stillTraceable.slice().sort(),
+                'R006 must still flag product docs and product code — the exemption is scoped, not a docs/ blanket');
+            console.log('✅ T24b R006 governance-artifact exemption passed');
+        }
+
         console.log('T25. Testing stale lock with matching mirror content is not drift ...');
         {
             const { syncRuntime, verifyRuntimeLock } = require(path.join(TEMPLATE_CLI_DIR, 'sync-runtime'));
