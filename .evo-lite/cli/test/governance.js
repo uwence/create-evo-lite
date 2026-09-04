@@ -15574,6 +15574,59 @@ async function runChildRuntimeTests() {
         console.log('✅ T-hive-scaffold-lock passed');
     }
 
+    console.log('T-hive-outbox-committable. Protocol and template must not contradict each other ...');
+    {
+        // `.agents/rules/hive-feedback.md` tells a child to write the outbox and
+        // then 「正常提交」. If the shipped .gitignore excludes that exact path the
+        // instruction is impossible to follow, and the child's only way out is to
+        // edit the template's own gitignore — which is what a child hive reported.
+        //
+        // git is the judge, not a substring search: an allowlist is order- and
+        // pattern-sensitive, so `includes('!.evo-lite/hive/')` could pass while
+        // the path stays ignored in practice.
+        const { FEEDBACK_REL } = require(path.join(CLI_DIR, 'hive', 'feedback.js'));
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-outbox-ignore-'));
+        try {
+            childProcess.execFileSync('git', ['init', '-q'], { cwd: tmp, stdio: 'ignore' });
+            fs.copyFileSync(path.join(WORKSPACE_ROOT, 'templates', 'gitignore'),
+                path.join(tmp, '.gitignore'));
+            const target = path.join(tmp, ...FEEDBACK_REL.split('/'));
+            fs.mkdirSync(path.dirname(target), { recursive: true });
+            fs.writeFileSync(target, '# outbox\n');
+
+            let ignored;
+            try {
+                // exit 0 => the path IS ignored, which is the failure we are hunting
+                childProcess.execFileSync('git', ['check-ignore', '-q', FEEDBACK_REL],
+                    { cwd: tmp, stdio: 'ignore' });
+                ignored = true;
+            } catch (_) {
+                ignored = false;
+            }
+            assert.strictEqual(ignored, false,
+                `the hive protocol tells a child to commit ${FEEDBACK_REL}, `
+                + 'so the shipped .gitignore must not exclude it');
+
+            // Control: the allowlist must stay an allowlist. Runtime state that
+            // nothing asks anyone to commit is still ignored, so a blanket
+            // `!.evo-lite/**` would redden here instead of passing silently.
+            let dbIgnored;
+            try {
+                fs.writeFileSync(path.join(tmp, '.evo-lite', 'memory.db'), 'x');
+                childProcess.execFileSync('git', ['check-ignore', '-q', '.evo-lite/memory.db'],
+                    { cwd: tmp, stdio: 'ignore' });
+                dbIgnored = true;
+            } catch (_) {
+                dbIgnored = false;
+            }
+            assert.strictEqual(dbIgnored, true,
+                'the exemption must stay scoped — runtime state like memory.db stays ignored');
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+        console.log('✅ T-hive-outbox-committable passed');
+    }
+
     console.log('T-command-policy. checkCommand / loadPolicy / matchesEntry ...');
     {
         const { checkCommand, matchesEntry, loadPolicy, BUILTIN_DEFAULT } =
