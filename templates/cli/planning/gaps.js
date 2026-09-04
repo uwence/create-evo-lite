@@ -249,6 +249,18 @@ const ROOT_META_FILES = new Set([
     'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock',
 ]);
 
+// Directories that hold the governance state machine's own artifacts, as
+// opposed to product code or product documentation. Scoped deliberately:
+// docs/ as a whole is NOT exempt, because docs/guides/** and
+// docs/architecture/** document the product and should stay traceable.
+const GOVERNANCE_DOC_PREFIXES = [
+    'docs/specs/',
+    'docs/plans/',
+    'docs/superpowers/',   // holds only specs/ and plans/
+    'docs/validation/',    // acceptance evidence + its fixtures
+    'docs/contracts/',     // frozen IR / report schemas
+];
+
 function isGovernanceInfraFile(file) {
     const f = String(file || '').replace(/\\/g, '/').replace(/^\.\//, '');
     // R006 is a business-code traceability rule. Evo-Lite runtime state,
@@ -258,8 +270,16 @@ function isGovernanceInfraFile(file) {
     // rules (archive-evidence backfill, freshness, runtime-lock verification).
     if (f === '.evo-lite' || f.startsWith('.evo-lite/')) return true; // runtime state + mirror
     if (f === '.claude' || f.startsWith('.claude/')) return true;     // host adapter: commands, settings, skills
+    // The governance state machine's own products. A spec, a plan, or the
+    // evidence attached to one cannot satisfy "link to a task in docs/plans/":
+    // they ARE the record that rule points at, so the only way to silence it
+    // was to author a self-referential task, which games the rule instead of
+    // fixing anything. Reported from a child hive and reproduced here.
+    if (GOVERNANCE_DOC_PREFIXES.some(prefix => f.startsWith(prefix))) return true;
     // Root-level meta only (no path separator → top of repo), so nested
     // product files like docs/README.md or src/foo.lock stay traceable.
+    // docs/guides/** and docs/architecture/** stay traceable for the same
+    // reason: they describe the product, they are not governance artifacts.
     const base = f.includes('/') ? '' : f;
     if (!base) return false;
     if (ROOT_META_FILES.has(base)) return true;

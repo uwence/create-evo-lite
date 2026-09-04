@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execSync } = require('child_process');
 const readline = require('readline/promises');
 const http = require('http');
@@ -51,6 +52,43 @@ const RUNTIME_DEPENDENCIES = {
 const RUNTIME_OPTIONAL_DEPENDENCIES = {
     '@zvec/zvec': '0.7.0',
 };
+
+// The runtime-mirror lock records which bytes this scaffold actually installed.
+//
+// `sync-runtime` is the lock's only other writer, and it can never run inside a
+// child: a child has no templates/ tree to sync from. Until this existed, a
+// project scaffolded today carried no lock and was therefore indistinguishable
+// from a pre-lock legacy child, so its FIRST nurture had to skip gene-mutation
+// detection entirely — precisely the window in which a new child does its early
+// work and is most likely to edit a gene.
+//
+// Entries come from the shared manifest rather than a directory walk, so the
+// lock covers exactly the files nurture will later ask about. Hashes are read
+// back from disk instead of taken from the template, because scaffolding over
+// an existing project may legitimately preserve the project's own bytes; a
+// lock written from the template side would then describe a file that is not
+// there.
+function writeRuntimeMirrorLock(targetDir, manifestPaths) {
+    const entries = buildManagedTemplateEntries({
+        ...manifestPaths,
+        scopes: ['sync-always', 'copy-on-init'],
+    });
+    const checksums = {};
+    for (const entry of entries) {
+        if (!fs.existsSync(entry.activeFile)) continue;
+        const rel = path.relative(targetDir, entry.activeFile).replace(/\\/g, '/');
+        checksums[rel] = crypto.createHash('sha256')
+            .update(fs.readFileSync(entry.activeFile)).digest('hex');
+    }
+    const lockPath = path.join(targetDir, '.evo-lite', 'generated', 'runtime-mirror.lock.json');
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, `${JSON.stringify({
+        version: 'evo-runtime-mirror@1',
+        generatedAt: new Date().toISOString(),
+        entries: checksums,
+    }, null, 2)}\n`);
+    return { lockPath, count: Object.keys(checksums).length };
+}
 
 function writeRuntimeManifest(evoLiteDir) {
     const runtimeTemplateDir = path.join(__dirname, 'templates', 'runtime');
@@ -481,6 +519,15 @@ async function runInit(targetDirArg, options = {}) {
     if (fs.existsSync(cliTemplatesDir)) {
         copyRecursiveSync(cliTemplatesDir, cliDir);
     }
+
+    // 所有受管基因都已落盘，此时记录镜像锁：子巢的首次 nurture 才能分辨
+    // 「子巢自己改过基因」与「母仓漂移」。
+    writeRuntimeMirrorLock(targetDir, {
+        workspaceRoot: targetDir,
+        activeCliDir: cliDir,
+        templateRootPath: templatesDir,
+        templateCliPath: cliTemplatesDir,
+    });
 
     // Hive feedback outbox：子巢上报 evo-lite 摩擦的协议文件（内容归子巢，只在缺失时创建）
     const hiveFeedbackPath = path.join(evoLiteDir, 'hive', 'feedback.md');
