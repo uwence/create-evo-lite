@@ -1,11 +1,12 @@
 {
   "version": "evo-verification-contract@1",
   "notes": {
-    "command.scope": "Informational label only — it appears inside `cmd` and has NO execution effect; command verifiers always run at the repository root. `cwd` was removed: executing at a spec-chosen directory is unimplemented attack surface with no consumer."
+    "command.scope": "Informational label only — it appears inside `cmd` and has NO execution effect; command verifiers always run at the repository root. `cwd` was removed: executing at a spec-chosen directory is unimplemented attack surface with no consumer.",
+    "command.timeoutMs": "Optional execution budget in milliseconds; defaults to 120000 when absent. Unlike `scope` this DOES have an execution effect — it is passed to the executor. A criterion whose command legitimately runs longer than the default must declare one, or it fails intermittently with no exit code (a signalled death, not a non-zero exit). Measured on the reference machine: the governance suite takes ~105s against the 120s default, a 14% margin."
   },
   "verdictStates": ["PASS", "FAIL", "UNVERIFIED", "STALE"],
   "verifierTypes": {
-    "command":          { "requiredParams": ["cmd"],          "optionalParams": ["scope"] },
+    "command":          { "requiredParams": ["cmd"],          "optionalParams": ["scope", "timeoutMs"] },
     "file-exists":      { "requiredParams": ["path"],         "optionalParams": [] },
     "file-absent":      { "requiredParams": ["path"],         "optionalParams": [] },
     "json-path-equals": { "requiredParams": ["file", "path"], "optionalParams": ["equals", "equalsJsonPath"] },

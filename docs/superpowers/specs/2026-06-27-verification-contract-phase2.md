@@ -88,23 +88,23 @@ so a reviewer sees exactly what `--apply` will mutate.
     { "id": "ac-ready-when-all-pass",
       "description": "previewClose returns READY when a spec has >=1 criteria and statusSpec reports all PASS.",
       "dependsOn": ["templates/cli/verification/close-preview.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-blocked-lists-remedies",
       "description": "previewClose returns BLOCKED with a per-criterion remedy when any criterion is STALE/UNVERIFIED/FAIL.",
       "dependsOn": ["templates/cli/verification/close-preview.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-no-contract-state",
       "description": "previewClose returns NO-CONTRACT (not BLOCKED) for a spec with zero criteria.",
       "dependsOn": ["templates/cli/verification/close-preview.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-action-list-and-plan-state",
       "description": "previewClose reports linked-plan state and the closure action list (flip boxes / spec done / backfill).",
       "dependsOn": ["templates/cli/verification/close-preview.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-cli-read-only",
       "description": "mem close --preview prints a verdict and mutates no files; --strict exits non-zero unless READY.",
       "dependsOn": ["templates/cli/verification/close-commands.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } }
   ]
 }
 ```

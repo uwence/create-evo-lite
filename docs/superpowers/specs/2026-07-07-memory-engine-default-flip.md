@@ -194,37 +194,37 @@ config alone.
     {
       "id": "ac-graded-rubric",
       "description": "mem memory-ab computes per-query hit/precision against committed expected-hit labels for BUILTIN_QUERIES and prints aggregate hit-rate + mean precision per engine; degrades cleanly when @zvec/zvec is absent.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "scope": "all" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000, "scope": "all" } },
       "dependsOn": ["templates/cli/memory-ab.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-flip-evidence-artifact",
       "description": "docs/memory-engine-flip-evidence.md exists with the graded quantitative table, the judged from-logs sample (5-8 rows with zvec-better/sqlite-better/tie verdicts), and a GO/NO-GO verdict paragraph.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["docs/memory-engine-flip-evidence.md"]
     },
     {
       "id": "ac-engine-aware-rebuild",
       "description": "rebuild is engine-aware: with engine=zvec it wipes .evo-lite/zvec/collection + nextid.json and repopulates from raw_memory/*.md via the seam; with engine=sqlite it keeps today's behavior. Full-rebuild idempotent. Skips cleanly when @zvec/zvec is absent.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "scope": "all" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000, "scope": "all" } },
       "dependsOn": ["templates/cli/memory.service.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-list-through-seam",
       "description": "MemoryIndex contract has a list()/all() method; SqliteFtsIndex and ZvecMemoryIndex both implement it with the same shape; service list() routes through getMemoryIndex().list() so inspection reflects the active engine.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/memory-index.js", "templates/cli/memory-index-zvec.js", "templates/cli/memory.service.js"]
     },
     {
       "id": "ac-default-flip-fallback",
       "description": "DEFAULT_ENGINE_CHOICE is 'zvec'; no-config selection resolves to ZvecMemoryIndex when @zvec/zvec is available and falls back to SqliteFtsIndex with a warning when it is mocked unavailable; an explicit memory-engine.json pin to sqlite-fts5-trigram overrides (rollback path).",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/memory-index.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-mirror-parity",
       "description": "templates/cli/** and .evo-lite/cli/** mirrors are byte-identical after the changes; mem sync-runtime verifies parity.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": [".evo-lite/cli/memory.service.js", ".evo-lite/cli/memory-index.js"]
     }
   ]

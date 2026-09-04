@@ -1653,7 +1653,7 @@ mem code scan --full
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js governance",
+          "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000,
           "scope": "governance"
         }
       },
@@ -1668,7 +1668,7 @@ mem code scan --full
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js all",
+          "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000,
           "scope": "all"
         }
       },
@@ -1696,7 +1696,7 @@ mem code scan --full
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js all",
+          "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000,
           "scope": "all"
         }
       },
@@ -1710,7 +1710,7 @@ mem code scan --full
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js all",
+          "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000,
           "scope": "all"
         }
       },
@@ -1724,7 +1724,7 @@ mem code scan --full
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js governance",
+          "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000,
           "scope": "governance"
         }
       },
@@ -1796,7 +1796,7 @@ mem code scan --full
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js all",
+          "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000,
           "scope": "all"
         }
       },
@@ -1810,7 +1810,7 @@ mem code scan --full
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js governance",
+          "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000,
           "scope": "governance"
         }
       },
@@ -1824,7 +1824,7 @@ mem code scan --full
       "verifier": {
         "type": "command",
         "params": {
-          "cmd": "node ./.evo-lite/cli/test.js all",
+          "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000,
           "scope": "all"
         }
       },

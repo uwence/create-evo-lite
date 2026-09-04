@@ -155,19 +155,19 @@ dashboard.
     { "id": "ac-validator-rejects-bad",
       "description": "validateCriteria/validateEvidenceRecord reject unknown type, missing params, empty dependsOn, dup ids, bad verdict, and manual/attestedBy mismatch.",
       "dependsOn": ["templates/cli/verification/**", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-derive-four-states",
       "description": "deriveVerdicts returns UNVERIFIED (no record), STALE (machine PASS with dependsOn in changedFiles), PASS (machine PASS, deps untouched; or manual), FAIL.",
       "dependsOn": ["templates/cli/verification/**", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-manual-attestation-distinct",
       "description": "A manual criterion is STALE-exempt and its evidence requires attestedBy; machine evidence must not carry attestedBy.",
       "dependsOn": ["templates/cli/verification/**", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-lint-dogfood",
       "description": "mem verify-contract lint validates this spec's own criteria block.",
       "dependsOn": ["templates/cli/verification/**", "docs/superpowers/specs/2026-06-26-verification-contract-phase0.md"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } }
   ]
 }
 ```
