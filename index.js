@@ -6,6 +6,7 @@ const readline = require('readline/promises');
 const http = require('http');
 const { Command } = require('commander');
 const { buildManagedTemplateEntries } = require(path.join(__dirname, 'templates', 'cli', 'template-manifest'));
+const gitignoreRules = require(path.join(__dirname, 'templates', 'cli', 'gitignore-rules'));
 const { installPostCommitHook, diffInstalledHook } = require(path.join(__dirname, 'templates', 'cli', 'hooks'));
 
 const SELF_VERSION = require(path.join(__dirname, 'package.json')).version;
@@ -251,8 +252,19 @@ function ensureProjectGitignore(targetDir, templateContent) {
     }
 
     const currentContent = fs.readFileSync(gitignorePath, 'utf8');
+
     if (hasEvoLiteGitignoreRules(currentContent)) {
-        return { status: 'existing' };
+        // A block exists — but "exists" is not "complete". Rules added to the
+        // template after this project was scaffolded are missing here, and the
+        // old check returned early and never delivered them. Top up additively:
+        // append only what is absent, leaving every line the project owns alone.
+        const missing = gitignoreRules.missingRules(currentContent, templateContent);
+        if (missing.length === 0) {
+            return { status: 'existing' };
+        }
+        fs.writeFileSync(gitignorePath, gitignoreRules.appendRules(currentContent, missing), 'utf8');
+        console.log(`✅ 已向现有 .gitignore 补齐 ${missing.length} 条新增的 Evo-Lite 忽略规则。`);
+        return { status: 'topped-up', added: missing };
     }
 
     const separator = currentContent.endsWith('\n') ? '' : '\n';
@@ -700,6 +712,7 @@ module.exports = {
     diffInstalledHook,
     main,
     runInit,
+    ensureProjectGitignore,
 };
 
 if (path.resolve(process.argv[1] || '') === path.resolve(__filename)) {
