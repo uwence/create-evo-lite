@@ -15510,6 +15510,70 @@ async function runChildRuntimeTests() {
     }
     console.log('✅ T-hive-mutation passed');
 
+    console.log('T-hive-scaffold-lock. A freshly scaffolded child is not a legacy child ...');
+    {
+        // T-hive-mutation (a) covers the LEGACY child: one that predates the lock
+        // mechanism, where skipping mutation detection is the correct degradation.
+        // This block covers the other case: a child scaffolded TODAY. It has no
+        // templates/ tree, so `sync-runtime` — the only writer of the lock — can
+        // never run inside it, and until its first nurture it fell into the same
+        // legacy branch. That window is exactly when a child does its early work.
+        const crypto = require('crypto');
+        const { runInitializer } = require('./harness');
+        const { nurtureChild } = require(path.join(CLI_DIR, 'hive', 'nurture.js'));
+        const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-scaffold-lock-'));
+        // Let git through; stub the dependency install so the test needs no
+        // network and no native toolchain.
+        const gitOnly = (cmd, opts) => {
+            const s = String(cmd);
+            if (/(^|[\\/"'])git(\.exe)?["']?\s/.test(s) || s.startsWith('git ')) {
+                return childProcess.execSync(cmd, opts);
+            }
+            return '';
+        };
+        const r = await runInitializer(projectRoot, {
+            args: ['--no-initial-commit'], execSyncImpl: gitOnly,
+        });
+        assert.strictEqual(r.status, 0, 'the scaffold must complete: this block tests the lock, not failure');
+
+        const lockPath = path.join(projectRoot, '.evo-lite', 'generated', 'runtime-mirror.lock.json');
+        assert.ok(fs.existsSync(lockPath),
+            'a freshly scaffolded child must carry a runtime-mirror lock');
+
+        // The lock must describe what is actually on disk. A lock written from
+        // the template side rather than the installed side would pass an
+        // existence check and still be wrong, so every recorded hash is re-derived.
+        const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+        const recorded = Object.entries(lock.entries || {});
+        assert.ok(recorded.length > 0, 'the scaffold lock must record the installed runtime, not an empty map');
+        const wrong = recorded.filter(([rel, hash]) => {
+            const abs = path.join(projectRoot, rel);
+            if (!fs.existsSync(abs)) return true;
+            return crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex') !== hash;
+        }).map(([rel]) => rel);
+        assert.deepStrictEqual(wrong, [], 'every lock entry must match the bytes actually installed');
+
+        // The property that matters: the first nurture can already tell a child
+        // gene mutation from mother drift.
+        const dry = nurtureChild(WORKSPACE_ROOT, { id: 'scaffold-lock', path: projectRoot },
+            { dryRun: true, exec: () => '' });
+        assert.strictEqual(dry.lockMissing, false,
+            'a child scaffolded today must not be reported as a lockless legacy child');
+
+        // End-to-end, and the assertion that actually constrains the lock's
+        // CONTENTS rather than its existence: edit one gene in the child, and
+        // the very first nurture must name it. An empty, misspelled, or
+        // wrongly-scoped lock still satisfies lockMissing === false, but cannot
+        // survive this.
+        const gene = path.join(projectRoot, '.evo-lite', 'cli', 'memory.js');
+        fs.writeFileSync(gene, `${fs.readFileSync(gene, 'utf8')}\n// child local patch\n`);
+        const mutated = nurtureChild(WORKSPACE_ROOT, { id: 'scaffold-lock', path: projectRoot },
+            { dryRun: true, exec: () => '' });
+        assert.ok(mutated.mutations.includes('memory.js'),
+            'the first nurture of a scaffolded child must detect a gene the child edited');
+        console.log('✅ T-hive-scaffold-lock passed');
+    }
+
     console.log('T-command-policy. checkCommand / loadPolicy / matchesEntry ...');
     {
         const { checkCommand, matchesEntry, loadPolicy, BUILTIN_DEFAULT } =
