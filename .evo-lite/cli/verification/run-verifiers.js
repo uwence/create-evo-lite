@@ -5,10 +5,29 @@ const path = require('path');
 const { execSync } = require('child_process');
 const { loadPolicy, checkCommand } = require('./command-policy');
 
+// Keep the TAIL, not the head. A failing command explains itself at the end of
+// its output; the head of a test-suite run is a wall of passing cases. Keeping
+// the first 500 characters produced evidence whose visible part read entirely
+// as success while the verdict said FAIL.
 function truncate(s, n = 500) {
     s = String(s == null ? '' : s);
-    return s.length > n ? s.slice(0, n) + '…' : s;
+    return s.length > n ? '…' + s.slice(-n) : s;
 }
+
+// A process killed by a signal has no exit status. Rendering that as `exit=?`
+// discarded the only facts that explain it — the signal, and the error code
+// that says WHY it was signalled. Measured: execSync on timeout throws with
+// status === null, signal 'SIGTERM', code 'ETIMEDOUT'.
+function describeExit(e, timeoutMs) {
+    if (e && e.status != null) return `exit=${e.status}`;
+    const parts = [];
+    if (e && e.signal) parts.push(`signal=${e.signal}`);
+    if (e && e.code) parts.push(`code=${e.code}`);
+    if (e && e.code === 'ETIMEDOUT' && timeoutMs) parts.push(`after ${timeoutMs}ms`);
+    return parts.length ? `killed(${parts.join(' ')})` : 'exit=unknown(no status, no signal)';
+}
+
+const DEFAULT_COMMAND_TIMEOUT_MS = 120000;
 
 // Resolve a spec-supplied relative path but refuse to escape the project root.
 // A criterion from an untrusted spec must not probe `../../etc/passwd`.
@@ -92,11 +111,18 @@ function runVerifier(criterion, opts = {}) {
                 if (!check.allowed) {
                     return { verdict: 'UNVERIFIED', detail: check.reason, blocked: true };
                 }
+                // A criterion whose command legitimately outlives the default
+                // budget can declare its own. The default is unchanged, so a
+                // spec that says nothing behaves exactly as before; declaring a
+                // longer one is the spec author's decision, not this file's.
+                const declared = Number(p.timeoutMs);
+                const timeoutMs = Number.isFinite(declared) && declared > 0
+                    ? declared : DEFAULT_COMMAND_TIMEOUT_MS;
                 try {
-                    const out = exec(p.cmd, { cwd: repoRoot, timeout: 120000 });
+                    const out = exec(p.cmd, { cwd: repoRoot, timeout: timeoutMs });
                     return { verdict: 'PASS', detail: `exit=0 ${truncate(out)}`.trim() };
                 } catch (e) {
-                    return { verdict: 'FAIL', detail: `exit=${e.status != null ? e.status : '?'} ${truncate(e.stdout || e.message)}`.trim() };
+                    return { verdict: 'FAIL', detail: `${describeExit(e, timeoutMs)} ${truncate(e.stdout || e.message)}`.trim() };
                 }
             }
             case 'file-exists':
