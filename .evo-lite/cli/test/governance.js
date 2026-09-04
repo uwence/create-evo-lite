@@ -6965,6 +6965,54 @@ Evo-Focus: plan:demo`,
             assert.ok(r010Findings.some(f => f.id === 'R010:backlog:zzzz'),
                 'a titleless task must not suppress a genuinely untracked backlog item when a well-formed task is also present');
 
+            // R010 reverse-substring — the arm that asks whether a TASK TITLE
+            // contains the BACKLOG ITEM. It answers yes for any item short
+            // enough to fall inside an unrelated longer title, and the item
+            // then reads as covered although nothing links the two. Measured on
+            // this repo the arm suppresses nothing, because every current item
+            // carries a `[label]` prefix no title would ever contain — it is
+            // reachable only on an unlabelled item, which is exactly the
+            // fixture below.
+            const r010RevRoot = createTempRuntimeRoot('disposition-planning-r010-reverse').workspaceRoot;
+            writeText(path.join(r010RevRoot, '.evo-lite', 'active_context.md'), [
+                '# Active Context', '<!-- BEGIN_META -->', '<!-- END_META -->',
+                '## Focus', '<!-- BEGIN_FOCUS -->', 'focus', '<!-- END_FOCUS -->',
+                '## Backlog', '<!-- BEGIN_BACKLOG -->', '- [ ] cache', '<!-- END_BACKLOG -->',
+                '## Trajectory', '<!-- BEGIN_TRAJECTORY -->', '<!-- END_TRAJECTORY -->', '',
+            ].join('\n'));
+            const r010RevIR = { specs: [], plans: [], tasks: [
+                { id: 'task:unrelated', title: 'Implement the cache invalidation strategy',
+                  linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' },
+            ] };
+            const revFindings = gaps.runPlanningDriftCensus(r010RevRoot, r010RevIR, { changedFiles: [] })
+                .findings.filter(f => f.ruleId === 'R010');
+            assert.strictEqual(revFindings.length, 1,
+                'a backlog item must not be absorbed merely because an unrelated task title contains its text');
+
+            // Controls: removing the reverse arm must not remove real coverage.
+            // (a) forward containment — the item names the task title — still counts.
+            // (b) an explicit task id in the item still counts.
+            const r010KeepRoot = createTempRuntimeRoot('disposition-planning-r010-keep').workspaceRoot;
+            writeText(path.join(r010KeepRoot, '.evo-lite', 'active_context.md'), [
+                '# Active Context', '<!-- BEGIN_META -->', '<!-- END_META -->',
+                '## Focus', '<!-- BEGIN_FOCUS -->', 'focus', '<!-- END_FOCUS -->',
+                '## Backlog', '<!-- BEGIN_BACKLOG -->',
+                '- [ ] [fwd] we still owe the cache invalidation strategy work',
+                '- [ ] [byid] tracked as task:explicitly-referenced',
+                '<!-- END_BACKLOG -->',
+                '## Trajectory', '<!-- BEGIN_TRAJECTORY -->', '<!-- END_TRAJECTORY -->', '',
+            ].join('\n'));
+            const r010KeepIR = { specs: [], plans: [], tasks: [
+                { id: 'task:fwd', title: 'cache invalidation strategy',
+                  linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' },
+                { id: 'task:explicitly-referenced', title: 'Something else entirely',
+                  linkedPlan: 'plan:p', linkedFiles: [], status: 'implemented' },
+            ] };
+            const keepFindings = gaps.runPlanningDriftCensus(r010KeepRoot, r010KeepIR, { changedFiles: [] })
+                .findings.filter(f => f.ruleId === 'R010');
+            assert.deepStrictEqual(keepFindings.map(f => f.id), [],
+                'forward containment and explicit task-id references must keep suppressing R010');
+
             console.log('✅ T-disposition-planning-census passed');
         }
 
