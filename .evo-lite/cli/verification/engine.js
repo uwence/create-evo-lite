@@ -90,26 +90,59 @@ function statusSpec(specPath, opts = {}) {
     return computeLiveVerdicts(contract.criteria, store.records, headSha, gitDiff);
 }
 
-function attestSpec(specPath, criterionId, opts = {}) {
+// Attest one or more manual criteria in a single pass.
+//
+// Why more than one: attest is fail-closed on a dirty tree, and writing an
+// evidence record is itself what dirties the tree — so attesting N criteria used
+// to force N commits, one per criterion, purely to satisfy the next call's own
+// precondition. A child project ended up with seven `chore(verification)` commits
+// for seven attestations. The commit-bound intent is right (evidence must bind to
+// a real committed state); needing a commit BETWEEN two attestations of the same
+// state is not part of that intent.
+//
+// All-or-nothing comes from ordering, not from rollback: every criterion is
+// resolved and type-checked, and the tree is verified clean, BEFORE the first
+// write happens. There is nothing to undo because nothing is written until the
+// whole batch is known good. A rollback transaction here would be more machinery
+// for strictly less certainty.
+//
+// The clean-tree check and `git rev-parse HEAD` run ONCE, so every record in a
+// batch binds the same commitSha and the same ranAt — they describe one act of
+// human inspection of one tree state, and reading HEAD per record would let them
+// disagree if something moved mid-batch.
+function attestSpec(specPath, criterionIds, opts = {}) {
     const root = opts.root || process.cwd();
     const exec = opts.exec || defaultExec;
     if (!opts.by) throw new Error('attest requires --by <name>');
+    const ids = Array.isArray(criterionIds) ? criterionIds : [criterionIds];
+    if (!ids.length) throw new Error('attest requires at least one criterionId');
+    const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+    if (dupes.length) {
+        throw new Error(`criterion listed more than once: ${[...new Set(dupes)].join(', ')}`);
+    }
     const specText = fs.readFileSync(specPath, 'utf8');
 
     // Trust gate: a human attestation may ONLY stand in for a `manual` verifier.
-    // Without this, attest could forge a machine criterion into a STALE-exempt
-    // manual PASS, bypassing its verifier and defeating the whole contract.
+    // Without this, attest could forge a machine criterion into a human PASS,
+    // bypassing its verifier and defeating the whole contract.
     const contract = loadValidatedContract(specText);
     if (!contract.ok) {
         throw new Error('contract invalid — cannot attest: ' + contract.findings.map(f => f.message).join('; '));
     }
-    const crit = contract.criteria.find(c => c.id === criterionId);
-    if (!crit) {
-        throw new Error(`criterion not found: ${criterionId}`);
+
+    // --- Preflight: resolve and type-check EVERY id before any write ---
+    const crits = [];
+    for (const criterionId of ids) {
+        const crit = contract.criteria.find(c => c.id === criterionId);
+        if (!crit) {
+            throw new Error(`criterion not found: ${criterionId}`);
+        }
+        if (!crit.verifier || crit.verifier.type !== 'manual') {
+            throw new Error(`criterion ${criterionId} is type "${crit.verifier && crit.verifier.type}", not manual — only manual criteria can be attested; run its verifier instead`);
+        }
+        crits.push(crit);
     }
-    if (!crit.verifier || crit.verifier.type !== 'manual') {
-        throw new Error(`criterion ${criterionId} is type "${crit.verifier && crit.verifier.type}", not manual — only manual criteria can be attested; run its verifier instead`);
-    }
+
     // Clean-tree fail-closed: an attestation binds to a real committed state.
     const porcelain = String(exec('git status --porcelain', { cwd: root })).trim();
     if (porcelain) {
@@ -119,13 +152,19 @@ function attestSpec(specPath, criterionId, opts = {}) {
     const specId = contract.specId;
     const headSha = opts.headSha || String(exec('git rev-parse HEAD', { cwd: root })).trim();
     const ranAt = opts.ranAt || new Date().toISOString();
-    const record = {
-        criterionId, verdict: 'PASS', commitSha: headSha, verifierType: 'manual',
-        ranAt, detail: opts.note || 'manual attestation', attestedBy: opts.by,
-        criterionDigest: criterionDigest(crit),
-    };
-    writeRecord(root, specId, record);
-    return record;
+
+    // --- Writes: preflight passed, so every record below is known valid ---
+    const records = crits.map(crit => {
+        const record = {
+            criterionId: crit.id, verdict: 'PASS', commitSha: headSha, verifierType: 'manual',
+            ranAt, detail: opts.note || 'manual attestation', attestedBy: opts.by,
+            criterionDigest: criterionDigest(crit),
+        };
+        writeRecord(root, specId, record);
+        return record;
+    });
+    // A single id still returns the record itself — existing callers are unchanged.
+    return Array.isArray(criterionIds) ? records : records[0];
 }
 
 module.exports = { runSpec, statusSpec, attestSpec, specIdOf };

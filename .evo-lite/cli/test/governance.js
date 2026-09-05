@@ -2906,6 +2906,70 @@ async function runGovernanceTests() {
             }
         }
 
+        console.log('T52b. Testing batch attestSpec: all-or-nothing preflight, one bound commit ...');
+        {
+            const engine = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
+            const { readEvidence } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-batch-attest-'));
+            try {
+                const specPath = path.join(root, 'spec.md');
+                fs.writeFileSync(specPath, [
+                    '---', 'id: spec:b', 'status: draft', 'linkedPlan: plan:b', '---', '',
+                    '# B', '', '## Acceptance Criteria', '',
+                    '```json',
+                    '{ "criteria": [' +
+                    ' { "id": "m1", "description": "x", "dependsOn": ["a.js"], "verifier": { "type": "manual", "params": { "reason": "r" } } },' +
+                    ' { "id": "m2", "description": "x", "dependsOn": ["b.js"], "verifier": { "type": "manual", "params": { "reason": "r" } } },' +
+                    ' { "id": "cmd", "description": "x", "dependsOn": ["c.js"], "verifier": { "type": "command", "params": { "cmd": "true" } } } ] }',
+                    '```', '',
+                ].join('\n'));
+                const cleanExec = (cmd) => (/status --porcelain/.test(cmd) ? '' : 'shaB');
+                const recCount = () => Object.keys(readEvidence(root, 'spec:b').records || {}).length;
+
+                // A valid manual id FIRST, an unknown id SECOND. If the preflight were
+                // interleaved with the writes, m1 would already be on disk. Zero
+                // records is the whole point of validating before writing.
+                assert.throws(
+                    () => engine.attestSpec(specPath, ['m1', 'nope'], { root, headSha: 'shaB', ranAt: 't', by: 'alice', exec: cleanExec }),
+                    /criterion not found: nope/, 'an unknown id in the batch throws');
+                assert.strictEqual(recCount(), 0, 'a rejected batch writes NOTHING — not even the ids that were valid');
+
+                // Same shape for the trust gate: a machine criterion anywhere in the
+                // batch must not let a human PASS be forged for it.
+                assert.throws(
+                    () => engine.attestSpec(specPath, ['m1', 'cmd'], { root, headSha: 'shaB', ranAt: 't', by: 'alice', exec: cleanExec }),
+                    /not manual/, 'a machine criterion in the batch throws');
+                assert.strictEqual(recCount(), 0, 'the trust-gate rejection also writes nothing');
+
+                assert.throws(
+                    () => engine.attestSpec(specPath, ['m1', 'm1'], { root, headSha: 'shaB', ranAt: 't', by: 'alice', exec: cleanExec }),
+                    /more than once/, 'a duplicated id is refused rather than written twice');
+                assert.strictEqual(recCount(), 0, 'the duplicate rejection also writes nothing');
+
+                // A dirty tree still refuses the whole batch.
+                assert.throws(
+                    () => engine.attestSpec(specPath, ['m1', 'm2'], { root, headSha: 'shaB', ranAt: 't', by: 'alice', exec: () => ' M x.js' }),
+                    /working tree is dirty/, 'a dirty tree refuses the batch');
+                assert.strictEqual(recCount(), 0, 'the dirty-tree refusal writes nothing');
+
+                const written = engine.attestSpec(specPath, ['m1', 'm2'], { root, headSha: 'shaB', ranAt: 't', by: 'alice', exec: cleanExec });
+                assert.strictEqual(written.length, 2, 'a valid batch writes every record');
+                assert.strictEqual(recCount(), 2, 'both records reached the store');
+                const store = readEvidence(root, 'spec:b').records;
+                // One act of inspection of one tree state: reading HEAD per record
+                // would let a batch disagree with itself if something moved mid-run.
+                assert.strictEqual(store.m1.commitSha, store.m2.commitSha, 'every record in a batch binds the SAME commit');
+                assert.strictEqual(store.m1.ranAt, store.m2.ranAt, 'every record in a batch shares one ranAt');
+
+                // Backward compatibility: a bare string still returns the record itself.
+                const single = engine.attestSpec(specPath, 'm1', { root, headSha: 'shaB', ranAt: 't2', by: 'bob', exec: cleanExec });
+                assert.strictEqual(single.criterionId, 'm1', 'a single string id returns the record, not an array');
+                console.log('✅ T52b batch attest');
+            } finally {
+                fs.rmSync(root, { recursive: true, force: true });
+            }
+        }
+
         console.log('T53. Testing previewClose task-incomplete warning (advisory, not a blocker) ...');
         {
             const { previewClose } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
