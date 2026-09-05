@@ -2906,7 +2906,12 @@ async function runGovernanceTests() {
             }
         }
 
-        console.log('T52b. Testing batch attestSpec: all-or-nothing preflight, one bound commit ...');
+        // Scope of this test: PREFLIGHT/REFUSAL atomicity — a batch that is refused
+        // writes nothing, not even the ids that were individually valid. It does NOT
+        // test transactional storage: writeRecord persists one record at a time, so
+        // a failure DURING the write phase can leave a prefix. That is out of scope
+        // by design, not by omission.
+        console.log('T52b. Testing batch attestSpec: preflight/refusal atomicity, one bound commit ...');
         {
             const engine = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'engine'));
             const { readEvidence } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
@@ -2964,7 +2969,7 @@ async function runGovernanceTests() {
                 // Backward compatibility: a bare string still returns the record itself.
                 const single = engine.attestSpec(specPath, 'm1', { root, headSha: 'shaB', ranAt: 't2', by: 'bob', exec: cleanExec });
                 assert.strictEqual(single.criterionId, 'm1', 'a single string id returns the record, not an array');
-                console.log('✅ T52b batch attest');
+                console.log('✅ T52b batch attest preflight/refusal atomicity');
             } finally {
                 fs.rmSync(root, { recursive: true, force: true });
             }

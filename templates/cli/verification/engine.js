@@ -100,11 +100,16 @@ function statusSpec(specPath, opts = {}) {
 // a real committed state); needing a commit BETWEEN two attestations of the same
 // state is not part of that intent.
 //
-// All-or-nothing comes from ordering, not from rollback: every criterion is
-// resolved and type-checked, and the tree is verified clean, BEFORE the first
-// write happens. There is nothing to undo because nothing is written until the
-// whole batch is known good. A rollback transaction here would be more machinery
-// for strictly less certainty.
+// What this guarantees: every foreseeable REFUSAL is decided before the first
+// write. Ids are resolved, types are checked, and the tree is verified clean while
+// nothing has been written yet — so a rejected batch cannot leave a valid prefix
+// on disk. Ordering, not rollback, is what buys that.
+//
+// What it does NOT guarantee: transactional storage. Records go to writeRecord one
+// at a time, so once the write phase has begun an I/O failure, a permission error
+// or a killed process may leave a prefix persisted. No rollback semantics are
+// claimed, and none are needed for the refusal paths this exists to serve — the
+// alternative is more machinery for strictly less certainty.
 //
 // The clean-tree check and `git rev-parse HEAD` run ONCE, so every record in a
 // batch binds the same commitSha and the same ranAt — they describe one act of
