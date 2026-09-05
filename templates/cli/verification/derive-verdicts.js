@@ -42,17 +42,28 @@ function deriveVerdicts(criteria, records, headSha, changedFiles) {
         if (rec.criterionDigest !== criterionDigest(c)) {
             return { criterionId: c.id, verdict: 'STALE', detail: 'criterion definition changed since evidence' };
         }
-        if (rec.verifierType === 'manual') {
-            return { criterionId: c.id, verdict: 'PASS', detail: 'manual attestation (digest matches)' };
-        }
+        // Manual evidence used to return PASS here, BEFORE the dependsOn check —
+        // so an attestation only went STALE when the criterion was redefined, never
+        // when the code it guards changed. That is backwards: a machine criterion
+        // can be re-run for free, while a manual one is exactly the kind only a
+        // human can re-check (visual, interaction, feel) — and it was the one
+        // permanently exempt. Worse, `readinessOf()` maps every non-PASS verdict to
+        // a closure blocker, so a manual PASS that had gone stale in fact still let
+        // a spec close READY, and R011 consumed the same verdict.
+        //
+        // Manual now takes the same path as machine: dependsOn changed → STALE, and
+        // a human decides whether the change actually invalidates the attestation.
+        // The remedy differs (re-attest, not re-run) and is routed by verifierType
+        // in close-preview's remedyFor().
+        const kind = rec.verifierType === 'manual' ? 'attestation' : 'evidence';
         if (changedFiles == null) {
             return rec.commitSha !== headSha
                 ? { criterionId: c.id, verdict: 'STALE', detail: `commit ${rec.commitSha} != HEAD ${headSha}` }
                 : { criterionId: c.id, verdict: 'PASS', detail: 'commit matches HEAD' };
         }
         return dependsMatches(c.dependsOn, changedFiles)
-            ? { criterionId: c.id, verdict: 'STALE', detail: 'dependsOn changed since evidence' }
-            : { criterionId: c.id, verdict: 'PASS', detail: 'dependsOn unchanged' };
+            ? { criterionId: c.id, verdict: 'STALE', detail: `dependsOn changed since ${kind}` }
+            : { criterionId: c.id, verdict: 'PASS', detail: `dependsOn unchanged since ${kind}` };
     });
 }
 
