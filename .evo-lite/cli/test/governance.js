@@ -1044,7 +1044,21 @@ async function runGovernanceTests() {
             assert.strictEqual(byId.b, 'FAIL', 'recorded FAIL → FAIL');
             assert.strictEqual(byId.c, 'PASS', 'machine PASS, deps untouched → PASS');
             assert.strictEqual(byId.d, 'STALE', 'machine PASS, deps in changedFiles → STALE');
-            assert.strictEqual(byId.e, 'PASS', 'manual PASS is STALE-exempt');
+            // 'e' is a manual criterion whose dependsOn is ['index.js'], and the
+            // changed set here is ['templates/runtime/package.json'] — so its deps
+            // did NOT change and it must stay PASS. This asserts the fix did not
+            // simply staleness-everything.
+            assert.strictEqual(byId.e, 'PASS', 'manual PASS, deps untouched → PASS');
+            // ...and the same manual record goes STALE the moment its own deps move.
+            // This is the negative control for the exemption that used to live in
+            // derive-verdicts: revert that early return and this assertion fails.
+            const eStale = deriveVerdicts([cE],
+                [{ criterionId: 'e', verdict: 'PASS', commitSha: 'old', verifierType: 'manual', attestedBy: 'alice', criterionDigest: criterionDigest(cE) }],
+                'h', ['index.js']);
+            assert.strictEqual(eStale[0].verdict, 'STALE',
+                'manual PASS, deps in changedFiles → STALE (manual is NOT exempt)');
+            assert.match(eStale[0].detail, /attestation/,
+                'a stale manual verdict names the attestation, not generic evidence');
             const cS = crit('c', ['index.js']);
             const strict = deriveVerdicts([cS],
                 [{ criterionId: 'c', verdict: 'PASS', commitSha: 'old', verifierType: 'command', criterionDigest: criterionDigest(cS) }], 'h', null);
@@ -1255,9 +1269,26 @@ async function runGovernanceTests() {
                 assert.strictEqual(v['ac-man'], 'UNVERIFIED', 'manual criterion UNVERIFIED until attested');
                 engine.attestSpec(specPath, 'ac-man', { root, headSha: 'sha1', ranAt: 't', by: 'alice', note: 'enabled in repo settings', exec: (cmd) => (/status --porcelain/.test(cmd) ? '' : 'sha1') });
                 v = Object.fromEntries(engine.statusSpec(specPath, { root, headSha: 'sha9', gitDiff: () => ['index.js'], exec: () => 'sha9' }).map(x => [x.criterionId, x.verdict]));
-                assert.strictEqual(v['ac-man'], 'PASS', 'attested manual stays PASS even when deps changed (STALE-exempt)');
+                // End-to-end through statusSpec: an attestation binds to the commit
+                // it was made at, so once its dependsOn moves it reports STALE just
+                // like a machine criterion. Previously this asserted the opposite
+                // ("stays PASS even when deps changed"), which is precisely how a
+                // visual criterion could survive its renderer being rewritten.
+                assert.strictEqual(v['ac-man'], 'STALE', 'attested manual goes STALE once its deps changed');
                 assert.strictEqual(v['ac-cmd'], 'STALE', 'machine criterion STALE once its deps changed');
-                console.log('✅ T37 statusSpec + attestSpec');
+                // The gate this actually feeds: readiness must refuse to close.
+                const { readinessOf } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'close-preview'));
+                const ready = readinessOf(specPath, {
+                    root,
+                    statusFn: () => engine.statusSpec(specPath, { root, headSha: 'sha9', gitDiff: () => ['index.js'], exec: () => 'sha9' }),
+                });
+                assert.strictEqual(ready.readiness, 'BLOCKED',
+                    'a stale attestation must block closure — readinessOf maps every non-PASS verdict to a blocker');
+                const manBlocker = (ready.blockers || []).find(b => b.criterionId === 'ac-man');
+                assert.ok(manBlocker, 'the stale manual criterion appears as a blocker');
+                assert.match(manBlocker.remedy, /attest/,
+                    'a stale MANUAL criterion is told to re-attest, not to re-run a verifier it does not have');
+                console.log('✅ T37 statusSpec + attestSpec + stale-attestation blocks closure');
             } finally {
                 fs.rmSync(root, { recursive: true, force: true });
             }
@@ -2819,18 +2850,24 @@ async function runGovernanceTests() {
             console.log('✅ T50 machine digest STALE');
         }
 
-        console.log('T51. Testing deriveVerdicts manual: STALE on digest change, exempt from deps/commit ...');
+        console.log('T51. Testing deriveVerdicts manual: STALE on digest change AND on dependsOn change ...');
         {
             const { deriveVerdicts } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'derive-verdicts'));
             const { criterionDigest } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'validate-contract'));
             const crit = { id: 'man', description: 'x', dependsOn: ['index.js'], verifier: { type: 'manual', params: { reason: 'r' } } };
             const rec = { criterionId: 'man', verdict: 'PASS', commitSha: 'old', verifierType: 'manual', ranAt: 't', detail: 'd', attestedBy: 'alice', criterionDigest: criterionDigest(crit) };
-            assert.strictEqual(deriveVerdicts([crit], [rec], 'newhead', ['index.js'])[0].verdict, 'PASS', 'manual PASS survives deps/commit change when digest matches');
+            // This assertion used to read "manual PASS SURVIVES deps/commit change".
+            // That exemption is what let a visual criterion stay green across a
+            // rewrite of the very file it guards, and it reached closure readiness.
+            assert.strictEqual(deriveVerdicts([crit], [rec], 'newhead', ['index.js'])[0].verdict, 'STALE',
+                'manual STALEs when its dependsOn changed — no exemption');
+            assert.strictEqual(deriveVerdicts([crit], [rec], 'newhead', ['unrelated.js'])[0].verdict, 'PASS',
+                'manual stays PASS when the change misses its dependsOn');
             const redefined = { ...crit, verifier: { type: 'manual', params: { reason: 'DIFFERENT' } } };
             assert.strictEqual(deriveVerdicts([redefined], [rec], 'newhead', ['index.js'])[0].verdict, 'STALE', 'manual STALEs on digest change');
             const legacy = { ...rec }; delete legacy.criterionDigest;
             assert.strictEqual(deriveVerdicts([crit], [legacy], 'h', [])[0].verdict, 'STALE', 'manual absent digest → STALE');
-            console.log('✅ T51 manual digest STALE');
+            console.log('✅ T51 manual digest + dependsOn STALE');
         }
 
         console.log('T52. Testing runSpec + attestSpec stamp criterionDigest ...');
