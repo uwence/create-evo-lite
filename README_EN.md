@@ -8,7 +8,7 @@
 [![Vibecoding](https://img.shields.io/badge/Vibecoding-AI_Assisted-8a2be2.svg)](#)
 [![Runtime](https://img.shields.io/badge/Runtime-Project_Local-007acc.svg)](#)
 [![Governance](https://img.shields.io/badge/Governance-Post_Commit_Hook-84cc16.svg)](#)
-[![Memory](https://img.shields.io/badge/Memory-SQLite_FTS5-ff6600.svg)](#)
+[![Memory](https://img.shields.io/badge/Memory-Zvec_%2B_SQLite_Fallback-ff6600.svg)](#)
 [![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
 
 [中文 README](./README.md) · [Architecture](./docs/AI_AGENT_DEFENSE_ARCHITECTURE.md) · [Contracts](./docs/contracts/) · [Quick Start](#-quick-start) · [Command Reference](#-command-reference)
@@ -162,7 +162,7 @@ Project/
 │   ├── cli/                          # project-local runtime CLI
 │   ├── raw_memory/                   # durable archive chain
 │   ├── index_memory/                 # archive index marker files
-│   ├── memory.db                     # SQLite FTS/BM25 retrieval layer
+│   ├── memory.db                     # rebuildable SQLite fallback retrieval store
 │   ├── generated/                    # IR / dashboard / drift / governance reports
 │   ├── mem                           # Unix / Bash wrapper
 │   └── mem.cmd                       # Windows wrapper
@@ -212,6 +212,36 @@ Dashboard data, drift rules, and MCP tools consume this IR.
 ### 5. Git hook is the runtime governance entrypoint
 
 The post-commit hook classifies changed files and automatically runs scan/progress/gaps/dashboard steps so AI/subagents cannot silently skip governance.
+
+---
+
+## Supported Environments
+
+As of 2.4.0 the support scope is a **declared** scope, not "whatever happens to run":
+
+```text
+Supported
+
+OS       Windows (win32) · Linux
+CPU      x64
+Node.js  20 · 22 · 24
+
+Not supported
+
+macOS (darwin)
+arm64 / Apple Silicon
+any other Node major (including 21 / 23 / 25)
+```
+
+> **Note: the published package metadata does not yet use `os` / `cpu` fields to
+> block installation on unsupported platforms.**
+> `npm install` may well succeed on macOS or arm64 —
+> **"it installs" is not "it is in the supported scope"**; this project adjudicates
+> those two as separate questions.
+>
+> `engines.node >= 20` is only the current runtime enforcement floor, not the
+> support scope itself: Node 21 / 23 / 25 may pass that gate while remaining
+> outside the declared scope.
 
 ---
 
@@ -544,11 +574,21 @@ Start the local inspector:
 ./.evo-lite/mem recall "keyword"
 ```
 
-Underlying retrieval:
+Default retrieval engine:
+
+```text
+Zvec
+```
+
+Fallback:
 
 ```text
 SQLite FTS5 + trigram + BM25
 ```
+
+When Zvec cannot be installed (no platform binding, a failed build, or a path the
+containment guard refuses), the runtime falls back automatically and stays fully
+functional.
 
 ### archive / context track
 
