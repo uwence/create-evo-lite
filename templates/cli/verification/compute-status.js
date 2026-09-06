@@ -11,15 +11,17 @@ function computeLiveVerdicts(criteria, records, headSha, gitDiff) {
         if (!rec) {
             return deriveVerdicts([c], [], headSha, [])[0];   // UNVERIFIED
         }
-        if (rec.verifierType !== 'manual') {
-            const changed = gitDiff(rec.commitSha);
-            if (changed === null) {
-                return { criterionId: c.id, verdict: 'STALE', detail: `commit ${rec.commitSha} unreachable` };
-            }
-            return deriveVerdicts([c], [rec], headSha, changed)[0];
+        // Every verifier type takes the same path. Manual used to be handed an
+        // empty changedFiles array and skipped git entirely ("STALE-exempt, no git
+        // needed") — but attestSpec() already requires a clean tree and reads HEAD,
+        // so a manual record always carries a real commit sha and git is available
+        // here regardless. The exemption bought nothing and cost the one signal
+        // that tells a human their attestation may no longer hold.
+        const changed = gitDiff(rec.commitSha);
+        if (changed === null) {
+            return { criterionId: c.id, verdict: 'STALE', detail: `commit ${rec.commitSha} unreachable` };
         }
-        // manual: STALE-exempt, no git needed.
-        return deriveVerdicts([c], [rec], headSha, [])[0];
+        return deriveVerdicts([c], [rec], headSha, changed)[0];
     });
 }
 

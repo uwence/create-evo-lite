@@ -67,13 +67,20 @@ function registerVerificationCommands(program) {
             if (options.strict && verdicts.some(v => v.verdict !== 'PASS')) process.exitCode = 1;
         });
 
-    vc.command('attest <spec> <criterionId>')
-        .description('Record a manual attestation (PASS) for a manual criterion.')
+    // Variadic: attest is fail-closed on a dirty tree AND writes evidence, so one
+    // criterion per invocation forced one commit per criterion just to satisfy the
+    // next call's precondition. Several criteria of the same tree state are one act
+    // of inspection and should cost one commit.
+    vc.command('attest <spec> <criterionId...>')
+        .description('Record a manual attestation (PASS) for one or more manual criteria — all validated before any is written.')
         .requiredOption('--by <name>', 'Who is attesting')
         .option('--note <text>', 'Attestation note')
-        .action((specPath, criterionId, options) => {
-            engine.attestSpec(specPath, criterionId, { by: options.by, note: options.note });
-            console.log(`✅ attested ${criterionId} by ${options.by}`);
+        .action((specPath, criterionIds, options) => {
+            const records = engine.attestSpec(specPath, criterionIds, { by: options.by, note: options.note });
+            for (const r of records) console.log(`✅ attested ${r.criterionId} by ${options.by}`);
+            if (records.length > 1) {
+                console.log(`   ${records.length} attestations bound to ${records[0].commitSha.slice(0, 8)} — one commit closes them all.`);
+            }
         });
 }
 

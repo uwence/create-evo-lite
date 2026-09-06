@@ -8,7 +8,16 @@ const { parseFrontmatter, parseSpecFile, resolveLinkedPlanIds, countTrackedUnche
 function remedyFor(verdict, verifierType) {
     if (verdict === 'FAIL') return 'verifier failed — fix the underlying issue, then re-run';
     const machine = verifierType !== 'manual';
-    if (verdict === 'STALE') return 'dependsOn changed — re-run `mem verify-contract run <spec>`';
+    // STALE now reaches manual criteria too (they stopped being exempt), and the
+    // remedy is not the machine one: there is no verifier to re-run, a human has to
+    // look again and re-attest. `machine` was already computed here and used by
+    // UNVERIFIED — the branch was written as if manual could go STALE, and only the
+    // routing was missing.
+    if (verdict === 'STALE') {
+        return machine
+            ? 'dependsOn changed — re-run `mem verify-contract run <spec>`'
+            : 'dependsOn changed since the attestation — re-check, then `mem verify-contract attest <spec> <criterionId> --by <name>`';
+    }
     if (verdict === 'UNVERIFIED') {
         return machine
             ? 'run `mem verify-contract run <spec>` on a clean HEAD'
