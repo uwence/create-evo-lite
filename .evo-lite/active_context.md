@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: c7b018efd9834680fb2b2922b4566278020538dd
-> upstreamSha: c7b018efd9834680fb2b2922b4566278020538dd
+> headSha: ac58d9ed07d9ab0de6625bb38cfe404da2629adc
+> upstreamSha: ac58d9ed07d9ab0de6625bb38cfe404da2629adc
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-09-05T09:45:19.264Z
+> focusUpdatedAt: 2026-09-06T09:24:41.648Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -27,7 +27,8 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
-- [c7b018e] 2026-09-05 manual-attestation-staleness: manual attestation 不再 STALE-exempt + batch attest。PR #72 合入 main@c7b018e(两父 merge), CI release-gate 
+- [ac58d9e] 2026-09-06 pr71-integration-closure: #71 收口:gitignore 规则下发、drift 折叠显示、verifier budget、2.4.0 版本号。 PR #71 合入 main@ac58d9e(两父 merge),CI rele
+- [c7b018e] 2026-09-05 manual-attestation-staleness: manual attestation 不再 STALE-exempt + batch attest。PR #72 合入 main@c7b018e(两父 merge), CI release-gate
 - [3f95ce4] 2026-09-03 child-zvec-default: 子巢默认安装并启用 zvec,pin 到 0.7.0。PR #66 合入 main@3f95ce4(两父 merge),CI 6/6 绿。 owner 决定(2026-09-03,两条):新建子巢默认
 - [0a717e1] 2026-09-03 governance-gate-parked: V_PRODUCT gate Step A 收口:PARKED at DEFERRED,PR #65 合入 main@0a717e1(两父 merge)。 产出:一份为 A0 的 B3 而设的 cel
 - [46abcf9] 2026-09-03 ProductSupportScopeGateClosed: [A0 product-support-scope] gate 三阶段全部冻结并合入 main@46abcf96(PR #64 两父 merge,复审 head aa59c36c,release-ga
@@ -36,7 +37,6 @@
 - [125b9d6] 2026-08-28 HookInstallProvenanceClosure: [hook-install-provenance] CLOSED — removed from the active backlog as stale runtime state. The fact
 - [6e399ba] 2026-08-18 A8a8DisprovedSpike: [a8a8] DISPROVED / CLOSED — controlled spike on main proved the first two links but falsified the re
 - [f6c1300] 2026-08-18 R011Closure: PR #48 merged f6c1300 (two-parent 84d25f3+f129312, expected-head lock on f129312). R011 stopped bein
-- [94e28d0] 2026-08-15 BacklogResolve: [235a] hook-status-freshness RESOLVED: shipped via PR #47 (merge 3e09455, reviewed head 975a67a, CI
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
