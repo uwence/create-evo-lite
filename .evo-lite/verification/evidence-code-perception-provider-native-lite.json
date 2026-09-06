@@ -5,42 +5,42 @@
     "ac-provider-contract": {
       "criterionId": "ac-provider-contract",
       "verdict": "PASS",
-      "commitSha": "287e0f9df8fee1abaacdbc497809b609eb499c3b",
+      "commitSha": "1de7122d6c29d517b0c1da2d7617ccc5dd3bf718",
       "verifierType": "command",
-      "ranAt": "2026-07-13T01:47:01.036Z",
-      "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
+      "ranAt": "2026-09-06T08:18:56.934Z",
+      "detail": "exit=0 …utcomes the amendment named ...\nHP27. producer: a committed artifact with an uncommitted record reports both (ac9) ...\nHP23. producer: the rename is the commit point ...\nHP28. producer: an unobservable document stops the run BEFORE the artifact ...\nHP29. producer: a phase-1 outcome is recorded and the run stops before any write ...\nHP30. CLI: the explicit hook install translates core state into exit semantics ...\n--- hook-provenance tests passed! ---\n--- Governance-focused CLI tests passed! ---",
       "attestedBy": null,
-      "criterionDigest": "sha256:c3ed273bd4f70185685a974642cd9be151570353b3eefb02438793e557b61d81"
+      "criterionDigest": "sha256:6317cd36d88b8a7dfa2cb55f16807e150b049d5eaee26aa479d5470e53b3fcfd"
     },
     "ac-capability-router": {
       "criterionId": "ac-capability-router",
       "verdict": "PASS",
-      "commitSha": "287e0f9df8fee1abaacdbc497809b609eb499c3b",
+      "commitSha": "1de7122d6c29d517b0c1da2d7617ccc5dd3bf718",
       "verifierType": "command",
-      "ranAt": "2026-07-13T01:47:01.036Z",
-      "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
+      "ranAt": "2026-09-06T08:18:56.934Z",
+      "detail": "exit=0 …utcomes the amendment named ...\nHP27. producer: a committed artifact with an uncommitted record reports both (ac9) ...\nHP23. producer: the rename is the commit point ...\nHP28. producer: an unobservable document stops the run BEFORE the artifact ...\nHP29. producer: a phase-1 outcome is recorded and the run stops before any write ...\nHP30. CLI: the explicit hook install translates core state into exit semantics ...\n--- hook-provenance tests passed! ---\n--- Governance-focused CLI tests passed! ---",
       "attestedBy": null,
-      "criterionDigest": "sha256:1393ce25b9b66811bcd31d60be44aaced4ca050af20864514080b31adc48f19a"
+      "criterionDigest": "sha256:5af5329eff5223f017f5703646da031a2ce03666fa71e4b6a1ee9d2a3da31dc9"
     },
     "ac-native-lite": {
       "criterionId": "ac-native-lite",
       "verdict": "PASS",
-      "commitSha": "287e0f9df8fee1abaacdbc497809b609eb499c3b",
+      "commitSha": "1de7122d6c29d517b0c1da2d7617ccc5dd3bf718",
       "verifierType": "command",
-      "ranAt": "2026-07-13T01:47:01.036Z",
-      "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
+      "ranAt": "2026-09-06T08:18:56.934Z",
+      "detail": "exit=0 …utcomes the amendment named ...\nHP27. producer: a committed artifact with an uncommitted record reports both (ac9) ...\nHP23. producer: the rename is the commit point ...\nHP28. producer: an unobservable document stops the run BEFORE the artifact ...\nHP29. producer: a phase-1 outcome is recorded and the run stops before any write ...\nHP30. CLI: the explicit hook install translates core state into exit semantics ...\n--- hook-provenance tests passed! ---\n--- Governance-focused CLI tests passed! ---",
       "attestedBy": null,
-      "criterionDigest": "sha256:a2ab4027e7dd986095b284c779f0ed805ddb9e59249af8bfd55e62c28f2d8a85"
+      "criterionDigest": "sha256:df526f94e140dfe7754f1339aa1e83597b06d81dd64de8d56d324d21bd8da924"
     },
     "ac-provider-freshness": {
       "criterionId": "ac-provider-freshness",
       "verdict": "PASS",
-      "commitSha": "287e0f9df8fee1abaacdbc497809b609eb499c3b",
+      "commitSha": "1de7122d6c29d517b0c1da2d7617ccc5dd3bf718",
       "verifierType": "command",
-      "ranAt": "2026-07-13T01:47:01.036Z",
-      "detail": "exit=0 --- Starting governance-focused CLI tests ---\nT13. Testing verify reports governance-operational next steps ...\n✅ T13 governance verify guidance passed\nT14. Testing post-commit hook writes governance run report ...\n✅ T14 governance hook telemetry passed\nT14a. Testing governance slice covers dashboard freshness relevance rules ...\n✅ T14a dashboard freshness relevance passed\nT15. Testing dashboard data surfaces governance runtime status ...\n✅ T15 dashboard governance summary passed\nT15a. Testing i…",
+      "ranAt": "2026-09-06T08:18:56.934Z",
+      "detail": "exit=0 …utcomes the amendment named ...\nHP27. producer: a committed artifact with an uncommitted record reports both (ac9) ...\nHP23. producer: the rename is the commit point ...\nHP28. producer: an unobservable document stops the run BEFORE the artifact ...\nHP29. producer: a phase-1 outcome is recorded and the run stops before any write ...\nHP30. CLI: the explicit hook install translates core state into exit semantics ...\n--- hook-provenance tests passed! ---\n--- Governance-focused CLI tests passed! ---",
       "attestedBy": null,
-      "criterionDigest": "sha256:36c38c31d1548418c93b427d326b498983ae45755660092c6f7f3654137f0de9"
+      "criterionDigest": "sha256:b370e36c4552605e174dcdb168972f0aa33536a0254d869c8bb417c29b2fe076"
     }
   }
 }

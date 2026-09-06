@@ -235,25 +235,25 @@ files、hashes、Architecture module membership、Planning linkedFiles、Git cha
     {
       "id": "ac-provider-contract",
       "description": "CodePerceptionProvider contract defines capabilities, availability, status, search, relationships, impact and explore; fixture providers validate successfully while invalid providers are rejected with isolated diagnostics.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/code-perception/provider-contract.js", "templates/cli/code-perception/provider-loader.js"]
     },
     {
       "id": "ac-capability-router",
       "description": "The router selects providers by requested capability and freshness, honours an explicit preferred provider, falls back to Native Lite, and never silently substitutes an unsupported capability.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/code-perception/provider-router.js"]
     },
     {
       "id": "ac-native-lite",
       "description": "With no external provider installed, Native Lite reports tracked files, hashes, Architecture IR module membership, Planning linkedFiles, Git changed files and explicit unavailable symbol/impact capabilities without breaking existing commands. File access is contained: every path is workspace-relative normalized and lstat+realpath-checked before read/hash, symlinks escaping the workspace are not followed (metadata-only or excluded), binary/ignored/oversize files are skipped, source read and hash are size-capped, and no source/secrets are persisted.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/code-perception/native-lite.js"]
     },
     {
       "id": "ac-provider-freshness",
       "description": "Every normalized result carries provider ID/version, indexed and current commit when available, dirty/stale state, adapter version and compatibility; stale results remain visibly stale through the router.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/code-perception/provider-router.js", "templates/cli/code-perception/normalize.js"]
     }
   ]

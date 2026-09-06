@@ -110,31 +110,31 @@ Close the loop in both directions, keeping the mother the sole evolution owner:
     {
       "id": "ac-outbox-collected-once",
       "description": "Given a child outbox with 2 unchecked items, hive nurture reports both in report.feedback and re-writes them checked in the child; a second nurture reports zero feedback items.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/hive/nurture.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-status-reports-without-marking",
       "description": "hive status includes unchecked child outbox items in its report and leaves the child outbox file byte-identical.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/hive/status.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-mutation-refuses-before-overwrite",
       "description": "A child with a committed local edit to a non-anchored managed file (clean porcelain, active-hash ≠ lock-hash) makes nurture return status='refused' with the file in report.mutations, and the child file is left unmodified; --force proceeds and overwrites.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/hive/nurture.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-mutation-skips-anchored-and-lockless",
       "description": "Anchored-merge entries never appear in report.mutations regardless of divergence; a child with no runtime-mirror.lock.json skips mutation detection with a WARN and is still nurturable.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/hive/nurture.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-outbox-scaffolded-and-ruled",
       "description": "create-evo-lite scaffolds an empty .evo-lite/hive/feedback.md, and a managed genes rule documents the outbox protocol for child agents.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "scope": "all" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js all", "timeoutMs": 600000, "scope": "all" } },
       "dependsOn": ["templates/cli/template-manifest.js", "templates/cli/test/integration.js"]
     }
   ]

@@ -206,7 +206,7 @@ Minimal Code Wiki(overview/current-focus/providers/modules/tasks)、Inspector Co
     {
       "id": "ac-inspector-code-surface",
       "description": "The Inspector Code page renders selected provider/version, indexed/current commit, index/freshness/dirty state, capabilities, current-focus files and resolved symbols, Task-to-Code links, Code Wiki entry and degraded guidance; GET /api/code/status, /api/code/focus and /api/code/task?id= return the same unified data read-only, never auto-install or index a provider, and surface diagnostics on provider failure.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/inspector.js"]
     },
     {

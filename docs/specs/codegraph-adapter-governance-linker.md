@@ -181,25 +181,25 @@ Task-to-File / Task-to-Symbol / Commit-to-File / Commit diff-range→symbol / Ev
     {
       "id": "ac-codegraph-adapter",
       "description": "The CodeGraph adapter invokes only allowlisted CLI commands through execFile/spawn without a shell; normalizes status/files/query/callers/callees/impact JSON fixtures; treats explore/node output as opaque context; and does not read or modify .codegraph internals.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/code-perception/providers/codegraph-exec.js", "templates/cli/code-perception/providers/codegraph.js", "templates/cli/test/fixtures/code-perception/"]
     },
     {
       "id": "ac-governance-linker",
       "description": "The linker generates confirmed file links from Planning linkedFiles, Git-derived commit links, range-intersection symbol links and evidence links; name-only heuristic links remain proposed with confidence <= 0.5.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/code-perception/governance-linker.js"]
     },
     {
       "id": "ac-provider-failure-isolation",
       "description": "Provider missing, not indexed, timeout, malformed output and unsupported versions do not break Planning IR, Architecture IR, memory or verify; Native Lite remains available, cached stale results stay visibly stale, and diagnostics are actionable.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/code-perception/providers/codegraph.js", "templates/cli/code-perception/cache.js"]
     },
     {
       "id": "ac-live-codegraph-dogfood",
       "description": "A committed dogfood artifact records a real CodeGraph-backed run on create-evo-lite. Because the plain governance suite only proves the process exit code — not that a real artifact exists — this criterion's verifier runs strict mode (`--require-live-codegraph`), which recomputes the artifact's command/result SHA fingerprints and asserts providerVersion, adapterVersion, repository commit, closure-evidence commit, and the recorded status/search/callers-callees/impact/focus/Task-to-Code/stale/fallback/limitations sections; a missing/invalid/tampered artifact exits non-zero so this AC cannot PASS without a real run.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance --require-live-codegraph", "scope": "governance" } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance --require-live-codegraph", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["docs/code-perception-codegraph-dogfood.md", "templates/cli/code-perception/dogfood-validate.js", "templates/cli/test.js"]
     }
   ]

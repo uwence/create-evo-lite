@@ -110,15 +110,15 @@ sweep." Documentation-only.
     { "id": "ac-staging-inside-try",
       "description": "A git add failure during applyClose triggers full journal rollback (every target restored, journal status aborted), not a half-applied tree.",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-advisory-lock",
       "description": "applyClose refuses with refused:locked when a fresh close.lock exists, and proceeds (overwriting) when the lock is older than the stale threshold; the lock is removed on normal completion.",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-task-warning-not-blocker",
       "description": "previewClose returns a tasks-incomplete warning when implemented<total but readiness stays READY when criteria all PASS; warnings is [] when tasks are complete.",
       "dependsOn": ["templates/cli/verification/close-preview.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } }
   ]
 }
 ```

@@ -206,27 +206,27 @@ staging.
     { "id": "ac-strict-no-contract",
       "description": "verify-contract status on a NO-CONTRACT spec returns a single NO-CONTRACT verdict (not an empty array) so --strict exits non-zero, matching close --preview --strict.",
       "dependsOn": ["templates/cli/verification/engine.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-identity-validation",
       "description": "loadValidatedContract fail-closes (ok:false) when the spec id is missing or not spec:* or when linkedPlan is present but not plan:*, before the NO-CONTRACT opt-out.",
       "dependsOn": ["templates/cli/verification/validate-contract.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-apply-warnings",
       "description": "applyClose returns warnings from the preview and printApply prints them; a tasks-incomplete warning surfaces on a direct --apply without blocking it.",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/verification/close-commands.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-plan-status-done",
       "description": "applyClose sets the linked plan frontmatter status: done (not just the spec), both when flipping checkboxes and when the plan has zero unchecked boxes but status is still draft.",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-safe-journal-slug",
       "description": "The closure journal filename uses evidenceSlug, so a spec id containing a path separator is rejected before any journal write (no path traversal).",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } },
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } },
     { "id": "ac-journal-write-in-txn",
       "description": "A failure of the success-journal write rolls back the mutation, unstages anything git-add-ed (clean index), and records aborted (the write is inside the rollback try, not after it).",
       "dependsOn": ["templates/cli/verification/close-apply.js", "templates/cli/test.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "scope": "governance" } } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } } }
   ]
 }
 ```

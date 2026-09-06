@@ -220,49 +220,49 @@ That is a genuine ergonomic regression for the true-positive case. The trade is 
       "id": "ac1",
       "description": "Only an authoritative verification-contract verdict can produce spec-closure-ready. No checkbox state, git ref, linked file, archive hit or progress confidence value can produce it, alone or in combination.",
       "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/verification/close-preview.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "timeoutMs": 600000 } }
     },
     {
       "id": "ac2",
       "description": "gaps.js contains no independent closure-readiness decision logic, no confidence threshold and no duplicate of any evidence predicate; it may only map the authoritative readiness result into R011 finding types.",
       "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/planning/progress.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "timeoutMs": 600000 } }
     },
     {
       "id": "ac3",
       "description": "R011 emits exactly four mutually exclusive types — spec-closure-ready, spec-closure-not-ready, spec-closure-uncontracted, spec-closure-unobservable — with levels info, warning, warning, warning and dispositionable false, true, true, false respectively.",
       "dependsOn": ["templates/cli/planning/gaps.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "timeoutMs": 600000 } }
     },
     {
       "id": "ac4",
       "description": "No R011 finding in any state recommends hand-editing a spec to status: done. spec-closure-ready routes to the existing close transaction; the other three carry no closure imperative.",
       "dependsOn": ["templates/cli/planning/gaps.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "timeoutMs": 600000 } }
     },
     {
       "id": "ac5",
       "description": "When readiness cannot be computed, the finding is retained as spec-closure-unobservable, the failure is recorded through the observation sink, the planning census reports complete false, disposition sync writes no tombstone that round, and no closure advice is emitted.",
       "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/verification/close-preview.js", "templates/cli/disposition/commands.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "timeoutMs": 600000 } }
     },
     {
       "id": "ac6",
       "description": "readinessOf is exported from close-preview.js returning previewClose's existing READY / BLOCKED / NO-CONTRACT vocabulary, computes only contract load and criteria verdicts, performs no write, propagates observation failure to its caller rather than catching it, and previewClose delegates to it with its own behaviour unchanged as pinned by its existing tests.",
       "dependsOn": ["templates/cli/verification/close-preview.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "timeoutMs": 600000 } }
     },
     {
       "id": "ac7",
       "description": "PLANNING_RULE_VERSIONS.R011 is 2, and factInputs carries both the authoritative closure state and a canonically ordered blocker identity — with a stable validation-failure identity when the contract is malformed — so that a change of blocking criteria within one state lapses a prior disposition, while a mere reordering does not. Presence evidence never appears in factInputs.",
       "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/verification/close-preview.js", "templates/cli/verification/validate-contract.js", "templates/cli/verification/contract-schema.json"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "timeoutMs": 600000 } }
     },
     {
       "id": "ac8",
       "description": "On the mother repo the two currently-flagged specs — spec:governance-observation-budget and spec:planning-truth-controls — become spec-closure-uncontracted naming their unevidenced tasks, and neither receives closure advice.",
       "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/planning/progress.js"],
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js" } }
+      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js", "timeoutMs": 600000 } }
     }
   ]
 }

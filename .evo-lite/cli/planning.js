@@ -84,8 +84,10 @@ function registerPlanCommands(program, deps = {}) {
         .description('Run planning drift checks (R003–R011), write drift-report.json.')
         .option('--last-commit', 'Evaluate changed files from the last commit instead of the working tree.')
         .option('--changed-files-from-env', 'Read changed files from EVO_LITE_CHANGED_FILES before falling back to git.')
+        .option('--verbose', 'Print every finding instead of one collapsed line per rule.')
         .action(async (options) => {
             const { runPlanningDrift } = require('./planning/gaps');
+            const { digestFindings } = require('./planning/digest');
             const { loadReport, saveReport, mergeFindings } = require('./architecture/diff');
             const { readLedger } = require('./disposition/ledger');
             const { annotate } = require('./disposition/resolve');
@@ -126,9 +128,8 @@ function registerPlanCommands(program, deps = {}) {
             if (newFindings.length === 0) {
                 console.log('No planning drift findings.');
             } else {
-                for (const f of newFindings) {
-                    console.log(`[${f.level}] ${f.rule}: ${f.message}`);
-                    if (f.suggestedAction) console.log(`  → ${f.suggestedAction}`);
+                for (const line of digestFindings(newFindings, { verbose: !!options.verbose })) {
+                    console.log(line);
                 }
             }
             console.log(`\nWritten: ${outPath}`);
