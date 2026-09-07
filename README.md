@@ -8,7 +8,7 @@
 [![Vibecoding](https://img.shields.io/badge/Vibecoding-AI_Assisted-8a2be2.svg)](#)
 [![Runtime](https://img.shields.io/badge/Runtime-Project_Local-007acc.svg)](#)
 [![Governance](https://img.shields.io/badge/Governance-Post_Commit_Hook-84cc16.svg)](#)
-[![Memory](https://img.shields.io/badge/Memory-SQLite_FTS5-ff6600.svg)](#)
+[![Memory](https://img.shields.io/badge/Memory-Zvec_%2B_SQLite_Fallback-ff6600.svg)](#)
 [![License](https://img.shields.io/badge/License-MIT-4ade80.svg)](./LICENSE)
 
 [English README](./README_EN.md) · [Architecture](./docs/AI_AGENT_DEFENSE_ARCHITECTURE.md) · [Contracts](./docs/contracts/) · [Quick Start](#-quick-start--极速上手) · [Command Reference](#-command-reference--命令速查)
@@ -162,7 +162,7 @@ Project/
 │   ├── cli/                          # 项目本地运行时 CLI
 │   ├── raw_memory/                   # durable archive 主链
 │   ├── index_memory/                 # archive index marker
-│   ├── memory.db                     # SQLite FTS/BM25 检索层
+│   ├── memory.db                     # 可重建的 SQLite 回落检索库
 │   ├── generated/                    # IR / dashboard / drift / governance report
 │   ├── mem                           # Unix / Bash wrapper
 │   └── mem.cmd                       # Windows wrapper
@@ -212,6 +212,34 @@ Dashboard、drift rules、MCP 工具都基于它工作。
 ### 5. Git hook 是治理运行时入口
 
 post-commit hook 会根据本次 commit 的文件类别自动跑 scan/progress/gaps/dashboard，避免 AI/subagent 忘记治理。
+
+---
+
+## 支持环境 / Supported Environments
+
+发布 2.4.0 起，产品支持范围是一份**已声明的**范围，不是"跑得起来的都算"：
+
+```text
+支持
+
+OS       Windows (win32) · Linux
+CPU      x64
+Node.js  20 · 22 · 24
+
+当前不支持
+
+macOS (darwin)
+arm64 / Apple Silicon
+其他 Node major（含 21 / 23 / 25）
+```
+
+> **注意：当前 npm 包的 metadata 尚未用 `os` / `cpu` 字段阻止不受支持的平台安装。**
+> 因此在 macOS 或 arm64 上 `npm install` 可能恰好成功——
+> **"能装上"不等于"在产品支持范围内"**，这两件事在本项目里是分开裁定的。
+>
+> 当前运行时入口只会硬性拒绝 Node < 20；这是一道 enforcement floor，
+> 不是产品支持范围本身。package.json 中的 `engines.node >= 20`
+> 只是兼容性 metadata，也不能把 Node 21 / 23 / 25 变成受支持版本。
 
 ---
 
@@ -544,11 +572,20 @@ Dashboard 数据合并：
 ./.evo-lite/mem recall "关键词"
 ```
 
-底层：
+默认检索引擎：
+
+```text
+Zvec
+```
+
+回落路径：
 
 ```text
 SQLite FTS5 + trigram + BM25
 ```
+
+Zvec 不可用（例如平台绑定不可用、安装/加载失败，或路径未通过 containment）时会自动
+回落到 SQLite；memory / recall 能继续使用，但两种引擎的检索结果与排序质量可能不同。
 
 ### archive / context track
 
