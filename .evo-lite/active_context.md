@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 58e395205fcd37b16bde085b28d0d3c04f3e584c
-> upstreamSha: 58e395205fcd37b16bde085b28d0d3c04f3e584c
+> headSha: 4a1dca8e7a0c5b3d41a2bf95a59b262a92fbcabf
+> upstreamSha: 4a1dca8e7a0c5b3d41a2bf95a59b262a92fbcabf
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-09-07T08:01:05.361Z
+> focusUpdatedAt: 2026-09-07T09:47:16.560Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -27,6 +27,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [4a1dca8] 2026-09-07 architecture-scan-coverage: 架构扫描覆盖率缺陷收口：装置不再把「没看见」报成「没问题」。PR #74 以两父 merge 合入 main@4a1dca8（parents 7899dcf + b5e14da），release-ga
 - [58e3952] 2026-09-07 planning-reverse-link-fix: planning 反向链接修复：plan 自身的 linkedSpec 现在能建链。PR #73 以两父 merge 合入 main@58e3952，CI 6/6 全绿（ubuntu node 20/
 - [58e3952] 2026-09-07 hive-attestation-staleness-hsg8: 向 hungersnakegame8 下发 2.4.0 attestation-staleness nurture 并记录。母仓 commit 9349097，仅动 .evo-lite/hive/ch
 - [58e3952] 2026-09-07 readme-support-scope-and-engine: README 支持范围与引擎描述纠正。分支 docs/readme-support-scope-and-engine 以两父 merge 合入 main@1b40814（内容 commit 5f9ad
@@ -36,7 +37,6 @@
 - [0a717e1] 2026-09-03 governance-gate-parked: V_PRODUCT gate Step A 收口:PARKED at DEFERRED,PR #65 合入 main@0a717e1(两父 merge)。 产出:一份为 A0 的 B3 而设的 cel
 - [46abcf9] 2026-09-03 ProductSupportScopeGateClosed: [A0 product-support-scope] gate 三阶段全部冻结并合入 main@46abcf96(PR #64 两父 merge,复审 head aa59c36c,release-ga
 - [e3a79bc] 2026-09-03 ZvecUpgradeDecisionRecordClosed: [zvec-win-unicode-containment] 裁决阶段 CLOSED。0.6→0.7 的 Upgrade Decision Record 经三阶段独立复审后全部冻结,并以两父 merg
-- [19b66c5] 2026-09-02 Zvec070MeasurementPhaseClosed: [zvec-win-unicode-containment] 测量阶段 CLOSED。Step 2C(非 ASCII 桥)经复审 APPROVED,PR #62 以两父 merge 合入 main@1
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
