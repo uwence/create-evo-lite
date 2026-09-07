@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: ac58d9ed07d9ab0de6625bb38cfe404da2629adc
-> upstreamSha: ac58d9ed07d9ab0de6625bb38cfe404da2629adc
+> headSha: 58e395205fcd37b16bde085b28d0d3c04f3e584c
+> upstreamSha: 58e395205fcd37b16bde085b28d0d3c04f3e584c
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-09-06T09:24:41.648Z
+> focusUpdatedAt: 2026-09-07T08:01:05.361Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -27,6 +27,9 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [58e3952] 2026-09-07 planning-reverse-link-fix: planning 反向链接修复：plan 自身的 linkedSpec 现在能建链。PR #73 以两父 merge 合入 main@58e3952，CI 6/6 全绿（ubuntu node 20/
+- [58e3952] 2026-09-07 hive-attestation-staleness-hsg8: 向 hungersnakegame8 下发 2.4.0 attestation-staleness nurture 并记录。母仓 commit 9349097，仅动 .evo-lite/hive/ch
+- [58e3952] 2026-09-07 readme-support-scope-and-engine: README 支持范围与引擎描述纠正。分支 docs/readme-support-scope-and-engine 以两父 merge 合入 main@1b40814（内容 commit 5f9ad
 - [ac58d9e] 2026-09-06 pr71-integration-closure: #71 收口:gitignore 规则下发、drift 折叠显示、verifier budget、2.4.0 版本号。 PR #71 合入 main@ac58d9e(两父 merge),CI rele
 - [c7b018e] 2026-09-05 manual-attestation-staleness: manual attestation 不再 STALE-exempt + batch attest。PR #72 合入 main@c7b018e(两父 merge), CI release-gate
 - [3f95ce4] 2026-09-03 child-zvec-default: 子巢默认安装并启用 zvec,pin 到 0.7.0。PR #66 合入 main@3f95ce4(两父 merge),CI 6/6 绿。 owner 决定(2026-09-03,两条):新建子巢默认
@@ -34,9 +37,6 @@
 - [46abcf9] 2026-09-03 ProductSupportScopeGateClosed: [A0 product-support-scope] gate 三阶段全部冻结并合入 main@46abcf96(PR #64 两父 merge,复审 head aa59c36c,release-ga
 - [e3a79bc] 2026-09-03 ZvecUpgradeDecisionRecordClosed: [zvec-win-unicode-containment] 裁决阶段 CLOSED。0.6→0.7 的 Upgrade Decision Record 经三阶段独立复审后全部冻结,并以两父 merg
 - [19b66c5] 2026-09-02 Zvec070MeasurementPhaseClosed: [zvec-win-unicode-containment] 测量阶段 CLOSED。Step 2C(非 ASCII 桥)经复审 APPROVED,PR #62 以两父 merge 合入 main@1
-- [125b9d6] 2026-08-28 HookInstallProvenanceClosure: [hook-install-provenance] CLOSED — removed from the active backlog as stale runtime state. The fact
-- [6e399ba] 2026-08-18 A8a8DisprovedSpike: [a8a8] DISPROVED / CLOSED — controlled spike on main proved the first two links but falsified the re
-- [f6c1300] 2026-08-18 R011Closure: PR #48 merged f6c1300 (two-parent 84d25f3+f129312, expected-head lock on f129312). R011 stopped bein
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
