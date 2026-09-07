@@ -22683,6 +22683,50 @@ console.log("RESULT" + JSON.stringify({ unchanged: before === after }));
         assert.ok(core.files.includes('planning/freeze-ledger.js'));
         console.log('✅ T-trace-freeze-v2 passed');
     }
+    console.log('T-scan-reverse-link. A plan\'s own linkedSpec builds the chain, without the spec repeating it ...');
+    {
+        const scan = require(path.join(CLI_DIR, 'planning', 'scan.js'));
+        const { buildTraceability } = require(path.join(CLI_DIR, 'planning', 'traceability.js'));
+        const runtime = createTempRuntimeRoot('scan-reverse-link');
+        const ws = runtime.workspaceRoot;
+
+        // spec:rev names NOTHING — no frontmatter linkedPlan, no "## Linked Plans"
+        // body section. The whole relation is declared from the plan's side.
+        writeText(path.join(ws, 'docs', 'specs', 'rev.md'),
+            '---\nid: spec:rev\ntitle: Reverse\nstatus: active\n---\n\n# Reverse\n\nNo plan is named here.\n');
+        writeText(path.join(ws, 'docs', 'plans', 'rev.md'),
+            '---\nid: plan:rev\ntitle: Reverse plan\nstatus: active\nlinkedSpec: spec:rev\n---\n\n'
+            + '# Reverse plan\n\n- [ ] [task:rev] Do the thing\n  - files: src/rev.js\n');
+        // Control: a plan that points at some OTHER spec must not attach here.
+        // Without it, "everything links to everything" would pass this test too.
+        writeText(path.join(ws, 'docs', 'plans', 'other.md'),
+            '---\nid: plan:other\ntitle: Other\nstatus: active\nlinkedSpec: spec:absent\n---\n\n'
+            + '# Other\n\n- [ ] [task:other] Unrelated\n');
+        // Control: the forward declaration keeps working AND keeps being judged.
+        // Resolution runs after cross-validation precisely so this still warns.
+        writeText(path.join(ws, 'docs', 'specs', 'fwd.md'),
+            '---\nid: spec:fwd\ntitle: Forward\nstatus: active\nlinkedPlan: plan:ghost\n---\n\n# Forward\n');
+
+        const ir = scan.scanPlanning(ws);
+        const rev = ir.specs.find(s => s.id === 'spec:rev');
+        assert.deepStrictEqual(rev.linkedPlans, ['plan:rev'],
+            'the reverse declaration alone must produce the link — the spec repeats nothing');
+        const fwd = ir.specs.find(s => s.id === 'spec:fwd');
+        assert.deepStrictEqual(fwd.linkedPlans, ['plan:ghost'],
+            'a forward declaration survives resolution unchanged');
+        assert.ok(ir.warnings.some(w => /spec:fwd references plan:ghost but no such plan/.test(w.message)),
+            'cross-validation still judges what the author wrote: a named-but-absent plan still warns');
+
+        scan.writePlanIR(ir, ws);
+        const trace = buildTraceability(ws);
+        assert.ok(trace.chains.some(c => c.spec === 'spec:rev' && c.plan === 'plan:rev' && c.task === 'task:rev'),
+            'traceability builds the chain from the reverse declaration alone');
+        assert.ok(!trace.unlinkedTasks.some(t => t.task === 'task:rev'),
+            'task:rev stops reading as unlinked');
+        assert.ok(trace.unlinkedTasks.some(t => t.task === 'task:other'),
+            'a genuinely unattached task still reads as unlinked — this links relations, not everything');
+        console.log('✅ T-scan-reverse-link passed');
+    }
     console.log('T-governance-observer. Structured snapshots exclude raw inputs and detect semantic transitions ...');
     {
         const observer = require(path.join(CLI_DIR, 'governance-observer.js'));
