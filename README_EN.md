@@ -239,9 +239,10 @@ any other Node major (including 21 / 23 / 25)
 > **"it installs" is not "it is in the supported scope"**; this project adjudicates
 > those two as separate questions.
 >
-> `engines.node >= 20` is only the current runtime enforcement floor, not the
-> support scope itself: Node 21 / 23 / 25 may pass that gate while remaining
-> outside the declared scope.
+> The current runtime entry point hard-rejects only Node < 20. That is an
+> enforcement floor, not the product support scope. The `engines.node >= 20`
+> field in package.json is compatibility metadata; it does not make
+> Node 21 / 23 / 25 supported versions.
 
 ---
 
@@ -586,9 +587,10 @@ Fallback:
 SQLite FTS5 + trigram + BM25
 ```
 
-When Zvec cannot be installed (no platform binding, a failed build, or a path the
-containment guard refuses), the runtime falls back automatically and stays fully
-functional.
+When Zvec is unavailable—for example because its platform binding cannot be
+used, loading fails, or the collection path does not pass containment—the
+runtime falls back to SQLite. Memory/recall remains available, but retrieval
+results and ranking quality may differ between the engines.
 
 ### archive / context track
 

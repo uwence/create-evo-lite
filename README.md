@@ -237,8 +237,9 @@ arm64 / Apple Silicon
 > 因此在 macOS 或 arm64 上 `npm install` 可能恰好成功——
 > **"能装上"不等于"在产品支持范围内"**，这两件事在本项目里是分开裁定的。
 >
-> `engines.node >= 20` 只是当前的运行期下限（enforcement floor），
-> 不是支持范围本身：Node 21 / 23 / 25 可能穿过这道门，但并不在已声明的支持范围内。
+> 当前运行时入口只会硬性拒绝 Node < 20；这是一道 enforcement floor，
+> 不是产品支持范围本身。package.json 中的 `engines.node >= 20`
+> 只是兼容性 metadata，也不能把 Node 21 / 23 / 25 变成受支持版本。
 
 ---
 
@@ -583,7 +584,8 @@ Zvec
 SQLite FTS5 + trigram + BM25
 ```
 
-Zvec 装不上（平台无绑定、编译失败、路径不被包容）时自动回落，功能不受影响。
+Zvec 不可用（例如平台绑定不可用、安装/加载失败，或路径未通过 containment）时会自动
+回落到 SQLite；memory / recall 能继续使用，但两种引擎的检索结果与排序质量可能不同。
 
 ### archive / context track
 
