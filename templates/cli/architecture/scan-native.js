@@ -32,6 +32,67 @@ const WALK_FILES = [
 // Extensions to include
 const INCLUDE_EXT = new Set(['.js', '.md', '.json', '.yaml', '.yml']);
 
+// WALK_TARGETS, WALK_FILES, INCLUDE_EXT and MODULE_RULES together describe
+// create-evo-lite's own layout. In any other project the real source tree is
+// never walked, so it produces no "unclassified" entry either: the scan returns
+// a clean IR having seen none of the code. Measured on the real children —
+// CodePLC 178 code files -> 0 in the IR -> 0 warnings.
+//
+// Until the module map itself becomes project-owned, the scan must at least
+// state what it did NOT cover. Authority for "what belongs to this project" is
+// git, deliberately not another hardcoded directory list: repeating that
+// mistake here is what produced the silence in the first place.
+const SOURCE_EXT = new Set([
+    '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.vue', '.svelte',
+    '.py', '.go', '.rs', '.rb', '.php', '.java', '.kt', '.scala', '.cs', '.swift',
+    '.c', '.h', '.cc', '.cpp', '.hpp',
+]);
+
+// The governance runtime lives under .evo-lite/ and children track it. It is
+// this tool's own code, not the project's source, so it is never "uncovered".
+const COVERAGE_EXCLUDE_PREFIX = '.evo-lite/';
+
+function listTrackedFiles(projectRoot) {
+    try {
+        const out = require('child_process').execFileSync('git', ['ls-files', '-z'], {
+            cwd: projectRoot,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            maxBuffer: 32 * 1024 * 1024,
+        });
+        return out.split('\0').filter(Boolean);
+    } catch (_) {
+        return null;
+    }
+}
+
+// Reporting heuristic, not a definition of the project: SOURCE_EXT being wrong
+// produces a warning about the wrong file, never silence about a real one.
+function measureCoverage(projectRoot, coveredPaths) {
+    const tracked = listTrackedFiles(projectRoot);
+    if (!tracked) {
+        return {
+            state: 'unknown',
+            reason: 'not a git repository, or git unavailable — no authority for what belongs to this project',
+            trackedSourceTotal: 0,
+            covered: 0,
+            uncovered: 0,
+            samples: [],
+        };
+    }
+    const covered = new Set(coveredPaths);
+    const source = tracked.filter(f => SOURCE_EXT.has(path.extname(f).toLowerCase())
+        && !f.startsWith(COVERAGE_EXCLUDE_PREFIX));
+    const missing = source.filter(f => !covered.has(f));
+    return {
+        state: 'measured',
+        trackedSourceTotal: source.length,
+        covered: source.length - missing.length,
+        uncovered: missing.length,
+        samples: missing.slice(0, 10),
+    };
+}
+
 function walkDir(absDir, recursive, projectRoot) {
     const results = [];
     if (!fs.existsSync(absDir)) return results;
@@ -186,6 +247,7 @@ function scanArchitecture(projectRoot) {
         provider: 'native',
         modules,
         files: fileObjects,
+        coverage: measureCoverage(projectRoot, uniqueFiles),
         warnings,
     };
 
