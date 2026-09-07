@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseSpecFile, parsePlanFile, parseFrontmatter } = require('./parse-markdown');
+const { parseSpecFile, parsePlanFile, parseFrontmatter, resolveLinkedPlanIds } = require('./parse-markdown');
 const { getEvoConfig } = require('../runtime');
 const { validateProvider } = require('../architecture/provider-contract');
 
@@ -188,6 +188,32 @@ function scanPlanning(projectRoot) {
         if (plan.linkedSpec && !specIdSet.has(plan.linkedSpec)) {
             warnings.push({ level: 'warning', message: `plan ${plan.id} references ${plan.linkedSpec} but no such spec found` });
         }
+    }
+
+    // Resolve linkedPlans to the WHOLE relation, not just the forward half.
+    //
+    // resolveLinkedPlanIds says of itself: "Anything that needs this answer must
+    // call THIS function rather than re-deriving it" — precisely because two
+    // mechanisms disagreeing about whether a spec has a linked plan is the defect
+    // it exists to close. Yet the IR was written from the declared half alone, so
+    // every consumer that reads it back (traceability, plan status, the inspector)
+    // re-derived the narrower answer, while Spec Portfolio — which does call this
+    // function — saw the wider one. `plan.linkedSpec` is a supported, correct
+    // declaration that simply did not survive the write.
+    //
+    // The cost of that landed on authors: a spec had to repeat in its own
+    // frontmatter a link its plan already declared, purely so trace and lint would
+    // agree. A workaround carried on every new spec/plan pair is a bill, not a
+    // convention. Measured here at the time of the fix: 3 of 45 specs carried an
+    // empty linkedPlans while a plan pointed back at them, and 23 tasks read as
+    // unlinked for no other reason.
+    //
+    // Deliberately AFTER the cross-validation above, which stays bit-for-bit
+    // unchanged: that warning answers "does the plan this spec names exist", and
+    // must keep judging what the author actually wrote. A reverse link cannot fail
+    // it — the plan is where the declaration came from.
+    for (const spec of specs) {
+        spec.linkedPlans = resolveLinkedPlanIds(spec, { plans });
     }
 
     const ir = {
