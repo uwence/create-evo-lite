@@ -1,6 +1,6 @@
 'use strict';
 
-// Drift engine — architecture scope: R001, R002, R007
+// Drift engine — architecture scope: R001, R002, R007, R014
 // Also provides shared drift report I/O (loadReport / saveReport / mergeFindings)
 // used by planning/gaps.js.
 
@@ -109,6 +109,27 @@ function checkR007(projectRoot, architectureIR) {
     return [];
 }
 
+// --- R014 ---
+
+// The scan covering none of a project's source used to be indistinguishable
+// from a project with nothing to report: both produced an empty finding list.
+// R014 exists so the first case has a voice.
+function checkR014(projectRoot, architectureIR) {
+    const coverage = architectureIR && architectureIR.coverage;
+    if (!coverage || coverage.state !== 'measured' || coverage.uncovered <= 0) return [];
+    return [{
+        id: 'R014',
+        rule: 'R014',
+        scope: 'architecture',
+        level: 'warning',
+        type: 'uncovered-source',
+        message: `architecture scan covers ${coverage.covered}/${coverage.trackedSourceTotal} tracked source files — `
+            + `${coverage.uncovered} were never walked, so no module, task link or drift check can see them`,
+        evidence: coverage.samples,
+        suggestedAction: 'The native module map describes create-evo-lite itself; a project with source elsewhere needs its own module boundaries',
+    }];
+}
+
 // --- Public ---
 
 function runArchitectureDrift(projectRoot, architectureIR) {
@@ -116,6 +137,7 @@ function runArchitectureDrift(projectRoot, architectureIR) {
         ...checkR001(projectRoot),
         ...checkR002(projectRoot),
         ...checkR007(projectRoot, architectureIR),
+        ...checkR014(projectRoot, architectureIR),
     ];
 }
 

@@ -3288,6 +3288,89 @@ async function runGovernanceTests() {
             console.log('✅ T19 architecture where reverse lookup passed');
         }
 
+        console.log('T-arch-coverage. Testing architecture scan reports source it never walked ...');
+        {
+            // The native scanner's WALK_TARGETS/INCLUDE_EXT are evo-lite's own shape.
+            // In any other project the real source tree is never walked at all, so it
+            // produces no "unclassified" warning either — the scan reports a clean IR
+            // while having seen none of the code. Measured on the real children:
+            // CodePLC 178 code files -> 0 in IR -> 0 warnings.
+            //
+            // The scan must therefore state what it did NOT cover. Authority for
+            // "what belongs to this project" is git, not another hardcoded list.
+            const scanPath = path.join(TEMPLATE_CLI_DIR, 'architecture', 'scan-native.js');
+            const diffPath = path.join(TEMPLATE_CLI_DIR, 'architecture', 'diff.js');
+            delete require.cache[require.resolve(scanPath)];
+            delete require.cache[require.resolve(diffPath)];
+            const { scanArchitecture } = require(scanPath);
+            const { runArchitectureDrift } = require(diffPath);
+
+            // (a) a project whose source lives where the scanner never looks
+            const uncoveredRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-arch-cov-a-'));
+            try {
+                writeText(path.join(uncoveredRoot, 'package.json'), '{"name":"demo"}\n');
+                writeText(path.join(uncoveredRoot, '.agents', 'rules', 'architecture.md'), '# arch\n');
+                writeText(path.join(uncoveredRoot, 'src', 'core', 'game.ts'), 'export const tick = () => 1;\n');
+                writeText(path.join(uncoveredRoot, 'src', 'render', 'renderer.ts'), 'export const draw = () => 2;\n');
+                runGit(uncoveredRoot, ['init']);
+                runGit(uncoveredRoot, ['add', '-A']);
+
+                const ir = scanArchitecture(uncoveredRoot);
+                assert.ok(ir.coverage, 'the IR must carry a coverage report');
+                assert.strictEqual(ir.coverage.state, 'measured',
+                    'coverage must be measured when the project is a git repo');
+                assert.strictEqual(ir.coverage.uncovered, 2,
+                    'both TypeScript sources are outside WALK_TARGETS and must be counted as uncovered');
+                assert.ok(ir.coverage.samples.includes('src/core/game.ts'),
+                    'the uncovered report must name the files, not just count them');
+
+                const findings = runArchitectureDrift(uncoveredRoot, ir);
+                const cov = findings.filter(f => f.rule === 'R014');
+                assert.strictEqual(cov.length, 1, 'uncovered source must surface as exactly one R014 finding');
+                assert.strictEqual(cov[0].level, 'warning', 'R014 must be a warning, not info');
+                assert.ok(JSON.stringify(cov[0].evidence).includes('src/core/game.ts'),
+                    'the R014 evidence must name an uncovered file');
+            } finally {
+                fs.rmSync(uncoveredRoot, { recursive: true, force: true });
+            }
+
+            // (b) negative control: source the scanner DOES cover must not fire R014.
+            // Without this, "always warn" would pass (a) and the rule would be unfalsifiable.
+            const coveredRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-arch-cov-b-'));
+            try {
+                writeText(path.join(coveredRoot, 'package.json'), '{"name":"demo"}\n');
+                writeText(path.join(coveredRoot, 'index.js'), 'module.exports = {};\n');
+                runGit(coveredRoot, ['init']);
+                runGit(coveredRoot, ['add', '-A']);
+
+                const ir = scanArchitecture(coveredRoot);
+                assert.strictEqual(ir.coverage.uncovered, 0,
+                    'index.js is inside WALK_FILES — a covered source file must not count as uncovered');
+                const findings = runArchitectureDrift(coveredRoot, ir);
+                assert.strictEqual(findings.filter(f => f.rule === 'R014').length, 0,
+                    'a fully covered project must produce no R014 finding');
+            } finally {
+                fs.rmSync(coveredRoot, { recursive: true, force: true });
+            }
+
+            // (c) no git, no authority: report unknown rather than guessing.
+            const noGitRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'evo-arch-cov-c-'));
+            try {
+                writeText(path.join(noGitRoot, 'package.json'), '{"name":"demo"}\n');
+                writeText(path.join(noGitRoot, 'src', 'main.ts'), 'export const x = 1;\n');
+                const ir = scanArchitecture(noGitRoot);
+                assert.strictEqual(ir.coverage.state, 'unknown',
+                    'without git there is no authority for what belongs to the project');
+                assert.ok(ir.coverage.reason, 'an unknown coverage state must say why');
+                assert.strictEqual(runArchitectureDrift(noGitRoot, ir).filter(f => f.rule === 'R014').length, 0,
+                    'unknown coverage must not be reported as uncovered');
+            } finally {
+                fs.rmSync(noGitRoot, { recursive: true, force: true });
+            }
+
+            console.log('✅ T-arch-coverage architecture scan reports uncovered source passed');
+        }
+
         console.log('T20. Testing context auto-refresh re-derives focus + prunes backlog ...');
         {
             const runtime = createTempRuntimeRoot('autorefresh');

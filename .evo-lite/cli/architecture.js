@@ -61,7 +61,7 @@ function registerArchitectureCommands(program) {
         });
 
     arch.command('diff')
-        .description('Run architecture drift checks (R001, R002, R007), write drift-report.json.')
+        .description('Run architecture drift checks (R001, R002, R007, R014), write drift-report.json.')
         .action(async () => {
             const { runArchitectureDrift, loadReport, saveReport, mergeFindings } = require('./architecture/diff');
             const archIRPath = path.join(projectRoot, '.evo-lite', 'generated', 'architecture', 'architecture-ir.json');
