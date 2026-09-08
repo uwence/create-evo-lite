@@ -10600,10 +10600,28 @@ Evo-Focus: plan:demo`,
             assert.strictEqual(r011.length, 0,
                 'a parked sibling with open tasks must keep the spec open — no R011 closure recommendation');
 
-            // the mirror must match the canonical tree
-            const canonical = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio.js'), 'utf8');
-            const mirror = fs.readFileSync(path.join(CLI_DIR, 'spec-portfolio.js'), 'utf8');
-            assert.strictEqual(mirror, canonical, 'run `mem sync-runtime` — the mirror is stale');
+            // the mirror must match the canonical tree.
+            //
+            // CLI_DIR is runner-relative (harness.js: path.resolve(__dirname, '..')),
+            // so it resolves to templates/cli when this suite runs from the canonical
+            // tree and to .evo-lite/cli when it runs from the mirror. TEMPLATE_CLI_DIR
+            // is always the canonical templates/cli path. Under the canonical runner
+            // the two are therefore the same directory and this comparison would be a
+            // tautology (a file compared with itself, unable to fail no matter how
+            // stale the mirror is) — so we say that explicitly instead of asserting a
+            // no-op. The comparison only has meaning under the mirror runner
+            // (`node ./.evo-lite/cli/test.js`), which is exactly the runner
+            // package.json's `test` script uses, so an unsynced mirror still reds
+            // where it matters.
+            if (path.resolve(CLI_DIR) === path.resolve(TEMPLATE_CLI_DIR)) {
+                console.log('   (mirror-staleness check: not applicable under this runner — '
+                    + 'CLI_DIR and TEMPLATE_CLI_DIR both resolve to the canonical tree here; '
+                    + 'run `node ./.evo-lite/cli/test.js` to exercise this check for real)');
+            } else {
+                const canonical = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio.js'), 'utf8');
+                const mirror = fs.readFileSync(path.join(CLI_DIR, 'spec-portfolio.js'), 'utf8');
+                assert.strictEqual(mirror, canonical, 'run `mem sync-runtime` — the mirror is stale');
+            }
         }
         console.log('✅ T-plan-predicate-negative-controls passed');
 
