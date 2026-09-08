@@ -38,14 +38,21 @@ Task 8 completes integrated implementation **verification** for both specs. **Ac
   canonical runner resolves `commander` and `@zvec/zvec` from the repository-root
   `node_modules`, so it runs standalone.
 - The suite takes 3–5 minutes. It is not hanging.
-- **Judge RED/GREEN by the assertion text, never by the exit code.** Measured on
-  this Windows worktree: a fully green run (3940 lines, 399 `✅`, zero
+- **Exit code still decides, with exactly one narrow amnesty.** Measured on this
+  Windows worktree: a fully green run (3940 lines, 399 `✅`, zero
   `AssertionError`, `--- Governance-focused CLI tests passed! ---`) still exited
   **1**, because the temp-cleanup epilogue hits `EBUSY` unlinking a fixture's
-  `memory.db` whose sqlite handle was left open. A step that keys on `$?` would
-  report a false RED on a passing suite. GREEN = your `✅ T-... passed` line is
-  present and no `AssertionError` appears; RED = the specific assertion message
-  the step names.
+  `memory.db` whose sqlite handle was left open. So:
+  - `exit 0` → GREEN under the normal conditions.
+  - `exit != 0` → **FAIL**, unless *all four* hold: (1) the step's own
+    `✅ T-... passed` line is present, (2) the suite banner
+    `--- Governance-focused CLI tests passed! ---` is present, (3) there is no
+    test error or stack trace of any kind — not just no `AssertionError`, since a
+    `TypeError` in a later test also exits non-zero without one, and (4) the sole
+    non-zero cause matches the known epilogue, `temp cleanup failed ... EBUSY ...
+    memory.db`. Any other non-zero exit is a real failure.
+  This is an amnesty for one identified cleanup defect, not a licence to stop
+  reading the exit code.
 
 ---
 
@@ -95,18 +102,13 @@ console.log('T-record-only-eligibility. Testing the record-only eligibility hard
         spec('## Acceptance Criteria', [VALID])).eligible, false,
         'a valid contract must never be eligible');
 
-    // (a2) evidence-independence. The gate is a STATIC property of the file, so
-    // real evidence records in every verdict state must not move the verdict.
-    // If anyone later wires evidence into this gate, this turns red.
-    const { writeRecord } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
-    const evRuntime = createTempRuntimeRoot('record-only-evidence');
-    const validText = spec('## Acceptance Criteria', [VALID]);
-    for (const verdict of ['PASS', 'FAIL', 'UNVERIFIED', 'STALE']) {
-        writeRecord(evRuntime.workspaceRoot, 'spec:t',
-            { criterionId: 'V', verdict, commitSha: 'deadbeef', verifierType: 'file-exists' });
-        assert.strictEqual(sp.evaluateRecordOnlyEligibility(validText).eligible, false,
-            `${verdict} evidence must not make a valid contract eligible`);
-    }
+    // (a2) structural evidence-independence: the gate is a pure function of the
+    // spec text and has no project root to read an evidence store from. Writing
+    // evidence here and asserting against this function would prove nothing —
+    // there is no path between them. The real five-state matrix runs end-to-end
+    // through buildSpecRegistry in Task 4.
+    assert.strictEqual(sp.evaluateRecordOnlyEligibility.length, 1,
+        'eligibility takes spec text only — no project root, so no evidence path');
 
     // (b) duplicate-id inverse escape: two VALID criteria sharing one id
     const dup = sp.evaluateRecordOnlyEligibility(
@@ -378,7 +380,7 @@ git commit -m "feat(spec-portfolio): closure record credential, independent of t
 
 **Interfaces:**
 - Consumes: `evaluateRecordOnlyEligibility` (Task 1), `parseClosureRecord` (Task 2)
-- Produces: `state === 'closed-record-only'`; registry entry fields `recordOnly: { declared, eligible, ineligible, visibilityAgrees, recordValid, locallyExecutableDigests, invalidClosureFields, authorityDigests, corroborationDigests }` — digest projections, never counts; `registry.version === 'evo-spec-registry@3'`
+- Produces: `state === 'closed-record-only'`; registry entry fields `recordOnly: { declared, eligible, visibilityAgrees, recordValid, locallyExecutableDigests, invalidClosureFields, authorityDigests, corroborationDigests }` — digest projections, never counts; `registry.version === 'evo-spec-registry@3'`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -681,6 +683,34 @@ console.log('T-record-only-findings. Testing violation findings, factInputs and 
         recFp(['closureReason: r']),
         recFp(['closureReason: r', 'closureBasis: record-only']),
         'fixing one field while another stays invalid must move the fingerprint');
+
+    // Evidence-independence, END TO END through the registry, which is where the
+    // frozen AC lives. Same project, same spec, same complete closure record;
+    // only the evidence store changes. A valid contract stays INELIGIBLE in all
+    // five conditions, so :ineligible is emitted every time and the state never
+    // becomes terminal.
+    const { writeRecord } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+    writeText(path.join(projectRoot, 'docs', 'specs', 'ev.md'),
+        ['---', 'id: spec:ev', 'status: closed-record-only',
+         'closureBasis: record-only', 'closureReason: r', 'closureRecordedAt: 2026-09-08',
+         '---', '', '# EV', '',
+         '## Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', ''].join('\n'));
+
+    const evVerdict = () => {
+        const e = sp.buildSpecRegistry(projectRoot, { write: false }).specs.find(x => x.id === 'spec:ev');
+        return { state: e.state, ids: (e.findings || []).map(f => f.id) };
+    };
+    for (const verdict of [null, 'PASS', 'FAIL', 'UNVERIFIED', 'STALE']) {
+        if (verdict) {
+            writeRecord(projectRoot, 'spec:ev',
+                { criterionId: 'V', verdict, commitSha: 'deadbeef', verifierType: 'file-exists' });
+        }
+        const r = evVerdict();
+        const label = verdict || 'no evidence';
+        assert.notStrictEqual(r.state, 'closed-record-only', `${label}: must not become terminal`);
+        assert.ok(r.ids.includes('invalid-record-only-closure:spec:ev:ineligible'),
+            `${label}: must emit :ineligible; got ${r.ids.join(', ')}`);
+    }
 
     // (iii) prose never enters identity: factInputs carry exactly the frozen keys
     assert.deepStrictEqual(Object.keys(vis.factInputs).sort(),
@@ -1113,6 +1143,8 @@ console.log('T-portfolio-finding-correctness. Testing distinct plan predicates a
     // size: oversized in each state
     writeText(path.join(projectRoot, 'docs', 'specs', 's-active.md'),
         ['---', 'id: spec:sa', 'status: draft', 'linkedPlan: plan:sp', '---', '', '# SA', '', oversized].join('\n'));
+    writeText(path.join(projectRoot, 'docs', 'specs', 's-parked.md'),
+        ['---', 'id: spec:spk', 'status: parked', '---', '', '# SPK', '', oversized].join('\n'));
     writeText(path.join(projectRoot, 'docs', 'specs', 's-shipped.md'),
         ['---', 'id: spec:ss', 'status: done', '---', '', '# SS', '', oversized].join('\n'));
     writeText(path.join(projectRoot, 'docs', 'specs', 's-record.md'),
@@ -1154,11 +1186,20 @@ console.log('T-portfolio-finding-correctness. Testing distinct plan predicates a
 
     assert.ok(by('spec:sd').warnings.includes('size-exceeded'), 'adopted oversized warns — editing is cheapest there');
     assert.ok(by('spec:sa').warnings.includes('size-exceeded'), 'active oversized still warns');
-    assert.strictEqual(
-        by('spec:sd').warnings.includes('size-exceeded'),
-        by('spec:sa').warnings.includes('size-exceeded'),
-        'adopted -> active must not change the actionable verdict on an unchanged document');
-    for (const id of ['spec:ss', 'spec:sr']) {
+    // A real adopted -> active transition on ONE unchanged document. Comparing two
+    // different specs would not test this: the property is that gaining a linked
+    // plan, and nothing else, must not move the actionable verdict.
+    assert.strictEqual(by('spec:sd').state, 'adopted', 'spec:sd starts adopted');
+    const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+    const ir = JSON.parse(fs.readFileSync(irPath, 'utf8'));
+    ir.plans.push({ id: 'plan:sdp', status: 'active', linkedSpec: 'spec:sd', sourcePath: 'docs/plans/sdp.md' });
+    writeText(irPath, JSON.stringify(ir, null, 2));
+
+    const sd2 = sp.buildSpecRegistry(projectRoot, { write: false }).specs.find(x => x.id === 'spec:sd');
+    assert.strictEqual(sd2.state, 'active', 'linking a plan moves the same document to active');
+    assert.ok(sd2.warnings.includes('size-exceeded'),
+        'the unchanged document keeps its actionable size finding across adopted -> active');
+    for (const id of ['spec:spk', 'spec:ss', 'spec:sr']) {
         assert.strictEqual(by(id).sizeExceeded, true, `${id} measurement is preserved`);
         assert.ok(!by(id).warnings.includes('size-exceeded'), `${id} raises no actionable finding`);
     }
