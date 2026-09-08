@@ -10404,33 +10404,38 @@ Evo-Focus: plan:demo`,
             const projectRoot = runtime.workspaceRoot;
             const REC = ['closureBasis: record-only', 'closureReason: r', 'closureRecordedAt: 2026-09-08'];
 
-            const valid = path.join(projectRoot, 'docs', 'specs', 'v.md');
-            writeText(valid, ['---', 'id: spec:v', 'status: closed-record-only'].concat(REC, ['---', '', '# V', '']).join('\n'));
-            // REJECTED declaration: derives baseState, never terminal — must still be cleaned
+            // REJECTED declaration: derives baseState, never terminal — must still be cleaned.
+            // Exercised FIRST so a plain `node test.js governance` run reds here (the
+            // discriminating case) rather than on the valid-closure case below, which a
+            // state-keyed (instead of declaredStatus-keyed) implementation would also pass.
             const rejected = path.join(projectRoot, 'docs', 'specs', 'j.md');
             writeText(rejected, ['---', 'id: spec:j', 'status: closed-record-only', 'closureBasis: record-only',
                 'closureReason: r', '---', '', '# J', ''].join('\n'));
-            // never record-only closed: park must not invent fields
-            const plain = path.join(projectRoot, 'docs', 'specs', 'p.md');
-            writeText(plain, ['---', 'id: spec:p', 'status: draft', '---', '', '# P', ''].join('\n'));
-
-            sp.reactivateSpec(projectRoot, 'spec:v');
-            for (const f of ['closureBasis', 'closureReason', 'closureRecordedAt']) {
-                assert.ok(!new RegExp(`^${f}:`, 'm').test(fs.readFileSync(valid, 'utf8')),
-                    `reactivate must remove ${f}`);
-            }
-
             sp.parkSpec(projectRoot, 'spec:j');
             for (const f of ['closureBasis', 'closureReason']) {
                 assert.ok(!new RegExp(`^${f}:`, 'm').test(fs.readFileSync(rejected, 'utf8')),
                     `park must remove ${f} even from a REJECTED declaration (keyed on declaredStatus, not state)`);
             }
 
+            const valid = path.join(projectRoot, 'docs', 'specs', 'v.md');
+            writeText(valid, ['---', 'id: spec:v', 'status: closed-record-only'].concat(REC, ['---', '', '# V', '']).join('\n'));
+            sp.reactivateSpec(projectRoot, 'spec:v');
+            for (const f of ['closureBasis', 'closureReason', 'closureRecordedAt']) {
+                assert.ok(!new RegExp(`^${f}:`, 'm').test(fs.readFileSync(valid, 'utf8')),
+                    `reactivate must remove ${f}`);
+            }
+
+            // never record-only closed: park must not invent fields
+            const plain = path.join(projectRoot, 'docs', 'specs', 'p.md');
+            writeText(plain, ['---', 'id: spec:p', 'status: draft', '---', '', '# P', ''].join('\n'));
             sp.parkSpec(projectRoot, 'spec:p');
             assert.ok(!/closureBasis/.test(fs.readFileSync(plain, 'utf8')),
                 'park must not invent closure fields on a spec that never had them');
 
-            // credential replay: re-declaring without a fresh record must be rejected
+            // credential replay: re-declaring without a fresh record must be rejected.
+            // Reuses the `valid` path from the valid-closure part above (fully overwrites
+            // its content here, so there is no dependency on that part's assertions or
+            // file state having survived — only the path binding is reused).
             writeText(valid, ['---', 'id: spec:v', 'status: closed-record-only', '---', '', '# V', ''].join('\n'));
             const reg = sp.buildSpecRegistry(projectRoot, { write: false });
             const v = reg.specs.find(s => s.id === 'spec:v');
