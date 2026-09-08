@@ -19,7 +19,7 @@ linkedSpec: spec:record-only-closure-terminal-state
 - `docs/superpowers/specs/2026-09-08-record-only-closure-terminal-state-design.md` (`spec:record-only-closure-terminal-state`) — Tasks 1–6
 - `docs/superpowers/specs/2026-09-08-portfolio-finding-correctness-design.md` (`spec:portfolio-finding-correctness`) — Task 7
 
-Task 8 closes both. Read both specs before starting; the ownership boundary between them is normative, and a change made in the wrong file is a review failure even when the behaviour is right.
+Task 8 completes integrated implementation **verification** for both specs. **Actual spec closure happens only after independent implementation review — no task in this plan may set either spec to `done`.** Read both specs before starting; the ownership boundary between them is normative, and a change made in the wrong file is a review failure even when the behaviour is right.
 
 ## Global Constraints
 
@@ -30,7 +30,22 @@ Task 8 closes both. Read both specs before starting; the ownership boundary betw
 - **Rule versions are fixed by `spec:disposition-ledger` §2.3, not by the implementer:** `invalid-record-only-closure@1`, `zombie-plan@2`, `size-exceeded@2`.
 - **Ownership boundary:** size actionability for *every* state — including `closed-record-only` — is decided only by `SIZE_ACTIONABLE_STATES` in Task 7. Do not restate it in the record-only tasks.
 - **Existing thresholds are unchanged:** `SIZE_THRESHOLDS = { acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 }`, `DEFAULT_AGING_DAYS = 14`.
-- Test command for every task: `node ./.evo-lite/cli/test.js governance`. It takes 3–5 minutes; do not assume a hang.
+- **Test command for Tasks 1–7: `node ./templates/cli/test.js governance`.** Not the
+  `.evo-lite/cli/` one. Both runners load `./test/governance` *relative to
+  themselves*, so `.evo-lite/cli/test.js` runs the MIRROR copy — and the mirror is
+  not refreshed until Task 8. Running it would execute stale tests against stale
+  code, and every RED/GREEN step in Tasks 1–7 would be meaningless. Verified: the
+  canonical runner resolves `commander` and `@zvec/zvec` from the repository-root
+  `node_modules`, so it runs standalone.
+- The suite takes 3–5 minutes. It is not hanging.
+- **Judge RED/GREEN by the assertion text, never by the exit code.** Measured on
+  this Windows worktree: a fully green run (3940 lines, 399 `✅`, zero
+  `AssertionError`, `--- Governance-focused CLI tests passed! ---`) still exited
+  **1**, because the temp-cleanup epilogue hits `EBUSY` unlinking a fixture's
+  `memory.db` whose sqlite handle was left open. A step that keys on `$?` would
+  report a false RED on a passing suite. GREEN = your `✅ T-... passed` line is
+  present and no `AssertionError` appears; RED = the specific assertion message
+  the step names.
 
 ---
 
@@ -80,6 +95,19 @@ console.log('T-record-only-eligibility. Testing the record-only eligibility hard
         spec('## Acceptance Criteria', [VALID])).eligible, false,
         'a valid contract must never be eligible');
 
+    // (a2) evidence-independence. The gate is a STATIC property of the file, so
+    // real evidence records in every verdict state must not move the verdict.
+    // If anyone later wires evidence into this gate, this turns red.
+    const { writeRecord } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+    const evRuntime = createTempRuntimeRoot('record-only-evidence');
+    const validText = spec('## Acceptance Criteria', [VALID]);
+    for (const verdict of ['PASS', 'FAIL', 'UNVERIFIED', 'STALE']) {
+        writeRecord(evRuntime.workspaceRoot, 'spec:t',
+            { criterionId: 'V', verdict, commitSha: 'deadbeef', verifierType: 'file-exists' });
+        assert.strictEqual(sp.evaluateRecordOnlyEligibility(validText).eligible, false,
+            `${verdict} evidence must not make a valid contract eligible`);
+    }
+
     // (b) duplicate-id inverse escape: two VALID criteria sharing one id
     const dup = sp.evaluateRecordOnlyEligibility(
         spec('## Acceptance Criteria', [VALID, Object.assign({}, VALID)]));
@@ -109,10 +137,35 @@ console.log('T-record-only-eligibility. Testing the record-only eligibility hard
         'equal count with different content must still disagree — emptiness parity is not enough');
     assert.strictEqual(equalCount.eligible, false, 'equal-count discrepancy must deny');
 
+    // (d1) against the REAL corpus, scanned dynamically rather than hard-coded.
+    // Expected to be deliberately removed when the numbered-heading parser defect
+    // is fixed; until then the containment must hold on every divergent spec.
+    let divergent = 0;
+    for (const dir of [path.join(WORKSPACE_ROOT, 'docs', 'specs'),
+                       path.join(WORKSPACE_ROOT, 'docs', 'superpowers', 'specs')]) {
+        if (!fs.existsSync(dir)) continue;
+        for (const name of fs.readdirSync(dir).filter(n => n.endsWith('.md'))) {
+            const r = sp.evaluateRecordOnlyEligibility(fs.readFileSync(path.join(dir, name), 'utf8'));
+            if (!r.visibilityAgrees) {
+                divergent += 1;
+                assert.strictEqual(r.eligible, false, `${name}: visibility discrepancy must deny`);
+            }
+        }
+    }
+    assert.ok(divergent > 0,
+        'the corpus still carries the known parser divergence this gate contains');
+
     // description is part of visibility even though criterionDigest excludes it
     const a = Object.assign({}, VALID, { description: '' });
     assert.notStrictEqual(sp.contractVisibilityDigest(a), sp.contractVisibilityDigest(VALID),
         'contractVisibilityDigest must see description');
+    // authored payloads that a truthiness default would collapse must stay distinct
+    assert.notStrictEqual(sp.contractVisibilityDigest(null), sp.contractVisibilityDigest({}),
+        'null and {} are different authored payloads');
+    for (const v of [false, 0, '']) {
+        assert.notStrictEqual(sp.contractVisibilityDigest(v), sp.contractVisibilityDigest({}),
+            `${JSON.stringify(v)} must not collapse into {}`);
+    }
     // order-insensitive projection
     assert.deepStrictEqual(sp.visibilityProjection([VALID, INVALID]),
         sp.visibilityProjection([INVALID, VALID]),
@@ -123,7 +176,7 @@ console.log('✅ T-record-only-eligibility passed');
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: FAIL — `evaluateRecordOnlyEligibility must be exported`
 
 - [ ] **Step 3: Write the implementation**
@@ -155,7 +208,12 @@ function canonicalizeCriterion(value) {
 }
 
 function contractVisibilityDigest(criterion) {
-    const payload = JSON.stringify(canonicalizeCriterion(criterion || {}));
+    // NO `criterion || {}`. JSON can legitimately produce null, false, 0 and "",
+    // and a truthiness default collapses all four into `{}` — two parsers that
+    // observed DIFFERENT authored payloads would then project identically, which
+    // is exactly the disagreement this gate must fail closed on. `undefined`
+    // needs no handling: a JSON parser cannot produce it.
+    const payload = JSON.stringify(canonicalizeCriterion(criterion));
     return 'sha256:' + crypto.createHash('sha256').update(payload, 'utf8').digest('hex');
 }
 
@@ -183,11 +241,16 @@ function evaluateRecordOnlyEligibility(specText) {
         JSON.stringify(visibilityProjection(authority)) ===
         JSON.stringify(visibilityProjection(corroboration));
 
-    const eligible = visibilityAgrees
-        && locallyExecutable.length === 0
-        && (authority.length === 0 || aggregateFindings.length > 0);
+    // The CONTRACT-side violation, computed independently of visibility so that
+    // both can be reported at once. A spec is ineligible when it has an
+    // independently executable criterion, or a non-empty contract the authority
+    // considers wholly valid.
+    const ineligible = locallyExecutable.length > 0
+        || (authority.length > 0 && aggregateFindings.length === 0);
 
-    return { eligible, visibilityAgrees, authority, corroboration, locallyExecutable, aggregateFindings };
+    const eligible = visibilityAgrees && !ineligible;
+
+    return { eligible, ineligible, visibilityAgrees, authority, corroboration, locallyExecutable, aggregateFindings };
 }
 ```
 
@@ -195,7 +258,7 @@ Add all three to `module.exports`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: PASS — `✅ T-record-only-eligibility passed`
 
 - [ ] **Step 5: Commit**
@@ -257,7 +320,7 @@ console.log('✅ T-closure-record passed');
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: FAIL — `parseClosureRecord must be exported`
 
 - [ ] **Step 3: Write the implementation**
@@ -294,7 +357,7 @@ Add `parseClosureRecord` and `CLOSURE_FIELDS` to `module.exports`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: PASS — `✅ T-closure-record passed`
 
 - [ ] **Step 5: Commit**
@@ -315,7 +378,7 @@ git commit -m "feat(spec-portfolio): closure record credential, independent of t
 
 **Interfaces:**
 - Consumes: `evaluateRecordOnlyEligibility` (Task 1), `parseClosureRecord` (Task 2)
-- Produces: `state === 'closed-record-only'`; registry entry fields `recordOnly: { declared, eligible, visibilityAgrees, recordValid, locallyExecutableDigests, invalidClosureFields, authorityCount, corroborationCount }`; `registry.version === 'evo-spec-registry@3'`
+- Produces: `state === 'closed-record-only'`; registry entry fields `recordOnly: { declared, eligible, ineligible, visibilityAgrees, recordValid, locallyExecutableDigests, invalidClosureFields, authorityDigests, corroborationDigests }` — digest projections, never counts; `registry.version === 'evo-spec-registry@3'`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -380,13 +443,30 @@ console.log('T-record-only-state. Testing closed-record-only derivation, counts 
     const lines = sp.formatPortfolioReport(reg);
     assert.ok(lines[0].includes('recordClosed=2'), 'counts must report recordClosed as its own column');
     assert.ok(/shipped=0/.test(lines[0]), 'recordClosed must never be folded into shipped');
+
+    // memory.service must expose the bucket in its report OBJECT, not only in prose:
+    // a closed-record-only spec previously fell into none of the four hard-coded
+    // filters and vanished from the report entirely.
+    const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service'));
+    const prevRoot = process.env.EVO_LITE_ROOT;
+    process.env.EVO_LITE_ROOT = path.join(projectRoot, '.evo-lite');
+    try {
+        const report = await memoryService.verify({ silent: true });
+        assert.ok(report.specPortfolio && 'recordClosed' in report.specPortfolio,
+            'report.specPortfolio must expose recordClosed');
+        assert.strictEqual(report.specPortfolio.recordClosed, 2, 'both valid specs are counted');
+        assert.strictEqual(report.specPortfolio.shipped, 0, 'never folded into shipped');
+    } finally {
+        if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT;
+        else process.env.EVO_LITE_ROOT = prevRoot;
+    }
 }
 console.log('✅ T-record-only-state passed');
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: FAIL — `registry schema version must bump to @3`
 
 - [ ] **Step 3: Write the implementation**
@@ -484,7 +564,7 @@ report.specPortfolio = {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: PASS — `✅ T-record-only-state passed`
 
 - [ ] **Step 5: Commit**
@@ -536,21 +616,27 @@ console.log('T-record-only-findings. Testing violation findings, factInputs and 
     const projectRoot = runtime.workspaceRoot;
     const VALID = { id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } };
 
-    // simultaneously ineligible (valid contract), visibility-discrepant (numbered
-    // heading hides it) and record-incomplete (no closure fields at all)
+    // A genuine TRIPLE violation. A numbered heading would NOT produce one: it
+    // empties the authority, so locallyExecutable is 0 and `ineligible` is never
+    // established. Instead give the authority a valid contract (=> ineligible),
+    // put a DIFFERENT contract in a later block so the two parsers disagree
+    // (=> visibility discrepancy), and omit the closure record entirely.
+    const OTHER = { id: 'W', description: 'other', dependsOn: ['y.js'], verifier: { type: 'file-exists', params: { path: 'y.js' } } };
     writeText(path.join(projectRoot, 'docs', 'specs', 'triple.md'),
         ['---', 'id: spec:triple', 'status: closed-record-only', '---', '', '# T', '',
-         '## 3. Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', ''].join('\n'));
+         '## Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', '',
+         '## Appendix', '', '```json', JSON.stringify({ criteria: [OTHER] }), '```', ''].join('\n'));
 
     const reg = sp.buildSpecRegistry(projectRoot, { write: false });
     const entry = reg.specs.find(s => s.id === 'spec:triple');
     const ids = (entry.findings || []).map(f => f.id);
 
-    for (const key of ['contract-visibility-discrepancy', 'record-incomplete']) {
+    for (const key of ['ineligible', 'contract-visibility-discrepancy', 'record-incomplete']) {
         assert.ok(ids.includes(`invalid-record-only-closure:spec:triple:${key}`),
             `must emit ${key}; got ${ids.join(', ')}`);
     }
-    assert.ok(ids.length >= 2, 'violations report independently — none short-circuits another');
+    assert.strictEqual(ids.length, 3,
+        'all three violations report independently — none short-circuits another');
     assert.notStrictEqual(entry.state, 'closed-record-only', 'a rejected declaration is not terminal');
 
     const vis = entry.findings.find(f => f.id.endsWith(':contract-visibility-discrepancy'));
@@ -565,13 +651,50 @@ console.log('T-record-only-findings. Testing violation findings, factInputs and 
     assert.deepStrictEqual(rec.factInputs.invalidClosureFields,
         ['closureBasis', 'closureReason', 'closureRecordedAt'],
         'record-incomplete names the offending fields, sorted');
+
+    // Sensitivity, all three directions the frozen AC names.
+    const fpOf = f => computeFingerprint({ ruleId: f.ruleId, ruleVersion: f.ruleVersion, factInputs: f.factInputs });
+
+    // (i) equal-count authored change moves the discrepancy fingerprint
+    const before = fpOf(vis);
+    writeText(path.join(projectRoot, 'docs', 'specs', 'triple.md'),
+        ['---', 'id: spec:triple', 'status: closed-record-only', '---', '', '# T', '',
+         '## Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', '',
+         '## Appendix', '', '```json',
+         JSON.stringify({ criteria: [Object.assign({}, OTHER, { description: 'changed' })] }),
+         '```', ''].join('\n'));
+    const after = fpOf(sp.buildSpecRegistry(projectRoot, { write: false })
+        .specs.find(x => x.id === 'spec:triple').findings
+        .find(f => f.id.endsWith(':contract-visibility-discrepancy')));
+    assert.notStrictEqual(before, after,
+        'equal-count authored content change must move the discrepancy fingerprint');
+
+    // (ii) fixing one closure field while another stays bad moves record-incomplete
+    const recFp = fm => {
+        writeText(path.join(projectRoot, 'docs', 'specs', 'partial.md'),
+            ['---', 'id: spec:partial', 'status: closed-record-only'].concat(fm, ['---', '', '# P', '']).join('\n'));
+        return fpOf(sp.buildSpecRegistry(projectRoot, { write: false })
+            .specs.find(x => x.id === 'spec:partial').findings
+            .find(f => f.id.endsWith(':record-incomplete')));
+    };
+    assert.notStrictEqual(
+        recFp(['closureReason: r']),
+        recFp(['closureReason: r', 'closureBasis: record-only']),
+        'fixing one field while another stays invalid must move the fingerprint');
+
+    // (iii) prose never enters identity: factInputs carry exactly the frozen keys
+    assert.deepStrictEqual(Object.keys(vis.factInputs).sort(),
+        ['authorityContractDigests', 'corroborationContractDigests'],
+        'discrepancy identity is exactly the two digest projections — no message, no counts');
+    assert.deepStrictEqual(Object.keys(rec.factInputs), ['invalidClosureFields'],
+        'record-incomplete identity is exactly the offending field names');
 }
 console.log('✅ T-record-only-findings passed');
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: FAIL — `locallyExecutableCriterionDigests must be a canonical SET_KEY`
 
 - [ ] **Step 3: Write the implementation**
@@ -600,13 +723,15 @@ Push the warnings in `buildSpecRegistry`, immediately after the state derivation
 
 ```js
 if (recordOnlyDeclared && !recordOnlyValid) {
+    // Every applicable violation reports. None suppresses another: they are
+    // separately actionable and separately dispositionable.
+    if (eligibility.ineligible) warnings.push('invalid-record-only-closure:ineligible');
     if (!eligibility.visibilityAgrees) warnings.push('invalid-record-only-closure:contract-visibility-discrepancy');
-    if (eligibility.visibilityAgrees && !eligibility.eligible) warnings.push('invalid-record-only-closure:ineligible');
     if (!closureRecord.valid) warnings.push('invalid-record-only-closure:record-incomplete');
 }
 ```
 
-> `ineligible` is suppressed when visibility already disagrees: with the two parsers seeing different documents, "which criteria are executable" has no single answer to report, and the discrepancy finding is the actionable one. This is a reporting decision, not a short-circuit of consequences — the state is rejected either way.
+> These three conditions are read from independent facts, which is why `ineligible` is computed in Task 1 rather than derived from `eligible` here. Deriving it would make visibility disagreement mask the contract violation, and the frozen AC requires all applicable violations to be emitted together.
 
 In `buildSpecFindings`, map the composite warnings to per-instance findings:
 
@@ -641,7 +766,7 @@ if (warning.startsWith('invalid-record-only-closure:')) {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: PASS — `✅ T-record-only-findings passed`
 
 - [ ] **Step 5: Commit**
@@ -691,8 +816,25 @@ console.log('T-record-only-release. Testing credential independence at the relea
         ['---', 'id: spec:r4', 'status: closed-record-only', 'releaseBlocking: true',
          'releaseBlockDisposition: waived', 'releaseBlockReviewedAt: 2026-99-99'].concat(REC, ['---', '', '# R4', '']).join('\n'));
 
+    // a REJECTED declaration is release-blocked through the in-flight branch,
+    // as a consequence of deriving baseState — not via a waiver-gated reason
+    writeText(path.join(projectRoot, 'docs', 'specs', 'r5.md'),
+        ['---', 'id: spec:r5', 'status: closed-record-only', 'releaseBlocking: true',
+         'linkedPlan: plan:r5p', '---', '', '# R5', '',
+         '## Acceptance Criteria', '', '```json',
+         JSON.stringify({ criteria: [{ id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } }] }),
+         '```', ''].join('\n'));
+
     const reg = sp.buildSpecRegistry(projectRoot, { write: false });
     const blocker = id => (reg.blockers || []).find(b => b.id === id);
+
+    const r5 = blocker('spec:r5');
+    assert.ok(r5, 'a rejected record-only declaration that is releaseBlocking must still block');
+    assert.strictEqual(r5.state, 'active', 'the blocker carries the derived baseState');
+    assert.ok(/in-flight release-blocking spec/.test(r5.reason),
+        'a rejected declaration takes the in-flight reason, never a waiver-gated one');
+    assert.ok(!/record-only-closed/.test(r5.reason),
+        'it never borrows the terminal-state message it failed to earn');
 
     assert.ok(blocker('spec:r1'), 'a closure record is not a waiver — still BLOCKED');
     assert.ok(/record-only-closed/.test(blocker('spec:r1').reason),
@@ -714,7 +856,7 @@ console.log('✅ T-record-only-release passed');
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: FAIL — `sp.REQUIRES_RELEASE_WAIVER is undefined`
 
 - [ ] **Step 3: Write the implementation**
@@ -782,7 +924,7 @@ Export `REQUIRES_RELEASE_WAIVER`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: PASS — `✅ T-record-only-release passed`
 
 - [ ] **Step 5: Commit**
@@ -853,7 +995,7 @@ console.log('✅ T-record-only-credential-lifecycle passed');
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: FAIL — `reactivate must remove closureBasis`
 
 - [ ] **Step 3: Write the implementation**
@@ -861,17 +1003,19 @@ Expected: FAIL — `reactivate must remove closureBasis`
 In `templates/cli/spec-portfolio.js`, add a shared helper and use it in both transitions. It keys on the **pre-transition `declaredStatus`**, never on the derived `state`: a rejected declaration derives to `baseState`, so a `state`-keyed condition would skip exactly the case that leaves reusable credential fragments behind.
 
 ```js
-// Reads the declaration — what the operator wrote — not the derivation, which
-// is this system's verdict on it.
-function readDeclaredStatus(absPath) {
-    try {
-        const { frontmatter } = parseFrontmatter(fs.readFileSync(absPath, 'utf8'));
-        return (frontmatter && frontmatter.status) || null;
-    } catch (_) { return null; }
+// The pre-transition declaration is ALREADY in `entries`: rewriteSpecFrontmatter
+// has read the file and parsed the frontmatter before calling us. Re-reading the
+// file here would be a second, independent observation whose failure path
+// (`catch -> null`) would silently skip credential cleanup while the rewrite
+// still succeeded from the first read — an anti-replay guard that quietly opens
+// a replay seam. One observation, no seam.
+function declaredStatusOf(entries) {
+    const row = entries.find(([key]) => key === 'status');
+    return row ? row[1] : null;
 }
 
-function stripClosureRecordIfLeavingRecordOnly(absPath, entries) {
-    if (readDeclaredStatus(absPath) !== 'closed-record-only') return entries;
+function stripClosureRecordIfLeavingRecordOnly(entries) {
+    if (declaredStatusOf(entries) !== 'closed-record-only') return entries;
     let out = entries;
     for (const field of CLOSURE_FIELDS) out = removeEntry(out, field);
     return out;
@@ -882,7 +1026,7 @@ In `parkSpec`, inside the `rewriteSpecFrontmatter` callback:
 
 ```js
 rewriteSpecFrontmatter(absPath, (entries) => {
-    let out = stripClosureRecordIfLeavingRecordOnly(absPath, entries);
+    let out = stripClosureRecordIfLeavingRecordOnly(entries);
     out = setEntry(out, 'status', 'parked');
     out = removeEntry(out, 'parkedUntil');
     if (until) out = setEntry(out, 'parkedUntil', until);
@@ -894,7 +1038,7 @@ In `reactivateSpec`:
 
 ```js
 rewriteSpecFrontmatter(absPath, (entries) => {
-    let out = stripClosureRecordIfLeavingRecordOnly(absPath, entries);
+    let out = stripClosureRecordIfLeavingRecordOnly(entries);
     out = setEntry(out, 'status', 'adopted');
     out = removeEntry(out, 'parkedUntil');
     return out;
@@ -903,7 +1047,7 @@ rewriteSpecFrontmatter(absPath, (entries) => {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: PASS — `✅ T-record-only-credential-lifecycle passed`
 
 - [ ] **Step 5: Commit**
@@ -958,6 +1102,14 @@ console.log('T-portfolio-finding-correctness. Testing distinct plan predicates a
     writeText(agingPath, ['---', 'id: spec:z3', 'status: draft', 'linkedPlan: plan:zp2', '---', '', '# Z3', ''].join('\n'));
     const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
     fs.utimesSync(agingPath, old, old);
+    // Z1c/Z1d: parked spec x ACTIVE plan, and x plan MISSING from the IR
+    writeText(path.join(projectRoot, 'docs', 'specs', 'z4.md'),
+        ['---', 'id: spec:z4', 'status: parked', 'linkedPlan: plan:za', '---', '', '# Z4', ''].join('\n'));
+    writeText(path.join(projectRoot, 'docs', 'specs', 'z5.md'),
+        ['---', 'id: spec:z5', 'status: parked', 'linkedPlan: plan:ghost', '---', '', '# Z5', ''].join('\n'));
+    // size: oversized ADOPTED (no plan) — the cheapest place to edit, so still actionable
+    writeText(path.join(projectRoot, 'docs', 'specs', 's-adopted.md'),
+        ['---', 'id: spec:sd', 'status: draft', '---', '', '# SD', '', oversized].join('\n'));
     // size: oversized in each state
     writeText(path.join(projectRoot, 'docs', 'specs', 's-active.md'),
         ['---', 'id: spec:sa', 'status: draft', 'linkedPlan: plan:sp', '---', '', '# SA', '', oversized].join('\n'));
@@ -973,6 +1125,7 @@ console.log('T-portfolio-finding-correctness. Testing distinct plan predicates a
             { id: 'plan:zp', status: 'parked', linkedSpec: 'spec:z1', sourcePath: 'docs/plans/zp.md' },
             { id: 'plan:zd', status: 'draft', linkedSpec: 'spec:z2', sourcePath: 'docs/plans/zd.md' },
             { id: 'plan:zp2', status: 'parked', linkedSpec: 'spec:z3', sourcePath: 'docs/plans/zp2.md' },
+            { id: 'plan:za', status: 'active', linkedSpec: 'spec:z4', sourcePath: 'docs/plans/za.md' },
             { id: 'plan:sp', status: 'active', linkedSpec: 'spec:sa', sourcePath: 'docs/plans/sp.md' },
         ],
     }, null, 2));
@@ -982,6 +1135,9 @@ console.log('T-portfolio-finding-correctness. Testing distinct plan predicates a
 
     assert.ok(!by('spec:z1').warnings.includes('zombie-plan'), 'Z1: parked spec x parked plan must be settled');
     assert.ok(by('spec:z2').warnings.includes('zombie-plan'), 'a draft plan under a parked spec is still zombie');
+    assert.ok(by('spec:z4').warnings.includes('zombie-plan'), 'an ACTIVE plan under a parked spec is still zombie');
+    assert.ok(by('spec:z5').warnings.includes('zombie-plan'),
+        'a plan missing from the IR stays conservatively unsettled');
     // Z2 / W5-c anti-merge control
     assert.ok(by('spec:z3').warnings.includes('aging-inactive'),
         'Z2: aging-inactive must NOT be suppressed merely because the plan is parked');
@@ -996,7 +1152,12 @@ console.log('T-portfolio-finding-correctness. Testing distinct plan predicates a
     assert.ok(!('notDonePlans' in zf.factInputs),
         'zombie-plan must not fingerprint a set its rule no longer consults');
 
+    assert.ok(by('spec:sd').warnings.includes('size-exceeded'), 'adopted oversized warns — editing is cheapest there');
     assert.ok(by('spec:sa').warnings.includes('size-exceeded'), 'active oversized still warns');
+    assert.strictEqual(
+        by('spec:sd').warnings.includes('size-exceeded'),
+        by('spec:sa').warnings.includes('size-exceeded'),
+        'adopted -> active must not change the actionable verdict on an unchanged document');
     for (const id of ['spec:ss', 'spec:sr']) {
         assert.strictEqual(by(id).sizeExceeded, true, `${id} measurement is preserved`);
         assert.ok(!by(id).warnings.includes('size-exceeded'), `${id} raises no actionable finding`);
@@ -1007,7 +1168,7 @@ console.log('✅ T-portfolio-finding-correctness passed');
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: FAIL — `zombieRelevantPlans must be a canonical SET_KEY`
 
 - [ ] **Step 3: Write the implementation**
@@ -1080,7 +1241,7 @@ const plans = (spec.zombieRelevantPlans || spec.linkedPlans || []).join(', ');
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: PASS — `✅ T-portfolio-finding-correctness passed`
 
 - [ ] **Step 5: Commit**
@@ -1092,7 +1253,7 @@ git commit -m "fix(spec-portfolio): distinct zombie/aging predicates and state-a
 
 ---
 
-### Task 8: Integrated regression, runtime mirror, closure
+### Task 8: Integrated regression, runtime mirror, CHANGELOG
 
 **Files:**
 - Modify: `.evo-lite/cli/**` (via `sync-runtime`, never by hand)
@@ -1107,14 +1268,55 @@ git commit -m "fix(spec-portfolio): distinct zombie/aging predicates and state-a
 Negative controls proving this change did not disturb the repository's other two plan-status predicates:
 
 ```js
-console.log('T-plan-predicate-negative-controls. Testing the other two predicates are untouched ...');
+console.log('T-plan-predicate-negative-controls. Testing the other two predicates by BEHAVIOUR ...');
 {
-    const svc = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'memory.service.js'), 'utf8');
-    assert.ok(/plan\.status === 'parked'/.test(svc),
-        'memory.service focus derivation must keep its own parked predicate');
-    const gaps = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps.js'), 'utf8');
-    assert.ok(/parked/.test(gaps),
-        'planning/gaps.js sibling completeness must keep its own parked handling');
+    // These assert what the other two rules DO, not that a word still appears in
+    // their source. A grep for /parked/ passes on any comment and proves nothing.
+    const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service'));
+    const runtime = createTempRuntimeRoot('predicate-negative-controls');
+    const projectRoot = runtime.workspaceRoot;
+
+    writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+        version: 'evo-plan-ir@1', specs: [], tasks: [], warnings: [],
+        plans: [{ id: 'plan:shelved', status: 'parked', title: 'Shelved', linkedSpec: 'spec:shelved', sourcePath: 'docs/plans/shelved.md' }],
+    }, null, 2));
+
+    const prevRoot = process.env.EVO_LITE_ROOT;
+    process.env.EVO_LITE_ROOT = path.join(projectRoot, '.evo-lite');
+    try {
+        // memory.service: a parked plan is still NOT a focus target.
+        const advanced = memoryService.advanceFocusFromCommit({
+            commitMessage: 'chore: note something\n\nEvo-Focus: plan:shelved\n',
+        });
+        assert.strictEqual(advanced.status, 'plan-not-startable',
+            'a parked plan must remain not-startable for focus');
+        assert.strictEqual(advanced.focusChanged, false, 'focus must not advance onto a parked plan');
+    } finally {
+        if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT;
+        else process.env.EVO_LITE_ROOT = prevRoot;
+    }
+
+    // planning/gaps: a parked or draft sibling with open tasks still keeps the
+    // spec OPEN — the opposite of settled, and deliberately not aligned with the
+    // zombie predicate.
+    const { runPlanningDriftCensus } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+    const planIR = {
+        version: 'evo-plan-ir@1', warnings: [],
+        specs: [{ id: 'spec:two', status: 'draft', sourcePath: 'docs/specs/two.md', linkedPlan: 'plan:done' }],
+        plans: [
+            { id: 'plan:done', status: 'done', linkedSpec: 'spec:two', sourcePath: 'docs/plans/done.md' },
+            { id: 'plan:open', status: 'parked', linkedSpec: 'spec:two', sourcePath: 'docs/plans/open.md' },
+        ],
+        tasks: [
+            { id: 'task:a', linkedPlan: 'plan:done', status: 'implemented', title: 'a' },
+            { id: 'task:b', linkedPlan: 'plan:open', status: 'todo', title: 'b' },
+        ],
+    };
+    const census = runPlanningDriftCensus(projectRoot, planIR, {});
+    const r011 = (census.findings || []).filter(f => (f.ruleId || f.rule || f.id) === 'R011'
+        && JSON.stringify(f).includes('spec:two'));
+    assert.strictEqual(r011.length, 0,
+        'a parked sibling with open tasks must keep the spec open — no R011 closure recommendation');
 
     // the mirror must match the canonical tree
     const canonical = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio.js'), 'utf8');
@@ -1126,17 +1328,20 @@ console.log('✅ T-plan-predicate-negative-controls passed');
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node ./.evo-lite/cli/test.js governance`
+Run: `node ./templates/cli/test.js governance`
 Expected: FAIL — `run mem sync-runtime — the mirror is stale`
 
-- [ ] **Step 3: Refresh the mirror and run the FULL suite**
+- [ ] **Step 3: Refresh the mirror, then prove it on the RUNTIME runner**
 
 ```bash
 node .evo-lite/cli/memory.js sync-runtime
 node ./.evo-lite/cli/test.js all
 ```
 
-Expected: the whole suite passes, including both new test families and the negative controls.
+This is the one place `.evo-lite/cli/test.js` is correct: after `sync-runtime` the
+mirror carries every change from Tasks 1–7, so running it proves the deployed
+runtime — not just the canonical tree — is green. Expected: the whole suite
+passes, including both new test families and the behavioural negative controls.
 
 - [ ] **Step 4: Verify the governance surfaces on real data**
 
