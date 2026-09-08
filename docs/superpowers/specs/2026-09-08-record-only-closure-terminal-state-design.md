@@ -179,19 +179,53 @@ all for this reason:
 | `evo-code-perception-foundation` | 14 | 0 | `## 24. Acceptance Criteria` |
 
 Under an authority-only gate all three are eligible today, despite carrying 4, 5
-and 14 authored criteria. Numbering a heading would be an accidental, invisible
-bypass of the first hard gate — cheaper than the duplicate-id attack and
-reachable without intent. The gate therefore requires **corroboration**:
+and 14 authored criteria. Numbering a heading is an accidental, invisible bypass
+— cheaper than the duplicate-id attack and reachable without intent.
 
-> Eligibility requires that **both** extractors agree there is no executable
-> contract. When `extractLastCriteriaArray` finds criteria that the authority
-> cannot see, the spec is **not** eligible, and a
-> `invalid-record-only-closure:contract-visibility-discrepancy` finding is
-> emitted naming both counts.
+**Comparing emptiness is not enough.** The two parsers differ in *which* block
+they select, not merely in whether they find one: the authority takes the first
+JSON block under the heading, the corroborator the last one in the document
+containing `"criteria"`. A parity test on `length === 0` therefore leaves a
+second bypass, reproduced on a fixture:
+
+```
+first block under the AC heading → authority sees     [I]  (invalid)
+a later block in the document    → corroborator sees  [V]  (fully valid)
+
+both lengths = 1 → emptiness parity holds → ELIGIBLE, while a valid
+acceptance assertion sits in the document
+```
+
+(The illustration deliberately does not reproduce the heading text: the authority
+scans this document line-by-line too, and a spec about parser fragility is the
+wrong place to lean on a regex's trailing anchor.)
+
+The gate therefore compares **what each parser actually observed**:
+
+> `contractVisibilityDigest(c)` is a sha256 over the canonicalized **complete
+> authored criterion payload** — id, description, dependsOn and verifier.
+>
+> ```
+> visibilityProjection(criteria) = sorted(criteria.map(contractVisibilityDigest))
+> visibilityAgrees ⟺ visibilityProjection(authority)
+>                  === visibilityProjection(corroboration)
+> ```
+>
+> Any disagreement — different count, or the same count over different content —
+> denies eligibility and emits
+> `invalid-record-only-closure:contract-visibility-discrepancy`.
+
+`contractVisibilityDigest` is deliberately **not** `criterionDigest`, which
+covers verification semantics only (`id`, `verifier`, `dependsOn`) and excludes
+`description` by design — yet `validateCriteria` requires a non-empty
+`description`, so two criteria differing only there read as one valid and one
+invalid under an identical `criterionDigest`. For this gate that difference is
+the whole question. `criterionDigest` stays correct for
+`locallyExecutableCriterionDigests` (§5), where the criterion already validated
+and a prose rewrite should not stale a decision.
 
 Neither parser is modified, so no existing `verify-contract` or `close` verdict
-changes. The divergence of §8 stops being a silent hole and becomes a visible,
-conservative denial.
+changes. The divergence of §8 becomes a visible, conservative denial.
 
 ### The eligibility invariant
 
@@ -202,7 +236,8 @@ corroboration  = extractLastCriteriaArray(specText)
 aggregateFindings   = validateCriteria(authority)
 locallyExecutable   = authority.filter(c => validateCriteria([c]).length === 0)
 
-visibilityAgrees    = (authority.length === 0) === (corroboration.length === 0)
+visibilityAgrees    = visibilityProjection(authority)
+                   === visibilityProjection(corroboration)
 
 eligibleForRecordOnly ⟺
        visibilityAgrees
@@ -216,9 +251,10 @@ deliberately broken criterion to an otherwise valid contract would unlock
 record-only closure. Requiring that *no* criterion is independently executable
 closes both that vector and the duplicate-id inverse.
 
-A top-level validation failure (`criteria must be an array`) yields no locally
-executable criterion and a non-empty aggregate, and is therefore eligible — a
-contract that cannot be parsed as a contract is not an executable contract.
+All three conjuncts are load-bearing and independent. In particular
+`locallyExecutable.length === 0` alone never grants eligibility: visibility
+agreement and aggregate invalidity are separate gates, and no derivation of the
+form *all singletons fail ⇒ eligible* exists.
 
 ### Continuous enforcement
 
@@ -273,10 +309,18 @@ happens, `status` is set back to `closed-record-only`, and — still NO-CONTRACT
 `R1`'s three fields still valid — the spec is terminal again on a credential
 that was never restated.
 
-> **Transition invariant.** Leaving `closed-record-only` MUST invalidate the
-> current closure credential. `parkSpec` and `reactivateSpec`, when the spec
-> they act on is currently `closed-record-only`, remove `closureBasis`,
-> `closureReason` and `closureRecordedAt`.
+> **Transition invariant.** `parkSpec` and `reactivateSpec` MUST remove
+> `closureBasis`, `closureReason` and `closureRecordedAt` whenever the
+> **pre-transition `declaredStatus`** is `closed-record-only` — regardless of
+> whether that declaration ever earned the terminal `state`.
+
+Keying on `declaredStatus`, not `state`, is the whole content of this invariant.
+A *rejected* declaration derives to `baseState` (§5), so a spec can carry
+`status: closed-record-only` with `state: active` and a partial credential. An
+implementation keyed on `state === 'closed-record-only'` skips exactly that case,
+leaving credential fragments to be completed later and reused. The condition must
+read the declaration — what the operator wrote — not the derivation, which is
+this system's verdict on it.
 
 Removing those fields is not erasing history — git retains every prior record.
 The frontmatter asserts the *current* credential, and re-entry must require a
@@ -414,7 +458,7 @@ here rather than left to implementation:
 | `instanceKey` | `factInputs` |
 | --- | --- |
 | `ineligible` | `locallyExecutableCriterionDigests` — sorted digests of the criteria that independently validated clean |
-| `contract-visibility-discrepancy` | `authorityCriterionCount`, `corroborationCriterionCount` |
+| `contract-visibility-discrepancy` | `authorityContractDigests`, `corroborationContractDigests` — sorted `contractVisibilityDigest` values (§2); never counts, never parser prose |
 | `record-incomplete` | `invalidClosureFields` — sorted names of the missing or invalid fields |
 
 Consequences are the intended ones: changing which assertions are executable
@@ -426,10 +470,13 @@ assertion — is a different fact.
 
 **Set canonicalization.** `fingerprint.js` sorts arrays only for keys in its
 `SET_KEYS` vocabulary (`linkedFiles`, `notDonePlans`, `taskStatuses`,
-`linkedPlans`). Every set-valued key introduced here MUST be added there, so
-`[A, B]` and `[B, A]` fingerprint identically. Sorting locally in
-`spec-portfolio.js` instead is prohibited: it would place a second, invisible
-canonicalization rule outside the authority that owns it.
+`linkedPlans`). All five set-valued keys introduced here MUST join it —
+`zombieRelevantPlans`, `locallyExecutableCriterionDigests`,
+`invalidClosureFields`, `authorityContractDigests`,
+`corroborationContractDigests` — so `[A, B]` and `[B, A]` fingerprint
+identically. Sorting locally in `spec-portfolio.js` instead is prohibited: it
+would place a second, invisible canonicalization rule outside the authority that
+owns it.
 
 **Rule versions.** The disposition contract (`spec:disposition-ledger` §2.3)
 already decides this — not an implementation choice. It requires a bump when the
@@ -583,6 +630,18 @@ Rule versions are settled in §5 by the disposition contract, not by the
 implementer: `invalid-record-only-closure@1`, `zombie-plan@2`,
 `size-exceeded@2`.
 
+**Registry schema version: `evo-spec-registry@2` → `@3`.** The `@1 → @2` bump set
+the precedent in this file's own comment — *the shape gained
+blockers/errors/source, and a consumer that keys on the version must be told the
+difference*. This spec changes the `state` enum and adds derived fields including
+`zombieRelevantPlans`. Fixing every *known* internal consumer does not make the
+machine contract unchanged: an unknown or external consumer must still be able to
+learn the registry now carries a state it has never seen. Leaving it at `@2` is
+the same enum fall-through this round has been defending against, one level up.
+This is **not** a request to make `release-preflight` an exact-version gate — it
+refuses on missing `errors`/`blockers`/`source` fields, never on the version
+string, so the bump does not alter release behaviour (verified during design).
+
 ## §8 Registered Divergence — Out of Scope
 
 `spec-portfolio.js` and `verification/validate-contract.js` extract criteria by
@@ -623,7 +682,7 @@ today, while the divergence stays openly registered as unfixed.
   "criteria": [
     {
       "id": "ac-eligibility-gate-denies-every-executable-contract",
-      "description": "A spec with at least one independently executable criterion may NEVER be closed record-only, by any route. (a) Evidence-independence: with no evidence record, and with fixtures producing UNVERIFIED, STALE, FAIL and PASS, labelling it closed-record-only emits invalid-record-only-closure:ineligible in all five cases. (b) Duplicate-id inverse escape: a contract of two valid criteria sharing one id — which makes whole-array validateCriteria emit a single finding naming that id — is INELIGIBLE, because locallyExecutable is computed by singleton probe and yields 2; the withdrawn identity-matching rule yielded 0 and would have granted eligibility, so this case must turn red against that rule. (c) Appending one structurally broken criterion to a valid contract does not unlock eligibility. (d) Contract visibility: a spec whose Acceptance Criteria heading is numbered — parseSpecCriteria sees 0, extractLastCriteriaArray sees N>0 — is INELIGIBLE and emits invalid-record-only-closure:contract-visibility-discrepancy carrying both counts; asserted against the three real divergent specs on main, discovered by dynamic scan rather than a hard-coded list. (e) A genuinely contractless spec and an all-criteria-invalid spec both remain ELIGIBLE.",
+      "description": "A spec with at least one independently executable criterion may NEVER be closed record-only, by any route. (a) Evidence-independence: with no evidence record, and with fixtures producing UNVERIFIED, STALE, FAIL and PASS, labelling it closed-record-only emits invalid-record-only-closure:ineligible in all five cases. (b) Duplicate-id inverse escape: a contract of two valid criteria sharing one id — which makes whole-array validateCriteria emit a single finding naming that id — is INELIGIBLE, because locallyExecutable is computed by singleton probe and yields 2; the withdrawn identity-matching rule yielded 0 and would have granted eligibility, so this case must turn red against that rule. (c) Appending one structurally broken criterion to a valid contract does not unlock eligibility. (d) Contract visibility, BOTH divergence shapes, each INELIGIBLE with invalid-record-only-closure:contract-visibility-discrepancy: (d1) unequal — a numbered Acceptance Criteria heading gives parseSpecCriteria 0 and extractLastCriteriaArray N>0, asserted against the three real divergent specs on main found by dynamic scan, not a hard-coded list; (d2) EQUAL COUNT, different content — the heading's first block holds one structurally invalid criterion while a later block in the document holds a fully valid one, so both sides see exactly 1. An emptiness-parity predicate passes (d2) and must turn this case red. The finding's factInputs carry sorted contractVisibilityDigest projections, never counts: two contracts of equal size but different authored content produce different fingerprints, and a criterion differing only in description — which criterionDigest cannot see — is a visibility difference. (e) A genuinely contractless spec and an all-criteria-invalid spec both remain ELIGIBLE.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/spec-portfolio.js", "templates/cli/verification/validate-contract.js", "templates/cli/test/governance.js"]
     },
@@ -635,7 +694,7 @@ today, while the divergence stays openly registered as unfixed.
     },
     {
       "id": "ac-closure-credential-does-not-survive-reopen",
-      "description": "Leaving closed-record-only invalidates the closure credential. Given a validly closed-record-only spec, parkSpec and reactivateSpec each remove closureBasis, closureReason and closureRecordedAt from the frontmatter, and the fields are absent from the file afterwards. Negative control for credential replay: closed-record-only → reactivate → set status back to closed-record-only WITHOUT writing a fresh closure record MUST yield invalid-record-only-closure:record-incomplete and state === baseState(spec), never a terminal state. Leaving parked (a spec that was never record-only closed) does not touch closure fields that were never there.",
+      "description": "Leaving closed-record-only invalidates the closure credential, keyed on the PRE-TRANSITION declaredStatus rather than the derived state. (a) Given a validly closed-record-only spec, parkSpec and reactivateSpec each remove closureBasis, closureReason and closureRecordedAt, and the fields are absent afterwards. (b) Given a REJECTED declaration — status: closed-record-only with a partial or invalid closure record, hence state === baseState(spec), not terminal — parkSpec and reactivateSpec still remove all three fields; an implementation keyed on state === 'closed-record-only' skips this case and must turn it red. (c) Credential replay: closed-record-only → reactivate → status set back to closed-record-only WITHOUT a fresh closure record yields invalid-record-only-closure:record-incomplete and baseState, never a terminal state. (d) Leaving parked, on a spec never record-only closed, does not touch closure fields that were never there.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/spec-portfolio.js", "templates/cli/test/governance.js"]
     },
@@ -665,7 +724,7 @@ today, while the divergence stays openly registered as unfixed.
     },
     {
       "id": "ac-disposition-identity-is-stable-and-versioned",
-      "description": "Fingerprint identity behaves as §5 freezes it. Set canonicalization: findings whose set-valued factInputs (zombieRelevantPlans, locallyExecutableCriterionDigests, invalidClosureFields) differ only in element ORDER produce an IDENTICAL fingerprint — asserted through computeFingerprint, and each key is present in fingerprint.js SET_KEYS so no local sorting in spec-portfolio.js can satisfy this. Sensitivity: changing WHICH criteria are locally executable moves the ineligible fingerprint; fixing one closure-record field while another stays invalid moves the record-incomplete fingerprint; rewording a finding message moves neither. Versions: SPEC_RULE_VERSIONS declares invalid-record-only-closure at 1, zombie-plan at 2 and size-exceeded at 2, and a test asserts those literals so a future silent emission-condition change under an unchanged version turns red.",
+      "description": "Fingerprint and schema identity behave as §5 and §7 freeze them. Set canonicalization: findings whose set-valued factInputs (zombieRelevantPlans, locallyExecutableCriterionDigests, invalidClosureFields, authorityContractDigests, corroborationContractDigests) differ only in element ORDER produce an IDENTICAL fingerprint — asserted through computeFingerprint, and all five keys are present in fingerprint.js SET_KEYS so no local sorting in spec-portfolio.js can satisfy this. Sensitivity: changing WHICH criteria are locally executable moves the ineligible fingerprint; changing authored criterion content at equal count moves the contract-visibility-discrepancy fingerprint; fixing one closure-record field while another stays invalid moves record-incomplete; rewording a finding message moves none of them. Versions: SPEC_RULE_VERSIONS declares invalid-record-only-closure at 1, zombie-plan at 2 and size-exceeded at 2, and the registry declares version evo-spec-registry@3; tests assert those literals so a future silent emission-condition or schema change under an unchanged version turns red.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/spec-portfolio.js", "templates/cli/disposition/fingerprint.js", "templates/cli/test/governance.js"]
     }
