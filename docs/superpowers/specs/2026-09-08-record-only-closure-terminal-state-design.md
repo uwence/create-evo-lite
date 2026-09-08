@@ -5,7 +5,7 @@ created: 2026-09-08
 linkedPlan: plan:record-only-closure-terminal-state
 ---
 
-# Spec: `closed-record-only` Terminal State + Portfolio Finding Correctness
+# Spec: `closed-record-only` Terminal State
 
 **Date:** 2026-09-08
 **Depends on:** `spec:spec-portfolio-governance` (registry, states, findings, release
@@ -53,7 +53,7 @@ are closed on this item, and no machine verification stands behind that closure.
   something the gate no longer does. A correct gate paired with guidance that
   misinforms the operator is not a gate left alone.
 - **Not** a parser consolidation. The divergence between
-  `extractLastCriteriaArray()` and `parseSpecCriteria()` is registered in §8 and
+  `extractLastCriteriaArray()` and `parseSpecCriteria()` is registered in §7 and
   made **fail-closed** in §2 — disagreement denies eligibility and raises a
   finding. Neither parser is modified, so no existing contract verdict moves.
 - **Not** an escape hatch for failed verification. See §2, which is the first
@@ -225,7 +225,7 @@ the whole question. `criterionDigest` stays correct for
 and a prose rewrite should not stale a decision.
 
 Neither parser is modified, so no existing `verify-contract` or `close` verdict
-changes. The divergence of §8 becomes a visible, conservative denial.
+changes. The divergence of §7 becomes a visible, conservative denial.
 
 ### The eligibility invariant
 
@@ -367,7 +367,7 @@ distinguish the two without parsing prose.
 and never derives state itself. `deriveBlocker` remains the single authority for
 release *enforcement*, and this section is the whole of this spec's effect on
 that enforcement. It is **not** the whole of its effect on `release-preflight.js`,
-whose operator guidance text becomes false under the new state — see §7.
+whose operator guidance text becomes false under the new state — see §6.
 
 ### `waiverIsLoadBearing` consumes the same predicate
 
@@ -470,11 +470,10 @@ assertion — is a different fact.
 
 **Set canonicalization.** `fingerprint.js` sorts arrays only for keys in its
 `SET_KEYS` vocabulary (`linkedFiles`, `notDonePlans`, `taskStatuses`,
-`linkedPlans`). All five set-valued keys introduced here MUST join it —
-`zombieRelevantPlans`, `locallyExecutableCriterionDigests`,
-`invalidClosureFields`, `authorityContractDigests`,
-`corroborationContractDigests` — so `[A, B]` and `[B, A]` fingerprint
-identically. Sorting locally in `spec-portfolio.js` instead is prohibited: it
+`linkedPlans`). The four set-valued keys introduced here MUST join it —
+`locallyExecutableCriterionDigests`, `invalidClosureFields`,
+`authorityContractDigests`, `corroborationContractDigests` — so `[A, B]` and
+`[B, A]` fingerprint identically. Sorting locally in `spec-portfolio.js` instead is prohibited: it
 would place a second, invisible canonicalization rule outside the authority that
 owns it.
 
@@ -486,111 +485,23 @@ of facts the fingerprint depends on changes:
 | Rule | Version | Why |
 | --- | --- | --- |
 | `invalid-record-only-closure` | 1 | new rule |
-| `zombie-plan` | **2** | emission condition changed (§6) *and* `factInputs` moved from `notDonePlans` to `zombieRelevantPlans` |
-| `size-exceeded` | **2** | emission condition narrowed to `{adopted, active}` (§6) |
+
+`zombie-plan` and `size-exceeded` also change in this round, but they are owned
+by `spec:portfolio-finding-correctness`, which carries their `@2` bumps.
 
 ### Terminal privileges are conditional
 
-Only a **valid** `closed-record-only` spec is exempt from `zombie-plan`, the
-aging findings, and actionable `size-exceeded`. An invalid one gets no exemption
-at all — it is an open spec carrying a violation finding.
+A **valid** `closed-record-only` spec is `terminal`: being neither `parked` nor
+open, its derivation reaches neither the `zombie-plan` branch nor the aging
+findings. An invalid one gets no exemption at all — it is an open spec carrying a
+violation finding.
 
-## §6 Portfolio Finding Correctness (W5)
+Size actionability for this state is **not** decided here. `size-exceeded` is
+owned by `spec:portfolio-finding-correctness`, whose `SIZE_ACTIONABLE_STATES`
+membership test governs `closed-record-only` exactly as it governs `parked` and
+`shipped`. Restating it in both documents would give one rule two owners.
 
-Both fixes are consequences of the same lifecycle model, not opportunistic
-cleanups.
-
-### zombie-plan deadlock
-
-`notDonePlans` currently filters on `plan.status !== 'done'`, so a *parked* plan
-counts as not-done. A parked spec whose plan is also parked — a fully coherent,
-deliberately-stopped combination — can therefore never clear its warning, by any
-disposition available to the operator.
-
-The single-predicate fix is rejected. `notDonePlans` is read by **two** rules —
-`zombie-plan` and `aging-inactive`. Widening it would silently import a
-governance judgement this design has not argued (*an active spec backed only by
-parked plans is not stale*) and create a silent state where such a spec emits
-neither finding while still declaring itself in flight. That removes signal
-rather than fixing a deadlock.
-
-> **The two plan predicates are intentionally distinct.**
->
-> `zombie-plan` asks whether a *parked* spec still has any linked plan that is
-> neither completed nor deliberately deferred. **For this rule only**,
-> `{done, parked}` are settled.
->
-> `aging-inactive` retains its pre-existing definition of not-done: any linked
-> plan whose status is not `done`.
->
-> This design does **not** adjudicate whether an active spec backed only by
-> parked plans is itself lifecycle-inconsistent. That question is out of scope
-> and may require a separate finding rather than a change to `aging-inactive`
-> semantics.
-
-```js
-// zombie-plan only: "does this parked spec still have unsettled plans?"
-const ZOMBIE_SETTLED_PLAN_STATUSES = Object.freeze(new Set(['done', 'parked']));
-const zombieRelevantPlans = linkedPlans.filter(id => {
-    const plan = plansById.get(id);
-    return !plan || !ZOMBIE_SETTLED_PLAN_STATUSES.has(plan.status);
-});
-
-// aging-inactive: UNCHANGED pre-existing semantics. Do not merge with the above.
-const notDonePlans = linkedPlans.filter(id => {
-    const plan = plansById.get(id);
-    return !plan || plan.status !== 'done';
-});
-```
-
-A plan absent from the plan-IR remains conservatively unsettled under **both**
-predicates. Plan `parked` is a real observed status (1 instance in the current
-IR).
-
-The `zombie-plan` finding's `factInputs` MUST carry `zombieRelevantPlans`, not
-`notDonePlans`: a fingerprint computed over a set its own rule no longer consults
-describes the wrong fact. The registry keeps exposing `notDonePlans` unchanged
-for `aging-inactive` and external consumers; `zombieRelevantPlans` is added
-alongside, not in place of it. Changed emission condition plus changed
-`factInputs` extraction make this `zombie-plan@2`, and `zombieRelevantPlans`
-joins `SET_KEYS` — see §5.
-
-Counting the two here, the repository holds **four** distinct plan-status
-predicates, each answering a different question (§7 enumerates them). Collapsing
-them into one shared set would break three rules to tidy one. The duplication is
-the design.
-
-### size-gate state blindness
-
-The gate does not consult state, so on 2026-08-09 all three size warnings landed
-on `shipped`/`parked` specs and none on an `active` one — a check meant to stop
-in-flight specs growing unbounded, firing exclusively at closed issues.
-
-The fix separates **measurement** from **actionability** rather than suppressing
-the measurement:
-
-```js
-// Measurement: every state; `size` / `sizeExceeded` stay in the registry output.
-const sizeExceeded = isSizeExceeded(size);
-
-// Actionable finding: only where the spec can still cheaply change.
-const SIZE_ACTIONABLE_STATES = Object.freeze(new Set(['adopted', 'active']));
-if (sizeExceeded && !sizeWaiver && SIZE_ACTIONABLE_STATES.has(state)) {
-    warnings.push('size-exceeded');
-}
-```
-
-`adopted` is included deliberately: the gate asks whether a still-editable spec
-needs splitting or a waiver, and `adopted` (adopted, no plan yet) is where
-editing is cheapest. Excluding it would let an oversized spec stay silent until
-a plan is linked, then become a violation on `state → active` without the
-document changing at all.
-
-`sizeWaiver` remains the mechanism for a deliberate oversize; it is not used to
-silence any finding this spec touches. The narrowed emission condition makes this
-`size-exceeded@2` — see §5.
-
-## §7 Production Change Surface
+## §6 Production Change Surface
 
 > Production change is **expected** to be confined to the files listed below.
 > Any additional production consumer discovered during implementation requires
@@ -603,7 +514,7 @@ consumers, and portfolio counts:
 | --- | --- |
 | `templates/cli/spec-portfolio.js` | Primary: vocabulary, `baseState`, eligibility gate, closure-record parser, `deriveBlocker`, counts, findings, formatters |
 | `templates/cli/memory.service.js` (~3377) | **Required.** Four hard-coded buckets (`adopted`/`active`/`parked`/`shipped`); a `closed-record-only` spec would fall into none and vanish from the report. Add `recordClosed`. |
-| `templates/cli/disposition/fingerprint.js` | **Required.** `SET_KEYS` gains `zombieRelevantPlans`, `locallyExecutableCriterionDigests`, `invalidClosureFields` (§5). Canonicalization is owned here; local sorting elsewhere is prohibited. |
+| `templates/cli/disposition/fingerprint.js` | **Required.** `SET_KEYS` gains this spec's four record-only keys (§5). Canonicalization is owned here; local sorting elsewhere is prohibited. `spec:portfolio-finding-correctness` adds `zombieRelevantPlans` to the same list. |
 | `templates/cli/release-preflight.js` | **Required — operator guidance only.** Its remediation text states *"A waiver applies to parked specs only; adopted/active must be finished or deliberately parked first"*, which becomes false once `closed-record-only` is waiver-gated. Enforcement logic is untouched. |
 | `templates/cli/verification/validate-contract.js` | **Imported, not modified.** Canonical parser/validator per §2. |
 
@@ -618,23 +529,22 @@ Confirmed to need no change:
   matched the repo-wide search only on unrelated `.state` fields (ledger/commit
   identity) or on the literal filename. Verified non-consumers.
 
-Deliberately unchanged, and asserted so (AC7): `memory.service.js:1847`
-(`plan.status === 'parked'` in focus derivation) and `planning/gaps.js:667` (a
-parked or draft sibling keeps a spec *open*). With the two predicates of §6 these
-are the four plan-status predicates; this spec changes exactly one.
+This spec touches no plan-status predicate. The repository's four — including
+`memory.service.js:1847` and `planning/gaps.js:667` — are enumerated and held
+unchanged by `spec:portfolio-finding-correctness`.
 
 Test files and the `.evo-lite/cli/**` mirror (refreshed via `mem sync-runtime`,
 never edited directly) are naturally in scope.
 
 Rule versions are settled in §5 by the disposition contract, not by the
-implementer: `invalid-record-only-closure@1`, `zombie-plan@2`,
-`size-exceeded@2`.
+implementer: `invalid-record-only-closure@1`. The two `@2` bumps live in
+`spec:portfolio-finding-correctness`.
 
 **Registry schema version: `evo-spec-registry@2` → `@3`.** The `@1 → @2` bump set
 the precedent in this file's own comment — *the shape gained
 blockers/errors/source, and a consumer that keys on the version must be told the
-difference*. This spec changes the `state` enum and adds derived fields including
-`zombieRelevantPlans`. Fixing every *known* internal consumer does not make the
+difference*. This spec changes the `state` enum and adds record-only derived
+fields. Fixing every *known* internal consumer does not make the
 machine contract unchanged: an unknown or external consumer must still be able to
 learn the registry now carries a state it has never seen. Leaving it at `@2` is
 the same enum fall-through this round has been defending against, one level up.
@@ -642,7 +552,7 @@ This is **not** a request to make `release-preflight` an exact-version gate — 
 refuses on missing `errors`/`blockers`/`source` fields, never on the version
 string, so the bump does not alter release behaviour (verified during design).
 
-## §8 Registered Divergence — Out of Scope
+## §7 Registered Divergence — Out of Scope
 
 `spec-portfolio.js` and `verification/validate-contract.js` extract criteria by
 **materially different rules**:
@@ -700,7 +610,7 @@ today, while the divergence stays openly registered as unfixed.
     },
     {
       "id": "ac-valid-record-only-is-terminal-never-shipped",
-      "description": "A spec that is eligible (NO-CONTRACT fixture and INVALID-contract fixture, both covered) with a complete closure record derives state === 'closed-record-only'; registry counts report recordClosed incremented with shipped unchanged; and it emits no zombie-plan, aging-no-plan, aging-inactive, size-exceeded, nor unknown-status finding — the last because closed-record-only is in RECOGNIZED_SPEC_STATUSES per §1, so a correctly spelled declaration is recognized vocabulary. memory.service report.specPortfolio exposes recordClosed rather than absorbing it into any existing bucket.",
+      "description": "A spec that is eligible (NO-CONTRACT fixture and INVALID-contract fixture, both covered) with a complete closure record derives state === 'closed-record-only'; registry counts report recordClosed incremented with shipped unchanged; and it emits no aging-no-plan, aging-inactive, nor unknown-status finding — the aging ones because the state is not open, and the last because closed-record-only is in RECOGNIZED_SPEC_STATUSES per §1, so a correctly spelled declaration is recognized vocabulary. Being neither parked nor open it also never reaches the zombie-plan branch. Its size actionability is asserted by spec:portfolio-finding-correctness, not here. memory.service report.specPortfolio exposes recordClosed rather than absorbing it into any existing bucket.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/spec-portfolio.js", "templates/cli/memory.service.js", "templates/cli/test/governance.js"]
     },
@@ -717,14 +627,8 @@ today, while the divergence stays openly registered as unfixed.
       "dependsOn": ["templates/cli/spec-portfolio.js", "templates/cli/test/governance.js"]
     },
     {
-      "id": "ac-w5-zombie-and-size-actionability",
-      "description": "Z1: a parked spec whose only linked plan is parked emits no zombie-plan finding, while a linked plan that is draft or absent from the IR still does, and the zombie-plan finding's factInputs name zombieRelevantPlans rather than notDonePlans. Z2 (scope negative control): an active spec with a parked linked plan MUST still emit the aging-inactive finding that the pre-change implementation would have emitted — the patch may not suppress it merely because plan.status === 'parked', and the registry entry still exposes notDonePlans computed by the unchanged status !== 'done' rule. Independently: size-exceeded findings are emitted only for states adopted and active, while registry entries for parked, shipped and closed-record-only specs still report sizeExceeded true and their measured size dimensions — the fact is preserved, only the demand for governance action is withdrawn.",
-      "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
-      "dependsOn": ["templates/cli/spec-portfolio.js", "templates/cli/test/governance.js"]
-    },
-    {
       "id": "ac-disposition-identity-is-stable-and-versioned",
-      "description": "Fingerprint and schema identity behave as §5 and §7 freeze them. Set canonicalization: findings whose set-valued factInputs (zombieRelevantPlans, locallyExecutableCriterionDigests, invalidClosureFields, authorityContractDigests, corroborationContractDigests) differ only in element ORDER produce an IDENTICAL fingerprint — asserted through computeFingerprint, and all five keys are present in fingerprint.js SET_KEYS so no local sorting in spec-portfolio.js can satisfy this. Sensitivity: changing WHICH criteria are locally executable moves the ineligible fingerprint; changing authored criterion content at equal count moves the contract-visibility-discrepancy fingerprint; fixing one closure-record field while another stays invalid moves record-incomplete; rewording a finding message moves none of them. Versions: SPEC_RULE_VERSIONS declares invalid-record-only-closure at 1, zombie-plan at 2 and size-exceeded at 2, and the registry declares version evo-spec-registry@3; tests assert those literals so a future silent emission-condition or schema change under an unchanged version turns red.",
+      "description": "Fingerprint and schema identity behave as §5 and §6 freeze them. Set canonicalization: findings whose set-valued factInputs (locallyExecutableCriterionDigests, invalidClosureFields, authorityContractDigests, corroborationContractDigests) differ only in element ORDER produce an IDENTICAL fingerprint — asserted through computeFingerprint, and all four keys are present in fingerprint.js SET_KEYS so no local sorting in spec-portfolio.js can satisfy this. Sensitivity: changing WHICH criteria are locally executable moves the ineligible fingerprint; changing authored criterion content at equal count moves the contract-visibility-discrepancy fingerprint; fixing one closure-record field while another stays invalid moves record-incomplete; rewording a finding message moves none of them. Versions: SPEC_RULE_VERSIONS declares invalid-record-only-closure at 1 and the registry declares version evo-spec-registry@3; tests assert those literals so a future silent schema change under an unchanged version turns red. The zombie-plan and size-exceeded versions are asserted by spec:portfolio-finding-correctness.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/spec-portfolio.js", "templates/cli/disposition/fingerprint.js", "templates/cli/test/governance.js"]
     }
@@ -738,7 +642,7 @@ today, while the divergence stays openly registered as unfixed.
   `spec:planning-truth-controls` and `spec:disposition-ledger`. Each needs its
   own adjudication and its own `closureReason`; the mechanism landing does not
   authorize any particular use of it.
-- **Parser authority convergence** (§8): unify `extractLastCriteriaArray` and
+- **Parser authority convergence** (§7): unify `extractLastCriteriaArray` and
   `parseSpecCriteria` behind the canonical parser. The containment in §2 makes
   the divergence safe, not absent.
 - **The numbered-heading defect itself.** `parseSpecCriteria`'s
@@ -752,8 +656,7 @@ today, while the divergence stays openly registered as unfixed.
   `mem spec` subcommand mirroring `parkSpec` is deliberately left open; adding a
   command before the semantics are proven would fix the ergonomics of a contract
   that has not yet been exercised.
-- **A migration path for dispositions invalidated by the `zombie-plan@2` /
-  `size-exceeded@2` bumps.** The bumps are required (§5) and correct, but they
-  invalidate every existing decision on those two rules at once; whether any of
-  those decisions deserve re-statement is a separate question from making the
-  version honest.
+- **A migration path for dispositions invalidated by rule-version bumps.** This
+  spec's `invalid-record-only-closure` is new, so nothing is invalidated here;
+  the two `@2` bumps and their migration question belong to
+  `spec:portfolio-finding-correctness`.
