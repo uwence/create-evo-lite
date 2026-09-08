@@ -361,6 +361,16 @@ function extractLastCriteriaArray(content) {
 // description — so two criteria differing only there are one valid and one
 // invalid under an identical criterionDigest. For this gate that difference is
 // the whole question, so visibility hashes the complete authored payload.
+//
+// DELIBERATE ISOLATION BOUNDARY: This canonicalization is structurally identical
+// to the unexported `canonicalize` in `./verification/validate-contract.js:153-160`,
+// and `fingerprint.js` also carries a key-aware variant. They are kept separate
+// by design: `contractVisibilityDigest` (complete authored payload, includes
+// `description`) and `criterionDigest` (verification semantics only, excludes
+// `description`) are different identities that both feed disposition fingerprints.
+// Sharing a canonicalizer would couple them, so a change made for one would
+// silently move the other's fingerprint and invalidate recorded dispositions
+// without announcing it. Do not "helpfully" deduplicate this function.
 function canonicalizeCriterion(value) {
     if (Array.isArray(value)) return value.map(canonicalizeCriterion);
     if (value && typeof value === 'object') {
