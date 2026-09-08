@@ -1214,6 +1214,33 @@ function removeEntry(entries, key) {
     return entries.filter(([k]) => k !== key);
 }
 
+// Reads the pre-transition `status` straight out of the `entries` rewriteSpecFrontmatter
+// already parsed for us. Do NOT re-read the file here: that would be a second,
+// independent observation, and a plausible-looking `try/catch -> null` around it
+// would silently skip credential cleanup on failure while the rewrite still
+// succeeds from the first read — an anti-replay guard that quietly opens a
+// replay seam. One observation, no seam.
+function declaredStatusOf(entries) {
+    const row = entries.find(([key]) => key === 'status');
+    return row ? row[1] : null;
+}
+
+// A closure record is a credential for the closed-record-only DECLARATION,
+// not for the derived state: buildSpecRegistry rejects an invalid/incomplete
+// record-only declaration back to baseState (active/adopted), so a spec can
+// carry `status: closed-record-only` with a partial closure record while its
+// derived `state` is not 'closed-record-only'. Keying this strip on `state`
+// would skip exactly that rejected-declaration case and leave reusable
+// credential fragments in the frontmatter for a later re-declaration to
+// silently inherit. Key on the declaration the operator wrote, not this
+// system's verdict on it.
+function stripClosureRecordIfLeavingRecordOnly(entries) {
+    if (declaredStatusOf(entries) !== 'closed-record-only') return entries;
+    let out = entries;
+    for (const field of CLOSURE_FIELDS) out = removeEntry(out, field);
+    return out;
+}
+
 // parkSpec: rewrites frontmatter to status: parked (+ parkedUntil verbatim
 // when opts.until is set), rebuilds the registry, and returns the parked
 // state. Cascade (zombie-plan warning) is derived by buildSpecRegistry, not
@@ -1223,7 +1250,8 @@ function parkSpec(projectRoot, specId, opts = {}) {
     const until = opts.until;
 
     rewriteSpecFrontmatter(absPath, (entries) => {
-        let out = setEntry(entries, 'status', 'parked');
+        let out = stripClosureRecordIfLeavingRecordOnly(entries);
+        out = setEntry(out, 'status', 'parked');
         out = removeEntry(out, 'parkedUntil');
         if (until) out = setEntry(out, 'parkedUntil', until);
         return out;
@@ -1243,7 +1271,8 @@ function reactivateSpec(projectRoot, specId) {
     const absPath = findSpecFileById(projectRoot, specId, 'reactivateSpec');
 
     rewriteSpecFrontmatter(absPath, (entries) => {
-        let out = setEntry(entries, 'status', 'adopted');
+        let out = stripClosureRecordIfLeavingRecordOnly(entries);
+        out = setEntry(out, 'status', 'adopted');
         out = removeEntry(out, 'parkedUntil');
         return out;
     });

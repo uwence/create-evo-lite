@@ -10397,6 +10397,49 @@ Evo-Focus: plan:demo`,
         }
         console.log('✅ T-record-only-release passed');
 
+        console.log('T-record-only-credential-lifecycle. Testing that leaving the state invalidates the credential ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const runtime = createTempRuntimeRoot('record-only-lifecycle');
+            const projectRoot = runtime.workspaceRoot;
+            const REC = ['closureBasis: record-only', 'closureReason: r', 'closureRecordedAt: 2026-09-08'];
+
+            const valid = path.join(projectRoot, 'docs', 'specs', 'v.md');
+            writeText(valid, ['---', 'id: spec:v', 'status: closed-record-only'].concat(REC, ['---', '', '# V', '']).join('\n'));
+            // REJECTED declaration: derives baseState, never terminal — must still be cleaned
+            const rejected = path.join(projectRoot, 'docs', 'specs', 'j.md');
+            writeText(rejected, ['---', 'id: spec:j', 'status: closed-record-only', 'closureBasis: record-only',
+                'closureReason: r', '---', '', '# J', ''].join('\n'));
+            // never record-only closed: park must not invent fields
+            const plain = path.join(projectRoot, 'docs', 'specs', 'p.md');
+            writeText(plain, ['---', 'id: spec:p', 'status: draft', '---', '', '# P', ''].join('\n'));
+
+            sp.reactivateSpec(projectRoot, 'spec:v');
+            for (const f of ['closureBasis', 'closureReason', 'closureRecordedAt']) {
+                assert.ok(!new RegExp(`^${f}:`, 'm').test(fs.readFileSync(valid, 'utf8')),
+                    `reactivate must remove ${f}`);
+            }
+
+            sp.parkSpec(projectRoot, 'spec:j');
+            for (const f of ['closureBasis', 'closureReason']) {
+                assert.ok(!new RegExp(`^${f}:`, 'm').test(fs.readFileSync(rejected, 'utf8')),
+                    `park must remove ${f} even from a REJECTED declaration (keyed on declaredStatus, not state)`);
+            }
+
+            sp.parkSpec(projectRoot, 'spec:p');
+            assert.ok(!/closureBasis/.test(fs.readFileSync(plain, 'utf8')),
+                'park must not invent closure fields on a spec that never had them');
+
+            // credential replay: re-declaring without a fresh record must be rejected
+            writeText(valid, ['---', 'id: spec:v', 'status: closed-record-only', '---', '', '# V', ''].join('\n'));
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const v = reg.specs.find(s => s.id === 'spec:v');
+            assert.notStrictEqual(v.state, 'closed-record-only', 're-entry needs a fresh credential');
+            assert.ok(v.warnings.includes('invalid-record-only-closure:record-incomplete'),
+                're-entry without a record is record-incomplete');
+        }
+        console.log('✅ T-record-only-credential-lifecycle passed');
+
         console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
         {
             // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.
