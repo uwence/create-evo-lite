@@ -41,6 +41,13 @@ function buildSpecFindings(spec, size) {
     const f = (ruleId, factInputs, instanceKey, extra) => out.push({
         id: `${ruleId}:${spec.id}${instanceKey ? `:${instanceKey}` : ''}`,
         ruleId, ruleVersion: SPEC_RULE_VERSIONS[ruleId], factInputs,
+        // Kept as its own field (not folded into factInputs) so a formatter can
+        // render per-instance text without parsing it back out of `id` — the id
+        // is `${ruleId}:${spec.id}:${instanceKey}` and spec.id itself contains a
+        // colon, so splitting it is ambiguous. computeFingerprint hashes only
+        // {ruleId, ruleVersion, factInputs}, so this sibling field never moves
+        // the disposition fingerprint.
+        ...(instanceKey ? { instanceKey } : null),
         ...(extra || {}),
     });
     for (const w of spec.warnings) {
@@ -1263,12 +1270,19 @@ function formatWarningLine(spec, warning) {
 }
 
 // Per-finding line. Falls back to the legacy per-warning text for every rule
-// whose finding maps 1:1 onto a warning; only size-exceeded needs the
-// dimension, because it is the one rule that splits per instance.
+// whose finding maps 1:1 onto a warning; size-exceeded and
+// invalid-record-only-closure need special-casing because each splits into
+// multiple per-instance findings, and finding.ruleId is always the bare rule
+// id (the instance key lives in finding.instanceKey / finding.id, never in
+// ruleId) — so formatWarningLine's `warning.startsWith('rule:')` branches can
+// never match through a plain `formatWarningLine(spec, finding.ruleId)` call.
 function formatFindingLine(spec, finding) {
     if (finding.ruleId === 'size-exceeded') {
         const { dimension, value, threshold } = finding.factInputs;
         return `⚠️ ${spec.id} 体量超标 ${dimension}=${value} > ${threshold} (${spec.state}) — 建议拆分或声明 sizeWaiver`;
+    }
+    if (finding.ruleId === 'invalid-record-only-closure') {
+        return formatWarningLine(spec, `invalid-record-only-closure:${finding.instanceKey}`);
     }
     return formatWarningLine(spec, finding.ruleId);
 }

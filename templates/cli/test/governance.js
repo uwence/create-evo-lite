@@ -10212,6 +10212,20 @@ Evo-Focus: plan:demo`,
                 'all three violations report independently — none short-circuits another');
             assert.notStrictEqual(entry.state, 'closed-record-only', 'a rejected declaration is not terminal');
 
+            // The rendered report must preserve the same per-instance distinction the
+            // findings carry. formatFindingLine used to pass finding.ruleId (the bare
+            // rule id, with no instance key — that key lives only in finding.id) into
+            // formatWarningLine, whose 'invalid-record-only-closure:' branch requires
+            // the colon-prefixed key and therefore never matched; all three violations
+            // collapsed onto the same generic fallback line. Assert distinctness, not
+            // just line count — three identical fallback lines would otherwise pass.
+            const tripleReportLines = sp.formatPortfolioReport(reg)
+                .filter(l => l.includes('spec:triple'));
+            assert.strictEqual(tripleReportLines.length, 3,
+                `the triple violation must render as three lines, one per instance; got ${JSON.stringify(tripleReportLines)}`);
+            assert.strictEqual(new Set(tripleReportLines).size, 3,
+                `the three lines must be textually distinct, one per violation; got ${JSON.stringify(tripleReportLines)}`);
+
             const vis = entry.findings.find(f => f.id.endsWith(':contract-visibility-discrepancy'));
             assert.ok(Array.isArray(vis.factInputs.authorityContractDigests),
                 'visibility factInputs carry digests');
