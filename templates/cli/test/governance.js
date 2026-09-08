@@ -10163,6 +10163,135 @@ Evo-Focus: plan:demo`,
         }
         console.log('✅ T-record-only-state passed');
 
+        console.log('T-record-only-findings. Testing violation findings, factInputs and canonicalization ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const { SET_KEYS, computeFingerprint } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+
+            for (const k of ['locallyExecutableCriterionDigests', 'invalidClosureFields',
+                             'authorityContractDigests', 'corroborationContractDigests']) {
+                assert.ok(SET_KEYS.includes(k), `${k} must be a canonical SET_KEY, not sorted locally`);
+            }
+            assert.strictEqual(sp.SPEC_RULE_VERSIONS['invalid-record-only-closure'], 1,
+                'invalid-record-only-closure is a new rule at version 1');
+
+            // order-insensitivity through the real fingerprint authority
+            const fp = arr => computeFingerprint({
+                ruleId: 'invalid-record-only-closure', ruleVersion: 1,
+                factInputs: { locallyExecutableCriterionDigests: arr },
+            });
+            assert.strictEqual(fp(['a', 'b']), fp(['b', 'a']),
+                'set-valued factInputs must be order-insensitive');
+            assert.notStrictEqual(fp(['a', 'b']), fp(['a', 'c']),
+                'changing which criteria are executable must move the fingerprint');
+
+            const runtime = createTempRuntimeRoot('record-only-findings');
+            const projectRoot = runtime.workspaceRoot;
+            const VALID = { id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } };
+
+            // A genuine TRIPLE violation. A numbered heading would NOT produce one: it
+            // empties the authority, so locallyExecutable is 0 and `ineligible` is never
+            // established. Instead give the authority a valid contract (=> ineligible),
+            // put a DIFFERENT contract in a later block so the two parsers disagree
+            // (=> visibility discrepancy), and omit the closure record entirely.
+            const OTHER = { id: 'W', description: 'other', dependsOn: ['y.js'], verifier: { type: 'file-exists', params: { path: 'y.js' } } };
+            writeText(path.join(projectRoot, 'docs', 'specs', 'triple.md'),
+                ['---', 'id: spec:triple', 'status: closed-record-only', '---', '', '# T', '',
+                 '## Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', '',
+                 '## Appendix', '', '```json', JSON.stringify({ criteria: [OTHER] }), '```', ''].join('\n'));
+
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const entry = reg.specs.find(s => s.id === 'spec:triple');
+            const ids = (entry.findings || []).map(f => f.id);
+
+            for (const key of ['ineligible', 'contract-visibility-discrepancy', 'record-incomplete']) {
+                assert.ok(ids.includes(`invalid-record-only-closure:spec:triple:${key}`),
+                    `must emit ${key}; got ${ids.join(', ')}`);
+            }
+            assert.strictEqual(ids.length, 3,
+                'all three violations report independently — none short-circuits another');
+            assert.notStrictEqual(entry.state, 'closed-record-only', 'a rejected declaration is not terminal');
+
+            const vis = entry.findings.find(f => f.id.endsWith(':contract-visibility-discrepancy'));
+            assert.ok(Array.isArray(vis.factInputs.authorityContractDigests),
+                'visibility factInputs carry digests');
+            assert.ok(Array.isArray(vis.factInputs.corroborationContractDigests),
+                'visibility factInputs carry both sides');
+            assert.ok(!('authorityCriterionCount' in vis.factInputs),
+                'counts must NOT be the visibility identity — equal-size different-content would stay CURRENT');
+
+            const rec = entry.findings.find(f => f.id.endsWith(':record-incomplete'));
+            assert.deepStrictEqual(rec.factInputs.invalidClosureFields,
+                ['closureBasis', 'closureReason', 'closureRecordedAt'],
+                'record-incomplete names the offending fields, sorted');
+
+            // Sensitivity, all three directions the frozen AC names.
+            const fpOf = f => computeFingerprint({ ruleId: f.ruleId, ruleVersion: f.ruleVersion, factInputs: f.factInputs });
+
+            // (i) equal-count authored change moves the discrepancy fingerprint
+            const before = fpOf(vis);
+            writeText(path.join(projectRoot, 'docs', 'specs', 'triple.md'),
+                ['---', 'id: spec:triple', 'status: closed-record-only', '---', '', '# T', '',
+                 '## Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', '',
+                 '## Appendix', '', '```json',
+                 JSON.stringify({ criteria: [Object.assign({}, OTHER, { description: 'changed' })] }),
+                 '```', ''].join('\n'));
+            const after = fpOf(sp.buildSpecRegistry(projectRoot, { write: false })
+                .specs.find(x => x.id === 'spec:triple').findings
+                .find(f => f.id.endsWith(':contract-visibility-discrepancy')));
+            assert.notStrictEqual(before, after,
+                'equal-count authored content change must move the discrepancy fingerprint');
+
+            // (ii) fixing one closure field while another stays bad moves record-incomplete
+            const recFp = fm => {
+                writeText(path.join(projectRoot, 'docs', 'specs', 'partial.md'),
+                    ['---', 'id: spec:partial', 'status: closed-record-only'].concat(fm, ['---', '', '# P', '']).join('\n'));
+                return fpOf(sp.buildSpecRegistry(projectRoot, { write: false })
+                    .specs.find(x => x.id === 'spec:partial').findings
+                    .find(f => f.id.endsWith(':record-incomplete')));
+            };
+            assert.notStrictEqual(
+                recFp(['closureReason: r']),
+                recFp(['closureReason: r', 'closureBasis: record-only']),
+                'fixing one field while another stays invalid must move the fingerprint');
+
+            // Evidence-independence, END TO END through the registry, which is where the
+            // frozen AC lives. Same project, same spec, same complete closure record;
+            // only the evidence store changes. A valid contract stays INELIGIBLE in all
+            // five conditions, so :ineligible is emitted every time and the state never
+            // becomes terminal.
+            const { writeRecord } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 'ev.md'),
+                ['---', 'id: spec:ev', 'status: closed-record-only',
+                 'closureBasis: record-only', 'closureReason: r', 'closureRecordedAt: 2026-09-08',
+                 '---', '', '# EV', '',
+                 '## Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', ''].join('\n'));
+
+            const evVerdict = () => {
+                const e = sp.buildSpecRegistry(projectRoot, { write: false }).specs.find(x => x.id === 'spec:ev');
+                return { state: e.state, ids: (e.findings || []).map(f => f.id) };
+            };
+            for (const verdict of [null, 'PASS', 'FAIL', 'UNVERIFIED', 'STALE']) {
+                if (verdict) {
+                    writeRecord(projectRoot, 'spec:ev',
+                        { criterionId: 'V', verdict, commitSha: 'deadbeef', verifierType: 'file-exists' });
+                }
+                const r = evVerdict();
+                const label = verdict || 'no evidence';
+                assert.notStrictEqual(r.state, 'closed-record-only', `${label}: must not become terminal`);
+                assert.ok(r.ids.includes('invalid-record-only-closure:spec:ev:ineligible'),
+                    `${label}: must emit :ineligible; got ${r.ids.join(', ')}`);
+            }
+
+            // (iii) prose never enters identity: factInputs carry exactly the frozen keys
+            assert.deepStrictEqual(Object.keys(vis.factInputs).sort(),
+                ['authorityContractDigests', 'corroborationContractDigests'],
+                'discrepancy identity is exactly the two digest projections — no message, no counts');
+            assert.deepStrictEqual(Object.keys(rec.factInputs), ['invalidClosureFields'],
+                'record-incomplete identity is exactly the offending field names');
+        }
+        console.log('✅ T-record-only-findings passed');
+
         console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
         {
             // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.

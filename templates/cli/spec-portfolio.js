@@ -28,6 +28,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SPEC_RULE_VERSIONS = Object.freeze({
     'unknown-status': 1, 'zombie-plan': 1, 'size-exceeded': 1,
     'aging-no-plan': 1, 'aging-inactive': 1,
+    'invalid-record-only-closure': 1,
 });
 
 function breachedDimensions(size) {
@@ -61,6 +62,18 @@ function buildSpecFindings(spec, size) {
                 f('size-exceeded', { dimension: dim, value: size[dim],
                     threshold: SIZE_THRESHOLDS[dim], state: spec.state }, dim);
             }
+        }
+        else if (w.startsWith('invalid-record-only-closure:')) {
+            const instanceKey = w.slice('invalid-record-only-closure:'.length);
+            const ro = spec.recordOnly || {};
+            const factInputs =
+                instanceKey === 'ineligible'
+                    ? { locallyExecutableCriterionDigests: ro.locallyExecutableDigests || [] }
+                : instanceKey === 'contract-visibility-discrepancy'
+                    ? { authorityContractDigests: ro.authorityDigests || [],
+                        corroborationContractDigests: ro.corroborationDigests || [] }
+                    : { invalidClosureFields: ro.invalidClosureFields || [] };
+            f('invalid-record-only-closure', factInputs, instanceKey);
         }
     }
     return out;
@@ -662,6 +675,14 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             }
         }
 
+        if (recordOnlyDeclared && !recordOnlyValid) {
+            // Every applicable violation reports. None suppresses another: they are
+            // separately actionable and separately dispositionable.
+            if (eligibility.ineligible) warnings.push('invalid-record-only-closure:ineligible');
+            if (!eligibility.visibilityAgrees) warnings.push('invalid-record-only-closure:contract-visibility-discrepancy');
+            if (!closureRecord.valid) warnings.push('invalid-record-only-closure:record-incomplete');
+        }
+
         if (!statusRecognized) warnings.push('unknown-status');
         if (sizeExceeded && !sizeWaiver) warnings.push('size-exceeded');
 
@@ -1215,7 +1236,23 @@ function formatWarningLine(spec, warning) {
     if (warning === 'unknown-status') {
         // Name the fallback bucket explicitly: the reviewer needs to know the
         // portfolio count for this spec is a guess, not a reading.
-        return `⚠️ ${spec.id} 状态 "${spec.declaredStatus}" 不在已知词汇表内 (done|parked|adopted|active|draft) — 被兜底归为 ${spec.state}，该归类不可信`;
+        //
+        // The vocabulary list is derived from RECOGNIZED_SPEC_STATUSES rather than
+        // typed out here a second time — a status typed here but not there (or vice
+        // versa) would silently under- or over-report what buildSpecRegistry actually
+        // accepts, which is exactly what happened when closed-record-only was added
+        // to the recognized set but not to this message.
+        const knownVocabulary = Array.from(RECOGNIZED_SPEC_STATUSES).join('|');
+        return `⚠️ ${spec.id} 状态 "${spec.declaredStatus}" 不在已知词汇表内 (${knownVocabulary}) — 被兜底归为 ${spec.state}，该归类不可信`;
+    }
+    if (warning.startsWith('invalid-record-only-closure:')) {
+        const key = warning.slice('invalid-record-only-closure:'.length);
+        const detail = key === 'ineligible'
+            ? '该 spec 有可执行的验收合同,不得走 record-only 收口'
+            : key === 'contract-visibility-discrepancy'
+                ? '两个提取器对该 spec 的合同判读不一致 — 收口入口 fail-closed'
+                : 'closure record 不完整 (closureBasis / closureReason / closureRecordedAt)';
+        return `⚠️ ${spec.id} record-only 收口被驳回: ${detail}`;
     }
     if (warning === 'zombie-plan') {
         // Only the not-done plans are "仍活跃" — a done plan must never be named here.

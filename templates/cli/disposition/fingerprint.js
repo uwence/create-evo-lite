@@ -7,6 +7,8 @@ const crypto = require('crypto');
 // so the exported list is an array and the lookup structure stays module-private below.
 const SET_KEYS = Object.freeze([
     'linkedFiles', 'notDonePlans', 'taskStatuses', 'linkedPlans',
+    'locallyExecutableCriterionDigests', 'invalidClosureFields',
+    'authorityContractDigests', 'corroborationContractDigests',
 ]);
 const SET_KEYS_LOOKUP = new Set(SET_KEYS);
 
