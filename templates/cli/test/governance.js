@@ -10049,6 +10049,40 @@ Evo-Focus: plan:demo`,
         }
         console.log('✅ T-record-only-eligibility passed');
 
+        console.log('T-closure-record. Testing the record-only closure credential parser ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof sp.parseClosureRecord, 'function', 'parseClosureRecord must be exported');
+
+            const good = { closureBasis: 'record-only', closureReason: 'merged pre-contract', closureRecordedAt: '2026-09-08' };
+            assert.strictEqual(sp.parseClosureRecord(good).valid, true, 'a complete record is valid');
+            assert.deepStrictEqual(sp.parseClosureRecord(good).invalidFields, [], 'a complete record has no invalid fields');
+
+            assert.strictEqual(sp.parseClosureRecord({}).present, false, 'absent record is not present');
+            assert.strictEqual(sp.parseClosureRecord({}).valid, false, 'absent record is not valid');
+
+            for (const field of ['closureBasis', 'closureReason', 'closureRecordedAt']) {
+                const partial = Object.assign({}, good);
+                delete partial[field];
+                const r = sp.parseClosureRecord(partial);
+                assert.strictEqual(r.valid, false, `omitting ${field} alone must invalidate`);
+                assert.ok(r.invalidFields.includes(field), `invalidFields must name ${field}`);
+            }
+
+            assert.strictEqual(sp.parseClosureRecord(Object.assign({}, good, { closureBasis: 'waived' })).valid, false,
+                'closureBasis is a closed enum');
+            assert.strictEqual(sp.parseClosureRecord(Object.assign({}, good, { closureReason: '   ' })).valid, false,
+                'closureReason must be non-empty after trim');
+            assert.strictEqual(sp.parseClosureRecord(Object.assign({}, good, { closureRecordedAt: '2026-99-99' })).valid, false,
+                'closureRecordedAt must round-trip as a real date');
+
+            // A closure record is NOT a release waiver, and vice versa.
+            assert.strictEqual(sp.parseClosureRecord({
+                releaseBlockDisposition: 'waived', releaseBlockReason: 'r', releaseBlockReviewedAt: '2026-09-08',
+            }).present, false, 'a release waiver does not satisfy the closure record');
+        }
+        console.log('✅ T-closure-record passed');
+
         console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
         {
             // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.

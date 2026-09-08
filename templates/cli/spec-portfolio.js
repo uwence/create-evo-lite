@@ -235,6 +235,35 @@ function parseReleaseWaiver(frontmatter) {
     return { present: true, valid: errors.length === 0, errors };
 }
 
+// A closure record is a separate credential from the release waiver above:
+// it certifies that a spec was closed record-only, with no machine-executable
+// acceptance contract. Neither credential implies or is satisfied by the
+// other, so this reuses the *validation pattern* only (closed enum,
+// non-empty text, round-trippable date) — its own fields, parser, errors.
+const CLOSURE_FIELDS = Object.freeze(['closureBasis', 'closureReason', 'closureRecordedAt']);
+
+function parseClosureRecord(frontmatter) {
+    const fm = frontmatter || {};
+    const present = CLOSURE_FIELDS.some(f => fm[f] !== undefined && fm[f] !== null);
+    const errors = [];
+    const invalidFields = [];
+
+    if (fm.closureBasis !== 'record-only') {
+        invalidFields.push('closureBasis');
+        errors.push(`closureBasis must be exactly \`record-only\`, unquoted (closed enum); got ${fm.closureBasis === undefined ? '<missing>' : `\`${fm.closureBasis}\``}`);
+    }
+    if (fm.closureReason === undefined || fm.closureReason === null || String(fm.closureReason).trim() === '') {
+        invalidFields.push('closureReason');
+        errors.push('closureReason must be present and non-empty after trim');
+    }
+    if (fm.closureRecordedAt === undefined || fm.closureRecordedAt === null || !isRoundTripDate(String(fm.closureRecordedAt))) {
+        invalidFields.push('closureRecordedAt');
+        errors.push(`closureRecordedAt must be a real YYYY-MM-DD date that survives a round-trip; got ${fm.closureRecordedAt === undefined ? '<missing>' : `\`${fm.closureRecordedAt}\``}`);
+    }
+
+    return { present, valid: errors.length === 0, errors, invalidFields: invalidFields.sort() };
+}
+
 // spec §8.2.2. Returns a blocker record or null.
 //
 // `parked` still blocks on purpose: park means "deferred", not "the risk went
@@ -1352,4 +1381,6 @@ module.exports = {
     contractVisibilityDigest,
     visibilityProjection,
     evaluateRecordOnlyEligibility,
+    parseClosureRecord,
+    CLOSURE_FIELDS,
 };
