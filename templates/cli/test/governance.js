@@ -10239,6 +10239,24 @@ Evo-Focus: plan:demo`,
                 ['closureBasis', 'closureReason', 'closureRecordedAt'],
                 'record-incomplete names the offending fields, sorted');
 
+            // Invariant: `ineligible` is true when
+            // `locallyExecutable.length > 0 || (authority.length > 0 && aggregateFindings.length === 0)`,
+            // but the frozen factInputs identity for this finding is
+            // locallyExecutableCriterionDigests ALONE. That is only safe if the second
+            // disjunct can never fire while locallyExecutable stays empty — otherwise the
+            // fingerprint would be an immovable constant for that case. It cannot: singleton
+            // per-criterion validation is a strict subset of whole-array validation
+            // (whole-array additionally catches duplicate ids across the set), so
+            // aggregateFindings.length === 0 forces every singleton criterion clean, which
+            // makes locallyExecutable non-empty whenever the second disjunct holds. Assert
+            // it here, on the real ineligible finding, so a future change to the
+            // disjunction or to the singleton/whole-array subset relationship reds instead
+            // of silently leaving this identity frozen.
+            const elig = entry.findings.find(f => f.id.endsWith(':ineligible'));
+            assert.ok(Array.isArray(elig.factInputs.locallyExecutableCriterionDigests) &&
+                elig.factInputs.locallyExecutableCriterionDigests.length > 0,
+                'ineligible factInputs.locallyExecutableCriterionDigests must never be an empty set');
+
             // Sensitivity, all three directions the frozen AC names.
             const fpOf = f => computeFingerprint({ ruleId: f.ruleId, ruleVersion: f.ruleVersion, factInputs: f.factInputs });
 
@@ -10274,7 +10292,7 @@ Evo-Focus: plan:demo`,
             // only the evidence store changes. A valid contract stays INELIGIBLE in all
             // five conditions, so :ineligible is emitted every time and the state never
             // becomes terminal.
-            const { writeRecord } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            const { writeRecord, readEvidence } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
             writeText(path.join(projectRoot, 'docs', 'specs', 'ev.md'),
                 ['---', 'id: spec:ev', 'status: closed-record-only',
                  'closureBasis: record-only', 'closureReason: r', 'closureRecordedAt: 2026-09-08',
@@ -10289,6 +10307,17 @@ Evo-Focus: plan:demo`,
                 if (verdict) {
                     writeRecord(projectRoot, 'spec:ev',
                         { criterionId: 'V', verdict, commitSha: 'deadbeef', verifierType: 'file-exists' });
+                    // Prove the fixture actually fired. evaluateRecordOnlyEligibility(specText)
+                    // takes only the spec text and never opens the evidence store, so without
+                    // this readback the five eligibility assertions below are copies of one
+                    // assertion that cannot fail no matter what — or whether — anything was
+                    // written. Reading the record back through readEvidence (the same
+                    // evidence-store path convention writeRecord used) proves the write
+                    // actually landed where anyone looks; if that path convention ever moved,
+                    // this would red instead of staying silently green.
+                    const readBack = readEvidence(projectRoot, 'spec:ev');
+                    assert.strictEqual(readBack.records.V.verdict, verdict,
+                        `${verdict}: the written record must be readable back at the same path`);
                 }
                 const r = evVerdict();
                 const label = verdict || 'no evidence';

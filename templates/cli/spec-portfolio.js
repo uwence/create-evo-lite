@@ -1258,7 +1258,13 @@ function formatWarningLine(spec, warning) {
             ? '该 spec 有可执行的验收合同,不得走 record-only 收口'
             : key === 'contract-visibility-discrepancy'
                 ? '两个提取器对该 spec 的合同判读不一致 — 收口入口 fail-closed'
-                : 'closure record 不完整 (closureBasis / closureReason / closureRecordedAt)';
+                : key === 'record-incomplete'
+                    ? 'closure record 不完整 (closureBasis / closureReason / closureRecordedAt)'
+                    // Fail-open guard: an instance key that is none of the three known
+                    // ones must name itself, not silently masquerade as
+                    // record-incomplete. A future fourth key hitting this branch is a
+                    // bug to surface, not a violation to mis-describe.
+                    : `未知的 record-only 违规实例 "${key}"`;
         return `⚠️ ${spec.id} record-only 收口被驳回: ${detail}`;
     }
     if (warning === 'zombie-plan') {
