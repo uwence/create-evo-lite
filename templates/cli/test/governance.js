@@ -10550,6 +10550,63 @@ Evo-Focus: plan:demo`,
         }
         console.log('✅ T-portfolio-finding-correctness passed');
 
+        console.log('T-plan-predicate-negative-controls. Testing the other two predicates by BEHAVIOUR ...');
+        {
+            // These assert what the other two rules DO, not that a word still appears in
+            // their source. A grep for /parked/ passes on any comment and proves nothing.
+            const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service'));
+            const runtime = createTempRuntimeRoot('predicate-negative-controls');
+            const projectRoot = runtime.workspaceRoot;
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], tasks: [], warnings: [],
+                plans: [{ id: 'plan:shelved', status: 'parked', title: 'Shelved', linkedSpec: 'spec:shelved', sourcePath: 'docs/plans/shelved.md' }],
+            }, null, 2));
+
+            const prevRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = path.join(projectRoot, '.evo-lite');
+            try {
+                // memory.service: a parked plan is still NOT a focus target.
+                const advanced = memoryService.advanceFocusFromCommit({
+                    commitMessage: 'chore: note something\n\nEvo-Focus: plan:shelved\n',
+                });
+                assert.strictEqual(advanced.status, 'plan-not-startable',
+                    'a parked plan must remain not-startable for focus');
+                assert.strictEqual(advanced.focusChanged, false, 'focus must not advance onto a parked plan');
+            } finally {
+                if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT;
+                else process.env.EVO_LITE_ROOT = prevRoot;
+            }
+
+            // planning/gaps: a parked or draft sibling with open tasks still keeps the
+            // spec OPEN — the opposite of settled, and deliberately not aligned with the
+            // zombie predicate.
+            const { runPlanningDriftCensus } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const planIR = {
+                version: 'evo-plan-ir@1', warnings: [],
+                specs: [{ id: 'spec:two', status: 'draft', sourcePath: 'docs/specs/two.md', linkedPlan: 'plan:done' }],
+                plans: [
+                    { id: 'plan:done', status: 'done', linkedSpec: 'spec:two', sourcePath: 'docs/plans/done.md' },
+                    { id: 'plan:open', status: 'parked', linkedSpec: 'spec:two', sourcePath: 'docs/plans/open.md' },
+                ],
+                tasks: [
+                    { id: 'task:a', linkedPlan: 'plan:done', status: 'implemented', title: 'a' },
+                    { id: 'task:b', linkedPlan: 'plan:open', status: 'todo', title: 'b' },
+                ],
+            };
+            const census = runPlanningDriftCensus(projectRoot, planIR, {});
+            const r011 = (census.findings || []).filter(f => (f.ruleId || f.rule || f.id) === 'R011'
+                && JSON.stringify(f).includes('spec:two'));
+            assert.strictEqual(r011.length, 0,
+                'a parked sibling with open tasks must keep the spec open — no R011 closure recommendation');
+
+            // the mirror must match the canonical tree
+            const canonical = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio.js'), 'utf8');
+            const mirror = fs.readFileSync(path.join(CLI_DIR, 'spec-portfolio.js'), 'utf8');
+            assert.strictEqual(mirror, canonical, 'run `mem sync-runtime` — the mirror is stale');
+        }
+        console.log('✅ T-plan-predicate-negative-controls passed');
+
         console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
         {
             // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.

@@ -7092,7 +7092,11 @@ Evo-Focus: plan:demo`,
 
             w('u.md', ['id: spec:u', 'status: closed-experimental']);
             const big = [1,2,3,4,5,6,7,8,9].map(n => `    { "id": "c${n}" }`).join(',\n');
-            w('big.md', ['id: spec:big', 'status: done', 'x: 1']);
+            // status: draft (not done/parked) keeps spec:big in an actionable
+            // state (adopted) so its size-exceeded finding is not withheld by
+            // the state-aware actionability gate — this fixture is only about
+            // per-dimension finding shape, not about size actionability itself.
+            w('big.md', ['id: spec:big', 'status: draft', 'x: 1']);
             fs.appendFileSync(path.join(root, 'docs', 'specs', 'big.md'),
                 ['## Acceptance Criteria', '', '```json', '{', '  "criteria": [', big, '  ]', '}', '```', ''].join('\n'));
 
@@ -9515,7 +9519,7 @@ Evo-Focus: plan:demo`,
                 'RECOGNIZED_SPEC_STATUSES must be exported as a Set');
             assert.deepStrictEqual(
                 [...specPortfolio.RECOGNIZED_SPEC_STATUSES].sort(),
-                ['active', 'adopted', 'done', 'draft', 'parked'],
+                ['active', 'adopted', 'closed-record-only', 'done', 'draft', 'parked'],
                 'the recognized status vocabulary is closed and explicit');
 
             const vocabRoot = createTempRuntimeRoot('spec-status-vocabulary').workspaceRoot;
@@ -9649,7 +9653,7 @@ Evo-Focus: plan:demo`,
             }, null, 2));
 
             const registry = specPortfolio.buildSpecRegistry(projectRoot);
-            assert.strictEqual(registry.version, 'evo-spec-registry@2', 'registry version stamp (bumped by Task 8: blockers/errors/source)');
+            assert.strictEqual(registry.version, 'evo-spec-registry@3', 'registry version stamp (bumped again: closed-record-only state + recordOnly fields)');
             assert.strictEqual(registry.agingDays, 14, 'agingDays defaults to 14 with no config override');
             assert.strictEqual(registry.specs.length, 6, 'all six fixture specs enumerated');
 
@@ -9690,7 +9694,7 @@ Evo-Focus: plan:demo`,
             assert.strictEqual(noWrite.specs.length, 6, 'write:false still returns a full registry');
 
             const report = specPortfolio.formatPortfolioReport(registry);
-            assert.strictEqual(report[0], '📋 [Spec Portfolio]: adopted=3 active=1 parked=1 shipped=1',
+            assert.strictEqual(report[0], '📋 [Spec Portfolio]: adopted=3 active=1 parked=1 shipped=1 recordClosed=0',
                 'first report line summarizes counts per state');
             // Task 9 changed the SHAPE, not the content: the ⚠️ glyph now leads a
             // single actionable header and the per-finding lines are indented
@@ -9948,6 +9952,661 @@ Evo-Focus: plan:demo`,
         }
         console.log('✅ T-spec-portfolio-size passed');
 
+        console.log('T-record-only-eligibility. Testing the record-only eligibility hard gate ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof sp.evaluateRecordOnlyEligibility, 'function',
+                'evaluateRecordOnlyEligibility must be exported');
+            assert.strictEqual(typeof sp.contractVisibilityDigest, 'function',
+                'contractVisibilityDigest must be exported');
+
+            const VALID = { id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } };
+            const INVALID = { id: 'I' };
+            const spec = (heading, first, extra) => [
+                '---', 'id: spec:t', 'status: draft', '---', '', '# T', '',
+                heading, '', '```json', JSON.stringify({ criteria: first }, null, 2), '```', '',
+            ].concat(extra ? ['## Appendix', '', '```json', JSON.stringify({ criteria: extra }, null, 2), '```', ''] : []).join('\n');
+
+            // (e) genuinely contractless, and all-criteria-invalid: both ELIGIBLE
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility(
+                ['---', 'id: spec:t', 'status: draft', '---', '', '# T', ''].join('\n')).eligible, true,
+                'NO-CONTRACT must be eligible');
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [INVALID])).eligible, true,
+                'all-criteria-invalid must be eligible');
+
+            // (a) a valid contract is INELIGIBLE regardless of evidence
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [VALID])).eligible, false,
+                'a valid contract must never be eligible');
+
+            // (a2) structural evidence-independence: the gate is a pure function of the
+            // spec text and has no project root to read an evidence store from. Writing
+            // evidence here and asserting against this function would prove nothing —
+            // there is no path between them. The real five-state matrix runs end-to-end
+            // through buildSpecRegistry in Task 4.
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility.length, 1,
+                'eligibility takes spec text only — no project root, so no evidence path');
+
+            // (b) duplicate-id inverse escape: two VALID criteria sharing one id
+            const dup = sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [VALID, Object.assign({}, VALID)]));
+            assert.strictEqual(dup.locallyExecutable.length, 2,
+                'both duplicated criteria are independently executable');
+            assert.strictEqual(dup.eligible, false,
+                'duplicate-id must NOT unlock record-only closure');
+
+            // (c) appending one broken criterion to a valid contract
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [VALID, INVALID])).eligible, false,
+                'appending a broken criterion must not unlock eligibility');
+
+            // (d1) visibility, unequal: numbered heading hides the contract from the authority
+            const numbered = sp.evaluateRecordOnlyEligibility(spec('## 10. Acceptance Criteria', [VALID]));
+            assert.strictEqual(numbered.authority.length, 0, 'authority sees nothing under a numbered heading');
+            assert.strictEqual(numbered.corroboration.length, 1, 'corroborator still sees the block');
+            assert.strictEqual(numbered.visibilityAgrees, false, 'unequal visibility must disagree');
+            assert.strictEqual(numbered.eligible, false, 'visibility discrepancy must deny');
+
+            // (d2) visibility, EQUAL COUNT, different content
+            const equalCount = sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [INVALID], [VALID]));
+            assert.strictEqual(equalCount.authority.length, 1, 'authority sees the heading block');
+            assert.strictEqual(equalCount.corroboration.length, 1, 'corroborator sees the later block');
+            assert.strictEqual(equalCount.visibilityAgrees, false,
+                'equal count with different content must still disagree — emptiness parity is not enough');
+            assert.strictEqual(equalCount.eligible, false, 'equal-count discrepancy must deny');
+
+            // (d1) against the REAL corpus, scanned dynamically rather than hard-coded.
+            // Expected to be deliberately removed when the numbered-heading parser defect
+            // is fixed; until then the containment must hold on every divergent spec.
+            let divergent = 0;
+            for (const dir of [path.join(WORKSPACE_ROOT, 'docs', 'specs'),
+                               path.join(WORKSPACE_ROOT, 'docs', 'superpowers', 'specs')]) {
+                if (!fs.existsSync(dir)) continue;
+                for (const name of fs.readdirSync(dir).filter(n => n.endsWith('.md'))) {
+                    const r = sp.evaluateRecordOnlyEligibility(fs.readFileSync(path.join(dir, name), 'utf8'));
+                    if (!r.visibilityAgrees) {
+                        divergent += 1;
+                        assert.strictEqual(r.eligible, false, `${name}: visibility discrepancy must deny`);
+                    }
+                }
+            }
+            assert.ok(divergent > 0,
+                'the corpus still carries the known parser divergence this gate contains');
+
+            // description is part of visibility even though criterionDigest excludes it
+            const a = Object.assign({}, VALID, { description: '' });
+            assert.notStrictEqual(sp.contractVisibilityDigest(a), sp.contractVisibilityDigest(VALID),
+                'contractVisibilityDigest must see description');
+            // authored payloads that a truthiness default would collapse must stay distinct
+            assert.notStrictEqual(sp.contractVisibilityDigest(null), sp.contractVisibilityDigest({}),
+                'null and {} are different authored payloads');
+            for (const v of [false, 0, '']) {
+                assert.notStrictEqual(sp.contractVisibilityDigest(v), sp.contractVisibilityDigest({}),
+                    `${JSON.stringify(v)} must not collapse into {}`);
+            }
+            // order-insensitive projection
+            assert.deepStrictEqual(sp.visibilityProjection([VALID, INVALID]),
+                sp.visibilityProjection([INVALID, VALID]),
+                'visibilityProjection must be order-insensitive');
+        }
+        console.log('✅ T-record-only-eligibility passed');
+
+        console.log('T-closure-record. Testing the record-only closure credential parser ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof sp.parseClosureRecord, 'function', 'parseClosureRecord must be exported');
+
+            const good = { closureBasis: 'record-only', closureReason: 'merged pre-contract', closureRecordedAt: '2026-09-08' };
+            assert.strictEqual(sp.parseClosureRecord(good).valid, true, 'a complete record is valid');
+            assert.deepStrictEqual(sp.parseClosureRecord(good).invalidFields, [], 'a complete record has no invalid fields');
+
+            assert.strictEqual(sp.parseClosureRecord({}).present, false, 'absent record is not present');
+            assert.strictEqual(sp.parseClosureRecord({}).valid, false, 'absent record is not valid');
+
+            for (const field of ['closureBasis', 'closureReason', 'closureRecordedAt']) {
+                const partial = Object.assign({}, good);
+                delete partial[field];
+                const r = sp.parseClosureRecord(partial);
+                assert.strictEqual(r.valid, false, `omitting ${field} alone must invalidate`);
+                assert.ok(r.invalidFields.includes(field), `invalidFields must name ${field}`);
+            }
+
+            assert.strictEqual(sp.parseClosureRecord(Object.assign({}, good, { closureBasis: 'waived' })).valid, false,
+                'closureBasis is a closed enum');
+            assert.strictEqual(sp.parseClosureRecord(Object.assign({}, good, { closureReason: '   ' })).valid, false,
+                'closureReason must be non-empty after trim');
+            assert.strictEqual(sp.parseClosureRecord(Object.assign({}, good, { closureRecordedAt: '2026-99-99' })).valid, false,
+                'closureRecordedAt must round-trip as a real date');
+
+            // A closure record is NOT a release waiver, and vice versa.
+            assert.strictEqual(sp.parseClosureRecord({
+                releaseBlockDisposition: 'waived', releaseBlockReason: 'r', releaseBlockReviewedAt: '2026-09-08',
+            }).present, false, 'a release waiver does not satisfy the closure record');
+        }
+        console.log('✅ T-closure-record passed');
+
+        console.log('T-record-only-state. Testing closed-record-only derivation, counts and schema version ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const runtime = createTempRuntimeRoot('record-only-state');
+            const projectRoot = runtime.workspaceRoot;
+            const REC = ['closureBasis: record-only', 'closureReason: merged before contracts existed', 'closureRecordedAt: 2026-09-08'];
+
+            // valid: NO-CONTRACT + complete record, with a linked plan (so baseState would be `active`)
+            writeText(path.join(projectRoot, 'docs', 'specs', 'ok-nocontract.md'),
+                ['---', 'id: spec:ok1', 'status: closed-record-only', 'linkedPlan: plan:p1'].concat(REC, ['---', '', '# OK1', '']).join('\n'));
+
+            // valid: INVALID contract + complete record
+            writeText(path.join(projectRoot, 'docs', 'specs', 'ok-invalid.md'),
+                ['---', 'id: spec:ok2', 'status: closed-record-only'].concat(REC, ['---', '', '# OK2', '',
+                    '## Acceptance Criteria', '', '```json', '{ "criteria": [ { "id": "x" } ] }', '```', '']).join('\n'));
+
+            // rejected: ineligible (valid contract), with linked plan -> baseState active
+            writeText(path.join(projectRoot, 'docs', 'specs', 'bad-eligible.md'),
+                ['---', 'id: spec:bad1', 'status: closed-record-only', 'linkedPlan: plan:p2'].concat(REC, ['---', '', '# BAD1', '',
+                    '## Acceptance Criteria', '', '```json',
+                    JSON.stringify({ criteria: [{ id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } }] }),
+                    '```', '']).join('\n'));
+
+            // rejected: record incomplete, no linked plan -> baseState adopted
+            writeText(path.join(projectRoot, 'docs', 'specs', 'bad-record.md'),
+                ['---', 'id: spec:bad2', 'status: closed-record-only', 'closureBasis: record-only', '---', '', '# BAD2', ''].join('\n'));
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], tasks: [], warnings: [],
+                plans: [
+                    { id: 'plan:p1', status: 'active', linkedSpec: 'spec:ok1', sourcePath: 'docs/plans/p1.md' },
+                    { id: 'plan:p2', status: 'active', linkedSpec: 'spec:bad1', sourcePath: 'docs/plans/p2.md' },
+                ],
+            }, null, 2));
+
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const by = id => reg.specs.find(s => s.id === id);
+
+            assert.strictEqual(reg.version, 'evo-spec-registry@3', 'registry schema version must bump to @3');
+            assert.strictEqual(by('spec:ok1').state, 'closed-record-only', 'NO-CONTRACT + valid record is terminal');
+            assert.strictEqual(by('spec:ok2').state, 'closed-record-only', 'INVALID contract + valid record is terminal');
+            assert.strictEqual(by('spec:bad1').state, 'active', 'ineligible declaration derives baseState (linkedPlans present)');
+            assert.strictEqual(by('spec:bad2').state, 'adopted', 'record-incomplete declaration derives baseState (no linkedPlans)');
+            for (const id of ['spec:bad1', 'spec:bad2']) {
+                assert.notStrictEqual(by(id).state, 'closed-record-only', `${id} must not reach the terminal state`);
+                assert.notStrictEqual(by(id).state, 'shipped', `${id} must not be counted as shipped`);
+            }
+
+            // recognized vocabulary: no unknown-status on a correctly spelled declaration
+            for (const id of ['spec:ok1', 'spec:ok2', 'spec:bad1', 'spec:bad2']) {
+                assert.ok(!by(id).warnings.includes('unknown-status'), `${id} must not raise unknown-status`);
+            }
+            // terminal privileges: neither open nor parked, so no aging and no zombie branch
+            for (const w of ['aging-no-plan', 'aging-inactive', 'zombie-plan']) {
+                assert.ok(!by('spec:ok1').warnings.includes(w), `a valid record-only spec must not emit ${w}`);
+            }
+
+            const lines = sp.formatPortfolioReport(reg);
+            assert.ok(lines[0].includes('recordClosed=2'), 'counts must report recordClosed as its own column');
+            assert.ok(/shipped=0/.test(lines[0]), 'recordClosed must never be folded into shipped');
+
+            // memory.service must expose the bucket in its report OBJECT, not only in prose:
+            // a closed-record-only spec previously fell into none of the four hard-coded
+            // filters and vanished from the report entirely.
+            const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service'));
+            const prevRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = path.join(projectRoot, '.evo-lite');
+            try {
+                const report = await memoryService.verify({ silent: true });
+                assert.ok(report.specPortfolio && 'recordClosed' in report.specPortfolio,
+                    'report.specPortfolio must expose recordClosed');
+                assert.strictEqual(report.specPortfolio.recordClosed, 2, 'both valid specs are counted');
+                assert.strictEqual(report.specPortfolio.shipped, 0, 'never folded into shipped');
+            } finally {
+                if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT;
+                else process.env.EVO_LITE_ROOT = prevRoot;
+            }
+        }
+        console.log('✅ T-record-only-state passed');
+
+        console.log('T-record-only-findings. Testing violation findings, factInputs and canonicalization ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const { SET_KEYS, computeFingerprint } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+
+            for (const k of ['locallyExecutableCriterionDigests', 'invalidClosureFields',
+                             'authorityContractDigests', 'corroborationContractDigests']) {
+                assert.ok(SET_KEYS.includes(k), `${k} must be a canonical SET_KEY, not sorted locally`);
+            }
+            assert.strictEqual(sp.SPEC_RULE_VERSIONS['invalid-record-only-closure'], 1,
+                'invalid-record-only-closure is a new rule at version 1');
+
+            // order-insensitivity through the real fingerprint authority
+            const fp = arr => computeFingerprint({
+                ruleId: 'invalid-record-only-closure', ruleVersion: 1,
+                factInputs: { locallyExecutableCriterionDigests: arr },
+            });
+            assert.strictEqual(fp(['a', 'b']), fp(['b', 'a']),
+                'set-valued factInputs must be order-insensitive');
+            assert.notStrictEqual(fp(['a', 'b']), fp(['a', 'c']),
+                'changing which criteria are executable must move the fingerprint');
+
+            const runtime = createTempRuntimeRoot('record-only-findings');
+            const projectRoot = runtime.workspaceRoot;
+            const VALID = { id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } };
+
+            // A genuine TRIPLE violation. A numbered heading would NOT produce one: it
+            // empties the authority, so locallyExecutable is 0 and `ineligible` is never
+            // established. Instead give the authority a valid contract (=> ineligible),
+            // put a DIFFERENT contract in a later block so the two parsers disagree
+            // (=> visibility discrepancy), and omit the closure record entirely.
+            const OTHER = { id: 'W', description: 'other', dependsOn: ['y.js'], verifier: { type: 'file-exists', params: { path: 'y.js' } } };
+            writeText(path.join(projectRoot, 'docs', 'specs', 'triple.md'),
+                ['---', 'id: spec:triple', 'status: closed-record-only', '---', '', '# T', '',
+                 '## Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', '',
+                 '## Appendix', '', '```json', JSON.stringify({ criteria: [OTHER] }), '```', ''].join('\n'));
+
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const entry = reg.specs.find(s => s.id === 'spec:triple');
+            const ids = (entry.findings || []).map(f => f.id);
+
+            for (const key of ['ineligible', 'contract-visibility-discrepancy', 'record-incomplete']) {
+                assert.ok(ids.includes(`invalid-record-only-closure:spec:triple:${key}`),
+                    `must emit ${key}; got ${ids.join(', ')}`);
+            }
+            assert.strictEqual(ids.length, 3,
+                'all three violations report independently — none short-circuits another');
+            assert.notStrictEqual(entry.state, 'closed-record-only', 'a rejected declaration is not terminal');
+
+            // The rendered report must preserve the same per-instance distinction the
+            // findings carry. formatFindingLine used to pass finding.ruleId (the bare
+            // rule id, with no instance key — that key lives only in finding.id) into
+            // formatWarningLine, whose 'invalid-record-only-closure:' branch requires
+            // the colon-prefixed key and therefore never matched; all three violations
+            // collapsed onto the same generic fallback line. Assert distinctness, not
+            // just line count — three identical fallback lines would otherwise pass.
+            const tripleReportLines = sp.formatPortfolioReport(reg)
+                .filter(l => l.includes('spec:triple'));
+            assert.strictEqual(tripleReportLines.length, 3,
+                `the triple violation must render as three lines, one per instance; got ${JSON.stringify(tripleReportLines)}`);
+            assert.strictEqual(new Set(tripleReportLines).size, 3,
+                `the three lines must be textually distinct, one per violation; got ${JSON.stringify(tripleReportLines)}`);
+
+            const vis = entry.findings.find(f => f.id.endsWith(':contract-visibility-discrepancy'));
+            assert.ok(Array.isArray(vis.factInputs.authorityContractDigests),
+                'visibility factInputs carry digests');
+            assert.ok(Array.isArray(vis.factInputs.corroborationContractDigests),
+                'visibility factInputs carry both sides');
+            assert.ok(!('authorityCriterionCount' in vis.factInputs),
+                'counts must NOT be the visibility identity — equal-size different-content would stay CURRENT');
+
+            const rec = entry.findings.find(f => f.id.endsWith(':record-incomplete'));
+            assert.deepStrictEqual(rec.factInputs.invalidClosureFields,
+                ['closureBasis', 'closureReason', 'closureRecordedAt'],
+                'record-incomplete names the offending fields, sorted');
+
+            // Invariant: `ineligible` is true when
+            // `locallyExecutable.length > 0 || (authority.length > 0 && aggregateFindings.length === 0)`,
+            // but the frozen factInputs identity for this finding is
+            // locallyExecutableCriterionDigests ALONE. That is only safe if the second
+            // disjunct can never fire while locallyExecutable stays empty — otherwise the
+            // fingerprint would be an immovable constant for that case. It cannot: singleton
+            // per-criterion validation is a strict subset of whole-array validation
+            // (whole-array additionally catches duplicate ids across the set), so
+            // aggregateFindings.length === 0 forces every singleton criterion clean, which
+            // makes locallyExecutable non-empty whenever the second disjunct holds. Assert
+            // it here, on the real ineligible finding, so a future change to the
+            // disjunction or to the singleton/whole-array subset relationship reds instead
+            // of silently leaving this identity frozen.
+            const elig = entry.findings.find(f => f.id.endsWith(':ineligible'));
+            assert.ok(Array.isArray(elig.factInputs.locallyExecutableCriterionDigests) &&
+                elig.factInputs.locallyExecutableCriterionDigests.length > 0,
+                'ineligible factInputs.locallyExecutableCriterionDigests must never be an empty set');
+
+            // Sensitivity, all three directions the frozen AC names.
+            const fpOf = f => computeFingerprint({ ruleId: f.ruleId, ruleVersion: f.ruleVersion, factInputs: f.factInputs });
+
+            // (i) equal-count authored change moves the discrepancy fingerprint
+            const before = fpOf(vis);
+            writeText(path.join(projectRoot, 'docs', 'specs', 'triple.md'),
+                ['---', 'id: spec:triple', 'status: closed-record-only', '---', '', '# T', '',
+                 '## Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', '',
+                 '## Appendix', '', '```json',
+                 JSON.stringify({ criteria: [Object.assign({}, OTHER, { description: 'changed' })] }),
+                 '```', ''].join('\n'));
+            const after = fpOf(sp.buildSpecRegistry(projectRoot, { write: false })
+                .specs.find(x => x.id === 'spec:triple').findings
+                .find(f => f.id.endsWith(':contract-visibility-discrepancy')));
+            assert.notStrictEqual(before, after,
+                'equal-count authored content change must move the discrepancy fingerprint');
+
+            // (ii) fixing one closure field while another stays bad moves record-incomplete
+            const recFp = fm => {
+                writeText(path.join(projectRoot, 'docs', 'specs', 'partial.md'),
+                    ['---', 'id: spec:partial', 'status: closed-record-only'].concat(fm, ['---', '', '# P', '']).join('\n'));
+                return fpOf(sp.buildSpecRegistry(projectRoot, { write: false })
+                    .specs.find(x => x.id === 'spec:partial').findings
+                    .find(f => f.id.endsWith(':record-incomplete')));
+            };
+            assert.notStrictEqual(
+                recFp(['closureReason: r']),
+                recFp(['closureReason: r', 'closureBasis: record-only']),
+                'fixing one field while another stays invalid must move the fingerprint');
+
+            // Evidence-independence, END TO END through the registry, which is where the
+            // frozen AC lives. Same project, same spec, same complete closure record;
+            // only the evidence store changes. A valid contract stays INELIGIBLE in all
+            // five conditions, so :ineligible is emitted every time and the state never
+            // becomes terminal.
+            const { writeRecord, readEvidence } = require(path.join(TEMPLATE_CLI_DIR, 'verification', 'evidence-store'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 'ev.md'),
+                ['---', 'id: spec:ev', 'status: closed-record-only',
+                 'closureBasis: record-only', 'closureReason: r', 'closureRecordedAt: 2026-09-08',
+                 '---', '', '# EV', '',
+                 '## Acceptance Criteria', '', '```json', JSON.stringify({ criteria: [VALID] }), '```', ''].join('\n'));
+
+            const evVerdict = () => {
+                const e = sp.buildSpecRegistry(projectRoot, { write: false }).specs.find(x => x.id === 'spec:ev');
+                return { state: e.state, ids: (e.findings || []).map(f => f.id) };
+            };
+            for (const verdict of [null, 'PASS', 'FAIL', 'UNVERIFIED', 'STALE']) {
+                if (verdict) {
+                    writeRecord(projectRoot, 'spec:ev',
+                        { criterionId: 'V', verdict, commitSha: 'deadbeef', verifierType: 'file-exists' });
+                    // Prove the fixture actually fired. evaluateRecordOnlyEligibility(specText)
+                    // takes only the spec text and never opens the evidence store, so without
+                    // this readback the five eligibility assertions below are copies of one
+                    // assertion that cannot fail no matter what — or whether — anything was
+                    // written. Reading the record back through readEvidence (the same
+                    // evidence-store path convention writeRecord used) proves the write
+                    // actually landed where anyone looks; if that path convention ever moved,
+                    // this would red instead of staying silently green.
+                    const readBack = readEvidence(projectRoot, 'spec:ev');
+                    assert.strictEqual(readBack.records.V.verdict, verdict,
+                        `${verdict}: the written record must be readable back at the same path`);
+                }
+                const r = evVerdict();
+                const label = verdict || 'no evidence';
+                assert.notStrictEqual(r.state, 'closed-record-only', `${label}: must not become terminal`);
+                assert.ok(r.ids.includes('invalid-record-only-closure:spec:ev:ineligible'),
+                    `${label}: must emit :ineligible; got ${r.ids.join(', ')}`);
+            }
+
+            // (iii) prose never enters identity: factInputs carry exactly the frozen keys
+            assert.deepStrictEqual(Object.keys(vis.factInputs).sort(),
+                ['authorityContractDigests', 'corroborationContractDigests'],
+                'discrepancy identity is exactly the two digest projections — no message, no counts');
+            assert.deepStrictEqual(Object.keys(rec.factInputs), ['invalidClosureFields'],
+                'record-incomplete identity is exactly the offending field names');
+        }
+        console.log('✅ T-record-only-findings passed');
+
+        console.log('T-record-only-release. Testing credential independence at the release gate ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.ok(sp.REQUIRES_RELEASE_WAIVER.has('parked'), 'parked is waiver-gated');
+            assert.ok(sp.REQUIRES_RELEASE_WAIVER.has('closed-record-only'), 'closed-record-only is waiver-gated');
+
+            const runtime = createTempRuntimeRoot('record-only-release');
+            const projectRoot = runtime.workspaceRoot;
+            const REC = ['closureBasis: record-only', 'closureReason: r', 'closureRecordedAt: 2026-09-08'];
+            const WAIVER = ['releaseBlockDisposition: waived', 'releaseBlockReason: accepted', 'releaseBlockReviewedAt: 2026-09-08'];
+
+            // closure record alone does NOT clear a release blocker
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r1.md'),
+                ['---', 'id: spec:r1', 'status: closed-record-only', 'releaseBlocking: true'].concat(REC, ['---', '', '# R1', '']).join('\n'));
+            // closure record + valid waiver clears it
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r2.md'),
+                ['---', 'id: spec:r2', 'status: closed-record-only', 'releaseBlocking: true'].concat(REC, WAIVER, ['---', '', '# R2', '']).join('\n'));
+            // waiver WITHOUT a closure record does not buy a terminal state
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r3.md'),
+                ['---', 'id: spec:r3', 'status: closed-record-only', 'releaseBlocking: true'].concat(WAIVER, ['---', '', '# R3', '']).join('\n'));
+            // malformed waiver on a valid record-only spec must surface its schema errors
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r4.md'),
+                ['---', 'id: spec:r4', 'status: closed-record-only', 'releaseBlocking: true',
+                 'releaseBlockDisposition: waived', 'releaseBlockReviewedAt: 2026-99-99'].concat(REC, ['---', '', '# R4', '']).join('\n'));
+
+            // a REJECTED declaration is release-blocked through the in-flight branch,
+            // as a consequence of deriving baseState — not via a waiver-gated reason
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r5.md'),
+                ['---', 'id: spec:r5', 'status: closed-record-only', 'releaseBlocking: true',
+                 'linkedPlan: plan:r5p', '---', '', '# R5', '',
+                 '## Acceptance Criteria', '', '```json',
+                 JSON.stringify({ criteria: [{ id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } }] }),
+                 '```', ''].join('\n'));
+
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const blocker = id => (reg.blockers || []).find(b => b.id === id);
+
+            const r5 = blocker('spec:r5');
+            assert.ok(r5, 'a rejected record-only declaration that is releaseBlocking must still block');
+            assert.strictEqual(r5.state, 'active', 'the blocker carries the derived baseState');
+            assert.ok(/in-flight release-blocking spec/.test(r5.reason),
+                'a rejected declaration takes the in-flight reason, never a waiver-gated one');
+            assert.ok(!/record-only-closed/.test(r5.reason),
+                'it never borrows the terminal-state message it failed to earn');
+
+            assert.ok(blocker('spec:r1'), 'a closure record is not a waiver — still BLOCKED');
+            assert.ok(/record-only-closed/.test(blocker('spec:r1').reason),
+                'the reason must be record-only specific, distinct from the parked text');
+            assert.ok(!/^parked release-blocking/.test(blocker('spec:r1').reason),
+                'parked and record-only must not share a message');
+            assert.ok(!blocker('spec:r2'), 'an independent valid waiver clears it');
+            assert.notStrictEqual(reg.specs.find(s => s.id === 'spec:r3').state, 'closed-record-only',
+                'a waiver does not substitute for a closure record');
+            assert.ok((reg.errors || []).some(e => /closureRecordedAt|releaseBlockReviewedAt|releaseBlockReason/.test(e.reason)),
+                'waiverIsLoadBearing must surface waiver schema errors on closed-record-only too');
+
+            const preflight = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'release-preflight.js'), 'utf8');
+            assert.ok(!/A waiver applies to parked specs only/.test(preflight),
+                'remediation text must stop asserting something the gate no longer does');
+        }
+        console.log('✅ T-record-only-release passed');
+
+        console.log('T-record-only-credential-lifecycle. Testing that leaving the state invalidates the credential ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const runtime = createTempRuntimeRoot('record-only-lifecycle');
+            const projectRoot = runtime.workspaceRoot;
+            const REC = ['closureBasis: record-only', 'closureReason: r', 'closureRecordedAt: 2026-09-08'];
+
+            // REJECTED declaration: derives baseState, never terminal — must still be cleaned.
+            // Exercised FIRST so a plain `node test.js governance` run reds here (the
+            // discriminating case) rather than on the valid-closure case below, which a
+            // state-keyed (instead of declaredStatus-keyed) implementation would also pass.
+            const rejected = path.join(projectRoot, 'docs', 'specs', 'j.md');
+            writeText(rejected, ['---', 'id: spec:j', 'status: closed-record-only', 'closureBasis: record-only',
+                'closureReason: r', '---', '', '# J', ''].join('\n'));
+            sp.parkSpec(projectRoot, 'spec:j');
+            for (const f of ['closureBasis', 'closureReason']) {
+                assert.ok(!new RegExp(`^${f}:`, 'm').test(fs.readFileSync(rejected, 'utf8')),
+                    `park must remove ${f} even from a REJECTED declaration (keyed on declaredStatus, not state)`);
+            }
+
+            const valid = path.join(projectRoot, 'docs', 'specs', 'v.md');
+            writeText(valid, ['---', 'id: spec:v', 'status: closed-record-only'].concat(REC, ['---', '', '# V', '']).join('\n'));
+            sp.reactivateSpec(projectRoot, 'spec:v');
+            for (const f of ['closureBasis', 'closureReason', 'closureRecordedAt']) {
+                assert.ok(!new RegExp(`^${f}:`, 'm').test(fs.readFileSync(valid, 'utf8')),
+                    `reactivate must remove ${f}`);
+            }
+
+            // never record-only closed: park must not invent fields
+            const plain = path.join(projectRoot, 'docs', 'specs', 'p.md');
+            writeText(plain, ['---', 'id: spec:p', 'status: draft', '---', '', '# P', ''].join('\n'));
+            sp.parkSpec(projectRoot, 'spec:p');
+            assert.ok(!/closureBasis/.test(fs.readFileSync(plain, 'utf8')),
+                'park must not invent closure fields on a spec that never had them');
+
+            // credential replay: re-declaring without a fresh record must be rejected.
+            // Reuses the `valid` path from the valid-closure part above (fully overwrites
+            // its content here, so there is no dependency on that part's assertions or
+            // file state having survived — only the path binding is reused).
+            writeText(valid, ['---', 'id: spec:v', 'status: closed-record-only', '---', '', '# V', ''].join('\n'));
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const v = reg.specs.find(s => s.id === 'spec:v');
+            assert.notStrictEqual(v.state, 'closed-record-only', 're-entry needs a fresh credential');
+            assert.ok(v.warnings.includes('invalid-record-only-closure:record-incomplete'),
+                're-entry without a record is record-incomplete');
+        }
+        console.log('✅ T-record-only-credential-lifecycle passed');
+
+        console.log('T-portfolio-finding-correctness. Testing distinct plan predicates and size actionability ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const { SET_KEYS, computeFingerprint } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            assert.ok(SET_KEYS.includes('zombieRelevantPlans'), 'zombieRelevantPlans must be a canonical SET_KEY');
+            assert.strictEqual(sp.SPEC_RULE_VERSIONS['zombie-plan'], 2, 'zombie-plan bumps to 2');
+            assert.strictEqual(sp.SPEC_RULE_VERSIONS['size-exceeded'], 2, 'size-exceeded bumps to 2');
+
+            const fp = arr => computeFingerprint({ ruleId: 'zombie-plan', ruleVersion: 2, factInputs: { zombieRelevantPlans: arr } });
+            assert.strictEqual(fp(['a', 'b']), fp(['b', 'a']), 'zombieRelevantPlans must be order-insensitive');
+
+            const runtime = createTempRuntimeRoot('portfolio-finding-correctness');
+            const projectRoot = runtime.workspaceRoot;
+            const oversized = ['## Acceptance Criteria', '', '```json', '{', '  "criteria": [',
+                [1,2,3,4,5,6,7,8,9].map(n => `    { "id": "c${n}" }`).join(',\n'), '  ]', '}', '```', ''].join('\n');
+
+            // Z1: parked spec x parked plan -> settled
+            writeText(path.join(projectRoot, 'docs', 'specs', 'z1.md'),
+                ['---', 'id: spec:z1', 'status: parked', 'linkedPlan: plan:zp', '---', '', '# Z1', ''].join('\n'));
+            // Z1b: parked spec x draft plan -> still zombie
+            writeText(path.join(projectRoot, 'docs', 'specs', 'z2.md'),
+                ['---', 'id: spec:z2', 'status: parked', 'linkedPlan: plan:zd', '---', '', '# Z2', ''].join('\n'));
+            // Z2 / W5-c: ACTIVE spec x PARKED plan -> aging-inactive MUST still fire
+            const agingPath = path.join(projectRoot, 'docs', 'specs', 'z3.md');
+            writeText(agingPath, ['---', 'id: spec:z3', 'status: draft', 'linkedPlan: plan:zp2', '---', '', '# Z3', ''].join('\n'));
+            const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+            fs.utimesSync(agingPath, old, old);
+            // Z1c/Z1d: parked spec x ACTIVE plan, and x plan MISSING from the IR
+            writeText(path.join(projectRoot, 'docs', 'specs', 'z4.md'),
+                ['---', 'id: spec:z4', 'status: parked', 'linkedPlan: plan:za', '---', '', '# Z4', ''].join('\n'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 'z5.md'),
+                ['---', 'id: spec:z5', 'status: parked', 'linkedPlan: plan:ghost', '---', '', '# Z5', ''].join('\n'));
+            // size: oversized ADOPTED (no plan) — the cheapest place to edit, so still actionable
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-adopted.md'),
+                ['---', 'id: spec:sd', 'status: draft', '---', '', '# SD', '', oversized].join('\n'));
+            // size: oversized in each state
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-active.md'),
+                ['---', 'id: spec:sa', 'status: draft', 'linkedPlan: plan:sp', '---', '', '# SA', '', oversized].join('\n'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-parked.md'),
+                ['---', 'id: spec:spk', 'status: parked', '---', '', '# SPK', '', oversized].join('\n'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-shipped.md'),
+                ['---', 'id: spec:ss', 'status: done', '---', '', '# SS', '', oversized].join('\n'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-record.md'),
+                ['---', 'id: spec:sr', 'status: closed-record-only', 'closureBasis: record-only',
+                 'closureReason: r', 'closureRecordedAt: 2026-09-08', '---', '', '# SR', '', oversized].join('\n'));
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], tasks: [], warnings: [],
+                plans: [
+                    { id: 'plan:zp', status: 'parked', linkedSpec: 'spec:z1', sourcePath: 'docs/plans/zp.md' },
+                    { id: 'plan:zd', status: 'draft', linkedSpec: 'spec:z2', sourcePath: 'docs/plans/zd.md' },
+                    { id: 'plan:zp2', status: 'parked', linkedSpec: 'spec:z3', sourcePath: 'docs/plans/zp2.md' },
+                    { id: 'plan:za', status: 'active', linkedSpec: 'spec:z4', sourcePath: 'docs/plans/za.md' },
+                    { id: 'plan:sp', status: 'active', linkedSpec: 'spec:sa', sourcePath: 'docs/plans/sp.md' },
+                ],
+            }, null, 2));
+
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const by = id => reg.specs.find(s => s.id === id);
+
+            assert.ok(!by('spec:z1').warnings.includes('zombie-plan'), 'Z1: parked spec x parked plan must be settled');
+            assert.ok(by('spec:z2').warnings.includes('zombie-plan'), 'a draft plan under a parked spec is still zombie');
+            assert.ok(by('spec:z4').warnings.includes('zombie-plan'), 'an ACTIVE plan under a parked spec is still zombie');
+            assert.ok(by('spec:z5').warnings.includes('zombie-plan'),
+                'a plan missing from the IR stays conservatively unsettled');
+            // Z2 / W5-c anti-merge control
+            assert.ok(by('spec:z3').warnings.includes('aging-inactive'),
+                'Z2: aging-inactive must NOT be suppressed merely because the plan is parked');
+            assert.deepStrictEqual(by('spec:z3').notDonePlans, ['plan:zp2'],
+                'notDonePlans keeps the unchanged status !== done rule');
+            assert.deepStrictEqual(by('spec:z1').zombieRelevantPlans, [],
+                'zombieRelevantPlans is the zombie rule\'s own set');
+
+            const zf = by('spec:z2').findings.find(f => f.ruleId === 'zombie-plan');
+            assert.ok(Array.isArray(zf.factInputs.zombieRelevantPlans),
+                'zombie-plan factInputs name zombieRelevantPlans');
+            assert.ok(!('notDonePlans' in zf.factInputs),
+                'zombie-plan must not fingerprint a set its rule no longer consults');
+
+            assert.ok(by('spec:sd').warnings.includes('size-exceeded'), 'adopted oversized warns — editing is cheapest there');
+            assert.ok(by('spec:sa').warnings.includes('size-exceeded'), 'active oversized still warns');
+            // A real adopted -> active transition on ONE unchanged document. Comparing two
+            // different specs would not test this: the property is that gaining a linked
+            // plan, and nothing else, must not move the actionable verdict.
+            assert.strictEqual(by('spec:sd').state, 'adopted', 'spec:sd starts adopted');
+            const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            const ir = JSON.parse(fs.readFileSync(irPath, 'utf8'));
+            ir.plans.push({ id: 'plan:sdp', status: 'active', linkedSpec: 'spec:sd', sourcePath: 'docs/plans/sdp.md' });
+            writeText(irPath, JSON.stringify(ir, null, 2));
+
+            const sd2 = sp.buildSpecRegistry(projectRoot, { write: false }).specs.find(x => x.id === 'spec:sd');
+            assert.strictEqual(sd2.state, 'active', 'linking a plan moves the same document to active');
+            assert.ok(sd2.warnings.includes('size-exceeded'),
+                'the unchanged document keeps its actionable size finding across adopted -> active');
+            for (const id of ['spec:spk', 'spec:ss', 'spec:sr']) {
+                assert.strictEqual(by(id).sizeExceeded, true, `${id} measurement is preserved`);
+                assert.ok(!by(id).warnings.includes('size-exceeded'), `${id} raises no actionable finding`);
+            }
+        }
+        console.log('✅ T-portfolio-finding-correctness passed');
+
+        console.log('T-plan-predicate-negative-controls. Testing the other two predicates by BEHAVIOUR ...');
+        {
+            // These assert what the other two rules DO, not that a word still appears in
+            // their source. A grep for /parked/ passes on any comment and proves nothing.
+            const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service'));
+            const runtime = createTempRuntimeRoot('predicate-negative-controls');
+            const projectRoot = runtime.workspaceRoot;
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], tasks: [], warnings: [],
+                plans: [{ id: 'plan:shelved', status: 'parked', title: 'Shelved', linkedSpec: 'spec:shelved', sourcePath: 'docs/plans/shelved.md' }],
+            }, null, 2));
+
+            const prevRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = path.join(projectRoot, '.evo-lite');
+            try {
+                // memory.service: a parked plan is still NOT a focus target.
+                const advanced = memoryService.advanceFocusFromCommit({
+                    commitMessage: 'chore: note something\n\nEvo-Focus: plan:shelved\n',
+                });
+                assert.strictEqual(advanced.status, 'plan-not-startable',
+                    'a parked plan must remain not-startable for focus');
+                assert.strictEqual(advanced.focusChanged, false, 'focus must not advance onto a parked plan');
+            } finally {
+                if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT;
+                else process.env.EVO_LITE_ROOT = prevRoot;
+            }
+
+            // planning/gaps: a parked or draft sibling with open tasks still keeps the
+            // spec OPEN — the opposite of settled, and deliberately not aligned with the
+            // zombie predicate.
+            const { runPlanningDriftCensus } = require(path.join(TEMPLATE_CLI_DIR, 'planning', 'gaps'));
+            const planIR = {
+                version: 'evo-plan-ir@1', warnings: [],
+                specs: [{ id: 'spec:two', status: 'draft', sourcePath: 'docs/specs/two.md', linkedPlan: 'plan:done' }],
+                plans: [
+                    { id: 'plan:done', status: 'done', linkedSpec: 'spec:two', sourcePath: 'docs/plans/done.md' },
+                    { id: 'plan:open', status: 'parked', linkedSpec: 'spec:two', sourcePath: 'docs/plans/open.md' },
+                ],
+                tasks: [
+                    { id: 'task:a', linkedPlan: 'plan:done', status: 'implemented', title: 'a' },
+                    { id: 'task:b', linkedPlan: 'plan:open', status: 'todo', title: 'b' },
+                ],
+            };
+            const census = runPlanningDriftCensus(projectRoot, planIR, {});
+            const r011 = (census.findings || []).filter(f => (f.ruleId || f.rule || f.id) === 'R011'
+                && JSON.stringify(f).includes('spec:two'));
+            assert.strictEqual(r011.length, 0,
+                'a parked sibling with open tasks must keep the spec open — no R011 closure recommendation');
+
+            // the mirror must match the canonical tree
+            const canonical = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio.js'), 'utf8');
+            const mirror = fs.readFileSync(path.join(CLI_DIR, 'spec-portfolio.js'), 'utf8');
+            assert.strictEqual(mirror, canonical, 'run `mem sync-runtime` — the mirror is stale');
+        }
+        console.log('✅ T-plan-predicate-negative-controls passed');
+
         console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
         {
             // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.
@@ -10023,7 +10682,7 @@ Evo-Focus: plan:demo`,
                     report = await loaded.service.verify();
                 });
                 const portfolioLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]:'));
-                assert.strictEqual(portfolioLine, '📋 [Spec Portfolio]: adopted=0 active=0 parked=0 shipped=0',
+                assert.strictEqual(portfolioLine, '📋 [Spec Portfolio]: adopted=0 active=0 parked=0 shipped=0 recordClosed=0',
                     'clean workspace 📋 line reports all-zero counts');
                 assert.ok(!output.split('\n').some(l => l.startsWith('⚠️') && l.includes('spec:')),
                     'clean workspace must not include any spec ⚠️ warning lines');

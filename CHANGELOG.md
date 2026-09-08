@@ -1,3 +1,23 @@
+## [Unreleased]
+
+### Added
+- `closed-record-only`: a third terminal spec state for finished work that has no
+  machine-executable acceptance contract. Entry is gated on NO-CONTRACT/INVALID
+  only, requires its own closure record, and does **not** clear a release blocker —
+  a closure record is not a waiver.
+- `recordClosed` as an independent portfolio count, never folded into `shipped`.
+
+### Fixed
+- `zombie-plan` no longer deadlocks a parked spec whose plan is also parked;
+  `aging-inactive` semantics are deliberately unchanged.
+- `size-exceeded` is raised only for `adopted`/`active` specs. Measurement is
+  preserved for every state.
+
+### Changed
+- Registry schema `evo-spec-registry@2` → `@3` (state enum + record-only fields).
+- Rule versions: `zombie-plan@2`, `size-exceeded@2`; both invalidate existing
+  dispositions on those rules by design.
+
 ## 2.3.0 - 2026-07-09
 
 ### Added
