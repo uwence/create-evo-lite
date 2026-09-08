@@ -24,9 +24,17 @@ const RECOGNIZED_SPEC_STATUSES = Object.freeze(new Set([
 ]));
 const DEFAULT_AGING_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
+// zombie-plan's own settled-plan-statuses set — see the zombieRelevantPlans
+// derivation in buildSpecRegistry for why this must stay distinct from the
+// notDonePlans predicate that aging-inactive reads.
+const ZOMBIE_SETTLED_PLAN_STATUSES = Object.freeze(new Set(['done', 'parked']));
+// Measurement (size / sizeExceeded) happens in every state; this set gates
+// only whether an *actionable* size-exceeded finding is raised — see the
+// sizeExceeded / SIZE_ACTIONABLE_STATES split in buildSpecRegistry.
+const SIZE_ACTIONABLE_STATES = Object.freeze(new Set(['adopted', 'active']));
 
 const SPEC_RULE_VERSIONS = Object.freeze({
-    'unknown-status': 1, 'zombie-plan': 1, 'size-exceeded': 1,
+    'unknown-status': 1, 'zombie-plan': 2, 'size-exceeded': 2,
     'aging-no-plan': 1, 'aging-inactive': 1,
     'invalid-record-only-closure': 1,
 });
@@ -52,7 +60,7 @@ function buildSpecFindings(spec, size) {
     });
     for (const w of spec.warnings) {
         if (w === 'unknown-status') f(w, { declaredStatus: spec.declaredStatus });
-        else if (w === 'zombie-plan') f(w, { notDonePlans: spec.notDonePlans });
+        else if (w === 'zombie-plan') f(w, { zombieRelevantPlans: spec.zombieRelevantPlans });
         else if (w === 'aging-no-plan' || w === 'aging-inactive') {
             // The finding is emitted unchanged — same id, same factInputs (AC7 /
             // "never filter"). What changes is whether it may enter the
@@ -630,7 +638,24 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         // second implementation of the same question.
         const linkedPlans = resolveLinkedPlanIds(parsed, ir);
 
-        // A referenced plan absent from plan-ir is conservatively treated as not-done.
+        // zombie-plan only: "does this parked spec still have unsettled plans?"
+        // For THIS RULE ONLY, {done, parked} are settled. A parked spec whose
+        // linked plan is also parked is a coherent, deliberately-stopped
+        // combination — it must not warn forever with no disposition able to
+        // clear it.
+        const zombieRelevantPlans = linkedPlans.filter(planId => {
+            const plan = plansById.get(planId);
+            return !plan || !ZOMBIE_SETTLED_PLAN_STATUSES.has(plan.status);
+        });
+
+        // aging-inactive: UNCHANGED pre-existing semantics — any linked plan whose
+        // status is not `done` keeps the spec "not done". Do not merge this with
+        // zombieRelevantPlans above: widening this to also treat `parked` as
+        // settled would silently import a governance judgement no design has
+        // argued (that an active spec backed only by parked plans is not stale)
+        // and would make such a spec emit neither finding while still declaring
+        // itself in flight. A referenced plan absent from plan-ir is
+        // conservatively treated as not-done under both predicates.
         const notDonePlans = linkedPlans.filter(planId => {
             const plan = plansById.get(planId);
             return !plan || plan.status !== 'done';
@@ -694,7 +719,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             state = 'shipped';
         } else if (status === 'parked') {
             state = 'parked';
-            if (linkedPlans.length > 0 && anyPlanNotDone) warnings.push('zombie-plan');
+            if (linkedPlans.length > 0 && zombieRelevantPlans.length > 0) warnings.push('zombie-plan');
         } else if (recordOnlyDeclared && recordOnlyValid) {
             state = 'closed-record-only';
         } else {
@@ -715,7 +740,10 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         }
 
         if (!statusRecognized) warnings.push('unknown-status');
-        if (sizeExceeded && !sizeWaiver) warnings.push('size-exceeded');
+        // Measurement (sizeExceeded above) happens regardless of state — only
+        // the actionable finding is withheld where the spec can no longer
+        // cheaply change (e.g. shipped, parked, closed-record-only).
+        if (sizeExceeded && !sizeWaiver && SIZE_ACTIONABLE_STATES.has(state)) warnings.push('size-exceeded');
 
         const blocking = parseReleaseBlocking(frontmatter);
         if (blocking.error) errors.push({ path: relSpecPath, reason: blocking.error });
@@ -761,6 +789,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             relations: parseRelations(frontmatter),
             relationMode: (frontmatter && frontmatter.relationMode) || null,
             notDonePlans,
+            zombieRelevantPlans,
             warnings,
             releaseBlocking: blocking.value,
             releaseBlockingDeclared: blocking.present,
@@ -1324,8 +1353,10 @@ function formatWarningLine(spec, warning) {
         return `⚠️ ${spec.id} record-only 收口被驳回: ${detail}`;
     }
     if (warning === 'zombie-plan') {
-        // Only the not-done plans are "仍活跃" — a done plan must never be named here.
-        const plans = (spec.notDonePlans || spec.linkedPlans || []).join(', ');
+        // Only the zombie-relevant plans are "仍活跃" — a done or parked plan
+        // must never be named here (zombie-plan's own settled set, distinct
+        // from notDonePlans which aging-inactive reads).
+        const plans = (spec.zombieRelevantPlans || spec.linkedPlans || []).join(', ');
         return `⚠️ ${spec.id} 已 parked 但关联 plan 仍活跃 (${plans}) — zombie plan`;
     }
     return `⚠️ ${spec.id} ${warning}`;

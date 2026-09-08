@@ -7092,7 +7092,11 @@ Evo-Focus: plan:demo`,
 
             w('u.md', ['id: spec:u', 'status: closed-experimental']);
             const big = [1,2,3,4,5,6,7,8,9].map(n => `    { "id": "c${n}" }`).join(',\n');
-            w('big.md', ['id: spec:big', 'status: done', 'x: 1']);
+            // status: draft (not done/parked) keeps spec:big in an actionable
+            // state (adopted) so its size-exceeded finding is not withheld by
+            // the state-aware actionability gate — this fixture is only about
+            // per-dimension finding shape, not about size actionability itself.
+            w('big.md', ['id: spec:big', 'status: draft', 'x: 1']);
             fs.appendFileSync(path.join(root, 'docs', 'specs', 'big.md'),
                 ['## Acceptance Criteria', '', '```json', '{', '  "criteria": [', big, '  ]', '}', '```', ''].join('\n'));
 
@@ -10444,6 +10448,107 @@ Evo-Focus: plan:demo`,
                 're-entry without a record is record-incomplete');
         }
         console.log('✅ T-record-only-credential-lifecycle passed');
+
+        console.log('T-portfolio-finding-correctness. Testing distinct plan predicates and size actionability ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const { SET_KEYS, computeFingerprint } = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            assert.ok(SET_KEYS.includes('zombieRelevantPlans'), 'zombieRelevantPlans must be a canonical SET_KEY');
+            assert.strictEqual(sp.SPEC_RULE_VERSIONS['zombie-plan'], 2, 'zombie-plan bumps to 2');
+            assert.strictEqual(sp.SPEC_RULE_VERSIONS['size-exceeded'], 2, 'size-exceeded bumps to 2');
+
+            const fp = arr => computeFingerprint({ ruleId: 'zombie-plan', ruleVersion: 2, factInputs: { zombieRelevantPlans: arr } });
+            assert.strictEqual(fp(['a', 'b']), fp(['b', 'a']), 'zombieRelevantPlans must be order-insensitive');
+
+            const runtime = createTempRuntimeRoot('portfolio-finding-correctness');
+            const projectRoot = runtime.workspaceRoot;
+            const oversized = ['## Acceptance Criteria', '', '```json', '{', '  "criteria": [',
+                [1,2,3,4,5,6,7,8,9].map(n => `    { "id": "c${n}" }`).join(',\n'), '  ]', '}', '```', ''].join('\n');
+
+            // Z1: parked spec x parked plan -> settled
+            writeText(path.join(projectRoot, 'docs', 'specs', 'z1.md'),
+                ['---', 'id: spec:z1', 'status: parked', 'linkedPlan: plan:zp', '---', '', '# Z1', ''].join('\n'));
+            // Z1b: parked spec x draft plan -> still zombie
+            writeText(path.join(projectRoot, 'docs', 'specs', 'z2.md'),
+                ['---', 'id: spec:z2', 'status: parked', 'linkedPlan: plan:zd', '---', '', '# Z2', ''].join('\n'));
+            // Z2 / W5-c: ACTIVE spec x PARKED plan -> aging-inactive MUST still fire
+            const agingPath = path.join(projectRoot, 'docs', 'specs', 'z3.md');
+            writeText(agingPath, ['---', 'id: spec:z3', 'status: draft', 'linkedPlan: plan:zp2', '---', '', '# Z3', ''].join('\n'));
+            const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+            fs.utimesSync(agingPath, old, old);
+            // Z1c/Z1d: parked spec x ACTIVE plan, and x plan MISSING from the IR
+            writeText(path.join(projectRoot, 'docs', 'specs', 'z4.md'),
+                ['---', 'id: spec:z4', 'status: parked', 'linkedPlan: plan:za', '---', '', '# Z4', ''].join('\n'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 'z5.md'),
+                ['---', 'id: spec:z5', 'status: parked', 'linkedPlan: plan:ghost', '---', '', '# Z5', ''].join('\n'));
+            // size: oversized ADOPTED (no plan) — the cheapest place to edit, so still actionable
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-adopted.md'),
+                ['---', 'id: spec:sd', 'status: draft', '---', '', '# SD', '', oversized].join('\n'));
+            // size: oversized in each state
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-active.md'),
+                ['---', 'id: spec:sa', 'status: draft', 'linkedPlan: plan:sp', '---', '', '# SA', '', oversized].join('\n'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-parked.md'),
+                ['---', 'id: spec:spk', 'status: parked', '---', '', '# SPK', '', oversized].join('\n'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-shipped.md'),
+                ['---', 'id: spec:ss', 'status: done', '---', '', '# SS', '', oversized].join('\n'));
+            writeText(path.join(projectRoot, 'docs', 'specs', 's-record.md'),
+                ['---', 'id: spec:sr', 'status: closed-record-only', 'closureBasis: record-only',
+                 'closureReason: r', 'closureRecordedAt: 2026-09-08', '---', '', '# SR', '', oversized].join('\n'));
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], tasks: [], warnings: [],
+                plans: [
+                    { id: 'plan:zp', status: 'parked', linkedSpec: 'spec:z1', sourcePath: 'docs/plans/zp.md' },
+                    { id: 'plan:zd', status: 'draft', linkedSpec: 'spec:z2', sourcePath: 'docs/plans/zd.md' },
+                    { id: 'plan:zp2', status: 'parked', linkedSpec: 'spec:z3', sourcePath: 'docs/plans/zp2.md' },
+                    { id: 'plan:za', status: 'active', linkedSpec: 'spec:z4', sourcePath: 'docs/plans/za.md' },
+                    { id: 'plan:sp', status: 'active', linkedSpec: 'spec:sa', sourcePath: 'docs/plans/sp.md' },
+                ],
+            }, null, 2));
+
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const by = id => reg.specs.find(s => s.id === id);
+
+            assert.ok(!by('spec:z1').warnings.includes('zombie-plan'), 'Z1: parked spec x parked plan must be settled');
+            assert.ok(by('spec:z2').warnings.includes('zombie-plan'), 'a draft plan under a parked spec is still zombie');
+            assert.ok(by('spec:z4').warnings.includes('zombie-plan'), 'an ACTIVE plan under a parked spec is still zombie');
+            assert.ok(by('spec:z5').warnings.includes('zombie-plan'),
+                'a plan missing from the IR stays conservatively unsettled');
+            // Z2 / W5-c anti-merge control
+            assert.ok(by('spec:z3').warnings.includes('aging-inactive'),
+                'Z2: aging-inactive must NOT be suppressed merely because the plan is parked');
+            assert.deepStrictEqual(by('spec:z3').notDonePlans, ['plan:zp2'],
+                'notDonePlans keeps the unchanged status !== done rule');
+            assert.deepStrictEqual(by('spec:z1').zombieRelevantPlans, [],
+                'zombieRelevantPlans is the zombie rule\'s own set');
+
+            const zf = by('spec:z2').findings.find(f => f.ruleId === 'zombie-plan');
+            assert.ok(Array.isArray(zf.factInputs.zombieRelevantPlans),
+                'zombie-plan factInputs name zombieRelevantPlans');
+            assert.ok(!('notDonePlans' in zf.factInputs),
+                'zombie-plan must not fingerprint a set its rule no longer consults');
+
+            assert.ok(by('spec:sd').warnings.includes('size-exceeded'), 'adopted oversized warns — editing is cheapest there');
+            assert.ok(by('spec:sa').warnings.includes('size-exceeded'), 'active oversized still warns');
+            // A real adopted -> active transition on ONE unchanged document. Comparing two
+            // different specs would not test this: the property is that gaining a linked
+            // plan, and nothing else, must not move the actionable verdict.
+            assert.strictEqual(by('spec:sd').state, 'adopted', 'spec:sd starts adopted');
+            const irPath = path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json');
+            const ir = JSON.parse(fs.readFileSync(irPath, 'utf8'));
+            ir.plans.push({ id: 'plan:sdp', status: 'active', linkedSpec: 'spec:sd', sourcePath: 'docs/plans/sdp.md' });
+            writeText(irPath, JSON.stringify(ir, null, 2));
+
+            const sd2 = sp.buildSpecRegistry(projectRoot, { write: false }).specs.find(x => x.id === 'spec:sd');
+            assert.strictEqual(sd2.state, 'active', 'linking a plan moves the same document to active');
+            assert.ok(sd2.warnings.includes('size-exceeded'),
+                'the unchanged document keeps its actionable size finding across adopted -> active');
+            for (const id of ['spec:spk', 'spec:ss', 'spec:sr']) {
+                assert.strictEqual(by(id).sizeExceeded, true, `${id} measurement is preserved`);
+                assert.ok(!by(id).warnings.includes('size-exceeded'), `${id} raises no actionable finding`);
+            }
+        }
+        console.log('✅ T-portfolio-finding-correctness passed');
 
         console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
         {
