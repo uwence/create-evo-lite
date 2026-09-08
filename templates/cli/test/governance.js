@@ -9948,6 +9948,107 @@ Evo-Focus: plan:demo`,
         }
         console.log('✅ T-spec-portfolio-size passed');
 
+        console.log('T-record-only-eligibility. Testing the record-only eligibility hard gate ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.strictEqual(typeof sp.evaluateRecordOnlyEligibility, 'function',
+                'evaluateRecordOnlyEligibility must be exported');
+            assert.strictEqual(typeof sp.contractVisibilityDigest, 'function',
+                'contractVisibilityDigest must be exported');
+
+            const VALID = { id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } };
+            const INVALID = { id: 'I' };
+            const spec = (heading, first, extra) => [
+                '---', 'id: spec:t', 'status: draft', '---', '', '# T', '',
+                heading, '', '```json', JSON.stringify({ criteria: first }, null, 2), '```', '',
+            ].concat(extra ? ['## Appendix', '', '```json', JSON.stringify({ criteria: extra }, null, 2), '```', ''] : []).join('\n');
+
+            // (e) genuinely contractless, and all-criteria-invalid: both ELIGIBLE
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility(
+                ['---', 'id: spec:t', 'status: draft', '---', '', '# T', ''].join('\n')).eligible, true,
+                'NO-CONTRACT must be eligible');
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [INVALID])).eligible, true,
+                'all-criteria-invalid must be eligible');
+
+            // (a) a valid contract is INELIGIBLE regardless of evidence
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [VALID])).eligible, false,
+                'a valid contract must never be eligible');
+
+            // (a2) structural evidence-independence: the gate is a pure function of the
+            // spec text and has no project root to read an evidence store from. Writing
+            // evidence here and asserting against this function would prove nothing —
+            // there is no path between them. The real five-state matrix runs end-to-end
+            // through buildSpecRegistry in Task 4.
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility.length, 1,
+                'eligibility takes spec text only — no project root, so no evidence path');
+
+            // (b) duplicate-id inverse escape: two VALID criteria sharing one id
+            const dup = sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [VALID, Object.assign({}, VALID)]));
+            assert.strictEqual(dup.locallyExecutable.length, 2,
+                'both duplicated criteria are independently executable');
+            assert.strictEqual(dup.eligible, false,
+                'duplicate-id must NOT unlock record-only closure');
+
+            // (c) appending one broken criterion to a valid contract
+            assert.strictEqual(sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [VALID, INVALID])).eligible, false,
+                'appending a broken criterion must not unlock eligibility');
+
+            // (d1) visibility, unequal: numbered heading hides the contract from the authority
+            const numbered = sp.evaluateRecordOnlyEligibility(spec('## 10. Acceptance Criteria', [VALID]));
+            assert.strictEqual(numbered.authority.length, 0, 'authority sees nothing under a numbered heading');
+            assert.strictEqual(numbered.corroboration.length, 1, 'corroborator still sees the block');
+            assert.strictEqual(numbered.visibilityAgrees, false, 'unequal visibility must disagree');
+            assert.strictEqual(numbered.eligible, false, 'visibility discrepancy must deny');
+
+            // (d2) visibility, EQUAL COUNT, different content
+            const equalCount = sp.evaluateRecordOnlyEligibility(
+                spec('## Acceptance Criteria', [INVALID], [VALID]));
+            assert.strictEqual(equalCount.authority.length, 1, 'authority sees the heading block');
+            assert.strictEqual(equalCount.corroboration.length, 1, 'corroborator sees the later block');
+            assert.strictEqual(equalCount.visibilityAgrees, false,
+                'equal count with different content must still disagree — emptiness parity is not enough');
+            assert.strictEqual(equalCount.eligible, false, 'equal-count discrepancy must deny');
+
+            // (d1) against the REAL corpus, scanned dynamically rather than hard-coded.
+            // Expected to be deliberately removed when the numbered-heading parser defect
+            // is fixed; until then the containment must hold on every divergent spec.
+            let divergent = 0;
+            for (const dir of [path.join(WORKSPACE_ROOT, 'docs', 'specs'),
+                               path.join(WORKSPACE_ROOT, 'docs', 'superpowers', 'specs')]) {
+                if (!fs.existsSync(dir)) continue;
+                for (const name of fs.readdirSync(dir).filter(n => n.endsWith('.md'))) {
+                    const r = sp.evaluateRecordOnlyEligibility(fs.readFileSync(path.join(dir, name), 'utf8'));
+                    if (!r.visibilityAgrees) {
+                        divergent += 1;
+                        assert.strictEqual(r.eligible, false, `${name}: visibility discrepancy must deny`);
+                    }
+                }
+            }
+            assert.ok(divergent > 0,
+                'the corpus still carries the known parser divergence this gate contains');
+
+            // description is part of visibility even though criterionDigest excludes it
+            const a = Object.assign({}, VALID, { description: '' });
+            assert.notStrictEqual(sp.contractVisibilityDigest(a), sp.contractVisibilityDigest(VALID),
+                'contractVisibilityDigest must see description');
+            // authored payloads that a truthiness default would collapse must stay distinct
+            assert.notStrictEqual(sp.contractVisibilityDigest(null), sp.contractVisibilityDigest({}),
+                'null and {} are different authored payloads');
+            for (const v of [false, 0, '']) {
+                assert.notStrictEqual(sp.contractVisibilityDigest(v), sp.contractVisibilityDigest({}),
+                    `${JSON.stringify(v)} must not collapse into {}`);
+            }
+            // order-insensitive projection
+            assert.deepStrictEqual(sp.visibilityProjection([VALID, INVALID]),
+                sp.visibilityProjection([INVALID, VALID]),
+                'visibilityProjection must be order-insensitive');
+        }
+        console.log('✅ T-record-only-eligibility passed');
+
         console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
         {
             // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.

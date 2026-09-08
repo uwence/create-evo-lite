@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 // Called through the module object, never destructured: git observation must
 // stay substitutable by a test without rebuilding the module graph.
 const childProcess = require('child_process');
@@ -10,6 +11,7 @@ const { classifyGitFailure } = require('./planning/gaps');
 const { getWorkspaceRoot } = require('./runtime');
 const { readLedger } = require('./disposition/ledger');
 const { annotate } = require('./disposition/resolve');
+const { parseSpecCriteria, validateCriteria } = require('./verification/validate-contract');
 
 const SIZE_THRESHOLDS = Object.freeze({ acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 });
 // The closed vocabulary of spec statuses this registry can actually reason about.
@@ -351,6 +353,68 @@ function extractLastCriteriaArray(content) {
     } catch (_) {
         return [];
     }
+}
+
+// Visibility identity. Deliberately NOT criterionDigest: that digest covers
+// verification semantics only (id, verifier, dependsOn) and excludes
+// `description` on purpose, yet validateCriteria REQUIRES a non-empty
+// description — so two criteria differing only there are one valid and one
+// invalid under an identical criterionDigest. For this gate that difference is
+// the whole question, so visibility hashes the complete authored payload.
+function canonicalizeCriterion(value) {
+    if (Array.isArray(value)) return value.map(canonicalizeCriterion);
+    if (value && typeof value === 'object') {
+        const out = {};
+        for (const k of Object.keys(value).sort()) out[k] = canonicalizeCriterion(value[k]);
+        return out;
+    }
+    return value;
+}
+
+function contractVisibilityDigest(criterion) {
+    // NO `criterion || {}`. JSON can legitimately produce null, false, 0 and "",
+    // and a truthiness default collapses all four into `{}` — two parsers that
+    // observed DIFFERENT authored payloads would then project identically, which
+    // is exactly the disagreement this gate must fail closed on. `undefined`
+    // needs no handling: a JSON parser cannot produce it.
+    const payload = JSON.stringify(canonicalizeCriterion(criterion));
+    return 'sha256:' + crypto.createHash('sha256').update(payload, 'utf8').digest('hex');
+}
+
+function visibilityProjection(criteria) {
+    return (criteria || []).map(contractVisibilityDigest).sort();
+}
+
+// The first hard gate. Protects the verification system itself, not the release
+// gate: only NO-CONTRACT and INVALID may enter record-only closure.
+// UNVERIFIED / STALE / FAIL / PASS all mean "criteria present AND structurally
+// valid" and differ only in evidence, which is never consulted here.
+function evaluateRecordOnlyEligibility(specText) {
+    const authority = (parseSpecCriteria(specText) || {}).criteria || [];
+    const corroboration = extractLastCriteriaArray(specText);
+
+    const aggregateFindings = validateCriteria(authority);
+    // DENY-only probe. A singleton PASS proves a self-contained executable
+    // acceptance assertion exists and refuses eligibility. A singleton FAIL
+    // proves nothing alone and defers to the aggregate. Singleton constraints
+    // are a strict subset of whole-array constraints, so this can only ever
+    // deny, never grant.
+    const locallyExecutable = authority.filter(c => validateCriteria([c]).length === 0);
+
+    const visibilityAgrees =
+        JSON.stringify(visibilityProjection(authority)) ===
+        JSON.stringify(visibilityProjection(corroboration));
+
+    // The CONTRACT-side violation, computed independently of visibility so that
+    // both can be reported at once. A spec is ineligible when it has an
+    // independently executable criterion, or a non-empty contract the authority
+    // considers wholly valid.
+    const ineligible = locallyExecutable.length > 0
+        || (authority.length > 0 && aggregateFindings.length === 0);
+
+    const eligible = visibilityAgrees && !ineligible;
+
+    return { eligible, ineligible, visibilityAgrees, authority, corroboration, locallyExecutable, aggregateFindings };
 }
 
 function computeSizeMetrics(content, body) {
@@ -1275,4 +1339,7 @@ module.exports = {
     resolveLastTouchedAt,
     // Exported so a test can assert PROVENANCE, not just the instant.
     observeLastTouchedAt,
+    contractVisibilityDigest,
+    visibilityProjection,
+    evaluateRecordOnlyEligibility,
 };
