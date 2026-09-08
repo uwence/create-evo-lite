@@ -286,24 +286,48 @@ function parseClosureRecord(frontmatter) {
     return { present, valid: errors.length === 0, errors, invalidFields: invalidFields.sort() };
 }
 
+// Shared POLICY predicate, never a shared lifecycle branch and never a shared
+// message. `parked` = the work is not finished / deliberately deferred.
+// `closed-record-only` = the work is claimed finished, with no verifiable
+// closure. An audit must separate them at a glance.
+const REQUIRES_RELEASE_WAIVER = Object.freeze(new Set(['parked', 'closed-record-only']));
+
+const WAIVER_GATED_REASON = Object.freeze({
+    'parked': {
+        invalidWaiver: 'parked release-blocking spec whose waiver is incomplete or invalid',
+        noWaiver: 'parked release-blocking spec with no waiver',
+    },
+    'closed-record-only': {
+        invalidWaiver: 'record-only-closed release-blocking spec whose waiver is incomplete or invalid',
+        noWaiver: 'record-only-closed release-blocking spec with no waiver — '
+                + 'a closure record is not a waiver; the risk was never verified',
+    },
+});
+
 // spec §8.2.2. Returns a blocker record or null.
 //
 // `parked` still blocks on purpose: park means "deferred", not "the risk went
 // away". If changing governance state silently cleared the gate, anyone could
 // route around a real product risk by re-labelling it. Clearing it takes an
 // explicit, recorded waiver.
+//
+// `closed-record-only` blocks on the same purpose, for a different reason: a
+// closure record certifies the project's books are closed, not that the risk
+// was shown not to exist. A closure record and a release waiver are two
+// independent credentials — clearing a release blocker still takes its own,
+// independently valid waiver.
 function deriveBlocker(spec) {
     if (!spec.releaseBlocking) return null;
     if (spec.state === 'shipped') return null;
-    if (spec.state === 'parked') {
+    if (REQUIRES_RELEASE_WAIVER.has(spec.state)) {
         if (spec.releaseBlockWaiver && spec.releaseBlockWaiver.valid) return null;
+        const reasons = WAIVER_GATED_REASON[spec.state];
         return {
             id: spec.id,
             file: spec.file,
             state: spec.state,
             reason: spec.releaseBlockWaiver && spec.releaseBlockWaiver.present
-                ? 'parked release-blocking spec whose waiver is incomplete or invalid'
-                : 'parked release-blocking spec with no waiver',
+                ? reasons.invalidWaiver : reasons.noWaiver,
         };
     }
     // adopted / active — a waiver does not apply here at all (§8.2.2.1).
@@ -698,7 +722,10 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         const waiver = parseReleaseWaiver(frontmatter);
 
         // Waiver schema errors are raised ONLY where a waiver can actually do
-        // something: a release-blocking spec that is parked (§8.2.2.1).
+        // something: a release-blocking spec whose state is waiver-gated
+        // (REQUIRES_RELEASE_WAIVER — parked or closed-record-only, §8.2.2.1).
+        // Routed through the same predicate deriveBlocker() uses, so it is a
+        // real authority rather than a private helper of deriveBlocker.
         //
         // Validating it everywhere made the fields load-bearing in states the
         // frozen table says are ALLOW. A shipped spec that still carries waiver
@@ -711,7 +738,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         // unconditional and a waiver cannot lift it, so reporting the waiver as
         // malformed would suggest that fixing it would help. The blocker's own
         // reason says the true thing instead.
-        const waiverIsLoadBearing = blocking.value && state === 'parked';
+        const waiverIsLoadBearing = blocking.value && REQUIRES_RELEASE_WAIVER.has(state);
         if (waiverIsLoadBearing) {
             for (const e of waiver.errors) errors.push({ path: relSpecPath, reason: e });
         }
@@ -1471,4 +1498,5 @@ module.exports = {
     evaluateRecordOnlyEligibility,
     parseClosureRecord,
     CLOSURE_FIELDS,
+    REQUIRES_RELEASE_WAIVER,
 };

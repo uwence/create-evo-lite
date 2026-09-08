@@ -10335,6 +10335,68 @@ Evo-Focus: plan:demo`,
         }
         console.log('✅ T-record-only-findings passed');
 
+        console.log('T-record-only-release. Testing credential independence at the release gate ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            assert.ok(sp.REQUIRES_RELEASE_WAIVER.has('parked'), 'parked is waiver-gated');
+            assert.ok(sp.REQUIRES_RELEASE_WAIVER.has('closed-record-only'), 'closed-record-only is waiver-gated');
+
+            const runtime = createTempRuntimeRoot('record-only-release');
+            const projectRoot = runtime.workspaceRoot;
+            const REC = ['closureBasis: record-only', 'closureReason: r', 'closureRecordedAt: 2026-09-08'];
+            const WAIVER = ['releaseBlockDisposition: waived', 'releaseBlockReason: accepted', 'releaseBlockReviewedAt: 2026-09-08'];
+
+            // closure record alone does NOT clear a release blocker
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r1.md'),
+                ['---', 'id: spec:r1', 'status: closed-record-only', 'releaseBlocking: true'].concat(REC, ['---', '', '# R1', '']).join('\n'));
+            // closure record + valid waiver clears it
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r2.md'),
+                ['---', 'id: spec:r2', 'status: closed-record-only', 'releaseBlocking: true'].concat(REC, WAIVER, ['---', '', '# R2', '']).join('\n'));
+            // waiver WITHOUT a closure record does not buy a terminal state
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r3.md'),
+                ['---', 'id: spec:r3', 'status: closed-record-only', 'releaseBlocking: true'].concat(WAIVER, ['---', '', '# R3', '']).join('\n'));
+            // malformed waiver on a valid record-only spec must surface its schema errors
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r4.md'),
+                ['---', 'id: spec:r4', 'status: closed-record-only', 'releaseBlocking: true',
+                 'releaseBlockDisposition: waived', 'releaseBlockReviewedAt: 2026-99-99'].concat(REC, ['---', '', '# R4', '']).join('\n'));
+
+            // a REJECTED declaration is release-blocked through the in-flight branch,
+            // as a consequence of deriving baseState — not via a waiver-gated reason
+            writeText(path.join(projectRoot, 'docs', 'specs', 'r5.md'),
+                ['---', 'id: spec:r5', 'status: closed-record-only', 'releaseBlocking: true',
+                 'linkedPlan: plan:r5p', '---', '', '# R5', '',
+                 '## Acceptance Criteria', '', '```json',
+                 JSON.stringify({ criteria: [{ id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } }] }),
+                 '```', ''].join('\n'));
+
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const blocker = id => (reg.blockers || []).find(b => b.id === id);
+
+            const r5 = blocker('spec:r5');
+            assert.ok(r5, 'a rejected record-only declaration that is releaseBlocking must still block');
+            assert.strictEqual(r5.state, 'active', 'the blocker carries the derived baseState');
+            assert.ok(/in-flight release-blocking spec/.test(r5.reason),
+                'a rejected declaration takes the in-flight reason, never a waiver-gated one');
+            assert.ok(!/record-only-closed/.test(r5.reason),
+                'it never borrows the terminal-state message it failed to earn');
+
+            assert.ok(blocker('spec:r1'), 'a closure record is not a waiver — still BLOCKED');
+            assert.ok(/record-only-closed/.test(blocker('spec:r1').reason),
+                'the reason must be record-only specific, distinct from the parked text');
+            assert.ok(!/^parked release-blocking/.test(blocker('spec:r1').reason),
+                'parked and record-only must not share a message');
+            assert.ok(!blocker('spec:r2'), 'an independent valid waiver clears it');
+            assert.notStrictEqual(reg.specs.find(s => s.id === 'spec:r3').state, 'closed-record-only',
+                'a waiver does not substitute for a closure record');
+            assert.ok((reg.errors || []).some(e => /closureRecordedAt|releaseBlockReviewedAt|releaseBlockReason/.test(e.reason)),
+                'waiverIsLoadBearing must surface waiver schema errors on closed-record-only too');
+
+            const preflight = fs.readFileSync(path.join(TEMPLATE_CLI_DIR, 'release-preflight.js'), 'utf8');
+            assert.ok(!/A waiver applies to parked specs only/.test(preflight),
+                'remediation text must stop asserting something the gate no longer does');
+        }
+        console.log('✅ T-record-only-release passed');
+
         console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
         {
             // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.
