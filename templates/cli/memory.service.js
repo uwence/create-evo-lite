@@ -3378,6 +3378,7 @@ async function verify(options = {}) {
             active: registry.specs.filter(s => s.state === 'active').length,
             parked: registry.specs.filter(s => s.state === 'parked').length,
             shipped: registry.specs.filter(s => s.state === 'shipped').length,
+            recordClosed: registry.specs.filter(s => s.state === 'closed-record-only').length,
             warnings: registry.specs.reduce((n, s) => n + (s.warnings ? s.warnings.length : 0), 0),
         };
     } catch (err) {

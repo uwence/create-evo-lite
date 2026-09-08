@@ -11,7 +11,7 @@ const { classifyGitFailure } = require('./planning/gaps');
 const { getWorkspaceRoot } = require('./runtime');
 const { readLedger } = require('./disposition/ledger');
 const { annotate } = require('./disposition/resolve');
-const { parseSpecCriteria, validateCriteria } = require('./verification/validate-contract');
+const { parseSpecCriteria, validateCriteria, criterionDigest } = require('./verification/validate-contract');
 
 const SIZE_THRESHOLDS = Object.freeze({ acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 });
 // The closed vocabulary of spec statuses this registry can actually reason about.
@@ -19,7 +19,9 @@ const SIZE_THRESHOLDS = Object.freeze({ acCount: 8, phaseCount: 3, dependsOnCoun
 // is a guess — see the `unknown-status` warning. `draft` is included because
 // adoptSpec() normalizes it to `adopted` on adoption, so it is a legitimate
 // pre-adoption input rather than an invented word.
-const RECOGNIZED_SPEC_STATUSES = Object.freeze(new Set(['done', 'parked', 'adopted', 'active', 'draft']));
+const RECOGNIZED_SPEC_STATUSES = Object.freeze(new Set([
+    'done', 'parked', 'adopted', 'active', 'draft', 'closed-record-only',
+]));
 const DEFAULT_AGING_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -629,19 +631,35 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         const declaredStatus = (status && status !== 'unknown') ? status : null;
         const statusRecognized = !declaredStatus || RECOGNIZED_SPEC_STATUSES.has(declaredStatus);
         const warnings = [];
-        let state;
 
+        // baseState never consults any terminal declaration. Named on purpose:
+        // the failure mode this guards against is a future branch reorder that
+        // quietly turns an invalid closed-record-only declaration into a
+        // terminal one by falling through an if/else chain's residue.
+        const baseState = () => (linkedPlans.length > 0 ? 'active' : 'adopted');
+
+        const recordOnlyDeclared = status === 'closed-record-only';
+        const eligibility = recordOnlyDeclared
+            ? evaluateRecordOnlyEligibility(content)
+            : null;
+        const closureRecord = recordOnlyDeclared ? parseClosureRecord(frontmatter) : null;
+        const recordOnlyValid = recordOnlyDeclared && eligibility.eligible && closureRecord.valid;
+
+        let state;
         if (status === 'done') {
             state = 'shipped';
         } else if (status === 'parked') {
             state = 'parked';
             if (linkedPlans.length > 0 && anyPlanNotDone) warnings.push('zombie-plan');
-        } else if (linkedPlans.length === 0) {
-            state = 'adopted';
-            if (idleDays > agingDays) warnings.push('aging-no-plan');
+        } else if (recordOnlyDeclared && recordOnlyValid) {
+            state = 'closed-record-only';
         } else {
-            state = 'active';
-            if (anyPlanNotDone && idleDays > agingDays) warnings.push('aging-inactive');
+            state = baseState();
+            if (linkedPlans.length === 0) {
+                if (idleDays > agingDays) warnings.push('aging-no-plan');
+            } else if (anyPlanNotDone && idleDays > agingDays) {
+                warnings.push('aging-inactive');
+            }
         }
 
         if (!statusRecognized) warnings.push('unknown-status');
@@ -692,6 +710,16 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             releaseBlocking: blocking.value,
             releaseBlockingDeclared: blocking.present,
             releaseBlockWaiver: waiver,
+            recordOnly: recordOnlyDeclared ? {
+                declared: true,
+                eligible: eligibility.eligible,
+                visibilityAgrees: eligibility.visibilityAgrees,
+                recordValid: closureRecord.valid,
+                locallyExecutableDigests: eligibility.locallyExecutable.map(criterionDigest).sort(),
+                invalidClosureFields: closureRecord.invalidFields,
+                authorityDigests: visibilityProjection(eligibility.authority),
+                corroborationDigests: visibilityProjection(eligibility.corroboration),
+            } : null,
         });
     }
 
@@ -736,9 +764,11 @@ function buildSpecRegistry(projectRoot, opts = {}) {
     const parseFailures = sourceWarnings.filter(w => /parse threw/.test(w.reason));
 
     const registry = {
-        // Bumped from @1: the shape gained blockers/errors/source, and a consumer
-        // that keys on the version must be told the difference.
-        version: 'evo-spec-registry@2',
+        // Bumped from @2: the `state` enum gained `closed-record-only` and entries
+        // gained record-only derived fields. A consumer that keys on the version
+        // must be told the difference; fixing every KNOWN internal consumer does
+        // not make the machine contract unchanged.
+        version: 'evo-spec-registry@3',
         generatedAt: new Date().toISOString(),
         agingDays,
         specs,
@@ -1209,14 +1239,15 @@ function formatFindingLine(spec, finding) {
 function formatPortfolioReport(registry) {
     if (!registry) return [];
 
-    const counts = { adopted: 0, active: 0, parked: 0, shipped: 0 };
+    const counts = { adopted: 0, active: 0, parked: 0, shipped: 0, recordClosed: 0 };
     const specs = Array.isArray(registry.specs) ? registry.specs : [];
     for (const spec of specs) {
-        if (Object.prototype.hasOwnProperty.call(counts, spec.state)) counts[spec.state]++;
+        if (spec.state === 'closed-record-only') counts.recordClosed += 1;
+        else if (Object.prototype.hasOwnProperty.call(counts, spec.state)) counts[spec.state]++;
     }
 
     const lines = [
-        `📋 [Spec Portfolio]: adopted=${counts.adopted} active=${counts.active} parked=${counts.parked} shipped=${counts.shipped}`,
+        `📋 [Spec Portfolio]: adopted=${counts.adopted} active=${counts.active} parked=${counts.parked} shipped=${counts.shipped} recordClosed=${counts.recordClosed}`,
     ];
     if (registry.source && registry.source.portfolioSourceDrift) {
         lines.push('⚠️ [portfolio-source-drift] Planning IR contains specs but no valid portfolio entities were discovered.');

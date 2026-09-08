@@ -9515,7 +9515,7 @@ Evo-Focus: plan:demo`,
                 'RECOGNIZED_SPEC_STATUSES must be exported as a Set');
             assert.deepStrictEqual(
                 [...specPortfolio.RECOGNIZED_SPEC_STATUSES].sort(),
-                ['active', 'adopted', 'done', 'draft', 'parked'],
+                ['active', 'adopted', 'closed-record-only', 'done', 'draft', 'parked'],
                 'the recognized status vocabulary is closed and explicit');
 
             const vocabRoot = createTempRuntimeRoot('spec-status-vocabulary').workspaceRoot;
@@ -9649,7 +9649,7 @@ Evo-Focus: plan:demo`,
             }, null, 2));
 
             const registry = specPortfolio.buildSpecRegistry(projectRoot);
-            assert.strictEqual(registry.version, 'evo-spec-registry@2', 'registry version stamp (bumped by Task 8: blockers/errors/source)');
+            assert.strictEqual(registry.version, 'evo-spec-registry@3', 'registry version stamp (bumped again: closed-record-only state + recordOnly fields)');
             assert.strictEqual(registry.agingDays, 14, 'agingDays defaults to 14 with no config override');
             assert.strictEqual(registry.specs.length, 6, 'all six fixture specs enumerated');
 
@@ -9690,7 +9690,7 @@ Evo-Focus: plan:demo`,
             assert.strictEqual(noWrite.specs.length, 6, 'write:false still returns a full registry');
 
             const report = specPortfolio.formatPortfolioReport(registry);
-            assert.strictEqual(report[0], '📋 [Spec Portfolio]: adopted=3 active=1 parked=1 shipped=1',
+            assert.strictEqual(report[0], '📋 [Spec Portfolio]: adopted=3 active=1 parked=1 shipped=1 recordClosed=0',
                 'first report line summarizes counts per state');
             // Task 9 changed the SHAPE, not the content: the ⚠️ glyph now leads a
             // single actionable header and the per-finding lines are indented
@@ -10083,6 +10083,86 @@ Evo-Focus: plan:demo`,
         }
         console.log('✅ T-closure-record passed');
 
+        console.log('T-record-only-state. Testing closed-record-only derivation, counts and schema version ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const runtime = createTempRuntimeRoot('record-only-state');
+            const projectRoot = runtime.workspaceRoot;
+            const REC = ['closureBasis: record-only', 'closureReason: merged before contracts existed', 'closureRecordedAt: 2026-09-08'];
+
+            // valid: NO-CONTRACT + complete record, with a linked plan (so baseState would be `active`)
+            writeText(path.join(projectRoot, 'docs', 'specs', 'ok-nocontract.md'),
+                ['---', 'id: spec:ok1', 'status: closed-record-only', 'linkedPlan: plan:p1'].concat(REC, ['---', '', '# OK1', '']).join('\n'));
+
+            // valid: INVALID contract + complete record
+            writeText(path.join(projectRoot, 'docs', 'specs', 'ok-invalid.md'),
+                ['---', 'id: spec:ok2', 'status: closed-record-only'].concat(REC, ['---', '', '# OK2', '',
+                    '## Acceptance Criteria', '', '```json', '{ "criteria": [ { "id": "x" } ] }', '```', '']).join('\n'));
+
+            // rejected: ineligible (valid contract), with linked plan -> baseState active
+            writeText(path.join(projectRoot, 'docs', 'specs', 'bad-eligible.md'),
+                ['---', 'id: spec:bad1', 'status: closed-record-only', 'linkedPlan: plan:p2'].concat(REC, ['---', '', '# BAD1', '',
+                    '## Acceptance Criteria', '', '```json',
+                    JSON.stringify({ criteria: [{ id: 'V', description: 'd', dependsOn: ['x.js'], verifier: { type: 'file-exists', params: { path: 'x.js' } } }] }),
+                    '```', '']).join('\n'));
+
+            // rejected: record incomplete, no linked plan -> baseState adopted
+            writeText(path.join(projectRoot, 'docs', 'specs', 'bad-record.md'),
+                ['---', 'id: spec:bad2', 'status: closed-record-only', 'closureBasis: record-only', '---', '', '# BAD2', ''].join('\n'));
+
+            writeText(path.join(projectRoot, '.evo-lite', 'generated', 'planning', 'plan-ir.json'), JSON.stringify({
+                version: 'evo-plan-ir@1', specs: [], tasks: [], warnings: [],
+                plans: [
+                    { id: 'plan:p1', status: 'active', linkedSpec: 'spec:ok1', sourcePath: 'docs/plans/p1.md' },
+                    { id: 'plan:p2', status: 'active', linkedSpec: 'spec:bad1', sourcePath: 'docs/plans/p2.md' },
+                ],
+            }, null, 2));
+
+            const reg = sp.buildSpecRegistry(projectRoot, { write: false });
+            const by = id => reg.specs.find(s => s.id === id);
+
+            assert.strictEqual(reg.version, 'evo-spec-registry@3', 'registry schema version must bump to @3');
+            assert.strictEqual(by('spec:ok1').state, 'closed-record-only', 'NO-CONTRACT + valid record is terminal');
+            assert.strictEqual(by('spec:ok2').state, 'closed-record-only', 'INVALID contract + valid record is terminal');
+            assert.strictEqual(by('spec:bad1').state, 'active', 'ineligible declaration derives baseState (linkedPlans present)');
+            assert.strictEqual(by('spec:bad2').state, 'adopted', 'record-incomplete declaration derives baseState (no linkedPlans)');
+            for (const id of ['spec:bad1', 'spec:bad2']) {
+                assert.notStrictEqual(by(id).state, 'closed-record-only', `${id} must not reach the terminal state`);
+                assert.notStrictEqual(by(id).state, 'shipped', `${id} must not be counted as shipped`);
+            }
+
+            // recognized vocabulary: no unknown-status on a correctly spelled declaration
+            for (const id of ['spec:ok1', 'spec:ok2', 'spec:bad1', 'spec:bad2']) {
+                assert.ok(!by(id).warnings.includes('unknown-status'), `${id} must not raise unknown-status`);
+            }
+            // terminal privileges: neither open nor parked, so no aging and no zombie branch
+            for (const w of ['aging-no-plan', 'aging-inactive', 'zombie-plan']) {
+                assert.ok(!by('spec:ok1').warnings.includes(w), `a valid record-only spec must not emit ${w}`);
+            }
+
+            const lines = sp.formatPortfolioReport(reg);
+            assert.ok(lines[0].includes('recordClosed=2'), 'counts must report recordClosed as its own column');
+            assert.ok(/shipped=0/.test(lines[0]), 'recordClosed must never be folded into shipped');
+
+            // memory.service must expose the bucket in its report OBJECT, not only in prose:
+            // a closed-record-only spec previously fell into none of the four hard-coded
+            // filters and vanished from the report entirely.
+            const memoryService = require(path.join(TEMPLATE_CLI_DIR, 'memory.service'));
+            const prevRoot = process.env.EVO_LITE_ROOT;
+            process.env.EVO_LITE_ROOT = path.join(projectRoot, '.evo-lite');
+            try {
+                const report = await memoryService.verify({ silent: true });
+                assert.ok(report.specPortfolio && 'recordClosed' in report.specPortfolio,
+                    'report.specPortfolio must expose recordClosed');
+                assert.strictEqual(report.specPortfolio.recordClosed, 2, 'both valid specs are counted');
+                assert.strictEqual(report.specPortfolio.shipped, 0, 'never folded into shipped');
+            } finally {
+                if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT;
+                else process.env.EVO_LITE_ROOT = prevRoot;
+            }
+        }
+        console.log('✅ T-record-only-state passed');
+
         console.log('T-verify-spec-portfolio. Testing verify() surfaces the Spec Portfolio report ...');
         {
             // (a) aging adopted spec (no linked plan, old mtime) -> 📋 line + ⚠️ aging line, hasAlerts true.
@@ -10158,7 +10238,7 @@ Evo-Focus: plan:demo`,
                     report = await loaded.service.verify();
                 });
                 const portfolioLine = output.split('\n').find(l => l.startsWith('📋 [Spec Portfolio]:'));
-                assert.strictEqual(portfolioLine, '📋 [Spec Portfolio]: adopted=0 active=0 parked=0 shipped=0',
+                assert.strictEqual(portfolioLine, '📋 [Spec Portfolio]: adopted=0 active=0 parked=0 shipped=0 recordClosed=0',
                     'clean workspace 📋 line reports all-zero counts');
                 assert.ok(!output.split('\n').some(l => l.startsWith('⚠️') && l.includes('spec:')),
                     'clean workspace must not include any spec ⚠️ warning lines');
