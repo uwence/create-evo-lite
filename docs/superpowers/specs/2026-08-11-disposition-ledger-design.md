@@ -192,9 +192,11 @@ environment. A recorded `headSha` going stale is the finding.
 
 ### 2.3 ruleVersion is a disposition compatibility version
 
-**Not** a code version. Bump only when:
+**Not** a code version. Bump only when — subject to the single narrow carve-out
+in §2.3.1, which this list must not be read without:
 
-- the condition under which the finding is emitted changes
+- the condition under which the finding is emitted changes, unless the change
+  only *narrows* emission and every condition in §2.3.1 holds
 - the governance meaning of the finding changes
 - the extraction of `factInputs` changes
 - the set of facts the fingerprint depends on changes
@@ -210,7 +212,10 @@ A change to a rule that can only *remove* findings it previously emitted does
 
 1. The change can only remove a subset of the findings the rule previously
    emitted.
-2. It cannot introduce any newly-emitted finding.
+2. It cannot introduce any newly-emitted finding **from that same rule**. A
+   different rule gaining findings — including a brand-new rule starting at
+   version 1 — is a separate question that §2.3 does not reach, and never
+   licenses skipping a bump on this one.
 3. For every finding that remains emitted: the canonical finding id
    construction is unchanged; the governance meaning is unchanged; the
    `factInputs` schema and its extraction are unchanged; and the same observed
