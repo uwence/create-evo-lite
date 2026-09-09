@@ -10251,6 +10251,28 @@ Evo-Focus: plan:demo`,
             } finally {
                 if (prevRoot === undefined) delete process.env.EVO_LITE_ROOT;
                 else process.env.EVO_LITE_ROOT = prevRoot;
+                // This test owns what it opened. verify() opens the entity store
+                // and the database, and both must be released before the suite
+                // deletes this root, or Windows fails the whole run on EBUSY.
+                //
+                // quiesceSharedResources() alone is NOT enough here, and that is
+                // the trap: it reaches CLI_DIR's module instance, which is
+                // runner-relative. Under `node ./templates/cli/test.js` the two
+                // paths coincide and the handle is closed by accident, so the
+                // leak is invisible; under the mirror runner and under CI's
+                // packed consume they are different modules, each with its own
+                // connection, and the one THIS test opened through
+                // TEMPLATE_CLI_DIR survives. Close that instance by the same
+                // path the test loaded it from — index first, then database,
+                // the order runVerify established.
+                try {
+                    const idx = require(path.join(TEMPLATE_CLI_DIR, 'memory-index.js'));
+                    const active = typeof idx.peekMemoryIndex === 'function' ? idx.peekMemoryIndex() : null;
+                    if (active && typeof active.close === 'function') active.close();
+                    if (typeof idx.resetMemoryIndex === 'function') idx.resetMemoryIndex();
+                } catch (_) { /* never opened in this run */ }
+                try { require(path.join(TEMPLATE_CLI_DIR, 'db.js')).closeDb(); } catch (_) { /* never opened in this run */ }
+                quiesceSharedResources();
             }
         }
         console.log('✅ T-record-only-state passed');
