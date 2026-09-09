@@ -203,6 +203,38 @@ Do **not** bump for: message rewording, CLI output format, internal refactoring,
 
 A careless bump invalidates every disposition for that rule at once, so the field must mean "old decisions may no longer apply", nothing else.
 
+### 2.3.1 Compatibility-preserving emission narrowing
+
+A change to a rule that can only *remove* findings it previously emitted does
+**not** require a `ruleVersion` bump, provided **all** of the following hold:
+
+1. The change can only remove a subset of the findings the rule previously
+   emitted.
+2. It cannot introduce any newly-emitted finding.
+3. For every finding that remains emitted: the canonical finding id
+   construction is unchanged; the governance meaning is unchanged; the
+   `factInputs` schema and its extraction are unchanged; and the same observed
+   facts still produce the same `factInputs` values.
+4. The removed findings resolve through authoritative absence — ORPHANED under
+   §3.3 — and not through the emitting rule's own version.
+5. No surviving disposition that was CURRENT before the change becomes
+   semantically inapplicable because of the change.
+
+This is a **narrowing** clause and is not to be read as anything wider. Any
+widening of emission, and any change to a surviving finding's meaning,
+`factInputs`, identity or applicability, still requires a bump under §2.3.
+Whether a widening could ever be compatibility-preserving is deliberately left
+undecided here; it needs its own adjudication.
+
+This is a reading of §2.3, not an exception to it. §2.3 exists so that
+`ruleVersion` means "old decisions may no longer apply". Under the five
+conditions above, every decision that survives the change still applies to
+exactly the fact it was made about, and every decision that does not survive is
+resolved by the census as ORPHANED with its tombstone intact. Bumping would
+instead mark a population of still-applicable decisions STALE — the precise
+failure the paragraph above forbids. A rule whose emission narrows is therefore
+versioned by §3.3's absence machinery, not by §2.3's compatibility field.
+
 ## 3. Ledger → finding resolution
 
 Three relations, not two:

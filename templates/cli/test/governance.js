@@ -7307,6 +7307,94 @@ Evo-Focus: plan:demo`,
             console.log('✅ T-disposition-annotation passed');
         }
 
+        console.log('T-unknown-status-narrowing-compatibility. Recognizing a token narrows unknown-status without invalidating decisions ...');
+        {
+            const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));
+            const led = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'ledger'));
+            const fp = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'fingerprint'));
+            const res = require(path.join(TEMPLATE_CLI_DIR, 'disposition', 'resolve'));
+            const root = createTempRuntimeRoot('unknown-status-narrowing').workspaceRoot;
+            const w = (file, front) => writeText(path.join(root, 'docs', 'specs', file),
+                ['---', ...front, '---', '', '# S', ''].join('\n'));
+
+            // The token this round adds to RECOGNIZED_SPEC_STATUSES: the finding
+            // that the change REMOVES.
+            w('recognized.md', ['id: spec:recognized', 'status: closed-record-only']);
+            // A token that is still not vocabulary: the population that SURVIVES.
+            w('future.md', ['id: spec:future', 'status: future-status']);
+
+            const first = sp.buildSpecRegistry(root, { write: false });
+            const byId = Object.fromEntries(first.specs.map(s => [s.id, s]));
+
+            assert.ok(!byId['spec:recognized'].findings.some(f => f.ruleId === 'unknown-status'),
+                'a recognized token emits no unknown-status — this is the emission NARROWING itself');
+
+            const survivor = byId['spec:future'].findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(survivor, 'precondition: an unrecognized token must still emit, or everything below is vacuous');
+            assert.strictEqual(survivor.id, 'unknown-status:spec:future',
+                'a surviving finding keeps its canonical id construction');
+            assert.strictEqual(survivor.ruleVersion, 1,
+                'unknown-status stays at ruleVersion 1 under spec:disposition-ledger §2.3.1 — a named clause, not a local exemption');
+            assert.deepStrictEqual(survivor.factInputs, { declaredStatus: 'future-status' },
+                'a surviving finding keeps the same factInputs schema and the same extracted value');
+
+            // THE load-bearing assertion, and the reason @1 is retained.
+            //
+            // The recorded fingerprint is built from a LITERAL pre-change finding
+            // shape, never from the live object. Deriving it from `survivor` would
+            // make this pass under any ruleVersion and prove nothing: the point is
+            // that a decision taken BEFORE the vocabulary change still applies
+            // AFTER it. Bump unknown-status to @2 and the live fingerprint moves
+            // away from this literal, so this entry reads `stale` and this reds.
+            const preChangeFingerprint = fp.computeFingerprint({
+                ruleId: 'unknown-status', ruleVersion: 1,
+                factInputs: { declaredStatus: 'future-status' },
+            });
+            led.writeLedger(root, led.upsertEntry({ version: led.LEDGER_VERSION, entries: [] }, {
+                findingId: 'unknown-status:spec:future', ruleId: 'unknown-status', ruleVersion: 1,
+                fingerprint: preChangeFingerprint, choice: 'accepted-debt',
+                reason: 'decision taken before closed-record-only became recognized vocabulary',
+                at: '2026-08-11T00:00:00Z',
+            }));
+
+            const second = sp.buildSpecRegistry(root, { write: false });
+            const annotated = second.specs.find(s => s.id === 'spec:future')
+                .findings.find(f => f.ruleId === 'unknown-status');
+            assert.ok(annotated, 'a dispositioned finding stays in the collection');
+            assert.strictEqual(annotated.disposition.status, 'current',
+                'the pre-change decision is still CURRENT — @1 is kept because old decisions still apply, not to hide staleness');
+            assert.strictEqual(annotated.disposition.choice, 'accepted-debt');
+
+            // Positive control for the option that was rejected. Had the change
+            // been shipped as unknown-status@2, the live finding would carry
+            // ruleVersion 2 and this very entry — a decision about a spec the
+            // change never touched — would have lapsed.
+            const asIfBumped = { ...survivor, ruleVersion: 2 };
+            assert.strictEqual(res.annotate(asIfBumped, led.readLedger(root)).disposition.status, 'stale',
+                'positive control: under a bump, an untouched pre-change decision goes STALE — the collateral §2.3.1 exists to avoid');
+
+            // The removed instance resolves through authoritative absence, not
+            // through the rule version: the same census that keeps the survivor
+            // CURRENT classifies the decision about the now-recognized token as
+            // ORPHANED, where the tombstone rules of §3.3 apply.
+            const liveIds = new Set(second.specs.flatMap(s => s.findings.map(f => f.id)));
+            const removedEntry = {
+                findingId: 'unknown-status:spec:recognized', ruleId: 'unknown-status', ruleVersion: 1,
+                fingerprint: fp.computeFingerprint({
+                    ruleId: 'unknown-status', ruleVersion: 1,
+                    factInputs: { declaredStatus: 'closed-record-only' },
+                }),
+                choice: 'accepted-debt', reason: 'taken while the token was still unrecognized',
+                at: '2026-08-11T00:00:00Z',
+            };
+            assert.strictEqual(res.classifyEntry(removedEntry, liveIds), 'orphaned',
+                'the decision the narrowing removes resolves as ORPHANED by absence');
+            assert.strictEqual(res.classifyEntry(led.readLedger(root).entries[0], liveIds), 'current',
+                'contrast: under the SAME census the surviving decision is untouched — absence is doing the work, not a version bump');
+
+            console.log('✅ T-unknown-status-narrowing-compatibility passed');
+        }
+
         console.log('NC1-disposition-cardinality. Same input -> identical finding id set across no ledger / current ledger / stale ledger ...');
         {
             const sp = require(path.join(TEMPLATE_CLI_DIR, 'spec-portfolio'));

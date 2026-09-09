@@ -480,11 +480,12 @@ owns it.
 **Rule versions.** The disposition contract (`spec:disposition-ledger` §2.3)
 already decides this — not an implementation choice. It requires a bump when the
 emission condition changes, when `factInputs` extraction changes, or when the set
-of facts the fingerprint depends on changes:
+of facts the fingerprint depends on changes — unless §2.3.1 narrowing applies:
 
 | Rule | Version | Why |
 | --- | --- | --- |
 | `invalid-record-only-closure` | 1 | new rule |
+| `unknown-status` | 1 | §2.3.1 narrowing, not a local exemption: recognition only removes its own finding; survivors keep id, meaning, `{declaredStatus}` |
 
 `zombie-plan` and `size-exceeded` also change in this round, but they are owned
 by `spec:portfolio-finding-correctness`, which carries their `@2` bumps.
