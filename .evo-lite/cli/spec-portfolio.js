@@ -81,14 +81,32 @@ function buildSpecFindings(spec, size) {
         else if (w.startsWith('invalid-record-only-closure:')) {
             const instanceKey = w.slice('invalid-record-only-closure:'.length);
             const ro = spec.recordOnly || {};
-            const factInputs =
-                instanceKey === 'ineligible'
-                    ? { locallyExecutableCriterionDigests: ro.locallyExecutableDigests || [] }
-                : instanceKey === 'contract-visibility-discrepancy'
-                    ? { authorityContractDigests: ro.authorityDigests || [],
-                        corroborationContractDigests: ro.corroborationDigests || [] }
-                    : { invalidClosureFields: ro.invalidClosureFields || [] };
-            f('invalid-record-only-closure', factInputs, instanceKey);
+            if (instanceKey === 'ineligible') {
+                f('invalid-record-only-closure',
+                    { locallyExecutableCriterionDigests: ro.locallyExecutableDigests || [] }, instanceKey);
+            } else if (instanceKey === 'contract-visibility-discrepancy') {
+                f('invalid-record-only-closure',
+                    { authorityContractDigests: ro.authorityDigests || [],
+                      corroborationContractDigests: ro.corroborationDigests || [] }, instanceKey);
+            } else if (instanceKey === 'record-incomplete') {
+                f('invalid-record-only-closure',
+                    { invalidClosureFields: ro.invalidClosureFields || [] }, instanceKey);
+            } else {
+                // Fail-open guard, mirrored from formatWarningLine's comment on the
+                // same case: an instanceKey that is none of the three known ones
+                // must not fall through the ternary chain and silently inherit
+                // record-incomplete's factInputs shape — that would fingerprint a
+                // future fourth violation under someone else's disposition
+                // identity, a wrong fingerprint recorded silently. This is the
+                // more dangerous of the two paths to get wrong (the display path
+                // only mis-describes; this one mis-identifies), so it must fail
+                // loud rather than mimic. Mark it non-dispositionable — the same
+                // refusal mechanism the mtime-provenance aging findings use above
+                // — so nobody can record a decision against a wrong fingerprint;
+                // the finding still surfaces, keyed by its own unrecognized name.
+                f('invalid-record-only-closure',
+                    { unrecognizedInstanceKey: instanceKey }, instanceKey, { dispositionable: false });
+            }
         }
     }
     return out;
@@ -298,8 +316,6 @@ function parseClosureRecord(frontmatter) {
 // message. `parked` = the work is not finished / deliberately deferred.
 // `closed-record-only` = the work is claimed finished, with no verifiable
 // closure. An audit must separate them at a glance.
-const REQUIRES_RELEASE_WAIVER = Object.freeze(new Set(['parked', 'closed-record-only']));
-
 const WAIVER_GATED_REASON = Object.freeze({
     'parked': {
         invalidWaiver: 'parked release-blocking spec whose waiver is incomplete or invalid',
@@ -311,6 +327,12 @@ const WAIVER_GATED_REASON = Object.freeze({
                 + 'a closure record is not a waiver; the risk was never verified',
     },
 });
+
+// Derived from WAIVER_GATED_REASON's keys, not enumerated a second time — a
+// state added to one but not the other would otherwise make `reasons`
+// undefined in deriveBlocker below and throw, breaking its documented
+// never-throws-for-normal-degradation contract.
+const REQUIRES_RELEASE_WAIVER = Object.freeze(new Set(Object.keys(WAIVER_GATED_REASON)));
 
 // spec §8.2.2. Returns a blocker record or null.
 //

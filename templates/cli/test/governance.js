@@ -10525,6 +10525,13 @@ Evo-Focus: plan:demo`,
             const zf = by('spec:z2').findings.find(f => f.ruleId === 'zombie-plan');
             assert.ok(Array.isArray(zf.factInputs.zombieRelevantPlans),
                 'zombie-plan factInputs name zombieRelevantPlans');
+            // zombieRelevantPlans is a fingerprint input now, not just a display
+            // list — wrong content means a wrong disposition identity. Pin the
+            // exact set (spec:z2 links only the draft plan:zd), not merely its
+            // shape, so this proves the set is genuinely filtered rather than
+            // passed through unchanged.
+            assert.deepStrictEqual(zf.factInputs.zombieRelevantPlans, ['plan:zd'],
+                'zombie-plan factInputs must name exactly the zombie-relevant plan, not a superset or a different plan');
             assert.ok(!('notDonePlans' in zf.factInputs),
                 'zombie-plan must not fingerprint a set its rule no longer consults');
 
@@ -10610,9 +10617,15 @@ Evo-Focus: plan:demo`,
             // tautology (a file compared with itself, unable to fail no matter how
             // stale the mirror is) — so we say that explicitly instead of asserting a
             // no-op. The comparison only has meaning under the mirror runner
-            // (`node ./.evo-lite/cli/test.js`), which is exactly the runner
-            // package.json's `test` script uses, so an unsynced mirror still reds
-            // where it matters.
+            // (`node ./.evo-lite/cli/test.js`), which is exactly what the runner
+            // package.json's `test` script uses — but even there it catches only
+            // a PARTIAL sync: this governance.js fresh (so this assertion is
+            // present and running) while spec-portfolio.js is stale, which is a
+            // real, recorded failure shape in this repository. A WHOLLY stale
+            // mirror is not detectable from inside the mirror's own suite: the
+            // mirror runner executes the mirror's own copy of governance.js, so
+            // if that copy is itself the stale one, this assertion is not part
+            // of the code that runs and nothing reds.
             if (path.resolve(CLI_DIR) === path.resolve(TEMPLATE_CLI_DIR)) {
                 console.log('   (mirror-staleness check: not applicable under this runner — '
                     + 'CLI_DIR and TEMPLATE_CLI_DIR both resolve to the canonical tree here; '
