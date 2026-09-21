@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>create-evo-lite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{--bg:#f5f7f6;--surface:#fff;--surface-2:#eaeeed;--ink:#131a19;--ink-2:#5a6664;--ink-3:#808d8a;
+--line:#d6dddb;--line-soft:#e6ebea;--accent:#0d7480;--accent-soft:#e0f0f1;--ok:#2c7a4f;--ok-soft:#e2f1e8;
+--warn:#9a6407;--warn-soft:#f6eddc;--danger:#a33028;--danger-soft:#f7e5e3;
+--shadow:0 1px 2px rgba(19,26,25,.05),0 8px 24px -16px rgba(19,26,25,.25);
+--f-sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+--f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Consolas,monospace;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1211;--surface:#141c1b;--surface-2:#1b2524;
+--ink:#e3e9e7;--ink-2:#8f9d9a;--ink-3:#6f7d7a;--line:#253230;--line-soft:#1d2726;--accent:#45b8c4;--accent-soft:#10302f;
+--ok:#5cba81;--ok-soft:#10291d;--warn:#d59c46;--warn-soft:#2b2313;--danger:#e2786f;--danger-soft:#2d1917;
+--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -16px rgba(0,0,0,.8);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0d1211;--surface:#141c1b;--surface-2:#1b2524;--ink:#e3e9e7;--ink-2:#8f9d9a;
+--ink-3:#6f7d7a;--line:#253230;--line-soft:#1d2726;--accent:#45b8c4;--accent-soft:#10302f;--ok:#5cba81;
+--ok-soft:#10291d;--warn:#d59c46;--warn-soft:#2b2313;--danger:#e2786f;--danger-soft:#2d1917;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-sans);font-size:15px;line-height:1.65;
+-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:0 16px 96px;display:grid;grid-template-columns:1fr;gap:40px}
+@media (min-width:1024px){.wrap{padding:0 24px 96px;grid-template-columns:216px minmax(0,1fr);gap:56px;align-items:start}}
+.masthead{grid-column:1/-1;border-bottom:1px solid var(--line);padding:44px 0 28px;display:flex;flex-wrap:wrap;
+gap:28px 40px;align-items:flex-end;justify-content:space-between}
+.masthead h1{font-size:clamp(28px,4vw,40px);line-height:1.12;letter-spacing:-.022em;font-weight:700;margin:0 0 10px}
+.eyebrow{font-family:var(--f-mono);font-size:11px;font-weight:500;letter-spacing:.13em;text-transform:uppercase;
+color:var(--accent);margin:0 0 12px}
+.masthead p.lede{margin:0;color:var(--ink-2);max-width:58ch}
+.stamp{font-family:var(--f-mono);font-size:12px;color:var(--ink-2);display:grid;gap:4px;justify-items:start}
+.stamp b{color:var(--ink);font-weight:600}
+nav.toc{display:none;font-size:13px}
+@media (min-width:1024px){nav.toc{display:block;position:sticky;top:24px}}
+nav.toc p{font-family:var(--f-mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);margin:0 0 10px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:1px}
+nav.toc a{display:block;padding:5px 10px;color:var(--ink-2);text-decoration:none;border-left:2px solid var(--line-soft);border-radius:0 4px 4px 0}
+nav.toc a:hover{color:var(--accent);background:var(--surface);border-left-color:var(--accent)}
+main{min-width:0;display:grid;gap:52px}
+section{scroll-margin-top:20px;min-width:0}
+h2{font-size:21px;font-weight:600;margin:0 0 6px;padding-bottom:10px;border-bottom:1px solid var(--line);
+display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+h2 .h2-tag{font-family:var(--f-mono);font-size:11px;font-weight:500;color:var(--ink-3);letter-spacing:.04em}
+h3{font-size:15px;font-weight:600;margin:26px 0 8px}
+p{margin:10px 0;max-width:74ch}
+ul{margin:10px 0;padding-left:20px;max-width:74ch}
+li{margin:4px 0}
+a{color:var(--accent)}
+code{font-family:var(--f-mono);font-size:.875em;background:var(--surface-2);border-radius:3px;padding:1px 5px;word-break:break-word}
+pre{margin:12px 0;padding:12px 14px;overflow-x:auto;background:var(--surface);border:1px solid var(--line);
+border-left:3px solid var(--ink-3);border-radius:0 8px 8px 0;box-shadow:var(--shadow)}
+pre code{background:none;padding:0;font-size:12.5px;line-height:1.7}
+blockquote{margin:16px 0;padding:13px 16px;border-radius:8px;background:var(--warn-soft);font-size:14px;max-width:74ch}
+blockquote p{margin:6px 0;max-width:none}
+blockquote p:first-child{margin-top:0}blockquote p:last-child{margin-bottom:0}
+.tablewrap{overflow-x:auto;margin:14px 0;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:9px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+thead th{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+font-weight:500;background:var(--surface-2);border-bottom:1px solid var(--line);white-space:nowrap}
+tbody tr:last-child td{border-bottom:none}
+.badge{display:inline-block;font-family:var(--f-mono);font-size:10.5px;font-weight:600;letter-spacing:.06em;
+padding:2px 7px;border-radius:4px;white-space:nowrap}
+.badge.pass{color:var(--ok);background:var(--ok-soft)}
+.badge.hold{color:var(--warn);background:var(--warn-soft)}
+.badge.stop{color:var(--danger);background:var(--danger-soft)}
+.badge.idle{color:var(--ink-3);background:var(--surface-2)}
+.now{background:var(--accent-soft);border-radius:10px;padding:4px 20px;margin-top:14px}
+.now p{max-width:none}
+.log{border-left:2px solid var(--line);padding-left:18px;margin-top:8px}
+.log h3{font-family:var(--f-mono);font-size:13px;color:var(--accent);margin-top:22px}
+.log p.lbl{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+color:var(--ink-3);margin:12px 0 -4px}
+footer{grid-column:1/-1;border-top:1px solid var(--line);margin-top:12px;padding-top:20px;font-size:12.5px;
+color:var(--ink-3);font-family:var(--f-mono)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body>
+<div class="wrap">
+<header class="masthead">
+<div><p class="eyebrow">AI Project Continuity Toolkit</p><h1>create-evo-lite</h1>
+<p class="lede">3.x 的驾驶舱。人和 AI 都从这里开始。每段有硬上限，超出就把旧内容驱逐到 <code>docs/devlog.md</code>，再旧的交给 git history。</p></div>
+<div class="stamp"><div><b>branch</b> 3.x</div><div><b>specs</b> 2</div><div><b>last log</b> 2026-09-21 · 3.x skeleton</div><div><b>rendered</b> 2026-09-21</div></div>
+</header>
+<nav class="toc" aria-label="目录"><p>目录</p><ol><li><a href="#identity">Identity</a></li><li><a href="#now">Now</a></li><li><a href="#milestones">Milestones</a></li><li><a href="#decisions">Decisions</a></li><li><a href="#specs">Specs</a></li><li><a href="#known-issues">Known Issues</a></li><li><a href="#commands">Commands</a></li><li><a href="#handoff">Handoff</a></li><li><a href="#specs-generated">Spec 索引</a></li><li><a href="#devlog">开发日志</a></li></ol></nav>
+<main>
+<section id="identity"><h2>Identity <span class="h2-tag">&lt;= 10 lines</span></h2><p><strong>create-evo-lite 3.x — AI Project Continuity Toolkit</strong></p>
+<p>给项目安装一套让人和 AI 能持续接手开发的基础设施。一条命令装好三个对象：<code>PROJECT.md</code>（我在哪）、<code>docs/specs/</code>（要做什么）、<code>docs/devlog.md</code>（做过什么、为什么）。</p>
+<p>纯 Markdown，零原生依赖。索引坏了、引擎装不上、hook 没生效，项目仍然 100% 可接手——这才是 lite 的定义。</p>
+<p>2.x 是另一代产品定义（AI Governance Runtime），已于 2026-09-21 冻结，经验见 <code>docs/lessons-v2.md</code>。npm 上 <code>latest</code> 仍是 2.4.x，3.x 预发布走 <code>next</code>。</p></section>
+<section id="now"><h2>Now <span class="h2-tag">&lt;= 5 lines</span></h2><p>3.x skeleton 已落地（迁移顺序第 3–4 步完成）。</p>
+<p>下一步是第 5 步 <strong>fresh-agent dogfood</strong>：让一个没读过任何历史对话的 agent 只读本仓库，回答「项目是什么 / 在哪 / 为什么 / 下一步」。</p>
+<p>第 6 步（极小 CLI）<strong>尚未授权</strong>。dogfood 通过也不得自动开始——本轮的设计目标就是故意少做一步。</p></section>
+<section id="milestones"><h2>Milestones <span class="h2-tag">&lt;= 20 rows</span></h2><div class="tablewrap"><table><thead><tr><th>#</th><th>步骤</th><th>状态</th></tr></thead><tbody><tr><td>1</td><td>annotated tag <code>v2.4-governance-freeze</code></td><td><span class="badge hold">本地已建，远端推送被拒（HTTP 403），待 owner 执行</span></td></tr><tr><td>2</td><td>branch <code>maintenance/2.x</code></td><td><span class="badge pass">已推送</span></td></tr><tr><td>3</td><td>干净分支建 3.x skeleton，不复制 <code>.evo-lite</code></td><td><span class="badge pass">完成</span></td></tr><tr><td>4</td><td>PROJECT.md + specs/ + devlog.md + renderer</td><td><span class="badge pass">完成</span></td></tr><tr><td>5</td><td>fresh-agent dogfood</td><td><span class="badge hold">进行中</span></td></tr><tr><td>6</td><td>极小 CLI（init / status / spec / render）</td><td><span class="badge stop">未授权</span></td></tr><tr><td>7</td><td>fresh clone 全链路通过后 main 切 3.x</td><td><span class="badge idle">未开始</span></td></tr></tbody></table></div></section>
+<section id="decisions"><h2>Decisions <span class="h2-tag">&lt;= 20 active rows</span></h2><div class="tablewrap"><table><thead><tr><th>日期</th><th>决策</th><th>理由</th><th>被否方案</th></tr></thead><tbody><tr><td>2026-09-21</td><td>2.x 冻结为 Governance Runtime，不再演进</td><td>治理层 ~115,000 行 JS 对 720 行产品代码，三条活跃 backlog 全部自锁</td><td>原地砍瘦 2.x</td></tr><tr><td>2026-09-21</td><td>3.x 重定义为 Project Continuity Toolkit</td><td>解决的已不是同一个问题</td><td>保留治理定位</td></tr><tr><td>2026-09-21</td><td>复用包名 <code>create-evo-lite</code></td><td>顶层用户任务未变，major version 足以表达断裂</td><td>另起新包名</td></tr><tr><td>2026-09-21</td><td>3.0 预发布走 dist-tag <code>next</code></td><td>现有用户普通安装仍拿到 2.4.x</td><td>直接发 <code>latest</code></td></tr><tr><td>2026-09-21</td><td>main 不保留 <code>legacy/</code> 目录</td><td>git 层归档不等于 AI 上下文层精简</td><td>把 <code>.evo-lite</code> 搬进 <code>legacy/</code></td></tr><tr><td>2026-09-21</td><td>检索是 capability，不是 dependency</td><td><code>better-sqlite3</code> 缺席即整条接管链失败</td><td>继续以索引为状态模型依赖</td></tr><tr><td>2026-09-21</td><td>Unknown 触发 scope reduction，不触发 blocking</td><td>2.x 的 unknown 最终等价于 blocked</td><td>保留 authority-first 模型</td></tr><tr><td>2026-09-21</td><td>本阶段不写 CLI，也不写行数检查器</td><td>写「治理轻量的治理器」是复发第一征兆</td><td>顺手把 CLI 一起做了</td></tr></tbody></table></div></section>
+<section id="specs"><h2>Specs <span class="h2-tag">&lt;= 20 active rows</span></h2><div class="tablewrap"><table><thead><tr><th>spec</th><th>说明</th><th>行数</th></tr></thead><tbody><tr><td><code>docs/specs/3.0-product-reset.md</code></td><td>2.x 冻结与 3.x 重定位的唯一权威</td><td>118 / 120</td></tr><tr><td><code>docs/specs/TEMPLATE.md</code></td><td>新 spec 模板</td><td>模板</td></tr></tbody></table></div></section>
+<section id="known-issues"><h2>Known Issues <span class="h2-tag">&lt;= 20 items</span></h2><ul><li><code>v2.4-governance-freeze</code> tag 未推到远端：该会话凭据对 <code>refs/tags/*</code> 返回 403。补救命令见 Commands。</li><li>git 里从未打过 <code>v2.4.0</code> tag（最新是 <code>v2.1.0</code>），所以 freeze tag 会是标记该版本的第一个 ref。</li><li>远端遗留 70+ 条 2.x 开发分支，未清理，不影响 3.x。</li><li><code>maintenance/2.x</code> 的维护窗口未定；现有 hive 子仓是否需要显式迁移通知未定。</li><li><code>docs/project.html</code> 的样式目前内联在 renderer 里，主题化未定。</li><li><code>PROJECT.md</code> 的 eviction 目前纯人工。<strong>本阶段禁止写自动检查器。</strong></li></ul></section>
+<section id="commands"><h2>Commands <span class="h2-tag">&lt;= 30 lines</span></h2><pre><code># 渲染开发文档（单向生成，永不回写源文件）
+node scripts/project-render.js          # -&gt; docs/project.html
+
+# 检索：canonical truth 是纯文本，永远只需要 grep
+rg -n &quot;关键词&quot; PROJECT.md docs/
+
+# 新建 spec：复制模板，改标题，硬上限 120 行
+cp docs/specs/TEMPLATE.md docs/specs/&lt;slug&gt;.md
+wc -l docs/specs/&lt;slug&gt;.md
+
+# owner 待执行：补上被 403 拒绝的 freeze tag
+git tag -a v2.4-governance-freeze 5c091b9 -m &quot;Evo-Lite 2.x governance runtime — frozen baseline&quot;
+git push origin v2.4-governance-freeze</code></pre></section>
+<section id="handoff"><h2>Handoff <span class="h2-tag">&lt;= 10 lines</span></h2><p>1. 读本文件的 <strong>Identity</strong> 与 <strong>Now</strong> 两段。 2. 读 <code>docs/specs/3.0-product-reset.md</code>——当前唯一的 active spec。 3. 读 <code>docs/devlog.md</code> 最新一条，了解上一轮做了什么、留下什么。</p>
+<p><strong>禁区</strong>：不要把 <code>docs/lessons-v2.md</code> 里的 2.x 议题当成待办，它们已关闭；不要新增 CLI、行数检查器、hook、MCP、search adapter、dashboard——第 6 步之前一律未授权。</p>
+<p><strong>不确定时</strong>：缩小范围继续（记为 <code>Assumed</code>），不要升级成 <code>Blocked</code>。只有不可逆操作、安全、数据破坏、兼容性才 BLOCK。</p></section>
+<section id="specs-generated"><h2>Spec 索引 <span class="h2-tag">generated</span></h2><p>由 <code>docs/specs/</code> 目录实时生成，不是手抄的。行数超过 120 即表示该 spec 需要拆。</p><div class="tablewrap"><table><thead><tr><th>文件</th><th>标题</th><th>行数</th></tr></thead><tbody><tr><td><code>docs/specs/3.0-product-reset.md</code></td><td>Evo-Lite 3.x Product Reset</td><td><span class="badge pass">118 / 120</span></td></tr><tr><td><code>docs/specs/TEMPLATE.md</code></td><td>&lt;Feature&gt;</td><td><span class="badge pass">43 / 120</span></td></tr></tbody></table></div></section>
+<section id="devlog"><h2>开发日志 <span class="h2-tag">最新 1 条</span></h2><div class="log"><h3>2026-09-21 · 3.x skeleton</h3>
+<p class="lbl">Changed</p>
+<ul><li>冻结 2.x：annotated tag <code>v2.4-governance-freeze</code> + branch <code>maintenance/2.x</code>，均指向 <code>5c091b9</code>。</li><li>从该冻结点建 <code>3.x</code> 干净分支，删除 764 个文件 / 232,764 行，树内不再有 <code>.evo-lite/</code>、<code>templates/cli/</code>、<code>.agents/</code>。</li><li>落地三个核心对象与 renderer：<code>PROJECT.md</code>、<code>docs/specs/</code>、<code>docs/devlog.md</code>、<code>scripts/project-render.js</code>。</li></ul>
+<p class="lbl">Why</p>
+<ul><li>2.x 治理层约 115,000 行 JS 对应 720 行产品代码，且三条活跃 backlog 全部自锁在「权威尚未实例化」上。</li><li>新 clone 里 <code>better-sqlite3</code> 缺席即整条接管链失败——为跨 agent 接手而建的装置，在新 agent 真正接手时第一个动作是抛错。</li></ul>
+<p class="lbl">Learned</p>
+<ul><li>git 层归档不等于 AI 上下文层精简：<code>legacy/</code> 留在主线树内，AI 仍会搜到并决定复用旧实现。</li><li>迁移顺序本身是设计：<code>package.json</code> 的 <code>test</code> / <code>prepublishOnly</code> 仍指向 <code>.evo-lite/cli</code>，提前单点拆 hook 会开出发布链半断的窗口。</li></ul>
+<p class="lbl">Next</p>
+<ul><li>第 5 步 fresh-agent dogfood。第 6 步 CLI 未授权，dogfood 通过也不自动开始。</li><li>Owner 待执行：补推 freeze tag（本会话凭据对 <code>refs/tags/*</code> 返回 403）。</li></ul></div></section>
+</main>
+<footer>由 scripts/project-render.js 从 PROJECT.md、docs/specs/、docs/devlog.md 生成 · 单向输出，不回写源文件 · 要改内容请改 Markdown 源文件后重新渲染</footer>
+</div></body></html>
