@@ -53,7 +53,7 @@ minimal CLI spec 已定义：`docs/specs/3.1-minimal-cli.md` 拥有 CLI 的全�
 | spec | 说明 | 行数 |
 |---|---|---|
 | `docs/specs/3.0-product-reset.md` | 2.x 冻结与 3.x 重定位的唯一权威 | 114 / 120 |
-| `docs/specs/3.1-minimal-cli.md` | CLI 的实现验收拥有者 | 108 / 120 |
+| `docs/specs/3.1-minimal-cli.md` | CLI 的实现验收拥有者 | 115 / 120 |
 | `docs/specs/TEMPLATE.md` | 新 spec 模板 | 模板 |
 
 ## Known Issues (<= 20)
@@ -87,7 +87,7 @@ git push origin v2.4-governance-freeze
 ## Handoff (<= 10)
 
 1. 读本文件的 **Identity** 与 **Now** 两段。
-2. 读 `docs/specs/3.0-product-reset.md`——当前唯一的 active spec。
+2. 读 `docs/specs/3.0-product-reset.md` 理解产品重置的边界，再读 `docs/specs/3.1-minimal-cli.md`——它拥有当前 CLI 的详细设计与验收。
 3. 读 `docs/devlog.md` 最新一条，了解上一轮做了什么、留下什么。
 
 **禁区**：不要把 `docs/lessons-v2.md` 里的 2.x 议题当成待办，它们已关闭；不要新增 CLI、行数检查器、hook、MCP、search adapter、dashboard——第 6 步之前一律未授权。

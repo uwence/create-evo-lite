@@ -6,6 +6,28 @@
 
 ---
 
+## 2026-09-21 · 3.1 spec 修订
+
+Changed
+- caps 增加第二个维度：非表格、非代码的正文物理行 <= 240 字符，超限同样只展示、exit 0。
+- 用行为负控替换「`status` 不得 import renderer parser」：同一目录下两份结构与行数相同、正文文字完全不同的 `PROJECT.md`，`status` 输出必须逐字节相同。
+- `production JS <= 800 / test.js <= 200` 从 AC 移回 Design 预算；删除 `status` 的 `Latest` 字段；关闭三个 Open Questions（slug 不带日期、无 PROJECT.md 时打印 `Initialized no` 并 exit 0、主题化列为 Non-goal）。
+- 修正 §2 的自相矛盾措辞，并把 PROJECT.md 的 Handoff 导航改为「先 3.0 后 3.1」。
+
+Why
+- 只有行数维度防不住最初的病灶：2.x 的 FOCUS 是 1835 字符的一整段，在行数维度上是 `1/5`，读作 OK。这正是 `d3752b9` 修过的那种「扫描说没问题，其实没看」的形状，而我在自己的 spec 里又造了一个。
+- 「不读取任何段落正文」与 caps 要数正文行直接冲突；边界应是「可以读字节，不得解释语义」。
+- 检查 import 绑定的是文件布局，要保护的却是信息流。共享 section scanner 无害，共享「这句话意味着 blocked」才有害。
+
+Learned
+- 一条 AC 如果约束的是实现结构而不是可观察行为，它既容易被绕开，也容易在无害的实现上误报。
+- 预算与验收门是两种东西：预算超了该问「为什么膨胀」，验收门没过才是「不合格」。同一个数字不能两者都是。
+
+Next
+- 审这一版是否可以授权实现。PROJECT.md 实测两个维度均通过（最长正文行 118 字符）。
+
+---
+
 ## 2026-09-21 · 3.1 spec 定稿
 
 Changed
