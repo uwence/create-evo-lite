@@ -52,8 +52,8 @@ minimal CLI spec 已定义：`docs/specs/3.1-minimal-cli.md` 拥有 CLI 的全�
 
 | spec | 说明 | 行数 |
 |---|---|---|
-| `docs/specs/3.0-product-reset.md` | 2.x 冻结与 3.x 重定位的唯一权威 | 114 / 120 |
-| `docs/specs/3.1-minimal-cli.md` | CLI 的实现验收拥有者 | 115 / 120 |
+| `docs/specs/3.0-product-reset.md` | 2.x 冻结与 3.x 重定位的唯一权威 | 115 / 120 |
+| `docs/specs/3.1-minimal-cli.md` | CLI 的实现验收拥有者 | 117 / 120 |
 | `docs/specs/TEMPLATE.md` | 新 spec 模板 | 模板 |
 
 ## Known Issues (<= 20)
@@ -62,7 +62,7 @@ minimal CLI spec 已定义：`docs/specs/3.1-minimal-cli.md` 拥有 CLI 的全�
 - git 里从未打过 `v2.4.0` tag（最新是 `v2.1.0`），所以 freeze tag 会是标记该版本的第一个 ref。
 - 远端遗留 70+ 条 2.x 开发分支，未清理，不影响 3.x。
 - `maintenance/2.x` 的维护窗口未定；现有 hive 子仓是否需要显式迁移通知未定。
-- `docs/project.html` 的样式内联在 renderer 里，主题化未定；该文件不入库，需要时重新生成。
+- `docs/project.html` 不入库，需要时重新生成。3.1 首版固定内联模板，主题化不在当前 scope。
 - `PROJECT.md` 的 eviction 目前纯人工。**本阶段禁止写自动检查器。**
 
 ## Commands (<= 30)

@@ -6,6 +6,28 @@
 
 ---
 
+## 2026-09-21 · 3.1 consistency patch
+
+Changed
+- `render` 与「不修改任何已存在文件」的冲突收窄：`init` 不改已存在文件；`render` 只许创建或替换它唯一的生成物 `docs/project.html`，不得动任何 canonical source。
+- `Initialized` 正式纳入 §2 的钉死字段表，不再是没有数据源所有权的额外分支；无 `PROJECT.md` 时 `Caps` 为 N/A。
+- 3.0 §2 的上限标注改为纯数字，并声明机械计数规则由 3.1 §4 拥有；`render` 主题化与 eviction 两条已被 3.1 裁定，从 Open Questions 移除。
+- PROJECT.md 的「主题化未定」改为「3.1 首版固定内联模板，不在当前 scope」。
+
+Why
+- 按原文字面，`render` 第一次能成功、第二次就违反 spec——这种冲突会逼实现者替我们做产品决定。
+- `active rows` 会让实现者问「什么算 active」，lifecycle 就从计数规则里重新长回来。这是 2.x 自锁链最便宜的一个入口。
+- 一边 Non-goal 一边「未定」，第三个 fresh agent 收到的就是互相矛盾的导航。
+
+Learned
+- 删掉一个词（active）比删掉一个模块便宜得多，但两者挡住的是同一种东西。
+- 我上一轮把 AC 数报成 14，实际是 15。汇报数字前应该数，不该凭印象。
+
+Next
+- 最终授权检查。实现仍未授权。
+
+---
+
 ## 2026-09-21 · 3.1 spec 修订
 
 Changed
