@@ -2,7 +2,7 @@
 
 3.x 的驾驶舱。人和 AI 都从这里开始。每段有硬上限，超出就把旧内容驱逐到 `docs/devlog.md`，再旧的交给 git history。
 
-## Identity (<= 10 lines)
+## Identity (<= 10)
 
 **create-evo-lite 3.x — AI Project Continuity Toolkit**
 
@@ -12,15 +12,15 @@
 
 2.x 是另一代产品定义（AI Governance Runtime），已于 2026-09-21 冻结，经验见 `docs/lessons-v2.md`。npm 上 `latest` 仍是 2.4.x，3.x 预发布走 `next`。
 
-## Now (<= 5 lines)
+## Now (<= 5)
 
-Markdown-only continuity skeleton 已通过独立接手验证：一个未参与开发的 agent 仅凭树内三个核心对象，正确恢复了产品定位、当前阶段、设计理由与下一步，并把缺席的 `package.json` 读成设计边界而非缺陷。
+minimal CLI spec 已定义：`docs/specs/3.1-minimal-cli.md` 拥有 CLI 的全部实现验收，3.0 只保留一条聚合结果。
 
-下一设计工作：定义 minimal CLI spec（`init` / `status` / `spec` / `render`）。**实现尚未授权**——写 spec 与实现 CLI 是两个动作，前者不被后者的未授权状态阻塞。
+**实现仍未授权。** 下一步是审这份 spec——重点不是功能够不够多，而是有没有哪条 AC 悄悄要求发明新的状态机、镜像或 enforcement layer。
 
 交付面仍未成立：树内没有 `package.json`，任何人都还装不到自己的项目里。
 
-## Milestones (<= 20 rows)
+## Milestones (<= 20)
 
 | # | 步骤 | 状态 |
 |---|---|---|
@@ -29,10 +29,10 @@ Markdown-only continuity skeleton 已通过独立接手验证：一个未参与�
 | 3 | 干净分支建 3.x skeleton，不复制 `.evo-lite` | 完成 |
 | 4 | PROJECT.md + specs/ + devlog.md + renderer | 完成 |
 | 5 | 独立接手复核 | 完成 |
-| 6 | 极小 CLI（init / status / spec / render） | 未授权 |
+| 6 | 极小 CLI（init / status / spec / render） | spec 已定义，实现未授权 |
 | 7 | fresh clone 全链路通过后 main 切 3.x | 未开始 |
 
-## Decisions (<= 20 active rows)
+## Decisions (<= 20)
 
 | 日期 | 决策 | 理由 | 被否方案 |
 |---|---|---|---|
@@ -48,14 +48,15 @@ Markdown-only continuity skeleton 已通过独立接手验证：一个未参与�
 | 2026-09-21 | 3.x 当前故意不是 npm package，`package.json` 留到 CLI 阶段整体建立 | 提前单点拆 2.x 发布链会开出半断窗口；2.x 的 scripts 完整保留在 `maintenance/2.x` | 现在就建 package.json |
 | 2026-09-21 | 不跟踪生成物 `docs/project.html` | Markdown 是 truth，HTML 是可丢弃投影；跟踪它等于在第一周重造 mirror-sync tax | 入库并靠人工保持同步 |
 
-## Specs (<= 20 active rows)
+## Specs (<= 20)
 
 | spec | 说明 | 行数 |
 |---|---|---|
-| `docs/specs/3.0-product-reset.md` | 2.x 冻结与 3.x 重定位的唯一权威 | 118 / 120 |
+| `docs/specs/3.0-product-reset.md` | 2.x 冻结与 3.x 重定位的唯一权威 | 114 / 120 |
+| `docs/specs/3.1-minimal-cli.md` | CLI 的实现验收拥有者 | 108 / 120 |
 | `docs/specs/TEMPLATE.md` | 新 spec 模板 | 模板 |
 
-## Known Issues (<= 20 items)
+## Known Issues (<= 20)
 
 - `v2.4-governance-freeze` tag 未推到远端：该会话凭据对 `refs/tags/*` 返回 403。补救命令见 Commands。
 - git 里从未打过 `v2.4.0` tag（最新是 `v2.1.0`），所以 freeze tag 会是标记该版本的第一个 ref。
@@ -64,7 +65,7 @@ Markdown-only continuity skeleton 已通过独立接手验证：一个未参与�
 - `docs/project.html` 的样式内联在 renderer 里，主题化未定；该文件不入库，需要时重新生成。
 - `PROJECT.md` 的 eviction 目前纯人工。**本阶段禁止写自动检查器。**
 
-## Commands (<= 30 lines)
+## Commands (<= 30)
 
 ```bash
 # 渲染开发文档（单向生成，永不回写源文件）
@@ -83,7 +84,7 @@ git tag -a v2.4-governance-freeze 5c091b9 -m "Evo-Lite 2.x governance runtime �
 git push origin v2.4-governance-freeze
 ```
 
-## Handoff (<= 10 lines)
+## Handoff (<= 10)
 
 1. 读本文件的 **Identity** 与 **Now** 两段。
 2. 读 `docs/specs/3.0-product-reset.md`——当前唯一的 active spec。

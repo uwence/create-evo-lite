@@ -6,6 +6,26 @@
 
 ---
 
+## 2026-09-21 · 3.1 spec 定稿
+
+Changed
+- 新增 `docs/specs/3.1-minimal-cli.md`（108 行），拥有 CLI 的全部实现验收。
+- 3.0 的 npm install / init / status·render / render 单向 / Windows 五条验收迁入 3.1，3.0 换成一条聚合；`render` 那条**取消旧勾**——它验的是脚本，不能充当 CLI 实现的证据。
+- 删除「上述第 5–8 条」这类位置引用；PROJECT.md 八个段的上限标注统一为 `(<= N)`。
+
+Why
+- 父 spec 只拥有 outcome，子 spec 只拥有 implementation acceptance，同一个事实只能有一个 checkbox。
+- 位置引用本身就是双真相源的变种：事实在别处，这里只留一个会漂移的指针。迁走四条后编号必然错位。
+
+Learned
+- caps 单一计数规则实测与人工核算对上七段，只有 Commands 差 2 行——是先前人工核算把代码围栏行数了进去，规则本身没错。
+- 「`status` 不得 import renderer 的 parser」这种 30 秒可检查的形状，比「不要把 Markdown 编译成状态机」这句原则更能挡住复发。原则负责解释，形状负责拦截。
+
+Next
+- 审 3.1。实现仍未授权。
+
+---
+
 ## 2026-09-21 · Step 5 CLOSED
 
 Changed
