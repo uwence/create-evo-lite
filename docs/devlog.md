@@ -6,6 +6,27 @@
 
 ---
 
+## 2026-09-21 · 测试卫生修复
+
+Changed
+- spec 12 条验收勾上 5 条有证据的；freeze tag 一条保持未勾——远端至今没有该 ref，本地有不算 durable freeze。
+- `Now` 改写为正常项目状态；两条此前只存在于对话里的边界落盘为 Decision（renderer 只读展示、3.x 故意不是 npm package）。
+- `branchLabel()` 补 `stdio: ['ignore','pipe','ignore']`；`docs/project.html` 停止跟踪，改为需要时重新生成。
+
+Why
+- Dogfood #1: INVALID due to self-referential test setup. Content reconstruction was correct and exposed four documentation/runtime defects. No pass/fail credit assigned.
+- 产品没有失败，是测试设计失败：`Now` 当时写着「本次审阅就是第 5 步」，把「当前焦点 / 下一步」两个答案退化成复述测试本身。
+
+Learned
+- 边界只写在对话里等于没写。`SPEC_LINE_CAP` 和缺席的 `package.json` 都被外部复核当成疑点，因为树里读不到理由。
+- 注释宣称的行为必须可实测：`degrades silently` 在无 `.git` 时实际会打印 `fatal: not a git repository`。
+- 生成物入库就是 mirror-sync tax 的起点，2.x 已经为此付过一次学费。
+
+Next
+- 第 6 步仍未授权；在它正式关闭前不写 CLI 实现，只可能先写 spec。
+
+---
+
 ## 2026-09-21 · 3.x skeleton
 
 Changed

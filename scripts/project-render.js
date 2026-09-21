@@ -153,7 +153,10 @@ function branchLabel() {
     try {
         return require('child_process')
             .execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'],
-                { cwd: ROOT, encoding: 'utf8', timeout: 3000 }).trim();
+                // stderr ignored: execFileSync otherwise leaks git's
+                // "not a git repository" to the console, which is not silent.
+                { cwd: ROOT, encoding: 'utf8', timeout: 3000,
+                  stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     } catch { return null; }
 }
 

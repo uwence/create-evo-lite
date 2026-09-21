@@ -14,11 +14,11 @@
 
 ## Now (<= 5 lines)
 
-3.x skeleton 已落地（迁移顺序第 3–4 步完成）。
+骨架已经成立：三个核心对象与 renderer 都在树内，`docs/specs/3.0-product-reset.md` 是当前唯一 active spec，12 条验收里 5 条已有证据。
 
-下一步是第 5 步 **fresh-agent dogfood**：让一个没读过任何历史对话的 agent 只读本仓库，回答「项目是什么 / 在哪 / 为什么 / 下一步」。
+尚未成立的是**交付面**——3.x 目前只服务于本仓库自己，树内没有 `package.json`，任何人都还装不到自己的项目里。
 
-第 6 步（极小 CLI）**尚未授权**。dogfood 通过也不得自动开始——本轮的设计目标就是故意少做一步。
+迁移顺序第 6 步（极小 CLI：`init` / `status` / `spec` / `render`）**尚未授权**。要推进它，先按 §7 写出对应 spec 并取得授权，不要直接开始实现。
 
 ## Milestones (<= 20 rows)
 
@@ -28,7 +28,7 @@
 | 2 | branch `maintenance/2.x` | 已推送 |
 | 3 | 干净分支建 3.x skeleton，不复制 `.evo-lite` | 完成 |
 | 4 | PROJECT.md + specs/ + devlog.md + renderer | 完成 |
-| 5 | fresh-agent dogfood | 进行中 |
+| 5 | 独立接手复核 | 进行中 |
 | 6 | 极小 CLI（init / status / spec / render） | 未授权 |
 | 7 | fresh clone 全链路通过后 main 切 3.x | 未开始 |
 
@@ -44,6 +44,9 @@
 | 2026-09-21 | 检索是 capability，不是 dependency | `better-sqlite3` 缺席即整条接管链失败 | 继续以索引为状态模型依赖 |
 | 2026-09-21 | Unknown 触发 scope reduction，不触发 blocking | 2.x 的 unknown 最终等价于 blocked | 保留 authority-first 模型 |
 | 2026-09-21 | 本阶段不写 CLI，也不写行数检查器 | 写「治理轻量的治理器」是复发第一征兆 | 顺手把 CLI 一起做了 |
+| 2026-09-21 | renderer 只读显示 spec 行数，不得阻断或自动改写 | 「展示事实」与「治理执行器」的边界必须落盘，否则复发从这里开始 | 超限即阻断 / 自动搬运 |
+| 2026-09-21 | 3.x 当前故意不是 npm package，`package.json` 留到 CLI 阶段整体建立 | 提前单点拆 2.x 发布链会开出半断窗口；2.x 的 scripts 完整保留在 `maintenance/2.x` | 现在就建 package.json |
+| 2026-09-21 | 不跟踪生成物 `docs/project.html` | Markdown 是 truth，HTML 是可丢弃投影；跟踪它等于在第一周重造 mirror-sync tax | 入库并靠人工保持同步 |
 
 ## Specs (<= 20 active rows)
 
@@ -58,13 +61,14 @@
 - git 里从未打过 `v2.4.0` tag（最新是 `v2.1.0`），所以 freeze tag 会是标记该版本的第一个 ref。
 - 远端遗留 70+ 条 2.x 开发分支，未清理，不影响 3.x。
 - `maintenance/2.x` 的维护窗口未定；现有 hive 子仓是否需要显式迁移通知未定。
-- `docs/project.html` 的样式目前内联在 renderer 里，主题化未定。
+- `docs/project.html` 的样式内联在 renderer 里，主题化未定；该文件不入库，需要时重新生成。
 - `PROJECT.md` 的 eviction 目前纯人工。**本阶段禁止写自动检查器。**
 
 ## Commands (<= 30 lines)
 
 ```bash
 # 渲染开发文档（单向生成，永不回写源文件）
+# 产物不入库：Markdown 是 truth，HTML 是可丢弃投影，需要看时重新生成
 node scripts/project-render.js          # -> docs/project.html
 
 # 检索：canonical truth 是纯文本，永远只需要 grep
