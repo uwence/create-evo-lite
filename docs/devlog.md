@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-09-21 · Step 5 CLOSED
+
+Changed
+- Dogfood #2 判定 PASS，Step 5 收口：spec 的 dogfood 验收勾上，Milestone 5 改为完成，`Now` 更新为下一设计工作。
+
+Why
+- 一个未参与开发的 agent 仅凭树内三个核心对象，独立恢复了产品定位 / 当前阶段 / 设计理由 / 下一步 / 明确不该做什么，并把缺席的 `package.json` 正确读成设计边界而非缺陷。
+- Dogfood #1 → INVALID（test setup self-reference）；Dogfood #2 → PASS。不跑第三次——继续设计更复杂的 blind-test protocol 就开始接近旧路线了。
+
+Learned
+- 被测 agent 认出自己在被测不构成污染：continuity 文档本来就该包含项目历史与迁移步骤，要避免的是答案由测试现场直接喂给它。
+- 它拒绝给自己的测试打勾（「该由提出测试的人勾」），说明语义边界是从文档里读出来的，不是被提示的。
+
+Next
+- 下一阶段第一笔内容之前先定 **AC 所有权规则**：父 spec 只拥有 outcome，子 spec 只拥有 implementation acceptance，同一个事实只能有一个 checkbox。因此 3.0 现有的 CLI / npm / Windows 验收应迁入 3.1，3.0 只保留一条聚合结果，不得两边各留一个 `- [ ] Windows works`——那就是新的双镜像。
+- `v2.4-governance-freeze` 仍只存在于本地，远端无该 ref。它不阻塞 Step 5，但 3.0 reset 最终完成前必须成为远端 durable ref。
+
+---
+
 ## 2026-09-21 · 测试卫生修复
 
 Changed

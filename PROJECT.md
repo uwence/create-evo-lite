@@ -14,11 +14,11 @@
 
 ## Now (<= 5 lines)
 
-骨架已经成立：三个核心对象与 renderer 都在树内，`docs/specs/3.0-product-reset.md` 是当前唯一 active spec，12 条验收里 5 条已有证据。
+Markdown-only continuity skeleton 已通过独立接手验证：一个未参与开发的 agent 仅凭树内三个核心对象，正确恢复了产品定位、当前阶段、设计理由与下一步，并把缺席的 `package.json` 读成设计边界而非缺陷。
 
-尚未成立的是**交付面**——3.x 目前只服务于本仓库自己，树内没有 `package.json`，任何人都还装不到自己的项目里。
+下一设计工作：定义 minimal CLI spec（`init` / `status` / `spec` / `render`）。**实现尚未授权**——写 spec 与实现 CLI 是两个动作，前者不被后者的未授权状态阻塞。
 
-迁移顺序第 6 步（极小 CLI：`init` / `status` / `spec` / `render`）**尚未授权**。要推进它，先按 §7 写出对应 spec 并取得授权，不要直接开始实现。
+交付面仍未成立：树内没有 `package.json`，任何人都还装不到自己的项目里。
 
 ## Milestones (<= 20 rows)
 
@@ -28,7 +28,7 @@
 | 2 | branch `maintenance/2.x` | 已推送 |
 | 3 | 干净分支建 3.x skeleton，不复制 `.evo-lite` | 完成 |
 | 4 | PROJECT.md + specs/ + devlog.md + renderer | 完成 |
-| 5 | 独立接手复核 | 进行中 |
+| 5 | 独立接手复核 | 完成 |
 | 6 | 极小 CLI（init / status / spec / render） | 未授权 |
 | 7 | fresh clone 全链路通过后 main 切 3.x | 未开始 |
 
