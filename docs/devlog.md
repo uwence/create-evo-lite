@@ -6,6 +6,23 @@
 
 ---
 
+## 2026-09-22 · 补上 test 的 AC 所有者
+
+Changed
+- 3.1 新增一条验收：`npm test` 调用仓库唯一的 `test.js`，覆盖行为测试并以 exit 0 通过。15 条 → 16 条。
+
+Why
+- `test 全绿` 写在 Goal、`test.js <= 200` 写在 Design 预算，但没有任何 checkbox 拥有「测试存在并通过」这个 outcome。实现者可以一行测试不写，其余 15 条全过，3.1 看起来就能 CLOSED。
+
+Learned
+- outcome 出现在 Goal 里不等于有人拥有它。AC 所有权规则要反过来用一次：每个 Goal 里的动词，都该能指到一个 checkbox。
+- `test.js <= 200` 继续留在 Design：预算超了问「为什么膨胀」，验收没过才是「不合格」，同一个数字不能两者都是。
+
+Next
+- 最终授权检查。实现仍未授权。
+
+---
+
 ## 2026-09-21 · 3.1 consistency patch
 
 Changed

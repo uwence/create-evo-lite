@@ -53,7 +53,7 @@ minimal CLI spec 已定义：`docs/specs/3.1-minimal-cli.md` 拥有 CLI 的全�
 | spec | 说明 | 行数 |
 |---|---|---|
 | `docs/specs/3.0-product-reset.md` | 2.x 冻结与 3.x 重定位的唯一权威 | 115 / 120 |
-| `docs/specs/3.1-minimal-cli.md` | CLI 的实现验收拥有者 | 117 / 120 |
+| `docs/specs/3.1-minimal-cli.md` | CLI 的实现验收拥有者 | 118 / 120 |
 | `docs/specs/TEMPLATE.md` | 新 spec 模板 | 模板 |
 
 ## Known Issues (<= 20)
