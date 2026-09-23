@@ -1,8 +1,11 @@
 ---
 id: spec:governance-observation-budget
-status: draft
+status: closed-record-only
 linkedPlan: plan:governance-observation-budget
 releaseBlocking: false
+closureBasis: record-only
+closureReason: Governance Observation & Work Budget was implemented as historical mother-runtime work and its intended observation/budget behavior was delivered, but this legacy spec contains only prose acceptance criteria and has NO executable acceptance contract under the current verification authority. The completed historical work is therefore closed as record-only rather than retroactively converting prose into a verification contract.
+closureRecordedAt: 2026-09-24
 ---
 
 # Governance Observation & Work Budget — Design Spec

@@ -1,8 +1,11 @@
 ---
 id: spec:disposition-ledger
-status: draft
+status: closed-record-only
 created: 2026-08-11
 linkedPlan: plan:disposition-ledger
+closureBasis: record-only
+closureReason: Disposition Ledger implementation was completed and merged through PR #46, and the resulting ledger/fingerprint/disposition behavior is already in use, but this historical spec's Acceptance Criteria use the pre-contract schema and are INVALID under the current executable-contract authority. Rebuilding a new contract now would retroactively manufacture verification for completed work, so the lifecycle is closed as a historical record without claiming shipped or machine-verified closure.
+closureRecordedAt: 2026-09-24
 ---
 
 # Spec: Disposition Ledger

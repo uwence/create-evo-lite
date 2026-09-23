@@ -1,8 +1,11 @@
 ---
 id: spec:planning-truth-controls
-status: draft
+status: closed-record-only
 linkedPlan: plan:planning-truth-controls
 releaseBlocking: false
+closureBasis: record-only
+closureReason: Planning Truth Controls was implemented as historical mother-runtime work, including the governance-contract, freeze-ledger, trace and portfolio controls described by this spec, but the legacy document has NO executable acceptance contract under today's verification authority. Because the implementation is already historical, authoring a new executable contract now would be retrospective proof construction; close the record without claiming shipped or verified status.
+closureRecordedAt: 2026-09-24
 ---
 
 # Planning Truth Controls — Design Spec
