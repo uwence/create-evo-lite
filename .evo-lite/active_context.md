@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 934c62653fe62594c1b526563392f7a3bfe0c4a2
-> upstreamSha: 934c62653fe62594c1b526563392f7a3bfe0c4a2
+> headSha: 5a04e4f69c5f3976cc1d896bcf3b8b265920f5a0
+> upstreamSha: 5a04e4f69c5f3976cc1d896bcf3b8b265920f5a0
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-09-23T16:34:04.858Z
+> focusUpdatedAt: 2026-09-23T16:55:11.386Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -27,6 +27,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [5a04e4f] 2026-09-23 record-only closure of historical specs: PR #76 merged into main as merge commit 5a04e4f (parents 56bf774 + 94f31dc exact head, --match-head-
 - [934c626] 2026-09-23 post-merge state closure: PR #75 (spec/record-only-closure-terminal-state) merged into main as merge commit 934c626 (parents 5
 - [4a1dca8] 2026-09-07 architecture-scan-coverage: 架构扫描覆盖率缺陷收口：装置不再把「没看见」报成「没问题」。PR #74 以两父 merge 合入 main@4a1dca8（parents 7899dcf + b5e14da），release-ga
 - [58e3952] 2026-09-07 planning-reverse-link-fix: planning 反向链接修复：plan 自身的 linkedSpec 现在能建链。PR #73 以两父 merge 合入 main@58e3952，CI 6/6 全绿（ubuntu node 20/
@@ -36,7 +37,6 @@
 - [c7b018e] 2026-09-05 manual-attestation-staleness: manual attestation 不再 STALE-exempt + batch attest。PR #72 合入 main@c7b018e(两父 merge), CI release-gate
 - [3f95ce4] 2026-09-03 child-zvec-default: 子巢默认安装并启用 zvec,pin 到 0.7.0。PR #66 合入 main@3f95ce4(两父 merge),CI 6/6 绿。 owner 决定(2026-09-03,两条):新建子巢默认
 - [0a717e1] 2026-09-03 governance-gate-parked: V_PRODUCT gate Step A 收口:PARKED at DEFERRED,PR #65 合入 main@0a717e1(两父 merge)。 产出:一份为 A0 的 B3 而设的 cel
-- [46abcf9] 2026-09-03 ProductSupportScopeGateClosed: [A0 product-support-scope] gate 三阶段全部冻结并合入 main@46abcf96(PR #64 两父 merge,复审 head aa59c36c,release-ga
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
