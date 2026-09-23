@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 4a1dca8e7a0c5b3d41a2bf95a59b262a92fbcabf
-> upstreamSha: 4a1dca8e7a0c5b3d41a2bf95a59b262a92fbcabf
+> headSha: 934c62653fe62594c1b526563392f7a3bfe0c4a2
+> upstreamSha: 934c62653fe62594c1b526563392f7a3bfe0c4a2
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-09-07T09:47:16.560Z
+> focusUpdatedAt: 2026-09-23T16:34:04.858Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -27,6 +27,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [934c626] 2026-09-23 post-merge state closure: PR #75 (spec/record-only-closure-terminal-state) merged into main as merge commit 934c626 (parents 5
 - [4a1dca8] 2026-09-07 architecture-scan-coverage: 架构扫描覆盖率缺陷收口：装置不再把「没看见」报成「没问题」。PR #74 以两父 merge 合入 main@4a1dca8（parents 7899dcf + b5e14da），release-ga
 - [58e3952] 2026-09-07 planning-reverse-link-fix: planning 反向链接修复：plan 自身的 linkedSpec 现在能建链。PR #73 以两父 merge 合入 main@58e3952，CI 6/6 全绿（ubuntu node 20/
 - [58e3952] 2026-09-07 hive-attestation-staleness-hsg8: 向 hungersnakegame8 下发 2.4.0 attestation-staleness nurture 并记录。母仓 commit 9349097，仅动 .evo-lite/hive/ch
@@ -36,7 +37,6 @@
 - [3f95ce4] 2026-09-03 child-zvec-default: 子巢默认安装并启用 zvec,pin 到 0.7.0。PR #66 合入 main@3f95ce4(两父 merge),CI 6/6 绿。 owner 决定(2026-09-03,两条):新建子巢默认
 - [0a717e1] 2026-09-03 governance-gate-parked: V_PRODUCT gate Step A 收口:PARKED at DEFERRED,PR #65 合入 main@0a717e1(两父 merge)。 产出:一份为 A0 的 B3 而设的 cel
 - [46abcf9] 2026-09-03 ProductSupportScopeGateClosed: [A0 product-support-scope] gate 三阶段全部冻结并合入 main@46abcf96(PR #64 两父 merge,复审 head aa59c36c,release-ga
-- [e3a79bc] 2026-09-03 ZvecUpgradeDecisionRecordClosed: [zvec-win-unicode-containment] 裁决阶段 CLOSED。0.6→0.7 的 Upgrade Decision Record 经三阶段独立复审后全部冻结,并以两父 merg
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
@@ -50,8 +50,6 @@
 - [llm-wiki] Karpathy LLM-wiki 思路: raw_memory 之上建主题页蒸馏层(主题页知识单元/原地更新/密集互链/低频维护),与 code wiki 互为姐妹投影。等 spec:spec-portfolio-governance 落地后作首批 adopt 候选。详见该 spec Follow-ups。
 - [memory-lock-win-cim-snapshot-reliability] Parked residual — Phase 3A 已合入 main@d48108a：结构化分类、fail-closed 调用点迁移、timeout-only availability gate 与有界诊断均已完成。main run 30779360735 首跑 5/5；真实 CI 至今均走 alive 路径，因此自然 timeout-success 尚未观测。外部 PowerShell/CIM 延迟尾部仍存在，但不再作为 active release blocker。Phase 3B retry、timeout 增加、预热与 transport 替换均未授权。仅在以下任一条件出现时重新激活：1. Phase 3A 后真实 ETIMEDOUT 仍使 T-lock-ident/job 打红；2. 受支持 Node 版本的真实 timeout 不提供 ETIMEDOUT；3. 新证据足以冻结有界 retry 总预算或 transport 变更。
 - [attp-win83-canonical-root-identity] Parked residual — takeover-receipt 使用 fs.realpathSync.native，而 takeover-install 使用 fs.realpathSync；Windows 8.3 短路径与长路径混用时，跨模块项目根身份尚未证明一致。当前不修改生产代码，不占 active backlog；阻断 Windows 8.3 alias topology 的 rollout 声明。重新开启前先执行 long/short 四格 install、status、rollback、discard、receipt 与 containment 矩阵。
-- [spec-size-gate-state-blindness] 治理噪声缺陷（登记，未授权修）— `spec-portfolio.js:382` 的 `if (sizeExceeded && !sizeWaiver)` 完全不看 spec 的 state。2026-08-09 实测：3 条 size-exceeded 警告全部落在 shipped/parked 上（zvec-win-unicode-containment=shipped，靠 chars=57220>40000 触发；release-2.2.0-hardening=shipped，AC=9>8 且 depends=16>12；evo-code-perception-foundation=parked），**没有一条落在 active spec 上**。size gate 的立意是防止在飞 spec 膨胀失控，实际 100% 在骚扰已关闭议题。附带可用性缺陷：警告文案只印 AC/Phase 两个维度，漏印真正触发的 chars 与 dependsOn，导致出现看似自相矛盾的「体量超标 (AC=0, Phase=0)」。修法：size-exceeded 仅对 state=active 生效；文案印出实际越界的维度与阈值。**不要用 sizeWaiver 消音** —— 那是用配置掩盖判定缺陷。
-- [spec-zombie-plan-parked-deadlock] 判定缺陷（登记，未授权修）— `spec-portfolio.js:373` 的 parked 分支只判 `linkedPlans.length > 0 && anyPlanNotDone`，而 parked plan 同样被算作 notDone。后果：**parked spec + parked plan 这个完全自洽的组合永远无法消警**。实例 spec:unified-code-explore-wiki-projection（parked）× plan:code-wiki-inspector-projection（已 parked）在当前逻辑下无论怎么处置都清不掉 zombie-plan 警告。修法：parked plan 应与 done 一样不计入 anyPlanNotDone。
 - [plan-closure-manual-gap] 治理债实体化（登记，未授权修）— 2026-08-09 spec park 后暴露：plan 层缺少任何状态转换 CLI（`mem plan` 只有 status/scan/gaps/progress/trace/lint/freeze/ledger/new/archive-evidence，全是只读或扫描），所以 plan 收口 100% 靠手改文件，而手改从来没人做。实测账：docs/superpowers/plans/2026-06-30-evidence-durability-stale-cascade.md 与 2026-07-03-mother-child-hive-nurture.md **完全没有 YAML frontmatter**（无 id/status，却被 registry 关联为 linkedPlans），两者合计 62 个 checkbox 一个未勾，**但工作实际都已完成并合入 main**（前者产出的 test/harness.js + test/governance.js + test/integration.js 就在树上；后者的 hive nurture 正在子巢 CodePLC 上运行，2026-08-09 复现 hive status=up-to-date）。另有 plan:hive-nurture-engine-migration 20/20 全勾却仍 status=draft，plan:codegraph-adapter-governance-linker-mvp 14/15 且 status=draft。修法需先逐条核实证据再追认，不可批量标 done。**2026-08-18 新增一个母仓真实样本，且是本债最完整的一个**：`plan:r011-closure-router` 五个任务全部实现、逐任务复审、PR #48 两父合入 main@f6c1300、CI 6/6、合并结果全量套件 445、真实数据上验过行为，`[7f8c]` 已 durable closed —— 而 plan 源文件仍是 `status: draft`，SDD 的 checkbox 一个未勾，机器看到的是 `0/5 tasks done`。也就是说「工作完成」与「plan lifecycle / checkbox 状态」之间**完全没有自动收口**，即使走完了本项目最严格的一整套门禁也不例外。此样本与 `[focus-auto-advance-manual-intent-overwrite]` 的 read-side 证据**交叉放大**（错误的 reference 识别 × 过期的 plan lifecycle → 一条 R012 false positive），但两者是独立缺陷，不得合并；只修任一边都无法定义完整合同。同样不得用手工补勾来修历史。
 
 - [size-metrics-newline-determinism] 治理判据的跨平台确定性缺陷（登记，未授权修）— `computeSizeMetrics(content).chars` 直接量取工作副本内容长度，而 `.gitattributes` 声明 `* text=auto eol=lf`。因此**同一个 git blob 在 LF 与 CRLF 检出下产生不同的 chars**，差值恰为行数。2026-09-08 实测于 `spec:record-only-closure-terminal-state`：同一 commit 在 CI/LF 下 39143（余量 857），在本机 CRLF worktree 下 39805（余量 195）。后果是同一个 commit 的 `size-exceeded` verdict 可能因检出机器而异，而该 verdict 现在（`size-exceeded@2` 之后）只对 adopted/active 生效，正是最需要可复现的那一档。修法方向：在量取 chars 前先归一化行尾，并补一条 LF/CRLF 等价性回归；**不要调高 SIZE_THRESHOLDS** —— 阈值不是问题，测量口径才是。本条与 record-only closure 的实施无关，不得并入 plan:record-only-closure-terminal-state 的任何任务。
