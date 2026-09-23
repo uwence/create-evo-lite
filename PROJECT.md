@@ -14,11 +14,11 @@
 
 ## Now (<= 5)
 
-3.1 minimal CLI 实现已授权，按 `docs/specs/3.1-minimal-cli.md` 的 16 条 AC 实施。
+3.1 minimal CLI 已实现：`init` / `status` / `spec` / `render` 四个命令、`package.json`、唯一的 `test.js`（13 项全绿）与五个纯文本 seed 都在树内，production JS 642 / 800 行，零第三方依赖。
 
-授权边界：只做 `init` / `status` / `spec` / `render`、`package.json`、唯一的 `test.js` 与纯文本 seed。不得加入 CI、search adapter、MCP、hook、dashboard、主题系统、自动 eviction、语义状态解析或 `--force`。
+16 条 AC 中 15 条已有证据。仍未勾的只有 **Windows smoke test**——没有真实 Windows 环境，按 Assumption 继续，不阻塞。
 
-Windows AC 可以保持未勾，直到真实 smoke test 提供证据；它不阻塞实现。
+下一步是第 7 步：fresh clone 全链路验证通过后，main 才切 3.x。
 
 ## Milestones (<= 20)
 
@@ -29,8 +29,8 @@ Windows AC 可以保持未勾，直到真实 smoke test 提供证据；它不阻
 | 3 | 干净分支建 3.x skeleton，不复制 `.evo-lite` | 完成 |
 | 4 | PROJECT.md + specs/ + devlog.md + renderer | 完成 |
 | 5 | 独立接手复核 | 完成 |
-| 6 | 极小 CLI（init / status / spec / render） | 实现中 |
-| 7 | fresh clone 全链路通过后 main 切 3.x | 未开始 |
+| 6 | 极小 CLI（init / status / spec / render） | 完成 |
+| 7 | fresh clone 全链路通过后 main 切 3.x | 进行中 |
 
 ## Decisions (<= 20)
 
@@ -68,16 +68,15 @@ Windows AC 可以保持未勾，直到真实 smoke test 提供证据；它不阻
 ## Commands (<= 30)
 
 ```bash
-# 渲染开发文档（单向生成，永不回写源文件）
-# 产物不入库：Markdown 是 truth，HTML 是可丢弃投影，需要看时重新生成
-node scripts/project-render.js          # -> docs/project.html
+npm install          # 零依赖，不触发任何原生编译
+npm test             # 唯一的 test.js，覆盖 3.1 的行为验收
+
+node bin/cli.js status    # 只报机械事实，不解读正文
+node bin/cli.js render    # -> docs/project.html，单向；产物不入库，需要时重新生成
+node bin/cli.js spec <slug>
 
 # 检索：canonical truth 是纯文本，永远只需要 grep
 rg -n "关键词" PROJECT.md docs/
-
-# 新建 spec：复制模板，改标题，硬上限 120 行
-cp docs/specs/TEMPLATE.md docs/specs/<slug>.md
-wc -l docs/specs/<slug>.md
 
 # owner 待执行：补上被 403 拒绝的 freeze tag
 git tag -a v2.4-governance-freeze 5c091b9 -m "Evo-Lite 2.x governance runtime — frozen baseline"

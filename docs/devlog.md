@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-09-23 · minimal CLI 实现
+
+Changed
+- 实现 `init` / `status` / `spec` / `render`：`bin/cli.js` + `src/` 六个模块，production JS 642 / 800 行，`require` 只有 fs / path / child_process / crypto 等 Node 内建。
+- `package.json` 首次建立（3.0.0-beta.1，无 `dependencies`）；`templates/` 五个纯文本 seed；`test.js` 179 / 200 行，13 项全绿。
+- `scripts/project-render.js` 已删除，其逻辑迁入 `src/render.js` 与 `src/markdown.js`——不留两套 renderer 实现。
+
+Why
+- `status` 与 `render` 各有自己的扫描器：`src/structure.js` 只认 heading / 围栏 / 表格分隔行 / 行长，`src/markdown.js` 只服务 presentation，两者无依赖关系。约束的是信息流，不是模块布局。
+
+Learned
+- prose 负控真的抓得住东西：把 Now 换成「宇宙飞船今天吃香蕉」而保持结构与行数，`status` 输出必须逐字节不变，这条比检查 import 更难糊弄。
+- 长行维度的夹具直接用 1835 字符——2.x FOCUS 的真实长度。只数行的实现会把它报成 `Now 1/5 OK`，测试会立刻失败。
+
+Next
+- 第 7 步 fresh clone 全链路验证。Windows AC 无环境，按 Assumption 保持未勾。
+
+---
+
 ## 2026-09-22 · 补上 test 的 AC 所有者
 
 Changed
