@@ -43,9 +43,9 @@
 | 2026-09-21 | main 不保留 `legacy/` 目录 | git 层归档不等于 AI 上下文层精简 | 把 `.evo-lite` 搬进 `legacy/` |
 | 2026-09-21 | 检索是 capability，不是 dependency | `better-sqlite3` 缺席即整条接管链失败 | 继续以索引为状态模型依赖 |
 | 2026-09-21 | Unknown 触发 scope reduction，不触发 blocking | 2.x 的 unknown 最终等价于 blocked | 保留 authority-first 模型 |
-| 2026-09-21 | 本阶段不写 CLI，也不写行数检查器 | 写「治理轻量的治理器」是复发第一征兆 | 顺手把 CLI 一起做了 |
-| 2026-09-21 | renderer 只读显示 spec 行数，不得阻断或自动改写 | 「展示事实」与「治理执行器」的边界必须落盘，否则复发从这里开始 | 超限即阻断 / 自动搬运 |
-| 2026-09-21 | 3.x 当前故意不是 npm package，`package.json` 留到 CLI 阶段整体建立 | 提前单点拆 2.x 发布链会开出半断窗口；2.x 的 scripts 完整保留在 `maintenance/2.x` | 现在就建 package.json |
+| 2026-09-21 | CLI 只在 3.1 授权后整体建立，不提前拆 2.x 发布链 | 边做边拆会开出「拆到一半发布链也断了」的窗口 | 顺手把 CLI 一起做了 |
+| 2026-09-21 | caps 只读展示，不阻断、不自动修改、不自动 eviction | 「展示事实」与「治理执行器」的边界必须落盘，否则复发从这里开始 | 超限即阻断 / 自动搬运 |
+| 2026-09-23 | `package.json` 随 3.1 整体建立，零 `dependencies` | 原生模块缺席即接管链失败是 2.x 的死因；`npm install` 必须不触发任何编译 | 先建包再补边界 |
 | 2026-09-21 | 不跟踪生成物 `docs/project.html` | Markdown 是 truth，HTML 是可丢弃投影；跟踪它等于在第一周重造 mirror-sync tax | 入库并靠人工保持同步 |
 
 ## Specs (<= 20)
@@ -63,7 +63,7 @@
 - 远端遗留 70+ 条 2.x 开发分支，未清理，不影响 3.x。
 - `maintenance/2.x` 的维护窗口未定；现有 hive 子仓是否需要显式迁移通知未定。
 - `docs/project.html` 不入库，需要时重新生成。3.1 首版固定内联模板，主题化不在当前 scope。
-- `PROJECT.md` 的 eviction 目前纯人工。**本阶段禁止写自动检查器。**
+- `PROJECT.md` 的 eviction 纯人工：`status` 只读展示 caps 的两个维度，不阻断、不自动搬运。
 
 ## Commands (<= 30)
 
@@ -89,6 +89,6 @@ git push origin v2.4-governance-freeze
 2. 读 `docs/specs/3.0-product-reset.md` 理解产品重置的边界，再读 `docs/specs/3.1-minimal-cli.md`——它拥有当前 CLI 的详细设计与验收。
 3. 读 `docs/devlog.md` 最新一条，了解上一轮做了什么、留下什么。
 
-**禁区**：不要把 `docs/lessons-v2.md` 里的 2.x 议题当成待办，它们已关闭；不要新增 CLI、行数检查器、hook、MCP、search adapter、dashboard——第 6 步之前一律未授权。
+**禁区**：不要把 `docs/lessons-v2.md` 里的 2.x 议题当成待办，它们已关闭；不要新增 search adapter、MCP、hook、dashboard、主题系统、自动 eviction，也不要让任何命令从正文推导 focus / lifecycle / state。
 
 **不确定时**：缩小范围继续（记为 `Assumed`），不要升级成 `Blocked`。只有不可逆操作、安全、数据破坏、兼容性才 BLOCK。

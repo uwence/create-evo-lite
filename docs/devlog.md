@@ -6,6 +6,24 @@
 
 ---
 
+## 2026-09-23 · 清掉被实现淘汰的状态文字
+
+Changed
+- 两条阶段性 Decision 改写成实现之后仍然成立的长期边界：「本阶段不写 CLI」→「CLI 只在 3.1 授权后整体建立，不提前拆 2.x 发布链」；「3.x 故意不是 npm package」→「`package.json` 随 3.1 整体建立，零 dependencies」。
+- renderer 那条扩成 caps 的完整边界：只读展示，不阻断、不自动修改、不自动 eviction。
+- Known Issues 去掉「本阶段禁止写自动检查器」；Handoff 禁区改成当前真实的：不新增 search / MCP / hook / dashboard / 主题系统 / 自动 eviction，也不得从正文推导 focus / lifecycle / state。
+
+Why
+- Milestone 6 已完成，而这四处仍写着「CLI 未授权」。下一个 fresh agent 会同时读到「CLI 已完成」和「CLI 未授权」——正好是 3.x 自己要消灭的矛盾导航。
+
+Learned
+- 阶段性禁令过期得比想象中快。改写成长期边界而不是删除，既清掉矛盾，又保住当初立这条规则的理由——删掉就只剩结论，下一个人会重新试一遍。
+
+Next
+- 真实 Windows 上跑 tarball smoke test。它是 3.1 唯一未勾的 AC，也是 3.0 聚合验收未勾的唯一原因。不在它通过前发布 next 或切 main。
+
+---
+
 ## 2026-09-23 · 全链路证据收齐
 
 Changed
