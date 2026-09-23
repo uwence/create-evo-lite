@@ -6,6 +6,24 @@
 
 ---
 
+## 2026-09-23 · 全链路证据收齐
+
+Changed
+- 从 `origin/3.x` 真实 clone 后跑通 `npm install` → `npm test` → `init` → `status` → `spec` → `render`，据此勾上 3.1 的 15 条验收。
+
+Why
+- 证据要来自 fresh clone，不是开发工作树。工作树里能跑通，不等于别人 clone 下来能跑通——2.x 就是在这一点上失败的。
+
+Learned
+- `npm install` 0.8s、`audited 1 package`、`node_modules` 为空、树内无 `.node` 与 `binding.gyp`：零原生编译不是声明，是可复现的观察。
+- `npm pack` 产出 14 个文件 / 13.3 kB。对照 2.x：治理层单个测试文件就有 23,111 行。
+- 空目录 `init` 后 `status` 报 `Project target`——退回目录名这条分支在真实环境里走到了，不只在测试里。
+
+Next
+- 唯一未勾的是 Windows smoke test，无环境，按 Assumption 保持未勾；3.0 的聚合验收因此也保持未勾。
+
+---
+
 ## 2026-09-23 · minimal CLI 实现
 
 Changed
