@@ -98,8 +98,8 @@ function main() {
             '  releaseBlockDisposition: waived',
             '  releaseBlockReason: <why this risk is accepted>',
             '  releaseBlockReviewedAt: YYYY-MM-DD',
-            'A waiver applies to parked specs only; adopted/active must be finished',
-            'or deliberately parked first (spec §8.2.2.1).',
+            'A waiver applies to parked and record-only-closed specs; adopted/active must be',
+            'finished, parked, or record-only closed first (spec §8.2.2.1).',
         ]);
         process.exit(1);
         return;

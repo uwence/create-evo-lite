@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 // Called through the module object, never destructured: git observation must
 // stay substitutable by a test without rebuilding the module graph.
 const childProcess = require('child_process');
@@ -10,6 +11,7 @@ const { classifyGitFailure } = require('./planning/gaps');
 const { getWorkspaceRoot } = require('./runtime');
 const { readLedger } = require('./disposition/ledger');
 const { annotate } = require('./disposition/resolve');
+const { parseSpecCriteria, validateCriteria, criterionDigest } = require('./verification/validate-contract');
 
 const SIZE_THRESHOLDS = Object.freeze({ acCount: 8, phaseCount: 3, dependsOnCount: 12, chars: 40000 });
 // The closed vocabulary of spec statuses this registry can actually reason about.
@@ -17,13 +19,24 @@ const SIZE_THRESHOLDS = Object.freeze({ acCount: 8, phaseCount: 3, dependsOnCoun
 // is a guess — see the `unknown-status` warning. `draft` is included because
 // adoptSpec() normalizes it to `adopted` on adoption, so it is a legitimate
 // pre-adoption input rather than an invented word.
-const RECOGNIZED_SPEC_STATUSES = Object.freeze(new Set(['done', 'parked', 'adopted', 'active', 'draft']));
+const RECOGNIZED_SPEC_STATUSES = Object.freeze(new Set([
+    'done', 'parked', 'adopted', 'active', 'draft', 'closed-record-only',
+]));
 const DEFAULT_AGING_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
+// zombie-plan's own settled-plan-statuses set — see the zombieRelevantPlans
+// derivation in buildSpecRegistry for why this must stay distinct from the
+// notDonePlans predicate that aging-inactive reads.
+const ZOMBIE_SETTLED_PLAN_STATUSES = Object.freeze(new Set(['done', 'parked']));
+// Measurement (size / sizeExceeded) happens in every state; this set gates
+// only whether an *actionable* size-exceeded finding is raised — see the
+// sizeExceeded / SIZE_ACTIONABLE_STATES split in buildSpecRegistry.
+const SIZE_ACTIONABLE_STATES = Object.freeze(new Set(['adopted', 'active']));
 
 const SPEC_RULE_VERSIONS = Object.freeze({
-    'unknown-status': 1, 'zombie-plan': 1, 'size-exceeded': 1,
+    'unknown-status': 1, 'zombie-plan': 2, 'size-exceeded': 2,
     'aging-no-plan': 1, 'aging-inactive': 1,
+    'invalid-record-only-closure': 1,
 });
 
 function breachedDimensions(size) {
@@ -36,11 +49,18 @@ function buildSpecFindings(spec, size) {
     const f = (ruleId, factInputs, instanceKey, extra) => out.push({
         id: `${ruleId}:${spec.id}${instanceKey ? `:${instanceKey}` : ''}`,
         ruleId, ruleVersion: SPEC_RULE_VERSIONS[ruleId], factInputs,
+        // Kept as its own field (not folded into factInputs) so a formatter can
+        // render per-instance text without parsing it back out of `id` — the id
+        // is `${ruleId}:${spec.id}:${instanceKey}` and spec.id itself contains a
+        // colon, so splitting it is ambiguous. computeFingerprint hashes only
+        // {ruleId, ruleVersion, factInputs}, so this sibling field never moves
+        // the disposition fingerprint.
+        ...(instanceKey ? { instanceKey } : null),
         ...(extra || {}),
     });
     for (const w of spec.warnings) {
         if (w === 'unknown-status') f(w, { declaredStatus: spec.declaredStatus });
-        else if (w === 'zombie-plan') f(w, { notDonePlans: spec.notDonePlans });
+        else if (w === 'zombie-plan') f(w, { zombieRelevantPlans: spec.zombieRelevantPlans });
         else if (w === 'aging-no-plan' || w === 'aging-inactive') {
             // The finding is emitted unchanged — same id, same factInputs (AC7 /
             // "never filter"). What changes is whether it may enter the
@@ -56,6 +76,36 @@ function buildSpecFindings(spec, size) {
             for (const dim of breachedDimensions(size)) {
                 f('size-exceeded', { dimension: dim, value: size[dim],
                     threshold: SIZE_THRESHOLDS[dim], state: spec.state }, dim);
+            }
+        }
+        else if (w.startsWith('invalid-record-only-closure:')) {
+            const instanceKey = w.slice('invalid-record-only-closure:'.length);
+            const ro = spec.recordOnly || {};
+            if (instanceKey === 'ineligible') {
+                f('invalid-record-only-closure',
+                    { locallyExecutableCriterionDigests: ro.locallyExecutableDigests || [] }, instanceKey);
+            } else if (instanceKey === 'contract-visibility-discrepancy') {
+                f('invalid-record-only-closure',
+                    { authorityContractDigests: ro.authorityDigests || [],
+                      corroborationContractDigests: ro.corroborationDigests || [] }, instanceKey);
+            } else if (instanceKey === 'record-incomplete') {
+                f('invalid-record-only-closure',
+                    { invalidClosureFields: ro.invalidClosureFields || [] }, instanceKey);
+            } else {
+                // Fail-open guard, mirrored from formatWarningLine's comment on the
+                // same case: an instanceKey that is none of the three known ones
+                // must not fall through the ternary chain and silently inherit
+                // record-incomplete's factInputs shape — that would fingerprint a
+                // future fourth violation under someone else's disposition
+                // identity, a wrong fingerprint recorded silently. This is the
+                // more dangerous of the two paths to get wrong (the display path
+                // only mis-describes; this one mis-identifies), so it must fail
+                // loud rather than mimic. Mark it non-dispositionable — the same
+                // refusal mechanism the mtime-provenance aging findings use above
+                // — so nobody can record a decision against a wrong fingerprint;
+                // the finding still surfaces, keyed by its own unrecognized name.
+                f('invalid-record-only-closure',
+                    { unrecognizedInstanceKey: instanceKey }, instanceKey, { dispositionable: false });
             }
         }
     }
@@ -233,24 +283,81 @@ function parseReleaseWaiver(frontmatter) {
     return { present: true, valid: errors.length === 0, errors };
 }
 
+// A closure record is a separate credential from the release waiver above:
+// it certifies that a spec was closed record-only, with no machine-executable
+// acceptance contract. Neither credential implies or is satisfied by the
+// other, so this reuses the *validation pattern* only (closed enum,
+// non-empty text, round-trippable date) — its own fields, parser, errors.
+const CLOSURE_FIELDS = Object.freeze(['closureBasis', 'closureReason', 'closureRecordedAt']);
+
+function parseClosureRecord(frontmatter) {
+    const fm = frontmatter || {};
+    const present = CLOSURE_FIELDS.some(f => fm[f] !== undefined && fm[f] !== null);
+    const errors = [];
+    const invalidFields = [];
+
+    if (fm.closureBasis !== 'record-only') {
+        invalidFields.push('closureBasis');
+        errors.push(`closureBasis must be exactly \`record-only\`, unquoted (closed enum); got ${fm.closureBasis === undefined ? '<missing>' : `\`${fm.closureBasis}\``}`);
+    }
+    if (fm.closureReason === undefined || fm.closureReason === null || String(fm.closureReason).trim() === '') {
+        invalidFields.push('closureReason');
+        errors.push('closureReason must be present and non-empty after trim');
+    }
+    if (fm.closureRecordedAt === undefined || fm.closureRecordedAt === null || !isRoundTripDate(String(fm.closureRecordedAt))) {
+        invalidFields.push('closureRecordedAt');
+        errors.push(`closureRecordedAt must be a real YYYY-MM-DD date that survives a round-trip; got ${fm.closureRecordedAt === undefined ? '<missing>' : `\`${fm.closureRecordedAt}\``}`);
+    }
+
+    return { present, valid: errors.length === 0, errors, invalidFields: invalidFields.sort() };
+}
+
+// Shared POLICY predicate, never a shared lifecycle branch and never a shared
+// message. `parked` = the work is not finished / deliberately deferred.
+// `closed-record-only` = the work is claimed finished, with no verifiable
+// closure. An audit must separate them at a glance.
+const WAIVER_GATED_REASON = Object.freeze({
+    'parked': {
+        invalidWaiver: 'parked release-blocking spec whose waiver is incomplete or invalid',
+        noWaiver: 'parked release-blocking spec with no waiver',
+    },
+    'closed-record-only': {
+        invalidWaiver: 'record-only-closed release-blocking spec whose waiver is incomplete or invalid',
+        noWaiver: 'record-only-closed release-blocking spec with no waiver — '
+                + 'a closure record is not a waiver; the risk was never verified',
+    },
+});
+
+// Derived from WAIVER_GATED_REASON's keys, not enumerated a second time — a
+// state added to one but not the other would otherwise make `reasons`
+// undefined in deriveBlocker below and throw, breaking its documented
+// never-throws-for-normal-degradation contract.
+const REQUIRES_RELEASE_WAIVER = Object.freeze(new Set(Object.keys(WAIVER_GATED_REASON)));
+
 // spec §8.2.2. Returns a blocker record or null.
 //
 // `parked` still blocks on purpose: park means "deferred", not "the risk went
 // away". If changing governance state silently cleared the gate, anyone could
 // route around a real product risk by re-labelling it. Clearing it takes an
 // explicit, recorded waiver.
+//
+// `closed-record-only` blocks on the same purpose, for a different reason: a
+// closure record certifies the project's books are closed, not that the risk
+// was shown not to exist. A closure record and a release waiver are two
+// independent credentials — clearing a release blocker still takes its own,
+// independently valid waiver.
 function deriveBlocker(spec) {
     if (!spec.releaseBlocking) return null;
     if (spec.state === 'shipped') return null;
-    if (spec.state === 'parked') {
+    if (REQUIRES_RELEASE_WAIVER.has(spec.state)) {
         if (spec.releaseBlockWaiver && spec.releaseBlockWaiver.valid) return null;
+        const reasons = WAIVER_GATED_REASON[spec.state];
         return {
             id: spec.id,
             file: spec.file,
             state: spec.state,
             reason: spec.releaseBlockWaiver && spec.releaseBlockWaiver.present
-                ? 'parked release-blocking spec whose waiver is incomplete or invalid'
-                : 'parked release-blocking spec with no waiver',
+                ? reasons.invalidWaiver : reasons.noWaiver,
         };
     }
     // adopted / active — a waiver does not apply here at all (§8.2.2.1).
@@ -351,6 +458,78 @@ function extractLastCriteriaArray(content) {
     } catch (_) {
         return [];
     }
+}
+
+// Visibility identity. Deliberately NOT criterionDigest: that digest covers
+// verification semantics only (id, verifier, dependsOn) and excludes
+// `description` on purpose, yet validateCriteria REQUIRES a non-empty
+// description — so two criteria differing only there are one valid and one
+// invalid under an identical criterionDigest. For this gate that difference is
+// the whole question, so visibility hashes the complete authored payload.
+//
+// DELIBERATE ISOLATION BOUNDARY: This canonicalization is structurally identical
+// to the unexported `canonicalize` in `./verification/validate-contract.js:153-160`,
+// and `fingerprint.js` also carries a key-aware variant. They are kept separate
+// by design: `contractVisibilityDigest` (complete authored payload, includes
+// `description`) and `criterionDigest` (verification semantics only, excludes
+// `description`) are different identities that both feed disposition fingerprints.
+// Sharing a canonicalizer would couple them, so a change made for one would
+// silently move the other's fingerprint and invalidate recorded dispositions
+// without announcing it. Do not "helpfully" deduplicate this function.
+function canonicalizeCriterion(value) {
+    if (Array.isArray(value)) return value.map(canonicalizeCriterion);
+    if (value && typeof value === 'object') {
+        const out = {};
+        for (const k of Object.keys(value).sort()) out[k] = canonicalizeCriterion(value[k]);
+        return out;
+    }
+    return value;
+}
+
+function contractVisibilityDigest(criterion) {
+    // NO `criterion || {}`. JSON can legitimately produce null, false, 0 and "",
+    // and a truthiness default collapses all four into `{}` — two parsers that
+    // observed DIFFERENT authored payloads would then project identically, which
+    // is exactly the disagreement this gate must fail closed on. `undefined`
+    // needs no handling: a JSON parser cannot produce it.
+    const payload = JSON.stringify(canonicalizeCriterion(criterion));
+    return 'sha256:' + crypto.createHash('sha256').update(payload, 'utf8').digest('hex');
+}
+
+function visibilityProjection(criteria) {
+    return (criteria || []).map(contractVisibilityDigest).sort();
+}
+
+// The first hard gate. Protects the verification system itself, not the release
+// gate: only NO-CONTRACT and INVALID may enter record-only closure.
+// UNVERIFIED / STALE / FAIL / PASS all mean "criteria present AND structurally
+// valid" and differ only in evidence, which is never consulted here.
+function evaluateRecordOnlyEligibility(specText) {
+    const authority = (parseSpecCriteria(specText) || {}).criteria || [];
+    const corroboration = extractLastCriteriaArray(specText);
+
+    const aggregateFindings = validateCriteria(authority);
+    // DENY-only probe. A singleton PASS proves a self-contained executable
+    // acceptance assertion exists and refuses eligibility. A singleton FAIL
+    // proves nothing alone and defers to the aggregate. Singleton constraints
+    // are a strict subset of whole-array constraints, so this can only ever
+    // deny, never grant.
+    const locallyExecutable = authority.filter(c => validateCriteria([c]).length === 0);
+
+    const visibilityAgrees =
+        JSON.stringify(visibilityProjection(authority)) ===
+        JSON.stringify(visibilityProjection(corroboration));
+
+    // The CONTRACT-side violation, computed independently of visibility so that
+    // both can be reported at once. A spec is ineligible when it has an
+    // independently executable criterion, or a non-empty contract the authority
+    // considers wholly valid.
+    const ineligible = locallyExecutable.length > 0
+        || (authority.length > 0 && aggregateFindings.length === 0);
+
+    const eligible = visibilityAgrees && !ineligible;
+
+    return { eligible, ineligible, visibilityAgrees, authority, corroboration, locallyExecutable, aggregateFindings };
 }
 
 function computeSizeMetrics(content, body) {
@@ -481,7 +660,24 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         // second implementation of the same question.
         const linkedPlans = resolveLinkedPlanIds(parsed, ir);
 
-        // A referenced plan absent from plan-ir is conservatively treated as not-done.
+        // zombie-plan only: "does this parked spec still have unsettled plans?"
+        // For THIS RULE ONLY, {done, parked} are settled. A parked spec whose
+        // linked plan is also parked is a coherent, deliberately-stopped
+        // combination — it must not warn forever with no disposition able to
+        // clear it.
+        const zombieRelevantPlans = linkedPlans.filter(planId => {
+            const plan = plansById.get(planId);
+            return !plan || !ZOMBIE_SETTLED_PLAN_STATUSES.has(plan.status);
+        });
+
+        // aging-inactive: UNCHANGED pre-existing semantics — any linked plan whose
+        // status is not `done` keeps the spec "not done". Do not merge this with
+        // zombieRelevantPlans above: widening this to also treat `parked` as
+        // settled would silently import a governance judgement no design has
+        // argued (that an active spec backed only by parked plans is not stale)
+        // and would make such a spec emit neither finding while still declaring
+        // itself in flight. A referenced plan absent from plan-ir is
+        // conservatively treated as not-done under both predicates.
         const notDonePlans = linkedPlans.filter(planId => {
             const plan = plansById.get(planId);
             return !plan || plan.status !== 'done';
@@ -526,30 +722,60 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         const declaredStatus = (status && status !== 'unknown') ? status : null;
         const statusRecognized = !declaredStatus || RECOGNIZED_SPEC_STATUSES.has(declaredStatus);
         const warnings = [];
-        let state;
 
+        // baseState never consults any terminal declaration. Named on purpose:
+        // the failure mode this guards against is a future branch reorder that
+        // quietly turns an invalid closed-record-only declaration into a
+        // terminal one by falling through an if/else chain's residue.
+        const baseState = () => (linkedPlans.length > 0 ? 'active' : 'adopted');
+
+        const recordOnlyDeclared = status === 'closed-record-only';
+        const eligibility = recordOnlyDeclared
+            ? evaluateRecordOnlyEligibility(content)
+            : null;
+        const closureRecord = recordOnlyDeclared ? parseClosureRecord(frontmatter) : null;
+        const recordOnlyValid = recordOnlyDeclared && eligibility.eligible && closureRecord.valid;
+
+        let state;
         if (status === 'done') {
             state = 'shipped';
         } else if (status === 'parked') {
             state = 'parked';
-            if (linkedPlans.length > 0 && anyPlanNotDone) warnings.push('zombie-plan');
-        } else if (linkedPlans.length === 0) {
-            state = 'adopted';
-            if (idleDays > agingDays) warnings.push('aging-no-plan');
+            if (linkedPlans.length > 0 && zombieRelevantPlans.length > 0) warnings.push('zombie-plan');
+        } else if (recordOnlyDeclared && recordOnlyValid) {
+            state = 'closed-record-only';
         } else {
-            state = 'active';
-            if (anyPlanNotDone && idleDays > agingDays) warnings.push('aging-inactive');
+            state = baseState();
+            if (linkedPlans.length === 0) {
+                if (idleDays > agingDays) warnings.push('aging-no-plan');
+            } else if (anyPlanNotDone && idleDays > agingDays) {
+                warnings.push('aging-inactive');
+            }
+        }
+
+        if (recordOnlyDeclared && !recordOnlyValid) {
+            // Every applicable violation reports. None suppresses another: they are
+            // separately actionable and separately dispositionable.
+            if (eligibility.ineligible) warnings.push('invalid-record-only-closure:ineligible');
+            if (!eligibility.visibilityAgrees) warnings.push('invalid-record-only-closure:contract-visibility-discrepancy');
+            if (!closureRecord.valid) warnings.push('invalid-record-only-closure:record-incomplete');
         }
 
         if (!statusRecognized) warnings.push('unknown-status');
-        if (sizeExceeded && !sizeWaiver) warnings.push('size-exceeded');
+        // Measurement (sizeExceeded above) happens regardless of state — only
+        // the actionable finding is withheld where the spec can no longer
+        // cheaply change (e.g. shipped, parked, closed-record-only).
+        if (sizeExceeded && !sizeWaiver && SIZE_ACTIONABLE_STATES.has(state)) warnings.push('size-exceeded');
 
         const blocking = parseReleaseBlocking(frontmatter);
         if (blocking.error) errors.push({ path: relSpecPath, reason: blocking.error });
         const waiver = parseReleaseWaiver(frontmatter);
 
         // Waiver schema errors are raised ONLY where a waiver can actually do
-        // something: a release-blocking spec that is parked (§8.2.2.1).
+        // something: a release-blocking spec whose state is waiver-gated
+        // (REQUIRES_RELEASE_WAIVER — parked or closed-record-only, §8.2.2.1).
+        // Routed through the same predicate deriveBlocker() uses, so it is a
+        // real authority rather than a private helper of deriveBlocker.
         //
         // Validating it everywhere made the fields load-bearing in states the
         // frozen table says are ALLOW. A shipped spec that still carries waiver
@@ -562,7 +788,7 @@ function buildSpecRegistry(projectRoot, opts = {}) {
         // unconditional and a waiver cannot lift it, so reporting the waiver as
         // malformed would suggest that fixing it would help. The blocker's own
         // reason says the true thing instead.
-        const waiverIsLoadBearing = blocking.value && state === 'parked';
+        const waiverIsLoadBearing = blocking.value && REQUIRES_RELEASE_WAIVER.has(state);
         if (waiverIsLoadBearing) {
             for (const e of waiver.errors) errors.push({ path: relSpecPath, reason: e });
         }
@@ -585,10 +811,21 @@ function buildSpecRegistry(projectRoot, opts = {}) {
             relations: parseRelations(frontmatter),
             relationMode: (frontmatter && frontmatter.relationMode) || null,
             notDonePlans,
+            zombieRelevantPlans,
             warnings,
             releaseBlocking: blocking.value,
             releaseBlockingDeclared: blocking.present,
             releaseBlockWaiver: waiver,
+            recordOnly: recordOnlyDeclared ? {
+                declared: true,
+                eligible: eligibility.eligible,
+                visibilityAgrees: eligibility.visibilityAgrees,
+                recordValid: closureRecord.valid,
+                locallyExecutableDigests: eligibility.locallyExecutable.map(criterionDigest).sort(),
+                invalidClosureFields: closureRecord.invalidFields,
+                authorityDigests: visibilityProjection(eligibility.authority),
+                corroborationDigests: visibilityProjection(eligibility.corroboration),
+            } : null,
         });
     }
 
@@ -633,9 +870,11 @@ function buildSpecRegistry(projectRoot, opts = {}) {
     const parseFailures = sourceWarnings.filter(w => /parse threw/.test(w.reason));
 
     const registry = {
-        // Bumped from @1: the shape gained blockers/errors/source, and a consumer
-        // that keys on the version must be told the difference.
-        version: 'evo-spec-registry@2',
+        // Bumped from @2: the `state` enum gained `closed-record-only` and entries
+        // gained record-only derived fields. A consumer that keys on the version
+        // must be told the difference; fixing every KNOWN internal consumer does
+        // not make the machine contract unchanged.
+        version: 'evo-spec-registry@3',
         generatedAt: new Date().toISOString(),
         agingDays,
         specs,
@@ -1026,6 +1265,33 @@ function removeEntry(entries, key) {
     return entries.filter(([k]) => k !== key);
 }
 
+// Reads the pre-transition `status` straight out of the `entries` rewriteSpecFrontmatter
+// already parsed for us. Do NOT re-read the file here: that would be a second,
+// independent observation, and a plausible-looking `try/catch -> null` around it
+// would silently skip credential cleanup on failure while the rewrite still
+// succeeds from the first read — an anti-replay guard that quietly opens a
+// replay seam. One observation, no seam.
+function declaredStatusOf(entries) {
+    const row = entries.find(([key]) => key === 'status');
+    return row ? row[1] : null;
+}
+
+// A closure record is a credential for the closed-record-only DECLARATION,
+// not for the derived state: buildSpecRegistry rejects an invalid/incomplete
+// record-only declaration back to baseState (active/adopted), so a spec can
+// carry `status: closed-record-only` with a partial closure record while its
+// derived `state` is not 'closed-record-only'. Keying this strip on `state`
+// would skip exactly that rejected-declaration case and leave reusable
+// credential fragments in the frontmatter for a later re-declaration to
+// silently inherit. Key on the declaration the operator wrote, not this
+// system's verdict on it.
+function stripClosureRecordIfLeavingRecordOnly(entries) {
+    if (declaredStatusOf(entries) !== 'closed-record-only') return entries;
+    let out = entries;
+    for (const field of CLOSURE_FIELDS) out = removeEntry(out, field);
+    return out;
+}
+
 // parkSpec: rewrites frontmatter to status: parked (+ parkedUntil verbatim
 // when opts.until is set), rebuilds the registry, and returns the parked
 // state. Cascade (zombie-plan warning) is derived by buildSpecRegistry, not
@@ -1035,7 +1301,8 @@ function parkSpec(projectRoot, specId, opts = {}) {
     const until = opts.until;
 
     rewriteSpecFrontmatter(absPath, (entries) => {
-        let out = setEntry(entries, 'status', 'parked');
+        let out = stripClosureRecordIfLeavingRecordOnly(entries);
+        out = setEntry(out, 'status', 'parked');
         out = removeEntry(out, 'parkedUntil');
         if (until) out = setEntry(out, 'parkedUntil', until);
         return out;
@@ -1055,7 +1322,8 @@ function reactivateSpec(projectRoot, specId) {
     const absPath = findSpecFileById(projectRoot, specId, 'reactivateSpec');
 
     rewriteSpecFrontmatter(absPath, (entries) => {
-        let out = setEntry(entries, 'status', 'adopted');
+        let out = stripClosureRecordIfLeavingRecordOnly(entries);
+        out = setEntry(out, 'status', 'adopted');
         out = removeEntry(out, 'parkedUntil');
         return out;
     });
@@ -1082,23 +1350,54 @@ function formatWarningLine(spec, warning) {
     if (warning === 'unknown-status') {
         // Name the fallback bucket explicitly: the reviewer needs to know the
         // portfolio count for this spec is a guess, not a reading.
-        return `⚠️ ${spec.id} 状态 "${spec.declaredStatus}" 不在已知词汇表内 (done|parked|adopted|active|draft) — 被兜底归为 ${spec.state}，该归类不可信`;
+        //
+        // The vocabulary list is derived from RECOGNIZED_SPEC_STATUSES rather than
+        // typed out here a second time — a status typed here but not there (or vice
+        // versa) would silently under- or over-report what buildSpecRegistry actually
+        // accepts, which is exactly what happened when closed-record-only was added
+        // to the recognized set but not to this message.
+        const knownVocabulary = Array.from(RECOGNIZED_SPEC_STATUSES).join('|');
+        return `⚠️ ${spec.id} 状态 "${spec.declaredStatus}" 不在已知词汇表内 (${knownVocabulary}) — 被兜底归为 ${spec.state}，该归类不可信`;
+    }
+    if (warning.startsWith('invalid-record-only-closure:')) {
+        const key = warning.slice('invalid-record-only-closure:'.length);
+        const detail = key === 'ineligible'
+            ? '该 spec 有可执行的验收合同,不得走 record-only 收口'
+            : key === 'contract-visibility-discrepancy'
+                ? '两个提取器对该 spec 的合同判读不一致 — 收口入口 fail-closed'
+                : key === 'record-incomplete'
+                    ? 'closure record 不完整 (closureBasis / closureReason / closureRecordedAt)'
+                    // Fail-open guard: an instance key that is none of the three known
+                    // ones must name itself, not silently masquerade as
+                    // record-incomplete. A future fourth key hitting this branch is a
+                    // bug to surface, not a violation to mis-describe.
+                    : `未知的 record-only 违规实例 "${key}"`;
+        return `⚠️ ${spec.id} record-only 收口被驳回: ${detail}`;
     }
     if (warning === 'zombie-plan') {
-        // Only the not-done plans are "仍活跃" — a done plan must never be named here.
-        const plans = (spec.notDonePlans || spec.linkedPlans || []).join(', ');
+        // Only the zombie-relevant plans are "仍活跃" — a done or parked plan
+        // must never be named here (zombie-plan's own settled set, distinct
+        // from notDonePlans which aging-inactive reads).
+        const plans = (spec.zombieRelevantPlans || spec.linkedPlans || []).join(', ');
         return `⚠️ ${spec.id} 已 parked 但关联 plan 仍活跃 (${plans}) — zombie plan`;
     }
     return `⚠️ ${spec.id} ${warning}`;
 }
 
 // Per-finding line. Falls back to the legacy per-warning text for every rule
-// whose finding maps 1:1 onto a warning; only size-exceeded needs the
-// dimension, because it is the one rule that splits per instance.
+// whose finding maps 1:1 onto a warning; size-exceeded and
+// invalid-record-only-closure need special-casing because each splits into
+// multiple per-instance findings, and finding.ruleId is always the bare rule
+// id (the instance key lives in finding.instanceKey / finding.id, never in
+// ruleId) — so formatWarningLine's `warning.startsWith('rule:')` branches can
+// never match through a plain `formatWarningLine(spec, finding.ruleId)` call.
 function formatFindingLine(spec, finding) {
     if (finding.ruleId === 'size-exceeded') {
         const { dimension, value, threshold } = finding.factInputs;
         return `⚠️ ${spec.id} 体量超标 ${dimension}=${value} > ${threshold} (${spec.state}) — 建议拆分或声明 sizeWaiver`;
+    }
+    if (finding.ruleId === 'invalid-record-only-closure') {
+        return formatWarningLine(spec, `invalid-record-only-closure:${finding.instanceKey}`);
     }
     return formatWarningLine(spec, finding.ruleId);
 }
@@ -1106,14 +1405,15 @@ function formatFindingLine(spec, finding) {
 function formatPortfolioReport(registry) {
     if (!registry) return [];
 
-    const counts = { adopted: 0, active: 0, parked: 0, shipped: 0 };
+    const counts = { adopted: 0, active: 0, parked: 0, shipped: 0, recordClosed: 0 };
     const specs = Array.isArray(registry.specs) ? registry.specs : [];
     for (const spec of specs) {
-        if (Object.prototype.hasOwnProperty.call(counts, spec.state)) counts[spec.state]++;
+        if (spec.state === 'closed-record-only') counts.recordClosed += 1;
+        else if (Object.prototype.hasOwnProperty.call(counts, spec.state)) counts[spec.state]++;
     }
 
     const lines = [
-        `📋 [Spec Portfolio]: adopted=${counts.adopted} active=${counts.active} parked=${counts.parked} shipped=${counts.shipped}`,
+        `📋 [Spec Portfolio]: adopted=${counts.adopted} active=${counts.active} parked=${counts.parked} shipped=${counts.shipped} recordClosed=${counts.recordClosed}`,
     ];
     if (registry.source && registry.source.portfolioSourceDrift) {
         lines.push('⚠️ [portfolio-source-drift] Planning IR contains specs but no valid portfolio entities were discovered.');
@@ -1275,4 +1575,10 @@ module.exports = {
     resolveLastTouchedAt,
     // Exported so a test can assert PROVENANCE, not just the instant.
     observeLastTouchedAt,
+    contractVisibilityDigest,
+    visibilityProjection,
+    evaluateRecordOnlyEligibility,
+    parseClosureRecord,
+    CLOSURE_FIELDS,
+    REQUIRES_RELEASE_WAIVER,
 };
