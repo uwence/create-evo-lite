@@ -14,11 +14,11 @@
 
 ## Now (<= 5)
 
-3.1 minimal CLI 已实现：`init` / `status` / `spec` / `render` 四个命令、`package.json`、唯一的 `test.js`（13 项全绿）与五个纯文本 seed 都在树内，production JS 642 / 800 行，零第三方依赖。
+3.1 minimal CLI **16 / 16 CLOSED**。Windows 11 / Node v22.22.2 上从 tarball 安装并跑通 install / test / init / status / render，九项核验无一 FAIL。
 
-16 条 AC 中 15 条已有证据。仍未勾的只有 **Windows smoke test**——没有真实 Windows 环境，按 Assumption 继续，不阻塞。
+3.0 现在 6 / 8，只剩两条，且都需要 owner 凭据：推远端 `v2.4-governance-freeze` tag，以及 `npm publish --tag next`。
 
-下一步是第 7 步：fresh clone 全链路验证通过后，main 才切 3.x。
+其后的顺序：registry 上做一次真实 `npx` smoke → 勾 3.0 的发布 AC → 最后才把 main 切到 3.x。
 
 ## Milestones (<= 20)
 
@@ -53,7 +53,7 @@
 | spec | 说明 | 行数 |
 |---|---|---|
 | `docs/specs/3.0-product-reset.md` | 2.x 冻结与 3.x 重定位的唯一权威 | 115 / 120 |
-| `docs/specs/3.1-minimal-cli.md` | CLI 的实现验收拥有者 | 118 / 120 |
+| `docs/specs/3.1-minimal-cli.md` | CLI 的实现验收拥有者 · 16/16 CLOSED | 118 / 120 |
 | `docs/specs/TEMPLATE.md` | 新 spec 模板 | 模板 |
 
 ## Known Issues (<= 20)
@@ -63,6 +63,7 @@
 - 远端遗留 70+ 条 2.x 开发分支，未清理，不影响 3.x。
 - `maintenance/2.x` 的维护窗口未定；现有 hive 子仓是否需要显式迁移通知未定。
 - `docs/project.html` 不入库，需要时重新生成。3.1 首版固定内联模板，主题化不在当前 scope。
+- 发布产物取决于打包平台：Windows checkout 的 CRLF 让 `npm pack` 出 13.4 kB / 33.9 kB，Linux 为 13.3 kB / 33.1 kB（同为 14 文件）。CRLF 本身不影响运行，仅让长行维度的字符计数多算 1。树内无 `.gitattributes`；建议在 Linux/macOS checkout 上执行 publish。
 - `PROJECT.md` 的 eviction 纯人工：`status` 只读展示 caps 的两个维度，不阻断、不自动搬运。
 
 ## Commands (<= 30)

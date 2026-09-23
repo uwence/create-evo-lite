@@ -6,6 +6,24 @@
 
 ---
 
+## 2026-09-23 · Windows 证据到位，3.1 CLOSED
+
+Changed
+- 勾上 3.1 最后一条 Windows smoke test，16 / 16 CLOSED；随即勾上 3.0 的 `Minimal CLI delivery satisfies 3.1` 聚合项，3.0 来到 6 / 8。
+
+Why
+- 证据来自真实 Windows：PowerShell 7.6.6 / Node v22.22.2，从 `npm pack` 的 tarball 安装到一个全新 consumer 项目，走 `npx` 的三个命令。install / test / init / status / render 全 PASS，五个 seed 齐全，`project.html` 已生成，`.gitignore` 哈希前后一致，项目内无 renderer 脚本。
+- 聚合项此刻才勾：父 spec 拥有 outcome，子 spec 拥有实现验收，子 spec 不全绿则父项无权勾。
+
+Learned
+- CRLF 路径是真实走通的，不是推断：Windows tarball 里的 seed 带 CRLF，`status` 仍正确报出 `Caps OK` 与 `Last log`——因为解析全部经过 `trim()`。代价只有长行维度多算 1 个字符。
+- 但打包产物确实因平台而异（13.4 / 33.9 kB vs 13.3 / 33.1 kB，文件数同为 14）。这不是缺陷，是「发布该从哪台机器做」的决定，已记入 Known Issues。
+
+Next
+- 两件都需要 owner 凭据：推远端 freeze tag、`npm publish --tag next`。之后才是 registry smoke → 勾发布 AC → 切 main。
+
+---
+
 ## 2026-09-23 · 清掉被实现淘汰的状态文字
 
 Changed
