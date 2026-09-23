@@ -14,11 +14,11 @@
 
 ## Now (<= 5)
 
-minimal CLI spec 已定义：`docs/specs/3.1-minimal-cli.md` 拥有 CLI 的全部实现验收，3.0 只保留一条聚合结果。
+3.1 minimal CLI 实现已授权，按 `docs/specs/3.1-minimal-cli.md` 的 16 条 AC 实施。
 
-**实现仍未授权。** 下一步是审这份 spec——重点不是功能够不够多，而是有没有哪条 AC 悄悄要求发明新的状态机、镜像或 enforcement layer。
+授权边界：只做 `init` / `status` / `spec` / `render`、`package.json`、唯一的 `test.js` 与纯文本 seed。不得加入 CI、search adapter、MCP、hook、dashboard、主题系统、自动 eviction、语义状态解析或 `--force`。
 
-交付面仍未成立：树内没有 `package.json`，任何人都还装不到自己的项目里。
+Windows AC 可以保持未勾，直到真实 smoke test 提供证据；它不阻塞实现。
 
 ## Milestones (<= 20)
 
@@ -29,7 +29,7 @@ minimal CLI spec 已定义：`docs/specs/3.1-minimal-cli.md` 拥有 CLI 的全�
 | 3 | 干净分支建 3.x skeleton，不复制 `.evo-lite` | 完成 |
 | 4 | PROJECT.md + specs/ + devlog.md + renderer | 完成 |
 | 5 | 独立接手复核 | 完成 |
-| 6 | 极小 CLI（init / status / spec / render） | spec 已定义，实现未授权 |
+| 6 | 极小 CLI（init / status / spec / render） | 实现中 |
 | 7 | fresh clone 全链路通过后 main 切 3.x | 未开始 |
 
 ## Decisions (<= 20)
