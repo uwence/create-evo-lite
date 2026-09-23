@@ -6,6 +6,23 @@
 
 ---
 
+## 2026-09-23 · 发布平台定案
+
+Changed
+- 新增 Decision：publish 一律从 Linux / macOS checkout 执行；Known Issues 里对应的那条收敛成纯事实，不再重复一份建议。
+
+Why
+- 同一个 commit 在 Windows checkout 上打出 13.4 kB / 33.9 kB，在 Linux 上是 13.3 kB / 33.1 kB。差异无害，但「发布产物取决于谁来发」本身是不该留的不确定性。
+- 被否的是加 `.gitattributes` 规范化行尾：那是往树里加文件来解决一个选一台机器就能解决的问题。
+
+Learned
+- 建议和决定该放在不同地方。留在 Known Issues 里它是「有人某天可能会做」，进了 Decisions 它才是「以后就这么办」，而且被否方案也一并留下。
+
+Next
+- 两条都等 owner 凭据：推 freeze tag、publish next。registry 已核 `latest: 2.4.0`、`3.0.0-beta.1` 不存在。
+
+---
+
 ## 2026-09-23 · Windows 证据到位，3.1 CLOSED
 
 Changed
