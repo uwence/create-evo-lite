@@ -107,8 +107,9 @@ A plan carries two independent facts. Neither may overwrite the other.
   completion is neither.
 - An authored value outside the recognized set (e.g. `in_progress`) is preserved
   verbatim and never coerced to a recognized value. It surfaces as a
-  **planning-scan warning** only — the same channel as today's `[warning]
-  Skipped …` lines from `mem plan scan`. It is not a drift finding, not
+  **planning-scan warning** only, emitted by `planning/scan.js` in the same
+  shape as today's `[warning] Skipped …` entries, which carry no `rule` field
+  (unlike the P001/R003 scan warnings). It is not a drift finding, not
   dispositionable, and adds no rule id or rule version; making it a governance
   finding would need its own spec.
 
@@ -221,8 +222,8 @@ Phase C must reconcile each one; this list is the review checklist.
 | `gaps.js` R012 phantom-focus | `status === 'draft' \|\| done === 0`; `factInputs.planStatus` | `unknown` is not `draft`; equivalent plans get equal emission and fingerprint |
 | `verification/close-preview`, `close-apply` | `planStatus !== 'done'`; flips checkboxes via `markTrackedPlanCheckboxesDone` | reads authored status; checkbox rewrite retired, plan body untouched (§3) |
 | governance tests pinning the flip (`flip N checkbox(es)` actions, post-apply `[x]` bodies) | retired behavior | restate: lifecycle written, body byte-identical |
-| `memory.service` `pickActivePlan` | `in_progress`, then `draft` | `in_progress` is authored by no plan; reconcile to the recognized set |
-| `memory.service` no-active-plan nudge | `in_progress \|\| draft` | same |
+| `memory.service` `pickActivePlan` (drives `context auto-refresh` FOCUS) | `in_progress`, then `draft` | replaced by §5.1 |
+| `memory.service` no-active-plan nudge | `in_progress \|\| draft` | uses §5.1's eligibility, not its own condition |
 | `memory.service` focus auto-advance | refuses `parked` | unchanged |
 | `governance-observer` `detectFocusPlanDrift` | `=== 'active'` | unchanged |
 | `planning.js`, `inspector.js`, `memory.js` | display | may show `taskCompletion` beside `status` |
@@ -233,6 +234,27 @@ Phase C must reconcile each one; this list is the review checklist.
 same document. Phase C MUST apply `spec:disposition-ledger` §2.3 to each rule
 whose emission condition or `factInputs` values change, naming the bump (or the
 §2.3.1 carve-out it relies on) per rule. R012 is currently `@1`.
+
+### §5.1 Active-Plan Eligibility
+
+One eligibility rule, shared by `pickActivePlan` and the no-active-plan nudge;
+neither may restate it.
+
+1. authored `status: active` → eligible, first priority;
+2. authored `status: draft` → eligible, second priority;
+3. `unknown`, `parked`, `done` and any unrecognized value → never eligible;
+4. `taskCompletion` plays no part in eligibility or priority;
+5. ties within a priority resolve by plan-IR order, as `find` does today.
+
+`in_progress` is retired from both consumers: no plan authors it, and under §1
+it would be an unrecognized value.
+
+Foreseeable consequence, recorded rather than decided here:
+`plan:governance-observation-budget` and `plan:planning-truth-controls` are
+authored `active` with every task checked, while their specs are
+`closed-record-only` (PR #76). Under this rule `context auto-refresh` would
+select one of them. That is the rule reading true authored state; whether those
+two plans stay `active` is a per-plan lifecycle decision for the owner.
 
 ## §6 Phases
 
@@ -272,39 +294,39 @@ against. They are expected to be unverified until then.
     },
     {
       "id": "ac-unrecognized-status-preserved-not-coerced",
-      "description": "An authored plan status outside {draft, active, parked, done, unknown} (e.g. in_progress) is preserved verbatim in status and surfaced as a planning-scan warning; it is not mapped to any recognized value by either parse path, and it produces no drift finding, no disposition fingerprint and no new rule id.",
+      "description": "An authored plan status outside {draft, active, parked, done, unknown} (e.g. in_progress) is preserved verbatim in status and surfaced as a mem plan scan warning of the same shape as the existing Skipped warnings, carrying no rule field; it is not mapped to any recognized value by either parse path, and it produces no drift finding, no disposition fingerprint and no new rule id.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
-      "dependsOn": ["templates/cli/planning/parse-markdown.js", "templates/cli/test/governance.js"]
+      "dependsOn": ["templates/cli/planning/parse-markdown.js", "templates/cli/planning/scan.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-r012-identity-is-format-independent",
       "description": "R012 phantom-focus on two equivalent plans that differ only in parse path yields the same emission decision and, when emitted, an identical computeFingerprint; the R012 ruleVersion change (or the disposition-ledger 2.3.1 carve-out relied on) is recorded.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
-      "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/disposition/fingerprint.js", "templates/cli/test/governance.js"]
+      "dependsOn": ["templates/cli/planning/gaps.js", "templates/cli/disposition/fingerprint.js", "templates/cli/planning/parse-markdown.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-close-writes-done-and-leaves-checkboxes",
       "description": "mem plan close writes an explicit status: done into the plan frontmatter, after which the parsed status is done with lifecycleProvenance authored; the plan body, including every checkbox, is byte-identical before and after. For a plan with no frontmatter, the only added content is a frontmatter block containing exactly status: done, no id key is added so the parse path is unchanged, and the file's original newline style is preserved. A second close leaves the file byte-identical.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
-      "dependsOn": ["templates/cli/planning.js", "templates/cli/test/governance.js"]
+      "dependsOn": ["templates/cli/planning.js", "templates/cli/planning/parse-markdown.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-verification-close-writes-lifecycle-only",
       "description": "Verification close writes lifecycle only. For an all-checked Superpowers plan with no authored status, close-preview lists a set status: done action (today it is skipped because the derived status is already done) and close-apply persists it. For a plan with unchecked tasks, a READY close still writes status: done, close-preview lists no checkbox-flip action, and after close-apply the plan body is byte-identical with every checkbox unchanged, so status done with taskCompletion incomplete is the result.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
-      "dependsOn": ["templates/cli/verification/close-preview.js", "templates/cli/verification/close-apply.js", "templates/cli/test/governance.js"]
+      "dependsOn": ["templates/cli/verification/close-preview.js", "templates/cli/verification/close-apply.js", "templates/cli/planning/parse-markdown.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-migration-population-enumerable-before-switch",
       "description": "A read-only enumeration lists every plan whose status would change under the converged parser, with current value, target value and taskCompletion, and on a fixture corpus lists exactly the changing plans and no others; it performs no writes. A completeness check compares that enumeration with a per-plan decision set (record <status> or leave unknown) and reports every missing, extra and duplicated decision; it passes only when the enumerated population equals the decided population and every plan has exactly one decision.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
-      "dependsOn": ["templates/cli/planning/scan.js", "templates/cli/test/governance.js"]
+      "dependsOn": ["templates/cli/planning/scan.js", "templates/cli/planning/parse-markdown.js", "templates/cli/test/governance.js"]
     },
     {
-      "id": "ac-regression-done-plan-not-zombie-relevant",
-      "description": "Regression guard, already true since PR #75: a parked spec whose only linked plan has status done emits no zombie-plan finding, both before and after parser convergence.",
+      "id": "ac-active-plan-selection-uses-authored-lifecycle",
+      "description": "pickActivePlan selects an authored active plan before an authored draft plan; plans whose status is unknown, parked, done or an unrecognized value are never selected; ties within a priority resolve by plan-IR order; the no-active-plan nudge reaches its decision through the same eligibility function; changing taskCompletion alone never changes which plan is selected.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
-      "dependsOn": ["templates/cli/spec-portfolio.js", "templates/cli/test/governance.js"]
+      "dependsOn": ["templates/cli/memory.service.js", "templates/cli/planning/parse-markdown.js", "templates/cli/test/governance.js"]
     }
   ]
 }
