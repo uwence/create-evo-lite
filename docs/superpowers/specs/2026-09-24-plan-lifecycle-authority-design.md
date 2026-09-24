@@ -170,42 +170,71 @@ style is preserved.
   plan. What is fixed here: no close path infers lifecycle, and no close path
   edits completion.
 
-## §4 Migration Boundary (Legacy Unspecified Plans)
+## §4 Migration Boundary
 
-For each plan whose `status` would change under §1 there are three distinct
-things, and only the last needs a human:
+**The migration-impact population** is the union of two sets of existing plans:
+
+1. **parser population** — plans whose `status` changes under §1/§2;
+2. **eligibility population** — plans whose `status` is unchanged but whose
+   §5.1 active-plan eligibility changes (they are status-stable yet
+   behavior-changing: `context auto-refresh` could newly select them).
+
+Only these two classes are in the census. Other consumer differences either
+follow from a status change already in set 1, or come from semantics this
+contract keeps; the census is not a general impact analysis.
+
+For each plan in the population there are three distinct things, and only the
+last needs a human:
 
 | kind | content | who decides |
 | --- | --- | --- |
-| authority fact | no authored `status` | parser |
+| authority fact | authored `status`, or its absence | parser |
 | observed fact | `taskCompletion` | parser |
-| migration decision | whether to record authored `done` (or another state) | owner, per plan |
+| migration decision | the plan's target lifecycle | owner, per plan |
 
 **Phase B — census and decisions (no plan writes).** A read-only enumeration
-lists every existing plan whose `status` would change, with its current value,
-its target value and its `taskCompletion`. Phase B's own tracked plan document
-is the decision artifact — no new ledger or runtime. It MUST record **exactly
-one** decision per enumerated plan: `record <status>` or `leave unknown`.
+lists every plan in the migration-impact population with its set (parser /
+eligibility), its current value, its value under the converged parser, and its
+`taskCompletion`. Phase B's own tracked plan document is the decision
+artifact — no new ledger or runtime. It MUST record **exactly one** decision
+per enumerated plan, recording a target lifecycle, not whether a write is
+needed:
+
+- `target <recognized-status>` — the plan's lifecycle after Phase C. When it
+  equals the plan's current authored value (e.g. `target active` for a plan
+  already authored `active`), Phase C writes no bytes; otherwise Phase C
+  writes it under §3's write rule.
+- `leave unknown` — keep `status` absent (`unknown`, `unspecified`). Valid only
+  for plans with no authored `status`; distinct from `target unknown`, which
+  writes an authored `unknown`.
+
 Completeness is set equality: enumerated population = decided population, with
 no plan missing, none extra, none decided twice. Phase C is not authorizable
 until that check is clean against the real census.
 
 **Phase C — one atomic migration.** A single reviewed change that, in order:
-(1) applies the approved `record <status>` decisions under §3's write rule,
+(1) applies the approved `target` decisions under §3's write rule,
 (2) switches parser semantics, (3) reconciles every §5 consumer. It merges as
 one unit. So no plan on main passes through a false `done → unknown → done`,
-and the only plans that become `unknown` are those the owner decided to leave
-`unknown`. Findings that appear are therefore decided before the switch, not
-discovered after it as "migration work" — the governance layer must not
-manufacture noise and then govern it.
+the only plans that become `unknown` are those the owner decided to leave
+`unknown`, and no plan becomes auto-refresh-selectable without a recorded
+decision. Findings and behavior that appear are therefore decided before the
+switch, not discovered after it as "migration work" — the governance layer must
+not manufacture noise and then govern it.
 
-Current population (main@5a3672b): 21 plans derived `done → unknown`, 3 derived
-`draft → unknown` (`evidence-durability-stale-cascade`,
-`mother-child-hive-nurture`, `backlog-edit-cli-gap`). One consequence is already
+Current population (main@5a3672b, computed, no overlap between the sets):
+
+| set | plans | count |
+| --- | --- | --- |
+| parser | 21 derived `done → unknown`; 3 derived `draft → unknown` (`evidence-durability-stale-cascade`, `mother-child-hive-nurture`, `backlog-edit-cli-gap`) | 24 |
+| eligibility | `plan:governance-observation-budget`, `plan:planning-truth-controls` — authored `active`, ineligible under today's `in_progress`/`draft` rule, eligible under §5.1 | 2 |
+| **migration-impact** | | **26** |
+
+One consequence is already
 predictable and is exactly what Phase B decides: `spec:hive-child-feedback-loop`
 (spec status `draft`, idle since 2026-07-09) links only
 `plan:hive-child-feedback-loop`, derived-done today; if Phase B leaves it
-`unknown`, the switch emits `aging-inactive` for that spec, and if it records
+`unknown`, the switch emits `aging-inactive` for that spec, and if it targets
 `done`, it does not.
 
 ## §5 Consumers
@@ -261,7 +290,7 @@ two plans stay `active` is a per-plan lifecycle decision for the owner.
 | phase | content | authorized by |
 | --- | --- | --- |
 | A | this contract | this document |
-| B | census + exactly one owner decision per plan, recorded in its plan document; no plan writes | its own plan |
+| B | migration-impact census (parser ∪ eligibility) + exactly one `target` / `leave unknown` decision per plan, recorded in its plan document; no plan writes | its own plan |
 | C | one atomic change: approved status writes → parser convergence → consumer reconciliation (§5), incl. retiring the verification-close checkbox rewrite | its own plan, after B's completeness check is clean |
 | D | `mem plan close` | its own plan |
 | E | review the zombie-plan findings one plan at a time | owner, per plan |
@@ -318,9 +347,9 @@ against. They are expected to be unverified until then.
     },
     {
       "id": "ac-migration-population-enumerable-before-switch",
-      "description": "A read-only enumeration lists every plan whose status would change under the converged parser, with current value, target value and taskCompletion, and on a fixture corpus lists exactly the changing plans and no others; it performs no writes. A completeness check compares that enumeration with a per-plan decision set (record <status> or leave unknown) and reports every missing, extra and duplicated decision; it passes only when the enumerated population equals the decided population and every plan has exactly one decision.",
+      "description": "A read-only enumeration lists the migration-impact population: every plan whose status changes under the converged parser, plus every plan whose status is unchanged but whose active-plan eligibility changes; each entry names its set, current value, converged value and taskCompletion. On a fixture corpus covering both sets it lists exactly those plans and no others, and performs no writes. A completeness check compares that population with a per-plan decision set (target <recognized-status> or leave unknown) and reports every missing, extra and duplicated decision, and every leave unknown given to a plan that has an authored status; it passes only when the enumerated population equals the decided population and every plan has exactly one valid decision.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
-      "dependsOn": ["templates/cli/planning/scan.js", "templates/cli/planning/parse-markdown.js", "templates/cli/test/governance.js"]
+      "dependsOn": ["templates/cli/planning/scan.js", "templates/cli/planning/parse-markdown.js", "templates/cli/memory.service.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-active-plan-selection-uses-authored-lifecycle",
@@ -336,6 +365,6 @@ against. They are expected to be unverified until then.
 
 - Whether `mem plan close` may close a plan with `taskCompletion` other than
   `complete`, and with what recorded reason (§3, Phase D).
-- The per-plan migration decisions for the 24 unspecified plans (§4, Phase B).
+- The per-plan migration decisions for the 26 migration-impact plans (§4, Phase B).
 - Whether the recognized plan-status set should share one vocabulary module
   with `RECOGNIZED_SPEC_STATUSES`.
