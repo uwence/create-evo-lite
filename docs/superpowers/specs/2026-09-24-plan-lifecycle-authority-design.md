@@ -15,6 +15,12 @@ implementation, no parser change, no CLI, and no change to any existing plan fil
 **Supersedes as authority:** the "freeze the contract first" condition recorded in
 Backlog Ideas `[plan-status-parser-divergence]`. That entry's measured facts stay
 valid; this document is the contract it was waiting for.
+**Supersedes in part (§3):** the "flip checkboxes" apply step of
+`spec:verification-contract-phase3`, and the "when flipping checkboxes" half of
+`ac-plan-status-done` in `spec:verification-contract-closure-correctness`. That
+spec's Non-Goals deferred the "criteria-gated vs task-evidence-driven closure"
+debate; §3 settles it. Both documents stay as historical record; they are not
+edited.
 
 ## Problem
 
@@ -54,8 +60,11 @@ target semantics.
 ## Non-Goals
 
 - This spec does not rule any specific historical plan `done`, and does not
-  rewrite any historical plan, individually or in bulk.
-- No checkbox is flipped, by this spec or by anything it authorizes.
+  rewrite any historical plan, individually or in bulk. The only historical
+  writes it permits are Phase C applying per-plan decisions the owner recorded
+  in Phase B (§4).
+- No checkbox is flipped, by this spec or by anything it authorizes — including
+  the existing verification close path, whose checkbox rewrite §3 retires.
 - No automatic close. Nothing in this contract turns an observation into an
   authored lifecycle transition.
 - Spec lifecycle is untouched (`spec-portfolio` states, `closed-record-only`).
@@ -78,8 +87,17 @@ A plan carries two independent facts. Neither may overwrite the other.
 | `taskCompletion` | derived from the plan's tracked task markers | `complete` · `incomplete` · `no-tracked-work` |
 
 - `status` keeps its name so existing consumers keep reading one field; what
-  changes is that it is never derived. Missing `status`, or an authored literal
-  `unknown`, yields `status: unknown` + `lifecycleProvenance: unspecified`.
+  changes is that it is never derived. Provenance records where the value came
+  from, not what it is:
+
+  | frontmatter | `status` | `lifecycleProvenance` |
+  | --- | --- | --- |
+  | `status` key absent | `unknown` | `unspecified` |
+  | `status: unknown` written explicitly | `unknown` | `authored` |
+  | any other written value | that value | `authored` |
+
+  (`spec-portfolio` treats an authored spec `unknown` as absent only because the
+  upstream spec parser cannot tell them apart; the plan parser can, so it must.)
 - `taskCompletion`: `no-tracked-work` when the plan has zero parsed tasks;
   `complete` when every parsed task is `implemented`; otherwise `incomplete`.
   It is computed by one function for both parse paths.
@@ -88,8 +106,11 @@ A plan carries two independent facts. Neither may overwrite the other.
   `active.plan.progress` is an existing `done/total` display string. Checkbox
   completion is neither.
 - An authored value outside the recognized set (e.g. `in_progress`) is preserved
-  verbatim and surfaced as an unrecognized-plan-status observation; it is never
-  coerced to a recognized value. This mirrors `RECOGNIZED_SPEC_STATUSES`.
+  verbatim and never coerced to a recognized value. It surfaces as a
+  **planning-scan warning** only — the same channel as today's `[warning]
+  Skipped …` lines from `mem plan scan`. It is not a drift finding, not
+  dispositionable, and adds no rule id or rule version; making it a governance
+  finding would need its own spec.
 
 So a historical Superpowers plan is represented truthfully as
 `status: unknown, lifecycleProvenance: unspecified, taskCompletion: complete` —
@@ -106,29 +127,47 @@ task sets, both parse paths MUST produce equal `status`,
 `lifecycleProvenance` and `taskCompletion`. Format may change which tasks are
 found; it may not change what the found facts mean.
 
-## §3 Close Persists Authored `done`
+## §3 Close Writes Lifecycle Only
 
-A plan leaves the open lifecycle only by an authored transition:
+A plan leaves the open lifecycle only by an authored transition, and **every**
+close path writes lifecycle and nothing else. The state
 
-- A future `mem plan close <id>` (Phase D) writes an explicit `status: done`
-  into the plan's frontmatter. It MUST NOT flip checkboxes: completion is an
-  observation, and writing it would forge the second axis to match the first.
-  It writes the `status` key only, creating a minimal frontmatter block when the
-  plan has none (12 of the 24 unspecified plans have no frontmatter at all; the
-  other 12 have one without `status`). It MUST NOT add or change
-  any other key: adding `id: plan:` would move the file from the Superpowers
-  parse path to the native one, so a lifecycle write would silently become a
-  parse-path change.
-- The existing verification close path (`close-preview` / `close-apply`)
-  already persists `status: done` and flips checkboxes when a contract verdict
-  authorizes it. Its decision "does this plan still need `status: done`
-  written" MUST read authored `status`, not a derived value — today an
-  all-checked Superpowers plan without authored status reports `done` and the
-  write is skipped, leaving no durable lifecycle record.
+```text
+status = done, taskCompletion = incomplete
+```
+
+is legal. It is not a contradiction; it is the reason for two axes: the
+lifecycle was formally closed, and the tracked work was not forged into
+completion to match.
+
+**One write rule for every plan-lifecycle write** (close, and the Phase C
+migration in §4): write the `status` key only, creating a minimal frontmatter
+block when the plan has none (12 of the 24 unspecified plans have no
+frontmatter at all; the other 12 have one without `status`). Never add or
+change any other key — adding `id: plan:` would move the file from the
+Superpowers parse path to the native one, so a lifecycle write would silently
+become a parse-path change. The body is byte-identical and the file's newline
+style is preserved.
+
+- **`mem plan close <id>`** (Phase D) writes `status: done` under that rule.
+- **Verification close** (`close-preview` / `close-apply`): a READY contract
+  verdict authorizes closing the spec and writing `status: done` on its linked
+  plans. It does **not** authorize the claim that every checkbox's work was
+  done. The checkbox rewrite (`markTrackedPlanCheckboxesDone`) is **retired**
+  by this contract: the preview no longer lists a flip action, apply no longer
+  performs one, and the existing `tasks-incomplete` warning stays as the
+  operator's signal. The "does this plan still need `status: done`" decision
+  reads authored `status`: today an all-checked Superpowers plan without
+  authored status reports `done` and the write is skipped, leaving no durable
+  lifecycle record.
+- R008 evidence backfill is unaffected; it records evidence, not completion.
+  No drift rule on main conditions on "`done` plan with unchecked tasks"
+  (checked across `planning/`), so retiring the flip creates no finding by
+  itself.
 - Whether `mem plan close` may close a plan whose `taskCompletion` is not
   `complete`, and what it must record when it does, is decided in the Phase D
-  plan, not here. What is fixed here: close never infers, and never edits
-  completion.
+  plan. What is fixed here: no close path infers lifecycle, and no close path
+  edits completion.
 
 ## §4 Migration Boundary (Legacy Unspecified Plans)
 
@@ -141,20 +180,32 @@ things, and only the last needs a human:
 | observed fact | `taskCompletion` | parser |
 | migration decision | whether to record authored `done` (or another state) | owner, per plan |
 
-Ordering constraint: **the parser switch (Phase C) MUST NOT land before
-Phase B.** Phase B produces a read-only enumeration of every existing plan whose
-`status` would change, with its current value, its target value and its
-`taskCompletion`, and records the owner's per-plan migration decision or an
-explicit "leave `unknown`". Findings that newly appear because of the switch are
-therefore known before it, not discovered after it as "migration work" — the
-governance layer must not manufacture noise and then govern it.
+**Phase B — census and decisions (no plan writes).** A read-only enumeration
+lists every existing plan whose `status` would change, with its current value,
+its target value and its `taskCompletion`. Phase B's own tracked plan document
+is the decision artifact — no new ledger or runtime. It MUST record **exactly
+one** decision per enumerated plan: `record <status>` or `leave unknown`.
+Completeness is set equality: enumerated population = decided population, with
+no plan missing, none extra, none decided twice. Phase C is not authorizable
+until that check is clean against the real census.
+
+**Phase C — one atomic migration.** A single reviewed change that, in order:
+(1) applies the approved `record <status>` decisions under §3's write rule,
+(2) switches parser semantics, (3) reconciles every §5 consumer. It merges as
+one unit. So no plan on main passes through a false `done → unknown → done`,
+and the only plans that become `unknown` are those the owner decided to leave
+`unknown`. Findings that appear are therefore decided before the switch, not
+discovered after it as "migration work" — the governance layer must not
+manufacture noise and then govern it.
 
 Current population (main@5a3672b): 21 plans derived `done → unknown`, 3 derived
 `draft → unknown` (`evidence-durability-stale-cascade`,
-`mother-child-hive-nurture`, `backlog-edit-cli-gap`). At least one new finding
-is already predictable: `spec:hive-child-feedback-loop` (spec status `draft`,
-idle since 2026-07-09) links only `plan:hive-child-feedback-loop`, which is
-derived-done today and would become not-done, emitting `aging-inactive`.
+`mother-child-hive-nurture`, `backlog-edit-cli-gap`). One consequence is already
+predictable and is exactly what Phase B decides: `spec:hive-child-feedback-loop`
+(spec status `draft`, idle since 2026-07-09) links only
+`plan:hive-child-feedback-loop`, derived-done today; if Phase B leaves it
+`unknown`, the switch emits `aging-inactive` for that spec, and if it records
+`done`, it does not.
 
 ## §5 Consumers
 
@@ -168,7 +219,8 @@ Phase C must reconcile each one; this list is the review checklist.
 | `spec-portfolio` `zombieRelevantPlans` | settled = `{done, parked}` | semantics kept; population shifts per §4 |
 | `spec-portfolio` `notDonePlans` (aging) | `!== 'done'` | semantics kept; population shifts per §4 |
 | `gaps.js` R012 phantom-focus | `status === 'draft' \|\| done === 0`; `factInputs.planStatus` | `unknown` is not `draft`; equivalent plans get equal emission and fingerprint |
-| `verification/close-preview`, `close-apply` | `planStatus !== 'done'` | reads authored status (§3) |
+| `verification/close-preview`, `close-apply` | `planStatus !== 'done'`; flips checkboxes via `markTrackedPlanCheckboxesDone` | reads authored status; checkbox rewrite retired, plan body untouched (§3) |
+| governance tests pinning the flip (`flip N checkbox(es)` actions, post-apply `[x]` bodies) | retired behavior | restate: lifecycle written, body byte-identical |
 | `memory.service` `pickActivePlan` | `in_progress`, then `draft` | `in_progress` is authored by no plan; reconcile to the recognized set |
 | `memory.service` no-active-plan nudge | `in_progress \|\| draft` | same |
 | `memory.service` focus auto-advance | refuses `parked` | unchanged |
@@ -187,15 +239,16 @@ whose emission condition or `factInputs` values change, naming the bump (or the
 | phase | content | authorized by |
 | --- | --- | --- |
 | A | this contract | this document |
-| B | read-only migration enumeration + per-plan owner decisions | its own plan |
-| C | parser convergence + consumer reconciliation (§5) | its own plan, after B |
+| B | census + exactly one owner decision per plan, recorded in its plan document; no plan writes | its own plan |
+| C | one atomic change: approved status writes → parser convergence → consumer reconciliation (§5), incl. retiring the verification-close checkbox rewrite | its own plan, after B's completeness check is clean |
 | D | `mem plan close` | its own plan |
 | E | review the zombie-plan findings one plan at a time | owner, per plan |
 
-Freezing this contract changes no finding: the three current `zombie-plan`
-findings link plans that are authored `draft` or derived `draft`, and both are
-unsettled before and after. The finding count moves only when a specific plan
-is closed in Phase E.
+Freezing this contract changes no finding. Phase C changes only findings that
+Phase B's decisions fixed in advance. The three current `zombie-plan` findings
+link plans that are authored `draft` or derived `draft` — unsettled before and
+after the switch unless Phase B records otherwise — so that count moves only
+when a specific plan is decided or closed, never as a side effect.
 
 ## Acceptance Criteria
 
@@ -207,7 +260,7 @@ against. They are expected to be unverified until then.
   "criteria": [
     {
       "id": "ac-equivalent-documents-equal-lifecycle",
-      "description": "Two content-equivalent plans, one parsed by parsePlanFile (native) and one by parseSuperPowersPlan, both with no authored status and every tracked task implemented, produce equal status (unknown), equal lifecycleProvenance (unspecified) and equal taskCompletion (complete); the same holds when both carry the same authored status.",
+      "description": "Two content-equivalent plans, one parsed by parsePlanFile (native) and one by parseSuperPowersPlan, both with no authored status and every tracked task implemented, produce equal status (unknown), equal lifecycleProvenance (unspecified) and equal taskCompletion (complete); the same holds when both carry the same authored status. Counterexample locked: a plan that explicitly writes status: unknown yields status unknown with lifecycleProvenance authored, not unspecified, on both parse paths.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/planning/parse-markdown.js", "templates/cli/test/governance.js"]
     },
@@ -219,7 +272,7 @@ against. They are expected to be unverified until then.
     },
     {
       "id": "ac-unrecognized-status-preserved-not-coerced",
-      "description": "An authored plan status outside {draft, active, parked, done, unknown} (e.g. in_progress) is preserved verbatim in status and surfaced as an unrecognized-plan-status observation; it is not mapped to any recognized value by either parse path.",
+      "description": "An authored plan status outside {draft, active, parked, done, unknown} (e.g. in_progress) is preserved verbatim in status and surfaced as a planning-scan warning; it is not mapped to any recognized value by either parse path, and it produces no drift finding, no disposition fingerprint and no new rule id.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/planning/parse-markdown.js", "templates/cli/test/governance.js"]
     },
@@ -231,19 +284,19 @@ against. They are expected to be unverified until then.
     },
     {
       "id": "ac-close-writes-done-and-leaves-checkboxes",
-      "description": "mem plan close writes an explicit status: done into the plan frontmatter, after which the parsed status is done with lifecycleProvenance authored; the plan body, including every checkbox, is byte-identical before and after; a second close is a no-op.",
+      "description": "mem plan close writes an explicit status: done into the plan frontmatter, after which the parsed status is done with lifecycleProvenance authored; the plan body, including every checkbox, is byte-identical before and after. For a plan with no frontmatter, the only added content is a frontmatter block containing exactly status: done, no id key is added so the parse path is unchanged, and the file's original newline style is preserved. A second close leaves the file byte-identical.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/planning.js", "templates/cli/test/governance.js"]
     },
     {
-      "id": "ac-verification-close-reads-authored-status",
-      "description": "close-preview lists a set status: done action for an all-checked Superpowers plan with no authored status (today it is skipped because the derived status is already done), and close-apply persists it.",
+      "id": "ac-verification-close-writes-lifecycle-only",
+      "description": "Verification close writes lifecycle only. For an all-checked Superpowers plan with no authored status, close-preview lists a set status: done action (today it is skipped because the derived status is already done) and close-apply persists it. For a plan with unchecked tasks, a READY close still writes status: done, close-preview lists no checkbox-flip action, and after close-apply the plan body is byte-identical with every checkbox unchanged, so status done with taskCompletion incomplete is the result.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/verification/close-preview.js", "templates/cli/verification/close-apply.js", "templates/cli/test/governance.js"]
     },
     {
       "id": "ac-migration-population-enumerable-before-switch",
-      "description": "A read-only enumeration lists every plan whose status would change under the converged parser, with current value, target value and taskCompletion, and on a fixture corpus lists exactly the changing plans and no others; it performs no writes.",
+      "description": "A read-only enumeration lists every plan whose status would change under the converged parser, with current value, target value and taskCompletion, and on a fixture corpus lists exactly the changing plans and no others; it performs no writes. A completeness check compares that enumeration with a per-plan decision set (record <status> or leave unknown) and reports every missing, extra and duplicated decision; it passes only when the enumerated population equals the decided population and every plan has exactly one decision.",
       "verifier": { "type": "command", "params": { "cmd": "node ./.evo-lite/cli/test.js governance", "timeoutMs": 600000, "scope": "governance" } },
       "dependsOn": ["templates/cli/planning/scan.js", "templates/cli/test/governance.js"]
     },
