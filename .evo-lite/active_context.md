@@ -3,11 +3,11 @@
 <!-- BEGIN_META -->
 
 > **核心目标**: 持续打磨 `create-evo-lite` 骨架代码，使其成为 Agentic Workflow 的终极"无感高压治理挂件"。
-> headSha: 5a04e4f69c5f3976cc1d896bcf3b8b265920f5a0
-> upstreamSha: 5a04e4f69c5f3976cc1d896bcf3b8b265920f5a0
+> headSha: 18c514f53c9e36542ef2784a39315a178b779a51
+> upstreamSha: 18c514f53c9e36542ef2784a39315a178b779a51
 > ahead: 0
 > behind: 0
-> focusUpdatedAt: 2026-09-23T16:55:11.386Z
+> focusUpdatedAt: 2026-09-24T03:37:10.429Z
 <!-- END_META -->
 
 ## 🎯 当前焦点
@@ -27,6 +27,7 @@
 ## 🔄 最近轨迹 (≤ 10 条)
 
 <!-- BEGIN_TRAJECTORY -->
+- [18c514f] 2026-09-24 plan lifecycle authority adopted: PR #77 merged into main as merge commit 18c514f (parents 5a3672b + 5317f16 exact adopted head, --mat
 - [5a04e4f] 2026-09-23 record-only closure of historical specs: PR #76 merged into main as merge commit 5a04e4f (parents 56bf774 + 94f31dc exact head, --match-head-
 - [934c626] 2026-09-23 post-merge state closure: PR #75 (spec/record-only-closure-terminal-state) merged into main as merge commit 934c626 (parents 5
 - [4a1dca8] 2026-09-07 architecture-scan-coverage: 架构扫描覆盖率缺陷收口：装置不再把「没看见」报成「没问题」。PR #74 以两父 merge 合入 main@4a1dca8（parents 7899dcf + b5e14da），release-ga
@@ -36,14 +37,13 @@
 - [ac58d9e] 2026-09-06 pr71-integration-closure: #71 收口:gitignore 规则下发、drift 折叠显示、verifier budget、2.4.0 版本号。 PR #71 合入 main@ac58d9e(两父 merge),CI rele
 - [c7b018e] 2026-09-05 manual-attestation-staleness: manual attestation 不再 STALE-exempt + batch attest。PR #72 合入 main@c7b018e(两父 merge), CI release-gate
 - [3f95ce4] 2026-09-03 child-zvec-default: 子巢默认安装并启用 zvec,pin 到 0.7.0。PR #66 合入 main@3f95ce4(两父 merge),CI 6/6 绿。 owner 决定(2026-09-03,两条):新建子巢默认
-- [0a717e1] 2026-09-03 governance-gate-parked: V_PRODUCT gate Step A 收口:PARKED at DEFERRED,PR #65 合入 main@0a717e1(两父 merge)。 产出:一份为 A0 的 B3 而设的 cel
 <!-- END_TRAJECTORY -->
 
 ## 📌 架构备忘 / 搁置区 (Backlog Ideas)
 
 > ⚠️ 此区域无锚点保护，可自由追加灵感与低优先级任务，但严禁在此堆积已完成任务。
 
-- [plan-status-parser-divergence] RESIDUAL / semantics-consistency / investigation-needed — Superpowers 与 native plan 对「无显式 frontmatter status」采用不同生命周期语义。`parseSuperPowersPlan` 在 tracked tasks 全部 implemented 时派生 `plan.status=done`，否则 `draft`；native `parsePlanFile` 在无显式 status 时始终返回 `unknown`。已确认该分歧会改变 Spec Portfolio 的 `notDonePlans` 与 zombie/aging warnings，并会改变 close-preview/apply 的 mutation planning：全勾且无显式 status 的 Superpowers plan 被视为已 done，因此 closure transaction 不会再持久化 `status: done`；等价 native plan 会。已证伪其 release-gate bypass 影响：`deriveBlocker` 不消费 `anyPlanNotDone`，checkbox 翻转不能改变 release verdict。R011 candidate selection 同样不消费 `plan.status`。第三个已确认消费者是 R012 phantom-focus。R012 以 `plan.status === "draft" || done === 0` 判定 unstarted，并把 `planStatus` 直接写入 finding factInputs。因而该 parser divergence 不仅影响展示：对「无显式 status、已有部分任务完成」的等价 plan，Superpowers 派生 draft，因此仍产生 phantom-focus finding；native 派生 unknown 且 done>0，因此不产生该 finding。对 done=0 的等价 plan，两边都会产生 R012，但 `factInputs.planStatus` 分别为 draft / unknown，导致同一未启动治理事实具有不同 fingerprint / disposition identity。该影响仍不通向 release verdict，且尚未判定哪种 lifecycle 语义才是 authoritative；在 contract 冻结前不修。两条均已在受控夹具上实测复现（partial 1/2：SP 出 finding、native 静默；done=0：两边都出，指纹不同），非仅读码推断。实现前先冻结 contract：`plan.status` 究竟是 authored lifecycle state 还是可派生 convenience；不同格式是否必须统一；close transaction 是否必须持久化显式 `status: done`。未冻结前不得修改 parser 或 closure production code。
+- [plan-status-parser-divergence] RESIDUAL / semantics-consistency / investigation-needed — Superpowers 与 native plan 对「无显式 frontmatter status」采用不同生命周期语义。`parseSuperPowersPlan` 在 tracked tasks 全部 implemented 时派生 `plan.status=done`，否则 `draft`；native `parsePlanFile` 在无显式 status 时始终返回 `unknown`。已确认该分歧会改变 Spec Portfolio 的 `notDonePlans` 与 zombie/aging warnings，并会改变 close-preview/apply 的 mutation planning：全勾且无显式 status 的 Superpowers plan 被视为已 done，因此 closure transaction 不会再持久化 `status: done`；等价 native plan 会。已证伪其 release-gate bypass 影响：`deriveBlocker` 不消费 `anyPlanNotDone`，checkbox 翻转不能改变 release verdict。R011 candidate selection 同样不消费 `plan.status`。第三个已确认消费者是 R012 phantom-focus。R012 以 `plan.status === "draft" || done === 0` 判定 unstarted，并把 `planStatus` 直接写入 finding factInputs。因而该 parser divergence 不仅影响展示：对「无显式 status、已有部分任务完成」的等价 plan，Superpowers 派生 draft，因此仍产生 phantom-focus finding；native 派生 unknown 且 done>0，因此不产生该 finding。对 done=0 的等价 plan，两边都会产生 R012，但 `factInputs.planStatus` 分别为 draft / unknown，导致同一未启动治理事实具有不同 fingerprint / disposition identity。该影响仍不通向 release verdict，且尚未判定哪种 lifecycle 语义才是 authoritative；在 contract 冻结前不修。两条均已在受控夹具上实测复现（partial 1/2：SP 出 finding、native 静默；done=0：两边都出，指纹不同），非仅读码推断。实现前先冻结 contract：`plan.status` 究竟是 authored lifecycle state 还是可派生 convenience；不同格式是否必须统一；close transaction 是否必须持久化显式 `status: done`。未冻结前不得修改 parser 或 closure production code。**2026-09-24 更新：contract 已冻结** —— `spec:plan-lifecycle-authority`（ADOPTED，PR #77 → main@18c514f）回答了上述三问：status 仅来自 authored frontmatter、taskCompletion 为独立观察轴、两类 parser 同语义、所有 close 路径只写 lifecycle（verification close 的 checkbox 改写被退休）。**但冻结 ≠ 实现授权**：Phase B（26-plan migration-impact census + 逐 plan 裁定）、C（原子迁移 + parser 切换 + consumer 调和）、D（`mem plan close`）仍须各自取得授权；在此之前仍不得修改 parser 或 closure production code。
 
 - 考虑 `raw_memory/` 原始文件层（YAML Frontmatter + Markdown），提升向量库抗毁性与换模型能力（参考 Gemini 设计文档讨论）。
 - [f9b1] 考虑下一步增加对 Python/Go 等非 Node 环境的轻量化适配支持。
