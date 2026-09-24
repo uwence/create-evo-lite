@@ -1,6 +1,6 @@
 ---
 id: spec:plan-lifecycle-authority
-status: draft
+status: adopted
 created: 2026-09-24
 releaseBlocking: false
 ---
